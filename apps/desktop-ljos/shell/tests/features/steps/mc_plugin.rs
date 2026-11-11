@@ -801,6 +801,17 @@ fn card(world: &World, brick: &Brick, list: ObjectId, id: &str) -> Option<Object
 }
 
 /// The pages and tabs the user can see, for a failure.
+/// The environment a second MC serves, in the scenarios with two.
+const OTHER_ENVIRONMENT: &str = "second";
+
+/// A plugin only the second environment's MC runs.
+fn other_plugin() -> Json {
+    let mut entry = code_review();
+    entry["id"] = json!("notes");
+    entry["name"] = json!("Notes");
+    entry
+}
+
 fn publish_plugin(world: &mut World, environment: &str, entry: Json) {
     fake(world)
         .plugins
@@ -1872,6 +1883,60 @@ pub fn register(steps: &mut Steps) {
                 Some(rescan) => click_item(world, rescan),
                 None => fail!("the environment has no rescan"),
             }
+        },
+    );
+    // A section per environment.
+    steps.step(
+        "two environments with different MC plugins",
+        |world, _, _| {
+            // Both are in the cluster before the window opens, as a member is
+            // when the app starts.
+            let here = world.mc.environment_id.clone();
+            publish_plugin(world, &here, code_review());
+            publish_plugin(world, OTHER_ENVIRONMENT, other_plugin());
+            world.mc.join_named(OTHER_ENVIRONMENT);
+            shell(world)?;
+            wait_status(world, CODE_REVIEW, "running")?;
+            let other = text(&other_plugin()["id"]);
+            world.wait_for_with(
+                |w| listed(w, &other, OTHER_ENVIRONMENT)["status"] == json!("running"),
+                describe,
+            )
+        },
+    );
+    steps.step(
+        "each environment's MC plugins are listed under that environment",
+        |world, _, _| {
+            let list = show_plugin_list(world)?;
+            let brick = shell(world)?;
+            let here = world.mc.environment_id.clone();
+            let other = text(&other_plugin()["id"]);
+            let sections = [
+                (here.clone(), CODE_REVIEW.to_owned(), other.clone()),
+                (OTHER_ENVIRONMENT.to_owned(), other, CODE_REVIEW.to_owned()),
+            ];
+            for (environment, shown, absent) in sections {
+                let section = format!("mcPlugins:{environment}");
+                let card = |id: &str| format!("mcPlugin:{environment}/{id}");
+                world.wait_for_with(
+                    |w| {
+                        brick
+                            .find_under(w, list, &section)
+                            .ok()
+                            .flatten()
+                            .filter(|s| brick.flag(w, *s, "visible"))
+                            .and_then(|s| brick.find_under(w, s, &card(&shown)).ok().flatten())
+                            .is_some()
+                    },
+                    |w| format!("{} under {section}; {}", card(&shown), describe(w)),
+                )?;
+                let under = brick.find_under(world, list, &section)?.expect("listed");
+                expect!(
+                    brick.find_under(world, under, &card(&absent))?.is_none(),
+                    "{section} also lists {absent}"
+                );
+            }
+            Ok(())
         },
     );
     steps.step(&format!("{Q} is listed as disabled"), |world, c, _| {

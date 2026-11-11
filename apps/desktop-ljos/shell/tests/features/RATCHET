@@ -1460,6 +1460,7 @@ planning/planner.feature: The user picks the planner's Slack channel in its sett
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
 plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
+plugins/plugin-catalog.feature: The plugin list has a section for each environment's MC plugins
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
 plugins/plugin-contributions.feature: A disabled package can be checked to compile without enabling it
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings

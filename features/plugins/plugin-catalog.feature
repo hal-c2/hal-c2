@@ -65,7 +65,7 @@ Feature: Plugin catalog
     When the user opens the plugin list for the second environment
     Then only that environment's MC plugins are listed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The plugin list has a section for each environment's MC plugins
     Given two environments with different MC plugins
     When the user opens the plugin list
