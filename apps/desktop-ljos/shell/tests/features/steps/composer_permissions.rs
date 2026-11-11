@@ -10,7 +10,7 @@ use crate::brick::Brick;
 use crate::harness::{Outcome, Q, Steps, show, text};
 use crate::steps::composer_brick::{composer_brick, composer_part_now, press_in_composer};
 use crate::steps::composer_workspace::{click, int, part, popup_of};
-use crate::steps::stream::THREAD;
+use crate::steps::stream::{THREAD, look};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -131,6 +131,48 @@ pub fn register(steps: &mut Steps) {
             },
         )
     });
+    steps.step(
+        "the app quits before the MC answers and starts again on the thread",
+        |world, _, _| {
+            // The answer goes with the connection it was for.
+            world.mc.drop_held();
+            world.restart()?;
+            world.connect()?;
+            world.sync()?;
+            let key = format!("{}:{THREAD}", world.mc.environment_id);
+            look(world, &key, true)
+        },
+    );
+    steps.step(
+        "another device gives the thread Full access",
+        |world, _, _| run_in(world, "full-access"),
+    );
+    steps.step(
+        &format!("the model control's permissions read {Q}"),
+        |world, c, _| {
+            let brick = drawn(world)?;
+            let picker = part(world, "modelPicker")?;
+            let popup = popup_of(&brick, world, picker)?;
+            if !brick.flag(world, popup, "opened") {
+                click(world, picker)?;
+            }
+            world.wait_for("the model control to open", |w| {
+                brick.flag(w, popup, "opened")
+            })?;
+            let permissions = part(world, "modelPickerPermissions")?;
+            world.wait_for_with(
+                |w| brick.text_of(w, permissions, "displayText") == c[0],
+                |w| {
+                    format!(
+                        "the footer to read {}; it reads {} and the composer shows {}",
+                        c[0],
+                        brick.text_of(w, permissions, "displayText"),
+                        show(&composer(w))
+                    )
+                },
+            )
+        },
+    );
     steps.step(
         "the composer does not name the permissions",
         |world, _, _| {

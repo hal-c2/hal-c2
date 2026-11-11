@@ -335,12 +335,7 @@ impl Composer {
         // for keeps the MC's default. A saved mode the provider no longer
         // offers is set to the mode the composer shows instead, so the turn
         // runs as read.
-        let mut runtime_mode = kept::read(engine, |d| {
-            d.drafts
-                .get(target)
-                .map(|k| k.runtime_mode.clone())
-                .unwrap_or_default()
-        });
+        let mut runtime_mode = self.picked_runtime_mode(engine, target);
         let offered = self.instance_of(&self.selection(engine, target));
         if !runtime_mode.is_empty() {
             runtime_mode = model::shown_runtime_mode(offered, &runtime_mode);

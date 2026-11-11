@@ -244,6 +244,7 @@ composer/model-and-mode.feature: New threads start with the default permissions
 composer/model-and-mode.feature: New worktree mode needs a base branch before sending
 composer/model-and-mode.feature: One control chooses the model and then its effort
 composer/model-and-mode.feature: Only the permissions the provider supports are offered
+composer/model-and-mode.feature: Permissions picked as the app quit give way to what the thread runs in
 composer/model-and-mode.feature: Planning and building are toggled on the desktop only when plan mode is on
 composer/model-and-mode.feature: Search results keep the provider's newest-first order
 composer/model-and-mode.feature: Searching the models finds a provider's older models too
