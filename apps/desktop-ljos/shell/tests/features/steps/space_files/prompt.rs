@@ -463,6 +463,14 @@ fn focused_item(world: &World) -> Option<ObjectId> {
     ljos::item::active_focus_item(world.engine(), root)
 }
 
+/// The palette's search field. Read for its own `activeFocus`: the
+/// features world shows bricks without a scene, so no window keeps a focus
+/// chain for [`focused_item`] to read.
+fn palette_search(world: &World) -> Option<ObjectId> {
+    let brick = world.peek_part::<brick::Shown>()?.0?;
+    brick.find(world, "commandPaletteSearch").ok().flatten()
+}
+
 fn palette_open(world: &World) -> bool {
     world
         .with::<Palette, _>(|p, _| p.is_open())
@@ -1155,13 +1163,17 @@ fn register_window(steps: &mut Steps) {
         window(world)?;
         world.wait_for_with(
             |w| {
-                palette_open(w)
-                    && focused_item(w).is_some_and(|f| object_name(w.engine(), f) == "commandPaletteSearch")
+                palette_open(w) && palette_search(w).is_some_and(|f| focused(w, f))
             },
             |w| {
                 format!(
-                    "the palette to be open (it is {}) with the keyboard in its search; it is in {}; {}",
+                    "the palette to be open (it is {}) with the keyboard in its search (it {}); it is in {}; {}",
                     if palette_open(w) { "open" } else { "shut" },
+                    match palette_search(w) {
+                        Some(f) if focused(w, f) => "has it",
+                        Some(_) => "does not have it",
+                        None => "is not drawn",
+                    },
                     focused_item(w).map_or("nothing".to_owned(), |f| format!("\"{}\"", object_name(w.engine(), f))),
                     describe_palette_key(w)
                 )

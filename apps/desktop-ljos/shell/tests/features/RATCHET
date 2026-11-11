@@ -2921,6 +2921,10 @@ space/prompt.feature: Taking @agent back out writes a block again
 space/prompt.feature: The page's prompt edits as the thread's prompt does [rich text]
 space/prompt.feature: The page's prompt edits as the thread's prompt does [vim keys]
 space/prompt.feature: The page's prompt stops its agent as a thread's prompt stops a turn
+space/prompt.feature: The palette's key opens the palette over a page, whatever has the keyboard [the block "Draft", ]
+space/prompt.feature: The palette's key opens the palette over a page, whatever has the keyboard [the page's prompt under its / menu, /]
+space/prompt.feature: The palette's key opens the palette over a page, whatever has the keyboard [the page's prompt, ]
+space/prompt.feature: The palette's key opens the palette over a page, whatever has the keyboard [the page's title, ]
 space/prompt.feature: The prompt says where an ask would run before it is sent
 space/prompt.feature: Words to @agent on a page's prompt ask an agent
 space/self-updating-pages.feature: A failed run leaves the page as it was and says so
