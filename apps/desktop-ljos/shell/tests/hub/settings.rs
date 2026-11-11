@@ -477,17 +477,26 @@ fn a_preference_another_desktop_saves_reaches_this_one() {
     );
     let reason = format!("Cannot read {}", dir.join("preferences.json").display());
     assert_eq!(settings.device_error(), reason);
-    // Gone: left as it is, for the next save to write whole.
+    // Deleted: what was last read stays, and the next save writes it whole.
     std::fs::remove_file(dir.join("preferences.json")).unwrap();
-    woken
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the watcher wakes the shell");
-    hal_c2_shell::controllers::settings::deliver(&hub.engine);
+    delivered(&hub, &woken, |hub| {
+        !Settings::of(&hub.engine).device_unreadable()
+    });
+    assert_eq!(settings.device_error(), "");
     assert_eq!(
         settings.device_value("timestampFormat"),
         Some(json!("24-hour"))
     );
-    // Repaired: read again, the error gone.
+    assert!(settings.write_device(&hub.engine, "diffLayout", json!("split")));
+    assert_eq!(
+        on_disk(&dir),
+        map(json!({"timestampFormat": "24-hour", "diffLayout": "split"}))
+    );
+    // Damaged again, then repaired: read again, the error gone.
+    saved_elsewhere(&dir, "[1, 2");
+    delivered(&hub, &woken, |hub| {
+        Settings::of(&hub.engine).device_unreadable()
+    });
     saved_elsewhere(&dir, "{\"wordWrap\": false}");
     delivered(&hub, &woken, |hub| {
         let s = Settings::of(&hub.engine);

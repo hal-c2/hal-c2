@@ -905,8 +905,8 @@ impl Settings {
 
     /// The preferences file changed on disk, as [`deliver`] tells it:
     /// show what it holds. One that cannot be read keeps the preferences
-    /// last read and refuses saves until it reads again; one that is
-    /// gone is written whole by the next save.
+    /// last read and refuses saves until it reads again or is deleted;
+    /// one that is gone is written whole by the next save.
     fn device_file_changed(&self, engine: &Engine) {
         {
             let mut s = self.0.state.borrow_mut();
@@ -916,6 +916,20 @@ impl Settings {
             return;
         };
         if !path.exists() {
+            // Deleting a damaged file repairs it: the next save writes it
+            // whole.
+            let repaired = {
+                let mut s = self.0.state.borrow_mut();
+                let repaired = s.device_unreadable;
+                if repaired {
+                    s.device_unreadable = false;
+                    s.device_error.clear();
+                }
+                repaired
+            };
+            if repaired {
+                self.emit(engine, Signal::Device);
+            }
             return;
         }
         let Some(saved) = read_preferences(&path) else {
