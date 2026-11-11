@@ -12,7 +12,7 @@ defmodule HalC2.Acp.MessageKeyTest do
 
     {:ok, upgraded} = ThreadRuntime.code_change(nil, before, nil)
 
-    assert upgraded.v == 20
+    assert upgraded.v == 21
     assert ThreadRuntime.message_key(upgraded.turn, :assistant, "m1") == "assistant:run-1:m1"
     assert ThreadRuntime.message_key(upgraded.turn, :assistant, nil) == "assistant:run-1:current"
   end
@@ -34,7 +34,7 @@ defmodule HalC2.Acp.MessageKeyTest do
 
     {:ok, upgraded} = ThreadRuntime.code_change(nil, before, nil)
 
-    assert upgraded.v == 20
+    assert upgraded.v == 21
     assert %{upgraded | agent_cancelled: true}.agent_cancelled
   end
 

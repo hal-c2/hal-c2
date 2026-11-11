@@ -39,7 +39,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 20
+  @state_version 21
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -217,6 +217,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        thread_id: thread_id,
        conn: nil,
        agent: nil,
+       # The registry agent (`config.agentId`) the instance named at launch.
+       agent_id: nil,
        # Whether the agent is Kimi Code, whose tool calls `Kimi.update/1` reshapes.
        kimi: false,
        # Kimi's session records while its subagents run (`read_wire/1`): %{session, dir,
@@ -1447,6 +1449,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 19} = state),
     do: state |> Map.put_new(:agent_cancelled, false) |> Map.put(:v, 20) |> migrate()
 
+  # A runtime from before knows its instance, and its agent is the one it names now.
+  defp migrate(%{v: 20} = state),
+    do:
+      state
+      |> Map.merge(%{v: 21, agent_id: agent_id(state[:agent])})
+      |> migrate()
+
+  defp agent_id(nil), do: nil
+  defp agent_id(instance), do: HalC2.Acp.setting(instance, "agentId")
+
   # --- session -------------------------------------------------------------------
 
   # A signed-out registry agent is not started for a thread: it could only refuse the
@@ -1463,12 +1475,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # The agent's permission mode is set when it starts, so a new mode means a new process.
   # So does a changed MCP credential: the header, env and bridge the live
-  # session carries would otherwise keep a token the flipped setting revoked.
+  # session carries would otherwise keep a token the flipped setting revoked. And so
+  # does an instance pointed at another registry agent: the next turn runs that one.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
        when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode do
-    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)),
-      do: {:ok, state},
-      else: ensure_session(%{state | session_id: nil}, turn)
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) and
+         agent_id(agent) == state.agent_id,
+       do: {:ok, state},
+       else: ensure_session(%{state | session_id: nil}, turn)
   end
 
   defp ensure_session(state, turn) do
@@ -1596,6 +1610,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          state
          | conn: conn,
            agent: instance,
+           agent_id: agent_id(instance),
            kimi: Kimi.agent?(instance),
            mode: mode,
            server: server,
@@ -1986,7 +2001,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     options =
       HalC2.Acp.session_config(%{"configOptions" => result["configOptions"], "modes" => modes})
 
-    HalC2.Acp.put_config(state.agent, options)
+    HalC2.Acp.put_config(state.agent, options, state.agent_id)
 
     # What each option offers (`configId` -> its choices' values).
     state =
@@ -2202,7 +2217,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp mode_changed(%{legacy_modes: %{} = modes} = state, %{"currentModeId" => id})
        when is_binary(id) and is_map_key(state.config, "mode") do
     if Enum.any?(List.wrap(modes["availableModes"]), &(is_map(&1) and &1["id"] == id)) do
-      HalC2.Acp.put_option(state.agent, "mode", id)
+      HalC2.Acp.put_option(state.agent, "mode", id, state.agent_id)
 
       %{
         state
@@ -2216,10 +2231,13 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp mode_changed(state, _update), do: state
 
-  # A mode of the session's older ACP modes is set through `session/set_mode`.
+  # A mode of the session's older ACP modes is set through `session/set_mode`. One the
+  # session already holds is recorded again, as the instance may have been dropped
+  # (another agent named, then this one again) while the session ran on.
   defp set_config(%{legacy_modes: %{} = modes} = state, "mode", value)
        when is_binary(value) and is_map_key(state.config, "mode") do
     if state.config["mode"] == value do
+      HalC2.Acp.put_option(state.agent, "mode", value, state.agent_id)
       state
     else
       case Connection.call(state.conn, "session/set_mode", %{
@@ -2227,7 +2245,7 @@ defmodule HalC2.Acp.ThreadRuntime do
              "modeId" => value
            }) do
         {:ok, _} ->
-          HalC2.Acp.put_option(state.agent, "mode", value)
+          HalC2.Acp.put_option(state.agent, "mode", value, state.agent_id)
 
           %{
             state
@@ -2245,6 +2263,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp set_config(state, id, value)
        when (is_binary(value) or is_boolean(value)) and is_map_key(state.config, id) do
     if state.config[id] == value do
+      HalC2.Acp.put_option(state.agent, id, value, state.agent_id)
       state
     else
       case Connection.call(
@@ -2255,6 +2274,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            ) do
         {:ok, result} ->
           state = remember_config(state, result || %{})
+          HalC2.Acp.put_option(state.agent, id, value, state.agent_id)
           %{state | config: Map.put(state.config, id, value)}
 
         {:error, reason} ->

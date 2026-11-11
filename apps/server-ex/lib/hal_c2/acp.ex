@@ -839,8 +839,7 @@ defmodule HalC2.Acp do
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
   # A probe's fresh session reports each option at the agent's default, but a running
-  # session may have set one since (`put_config/2`, `put_option/3`), before a
-  # `forget/1` or after. The probe decides which options and choices there are, and
+  # session may have set one since (`put_option/4`), before a `forget/1` or after. The probe decides which options and choices there are, and
   # the defaults of those no session set; a value a session set stays while its
   # option still offers it.
   defp publish_staged(id, :config, config) do
@@ -2247,9 +2246,9 @@ defmodule HalC2.Acp do
   Forgets what was read from an instance's agent, so it is probed again. Workspace
   snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
   the user already saw for a folder, and only the next workspace refresh replaces
-  them. So do the values a running session set on its options (`put_config/2`,
-  `put_option/3`): the next probe's options keep those they still offer. `drop/1` is
-  for an instance that is gone.
+  them. So do the values a running session set on its options (`put_option/4`): the
+  next probe's options keep those they still offer. `drop/1` is for an instance that
+  is gone, or that names another agent now.
   """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
@@ -2406,34 +2405,48 @@ defmodule HalC2.Acp do
 
   @doc """
   Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
-  keeps its models, so its session options follow what it last offered.
+  keeps its models, so its session options follow what it last offered. `agent` is
+  the agent the session's runtime was launched on (`config.agentId`); a runtime left
+  on an agent the instance no longer names writes nothing. `:any` skips that check.
   """
-  def put_config(id, config_options) when is_list(config_options) do
-    if driver(id) == "acpRegistry" and
-         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
-      locked(id, fn ->
-        :persistent_term.put({__MODULE__, id, :config}, config_options)
-        session_set(id, set_values(config_options))
-      end)
+  def put_config(id, config_options, agent \\ :any)
 
-      HalC2.Settings.notify_providers()
+  def put_config(id, config_options, agent) when is_list(config_options) do
+    if driver(id) == "acpRegistry" and
+         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options and
+         locked(id, fn ->
+           runs?(id, agent) and :persistent_term.put({__MODULE__, id, :config}, config_options)
+         end) == :ok,
+       do: HalC2.Settings.notify_providers()
+
+    :ok
+  end
+
+  def put_config(_id, _config_options, _agent), do: :ok
+
+  @doc """
+  Records `value` as what the registry session option `option` now holds because a
+  session set it, as `put_config/3` does for `agent`'s runtime. A probe keeps it over
+  the agent's default (`publish_staged/3`); defaults a session merely reports do not.
+  """
+  def put_option(id, option, value, agent \\ :any) do
+    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the config.
+    if driver(id) == "acpRegistry" and
+         locked(id, fn -> runs?(id, agent) and session_set(id, %{option => value}) end) == :ok do
+      {__MODULE__, id, :config}
+      |> :persistent_term.get([])
+      |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
+      |> then(&put_config(id, &1, agent))
     end
 
     :ok
   end
 
-  def put_config(_id, _config_options), do: :ok
-
-  @doc "Records `value` as what the registry session option `option` now holds."
-  def put_option(id, option, value) do
-    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the config.
-    if driver(id) == "acpRegistry", do: locked(id, fn -> session_set(id, %{option => value}) end)
-
-    {__MODULE__, id, :config}
-    |> :persistent_term.get([])
-    |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
-    |> then(&put_config(id, &1))
-  end
+  # Whether a runtime launched on `agent` still runs the instance's agent; Settings
+  # drops the instance when its agent changes (`drop/1`), and an old runtime's later
+  # writes must not come back.
+  defp runs?(_id, :any), do: true
+  defp runs?(id, agent), do: setting(id, "agentId") == agent
 
   # The option values a session set, which a probe's options keep (`publish_staged/3`).
   # `forget/1` keeps them, as the session keeps running; `drop/1` erases them.
@@ -2512,10 +2525,6 @@ defmodule HalC2.Acp do
   end
 
   defp plan_option?(_option), do: false
-
-  # Each option's current value in `config`, by option id.
-  defp set_values(config),
-    do: for(%{"id" => key, "currentValue" => value} <- config, into: %{}, do: {key, value})
 
   # Whether `value` is one `option` can hold: a choice it lists, or a boolean's.
   defp offers?(_option, nil), do: false

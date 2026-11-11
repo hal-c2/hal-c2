@@ -779,6 +779,57 @@ defmodule HalC2.AcpTest do
 
     HalC2.Acp.load()
     assert mode.() == "debug"
+
+    # A thread's runtime still on the old agent sets "code": the instance is not its now.
+    HalC2.Acp.put_option(id, "mode", "code", "modes-agent")
+    HalC2.Acp.load()
+    assert mode.() == "debug"
+
+    # A new session, during a reload, reports the agent's defaults; it set none of
+    # them, so a later default (here "code") is the next probe's to show.
+    defaults = :persistent_term.get({HalC2.Acp, id, :config})
+    HalC2.Acp.forget(id)
+    HalC2.Acp.put_config(id, defaults, "other-agent")
+
+    control = fn modes, effort ->
+      File.write!(
+        Path.join(dir, "control.json"),
+        JSON.encode!(%{
+          "acme" => %{
+            "legacyModes" => modes,
+            "sessionOptions" => [
+              %{
+                "id" => "effort",
+                "name" => "Effort",
+                "type" => "select",
+                "currentValue" => effort,
+                "options" => [
+                  %{"value" => "low", "name" => "Low"},
+                  %{"value" => "high", "name" => "High"}
+                ]
+              }
+            ]
+          }
+        })
+      )
+    end
+
+    control.(["code", "debug", "ask"], "low")
+    HalC2.Acp.load()
+    assert mode.() == "code"
+
+    # A session that sets its mode sets no other option: another's default still moves.
+    effort = fn ->
+      {HalC2.Acp, id, :config}
+      |> :persistent_term.get([])
+      |> Enum.find_value(&(&1["id"] == "effort" && &1["currentValue"]))
+    end
+
+    assert effort.() == "low"
+    HalC2.Acp.put_option(id, "mode", "ask", "other-agent")
+    control.(["code", "debug", "ask"], "high")
+    HalC2.Acp.load()
+    assert {mode.(), effort.()} == {"ask", "high"}
   end
 
   test "forgetting an instance leaves no generation entry behind" do
