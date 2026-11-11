@@ -106,7 +106,7 @@ jobs:
           curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
             | tar -xJ -C "$RUNNER_TOOL_CACHE/zig"
           echo "$RUNNER_TOOL_CACHE/zig/zig-x86_64-linux-$version" >> "$GITHUB_PATH"
-          echo "ghostty=$(grep -o 'libghostty-rs?rev=[0-9a-f]*' apps/desktop-ljos/Cargo.lock | head -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "ghostty=$(grep -o 'libghostty-rs?rev=[0-9a-f]*' Cargo.lock | head -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
       # Ghostty's Zig packages, by the libghostty-rs revision that names
       # them. Without them every libghostty build (each job's, until main's
