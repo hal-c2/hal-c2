@@ -377,6 +377,9 @@ pub struct Timeline {
     /// The turn items of the events being applied that changed in more
     /// than streamed text.
     reshaped: HashSet<String>,
+    /// The turn items of the events being applied that changed in more
+    /// than appended fields (a subagent's progress streams in one).
+    restated: HashSet<String>,
     /// Run ids.
     expanded_folds: HashSet<String>,
     /// Work groups the user toggled, by row id: open ones, or closed ones
@@ -1110,6 +1113,7 @@ impl Timeline {
             rows: Vec::new(),
             row_of_item: HashMap::new(),
             reshaped: HashSet::new(),
+            restated: HashSet::new(),
             expanded_folds: HashSet::new(),
             expanded_groups: HashSet::new(),
             open_subagent_groups: HashSet::new(),
@@ -1774,6 +1778,8 @@ impl Timeline {
     }
 
     fn everything_changed(&mut self, changed: &HashSet<String>) {
+        // Set against a snapshot, not patched: whatever differs is drawn.
+        self.restated.clone_from(changed);
         self.sort_items();
         self.restructure(changed);
         self.out.extend([
@@ -2053,6 +2059,7 @@ impl Timeline {
         self.workspace_touched = false;
         self.context_touched = false;
         self.reshaped.clear();
+        self.restated.clear();
         self.agent_models.clear();
         for event in events {
             let event = event.as_array().map_or(&[][..], Vec::as_slice);
@@ -2121,7 +2128,7 @@ impl Timeline {
             let Some(&row) = self.row_of_item.get(id) else {
                 continue;
             };
-            if !self.shows(&self.rows[row], id) {
+            if !self.shows(&self.rows[row], id) || !self.draws_change(&self.rows[row], id) {
                 continue;
             }
             let text_only = !self.reshaped.contains(id);
@@ -2142,6 +2149,13 @@ impl Timeline {
                 roles,
             });
         }
+    }
+
+    /// Whether what changed of `item` this frame is drawn in `row`: a
+    /// subagents group draws its members' titles, statuses and times, not
+    /// the progress they stream.
+    fn draws_change(&self, row: &Row, item: &str) -> bool {
+        row.kind != "subagents" || self.restated.contains(item)
     }
 
     /// Whether `row` draws anything of turn item `item`.
@@ -2270,6 +2284,9 @@ impl Timeline {
         fields.extend(array(patch, "u").iter().map(|f| f.as_str().unwrap_or("")));
         let structural =
             !existed || next.is_none() || replaced || fields.iter().any(|f| STRUCTURAL.contains(f));
+        if !existed || next.is_none() || replaced || !fields.is_empty() {
+            self.restated.insert(id.to_owned());
+        }
         // Anything but text appended to the item as it streams.
         let appended = object(patch, "a");
         if !existed
@@ -2811,10 +2828,9 @@ impl Timeline {
     /// Whether `row` shows an item `changed` names, or the checkpoint it
     /// lists.
     fn dirty_row(&self, row: &Row, changed: &HashSet<String>) -> bool {
-        row.items
-            .iter()
-            .any(|item| changed.contains(item) && self.shows(row, item))
-            || (!row.checkpoint.is_empty() && changed.contains(&row.checkpoint))
+        row.items.iter().any(|item| {
+            changed.contains(item) && self.shows(row, item) && self.draws_change(row, item)
+        }) || (!row.checkpoint.is_empty() && changed.contains(&row.checkpoint))
     }
 
     /// Brings the rows in line with `rows` by id: removes, inserts and

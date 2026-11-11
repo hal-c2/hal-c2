@@ -1185,6 +1185,33 @@ fn a_group_of_subagents_known_by_model_reads_their_launches_status() {
     assert_eq!(w.role(group, Role::Text), "2 done");
 }
 
+// Regression (timeline_prop): a closed group draws its members' titles,
+// statuses and times; the progress a member streams redraws nothing there.
+#[test]
+fn a_group_redraws_for_its_members_status_not_their_progress() {
+    let mut w = World::new();
+    w.seq = 4;
+    w.snapshot(vec![
+        row("run", run("running")),
+        row("subagent", json!({"id": "agent-1", "model": "opus"})),
+        row(
+            "turn-item",
+            item("suba-2", "subagent", 2, json!({"subagentId": "agent-1"})),
+        ),
+        row(
+            "turn-item",
+            item("suba-3", "subagent", 3, json!({"subagentId": "agent-1"})),
+        ),
+    ]);
+    let group = w.tl.row_id(w.last_of("subagents")).unwrap().to_owned();
+    let redrawn = |w: &World| w.view.redrawn.iter().any(|(id, _)| *id == group);
+    w.view.redrawn.clear();
+    w.change("turn-item", "suba-2", json!({"a": {"progress": "a"}}));
+    assert!(!redrawn(&w));
+    w.set("turn-item", "suba-2", json!({"status": "failed"}));
+    assert!(redrawn(&w));
+}
+
 #[test]
 fn a_subagent_model_changed_back_redraws_nothing() {
     let mut w = World::new();
