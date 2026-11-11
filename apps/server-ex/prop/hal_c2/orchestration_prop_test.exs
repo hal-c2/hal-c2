@@ -935,7 +935,7 @@ defmodule HalC2.OrchestrationPropTest do
         update(state, tid, fn thread ->
           %{thread | queue: List.delete(thread.queue, msg)}
           |> set_runs(&if(&1.msg == msg, do: %{&1 | held: false}, else: &1))
-          |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == msg)).instance)
+          |> move_to(instance_of(thread, msg), true)
           |> put_in([:messages, msg, :shown], true)
           |> started(msg)
         end)
