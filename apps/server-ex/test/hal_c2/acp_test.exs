@@ -735,6 +735,19 @@ defmodule HalC2.AcpTest do
     HalC2.Acp.put_option(id, "mode", "gone")
     HalC2.Acp.load()
     assert mode.() == "ask"
+
+    # A default only a probe set is the agent's to change: the next probe's stands.
+    HalC2.Acp.drop(id)
+    HalC2.Acp.load()
+    assert mode.() == "ask"
+
+    File.write!(
+      Path.join(dir, "control.json"),
+      JSON.encode!(%{"acme" => %{"legacyModes" => ["debug", "ask", "code"]}})
+    )
+
+    HalC2.Acp.load()
+    assert mode.() == "debug"
   end
 
   test "forgetting an instance leaves no generation entry behind" do

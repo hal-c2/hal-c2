@@ -839,15 +839,12 @@ defmodule HalC2.Acp do
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
   # A probe's fresh session reports each option at the agent's default, but a running
-  # session may have set one since (`put_option/3`, as `session/set_mode` does), before
-  # or across a `forget/1`. The probe decides which options and choices there are; a
-  # value set before stays while its option still offers it.
+  # session may have set one since (`put_config/2`, `put_option/3`), before a
+  # `forget/1` or after. The probe decides which options and choices there are, and
+  # the defaults of those no session set; a value a session set stays while its
+  # option still offers it.
   defp publish_staged(id, :config, config) do
-    set =
-      Map.merge(
-        :persistent_term.get({__MODULE__, id, :set_values}, %{}),
-        set_values(:persistent_term.get({__MODULE__, id, :config}, []))
-      )
+    set = :persistent_term.get({__MODULE__, id, :session_set}, %{})
 
     config =
       Enum.map(config, fn option ->
@@ -856,7 +853,6 @@ defmodule HalC2.Acp do
       end)
 
     :persistent_term.put({__MODULE__, id, :config}, config)
-    :persistent_term.erase({__MODULE__, id, :set_values})
   end
 
   defp publish_staged(id, key, value),
@@ -2251,9 +2247,9 @@ defmodule HalC2.Acp do
   Forgets what was read from an instance's agent, so it is probed again. Workspace
   snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
   the user already saw for a folder, and only the next workspace refresh replaces
-  them. So do the values a running session set on its options (`put_option/3`): the
-  next probe's options keep those they still offer. `drop/1` is for an instance that
-  is gone.
+  them. So do the values a running session set on its options (`put_config/2`,
+  `put_option/3`): the next probe's options keep those they still offer. `drop/1` is
+  for an instance that is gone.
   """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
@@ -2266,7 +2262,7 @@ defmodule HalC2.Acp do
   def drop(id) do
     locked(id, fn ->
       forget_now(id)
-      :persistent_term.erase({__MODULE__, id, :set_values})
+      :persistent_term.erase({__MODULE__, id, :session_set})
       :persistent_term.erase({__MODULE__, id, :workspaces})
       :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
       :ok
@@ -2298,15 +2294,6 @@ defmodule HalC2.Acp do
   end
 
   defp forget_now(id) do
-    # The option values a running session set (only a registry agent's do, through
-    # `put_config/2`) outlive the options until the next probe publishes its own
-    # (`publish_staged/3`).
-    set = set_values(:persistent_term.get({__MODULE__, id, :config}, []))
-    key = {__MODULE__, id, :set_values}
-
-    if set != %{} and driver(id) == @registry,
-      do: :persistent_term.put(key, Map.merge(:persistent_term.get(key, %{}), set))
-
     for key <- [
           :models,
           :version,
@@ -2424,7 +2411,11 @@ defmodule HalC2.Acp do
   def put_config(id, config_options) when is_list(config_options) do
     if driver(id) == "acpRegistry" and
          :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :config}, config_options) end)
+      locked(id, fn ->
+        :persistent_term.put({__MODULE__, id, :config}, config_options)
+        session_set(id, set_values(config_options))
+      end)
+
       HalC2.Settings.notify_providers()
     end
 
@@ -2435,10 +2426,23 @@ defmodule HalC2.Acp do
 
   @doc "Records `value` as what the registry session option `option` now holds."
   def put_option(id, option, value) do
+    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the config.
+    if driver(id) == "acpRegistry", do: locked(id, fn -> session_set(id, %{option => value}) end)
+
     {__MODULE__, id, :config}
     |> :persistent_term.get([])
     |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
     |> then(&put_config(id, &1))
+  end
+
+  # The option values a session set, which a probe's options keep (`publish_staged/3`).
+  # `forget/1` keeps them, as the session keeps running; `drop/1` erases them.
+  defp session_set(id, values) do
+    key = {__MODULE__, id, :session_set}
+    set = :persistent_term.get(key, %{})
+    merged = Map.merge(set, values)
+    if merged != set, do: :persistent_term.put(key, merged)
+    :ok
   end
 
   @max_options 16
