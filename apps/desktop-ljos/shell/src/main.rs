@@ -568,6 +568,13 @@ fn render_to(
             root
         }
     };
+    // The window as large as the picture: ShellWindow says a size of its own,
+    // which the picture would otherwise crop or leave blank around.
+    for (side, length) in [("width", options.size.0), ("height", options.size.1)] {
+        engine
+            .write_by_name(root, side, ljos::prelude::Value::Real(f64::from(length)))
+            .map_err(|e| format!("the window's {side}: {e:?}"))?;
+    }
     if capture.play_after_snapshot {
         // On the picture's virtual clock: they all run while it settles.
         scripted_run::play(&engine, capture.steps.clone());

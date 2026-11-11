@@ -403,6 +403,7 @@ Item {
             shown: richText.previewed
             address: richText.hoveredLink
             pointer: linkPointer.point.position
+            hostWindow: richText.Window.window
         }
         // Offers what can be done with the link under a point.
         function linkMenu(position, scenePosition) {

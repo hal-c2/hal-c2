@@ -19,6 +19,8 @@ ToolTip {
     // above when the window has no room, and never under it, which would
     // take the pointer off the link and close the card.
     property point pointer: Qt.point(0, 0)
+    // The window the card's parent is in, whose height decides above or below.
+    property Window hostWindow: null
 
     readonly property string status: previews?.status ?? ""
     readonly property var preview: previews?.card ?? ({})
@@ -42,11 +44,10 @@ ToolTip {
     x: pointer.x - 12
     y: {
         const below = pointer.y + 20;
-        const window = parent?.Window.window;
-        if (!parent || !window)
+        if (!parent || !hostWindow)
             return below;
         const scene = parent.mapToItem(null, 0, below);
-        return scene.y + implicitHeight <= window.height ? below : pointer.y - implicitHeight - 12;
+        return scene.y + implicitHeight <= hostWindow.height ? below : pointer.y - implicitHeight - 12;
     }
     width: Math.min(320, contentItem.implicitWidth + leftPadding + rightPadding)
     padding: 12

@@ -87,7 +87,7 @@ AbstractButton {
 
         ColumnLayout {
             objectName: "contextWindowDetails"
-            width: parent.width
+            width: details.availableWidth
             spacing: Theme.space.sm
 
             RowLayout {
