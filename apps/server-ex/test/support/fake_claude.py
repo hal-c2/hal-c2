@@ -156,6 +156,9 @@ if resume_at and resume_at.startswith("sub-uuid-"):
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
+# The model init reports: FAKE_CLAUDE_RUNS_MODEL, else the one it was launched on.
+running = os.environ.get("FAKE_CLAUDE_RUNS_MODEL") or (
+    sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else "claude-haiku")
 # FAKE_CLAUDE_NO_AUTO: a model without auto mode. Claude Code runs it in its default
 # mode instead, says so in its init message, and refuses a later switch to auto.
 NO_AUTO = bool(os.environ.get("FAKE_CLAUDE_NO_AUTO"))
@@ -377,7 +380,7 @@ for line in sys.stdin:
         lifecycle("queued")
         send({"type": "system", "subtype": "task_notification", "session_id": session, "task_id": orphaned, "status": "stopped",
               "summary": "Orphaned by a previous Claude Code process exit"})
-        send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+        send({"type": "system", "subtype": "init", "session_id": session, "model": running, "permissionMode": mode})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}o", "role": "assistant", "content": [{"type": "text", "text": "The survey stopped"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": "The survey stopped",
               "origin": {"kind": "task-notification"}, "session_id": session})
@@ -385,7 +388,7 @@ for line in sys.stdin:
         if "never start a turn" not in text:
             lifecycle("started")
         orphaned = None
-    send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+    send({"type": "system", "subtype": "init", "session_id": session, "model": running, "permissionMode": mode})
     # The project's UserPromptSubmit hooks (.claude/settings.json) run on the prompt; one
     # that exits 2 drops it, and Claude reports the hook's reason as a warning, then
     # again as the result of a turn that ran nothing (Claude Code 2.1.302).

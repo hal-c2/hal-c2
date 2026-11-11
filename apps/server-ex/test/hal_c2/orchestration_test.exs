@@ -5197,6 +5197,24 @@ defmodule HalC2.OrchestrationTest do
       assert "resumed at None fork False history True" in replies(state)
     end
 
+    test "a Claude turn on another model than the one picked records it and says so" do
+      System.put_env("FAKE_CLAUDE_RUNS_MODEL", "claude-sonnet-4-5-20250929")
+      on_exit(fn -> System.delete_env("FAKE_CLAUDE_RUNS_MODEL") end)
+      thread_id = launch("hello")
+      await_statuses(thread_id, ["completed"])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "where are we", claude())
+      state = await_statuses(thread_id, ["completed", "completed"])
+      [_, run] = runs(state)
+      assert run["appliedModel"] == "claude-sonnet-4-5-20250929"
+      text = "This turn runs on claude-sonnet-4-5-20250929, not the selected haiku."
+
+      assert [%{"status" => "completed", "runId" => run_id}] =
+               for(i <- StreamState.list(state, "turn-item"), i["title"] == text, do: i)
+
+      assert run_id == run["id"]
+    end
+
     test "provider.switch moves the next run to the new provider, with the conversation" do
       thread_id = launch("hello")
       await_statuses(thread_id, ["completed"])
@@ -5356,6 +5374,32 @@ defmodule HalC2.OrchestrationTest do
       {:ok, _} = send_message(thread_id, "msg-user-2", "where are we")
       await_statuses(thread_id, ["completed", "completed"])
       assert set_model.() == refused
+    end
+
+    # A model the session will not switch to fails the turn before the agent hears it,
+    # rather than running it on the model the session already had.
+    test "an ACP turn whose model the agent will not switch to is refused" do
+      System.put_env("FAKE_ACP_REFUSE_MODEL", "fake/two")
+      on_exit(fn -> System.delete_env("FAKE_ACP_REFUSE_MODEL") end)
+      thread_id = launch("hello", "grok")
+      state = await_statuses(thread_id, ["completed"])
+      assert [%{"appliedModel" => "gpt-5.4"}] = runs(state)
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.model-selection.set",
+          "threadId" => thread_id,
+          "modelSelection" => %{"instanceId" => "grok", "model" => "fake/two"}
+        })
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "where are we")
+      after_refusal = await_statuses(thread_id, ["completed", "failed"])
+      [_, refused] = runs(after_refusal)
+
+      assert refused["failure"] =~ "Could not switch to the model fake/two (model not available)"
+      refute Map.has_key?(refused, "appliedModel")
+      # The agent never answered the refused turn.
+      assert length(replies(after_refusal)) == length(replies(state))
     end
 
     test "merging a fork back brings its newer work to the parent's next run" do

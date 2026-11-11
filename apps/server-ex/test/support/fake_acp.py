@@ -353,6 +353,10 @@ for line in sys.stdin:
         if method == "session/new" and os.environ.get("FAKE_ACP_SESSIONS"):
             set_directory(sid, cwds[sid])
         send({"id": mid, "result": result})
+    # FAKE_ACP_REFUSE_MODEL: a model the session will not switch to.
+    elif method == "session/set_config_option" and params.get("configId") == "model" \
+            and params.get("value") == os.environ.get("FAKE_ACP_REFUSE_MODEL"):
+        send({"id": mid, "error": {"code": -32000, "message": "model not available"}})
     elif method == "session/set_config_option":
         if params.get("configId") == "model": model = params["value"]
         send({"id": mid, "result": {"configOptions": []}})

@@ -58,7 +58,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{AppliedModel, Entities}
 
   @state_version 13
   # Extension failures queued between turns: only the newest are kept, so an
@@ -335,6 +335,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     with {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- select_model(state, turn.model),
          {:ok, state} <- select_thinking(state, option(turn, "thinking")) do
+      state = AppliedModel.record(state, state.model)
       # A run that ended while the session opened never reaches Pi.
       case started(state) do
         :ok ->

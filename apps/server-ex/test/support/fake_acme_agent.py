@@ -417,6 +417,10 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and params.get("configId") == "model":
             send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})
             continue
+        # "refuseModels": models the session will not switch to.
+        if params.get("configId") == "model" and params["value"] in CONTROL.get("refuseModels", []):
+            send({"id": mid, "error": {"code": -32000, "message": "model not available"}})
+            continue
         if params.get("configId") == "model":
             model = params["value"]
         if params.get("configId") == "mode":

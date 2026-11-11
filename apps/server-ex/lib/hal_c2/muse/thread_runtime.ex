@@ -25,7 +25,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   alias HalC2.Subprocess.Durable
   alias HalC2.Muse
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
 
   @state_version 4
   @registry HalC2.Muse.Registry
@@ -218,6 +218,7 @@ defmodule HalC2.Muse.ThreadRuntime do
          {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
          state = %{state | turn: turn},
          {:ok, state} <- select_model(state, turn.model) do
+      state = AppliedModel.record(state, state.model)
       # A run that ended while the session opened never reaches Muse.
       case started(state) do
         :ok -> {:reply, :ok, send_turn(state, turn)}

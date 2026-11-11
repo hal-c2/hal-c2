@@ -34,7 +34,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
@@ -366,6 +366,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         orphans: %{}
     }
 
+    state = Map.put(state, :unapplied, [])
+
     with :ok <- Antigravity.check_turn(turn),
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
@@ -377,7 +379,10 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
          {:ok, state} <- set_session_options(state, turn),
-         state = set_parameters(state, turn) do
+         state = set_parameters(state, turn),
+         :ok <- applied(state) do
+      state = AppliedModel.record(state, state.model)
+
       # A run that ended while the session opened never reaches the agent.
       case started(state) do
         :ok -> {:reply, :ok, prompt(state, turn)}
@@ -2079,7 +2084,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         {:error, reason} ->
           Logger.warning("could not set Cursor's model options: #{redacted(reason)}")
-          state
+          unapplied(state, "the model #{model} with its options", reason)
       end
     else
       state
@@ -2181,7 +2186,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         {:error, reason} ->
           Logger.warning("could not set the mode to #{value}: #{redacted(reason)}")
-          state
+          unapplied(state, "the mode #{value}", reason)
       end
     end
   end
@@ -2203,7 +2208,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         {:error, reason} ->
           Logger.warning("could not set #{id} to #{value}: #{redacted(reason)}")
-          state
+          unapplied(state, "#{id} #{value}", reason)
       end
     end
   end
@@ -2323,7 +2328,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
           {:error, reason} ->
             Logger.warning("could not select #{target}: #{redacted(reason)}")
-            state
+            unapplied(state, "the model #{target}", reason)
         end
     end
   end
@@ -2367,23 +2372,40 @@ defmodule HalC2.Acp.ThreadRuntime do
         remember_config(%{state | model: model}, result || %{})
 
       # A resumed session may not say which method its agent switches models with.
-      {:error, _} when state.model_method == "session/set_config_option" ->
+      {:error, first} when state.model_method == "session/set_config_option" ->
         case select_model(state, "session/set_model", model) do
           {:ok, _} ->
             %{state | model: model, model_method: "session/set_model"}
 
           {:error, reason} ->
             Logger.warning("could not select #{model}: #{redacted(reason)}")
-            state
+            unapplied(state, "the model #{model}", first)
         end
 
       {:error, reason} ->
         Logger.warning("could not select #{model}: #{redacted(reason)}")
-        state
+        unapplied(state, "the model #{model}", reason)
     end
   end
 
   defp set_model_now(state, _model), do: state
+
+  # A model or option the turn picked that the agent would not switch to: the turn is
+  # refused (`applied/1`) rather than run on what the session had before.
+  defp unapplied(state, what, reason),
+    do: Map.update(state, :unapplied, [{what, reason}], &(&1 ++ [{what, reason}]))
+
+  defp applied(state) do
+    case Map.get(state, :unapplied, []) do
+      [] ->
+        :ok
+
+      [{what, reason} | _] ->
+        {:refused,
+         "Could not switch to #{what} (#{format(reason)}), so the turn was not sent. " <>
+           "Try again, or pick another.", state}
+    end
+  end
 
   defp select_model(state, "session/set_model", model),
     do:

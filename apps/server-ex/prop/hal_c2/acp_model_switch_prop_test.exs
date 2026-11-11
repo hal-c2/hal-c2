@@ -5,6 +5,9 @@ defmodule HalC2.AcpModelSwitchPropTest do
   model, is refused and leaves the thread's model alone, across session resets and
   runtime restarts, and the session being stopped. A session that offers switching takes every change.
 
+  A model the session will not switch to fails the turn before the agent hears it, and
+  leaves the model the session had for the next turn.
+
   A restart may also lose the agent's sessions. The next turn then runs in a new
   session that is handed every earlier turn, and the new session switches models as
   the agent's sessions do.
@@ -21,6 +24,9 @@ defmodule HalC2.AcpModelSwitchPropTest do
   @fake Path.expand("../../test/support/fake_acme_agent.py", __DIR__)
   @refused "The active ACP session does not expose a model-switch capability."
   @models ["acme/fast", "acme/smart"]
+  @broken "acme/broken"
+  @unswitched "Could not switch to the model acme/broken (model not available), " <>
+                "so the turn was not sent. Try again, or pick another."
 
   property "a session that cannot switch models refuses every model change, and a lost one is handed the thread",
     numtests: HalC2.Prop.numtests(20),
@@ -66,11 +72,16 @@ defmodule HalC2.AcpModelSwitchPropTest do
       {3, {:call, __MODULE__, :set_model, [oneof(@models)]}},
       {1, {:call, __MODULE__, :reset, []}},
       {1, {:call, __MODULE__, :detach, []}},
-      {1, {:call, __MODULE__, :restart, [boolean()]}}
+      {1, {:call, __MODULE__, :restart, [boolean()]}},
+      {1, {:call, __MODULE__, :broken_turn, [state.sends]}}
     ])
   end
 
   def precondition(state, {:call, _, :turn, [n, _]}), do: n == state.sends
+  # An agent that cannot switch refuses every change up front (`refused?/2`).
+  def precondition(state, {:call, _, :broken_turn, [n]}),
+    do: state.switchable and n == state.sends
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :turn, [_, model]}) do
@@ -80,6 +91,10 @@ defmodule HalC2.AcpModelSwitchPropTest do
       do: state,
       else: %{state | opened: true, lost: false, turns: state.turns + 1}
   end
+
+  # The refused turn's session is open; what it was to be handed waits for the next turn.
+  def next_state(state, _result, {:call, _, :broken_turn, [_]}),
+    do: %{state | sends: state.sends + 1, opened: true}
 
   def next_state(state, _result, {:call, _, :set_model, [model]}),
     do: if(refused?(state, model), do: state, else: %{state | model: model})
@@ -105,6 +120,9 @@ defmodule HalC2.AcpModelSwitchPropTest do
     reply = if refused?(state, model), do: {:error, @refused}, else: :ok
     result == {reply, expected}
   end
+
+  def postcondition(_state, {:call, _, :broken_turn, [_]}, result),
+    do: result == {"failed", "", @unswitched}
 
   def postcondition(_state, {:call, _, :reset, []}, result), do: result == :ok
   def postcondition(_state, {:call, _, :detach, []}, result), do: result == :ok
@@ -183,6 +201,30 @@ defmodule HalC2.AcpModelSwitchPropTest do
     end
   end
 
+  # A turn on a model the session will not switch to (its text is not "which model", so
+  # no later turn counts it among the turns it was handed).
+  def broken_turn(n) do
+    id = "m#{n}"
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => @tid,
+        "messageId" => id,
+        "text" => "try the broken model",
+        "modelSelection" => %{"instanceId" => "grok", "model" => @broken}
+      })
+
+    {status, text} = await_turn(id)
+    {status, text, failure(id)}
+  end
+
+  defp failure(id) do
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
+    |> StreamState.list("run")
+    |> Enum.find_value(&(&1["userMessageId"] == id && &1["failure"]))
+  end
+
   defp thread_model do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
     get_in(StreamState.get(state, "thread"), [@tid, "modelSelection", "model"])
@@ -217,7 +259,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
 
-    control = if switchable, do: %{}, else: %{"models" => []}
+    control = if switchable, do: %{"refuseModels" => [@broken]}, else: %{"models" => []}
     control = Map.put(control, "loseSessions", true)
     File.write!(Path.join(home, "control.json"), JSON.encode!(%{"grok" => control}))
 
