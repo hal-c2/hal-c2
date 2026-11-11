@@ -643,6 +643,18 @@ Feature: Agent code review
       And only the provider within its time remains
 
     @mc
+    Scenario: A review sandbox a reaper could not list is deleted once the MC starts again
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And the gateway will not list its sandboxes
+      When the reaper's timer runs without the MC
+      Then the reap says the sandboxes were not listed
+      And the sandbox past its time remains without its provider
+      When the gateway lists its sandboxes again
+      And the MC starts again
+      Then no review sandbox or provider remains
+
+    @mc
     Scenario: An MC starting deletes the review sandboxes left from before
       Given pull requests are not trusted and OpenShell is installed
       And a review sandbox within its time is left on the gateway from before

@@ -35,8 +35,9 @@ defmodule HalC2.OpenShell.Review do
   @expires_label "halc2.github.io/expires"
   @thread_label "halc2.github.io/thread"
   @home_label "halc2.github.io/home"
-  @workdir "/sandbox/review"
-  @bundle "/sandbox/review.bundle"
+  # On the review's own tmpfs (`HalC2.OpenShell.Policy.writable/0`).
+  @workdir "/review/src"
+  @bundle "/review/review.bundle"
   @limits %{cpu: "2", memory: "4Gi"}
   @ready_ms 300_000
   # How long a thread's end and owner are kept once it ended: its plugin asks why it
@@ -49,7 +50,8 @@ defmodule HalC2.OpenShell.Review do
   # user's, and opens their files and everything else on the API), the provider
   # profile (`profile/1`) and key holding its credential and how that key is sent, and
   # the executables in the review image (`HalC2.OpenShell.Manifest`) the policy lets
-  # reach it. Every other driver refuses (`refusal/2`).
+  # reach it, and the command that signs it in when it does not read its key from its
+  # environment (`sign_in/3`). Every other driver refuses (`refusal/2`).
   @drivers %{
     "claudeAgent" => %{
       host: "api.anthropic.com",
@@ -62,6 +64,7 @@ defmodule HalC2.OpenShell.Review do
       key: "ANTHROPIC_API_KEY",
       auth: {"header", "x-api-key"},
       command: ["claude"],
+      login: nil,
       binaries: ["/usr/local/bin/claude"]
     },
     "codex" => %{
@@ -75,6 +78,7 @@ defmodule HalC2.OpenShell.Review do
       key: "OPENAI_API_KEY",
       auth: {"bearer", "authorization"},
       command: ["codex", "app-server"],
+      login: ["codex", "login", "--with-api-key"],
       # npm's launcher, which runs the native binary under it: OpenShell matches a
       # connection's binary by its process's ancestors too.
       binaries: ["/usr/bin/codex", "/usr/bin/node"]
@@ -132,7 +136,7 @@ defmodule HalC2.OpenShell.Review do
           Map.new(environment)
         ),
       timeout_seconds: max(binding.deadline - now(), 1),
-      on_limit: fn -> close(binding.thread_id, "output") end
+      on_limit: {__MODULE__, :close, [binding.thread_id, "output"]}
     }
   end
 
@@ -268,13 +272,13 @@ defmodule HalC2.OpenShell.Review do
                  limits: @limits,
                  driver_config: disk,
                  providers: [name],
-                 environment: %{"HOME" => Policy.home()},
-                 timeout: 60_000
+                 environment: %{"HOME" => Policy.home()}
                ),
              :ok <- ready(conn, name, System.monotonic_time(:millisecond) + @ready_ms),
              :ok <- composed(conn, name, policy),
              :ok <- bounded(conn, name),
-             :ok <- checkout(conn, name, spec, deadline) do
+             :ok <- checkout(conn, name, spec, deadline),
+             :ok <- sign_in(conn, name, model) do
           binding = %{
             thread_id: thread_id,
             sandbox: name,
@@ -396,8 +400,16 @@ defmodule HalC2.OpenShell.Review do
       @expires_label => to_string(deadline)
     }
 
-  @doc "The sandbox (and provider) name of review thread `thread_id`."
-  def name(thread_id), do: "review-" <> String.downcase(thread_id)
+  @doc """
+  The sandbox (and provider) name of review thread `thread_id`: `review-` and 12 hex
+  digits of its hash. OpenShell 0.1.7 refuses a sandbox name longer than
+  `HalC2.OpenShell.Client.max_name/0`, which a thread id alone is; the thread label
+  carries the id whole.
+  """
+  def name(thread_id) do
+    hash = :crypto.hash(:sha256, String.downcase(thread_id))
+    "review-" <> Base.encode16(binary_part(hash, 0, 6), case: :lower)
+  end
 
   # --- server ---------------------------------------------------------------------------
 
@@ -747,7 +759,7 @@ defmodule HalC2.OpenShell.Review do
 
     with {:ok, tar} <- bundle(spec),
          upload =
-           Client.upload(conn, name, "/sandbox", {:file, tar},
+           Client.upload(conn, name, Path.dirname(@bundle), {:file, tar},
              upload_timeout: max(deadline - now(), 1) * 1000
            ),
          File.rm_rf(Path.dirname(tar)),
@@ -807,10 +819,57 @@ defmodule HalC2.OpenShell.Review do
   defp sha?(value),
     do: is_binary(value) and Regex.match?(~r/\A[0-9a-f]{40}([0-9a-f]{24})?\z/, value)
 
-  # A command run to its end in the sandbox: `{:ok, stdout}` when it exits 0.
-  defp run(conn, name, argv) do
-    with {:ok, exec} <- Client.exec(conn, name, argv, timeout_seconds: 600) do
-      collect(exec, [])
+  # Codex's app-server reads its key from its login only, never its environment, so
+  # it signs in with what OpenShell put in the sandbox's environment for the
+  # provider: a placeholder, which the proxy swaps for the key on the model's
+  # requests. The login is in the review's home, on its tmpfs.
+  defp sign_in(_conn, _name, %{login: nil}), do: :ok
+
+  defp sign_in(conn, name, %{login: login, key: key}) do
+    environment = %{"HOME" => Policy.home()}
+
+    # Each failure names its step and never the placeholder: the next OpenShell or
+    # agent version is most likely to break here, and the log is where to see how.
+    with {:printenv, {:ok, out}} <-
+           {:printenv, run(conn, name, ["printenv", key], environment: environment)},
+         {:placeholder, placeholder} when placeholder != "" <- {:placeholder, String.trim(out)},
+         {:login, {:ok, _}} <-
+           {:login, run(conn, name, login, environment: environment, input: placeholder <> "\n")} do
+      :ok
+    else
+      {:placeholder, _} ->
+        sign_in_failed(name, "#{key} is empty in the sandbox's environment")
+
+      {step, {:error, reason}} ->
+        sign_in_failed(name, "#{step} failed: #{inspect(reason)}")
+    end
+  end
+
+  defp sign_in_failed(name, why) do
+    Logger.warning("openshell: review #{name} could not sign in its agent: #{why}")
+    {:error, "The review's agent could not sign in in its sandbox."}
+  end
+
+  # A command run to its end in the sandbox, given `opts[:input]` on its stdin:
+  # `{:ok, stdout}` when it exits 0.
+  defp run(conn, name, argv, opts \\ []) do
+    exec_opts = [timeout_seconds: 600, environment: Keyword.get(opts, :environment, %{})]
+
+    with {:ok, exec} <- Client.exec(conn, name, argv, exec_opts) do
+      case Keyword.fetch(opts, :input) do
+        {:ok, input} ->
+          with :ok <- HalC2.OpenShell.Exec.send_stdin(exec, input),
+               :ok <- HalC2.OpenShell.Exec.close_stdin(exec) do
+            collect(exec, [])
+          else
+            error ->
+              HalC2.OpenShell.Exec.cancel(exec)
+              error
+          end
+
+        :error ->
+          collect(exec, [])
+      end
     end
   end
 

@@ -828,6 +828,12 @@ defmodule HalC2.Vcs do
   end
 
   # Runs `fun` while no other caller of this MC changes the repository `cwd` belongs to.
+  # Callers go in the order they asked (`HalC2.WorkspaceLease`): `:global`'s lock tries
+  # again after random sleeps of up to 8 s, so a dozen threads launched in one
+  # repository left a turn of a few ms waiting many seconds. Without the lease server
+  # (a test that starts only part of an MC) `:global` still takes the turns. A turn is
+  # not re-entrant: `fun` calling `in_turn` for the same repository waits on itself for
+  # good, where `:global.trans` let it through. No caller does today.
   defp in_turn(cwd, fun) do
     repo =
       case Git.ok(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
@@ -835,7 +841,9 @@ defmodule HalC2.Vcs do
         _ -> Path.expand(cwd)
       end
 
-    :global.trans({{__MODULE__, repo}, self()}, fun, [node()])
+    if GenServer.whereis(HalC2.WorkspaceLease),
+      do: HalC2.WorkspaceLease.with_lease({:repository, repo}, fun),
+      else: :global.trans({{__MODULE__, repo}, self()}, fun, [node()])
   end
 
   @doc """

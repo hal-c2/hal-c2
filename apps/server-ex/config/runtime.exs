@@ -5,10 +5,13 @@ import Config
 # `HalC2.Paths` ignores when it names an old home (`~/.t3`, `~/.hal-c2`). With neither,
 # a release uses the XDG directories. A checkout ignores the HAL_C2_HOME a dev server
 # or agent may have exported: its own `.hal-c2` wins (config.exs). T3CODE_HOME and
-# T3_HOME only say where to migrate from (`HalC2.Migration`).
+# T3_HOME only say where to migrate from (`HalC2.Migration`). Tests ignore both and
+# stay in the checkout's `.hal-c2`, so a shell that exported a scratch MC's home (as
+# AGENTS.md's test-data recipe does) never has a test open that MC's store.
 present = fn name -> if (value = System.get_env(name)) not in [nil, ""], do: value end
 
 cond do
+  config_env() == :test -> :ok
   dir = present.("HAL_C2_MC_HOME") -> config(:hal_c2, home: {:mc, dir})
   root = config_env() == :prod && present.("HAL_C2_HOME") -> config(:hal_c2, home: {:root, root})
   true -> :ok

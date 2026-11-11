@@ -1074,7 +1074,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "its agent runs Claude in a sandbox on {string}", %{args: [model]} = context do
-    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/sandbox/review"}}, 15_000
+    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/review/src"}}, 15_000
     # The model as named, its context window (`[1m]`) aside.
     models = for ["--model", named] <- Enum.chunk_every(args, 2, 1), do: named
     assert Enum.map(models, &String.replace(&1, ~r/\[\w+\]$/, "")) == [model]
@@ -1127,13 +1127,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "its agent runs in a sandbox, in a checkout of the head of \#{int}, with no credential in its environment",
        %{args: [number]} = context do
     assert_receive {:sandbox_exec, ["codex", "app-server"],
-                    %{workdir: "/sandbox/review", environment: env}},
+                    %{workdir: "/review/src", environment: env}},
                    15_000
 
     refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
     refute Map.has_key?(env, "PATH")
-    assert env["HOME"] == "/sandbox/home"
-    checkout = Path.join(context.sandbox_root, "review")
+    assert env["HOME"] == "/review/home"
+    checkout = Path.join(context.sandbox_root, "src")
     assert World.git!(checkout, ~w(rev-parse HEAD)) == context.heads[number]
     assert World.git!(checkout, ~w(remote)) == ""
     context
@@ -1236,6 +1236,28 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the gateway will not list its sandboxes", context do
     FakeOpenShell.failing(context.gateway, ["ListSandboxes"])
+    context
+  end
+
+  step "the gateway lists its sandboxes again", context do
+    FakeOpenShell.failing(context.gateway, [])
+    context
+  end
+
+  step "the sandbox past its time remains without its provider", context do
+    assert Map.has_key?(FakeOpenShell.sandboxes(context.gateway), "review-old")
+    refute Map.has_key?(FakeOpenShell.providers(context.gateway), "review-old")
+    context
+  end
+
+  # The MC's reconcile deletes off its review process, each told once the gateway has
+  # it: the sandbox whose provider went, and the other with its provider.
+  step "no review sandbox or provider remains", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-old"}}, 15_000
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-new"}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: "review-new"}}, 15_000
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    assert FakeOpenShell.providers(context.gateway) == %{}
     context
   end
 

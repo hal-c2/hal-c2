@@ -388,6 +388,25 @@ defmodule HalC2.PlannerPropTest do
     ])
   end
 
+  # The counterexample of PR #1408's CI: a task done by its merged pull request, whose
+  # owner GitHub refused, gets another owner while a look is on its way. The push closes
+  # its closed issue as completed and reads the issue back, which is no read of the look,
+  # whose copy of the issue still stands.
+  test "a push's read of the issue it changed during a look is no read of the look" do
+    assert_scripted([
+      {:refuse_owner, [:add, true]},
+      {:add, ["b", nil, :milestone]},
+      {:link, ["b", nil]},
+      {:refer, [2, 41]},
+      {:set_owner, ["b", "dana"]},
+      {:look, []},
+      {:merge, [41]},
+      {:close, [2, :not_planned]},
+      {:look, []},
+      {:own_while_looking, ["b", "alice"]}
+    ])
+  end
+
   test "a stored owner appearing while a push is held is no owner change for it to settle" do
     assert_scripted([
       {:add, ["a", nil, :task]},
@@ -3282,6 +3301,7 @@ defmodule HalC2.PlannerPropTest do
       "stdin" => [~s("title":#{JSON.encode!(title)})],
       "run" => hold <> took,
       "stdout" => "{}",
+      "record" => written(),
       "exit" => if(outcome == :ok, do: 0, else: 1),
       "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
     }
@@ -3587,11 +3607,14 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # The issues the plugin read alone since the last step, as a list: a look that
-  # read one twice is seen (`read_alone?/3` sets it for two-look commands).
+  # read one twice is seen (`read_alone?/3` sets it for two-look commands). A change to
+  # an issue that GitHub takes is read back with the same query, so each change taken
+  # since the last step (`written/0`) stands for one read of its issue, which no look
+  # made: a push made while a look is on its way is no read of that look.
   defp read_alone do
     calls = gh_calls()
 
-    alone =
+    reads =
       for line <- Enum.drop(calls, Process.get(:pl_alone_read)),
           %{"stdin" => stdin} <- [JSON.decode!(line)],
           {:ok, %{"query" => query, "variables" => %{"number" => number}}} <-
@@ -3599,9 +3622,24 @@ defmodule HalC2.PlannerPropTest do
           String.contains?(query, "issue(number: $number) { ...IssueFields"),
           do: number
 
+    changes =
+      case File.read(written()) do
+        {:ok, text} -> String.split(text, "\n", trim: true)
+        {:error, :enoent} -> []
+      end
+
+    taken =
+      for line <- Enum.drop(changes, Process.get(:pl_written_read)),
+          [_, number] <- [Regex.run(~r{issues/(\d+) }, JSON.decode!(line)["args"])],
+          do: String.to_integer(number)
+
     Process.put(:pl_alone_read, length(calls))
-    alone
+    Process.put(:pl_written_read, length(changes))
+    reads -- taken
   end
+
+  # Where gh writes down each change to an issue of `@repository` GitHub took.
+  defp written, do: Path.join(Process.get(:pl_gh), "written")
 
   # Every read of a pull request of `@lone` since the last, which the host its link names
   # served if the MC has a project there and github.com otherwise, and was none for a host
@@ -3969,7 +4007,8 @@ defmodule HalC2.PlannerPropTest do
             rule = %{
               "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
               "run" => ":",
-              "stdout" => "{}"
+              "stdout" => "{}",
+              "record" => written()
             }
 
             Enum.reverse(state_rules(rule, number))
@@ -4004,6 +4043,7 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_full, false)
     Process.put(:pl_calls_read, 0)
     Process.put(:pl_alone_read, 0)
+    Process.put(:pl_written_read, 0)
     Process.put(:pl_lone_read, 0)
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])

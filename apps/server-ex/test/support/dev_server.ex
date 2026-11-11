@@ -51,7 +51,7 @@ defmodule HalC2.Test.DevServer do
   loopback address can then be forwarded at its own port: one the OS picks
   there may already be taken at 127.0.0.1, by any socket of this machine.
   """
-  def on_free_port(start) do
+  def on_free_port(start, tries \\ 3) do
     {v4, v6, port} = free_pair()
 
     try do
@@ -60,6 +60,12 @@ defmodule HalC2.Test.DevServer do
       :gen_tcp.close(v4)
       close_v6(v6)
     end
+  rescue
+    # Free here, but taken at the dev server's own address: another port.
+    error ->
+      if tries > 1 and not_started?(error),
+        do: on_free_port(start, tries - 1),
+        else: reraise(error, __STACKTRACE__)
   end
 
   @doc """
@@ -69,7 +75,7 @@ defmodule HalC2.Test.DevServer do
   here; one that was free when a step looked and is bound again later can be
   taken in between, by any socket of this machine.
   """
-  def on_busy_port(start) do
+  def on_busy_port(start, tries \\ 3) do
     {v4, v6, port} = free_pair()
 
     try do
@@ -81,7 +87,18 @@ defmodule HalC2.Test.DevServer do
     after
       close_v6(v6)
     end
+  rescue
+    # Free here, but taken at the dev server's own address: another port.
+    error ->
+      if tries > 1 and not_started?(error),
+        do: on_busy_port(start, tries - 1),
+        else: reraise(error, __STACKTRACE__)
   end
+
+  # `hold/2`'s failure, raised here or on the peer MC an `:erpc` call started it on.
+  defp not_started?(%RuntimeError{message: "the dev server did not start" <> _}), do: true
+  defp not_started?(%ErlangError{original: {:exception, error, _}}), do: not_started?(error)
+  defp not_started?(_error), do: false
 
   # A port free at 127.0.0.1 and ::1, listened on at both: `{v4, v6, port}`.
   defp free_pair do
@@ -138,13 +155,15 @@ defmodule HalC2.Test.DevServer do
 
   # Runs `start` in a process of its own that outlives the caller (an `:erpc`
   # call's process ends as soon as it returns) and holds what it starts until
-  # `owner` ends; its shutdown takes what it linked down with it.
+  # `owner` ends; its shutdown takes what it linked down with it. A `start` that
+  # fails, such as at a port in use, raises here rather than leaving the caller
+  # waiting.
   defp hold(owner, start) do
     caller = self()
     ref = make_ref()
 
-    server =
-      spawn(fn ->
+    {server, started} =
+      spawn_monitor(fn ->
         owned = Process.monitor(owner)
         send(caller, {ref, start.()})
 
@@ -157,7 +176,12 @@ defmodule HalC2.Test.DevServer do
       end)
 
     receive do
-      {^ref, port} -> {port, server}
+      {^ref, port} ->
+        Process.demonitor(started, [:flush])
+        {port, server}
+
+      {:DOWN, ^started, :process, _, reason} ->
+        raise "the dev server did not start: #{inspect(reason)}"
     end
   end
 

@@ -5,9 +5,10 @@
 # `{name, args, output, exit_code}`, not as transcript files; only the generic
 # reading is ported, so the experiment vocabularies' cases and the per-call
 # directory cases (the MC gives no directory per call) are left out, as are
-# the distiller's (a later part of the port).
+# the distiller's (`token_economizer_distiller_test.exs`).
 
-for file <- ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts),
+for file <-
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope micro_skills_history micro_skills_distiller),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsTest do

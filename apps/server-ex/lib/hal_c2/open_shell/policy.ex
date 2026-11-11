@@ -22,15 +22,27 @@ defmodule HalC2.OpenShell.Policy do
   alias HalC2.OpenShell.Proto.Openshell.Sandbox.V1, as: Sb
 
   @mcp_version "2025-06-18"
+  # The revisions the proxy lets reach the broker. It takes a request with no
+  # MCP-Protocol-Version header as of 2025-03-26, as the spec says, and Codex 0.117
+  # sends none. That revision adds JSON-RPC batches, which the broker refuses. Sorted,
+  # as the gateway keeps them, so `check/2` reads back the rule asked for.
+  @mcp_versions Enum.sort([@mcp_version, "2025-03-26"])
   # The MCP methods an agent's client calls before and around its one tool call. An
   # MCP endpoint lets through only the methods its rules name.
   @mcp_methods ~w(initialize notifications/initialized ping tools/list)
   # The largest JSON-RPC body the broker takes: a report with many comments fits.
   @broker_body 262_144
-  @home "/sandbox/home"
+  @home "/review/home"
   # The only paths a review writes, each a tmpfs of this many bytes, so a review
   # cannot fill this machine's disk. A tmpfs is charged to the sandbox's memory.
-  @writable [{"/sandbox", 2_147_483_648}, {"/tmp", 536_870_912}]
+  # Not `/sandbox`: OpenShell keeps its workspace volume there, on this machine's
+  # disk, and refuses a mount over it; the review neither reads nor writes it.
+  @writable [{"/review", 2_147_483_648}, {"/tmp", 536_870_912}]
+  # What 0.1.7's supervisor adds to every policy once the sandbox is up, so a process
+  # runs at all. Not asked for, so a gateway whose supervisor adds less keeps the review
+  # narrower; `check/2` passes exactly these in the read-back, each only as here.
+  @baseline_read ~w(/var/log /proc /dev/urandom)
+  @baseline_write ~w(/dev/null)
 
   @doc "Where a review's agent keeps its files, a fresh directory of the sandbox."
   def home, do: @home
@@ -98,7 +110,7 @@ defmodule HalC2.OpenShell.Policy do
               allowed_ips: broker.ips,
               json_rpc_max_body_bytes: @broker_body,
               rules: report_rules(tool),
-              mcp: %Sb.McpOptions{strict_tool_names: true, versions: [@mcp_version]}
+              mcp: %Sb.McpOptions{strict_tool_names: true, versions: @mcp_versions}
             }
           ]
         }
@@ -150,7 +162,7 @@ defmodule HalC2.OpenShell.Policy do
       map_size(policy.network_middlewares || %{}) > 0 ->
         {:error, "the gateway adds network middleware"}
 
-      Map.keys(policy.network_policies) |> Enum.sort() !=
+      Map.keys(asked(policy, wanted)) |> Enum.sort() !=
           Map.keys(wanted.network_policies) |> Enum.sort() ->
         {:error, "the gateway adds network rules"}
 
@@ -164,9 +176,24 @@ defmodule HalC2.OpenShell.Policy do
 
   def check(_policy, _wanted), do: {:error, "the gateway reports no policy"}
 
-  # In any order, as a gateway may keep them.
-  defp filesystem(%Sb.FilesystemPolicy{} = fs),
-    do: %{fs | read_only: Enum.sort(fs.read_only), read_write: Enum.sort(fs.read_write)}
+  # 0.1.7 adds a rule `_provider_<name>` for each provider attached to the sandbox, with
+  # no endpoint and no binary: it lets nothing through, so it is not a widening. Any
+  # other rule the gateway adds, or one of those with an endpoint or binary, is.
+  defp asked(%Sb.SandboxPolicy{network_policies: rules}, wanted) do
+    Map.reject(rules, fn {name, rule} ->
+      not Map.has_key?(wanted.network_policies, name) and String.starts_with?(name, "_provider_") and
+        rule.endpoints == [] and rule.binaries == []
+    end)
+  end
+
+  # In any order, as a gateway may keep them, and without what the supervisor adds.
+  defp filesystem(%Sb.FilesystemPolicy{} = fs) do
+    %{
+      fs
+      | read_only: Enum.sort(fs.read_only -- @baseline_read),
+        read_write: Enum.sort(fs.read_write -- @baseline_write)
+    }
+  end
 
   defp filesystem(other), do: other
 

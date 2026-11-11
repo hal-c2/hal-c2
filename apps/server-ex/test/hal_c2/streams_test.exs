@@ -526,6 +526,27 @@ defmodule HalC2.StreamsTest do
     assert Enum.sort(gone) == ~w(item-5 item-6)
   end
 
+  test "a client that was away while a run went back to the queue gets each of its items once, as it is now" do
+    {:ok, seq} =
+      Streams.commit("th-31", :thread, thread("th-31") ++ [run(1), item(1, 1, %{"text" => "t"})])
+
+    {:ok, last} =
+      Streams.commit("th-31", :thread, [
+        {"run", "run-1", %{"s" => %{"status" => "queued"}}},
+        {"turn-item", "item-1", %{"a" => %{"text" => "a"}}}
+      ])
+
+    client = %{handle: Streams.Server.handle(), window: {:floor, 1}}
+    :ok = Streams.subscribe("th-31", self(), seq, client)
+    assert_receive {:hal_c2_stream, "th-31", {:events, events, ^last}}
+
+    # Sent whole, it already holds the append: the append sent after it showed twice.
+    # The offset it moves to is past the append, so a client cut off before `live`
+    # is not sent it again.
+    assert [%{patch: %{"d" => true, "s" => %{"text" => "ta"}}}] =
+             Enum.filter(events, &(&1.entity == "item-1"))
+  end
+
   test "a client that holds no runs is still told a rolled-back run's items are gone" do
     seq = long_thread("th-22")
     rolled = [{"run", "run-3", %{"s" => %{"status" => "rolled_back"}}}]

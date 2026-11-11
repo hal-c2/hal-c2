@@ -1,9 +1,22 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
-# here to beams of their own, which keep the docs and source the coverage reads.
-"../../../../plugins/token-economizer/mc/*.ex"
-|> Path.expand(__DIR__)
-|> Path.wildcard()
-|> HalC2.Proof.compile_plugin(Path.join(Mix.Project.build_path(), "plugins/token-economizer"))
+# here to beams of their own, which keep the docs and source the coverage reads. The
+# plugin's proofs share them, so they are compiled once per run, under a lock: test
+# files load in parallel, and a second compile would remove the beams under the other
+# file's tests.
+beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
+
+:global.trans({:token_economizer_beams, self()}, fn ->
+  unless :persistent_term.get(:token_economizer_beams, false) do
+    "../../../../plugins/token-economizer/mc/*.ex"
+    |> Path.expand(__DIR__)
+    |> Path.wildcard()
+    |> HalC2.Proof.compile_plugin(beams)
+
+    :persistent_term.put(:token_economizer_beams, true)
+  end
+end)
+
+Code.prepend_path(beams)
 
 defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   # TokenEconomizer's loop guard: one thread's turns, heard by the plugin through a feed
@@ -95,6 +108,10 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_stale_s/0" => "stale"
     },
     abstracts: %{
+      "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
+        "tool pruning's calls, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" =>
+        "tool pruning's quiet tick, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" =>
         "the settings are fixed for a run of the model; a change reads the trackers afresh and, with the guard and learning both off, drops the turns",
       "HalC2Plugins.TokenEconomizer handle_call :status" => "reads the counts, changes nothing",
@@ -104,16 +121,44 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "a person's word drops a learned fact; the guard never reads the facts",
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" =>
         "a person's word restores a dropped fact; the guard never reads the facts",
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_forget, _}" =>
+        "a person's word forgets a project's learned facts and its fold from history, and takes the envelope turns that fold seeded back out; seeding and unseeding are prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_info {:history, _, _, _, _}" =>
+        "a read of a fold from history, which folds a project's earlier turns into its micro-skills and seeds only an envelope that learned nothing live; the fold is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer handle_call {:shape_run, _, _}" =>
-        "stages learned facts ahead of a new conversation's first message; it neither steers nor notices a turn under way, and decides nothing for the guard",
+        "stages learned facts ahead of a new conversation's first message and denies it the tools pruning turned off (modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs), or, answered past its deadline, stages and records nothing; it neither steers nor notices a turn under way, and decides nothing for the guard",
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
+      "HalC2Plugins.TokenEconomizer state :prunes" =>
+        "tool pruning's evidence, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :convs" =>
+        "tool pruning's conversations, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :shaped" =>
+        "the loaded set a conversation was shaped with, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :seeded" =>
+        "tool pruning's read-back of earlier turns, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :unresolved" =>
+        "tool pruning's segments heard in part still to read back, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :away" =>
+        "tool pruning's threads moved to another MC, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :strays" =>
+        "tool pruning's uses heard with no project, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :prune_timers" =>
+        "tool pruning's quiet timers, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer.prune_status/1" =>
+        "what tool pruning's topic carries, which decides nothing here",
+      "HalC2Plugins.TokenEconomizer.toolprune_path/1" =>
+        "where tool pruning's evidence is kept; the loop guard's model keeps what it taught",
       "HalC2Plugins.TokenEconomizer handle_info :sweep" =>
         "drops a turn whose run the MC says ended, its end lost, closing it as the next turn's start does (`hear-start`, `close`): prop/hal_c2/token_economizer_plugin_prop_test.exs",
       "HalC2Plugins.TokenEconomizer state :active?" =>
         "how a sweep asks the MC whether a run is under way",
+      "HalC2Plugins.TokenEconomizer state :clock" =>
+        "the time a conversation's shaping checks its deadline against",
       "HalC2Plugins.TokenEconomizer state :ended" =>
         "the runs the last sweep found ended, which decide only when a lost end's turn is dropped",
       "HalC2Plugins.TokenEconomizer state :sweep" => "the next sweep's timer",
+      "HalC2Plugins.TokenEconomizer handle_info {:proposed, _, _}" =>
+        "a model's proposal of a project's facts, from a task of its own keyed by the project, not a thread; it decides nothing for the guard, and its admission is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer handle_info {:DOWN, _, :process, _, _}" =>
         "forgets a task that ended; what it did came in a message of its own",
       "HalC2Plugins.TokenEconomizer state :sup" =>
@@ -131,6 +176,10 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "the fact ids staged for a thread's conversation, for counting the waste they prevented; the guard never reads them",
       "HalC2Plugins.TokenEconomizer state :staged_order" =>
         "the staged conversations' order, for keeping only the latest; the guard never reads it",
+      "HalC2Plugins.TokenEconomizer state :folds" =>
+        "each project's fold from history, which holds back the micro-skills' live turns, never the guard's",
+      "HalC2Plugins.TokenEconomizer state :reading" =>
+        "the fold's read under way, in a task of its own; the guard never waits on it",
       "HalC2Plugins.TokenEconomizer state :recent" =>
         "the latest actions for the topic, which decide nothing",
       "HalC2Plugins.TokenEconomizer.status/1" => "what the topic carries, which decides nothing",

@@ -3572,6 +3572,10 @@ defmodule HalC2Plugins.CodeReview do
         }
       })
 
+    # Back to not started at a head it has not reviewed, it shows where another machine
+    # has that head, as a review stepping back does. The read of a run stepping back
+    # came while this one was still under way.
+    if left?(review), do: send(self(), :peer_claims)
     state |> put(review) |> pump() |> changed()
   end
 

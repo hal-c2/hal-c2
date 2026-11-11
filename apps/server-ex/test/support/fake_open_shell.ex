@@ -462,6 +462,10 @@ defmodule HalC2.Test.FakeOpenShell do
     defp unary(conn, "CreateSandbox", body, config) do
       request = Pb.CreateSandboxRequest.decode(body)
       notify(config, "CreateSandbox", request)
+      # How long the caller waits: 0.1.7 answers once the sandbox's images are pulled.
+      if pid = Map.get(config, :notify),
+        do: send(pid, {:openshell_timeout, "CreateSandbox", get_req_header(conn, "grpc-timeout")})
+
       sandbox = FakeOpenShell.sandbox(request.name, request.labels)
       policy = request.spec && request.spec.policy
       resources = request.spec && request.spec.template && request.spec.template.resources
@@ -469,6 +473,27 @@ defmodule HalC2.Test.FakeOpenShell do
       violations = (policy && FakeOpenShell.Validator.violations(policy)) || []
 
       cond do
+        # As 0.1.7's gateway, whatever the driver.
+        String.length(request.name) > 19 ->
+          error(
+            conn,
+            3,
+            "name exceeds maximum length (#{String.length(request.name)} > 19)"
+          )
+
+        # As 0.1.7's: its workspace volume is at /sandbox.
+        Enum.any?(mounts(request), &(&1["target"] == "/sandbox")) ->
+          error(conn, 3, "mount target '/sandbox' is reserved for the OpenShell workspace")
+
+        # As 0.1.7's, driver config only where the gateway's config allows it.
+        request.spec && request.spec.template && request.spec.template.driver_config &&
+            not driver_config?() ->
+          error(
+            conn,
+            9,
+            "caller driver config is disabled; a gateway administrator must enable allow_driver_config"
+          )
+
         match?(%Google.Protobuf.Struct{fields: %{"requests" => _}}, resources) ->
           error(conn, 9, "docker compute driver does not support resources.requests.cpu")
 
@@ -479,7 +504,10 @@ defmodule HalC2.Test.FakeOpenShell do
           Agent.update(config.store, fn store ->
             store
             |> put_in([:sandboxes, request.name], sandbox)
-            |> put_in([:policies, request.name], policy)
+            |> put_in(
+              [:policies, request.name],
+              policy |> provided(request.spec.providers) |> kept()
+            )
           end)
 
           reply(conn, %Pb.SandboxResponse{sandbox: sandbox})
@@ -496,7 +524,10 @@ defmodule HalC2.Test.FakeOpenShell do
           error(conn, 5, "sandbox not found")
 
         policy ->
-          reply(conn, %SandboxPb.GetSandboxConfigResponse{policy: widen.(policy), version: 1})
+          reply(conn, %SandboxPb.GetSandboxConfigResponse{
+            policy: widen.(baseline(policy)),
+            version: 1
+          })
       end
     end
 
@@ -684,15 +715,19 @@ defmodule HalC2.Test.FakeOpenShell do
 
     defp unary(conn, "DeleteSandbox", body, config) do
       request = Pb.DeleteSandboxRequest.decode(body)
-      notify(config, "DeleteSandbox", request)
+      mode = Map.get(config, :delete, :completed)
+      if mode != :completed, do: notify(config, "DeleteSandbox", request)
 
-      case Map.get(config, :delete, :completed) do
+      case mode do
         :completed ->
           Agent.update(config.store, fn store ->
             store
             |> Map.update!(:sandboxes, &Map.delete(&1, request.name))
             |> Map.update!(:policies, &Map.delete(&1, request.name))
           end)
+
+          # Told once the store has it, so what is waited on is there to read.
+          notify(config, "DeleteSandbox", request)
 
           reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
 
@@ -725,6 +760,70 @@ defmodule HalC2.Test.FakeOpenShell do
     end
 
     defp unary(conn, _method, _body, _config), do: error(conn, 12, "unimplemented")
+
+    defp mounts(%{spec: %{template: %{driver_config: %Google.Protobuf.Struct{} = config}}}) do
+      config |> Google.Protobuf.to_map() |> Map.values() |> Enum.flat_map(&(&1["mounts"] || []))
+    end
+
+    defp mounts(_request), do: []
+
+    # As 0.1.7's supervisor, which adds the paths a process needs once the sandbox is up.
+    defp baseline(%{filesystem: %{} = fs} = policy) do
+      %{
+        policy
+        | filesystem: %{
+            fs
+            | read_only: Enum.uniq(fs.read_only ++ ~w(/var/log /proc /dev/urandom)),
+              read_write: Enum.uniq(fs.read_write ++ ~w(/dev/null))
+          }
+      }
+    end
+
+    defp baseline(policy), do: policy
+
+    # As 0.1.7's gateway, which adds an empty rule for each provider attached.
+    defp provided(%{network_policies: rules} = policy, providers) do
+      alias HalC2.OpenShell.Proto.Openshell.Sandbox.V1, as: SandboxPb
+
+      added =
+        Map.new(
+          providers,
+          &{"_provider_" <> &1, %SandboxPb.NetworkPolicyRule{name: "_provider_" <> &1}}
+        )
+
+      %{policy | network_policies: Map.merge(added, rules || %{})}
+    end
+
+    defp provided(policy, _providers), do: policy
+
+    # As 0.1.7, the gateway keeps an MCP endpoint's versions sorted.
+    defp kept(%{network_policies: rules} = policy) when is_map(rules) do
+      sorted =
+        Map.new(rules, fn {name, rule} ->
+          {name,
+           %{
+             rule
+             | endpoints:
+                 Enum.map(rule.endpoints, fn
+                   %{mcp: %{versions: versions} = mcp} = endpoint ->
+                     %{endpoint | mcp: %{mcp | versions: Enum.sort(versions)}}
+
+                   endpoint ->
+                     endpoint
+                 end)
+           }}
+        end)
+
+      %{policy | network_policies: sorted}
+    end
+
+    defp kept(policy), do: policy
+
+    # Whether the config the MC gives its gateway lets a caller send driver config.
+    defp driver_config? do
+      HalC2.OpenShell.Config.render(%{port: 1, driver: "podman", socket: "/dev/null"}) =~
+        "allow_driver_config = true\n"
+    end
 
     defp settle_deletion(store, name) do
       Agent.update(store, fn state ->
@@ -766,6 +865,9 @@ defmodule HalC2.Test.FakeOpenShell do
 
           io = %{conn: conn, buffer: buffer, pending: rest, eof: false}
           Process.put(:fake_io, io)
+          # The sandbox's policy, for the proxy `HalC2.Test.FakeSandbox` puts in front of
+          # what its agents send.
+          Process.put(:fake_policy, Agent.get(config.store, & &1.policies[start.sandbox]))
           # A handler of three arguments also gets the start request (its workdir and
           # environment).
           case Map.get(config, :exec, &echo/2) do

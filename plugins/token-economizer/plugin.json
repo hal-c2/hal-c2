@@ -3,7 +3,7 @@
   "name": "TokenEconomizer",
   "version": "0.1.0",
   "apiVersion": 1,
-  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. Its micro-skills learn short facts about a project's environment from the same turns -- which way of running the tests works here, which tool is not installed -- and state them at the start of a new conversation instead of letting the agent rediscover them by failing. A port of Microsoft's TokenEconomizer.",
+  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. Its micro-skills learn short facts about a project's environment from the same turns -- which way of running the tests works here, which tool is not installed -- and state them at the start of a new conversation instead of letting the agent rediscover them by failing; turned on fully, your text generation model also proposes facts, each kept only once the plugin's own check holds on the turns it cites. Its tool pruning turns tools a project's agents never use off from their next conversation, and gives them back when you ask. A port of Microsoft's TokenEconomizer.",
   "author": {
     "name": "HAL-C2, porting microsoft/TokenEconomizer",
     "url": "https://github.com/microsoft/TokenEconomizer"
@@ -21,6 +21,10 @@
       "reason": "To state a project's learned environment facts ahead of the first message of a new conversation, so the agent does not rediscover them by failing. It never adds anything to a conversation already under way."
     },
     {
+      "id": "runs:shape",
+      "reason": "Tool pruning turns the tools a project's agents never use off as a conversation starts, for the whole conversation. A tool you use, a work-surface tool, or one you gave back is never turned off, and what is off is listed so you can give it back."
+    },
+    {
       "id": "threads:steer",
       "reason": "To send a stuck agent one redirect: a summary of what it repeated, and a nudge to try something different."
     },
@@ -30,7 +34,7 @@
     },
     {
       "id": "textGeneration",
-      "reason": "When a turn shows signs of a loop, your text generation model judges whether it is really stuck and writes the redirect. It sees commands, file names and error signatures, never file contents."
+      "reason": "When a turn shows signs of a loop, your text generation model judges whether it is really stuck and writes the redirect. With micro-skills on, it is also shown a digest of a project's recent turns every few turns and proposes facts about the project. Either way it sees commands, file names and error signatures, never file contents."
     }
   ],
   "settings": [
@@ -73,16 +77,63 @@
       "description": "Pinned detector thresholds, such as {\"min_turns\": 30}, over the sensitivity's and what was learned."
     },
     {
+      "key": "toolPrune",
+      "label": "Tool pruning",
+      "type": "choice",
+      "options": [
+        { "value": "auto", "label": "Turn unused tools off by itself" },
+        { "value": "propose", "label": "Only propose" },
+        { "value": "off", "label": "Off" }
+      ],
+      "default": "auto",
+      "description": "Tools a project's agents had loaded and never used, for long enough, are left out of their next conversation. Under propose nothing changes until you apply it; off leaves every tool in and still learns."
+    },
+    {
+      "key": "toolPruneEvidence",
+      "label": "Unused turns before a tool is proposed",
+      "type": "number",
+      "default": 10,
+      "description": "Turns a never-used tool must have stayed loaded and unused through, over at least the sessions below."
+    },
+    {
+      "key": "toolPruneMinSessions",
+      "label": "Sessions those turns must span",
+      "type": "number",
+      "default": 2,
+      "description": "So one long session never decides alone."
+    },
+    {
+      "key": "toolPruneSessions",
+      "label": "Or unused sessions, however short",
+      "type": "number",
+      "default": 5,
+      "description": "A tool unused through this many sessions is proposed whatever their length."
+    },
+    {
+      "key": "toolPruneQuietMinutes",
+      "label": "Quiet minutes before applying by itself",
+      "type": "number",
+      "default": 60,
+      "description": "Under auto, a new list is applied only once the project's sessions have been idle this long, so a resumed conversation keeps its prompt cache."
+    },
+    {
+      "key": "toolPruneProtect",
+      "label": "Tools never proposed",
+      "type": "list",
+      "default": [],
+      "description": "Tool names or patterns such as mcp__headroom__*, on top of the work-surface tools that are never proposed anyway."
+    },
+    {
       "key": "microSkills",
       "label": "Micro-skills",
       "type": "choice",
       "options": [
         { "value": "envfacts", "label": "Learn environment facts" },
-        { "value": "on", "label": "On" },
+        { "value": "on", "label": "Learn and ask a model" },
         { "value": "off", "label": "Off" }
       ],
       "default": "off",
-      "description": "Facts about a project's environment, learned from its turns and stated at the start of a new conversation. Off until you turn it on. On will add facts a model proposes in a later version; today it does the same as learning environment facts, which asks no model."
+      "description": "Facts about a project's environment, learned from its turns and stated at the start of a new conversation. Off until you turn it on. Learning environment facts asks no model; asking a model also has your text generation model propose facts every few turns, which costs tokens."
     },
     {
       "key": "microSkillsMaxFacts",
@@ -97,6 +148,39 @@
       "type": "number",
       "default": 150,
       "description": "The most tokens, more or less, the facts stated at the start of a conversation may take."
+    },
+    {
+      "key": "historyImport",
+      "label": "Learn from earlier threads",
+      "type": "boolean",
+      "default": false,
+      "description": "The first time the micro-skills are on in a project that has learned nothing yet, they first learn from its earlier threads, oldest first, as from turns that just ended. No model is asked and nothing is said in the threads. Turned off, the import stops where it is; turned on again, it goes on."
+    },
+    {
+      "key": "historyDays",
+      "label": "Earlier threads from the last (days)",
+      "type": "number",
+      "default": 365,
+      "description": "Threads last active longer ago than this are left out of the import."
+    },
+    {
+      "key": "historyMaxThreads",
+      "label": "Most earlier threads",
+      "type": "number",
+      "default": 200,
+      "description": "The import reads at most this many of a project's newest threads."
+    },
+    {
+      "key": "microSkillsProposeEvery",
+      "label": "Turns between proposals",
+      "type": "number",
+      "default": 3,
+      "description": "How many of a project's turns pass between the model's proposals, when micro-skills ask a model."
     }
-  ]
+  ],
+  "contributes": {
+    "pages": [
+      { "id": "token-economizer", "title": "TokenEconomizer", "qml": "ui/TokenEconomizerPage.qml" }
+    ]
+  }
 }

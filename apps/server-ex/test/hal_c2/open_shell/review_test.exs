@@ -46,12 +46,22 @@ defmodule HalC2.OpenShell.ReviewTest do
     %{gateway: gateway, root: root, repo: repo!(dir)}
   end
 
+  # OpenShell 0.1.7 refuses a sandbox name past 19 characters; a thread id is 36.
+  test "a review's sandbox name fits the gateway's limit, one per thread" do
+    a = Review.name("6A4CB514-2D43-409B-AABC-B77A844BAEA8")
+    b = Review.name("6a4cb514-2d43-409b-aabc-b77a844baea9")
+
+    assert String.length(a) <= HalC2.OpenShell.Client.max_name()
+    assert a == Review.name("6a4cb514-2d43-409b-aabc-b77a844baea8")
+    assert a != b
+  end
+
   test "a review's sandbox holds a checkout at its head made from a bundle, and its key only in a provider",
        %{gateway: g, root: root, repo: repo} do
     assert {:ok, %{sandbox: name}} = Review.open(spec(repo))
-    assert name == "review-review-thread-1"
+    assert name == Review.name("review-thread-1")
 
-    checkout = Path.join(root, "review")
+    checkout = Path.join(root, "src")
     assert git!(checkout, ["rev-parse", "HEAD"]) == repo.head
     assert File.read!(Path.join(checkout, "change.txt")) == "change\n"
     # A repository of its own: no remote, no hooks, and the bundle gone.
@@ -67,7 +77,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert spec.providers == [name]
     refute Enum.any?(Map.values(spec.environment), &(&1 =~ "sk-test"))
 
-    assert %{workdir: "/sandbox/review", commit: commit, mcp: %{url: url, report: true}} =
+    assert %{workdir: "/review/src", commit: commit, mcp: %{url: url, report: true}} =
              Review.binding(@thread)
 
     assert commit == repo.head
@@ -108,6 +118,16 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  # A first review pulls its image (#1419: 3.4 GB took two minutes), and 0.1.7 answers
+  # the create only once the pull is done.
+  test "a review waits for its sandbox's image as long as an install does", %{repo: repo} do
+    assert {:ok, _} = Review.open(spec(repo))
+    assert_received {:openshell_timeout, "CreateSandbox", [timeout]}
+    {value, unit} = Integer.parse(timeout)
+    ms = value * Map.fetch!(%{"H" => 3_600_000, "M" => 60_000, "S" => 1000, "m" => 1}, unit)
+    assert ms >= 300_000
+  end
+
   test "a review's disk is a tmpfs of its size on each path it writes", %{repo: repo} do
     assert {:ok, _} = Review.open(spec(repo))
     assert_received {:openshell_request, "CreateSandbox", %{spec: spec}}
@@ -118,7 +138,8 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert Enum.map(mounts, &{&1["type"], &1["target"], &1["size_bytes"]}) ==
              for({path, bytes} <- HalC2.OpenShell.Policy.writable(), do: {"tmpfs", path, bytes})
 
-    assert spec.policy.filesystem.read_write ==
+    # Besides /dev/null, which the supervisor adds to every policy and writes nothing.
+    assert spec.policy.filesystem.read_write -- ["/dev/null"] ==
              Enum.map(HalC2.OpenShell.Policy.writable(), &elem(&1, 0))
   end
 
@@ -170,6 +191,24 @@ defmodule HalC2.OpenShell.ReviewTest do
     refute message =~ "OPENAI_API_KEY"
   end
 
+  # The step most likely to break on the next OpenShell or Codex: its log says how.
+  @tag sandbox: [printenv: :missing]
+  test "an agent that cannot sign in says why in the log, never its placeholder", %{
+    gateway: g,
+    repo: repo
+  } do
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, "The review's agent could not sign in in its sandbox."} =
+                 Review.open(spec(repo))
+      end)
+
+    assert log =~ "could not sign in its agent: printenv failed"
+    refute log =~ "openshell:resolve:env"
+    refute_received {:sandbox_login, _}
+    assert_gone(g)
+  end
+
   test "an agent that cannot run in a sandbox is refused, never run here" do
     assert Review.refusal(@thread, "cursor") =~ "cursor cannot run in yet"
     assert Review.refusal(@thread, "codex") =~ "Run the review again."
@@ -194,6 +233,9 @@ defmodule HalC2.OpenShell.ReviewTest do
 
     assert {200, body} = FakeSandbox.post(mcp, list)
     assert %{"error" => %{"code" => -32602}} = JSON.decode!(body)
+
+    # A batch, which the policy's 2025-03-26 revision lets past the proxy, is no request.
+    assert {400, _} = FakeSandbox.post(mcp, [list])
 
     # Params that are no object are refused as such, not failed on.
     for params <- ["scalar", [], 1] do
@@ -418,6 +460,33 @@ defmodule HalC2.OpenShell.ReviewTest do
     refute Map.has_key?(FakeOpenShell.sandboxes(g), "review-old")
   end
 
+  # The property's counter-example: a reap without sandboxes listed leaves a sandbox
+  # whose provider went, and the next reconcile still deletes it.
+  test "a reconcile deletes a sandbox left behind without its provider", %{gateway: g} do
+    labels = owned(Review.labels("left", System.os_time(:second) + 600))
+    FakeOpenShell.put_sandbox(g, "review-left", labels)
+    FakeOpenShell.put_provider(g, "review-left", labels)
+    {:ok, conn} = OpenShell.Client.connect()
+    FakeOpenShell.failing(g, ["ListSandboxes"])
+
+    try do
+      assert {:error, {:not_deleted, [], [sandboxes: _]}} =
+               Review.reap(conn, System.os_time(:second) + 86_400)
+    after
+      FakeOpenShell.failing(g, [])
+      OpenShell.Client.disconnect(conn)
+    end
+
+    assert_received {:openshell_request, "DeleteProvider", %{name: "review-left"}}
+    assert FakeOpenShell.providers(g) == %{}
+    assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-left")
+
+    # Its deletion runs off the review process, told once the gateway has it.
+    Review.reconcile()
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 5_000
+    assert FakeOpenShell.sandboxes(g) == %{}
+  end
+
   test "a reaper that cannot list providers still deletes every sandbox past its lease",
        %{gateway: g} do
     now = System.os_time(:second)
@@ -509,7 +578,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     sandbox =
       Review.binding(@thread)
       |> Review.subprocess()
-      |> Map.merge(%{output_limit: 10, on_limit: fn -> send(test, :limited) end})
+      |> Map.merge(%{output_limit: 10, on_limit: {Kernel, :send, [test, :limited]}})
 
     {:ok, sub} =
       HalC2.Subprocess.start(["sh", "-c", "printf '%s\\n' 0123456789abcdef"], sandbox: sandbox)

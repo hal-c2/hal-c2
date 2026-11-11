@@ -1,5 +1,5 @@
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_distiller micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
@@ -850,6 +850,1153 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
   defp flush do
     receive do
       {kind, _, _, _, _} when kind in [:verdict, :delivered, :DOWN] -> flush()
+    after
+      0 -> :ok
+    end
+  end
+end
+
+defmodule HalC2.TokenEconomizerHistoryPropTest do
+  @moduledoc """
+  A state machine model of the first fold from history
+  (`plugins/token-economizer/mc/micro_skills_history.ex`), driven as the
+  plugin's process drives it: one read asked at a time and answered later,
+  or failing; turns ending in the project's threads before the fold starts
+  and while it runs; the import turned off and on under it; and the MC
+  restarting, the fold and the turns folded saved together. Whatever the
+  order:
+
+    * no turn is folded twice, and the fold counts exactly the turns it
+      folded itself, not those folded as they ended while it was stopped;
+    * only turns that ended are folded: those of the threads before the fold
+      started, and those heard live;
+    * the turns heard live are folded in the order they ended, and, for a
+      fold never stopped, after every turn it imported;
+    * a read lost to a restart is asked again from where the fold was saved,
+      and what it folded before stands;
+    * driven to its end, with the import on, the fold is done and has folded
+      every turn, but those of a thread or a held-back turn it could not read.
+
+  The envelope it seeds is `HalC2.TokenEconomizerHistorySeedPropTest`, below.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.History
+
+  @threads ~w(a b c)
+  @page 2
+  @base ~U[2026-11-01 00:00:00Z]
+
+  property "the first fold from history folds every turn once, the live ones after it, in order",
+    numtests: HalC2.Prop.numtests(300) do
+    forall cmds <- more_commands(4, commands(__MODULE__)) do
+      Process.put(:world, %{
+        clock: 0,
+        runs: [],
+        fold: nil,
+        offered: [],
+        reading: nil,
+        lost: [],
+        direct: 0,
+        stopped: false
+      })
+
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      drained = drain()
+
+      (result == :ok and drained == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        Drained: #{inspect(drained, pretty: true)}
+        World: #{inspect(Process.get(:world), pretty: true, limit: :infinity)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: whether the fold started. The rest is the world's, checked
+  # after every step.
+  def initial_state, do: %{started: false}
+
+  def command(%{started: false}) do
+    frequency([
+      {5, {:call, __MODULE__, :turn, [elements(@threads)]}},
+      {1, {:call, __MODULE__, :start, []}}
+    ])
+  end
+
+  def command(_state) do
+    frequency([
+      {3, {:call, __MODULE__, :turn, [elements(@threads)]}},
+      {4, {:call, __MODULE__, :ask, []}},
+      {4, {:call, __MODULE__, :answer, []}},
+      {1, {:call, __MODULE__, :fail, []}},
+      {1, {:call, __MODULE__, :stop, []}},
+      {1, {:call, __MODULE__, :resume, []}},
+      {1, {:call, __MODULE__, :restart, []}}
+    ])
+  end
+
+  def precondition(%{started: started}, {:call, _, :start, []}), do: not started
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :start, []}), do: %{state | started: true}
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(_state, _call, world), do: laws(world) == :ok
+
+  # --- the laws ------------------------------------------------------------------------------
+
+  # A fold once stopped, by the import turned off or its threads not listed,
+  # imports after the live turns folded while it was stopped.
+  defp laws(world) do
+    live = for {run, _thread, :live} <- world.runs, do: run
+    ended = MapSet.new(world.runs, &elem(&1, 0))
+    offered = world.offered
+    folded_live = Enum.filter(offered, &(&1 in live))
+    turns = world.fold && History.view(world.fold)["turns"]
+
+    cond do
+      offered != Enum.uniq(offered) -> {:twice, offered}
+      not Enum.all?(offered, &(&1 in ended)) -> {:never_ended, offered}
+      turns not in [nil, length(offered) - world.direct] -> {:counted, turns, offered}
+      folded_live != Enum.filter(live, &(&1 in folded_live)) -> {:live_order, folded_live}
+      not world.stopped and not live_last?(offered, live) -> {:live_before_import, offered}
+      true -> :ok
+    end
+  end
+
+  defp live_last?(offered, live) do
+    offered |> Enum.drop_while(&(&1 not in live)) |> Enum.all?(&(&1 in live))
+  end
+
+  # Turns the import on and reads until nothing is left; the fold is then
+  # done, having folded every turn but those it could not read.
+  defp drain do
+    world = Process.get(:world)
+
+    if world.fold == nil do
+      :ok
+    else
+      resume()
+      Enum.reduce_while(1..500, nil, fn _, _ -> drain_step() end)
+      world = Process.get(:world)
+      all = MapSet.new(world.runs, &elem(&1, 0))
+      expected = MapSet.difference(all, MapSet.new(world.lost))
+
+      cond do
+        History.view(world.fold)["state"] != "done" -> {:not_done, world.fold}
+        laws(world) != :ok -> laws(world)
+        not MapSet.subset?(expected, MapSet.new(world.offered)) -> {:missed, expected}
+        true -> :ok
+      end
+    end
+  end
+
+  defp drain_step do
+    world = Process.get(:world)
+
+    cond do
+      world.reading != nil ->
+        answer()
+        {:cont, nil}
+
+      History.next(world.fold) == nil ->
+        {:halt, nil}
+
+      true ->
+        ask()
+        {:cont, nil}
+    end
+  end
+
+  # --- the commands, on the world ---------------------------------------------------------
+
+  # A turn ends in `thread`: before the fold, one it will import; while it
+  # runs, one it holds back; else one folded as it ends.
+  def turn(thread) do
+    world = tick(Process.get(:world))
+    run = "r#{world.clock}"
+
+    case world.fold do
+      nil ->
+        put(%{world | runs: world.runs ++ [{run, thread, :old}]})
+
+      fold ->
+        world = %{world | runs: world.runs ++ [{run, thread, :live}]}
+
+        if History.running?(fold),
+          do: put(%{world | fold: History.hold(fold, [thread, run, []])}),
+          else: put(%{world | offered: world.offered ++ [run], direct: world.direct + 1})
+    end
+  end
+
+  def start do
+    world = tick(Process.get(:world))
+    put(%{world | fold: History.new("f", at(world.clock))})
+  end
+
+  # Asks the read the fold awaits, if none is under way; the answer is read
+  # now, against the threads as they are, and applied by `answer/0`.
+  def ask do
+    world = Process.get(:world)
+
+    case world.reading == nil and History.next(world.fold) do
+      :finish ->
+        put(%{world | fold: History.finish(world.fold, at(world.clock))})
+
+      what when what not in [false, nil] ->
+        put(%{world | reading: {world.fold["step"], what, read(world, what)}})
+
+      _ ->
+        world
+    end
+  end
+
+  def answer do
+    world = Process.get(:world)
+
+    case world.reading do
+      {step, what, result} -> put(apply_read(%{world | reading: nil}, step, what, result))
+      nil -> world
+    end
+  end
+
+  # The read under way fails.
+  def fail do
+    world = Process.get(:world)
+
+    case world.reading do
+      {step, what, _result} -> put(apply_read(%{world | reading: nil}, step, what, :error))
+      nil -> world
+    end
+  end
+
+  def stop, do: change(&History.stop(&1, "the history import was turned off"))
+  def resume, do: change(&History.resume/1)
+
+  # The MC restarts: the fold loads back from what was saved, and the read
+  # under way is lost.
+  def restart do
+    world = Process.get(:world)
+    fold = world.fold && History.load(world.fold |> JSON.encode!() |> JSON.decode!())
+    put(%{world | fold: fold, reading: nil})
+  end
+
+  defp change(fun) do
+    world = Process.get(:world)
+    put(%{world | fold: world.fold && fun.(world.fold)})
+  end
+
+  # --- reading, as `HalC2Plugins.TokenEconomizer.read_history/6` does ------------------------
+
+  defp read(world, :plan) do
+    threads =
+      world.runs
+      |> Enum.group_by(&elem(&1, 1), &elem(&1, 0))
+      |> Enum.map(fn {thread, [first | _]} ->
+        created = at(String.to_integer(String.trim_leading(first, "r")))
+        %{"id" => thread, "createdAt" => created, "latestUserMessageAt" => created}
+      end)
+
+    History.plan(threads, DateTime.add(@base, world.clock, :second), 3650, 200)
+  end
+
+  defp read(world, {:page, thread, after_run}) do
+    runs = for {run, ^thread, _} <- world.runs, do: run
+
+    runs =
+      if after_run, do: Enum.drop(runs, Enum.find_index(runs, &(&1 == after_run)) + 1), else: runs
+
+    page = Enum.take(runs, @page)
+    {page, length(page) == @page}
+  end
+
+  defp read(_world, {:pending, entries}), do: entries
+
+  # The answer applied to the fold that asked it, if it still awaits it.
+  defp apply_read(world, step, what, result) do
+    fold = world.fold
+
+    if History.running?(fold) and fold["step"] == step,
+      do: applied(world, what, result),
+      else: world
+  end
+
+  defp applied(world, :plan, :error),
+    do: %{world | fold: History.stop(world.fold, "the project's threads could not be listed")}
+
+  defp applied(world, :plan, {ids, skipped}),
+    do: %{world | fold: History.planned(world.fold, ids, skipped)}
+
+  defp applied(world, {:page, thread, _after}, :error) do
+    lost = for {run, ^thread, :old} <- world.runs, run not in world.offered, do: run
+    %{world | fold: History.unreadable(world.fold), lost: world.lost ++ lost}
+  end
+
+  defp applied(world, {:page, _thread, _after}, {runs, more}) do
+    fold = world.fold
+    held = History.held(fold)
+    ended = Map.new(world.runs, fn {run, _thread, _} -> {run, at(clock_of(run))} end)
+    kept = Enum.filter(runs, &(&1 not in held and History.imported?(fold, ended[&1])))
+
+    %{
+      world
+      | offered: world.offered ++ kept,
+        fold: History.paged(fold, length(kept), List.last(runs), more)
+    }
+  end
+
+  defp applied(world, {:pending, entries}, :error) do
+    lost = Enum.map(entries, fn [_thread, run, _ids] -> run end)
+    %{world | fold: History.drained(world.fold, entries, 0), lost: world.lost ++ lost}
+  end
+
+  defp applied(world, {:pending, entries}, entries) do
+    runs = Enum.map(entries, fn [_thread, run, _ids] -> run end)
+
+    %{
+      world
+      | offered: world.offered ++ runs,
+        fold: History.drained(world.fold, entries, length(runs))
+    }
+  end
+
+  defp clock_of("r" <> n), do: String.to_integer(n)
+
+  defp tick(world), do: %{world | clock: world.clock + 1}
+  defp at(clock), do: @base |> DateTime.add(clock, :second) |> DateTime.to_iso8601()
+
+  defp put(world) do
+    fold = world.fold || %{}
+
+    world = %{
+      world
+      | stopped: world.stopped or fold["state"] == "stopped" or Map.has_key?(fold, "stop")
+    }
+
+    Process.put(:world, world)
+    world
+  end
+end
+
+defmodule HalC2.TokenEconomizerHistorySeedPropTest do
+  @moduledoc """
+  What the first fold from history seeds the loop guard's envelope with
+  (`History.claim/2`, `seed/4`, `record_turn/3`, `unseed/2`), over pages of
+  imported green turns, pages read again after a crash, live turns recorded
+  meanwhile, and the tracker saved and loaded back, in any order. Whatever
+  the order, the envelope holds each page's turns once, in the order read,
+  ahead of the live turns, in the order they ended; and taking the seed back
+  out leaves exactly the live turns.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+
+  alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.History
+
+  property "the envelope holds the imported turns once, ahead of the live ones, until unseeded",
+    numtests: HalC2.Prop.numtests(300) do
+    forall ops <- list(frequency([{3, :page}, {2, :again}, {3, :live}, {1, :restart}])) do
+      fold = History.new("f", "2026-11-09T12:00:00Z")
+
+      {tracker, _step, seeded, live} =
+        Enum.reduce(ops, {Envelope.new(), -1, [], []}, fn
+          :page, {tracker, step, seeded, live} ->
+            samples = samples(step + 1)
+            tracker = History.seed(tracker, "f", step + 1, samples)
+            {tracker, step + 1, seeded ++ Enum.map(samples, & &1["turns"]), live}
+
+          :again, {tracker, step, seeded, live} ->
+            {History.seed(tracker, "f", max(step, 0), samples(max(step, 0))), step, seeded, live}
+
+          :live, {tracker, step, seeded, live} ->
+            {g, _, _} = Turn.fold(Turn.new(), "Bash", %{"command" => "pytest -q"}, "3 passed", 0)
+            tracker = tracker |> History.claim(fold) |> History.record_turn(g, true)
+            {tracker, step, seeded, live ++ [1]}
+
+          :restart, {tracker, step, seeded, live} ->
+            saved = tracker[:seed] |> JSON.encode!() |> JSON.decode!()
+            {Map.put(tracker, :seed, History.load_seed(saved)), step, seeded, live}
+        end)
+
+      unseeded = History.unseed(tracker, "f")
+
+      (tracker.resolved_turns == seeded ++ live and
+         length(tracker.resolved_snaps) == length(tracker.resolved_turns) and
+         unseeded.resolved_turns == live and History.seedable(tracker, "f") == :seeding)
+      |> when_fail(
+        IO.puts("""
+        Ops: #{inspect(ops)}
+        Turns: #{inspect(tracker.resolved_turns)}
+        Seed: #{inspect(tracker[:seed])}
+        Unseeded: #{inspect(unseeded.resolved_turns)}
+        """)
+      )
+    end
+  end
+
+  # A page's green turns: told apart from the live ones (1) and from each
+  # other page's, and the same each time the page is read.
+  defp samples(step) do
+    sample =
+      History.replay(
+        [{"Bash", %{"command" => "pytest -q"}, "3 passed", 0}],
+        "completed",
+        "default",
+        %{}
+      )
+
+    for n <- 1..rem(step, 3)//1, do: %{sample | "turns" => 100 + step * 10 + n}
+  end
+end
+
+defmodule HalC2.TokenEconomizerProposerPropTest do
+  @moduledoc """
+  The paid proposer's laws (`plugins/token-economizer/mc/micro_skills_distiller.ex`),
+  over one project's turns, the model's replies (facts and extractors, well or badly
+  made, citing turns in the window or long gone), drops, restores, renders with the
+  proposer on or off, and restarts, in any order. Whatever the order:
+
+    * a fact enters only from a reply, never from a turn, and only when its
+      detector confirms it on at least `Distiller.min_cite/0` distinct turns it
+      cites that are still in the window;
+    * a reply admits at most `Distiller.max_cands/0` facts, and what it does not
+      admit or revise is left exactly as it was;
+    * a proposed fact may be revised only in its contradiction condition: its
+      revision counts up by one and what it earned is kept;
+    * a dropped id is never admitted, however often the model proposes it, until
+      restored;
+    * extractors are append-only and at most `Distiller.max_extractors/0`;
+    * the window holds at most `Distiller.window_size/0` turns, and a turn folds once;
+    * a proposal is due exactly when the window holds a turn and `every` turns have
+      passed since the last, so a model is never asked twice in fewer;
+    * with the proposer off its facts are kept but never staged;
+    * saving and loading changes nothing.
+
+  The model call around these, off the plugin's process, and what the plugin does
+  with an answer that fails or never comes, are
+  `features/plugins/token-economizer-micro-skills.feature`.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts}
+
+  @ids ~w(build-first tests-as-module lint-here)
+  @manual "# repo operating manual"
+
+  property "the proposer admits only what its detector grounds, in any order",
+    numtests: HalC2.Prop.numtests(200) do
+    forall cmds <- more_commands(4, commands(__MODULE__, initial_state())) do
+      Process.put(:skills, EnvFacts.new(proposing: true))
+      {history, state, result} = run_commands(__MODULE__, cmds)
+
+      (result == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: the cadence only -- turns folded, the turn of the last proposal, and
+  # the reused runs folded. What a reply admits is checked against the state before it.
+  def initial_state, do: %{turns: 0, last: -1, folded: MapSet.new()}
+
+  def command(_state) do
+    frequency([
+      {8,
+       {:call, __MODULE__, :turn,
+        [
+          elements([:build_test, :build_test, :test_only, :pytest_broken, :regen, :none]),
+          elements([:fresh, :fresh, "run-a", "run-b"])
+        ]}},
+      {5, {:call, __MODULE__, :propose, [integer(1, 4), reply()]}},
+      {1, {:call, __MODULE__, :drop, [elements(@ids)]}},
+      {1, {:call, __MODULE__, :restore, [elements(@ids)]}},
+      {2, {:call, __MODULE__, :render, [boolean()]}},
+      {2, {:call, __MODULE__, :restart, []}}
+    ])
+  end
+
+  defp reply do
+    frequency([
+      {1, :garbage},
+      {6,
+       {resize(5, list(fact_spec())),
+        resize(2, list({elements(~w(built regen bad-name)), elements([:ok, :bad])}))}}
+    ])
+  end
+
+  defp fact_spec do
+    {elements(@ids),
+     elements([:build, :build, :build_contra, :module, :tests_pred, :built_feature, :bad]),
+     resize(4, list(oneof([integer(0, 9), :gone]))), elements([:ok, :ok, :ok, :lint])}
+  end
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :turn, [_kind, run]}) do
+    if run != :fresh and MapSet.member?(state.folded, run) do
+      state
+    else
+      folded = if run == :fresh, do: state.folded, else: MapSet.put(state.folded, run)
+      %{state | folded: folded, turns: state.turns + 1}
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :propose, [every, _reply]}),
+    do: if(due?(state, every), do: %{state | last: state.turns}, else: state)
+
+  def next_state(state, _result, _call), do: state
+
+  defp due?(state, every), do: state.turns > 0 and state.turns - state.last >= every
+
+  # --- the commands at work ---------------------------------------------------------------------
+
+  def turn(kind, run) do
+    before = Process.get(:skills)
+    iid = if run == :fresh, do: "run-#{System.unique_integer([:positive])}", else: run
+    calls = calls(kind)
+
+    after_turn =
+      before |> Distiller.fold(calls, iid) |> EnvFacts.update_turn(calls, iid)
+
+    Process.put(:skills, after_turn)
+    %{before: before, after: after_turn, reused: run != :fresh and iid in before.folded}
+  end
+
+  # Asks when due, as the plugin does, and admits the reply against the window as
+  # it is then. The reply's citations are read against that window: 0 is the newest
+  # turn in it, and a position past it (or `:gone`) names a turn long gone.
+  def propose(every, reply) do
+    before = Process.get(:skills)
+    due = Distiller.due?(before, every)
+
+    if due do
+      raw = raw(reply, before)
+      asked = Distiller.proposed(before)
+      {after_admit, outcomes} = Distiller.admit(asked, raw)
+      Process.put(:skills, after_admit)
+
+      %{
+        before: before,
+        asked: asked,
+        after: after_admit,
+        due: true,
+        raw: raw,
+        outcomes: outcomes
+      }
+    else
+      %{before: before, after: before, due: false, outcomes: []}
+    end
+  end
+
+  def drop(id) do
+    before = Process.get(:skills)
+
+    after_drop =
+      case EnvFacts.drop(before, id) do
+        {:ok, skills} -> skills
+        {:error, _} -> before
+      end
+
+    Process.put(:skills, after_drop)
+    %{before: before, after: after_drop}
+  end
+
+  def restore(id) do
+    before = Process.get(:skills)
+
+    after_restore =
+      case EnvFacts.restore(before, id) do
+        {:ok, skills} -> skills
+        {:error, _} -> before
+      end
+
+    Process.put(:skills, after_restore)
+    %{before: before, after: after_restore}
+  end
+
+  # What would be staged with the proposer on or off; rendering marks what was
+  # staged, so the state is left as it was.
+  def render(proposing) do
+    skills = Process.get(:skills)
+    {text, _} = EnvFacts.render(%{skills | proposing: proposing})
+    %{skills: skills, text: text, proposing: proposing}
+  end
+
+  def restart do
+    before = Process.get(:skills)
+
+    loaded =
+      before
+      |> EnvFacts.dump()
+      |> JSON.encode!()
+      |> JSON.decode!()
+      |> EnvFacts.load(proposing: true)
+
+    Process.put(:skills, loaded)
+    %{before: before, after: loaded}
+  end
+
+  defp bash(command, output, code \\ 0), do: {"Bash", %{"command" => command}, output, code}
+  defp edit(path), do: {"Edit", %{"file_path" => path}, "ok", nil}
+
+  defp calls(:build_test),
+    do: [edit("src/m.go"), bash("make build", "built"), bash("make test", "ok  ./... 0.01s")]
+
+  defp calls(:test_only),
+    do: [bash("make test", "make: *** No rule to make target 'build'.  Stop.", 2)]
+
+  defp calls(:pytest_broken),
+    do: [
+      edit("pkg/a.py"),
+      bash("pytest -q", "bash: pytest: command not found", 127),
+      bash("python -m pytest -q", "4 passed in 0.01s")
+    ]
+
+  defp calls(:regen), do: [bash("./scripts/regen-protos.sh --all", "done")]
+  defp calls(:none), do: []
+
+  @detectors %{
+    build: %{"scope" => "make test", "confirm" => "make build"},
+    build_contra: %{
+      "scope" => "make test",
+      "confirm" => "make build",
+      "contradict" => "No rule to make target"
+    },
+    module: %{"scope" => "pytest", "confirm" => "python -m pytest"},
+    tests_pred: %{"scope" => "ran_tests", "confirm" => "passed", "fired" => "ran_tests"},
+    built_feature: %{"scope" => "built", "confirm" => "make build"},
+    bad: %{"scope" => "make test", "confirm" => "make (build"}
+  }
+
+  defp raw(:garbage, _skills), do: "claude payload"
+
+  defp raw({facts, extractors}, skills) do
+    window = skills.proposer.window |> Enum.map(& &1["iid"]) |> Enum.reverse()
+
+    facts =
+      for {id, detector, cites, line} <- facts do
+        %{
+          "id" => id,
+          "claim" => "#{id} holds here",
+          "injection" =>
+            if(line == :lint,
+              do: "Skip the tests once `make build` passes.",
+              else: "In this repository, #{id}."
+            ),
+          "detector" => @detectors[detector],
+          "cite" =>
+            Enum.map(cites, fn
+              :gone -> "gone"
+              k -> Enum.at(window, k) || "gone-#{k}"
+            end)
+        }
+      end
+
+    extractors =
+      for {name, pattern} <- extractors do
+        %{
+          "name" => name,
+          "kind" => "out_regex",
+          "pattern" => if(pattern == :ok, do: "^built$", else: "(built")
+        }
+      end
+
+    JSON.encode!(%{"facts" => facts, "extractors" => extractors})
+  end
+
+  # --- the laws -------------------------------------------------------------------------------------
+
+  def postcondition(state, {:call, _, :turn, [_kind, _run]}, %{before: before, after: skills} = r) do
+    after_state =
+      if r.reused, do: state, else: next_state(state, nil, {:call, nil, :turn, [nil, :fresh]})
+
+    # A turn folded twice changes nothing; a turn never brings a proposed fact in,
+    # nor changes what one says.
+    (not r.reused or skills == before) and
+      skills.proposer.turns == after_state.turns and
+      MapSet.equal?(proposed_ids(skills), proposed_ids(before)) and
+      Enum.all?(proposed_ids(skills), &(skills.facts[&1].params == before.facts[&1].params)) and
+      lawful?(skills)
+  end
+
+  def postcondition(state, {:call, _, :propose, [every, reply]}, %{due: due} = r) do
+    due == due?(state, every) and
+      if due do
+        admitted?(r, reply) and r.after.proposer.last_propose == r.after.proposer.turns and
+          not Distiller.due?(r.after, every) and lawful?(r.after)
+      else
+        r.after == r.before
+      end
+  end
+
+  def postcondition(_state, {:call, _, :drop, [id]}, %{before: before, after: skills}) do
+    lawful?(skills) and
+      (not Map.has_key?(before.facts, id) or
+         (not Map.has_key?(skills.facts, id) and MapSet.member?(skills.dropped, id)))
+  end
+
+  def postcondition(_state, {:call, _, :restore, [id]}, %{after: skills}),
+    do: lawful?(skills) and not MapSet.member?(skills.dropped, id)
+
+  def postcondition(_state, {:call, _, :render, _}, %{proposing: false} = r) do
+    proposed = Enum.map(proposed_ids(r.skills), &r.skills.facts[&1].params["injection"])
+
+    not String.contains?(r.text, @manual) and
+      Enum.all?(proposed, &(not String.contains?(r.text, &1)))
+  end
+
+  def postcondition(_state, {:call, _, :render, _}, %{text: text}),
+    do: text == "" or String.length(text) <= 150 * 4 + 1
+
+  def postcondition(_state, {:call, _, :restart, _}, %{before: before, after: skills}) do
+    EnvFacts.dump(skills) == EnvFacts.dump(before) and
+      Distiller.due?(skills, 1) == Distiller.due?(before, 1) and lawful?(skills)
+  end
+
+  # What a reply did, item by item, against the state it was read in.
+  defp admitted?(r, reply) do
+    asked = r.asked
+    skills = r.after
+    facts = r.outcomes |> Enum.filter(&match?({:fact, _, _}, &1))
+    specs = r.raw |> Distiller.parse_payload() |> elem(1)
+    changed = for {:fact, id, reason} <- facts, reason in ~w(admitted revised), do: id
+
+    # One outcome per fact asked, in order, up to the cap; a reply may name an id twice.
+    read = Enum.take(specs, Distiller.max_cands())
+    count_ok = length(facts) == length(read)
+    garbage_ok = reply != :garbage or r.outcomes == []
+
+    admitted_ok =
+      facts
+      |> Enum.zip(read)
+      |> Enum.reduce_while(MapSet.new(), fn {outcome, spec}, earlier ->
+        if lawful_outcome?(outcome, spec, asked, skills, earlier) do
+          {:cont,
+           if(match?({:fact, _, "admitted"}, outcome),
+             do: MapSet.put(earlier, spec["id"]),
+             else: earlier
+           )}
+        else
+          {:halt, false}
+        end
+      end)
+      |> Kernel.!=(false)
+
+    # What was not admitted or revised is exactly as it was.
+    rest_ok =
+      MapSet.equal?(
+        MapSet.new(Map.keys(skills.facts)),
+        MapSet.union(MapSet.new(Map.keys(asked.facts)), MapSet.new(changed))
+      ) and
+        Enum.all?(asked.facts, fn {id, fact} -> id in changed or skills.facts[id] == fact end)
+
+    extractors_ok =
+      Enum.all?(asked.proposer.extractors, fn {name, spec} ->
+        skills.proposer.extractors[name] == spec
+      end)
+
+    count_ok and garbage_ok and admitted_ok and rest_ok and extractors_ok and
+      skills.dropped == asked.dropped
+  end
+
+  # Each admitted fact was new, not dropped, and grounded on two distinct turns still
+  # in the window that its own detector confirms; a revision keeps the fact's life
+  # and changes only its contradict condition.
+  defp lawful_outcome?({:fact, id, "admitted"}, spec, asked, skills, earlier) do
+    id == spec["id"] and not Map.has_key?(asked.facts, id) and
+      not MapSet.member?(earlier, id) and not MapSet.member?(asked.dropped, id) and
+      grounded(skills, spec) >= Distiller.min_cite() and
+      skills.facts[id].family == Distiller.family()
+  end
+
+  # A fact admitted earlier in the same reply has no state of its own to compare against.
+  defp lawful_outcome?({:fact, id, "revised"}, spec, asked, skills, earlier) do
+    now = skills.facts[id]
+
+    case asked.facts[id] do
+      nil ->
+        id == spec["id"] and MapSet.member?(earlier, id) and now.params["rev"] >= 2
+
+      was ->
+        id == spec["id"] and was.family == Distiller.family() and now.life == was.life and
+          now.params["rev"] > was.params["rev"] and
+          Map.delete(now.params["detector"], "contradict") ==
+            Map.delete(was.params["detector"], "contradict") and
+          Map.drop(now.params, ~w(detector rev)) == Map.drop(was.params, ~w(detector rev))
+    end
+  end
+
+  defp lawful_outcome?({:fact, id, "dropped"}, _spec, asked, skills, _earlier),
+    do: MapSet.member?(asked.dropped, id) and not Map.has_key?(skills.facts, id)
+
+  defp lawful_outcome?({:fact, _id, _refused}, _spec, _asked, _skills, _earlier), do: true
+
+  # The cited turns, still in the window, the detector confirms on: read with the
+  # window as admitted against (its features include extractors the reply added).
+  defp grounded(skills, spec) do
+    detector =
+      for {key, value} <- spec["detector"],
+          is_binary(value) and value != "",
+          into: %{},
+          do: {key, value}
+
+    cited = MapSet.new(spec["cite"] || [])
+
+    skills.proposer.window
+    |> Enum.filter(&MapSet.member?(cited, &1["iid"]))
+    |> Enum.count(&(Distiller.verdict(detector, &1) |> elem(0) == "confirm"))
+  end
+
+  defp proposed_ids(skills),
+    do: for({id, fact} <- skills.facts, Distiller.fact?(fact), into: MapSet.new(), do: id)
+
+  # What holds after every command: no dropped id among the facts, the window and the
+  # extractors within their caps.
+  # The proposer is made by the first turn folded, so before it there is none.
+  defp lawful?(skills) do
+    MapSet.disjoint?(skills.dropped, MapSet.new(Map.keys(skills.facts))) and
+      case skills.proposer do
+        nil ->
+          true
+
+        proposer ->
+          length(proposer.window) <= Distiller.window_size() and
+            length(proposer.window) == min(proposer.turns, Distiller.window_size()) and
+            map_size(proposer.extractors) <= Distiller.max_extractors()
+      end
+  end
+end
+
+defmodule HalC2.TokenEconomizerHeldPropTest do
+  @moduledoc """
+  A state machine model of a held project (`HalC2Plugins.TokenEconomizer`):
+  one whose saved micro-skills file does not read, found so by an MC
+  restarting over it, driven through turns, forgetting, settings saves
+  switching learning and the history import, and the file repaired under
+  the running process. Whatever the order, after every step:
+
+    * a project is held exactly while its file does not read, and is read
+      again, and learned from, at its first use after it is repaired;
+    * a held project has no fold from history and learns from no turn, and
+      its file keeps its bytes;
+    * forgetting a held project is refused, saying it is held; forgetting one
+      that reads is not;
+    * a turn in a project that reads, with learning and the import on, leaves
+      it a fold, so the hold is what keeps a held one from folding;
+    * once the project's entry is published, the last `microSkillsProjects`
+      naming it says held as that entry does, so a page listing the projects
+      lists it, held or not; and no process names it twice saying the same;
+    * asking for the project by name (a page's Read again), once the process
+      has published it, leaves it named as held exactly while it is.
+  """
+  # The plugin keeps the micro-skills under the MC's home, which a scratch
+  # home sets for the whole VM.
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
+
+  @garbled "{\"facts\": not json"
+
+  property "a held project folds nothing, is never forgotten, and keeps its file until it reads",
+    numtests: HalC2.Prop.numtests(150) do
+    forall cmds <- more_commands(4, commands(__MODULE__)) do
+      home = HalC2.Prop.scratch_home("token-economizer-held")
+      readable()
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
+      {:ok, plugin} = TokenEconomizer.init(settings(initial_state()))
+      Process.put(:plugin, plugin)
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      stop(Process.delete(:plugin))
+      Process.unregister(HalC2.Plugins)
+      Enum.each([:entry_held, :pulsed, :listed, :repeated], &Process.delete/1)
+      HalC2.Prop.restore_env()
+      File.rm_rf!(home)
+
+      (result == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: the settings in force, and whether project `p`'s file does not read.
+  def initial_state, do: %{micro: "envfacts", import: true, held: false}
+
+  def command(state) do
+    frequency(
+      [
+        {2, {:call, __MODULE__, :settings, [elements(~w(off envfacts on)), boolean()]}},
+        {5, {:call, __MODULE__, :turn, []}},
+        {3, {:call, __MODULE__, :forget, []}},
+        {2, {:call, __MODULE__, :read_again, []}},
+        {2, {:call, __MODULE__, :garble, []}},
+        {1, {:call, __MODULE__, :restart, []}}
+      ] ++ if(state.held, do: [{2, {:call, __MODULE__, :repair, []}}], else: [])
+    )
+  end
+
+  def precondition(state, {:call, _, :repair, []}), do: state.held
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :settings, [micro, import]}),
+    do: %{state | micro: micro, import: import}
+
+  def next_state(state, _result, {:call, _, :garble, []}), do: %{state | held: true}
+  def next_state(state, _result, {:call, _, :repair, []}), do: %{state | held: false}
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(state, call, seen) do
+    state = next_state(state, seen, call)
+
+    common =
+      if state.held,
+        do:
+          seen.entry["held"] =~ "not valid JSON" and seen.entry["file"] == path() and
+            seen.fold == nil and seen.entry["turns"] == 0 and seen.file == @garbled,
+        else: seen.entry["held"] == nil and not Map.has_key?(seen.entry, "file")
+
+    common and called(state, call, seen) and listed?(seen)
+  end
+
+  # The page's two topics agree: the listing names `p` as its entry shows it.
+  defp listed?(%{entry_held: entry_held, listed: listed, repeated: repeated}),
+    do: (entry_held == :none or listed == entry_held) and not repeated
+
+  defp called(state, {:call, _, :forget, []}, %{reply: reply}) do
+    case {state.held, reply} do
+      {true, {:error, message}} -> message =~ "held" and message =~ "not valid JSON"
+      {false, {:ok, _view}} -> true
+      _ -> false
+    end
+  end
+
+  defp called(state, {:call, _, :turn, []}, %{fold: fold}) do
+    if not state.held and state.micro != "off" and state.import, do: fold != nil, else: true
+  end
+
+  defp called(state, {:call, _, :read_again, []}, %{pulsed: pulsed, listed: listed}),
+    do: pulsed == nil or listed == state.held
+
+  defp called(_state, _call, _seen), do: true
+
+  # --- the commands, against the process's callbacks ---------------------------------------
+
+  defp settings(state),
+    do: %{
+      "microSkills" => state.micro,
+      "historyImport" => state.import,
+      "microSkillsProposeEvery" => 1000
+    }
+
+  def settings(micro, import) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call(
+        {:settings, settings(%{micro: micro, import: import})},
+        nil,
+        Process.get(:plugin)
+      )
+
+    seen(plugin)
+  end
+
+  # A turn in project `p` that would teach a fact: started, one call, finished.
+  def turn do
+    run = "run-#{System.unique_integer([:positive])}"
+    at = %{"threadId" => "a", "runId" => run}
+
+    observe(
+      Map.merge(at, %{
+        "type" => "turn.started",
+        "projectId" => "p",
+        "provider" => "claudeAgent",
+        "newConversation" => true
+      })
+    )
+
+    observe(
+      Map.merge(at, %{
+        "type" => "turn.item",
+        "itemType" => "command_execution",
+        "status" => "completed",
+        "input" => "pytest -q",
+        "output" => "3 passed in 0.10s",
+        "exitCode" => 0
+      })
+    )
+
+    observe(Map.merge(at, %{"type" => "turn.finished", "ordinal" => 1, "status" => "completed"}))
+    seen(Process.get(:plugin))
+  end
+
+  def forget do
+    {:reply, reply, plugin} =
+      TokenEconomizer.handle_call(
+        {:micro_skill_forget, %{"projectId" => "p"}},
+        nil,
+        Process.get(:plugin)
+      )
+
+    plugin |> seen() |> Map.put(:reply, reply)
+  end
+
+  # The MC restarts over a file that no longer reads.
+  def garble do
+    File.write!(path(), @garbled)
+    restart()
+  end
+
+  # A page asks for the project by name, and the process keeps what that read.
+  def read_again do
+    {:reply, {:ok, _view}, plugin} =
+      TokenEconomizer.handle_call(
+        {:micro_skills, %{"projectId" => "p"}},
+        nil,
+        Process.get(:plugin)
+      )
+
+    seen(plugin)
+  end
+
+  # The file reads again, under the running process.
+  def repair do
+    readable()
+    seen(Process.get(:plugin))
+  end
+
+  # The MC restarts: the process starts afresh from what it saved, with the
+  # settings it had.
+  def restart do
+    old = Process.get(:plugin)
+    stop(old)
+    published()
+    # A new process names each project afresh.
+    Process.delete(:pulsed)
+    {:ok, plugin} = TokenEconomizer.init(old.settings)
+    seen(plugin)
+  end
+
+  # Project `p` has learned a fact, so the import has nothing to read: a fold
+  # it starts is skipped at once, and no read leaves the process.
+  defp readable do
+    skills =
+      EnvFacts.add_candidate(EnvFacts.new(), %{
+        id: "form_repair:run_tests:pytest",
+        family: "form_repair",
+        high: false,
+        drift: false,
+        params: %{
+          "intent" => "run_tests",
+          "a" => "pytest",
+          "b_counts" => %{"python -m pytest" => 3},
+          "error_counts" => %{}
+        }
+      })
+
+    File.mkdir_p!(Path.dirname(path()))
+    File.write!(path(), JSON.encode!(Map.put(EnvFacts.dump(skills), "projectId", "p")))
+  end
+
+  defp path, do: TokenEconomizer.micro_skills_path("p")
+
+  defp observe(event) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call({:observe, event}, nil, Process.get(:plugin))
+
+    Process.put(:plugin, plugin)
+  end
+
+  # What a person would see of project `p`, looked at without keeping what
+  # looking loads, its fold, and its file's bytes.
+  # Also what its two topics last said, as a page would have them.
+  defp seen(plugin) do
+    Process.put(:plugin, plugin)
+    published()
+
+    {:reply, {:ok, %{"projects" => [entry]}}, _} =
+      TokenEconomizer.handle_call({:micro_skills, %{"projectId" => "p"}}, nil, plugin)
+
+    # What looking published is forgotten with the state it left.
+    ignore_published()
+
+    %{
+      entry: entry,
+      fold: plugin.folds["p"],
+      file: File.read!(path()),
+      entry_held: Process.get(:entry_held, :none),
+      listed: Process.get(:listed, :none),
+      repeated: Process.get(:repeated, false),
+      pulsed: Process.get(:pulsed)
+    }
+  end
+
+  defp ignore_published do
+    receive do
+      {:"$gen_cast", {:publish, "token-economizer", _topic, _value}} -> ignore_published()
+    after
+      0 -> :ok
+    end
+  end
+
+  # Takes what the plugin published since, in order.
+  defp published do
+    receive do
+      {:"$gen_cast", {:publish, "token-economizer", "microSkills:p", entry}} ->
+        Process.put(:entry_held, entry["held"] != nil)
+        published()
+
+      {:"$gen_cast", {:publish, "token-economizer", "microSkillsProjects", named}} ->
+        %{"projectId" => "p", "held" => held} = named
+        if Process.get(:pulsed) == held, do: Process.put(:repeated, true)
+        Process.put(:pulsed, held)
+        Process.put(:listed, held)
+        published()
+
+      {:"$gen_cast", {:publish, "token-economizer", _topic, _value}} ->
+        published()
+    after
+      0 -> :ok
+    end
+  end
+
+  # Ends the process's tasks, as its end would, and forgets what they sent.
+  defp stop(plugin) do
+    ref = Process.monitor(plugin.sup)
+    Process.unlink(plugin.sup)
+    Process.exit(plugin.sup, :shutdown)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    flush()
+  end
+
+  defp flush do
+    receive do
+      {kind, _, _, _, _} when kind in [:history, :verdict, :delivered, :DOWN] -> flush()
+      {:proposed, _, _} -> flush()
     after
       0 -> :ok
     end
