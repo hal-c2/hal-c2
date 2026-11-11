@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 #include "SidebarModel.h"
 
@@ -113,7 +114,8 @@ private:
   void openProjects(double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();
-  bool save() const;
+  // Written once edits pause (CoalescingWriter); `now` writes before returning and says whether it did.
+  bool save(bool now = false) const;
   void setLandingFailed(bool failed);
   // Every window's controller, this one's included.
   QList<DraftController*> everyWindow() const;
@@ -124,7 +126,8 @@ private:
   // What every window's controller keeps.
   struct Kept {
     QList<Draft> drafts;
-    QString path;
+    // shell-drafts.json.
+    CoalescingWriter file;
   };
 
   ShellBridge* m_bridge;

@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonValue>
-#include <QSaveFile>
 #include <QUrl>
 #include <QQmlPropertyMap>
 #include <QRegularExpression>
@@ -462,11 +461,12 @@ bool TerminalController::isOpen() const {
 }
 
 void TerminalController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_storeFile.setPath(path);
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
-  m_saved = file.readAll();
-  const QJsonObject stored = QJsonDocument::fromJson(m_saved).object();
+  const QByteArray saved = file.readAll();
+  m_storeFile.setWritten(saved);
+  const QJsonObject stored = QJsonDocument::fromJson(saved).object();
   m_height = std::max(minimumHeight, stored.value(QLatin1String("height")).toInt(m_height));
   for (const QJsonValue& value : stored.value(QLatin1String("threads")).toArray()) {
     const QJsonObject thread = value.toObject();
@@ -483,7 +483,7 @@ void TerminalController::setStorePath(const QString& path) {
 }
 
 void TerminalController::save() {
-  if (m_storePath.isEmpty()) return;
+  if (m_storeFile.path().isEmpty()) return;
   if (!m_threadKey.isEmpty() && m_ui.contains(m_threadKey)) {
     m_recent.removeOne(m_threadKey);
     m_recent.append(m_threadKey);
@@ -498,12 +498,7 @@ void TerminalController::save() {
   }
   const QByteArray json =
       QJsonDocument(QJsonObject{{QStringLiteral("height"), m_height}, {QStringLiteral("threads"), threads}}).toJson(QJsonDocument::Compact);
-  if (json == m_saved) return;
-  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
-  QSaveFile file(m_storePath);
-  if (!file.open(QIODevice::WriteOnly)) return;
-  file.write(json);
-  if (file.commit()) m_saved = json;
+  m_storeFile.write(json);
 }
 
 TerminalController::Facts TerminalController::facts() const {

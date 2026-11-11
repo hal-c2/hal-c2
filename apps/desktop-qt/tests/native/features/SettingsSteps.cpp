@@ -384,10 +384,12 @@ const Steps steps([] {
     settings(world)->writeDevice(c[0], c[1]);
   });
   step(QStringLiteral("this device's preferences file holds %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    QFile file(preferencesPath(world));
-    if (!file.open(QIODevice::ReadOnly)) fail(QStringLiteral("there is no %1").arg(file.fileName()));
-    const QJsonObject saved = QJsonDocument::fromJson(file.readAll()).object();
-    expect(saved.value(c[0]) == c[1], QStringLiteral("the file holds %1").arg(show(saved.toVariantMap())));
+    // Written once saves pause, off the GUI thread.
+    const auto saved = [&world] {
+      QFile file(preferencesPath(world));
+      return file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject();
+    };
+    world.waitFor([&] { return saved().value(c[0]) == c[1]; }, [&] { return QStringLiteral("the file holds %1").arg(show(saved().toVariantMap())); });
   });
   step(QStringLiteral("the desktop reports this device's preferences could not be saved"), [](World& world, const Captures&, const Table&) {
     expect(settings(world)->deviceError().startsWith(QLatin1String("Cannot save")),

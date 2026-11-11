@@ -10,7 +10,6 @@
 #include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -741,7 +740,7 @@ bool ComposerController::stash(const QString& target) {
   std::optional<StashEntry> oldest;
   if (m_kept.stash.size() > kMaxStashEntries) oldest = m_kept.stash.takeLast();
   // A stash that cannot be written keeps nothing: the prompt stays in the composer.
-  if (!save()) {
+  if (!save(true)) {
     m_kept.stash.removeFirst();
     if (oldest) m_kept.stash.append(*oldest);
     NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("error"), QStringLiteral("Could not stash this prompt"),
@@ -4793,6 +4792,8 @@ std::optional<ComposerController::Attachment> ComposerController::attachmentOf(c
 // terminalContexts}]} (a quoted reply among them carries its `citation`), and the drafts' images beside them (imagesPath).
 void ComposerController::setStorePath(const QString& path) {
   m_kept.path = path;
+  m_kept.file.setPath(path);
+  m_kept.imagesFile.setPath(imagesPath());
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   const QJsonObject stored = QJsonDocument::fromJson(file.readAll()).object();
@@ -4885,7 +4886,7 @@ void ComposerController::spread() const {
   }
 }
 
-bool ComposerController::save() const {
+bool ComposerController::save(bool now) const {
   spread();
   if (m_kept.path.isEmpty()) return true;
   QJsonObject targets;
@@ -4936,11 +4937,9 @@ bool ComposerController::save() const {
     for (const Attachment& attachment : entry.attachments) list.append(attachmentJson(attachment));
     if (!list.isEmpty()) unsentImages.insert(entry.messageId, list);
   }
-  // Whole or not at all: a write cut short would lose every thread's draft.
-  QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
-  QSaveFile file(m_kept.path);
-  bool written = false;
-  if (file.open(QIODevice::WriteOnly)) {
+  // Whole or not at all (CoalescingWriter): a write cut short would lose every thread's draft.
+  bool written = true;
+  {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
     if (!unsent.isEmpty()) stored.insert(QStringLiteral("unsent"), unsent);
@@ -4955,8 +4954,9 @@ bool ComposerController::save() const {
       for (auto it = m_kept.modelOptions.cbegin(); it != m_kept.modelOptions.cend(); ++it) modelOptions.insert(it.key(), it.value());
       stored.insert(QStringLiteral("modelOptions"), modelOptions);
     }
-    file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
-    written = file.commit();
+    const QByteArray bytes = QJsonDocument(stored).toJson(QJsonDocument::Compact);
+    if (now) written = m_kept.file.writeNow(bytes);
+    else m_kept.file.write(bytes);
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;
@@ -4967,16 +4967,14 @@ bool ComposerController::save() const {
   }
   const QString joined = imagesSignature(images) + u'\n' + imagesSignature(unsentImages);
   if (joined == m_kept.images) return written;
+  // A write that fails is tried again by the writer, so what it was given is what the file will hold.
+  m_kept.images = joined;
   if (images.isEmpty() && unsentImages.isEmpty()) {
-    if (QFile::remove(imagesPath()) || !QFile::exists(imagesPath())) m_kept.images = joined;
+    m_kept.imagesFile.remove();
     return written;
   }
-  QSaveFile imagesFile(imagesPath());
-  if (!imagesFile.open(QIODevice::WriteOnly)) return written;
   QJsonObject kept{{QStringLiteral("targets"), images}};
   if (!unsentImages.isEmpty()) kept.insert(QStringLiteral("unsent"), unsentImages);
-  imagesFile.write(QJsonDocument(kept).toJson(QJsonDocument::Compact));
-  // Remembered once written, so a failed write is tried again on the next save.
-  if (imagesFile.commit()) m_kept.images = joined;
+  m_kept.imagesFile.write(QJsonDocument(kept).toJson(QJsonDocument::Compact));
   return written;
 }
