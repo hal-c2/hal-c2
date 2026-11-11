@@ -17,6 +17,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "Stream.h"
 #include "Turn.h"
 #include "World.h"
 
@@ -98,10 +99,10 @@ void publish(World& world) {
                                           {QStringLiteral("slashCommands"), r.commands},
                                           {QStringLiteral("skills"), r.skills}}});
   // The open thread runs on it, as every thread the MC holds names a model.
-  if (world.mc.threads.contains(kThread) && !world.mc.threads.value(kThread).contains(QLatin1String("modelSelection"))) {
-    QJsonObject& row = world.mc.threads[kThread];
+  if (world.mc.threads.contains(stream::kThread) && !world.mc.threads.value(stream::kThread).contains(QLatin1String("modelSelection"))) {
+    QJsonObject& row = world.mc.threads[stream::kThread];
     row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
-    world.mc.sendRow(kThread, row);
+    world.mc.sendRow(stream::kThread, row);
   }
   world.sync();
 }
