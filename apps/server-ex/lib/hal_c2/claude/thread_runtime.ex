@@ -719,7 +719,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, state}
 
       {{:permission, control_id, tool, suggestions}, requests} ->
-        # Claude forbade remembering this one (`suppressAlwaysAllowRule`): a session
+        # Claude forbade remembering this one (`suppress_always_allow_rule`): a session
         # grant the card did not offer declines.
         decision =
           case response["decision"] || "decline" do
@@ -876,7 +876,9 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     # When Claude forbids an always-allow rule, the approval offers only decline and
     # approve (Upstream #22546).
-    once? = context["suppressAlwaysAllowRule"] == true
+    # The CLI writes it snake_case; the SDKs' camelCase spelling stays read.
+    once? =
+      context["suppress_always_allow_rule"] == true or context["suppressAlwaysAllowRule"] == true
 
     options =
       if once?,
@@ -900,10 +902,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     state = %{state | requests: Map.put(state.requests, request_id, request)}
 
-    # Claude asks its ask rules, safety checks and hooks in every mode; with no reason
-    # or "mode" it asked only because its mode does. Claude reuses an answered
-    # request's id, so each ask sets its own id's place.
-    mode_ask? = context["decision_reason_type"] in [nil, "mode"] and not once?
+    # Claude reuses an answered request's id, so each ask sets its own id's place.
+    mode_ask? = not once? and mode_ask?(context)
 
     mode_asks =
       if mode_ask?,
@@ -1078,6 +1078,20 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   catch
     :exit, reason -> {:error, reason}
+  end
+
+  # Whether Claude would not have asked had it been bypassing permissions. Claude Code
+  # (2.1.322's permission flow) still asks then for its ask rules, its hooks, the safety
+  # checks it holds bypass-immune, a sandbox override under the read block, a tool that
+  # needs the user, and an organisation's ask ceiling; it allows every other ask, such
+  # as a compound command's (`subcommandResults`) or a path outside the working
+  # directories (`workingDir`).
+  @asks_in_every_mode ["rule", "hook", "safetyCheck", "sandboxOverride"]
+  @codes_in_every_mode ["org_ask_ceiling", "outside_reads_blocked"]
+  defp mode_ask?(context) do
+    context["decision_reason_type"] not in @asks_in_every_mode and
+      context["decision_reason_code"] not in @codes_in_every_mode and
+      context["matched_ask_rule"] == nil and context["requires_user_interaction"] != true
   end
 
   # The tool approvals Claude asked only for its mode (`mode_asks`), which a session

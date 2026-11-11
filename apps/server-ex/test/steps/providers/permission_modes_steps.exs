@@ -465,11 +465,35 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     running_claude(context, "full-access")
   end
 
+  # The can_use_tool fields Claude Code (2.1.322) sends for each reason it asks.
   @ask_causes %{
-    "an ask rule in the user's Claude permissions" =>
-      {"rule", "Permission rule 'Bash(git push:*)' from user settings requires approval"},
-    "a hook in the user's Claude settings" =>
-      {"hook", "Hook PreToolUse:Bash asked for approval: pushes need a second look"}
+    "an ask rule in the user's Claude permissions" => %{
+      "decision_reason" =>
+        "Permission rule 'Bash(git push:*)' from user settings requires approval",
+      "decision_reason_type" => "rule"
+    },
+    "a hook in the user's Claude settings" => %{
+      "decision_reason" => "Hook PreToolUse:Bash asked for approval: pushes need a second look",
+      "decision_reason_type" => "hook"
+    },
+    "a safety check Claude never bypasses" => %{
+      "decision_reason" => "The permission check for this command did not finish",
+      "decision_reason_type" => "safetyCheck",
+      "suppress_always_allow_rule" => true
+    },
+    "the organisation's ask ceiling for the tool" => %{
+      "decision_reason_type" => "other",
+      "decision_reason_code" => "org_ask_ceiling"
+    },
+    "a compound command" => %{"decision_reason_type" => "subcommandResults"},
+    "a path outside the working directories" => %{
+      "decision_reason_type" => "workingDir",
+      "blocked_path" => "/srv/elsewhere"
+    },
+    "a shell operator Claude asks about" => %{
+      "decision_reason" => "This command uses shell operators that require approval for safety",
+      "decision_reason_type" => "other"
+    }
   }
 
   defp running_claude(context, mode) do
@@ -500,17 +524,14 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     %{"id" => "runtime-request:claudeAgent:#{control_id}"}
   end
 
-  step ~r/^a supervised Claude turn (?<cause>.+) asks to run a command$/,
+  step ~r/^a supervised Claude turn asks to run a command because of (?<cause>.+)$/,
        %{args: [cause]} = context do
-    {type, reason} = Map.fetch!(@ask_causes, cause)
+    fields = Map.fetch!(@ask_causes, cause)
     context = running_claude(context, "approval-required")
     pid = claude_runtime(context)
 
     request =
-      claude_ask(pid, :sys.get_state(pid).session, "perm-why", %{
-        "decision_reason" => reason,
-        "decision_reason_type" => type
-      })
+      claude_ask(pid, :sys.get_state(pid).session, "perm-why", fields)
 
     World.await_value(context, @thread, fn state ->
       match?(%{"status" => "pending"}, StreamState.get(state, "runtime-request")[request["id"]])

@@ -5,7 +5,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   make one case at a time:
 
   - The pending-approval lifecycle, for a command's approval, for one Claude's
-    safety check raised and forbade remembering (`suppressAlwaysAllowRule`), and
+    safety check raised and forbade remembering (`suppress_always_allow_rule`), and
     for an MCP tool's elicitation. Claude asks ("approve", "approve once", "mcp
     confirm"), and then, in any
     order: the user switches the thread's access (to Full access, which approves an

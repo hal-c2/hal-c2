@@ -189,10 +189,10 @@ if sys.argv[1:] == ["auth", "status"]:
 # The start also traces where it was pointed: its config directory, its account and any router.
 trace({"argv": sys.argv[1:], "pid": os.getpid(), "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL", "CLAUDE_CODE_ENABLE_TODO_TOOLS")}})
 # Claude's safety check asks to run a command and forbids an always-allow rule
-# (`suppressAlwaysAllowRule`), though its suggestions would allow every Bash command.
+# (`suppress_always_allow_rule`), though its suggestions would allow every Bash command.
 def ask_once():
     send({"type": "control_request", "request_id": "perm-once", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "rm -rf build"},
-          "decision_reason": "rm -rf on a path Claude could not verify always asks", "decision_reason_type": "safetyCheck", "suppressAlwaysAllowRule": True,
+          "decision_reason": "rm -rf on a path Claude could not verify always asks", "decision_reason_type": "safetyCheck", "suppress_always_allow_rule": True,
           "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash"}], "behavior": "allow", "destination": "session"}]}})
 
 

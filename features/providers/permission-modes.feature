@@ -244,10 +244,11 @@ Feature: Permission modes
     Then Claude's running session switches to the "bypassPermissions" permission mode
     And Claude's waiting command is approved without the user
 
-  # Claude asks its ask rules, its own safety checks and its hooks in every mode, so Full
-  # access leaves those approvals to the user.
+  # Claude still asks some approvals while it bypasses permissions: its ask rules, its
+  # hooks, the safety checks it never bypasses, and an organisation's ask ceiling. Full
+  # access leaves those to the user.
   Scenario Outline: Switching a running Claude turn to full access leaves an approval Claude asks in every mode waiting
-    Given a supervised Claude turn <cause> asks to run a command
+    Given a supervised Claude turn asks to run a command because of <cause>
     When the user switches the thread to full access
     Then Claude's running session switches to the "bypassPermissions" permission mode
     And Claude's approval still waits on the user
@@ -256,6 +257,20 @@ Feature: Permission modes
       | cause                                        |
       | an ask rule in the user's Claude permissions |
       | a hook in the user's Claude settings         |
+      | a safety check Claude never bypasses         |
+      | the organisation's ask ceiling for the tool  |
+
+  # Every other approval was Claude's mode asking, which Full access answers.
+  Scenario Outline: Switching a running Claude turn to full access approves what only its mode asked
+    Given a supervised Claude turn asks to run a command because of <cause>
+    When the user switches the thread to full access
+    Then Claude's asked command is approved without the user
+
+    Examples:
+      | cause                                  |
+      | a compound command                     |
+      | a path outside the working directories |
+      | a shell operator Claude asks about     |
 
   # Claude can ask just before it reads the switch; that ask was for its old mode.
   Scenario: A command Claude asks to run as it takes a switch to full access is approved
