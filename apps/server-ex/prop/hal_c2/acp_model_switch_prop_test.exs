@@ -115,7 +115,11 @@ defmodule HalC2.AcpModelSwitchPropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :turn, [_, model, level]}, result) do
-    handed = if state.lost, do: " with #{state.turns} earlier turns", else: ""
+    # A lost session whose only turn was refused has no earlier turns to be handed.
+    handed =
+      if state.lost and state.turns > 0,
+        do: " with #{state.turns} earlier turns",
+        else: ""
 
     cond do
       refused?(state, model) ->
