@@ -206,6 +206,25 @@ const Steps steps([] {
     const QString text = QStringLiteral("line one\nline two");
     write(world, text, int(text.size()));
   });
+  // The prompt's wrap width against the composer's: typed a key at a time,
+  // so its wrapping starts while the composer has one width, then the
+  // window is resized under it.
+  step(QStringLiteral("the user typed a prompt into the composer"), [](World& world, const Captures&, const Table&) {
+    typeInComposer(world, QStringLiteral("what are you talking about terminal color theme"));
+  });
+  step(QStringLiteral("the composer gets (narrower|wider)"), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = composerBrick(world);
+    const qreal factor = c[0] == QLatin1String("narrower") ? 0.5 : 2.0;
+    const QSize size(int(brick.window().width() * factor), brick.window().height());
+    brick.window().resize(size);
+    brick.root()->setSize(size);
+  });
+  step(QStringLiteral("the prompt wraps at the composer's width"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = composerEditor(world);
+    QQuickItem* scroll = composerBrick(world).item(QStringLiteral("promptScroll"));
+    world.waitFor([&] { return qAbs(input->width() - scroll->property("availableWidth").toReal()) < 1; },
+                  [&] { return QStringLiteral("the prompt is %1 wide in a composer %2 wide").arg(input->width()).arg(scroll->property("availableWidth").toReal()); });
+  });
   step(QStringLiteral("the message is sent"), [](World& world, const Captures&, const Table&) {
     const Pressed& pressed = world.mc.part<Pressed>();
     const QList<QJsonObject> sent = messages(world);

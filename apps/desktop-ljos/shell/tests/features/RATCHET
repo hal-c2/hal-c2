@@ -173,6 +173,7 @@ composer/editors-and-keys.feature: The Menu key opens the draft's right-click me
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Copy, fix the old totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Cut, fix the  totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Paste, fix the cart totals, cart]
+composer/editors-and-keys.feature: The prompt wraps at the composer's width after the composer is resized
 composer/editors-and-keys.feature: The same prompt sent twice in a row is recalled once
 composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
 composer/editors-and-keys.feature: Turning rich text off keeps the draft as plain Markdown

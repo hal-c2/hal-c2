@@ -1309,7 +1309,10 @@ Rectangle {
                             // The scroll view sizes the editor to its unwrapped text
                             // and not again when wrapping starts: a long prompt
                             // arriving whole (a recall, a restore) would stay one line.
-                            onWrapModeChanged: if (wrapMode !== TextEdit.NoWrap) width = promptScroll.contentItem.width
+                            // A binding, not a value: Qt goes on resizing the editor
+                            // with the scroll view after an assignment, Ljós does not
+                            // (TODO(ljos#383): drop the binding once it does).
+                            onWrapModeChanged: if (wrapMode !== TextEdit.NoWrap) width = Qt.binding(() => promptScroll.contentItem.width)
                             selectByMouse: true
                             background: null
                             // The prompt has its own font and size (Settings → Appearance).
