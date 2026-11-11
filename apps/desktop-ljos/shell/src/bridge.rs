@@ -269,13 +269,85 @@ fn file_urls(engine: &Engine, urls: &Value) -> Vec<String> {
     }
 }
 
-/// The path of a `file:` URL on this machine (no host).
+/// The path of a `file:` URL on this machine (no host). A file reference
+/// URL (`file:///.file/id=…`), which Finder puts on a drag's pasteboard,
+/// is resolved to the file's path, as Qt's `filePathURL` does.
+/// TODO(ljos#365): Ljós should hand drops over resolved.
 fn local_path(url: &str) -> Option<String> {
     let path = url.strip_prefix("file://")?;
     if !path.starts_with('/') {
         return None;
     }
+    if is_file_reference(path) {
+        return file_reference::path(url);
+    }
     Some(percent_decode(path))
+}
+
+/// Whether a `file:` URL's path is a file reference's, which names the file
+/// by its volume and number, not by its name.
+fn is_file_reference(path: &str) -> bool {
+    path.starts_with("/.file/id=")
+}
+
+/// File reference URLs, through Foundation's NSURL.
+#[cfg(target_os = "macos")]
+mod file_reference {
+    use std::ffi::{CStr, CString, c_char};
+
+    use objc2::msg_send;
+    use objc2::rc::{Retained, autoreleasepool};
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    fn string(text: &str) -> Option<Retained<AnyObject>> {
+        let text = CString::new(text).ok()?;
+        let class = AnyClass::get(c"NSString")?;
+        unsafe { msg_send![class, stringWithUTF8String: text.as_ptr()] }
+    }
+
+    fn text(string: &AnyObject) -> Option<String> {
+        let utf8: *const c_char = unsafe { msg_send![string, UTF8String] };
+        (!utf8.is_null()).then(|| {
+            unsafe { CStr::from_ptr(utf8) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    /// The path of the file `url` refers to; `None` when it is gone.
+    pub fn path(url: &str) -> Option<String> {
+        autoreleasepool(|_| {
+            let class = AnyClass::get(c"NSURL")?;
+            let url: Option<Retained<AnyObject>> =
+                unsafe { msg_send![class, URLWithString: &*string(url)?] };
+            let resolved: Option<Retained<AnyObject>> = unsafe { msg_send![&*url?, filePathURL] };
+            let path: Option<Retained<AnyObject>> = unsafe { msg_send![&*resolved?, path] };
+            text(&*path?).filter(|p| !p.is_empty())
+        })
+    }
+
+    /// The file reference URL of the file at `path`, as Finder drags it.
+    #[cfg(test)]
+    pub fn of(path: &str) -> Option<String> {
+        autoreleasepool(|_| {
+            let class = AnyClass::get(c"NSURL")?;
+            let url: Option<Retained<AnyObject>> =
+                unsafe { msg_send![class, fileURLWithPath: &*string(path)?] };
+            let reference: Option<Retained<AnyObject>> =
+                unsafe { msg_send![&*url?, fileReferenceURL] };
+            let text_of: Option<Retained<AnyObject>> =
+                unsafe { msg_send![&*reference?, absoluteString] };
+            text(&*text_of?)
+        })
+    }
+}
+
+/// Elsewhere no file is named by a file reference.
+#[cfg(not(target_os = "macos"))]
+mod file_reference {
+    pub fn path(_url: &str) -> Option<String> {
+        None
+    }
 }
 
 /// `%xx` escapes decoded, as QUrl::fromPercentEncoding does.
@@ -937,5 +1009,44 @@ struct Reset<'a>(&'a Cell<bool>);
 impl Drop for Reset<'_> {
     fn drop(&mut self) {
         self.0.set(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_url_is_its_decoded_path() {
+        assert_eq!(
+            local_path("file:///home/u/caf%C3%A9.png").as_deref(),
+            Some("/home/u/café.png")
+        );
+        assert_eq!(local_path("file://host/a.png"), None);
+        assert_eq!(local_path("https://example.com/a.png"), None);
+    }
+
+    // Finder's drags carry these; the path of one names no file, and its
+    // name (so what kind of file it is) is not in it.
+    #[test]
+    fn a_file_reference_is_never_taken_for_a_path() {
+        let url = "file:///.file/id=6571367.2773272/";
+        assert!(is_file_reference(url.strip_prefix("file://").unwrap()));
+        if !cfg!(target_os = "macos") {
+            assert_eq!(local_path(url), None);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_reference_resolves_to_the_files_path() {
+        let dir = std::env::temp_dir().join(format!("hal-c2-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = std::fs::canonicalize(&dir).unwrap().join("shot.png");
+        std::fs::write(&file, b"png").unwrap();
+        let reference = file_reference::of(&file.to_string_lossy()).unwrap();
+        assert!(reference.starts_with("file:///.file/id="), "{reference}");
+        assert_eq!(local_path(&reference).as_deref(), file.to_str());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
