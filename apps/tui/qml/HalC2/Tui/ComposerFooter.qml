@@ -46,8 +46,8 @@ Item {
                 text: footer.composer.footer.effort
                 onMouseDown: Shell.dispatch("composer.effortPicker.toggle")
             }
-            // The permissions are named only when they differ from the default
-            // (always on a new thread's first message).
+            // The permissions are always named while the prompt has a
+            // thread to run in, a new thread's first message included.
             Text { visible: !footer.compact && footer.composer.namesAccess; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
             Text {
                 objectName: "composerAccess"
