@@ -13,6 +13,14 @@ attempt() {
     timeout -k 10 120 "${apt[@]}" install -y "$@"
 }
 
+# A package the runner image already has needs no mirror at all.
+missing=()
+for package in "$@"; do
+  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q '^install ok installed$' || missing+=("$package")
+done
+[ ${#missing[@]} -eq 0 ] && echo "Already installed: $*" && exit 0
+set -- "${missing[@]}"
+
 attempt "$@" && exit 0
 echo "::warning::apt-get failed or timed out, retrying in 15s"
 sleep 15

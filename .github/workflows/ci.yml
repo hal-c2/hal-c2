@@ -217,7 +217,9 @@ jobs:
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
       - name: Install fuse3 and ripgrep
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3
+          "$GITHUB_WORKSPACE"/.github/scripts/install-ripgrep.sh
 
       - name: Build the machine-files helper
         run: |
@@ -392,7 +394,9 @@ jobs:
       - name: Install fuse3 and ripgrep
         if: contains(matrix.dirs, 'files')
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3
+          "$GITHUB_WORKSPACE"/.github/scripts/install-ripgrep.sh
 
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')
