@@ -36,7 +36,7 @@ const std::array<std::string, 3> kKeys{"appearance", "timestampFormat", "fontSiz
 // Empty removes the preference.
 const std::array<std::string, 3> kValues{"", "one", "two"};
 // A preference whose value is an object each save changes one entry of, as
-// providerModelPreferences is.
+// providerModelPreferences is. No desktop holds it until one saves an entry.
 const QString kObject = QStringLiteral("providerModelPreferences");
 const std::array<std::string, 2> kEntries{"codex", "claude"};
 
@@ -44,12 +44,10 @@ QJsonValue jsonOf(const std::string& value) {
   return value.empty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(QString::fromStdString(value));
 }
 
-QJsonObject initial() { return QJsonObject{{kObject, QJsonObject()}}; }
-
 struct Model {
   // preferences.json as last saved, and what each desktop holds.
-  QJsonObject file = initial();
-  std::array<QJsonObject, 2> view{initial(), initial()};
+  QJsonObject file;
+  std::array<QJsonObject, 2> view;
   // The file is broken by hand; and which desktop has found that out.
   bool broken = false;
   std::array<bool, 2> unreadable{false, false};
@@ -64,8 +62,6 @@ struct Desktop {
 struct Sut {
   QTemporaryDir home;
   std::array<std::unique_ptr<Desktop>, 2> desktops;
-
-  Sut() { write(QJsonDocument(initial()).toJson()); }
 
   QString path() const { return home.filePath(QStringLiteral("preferences.json")); }
 
@@ -163,8 +159,13 @@ struct SaveEntry : Command {
     const QString name = QString::fromStdString(entry);
     QJsonObject next = model.view[desktop];
     next.insert(kObject, entries(model));
-    return save(model, desktop, next,
-                [&](QJsonObject& file) { file.insert(kObject, with(file.value(kObject).toObject(), name, value)); });
+    // Only the entry this desktop changed: one it never held, removed, is
+    // left as the other saved it.
+    const bool changed = model.view[desktop].value(kObject).toObject().value(name) != jsonOf(value);
+    return save(model, desktop, next, [&](QJsonObject& file) {
+      const QJsonObject held = file.value(kObject).toObject();
+      file.insert(kObject, changed ? with(held, name, value) : held);
+    });
   }
   void apply(Model& model) const override { change(model); }
   void run(const Model& model, Sut& sut) const override {
