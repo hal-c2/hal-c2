@@ -294,6 +294,26 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
     assert prune["foldedRuns"] == %{}
   end
 
+  test "a turn whose end was never heard counts once, though the history is read back after it folds",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = observe(state, started(thread, "r2", p, %{}))
+    # r2 ends unheard (the thread moved to another MC, which ended it); the next
+    # conversation folds its segment.
+    ended(thread, "r2", 2, [])
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+    assert state.prunes[project]["prompts"] == 2
+
+    # The plugin starts again, and reads back what ran since the watermark.
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r4", p, %{"newConversation" => true}))
+    assert state.prunes[project]["prompts"] == 2
+  end
+
   test "a segment the feed dropped some of, in which a subagent worked, is no evidence any tool went unused",
        %{thread: thread, project: p} do
     project = {p, "claudeAgent"}
