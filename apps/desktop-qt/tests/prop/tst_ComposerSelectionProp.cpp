@@ -147,7 +147,12 @@ struct Sut {
     native->open(mc.origin(), QStringLiteral("mc-token"));
     RC_ASSERT(prop::until([this] { return online(); }));
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), kKey}});
-    RC_ASSERT(prop::until([this] { return shown().value(QStringLiteral("target")).toString() == kKey && shownModel() == nameOf(selection); }));
+    // The providers are in: the plan toggle only shows (and a plan pick only
+    // goes) once the thread's provider is known.
+    RC_ASSERT(prop::until([this] {
+      return shown().value(QStringLiteral("target")).toString() == kKey && shownModel() == nameOf(selection) &&
+             shown().value(QStringLiteral("showInteractionModeToggle")).toBool();
+    }));
   }
 
   ~Sut() {
