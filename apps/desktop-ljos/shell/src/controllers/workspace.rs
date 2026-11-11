@@ -162,6 +162,8 @@ pub struct Launch {
 }
 
 type Hook = Rc<dyn Fn(&Engine)>;
+/// What the cache answered, waiting to run on the window's engine.
+type Answers = Rc<RefCell<Vec<Box<dyn FnOnce(&Engine)>>>>;
 
 /// The workspace's state others read, on the engine.
 #[derive(Default)]
@@ -180,7 +182,7 @@ struct Shared {
     /// between runs, until it reports them again.
     kept_providers: RefCell<HashMap<String, Vec<Json>>>,
     /// The cache's answers, run by [`deliver`] on this window's engine.
-    answered: Rc<RefCell<Vec<Box<dyn FnOnce(&Engine)>>>>,
+    answered: Answers,
 }
 
 /// Runs what the cache answered the workspace (`threads::deliver`).

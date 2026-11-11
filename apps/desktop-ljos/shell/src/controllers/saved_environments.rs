@@ -311,7 +311,7 @@ impl SavedEnvironments {
             .as_ref()
             .map(|c| c.damaged().to_owned())
             .unwrap_or_default();
-        self.bridge.clone().publish(
+        self.bridge.publish(
             engine,
             "savedEnvironments",
             json!({
