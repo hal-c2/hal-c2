@@ -165,6 +165,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/context-references.feature:A bare currency sign*"),
     QStringLiteral("composer/context-references.feature:Closing the suggestions*"),
     QStringLiteral("composer/context-references.feature:A provider command is put into the draft*"),
+    QStringLiteral("composer/context-references.feature:A thread offers the skills and commands of the folder*"),
     QStringLiteral("composer/queue-and-steer.feature:A held queue*"),
     QStringLiteral("composer/queue-and-steer.feature:A resume that the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:A resume while reconnecting*"),

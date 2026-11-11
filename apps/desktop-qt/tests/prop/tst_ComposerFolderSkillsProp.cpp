@@ -2,12 +2,14 @@
 // The provider's entry has one skill of its own; each folder's are the MC's to
 // read, which it does only when a composer asks for that folder
 // (`server.refreshProviders` with a `cwd`) and then announces with the
-// providers. The composer asks once for each folder its thread works in, the
-// first time it works there; the menu offers the entry's skill, and the
-// folder's once the MC has read them, one per name, never another folder's.
-// Scope: one thread on one online environment, the caret at the end of the
-// text, within the five minutes after which a folder is asked again. Not
-// modelled: the environment dropping while a read is held.
+// providers. The composer asks for each folder its thread works in the first
+// time it works there, and again only when the MC has since lost what it read
+// (a restart); never while a read of that folder is out. The menu offers the
+// entry's skill, and the folder's once the MC holds them, one per name, never
+// another folder's. Scope: one thread on one online environment, the caret at
+// the end of the text, within the five minutes after which a folder is asked
+// again, reads that succeed. Not modelled: the environment dropping while a
+// read is held.
 
 #include "Prop.h"
 
@@ -43,15 +45,32 @@ struct Model {
   QString text;
   int folder = 0;
   bool holding = false;
-  // The folders the composer asked for, and those the MC has read.
-  QSet<QString> asked{kFolders.first()};
-  QSet<QString> read{kFolders.first()};
+  // How often the composer asked for each folder; the folders whose read the
+  // MC holds back, those it answered, and those it still has snapshots of.
+  QHash<QString, int> asks{{kFolders.first(), 1}};
+  QSet<QString> held;
+  QSet<QString> answered{kFolders.first()};
+  QSet<QString> has{kFolders.first()};
 
   QString cwd() const { return kFolders.at(folder); }
   bool menu() const { return text == QLatin1String("$"); }
+  // The composer looks at its folder: it asks when it never has, or when
+  // what the MC answered is gone, unless a read is still out.
+  void look() {
+    const QString f = cwd();
+    if (held.contains(f)) return;
+    if (asks.value(f) > 0 && !(answered.contains(f) && !has.contains(f))) return;
+    asks[f] += 1;
+    if (holding) {
+      held.insert(f);
+    } else {
+      answered.insert(f);
+      has.insert(f);
+    }
+  }
   QStringList skills() const {
     QStringList names{kEverywhere};
-    if (read.contains(cwd())) names.append(folderSkill(cwd()));
+    if (has.contains(cwd())) names.append(folderSkill(cwd()));
     names.sort();
     return names;
   }
@@ -172,6 +191,14 @@ struct Sut {
                                                                     {QStringLiteral("cursor"), text.size()}});
   }
 
+  // The MC restarts without its snapshots and announces its providers again.
+  void restart() {
+    snapshots = {};
+    for (const int id : mc.subscribers(QStringLiteral("config"))) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("id"), id}, {QStringLiteral("providers"), providers()}});
+    }
+  }
+
   void workIn(const QString& cwd) {
     QJsonObject& row = mc.threads[QStringLiteral("t1")];
     row.insert(QStringLiteral("worktreePath"), cwd);
@@ -198,12 +225,12 @@ bool menuIs(const Model& m, const Sut& sut) {
 }
 
 void verify(const Model& m, Sut& sut) {
-  for (const QString& folder : m.asked) RC_ASSERT(prop::until([&] { return sut.asks(folder) >= 1; }));
+  for (const QString& folder : kFolders) RC_ASSERT(prop::until([&] { return sut.asks(folder) >= m.asks.value(folder); }));
   RC_ASSERT(prop::until([&] { return menuIs(m, sut); }));
   // Once the menu matches, each folder was asked exactly as often as the model says.
   for (const QString& folder : kFolders) {
     RC_LOG() << folder.toStdString() << " asked " << sut.asks(folder) << " times\n";
-    RC_ASSERT(sut.asks(folder) == (m.asked.contains(folder) ? 1 : 0));
+    RC_ASSERT(sut.asks(folder) == m.asks.value(folder));
   }
 }
 
@@ -211,7 +238,10 @@ using Command = rc::state::Command<Model, Sut>;
 
 struct Type : Command {
   QString text = *rc::gen::elementOf(std::vector<QString>(kTexts.cbegin(), kTexts.cend()));
-  void apply(Model& m) const override { m.text = text; }
+  void apply(Model& m) const override {
+    m.text = text;
+    m.look();
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.type(text);
     verify(nextState(m0), sut);
@@ -225,8 +255,7 @@ struct WorkIn : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(folder != m.folder); }
   void apply(Model& m) const override {
     m.folder = folder;
-    m.asked.insert(m.cwd());
-    if (!m.holding) m.read.insert(m.cwd());
+    m.look();
   }
   void run(const Model& m0, Sut& sut) const override {
     const QString cwd = kFolders.at(folder);
@@ -254,7 +283,10 @@ struct Hold : Command {
 struct ReadHeld : Command {
   void apply(Model& m) const override {
     m.holding = false;
-    m.read = m.asked;
+    m.answered += m.held;
+    m.has += m.held;
+    m.held.clear();
+    m.look();
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.holding = false;
@@ -265,6 +297,19 @@ struct ReadHeld : Command {
   void show(std::ostream& os) const override { os << "ReadHeld"; }
 };
 
+// The MC restarts and has none of the folders it read; reads it holds stay out.
+struct Restart : Command {
+  void apply(Model& m) const override {
+    m.has.clear();
+    m.look();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.restart();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Restart"; }
+};
+
 }  // namespace
 
 class ComposerFolderSkillsProp : public QObject {
@@ -272,10 +317,10 @@ class ComposerFolderSkillsProp : public QObject {
 
 private slots:
   void theSkillMenuOffersTheFolderItsThreadWorksIn() {
-    QVERIFY(rc::check("each folder is asked for once, and $ offers the entry's skills and the current folder's once read, one per name", [] {
+    QVERIFY(rc::check("each folder is asked for once, and again once the MC lost it, and $ offers the entry's skills and the current folder's while the MC has them, one per name", [] {
       Sut sut;
       Model model;
-      const auto commands = *rc::gen::scale(0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, WorkIn, Hold, ReadHeld>()));
+      const auto commands = *rc::gen::scale(0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, WorkIn, Hold, ReadHeld, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

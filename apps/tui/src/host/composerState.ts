@@ -505,6 +505,11 @@ export interface Composer {
 const OFFLINE_REASON = "not connected to the environment";
 /** How long a folder's skills and commands, once read, are offered before being read again. */
 const FOLDER_REREAD_MS = 5 * 60_000;
+/** How long after a failed read of a folder it is asked for again. */
+const FOLDER_RETRY_MS = 30_000;
+
+const hasFolder = (provider: ServerProvider, cwd: string) =>
+  provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd) ?? false;
 
 /**
  * The provider as a thread working in `cwd` sees it: that folder's snapshot's
@@ -566,8 +571,15 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
   let providers: ReadonlyArray<ServerProvider> = [];
-  /** When each instance and folder's own skills and commands were last asked for. */
-  const foldersAsked = new Map<string, number>();
+  /**
+   * Each instance and folder whose own skills and commands were asked for:
+   * whether the read is still out, whether the MC kept what it read, and
+   * until when the answer stands.
+   */
+  const foldersAsked = new Map<
+    string,
+    { readonly reading: boolean; readonly kept: boolean; readonly stands: number }
+  >();
   /** The accounts the MC's usage hubs report, as its config last said. */
   let usageSources: UsageLimitSourceSnapshots = [];
   /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
@@ -2654,21 +2666,30 @@ export function createComposer(options: ComposerOptions): Composer {
       openKindPicker(page);
       return;
     }
-    // The folder's own skills and commands are read, and again after five
-    // minutes as the desktop does. A folder not read yet opens the picker once
-    // the read answers, if the character is still the last thing typed; one
-    // read before opens it now on what the MC last read.
+    // The folder's own skills and commands are read, one read at a time: the
+    // first time, again after five minutes as the desktop does, half a minute
+    // after a read that failed, and at once when the MC kept them but its
+    // providers no longer have them (it restarted). With nothing to offer
+    // until the first read answers, the picker opens then, if the character is
+    // still the last thing typed; otherwise it opens now on what there is.
     const cwd = composerCwd();
-    const folder = entry ? `${entry.instanceId}\n${cwd}` : null;
+    const folder = entry && cwd ? `${entry.instanceId}\n${cwd}` : null;
+    const asked = folder ? foldersAsked.get(folder) : undefined;
     if (
       entry &&
       folder &&
-      Date.now() - (foldersAsked.get(folder) ?? -Infinity) >= FOLDER_REREAD_MS
+      !asked?.reading &&
+      (asked === undefined || Date.now() >= asked.stands || (asked.kept && !hasFolder(entry, cwd)))
     ) {
-      foldersAsked.set(folder, Date.now());
-      const waits = !entry.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd);
+      foldersAsked.set(folder, { reading: true, kept: false, stands: Infinity });
+      const own =
+        trigger === "/"
+          ? (withUsageLimitsCommands([entry], usageSources)[0]?.slashCommands ?? []).length > 0
+          : (entry.skills ?? []).some((skill) => skill.enabled);
+      const waits = !own && !hasFolder(entry, cwd);
       const key = target();
-      const reopen = () => {
+      const answered = (kept: boolean, after: number) => {
+        foldersAsked.set(folder, { reading: false, kept, stands: Date.now() + after });
         if (waits && target() === key && picker === null && draftFor(key).text.endsWith(trigger)) {
           openTriggerPicker(trigger);
         }
@@ -2682,10 +2703,16 @@ export function createComposer(options: ComposerOptions): Composer {
               cwd,
             },
           )
-          .then((result) => {
-            if (result?.providers) providers = result.providers;
-            reopen();
-          }, reopen),
+          .then(
+            (result) => {
+              if (result?.providers) providers = result.providers;
+              const read = result?.providers?.find(
+                (candidate) => candidate.instanceId === entry.instanceId,
+              );
+              answered(read ? hasFolder(read, cwd) : false, FOLDER_REREAD_MS);
+            },
+            () => answered(false, FOLDER_RETRY_MS),
+          ),
       );
       if (waits) return;
     }

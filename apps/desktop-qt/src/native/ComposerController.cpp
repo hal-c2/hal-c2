@@ -4265,6 +4265,7 @@ void ComposerController::refreshPathSearch() {
 void ComposerController::refreshCatalogue() {
   const QJsonObject config = NativeShell::of(this)->controller<WorkspaceController>()->environmentConfig();
   m_catalogue = composer::instances(config.value(QLatin1String("providers")).toArray());
+  ++m_catalogues;
 }
 
 const composer::Instance* ComposerController::instanceOf(const QJsonObject& selection) const {
@@ -4280,9 +4281,10 @@ std::optional<composer::Instance> ComposerController::commandsOf(const QString& 
 // Most providers' skills and many commands are a folder's own (Claude's and
 // Codex's entries carry none): the MC reads them when a composer asks for its
 // folder and announces them with the providers, as `workspaceSnapshots`.
-// Asked once the composer has an instance and a folder, and again after five
-// minutes so a skill added to the project since shows up; a failed read keeps
-// what the MC last read.
+// Asked once the composer has an instance and a folder, one read at a time;
+// again after five minutes so a skill added to the project since shows up;
+// half a minute after a read that failed; and at once when a catalogue
+// announced since the MC kept the folder no longer has it (the MC restarted).
 void ComposerController::askFolder(const QString& target) {
   if (target.isEmpty() || !m_client->isReady()) return;
   const composer::Instance* instance = instanceOf(selection(target));
@@ -4290,11 +4292,23 @@ void ComposerController::askFolder(const QString& target) {
   const auto [environmentId, cwd] = searchPlace(target);
   if (cwd.isEmpty() || !m_store->environmentOnline(environmentId)) return;
   const QString key = environmentId + u'\n' + instance->instanceId + u'\n' + cwd;
-  if (const auto asked = m_foldersAsked.constFind(key); asked != m_foldersAsked.cend() && !asked->hasExpired()) return;
-  m_foldersAsked.insert(key, QDeadlineTimer(std::chrono::minutes(5)));
+  if (const auto asked = m_foldersAsked.constFind(key); asked != m_foldersAsked.cend()) {
+    if (asked->reading) return;
+    const bool lost = asked->kept && m_catalogues > asked->answeredAt && !composer::hasRead(*instance, cwd);
+    if (!asked->stands.hasExpired() && !lost) return;
+  }
+  m_foldersAsked.insert(key, FolderAsk{.reading = true});
   m_client->call(this, environmentId, QStringLiteral("server.refreshProviders"),
                  QJsonObject{{QStringLiteral("instanceId"), instance->instanceId}, {QStringLiteral("cwd"), cwd}},
-                 [](const QJsonValue&, const std::optional<QString>&) {});
+                 [this, key, instanceId = instance->instanceId, cwd](const QJsonValue& result, const std::optional<QString>& error) {
+                   using namespace std::chrono;
+                   const QList<composer::Instance> answered =
+                       composer::instances(result.toObject().value(QLatin1String("providers")).toArray());
+                   const composer::Instance* entry = composer::find(answered, instanceId);
+                   m_foldersAsked.insert(key, FolderAsk{.kept = !error && entry && composer::hasRead(*entry, cwd),
+                                                        .answeredAt = m_catalogues,
+                                                        .stands = QDeadlineTimer(error ? seconds(30) : minutes(5))});
+                 });
 }
 
 QJsonObject ComposerController::selection(const QString& target) const {

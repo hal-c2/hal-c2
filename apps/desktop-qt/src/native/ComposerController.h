@@ -712,8 +712,18 @@ private:
   // This window's stash list is open.
   bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
-  // When each environment, instance and folder may be asked for again.
-  QHash<QString, QDeadlineTimer> m_foldersAsked;
+  // Each environment, instance and folder asked for (askFolder): whether the
+  // read is still out, whether the MC kept what it read, the catalogue that
+  // was current when it answered, and until when the answer stands.
+  struct FolderAsk {
+    bool reading = false;
+    bool kept = false;
+    quint64 answeredAt = 0;
+    QDeadlineTimer stands;
+  };
+  QHash<QString, FolderAsk> m_foldersAsked;
+  // How many catalogues the providers have announced (refreshCatalogue).
+  quint64 m_catalogues = 0;
   // The @ search the menu shows: its target, query and checkout, and what came back.
   struct PathSearch {
     QString target;

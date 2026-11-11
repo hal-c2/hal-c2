@@ -378,6 +378,8 @@ Instance inFolder(const Instance& instance, const QString& cwd) {
   return seen;
 }
 
+bool hasRead(const Instance& instance, const QString& cwd) { return !snapshotFor(instance, cwd).isEmpty(); }
+
 const Instance* find(const QList<Instance>& list, const QString& instanceId) {
   const auto it = std::find_if(list.begin(), list.end(), [&](const Instance& instance) { return instance.instanceId == instanceId; });
   return it == list.end() ? nullptr : &*it;
