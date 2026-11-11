@@ -18,4 +18,8 @@ echo "::warning::apt-get failed or timed out, retrying in 15s"
 sleep 15
 # A killed install can leave dpkg half-configured, which would fail the retry.
 timeout -k 10 30 sudo dpkg --configure -a
+# The retry goes straight to the Ubuntu archive: the runner's mirror list falls back to
+# it only after the stalled Azure mirror's timeouts have used up the attempt.
+sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+  /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 attempt "$@"
