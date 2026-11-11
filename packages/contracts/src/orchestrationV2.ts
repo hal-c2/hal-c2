@@ -364,11 +364,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  /**
-   * Moves on with every change to modelSelection, providerInstanceId, runtimeMode or
-   * interactionMode; never goes backwards, and travels with the thread. A client sends
-   * the one it showed as `selectionBase`. Absent from older servers.
-   */
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
   selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -506,14 +502,11 @@ export const OrchestrationV2Run = Schema.Struct({
   /** A run that set up the thread's worktree as it started. */
   workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
   /**
-   * A queued user message's: whether the user picked what it runs on. A pick gives way
-   * to a later change of the thread's, and then the run names the thread's choice.
-   * Absent on the MC's own messages, which keep what they name.
+   * A queued user message's: whether its model is the user's pick. A pick gives way to
+   * a later change of the thread's, and then the run names the thread's choice. Absent
+   * on the MC's own messages, which keep what they name.
    */
   selectionPicked: Schema.optional(Schema.Boolean),
-  /** The modes a queued message picked, which the thread takes when it starts. */
-  runtimeMode: Schema.optional(RuntimeMode),
-  interactionMode: Schema.optional(ProviderInteractionMode),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1627,11 +1620,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  /**
-   * Moves on with every change to modelSelection, providerInstanceId, runtimeMode or
-   * interactionMode; never goes backwards, and travels with the thread. A client sends
-   * the one it showed as `selectionBase`. Absent from older servers.
-   */
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
   selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -2625,11 +2614,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,
-    /**
-     * The thread's `selectionRevision` the client showed when the user picked. Once the
-     * thread has moved on to another choice the command is refused with
-     * `selection-stale` and changes nothing; absent, the pick is taken as before.
-     */
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
     selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
@@ -2637,11 +2622,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode,
-    /**
-     * The thread's `selectionRevision` the client showed when the user picked. Once the
-     * thread has moved on to another choice the command is refused with
-     * `selection-stale` and changes nothing; absent, the pick is taken as before.
-     */
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
     selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
@@ -2649,11 +2630,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
-    /**
-     * The thread's `selectionRevision` the client showed when the user picked. Once the
-     * thread has moved on to another choice the command is refused with
-     * `selection-stale` and changes nothing; absent, the pick is taken as before.
-     */
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
     selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
@@ -2677,15 +2654,8 @@ export const OrchestrationV2Command = Schema.Union([
     attachments: Schema.Array(ChatAttachment),
     /** Seed the temporary title and generate a durable replacement for the first message. */
     titleSeed: Schema.optional(TrimmedNonEmptyString),
-    /**
-     * What the user picked for this message, all in the one command: the thread takes
-     * it when the message runs (a queued one's gives way to a later change). With
-     * `selectionBase`, a pick made against a choice the thread has moved on from is
-     * refused (`selection-stale`) and nothing is sent.
-     */
     modelSelection: Schema.optional(ModelSelection),
-    runtimeMode: Schema.optional(RuntimeMode),
-    interactionMode: Schema.optional(ProviderInteractionMode),
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
     selectionBase: Schema.optional(NonNegativeInt),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
@@ -2883,11 +2853,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
-    /**
-     * The thread's `selectionRevision` the client showed when the user picked. Once the
-     * thread has moved on to another choice the command is refused with
-     * `selection-stale` and changes nothing; absent, the pick is taken as before.
-     */
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
     selectionBase: Schema.optional(NonNegativeInt),
   }),
 ]);
@@ -2905,9 +2871,6 @@ export const OrchestrationV2SelectionStale = Schema.Struct({
   code: Schema.Literal(SELECTION_STALE),
   selectionRevision: NonNegativeInt,
   modelSelection: Schema.NullOr(ModelSelection),
-  providerInstanceId: ProviderInstanceId,
-  runtimeMode: Schema.NullOr(RuntimeMode),
-  interactionMode: Schema.NullOr(ProviderInteractionMode),
 });
 export type OrchestrationV2SelectionStale = typeof OrchestrationV2SelectionStale.Type;
 

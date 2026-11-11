@@ -165,7 +165,7 @@ defmodule HalC2.Orchestration.Selection do
   """
   @spec stale(map, map) :: {:error, map} | nil
   def stale(%{"selectionBase" => base} = command, thread) when is_integer(base) do
-    if base != revision(thread) and not Enum.all?(picked(command), &(same?(&1, thread))),
+    if base != revision(thread) and not Enum.all?(picked(command), &same?(&1, thread)),
       do: {:error, refusal(thread)}
   end
 
@@ -211,10 +211,7 @@ defmodule HalC2.Orchestration.Selection do
       "code" => "selection-stale",
       "message" => "This thread moved to #{where} elsewhere. Check it and send again.",
       "selectionRevision" => revision(thread),
-      "modelSelection" => thread["modelSelection"],
-      "providerInstanceId" => thread["providerInstanceId"] || instance,
-      "runtimeMode" => thread["runtimeMode"],
-      "interactionMode" => thread["interactionMode"]
+      "modelSelection" => thread["modelSelection"]
     }
   end
 end

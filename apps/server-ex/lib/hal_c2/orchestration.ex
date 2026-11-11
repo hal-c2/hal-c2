@@ -47,9 +47,7 @@ defmodule HalC2.Orchestration do
                      provider.switch thread.pull-request.link thread.pull-request.unlink
                      thread.title.regeneration.complete thread.auto-settle.set)
   # The refusals whose code reaches the client (`handle/2`), for it to act on.
-  @coded ~w(selection-stale message_still_sending)
-  # The modes a user picks with a message, beside its model.
-  @modes ~w(runtimeMode interactionMode)
+  @coded ~w(selection-stale)
   # Commands that arrange a thread in the lists; an archived thread takes none of them.
   @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
                  thread.unpin thread.pin.reorder thread.active.reorder thread.auto-settle.set)
@@ -2968,8 +2966,6 @@ defmodule HalC2.Orchestration do
         {:sent, dispatched(thread_id, command, decided)}
 
       {{:ok, _} = decided, moved} ->
-        picked_mode(thread_id, command)
-
         case dispatched(thread_id, command, decided) do
           {:ok, %{} = reply} -> {:ok, Map.merge(reply, revised(moved))}
           other -> other
@@ -2985,17 +2981,6 @@ defmodule HalC2.Orchestration do
   # What a reply says of the selection its command changed (`Selection.moved/3`).
   defp revised(nil), do: %{}
   defp revised(rev), do: %{"selectionRevision" => rev}
-
-  # A message that picked its permissions tells a running session the thread's, as
-  # `thread.runtime-mode.set` does: it may have just taken them.
-  defp picked_mode(thread_id, %{"runtimeMode" => mode} = command) when is_binary(mode) do
-    unless agent_message?(command) do
-      thread = StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
-      if thread["runtimeMode"] == mode, do: runtime_mode_changed(thread_id, mode)
-    end
-  end
-
-  defp picked_mode(_thread_id, _command), do: nil
 
   @doc false
   # One try of a recorded effect (`HalC2.Orchestration.Effects`); `payload` is
@@ -3148,25 +3133,19 @@ defmodule HalC2.Orchestration do
     upsert(state, "thread", thread_id, fn thread ->
       current = thread["modelSelection"] || %{}
 
-      unless agent_message?(message) do
-        model =
-          if is_map(selection) and selection != current and
-               selection["instanceId"] in [
-                 nil,
-                 current["instanceId"] || thread["providerInstanceId"]
-               ],
-             do:
-               thread_fields(
-                 "thread.model-selection.set",
-                 %{"modelSelection" => selection},
-                 thread,
-                 Entities.now()
-               ),
-             else: %{}
-
-        modes = Map.new(for {f, v} <- Selection.picked(message), f in @modes, do: {f, v})
-        thread |> Map.merge(model) |> Map.merge(modes)
-      end
+      if is_map(selection) and not Selection.same_selection?(selection, current) and
+           not agent_message?(message) and
+           selection["instanceId"] in [nil, current["instanceId"] || thread["providerInstanceId"]],
+         do:
+           Map.merge(
+             thread,
+             thread_fields(
+               "thread.model-selection.set",
+               %{"modelSelection" => selection},
+               thread,
+               Entities.now()
+             )
+           )
     end)
   end
 
@@ -5230,22 +5209,17 @@ defmodule HalC2.Orchestration do
   defp preparation_item_id(run_id), do: "turn-item:workspace-preparation:#{run_id}"
 
   # What a queued run that steers instead picked, as a message would carry it: nothing
-  # once its pick gave way, and its model alone from before runs said.
+  # once its pick gave way.
   defp queued_selection(%{"selectionPicked" => false}), do: %{}
+  defp queued_selection(queued), do: Map.take(queued, ["modelSelection"])
 
-  defp queued_selection(queued),
-    do: Map.take(queued, ["modelSelection" | @modes])
-
-  # What a queued user message keeps of what the user picked with it, which
+  # Whether a queued user message's model is the user's pick, which
   # `HalC2.Orchestration.Selection` lets give way to a later change of the thread's.
   # The MC's own messages and scheduled prompts keep what they name.
   defp queued_pick(command) do
-    if agent_message?(command) or command["scheduledTaskId"] != nil do
-      %{}
-    else
-      modes = for {field, value} <- Selection.picked(command), field != "modelSelection", into: %{}, do: {field, value}
-      Map.put(modes, "selectionPicked", Selection.picked(command) != [])
-    end
+    if agent_message?(command) or command["scheduledTaskId"] != nil,
+      do: %{},
+      else: %{"selectionPicked" => is_map(command["modelSelection"])}
   end
 
   # A message for later: its run waits in the queue, with the message itself. A
@@ -5462,12 +5436,6 @@ defmodule HalC2.Orchestration do
       if(queued && queued["selectionPicked"] == false, do: thread["modelSelection"]) ||
         (queued && queued["modelSelection"]) || command["modelSelection"] ||
         thread["modelSelection"]
-
-    # The modes the message picked, which the thread takes with its model.
-    modes =
-      if queued,
-        do: if(queued["selectionPicked"] == true, do: Map.take(queued, @modes), else: %{}),
-        else: Map.new(for {f, v} <- Selection.picked(command), f in @modes, do: {f, v})
 
     # The MC's own message to the agent (a delegated result, a pull request wake) names
     # no model: queued, it runs on the thread's selection when it starts, not the one
@@ -5713,8 +5681,8 @@ defmodule HalC2.Orchestration do
     # A message the MC sends for the agent is no choice of provider: a provider's wake
     # finishes that provider's background work and leaves a switch away from it
     # standing (#1048).
-    # What the user picked for this message is the thread's choice from now on, so
-    # the composer shows what ran: its model, even on the same provider, and its modes.
+    # What the user picked for this message is the thread's choice from now on, so the
+    # composer shows what ran: its model, on the same account too.
     picked? =
       if queued,
         do: queued["selectionPicked"] == true,
@@ -5722,23 +5690,17 @@ defmodule HalC2.Orchestration do
 
     switch_change =
       if not agent_message?(command) and
-           (instance != message_instance(thread, %{}) or modes != %{} or
+           (instance != message_instance(thread, %{}) or
               (picked? and not Selection.same_selection?(selection, thread["modelSelection"]))),
          do:
            upsert(
              state,
              "thread",
              thread_id,
-             &(&1
-               |> Map.merge(
-                 if(
-                   instance != message_instance(&1, %{}) or
-                     not Selection.same_selection?(selection, &1["modelSelection"]),
-                   do: thread_fields("provider.switch", %{"modelSelection" => selection}, &1, at),
-                   else: %{}
-                 )
-               )
-               |> Map.merge(modes))
+             &Map.merge(
+               &1,
+               thread_fields("provider.switch", %{"modelSelection" => selection}, &1, at)
+             )
            )
 
     # What the run sends, which the provider's conversation holds until it reports
@@ -5856,11 +5818,11 @@ defmodule HalC2.Orchestration do
           into: %{},
           do: {id, value}
         ),
-      runtime_mode: modes["runtimeMode"] || thread["runtimeMode"] || "full-access",
+      runtime_mode: thread["runtimeMode"] || "full-access",
       # How assistant text is written as it streams (`TurnWriter.flush/2`).
       streaming_mode:
         HalC2.Settings.for_project(thread["projectId"])["responseStreamingMode"] || "paragraph",
-      interaction_mode: modes["interactionMode"] || thread["interactionMode"] || "default",
+      interaction_mode: thread["interactionMode"] || "default",
       attachments: attachments,
       # A turn the provider started by itself, whose output its runtime already has
       # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.

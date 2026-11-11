@@ -48,6 +48,13 @@ defmodule HalC2.OrchestrationPropTest do
   finishes where it is, and the MC's own messages, which name no instance, run on the
   one the thread is on when they start, never taking it back (#1048).
 
+  Every change of the instance a thread is on moves its selection revision on by one.
+  A queued message gives way to such a change and runs where the thread then is, unless
+  the change is a queued message's own instance taken as it starts: those queued
+  behind it keep theirs. A client can switch the thread too, naming the revision it
+  showed (`selectionBase`); against one the thread has moved past, a switch to an
+  instance the thread is not on is refused as stale and changes nothing.
+
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`, through the
   bundled Codex plugin as on an MC. Every
   message says "wait", so its turn runs until it is interrupted or steered, and the
@@ -224,6 +231,11 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :steer_unnamed, [tid, msg, oneof(@instances), oneof([nil, ""])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
+      {2,
+       let(
+         [t <- oneof(@threads), i <- oneof(@instances), stale <- boolean()],
+         do: {:call, __MODULE__, :switch_seen, [t, i, seen(threads, t, stale)]}
+       )},
       {1, {:call, __MODULE__, :switch, [tid, @disabled]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
@@ -551,8 +563,9 @@ defmodule HalC2.OrchestrationPropTest do
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
 
   # An agent switches the thread it runs in; one put away has no agent to switch it.
-  def precondition(%{threads: threads}, {:call, _, :switch, [tid, _]}),
-    do: match?(%{status: :live}, threads[tid])
+  def precondition(%{threads: threads}, {:call, _, fun, [tid | _]})
+      when fun in [:switch, :switch_seen],
+      do: match?(%{status: :live}, threads[tid])
 
   def precondition(_state, _call), do: true
 
@@ -690,6 +703,7 @@ defmodule HalC2.OrchestrationPropTest do
           status: :live,
           title: "Thread #{tid}",
           instance: "codex",
+          rev: 0,
           runs: [],
           queue: [],
           messages: %{},
@@ -861,7 +875,13 @@ defmodule HalC2.OrchestrationPropTest do
   defp step(state, _result, {:call, _, :switch, [tid, instance]}) do
     if switch_refusal(state.threads[tid], instance),
       do: state,
-      else: update(state, tid, &%{&1 | instance: instance})
+      else: update(state, tid, &move_to(&1, instance, false))
+  end
+
+  defp step(state, _result, {:call, _, :switch_seen, [tid, instance, base]}) do
+    if stale?(state.threads[tid], instance, base),
+      do: state,
+      else: step(state, nil, {:call, __MODULE__, :switch, [tid, instance]})
   end
 
   # Resume at the reset: armed for the limit stop that is the thread's latest run, and
@@ -1046,6 +1066,33 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp instance_of(thread, msg), do: Enum.find(thread.runs, &(&1.msg == msg)).instance
 
+  # The revision a client showed: the thread's, or, once it has moved on, the one before.
+  defp seen(threads, tid, stale?) do
+    rev = (threads[tid] || %{rev: 0}).rev
+    if stale? and rev > 0, do: rev - 1, else: rev
+  end
+
+  # A pick made against a revision the thread has moved past, of an instance it is not on.
+  defp stale?(thread, instance, base), do: base != thread.rev and instance != thread.instance
+
+  # The thread comes to run on `instance`: its selection revision moves on, and its
+  # queued messages give way, all but the MC's own (which take the thread's instance as
+  # they start) and, when the change is a queued message's own instance taken as it
+  # starts (`taken?`), those still picked (`Selection.stamp/2`).
+  defp move_to(%{instance: instance} = thread, instance, _taken?), do: thread
+
+  defp move_to(thread, instance, taken?) do
+    %{thread | instance: instance, rev: thread.rev + 1}
+    |> set_runs(fn run ->
+      notice? = match?(%{notice: true}, thread.messages[run.msg])
+      kept? = taken? and Map.get(run, :picked, true)
+
+      if run.status == :queued and not notice? and not kept?,
+        do: Map.merge(run, %{instance: instance, picked: false}),
+        else: run
+    end)
+  end
+
   # Why the thread refuses the command, or nil.
   defp refusal(state, tid, command) do
     case state.threads[tid] do
@@ -1153,6 +1200,13 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(state, :switch, [tid, instance]),
     do: switch_refusal(state.threads[tid], instance) || :ok
+
+  defp expected_reply(state, :switch_seen, [tid, instance, base]),
+    do:
+      if(stale?(state.threads[tid], instance, base),
+        do: {:error, :stale},
+        else: expected_reply(state, :switch, [tid, instance])
+      )
 
   defp expected_reply(state, fun, [tid])
        when fun in [:archive, :unarchive, :delete, :interrupt],
@@ -1264,6 +1318,9 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   defp expected_reply(_state, _fun, _args), do: :ok
+
+  defp reply_matches?({:error, :stale}, {:error, refusal}),
+    do: match?(%{"code" => "selection-stale"}, refusal)
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
@@ -1451,7 +1508,7 @@ defmodule HalC2.OrchestrationPropTest do
           else: thread
 
       %{thread | queue: List.delete(thread.queue, next)}
-      |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == next)).instance)
+      |> move_to(Enum.find(thread.runs, &(&1.msg == next)).instance, true)
       |> put_in([:messages, next, :shown], true)
       |> started(next)
     else
@@ -1580,7 +1637,9 @@ defmodule HalC2.OrchestrationPropTest do
       active == nil ->
         thread = if by_user?, do: release_queue(thread), else: thread
 
-        %{thread | runs: thread.runs ++ [run], instance: instance}
+        thread
+        |> move_to(instance, false)
+        |> Map.update!(:runs, &(&1 ++ [run]))
         |> put_in([:messages, msg], %{message | shown: true})
         |> started(msg)
 
@@ -1665,6 +1724,7 @@ defmodule HalC2.OrchestrationPropTest do
       status: thread.status,
       title: thread.title,
       instance: thread.instance,
+      rev: thread.rev,
       runs:
         for(
           run <- thread.runs,
@@ -2034,6 +2094,16 @@ defmodule HalC2.OrchestrationPropTest do
     requests = StreamState.get(state, "runtime-request")
     requests["runtime-request:codex:" <> rid] || requests["runtime-request:codex:async:" <> rid]
   end
+
+  # A client's switch, naming the selection revision it showed.
+  def switch_seen(tid, instance, base),
+    do:
+      thread_command(%{
+        "type" => "provider.switch",
+        "threadId" => tid,
+        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"},
+        "selectionBase" => base
+      })
 
   # As `hal_c2_thread_configure` switches the agent's own thread.
   def switch(tid, instance),
@@ -2770,6 +2840,7 @@ defmodule HalC2.OrchestrationPropTest do
             end,
           title: thread["title"],
           instance: thread["modelSelection"]["instanceId"],
+          rev: thread["selectionRevision"],
           runs:
             for(
               run <- runs,

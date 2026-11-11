@@ -233,6 +233,54 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | Ultrathink: the cache    | Ultrathink: the cache    |
       | /home/sam/app.ts is odd  | Ultrathink: /home/sam/app.ts is odd |
 
+  # What the composer shows is what runs. Every change to a thread's model, provider,
+  # runtime or interaction mode moves its selection revision; a send carries the
+  # revision its pick was made against, and the MC refuses it once that has moved on.
+  @mc @priority-high
+  Scenario: A send picked against a selection that has since changed is refused
+    Given another client has moved the thread to "gpt-5.5"
+    When the user sends a message picked on "gpt-5.4" against the selection they saw
+    Then the send is refused as stale, naming "gpt-5.5"
+    And the thread still runs on "gpt-5.5"
+
+  @mc @priority-high
+  Scenario: A send that picks nothing keeps a model chosen elsewhere
+    Given another client has moved the thread to "gpt-5.5"
+    When the user sends a message that picks nothing
+    Then its turn runs on "gpt-5.5"
+
+  @mc @priority-high
+  Scenario: A message that names another model on the same account changes the thread's model
+    When the user sends a message that names "gpt-5.5"
+    Then its turn runs on "gpt-5.5"
+    And the thread runs on "gpt-5.5" at selection revision 1
+
+  @mc
+  Scenario: A queued message's pick gives way to a later change
+    Given the agent is working
+    And the user has queued a message that names "gpt-5.4"
+    When another client moves the thread to "gpt-5.5"
+    And the agent finishes its turn
+    Then the queued message runs on "gpt-5.5"
+
+  @mc
+  Scenario: A change to what a thread runs on answers with the revision it made
+    When a client switches the thread to planning
+    Then the reply names selection revision 1
+    When a client switches the thread to planning
+    Then the reply names no selection revision
+
+  @mc
+  Scenario: A thread created without a model names the one it runs on
+    Given new threads default to "gpt-5.5"
+    When a client creates a thread without naming a model or permissions
+    Then the new thread is recorded as running "gpt-5.5" in full access
+
+  @mc
+  Scenario: A project tells clients what a new thread there runs on
+    When new threads default to "gpt-5.5"
+    Then the project's sidebar row says a new thread there runs "gpt-5.5" in full access
+
   @desktop @mobile @backlog-mobile
   Scenario: Favourite models are listed first and can be unfavourited
     When the user marks "claude-opus" as a favourite

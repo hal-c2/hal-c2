@@ -57,7 +57,11 @@ defmodule HalC2.Orchestration.NewThread do
       defaults = defaults(project(input["projectId"]))
 
       input
-      |> Map.update("modelSelection", defaults["modelSelection"], &(&1 || defaults["modelSelection"]))
+      |> Map.update(
+        "modelSelection",
+        defaults["modelSelection"],
+        &(&1 || defaults["modelSelection"])
+      )
       |> Map.update("runtimeMode", defaults["runtimeMode"], &(&1 || defaults["runtimeMode"]))
     end
   end

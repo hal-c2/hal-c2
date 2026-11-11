@@ -17,8 +17,7 @@ defmodule HalC2.ModelSelectionProofTest do
       "HalC2.Orchestration.Selection.revision/1" => ~w(dispatchStale dispatch setThreadMode),
       # Every commit to a thread's stream: a set, a mode change, a queued pick taken at
       # its start, each moving the revision on and the queue with it.
-      "HalC2.Orchestration.Selection.stamp/2" =>
-        ~w(configure setThreadMode dispatch startNext),
+      "HalC2.Orchestration.Selection.stamp/2" => ~w(configure setThreadMode dispatch startNext),
       "HalC2.Orchestration.Selection.moved/3" => "setThreadMode",
       "HalC2.Orchestration.Selection.stale/2" => ~w(dispatchStale dispatch),
       "HalC2.Orchestration.Selection.picked/1" => ~w(dispatch dispatchStale),
@@ -65,7 +64,8 @@ defmodule HalC2.ModelSelectionProofTest do
   @inits [
     "start(1, 1, 0, 1, 1, 0, 1, fix)",
     "start(1, 1, 1, 0, 1, 0, 1, fix)",
-    "start(1, 1, 1, 1, 1, 1, 0, fix)"
+    # Both clients' own mode sets, interleaved.
+    "start(1, 0, 1, 0, 0, 1, 0, fix)"
   ]
 
   for init <- @inits do
