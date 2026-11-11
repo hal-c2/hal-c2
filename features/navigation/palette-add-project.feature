@@ -59,7 +59,7 @@ Feature: Adding a project from the command palette
     Then GitLab is marked "Setup Required"
     And choosing it opens the source control settings
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The environment's repository sources are listed after searching for it
     Given the machine "ai-beast" is connected
     And GitLab is not connected
