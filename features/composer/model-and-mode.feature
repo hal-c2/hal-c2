@@ -301,6 +301,18 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer still shows "gpt-5-codex"
     But a change made on another client after it replaces the pick
 
+  # An MC that keeps a selection revision names, in its reply, the one an own change moved
+  # the thread to; a reply naming none moved nothing. Each thread is judged by its own MC, so
+  # what one machine of a cluster answers says nothing about another's threads.
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: In a cluster, each machine's answers decide only its own threads' picks
+    Given one thread is on an MC that keeps no selection revision and another on one that does
+    And the user changed the first thread's access to Supervised
+    And the user picked "gpt-5-codex" for the second thread's next turn
+    When the second thread's MC answers an access change to it without moving the thread
+    Then the composer still shows "gpt-5-codex"
+    But a change made on another client to the second thread replaces the pick
+
   @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A thread whose account is off keeps it rather than move to another
     Given a thread runs on "gpt-5" on the account "Codex Personal"

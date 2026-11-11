@@ -526,8 +526,6 @@ export function createComposer(options: ComposerOptions): Composer {
   const modelOverrides = new Map<string, ThreadPick>();
   /** This client's own mode changes on each thread that may still move its revision on. */
   const ownChanges = new Map<string, OwnSelectionChange[]>();
-  /** Once one reply names a revision, a reply that names none moved nothing. */
-  let repliesNameRevisions = false;
   const pickHere = (detail: OrchestrationThread, selection: ModelSelection): ThreadPick =>
     pickOn(detail, selection, ownChanges.get(detail.id) ?? []);
   const ownModePending = (threadId: string) =>
@@ -546,11 +544,14 @@ export function createComposer(options: ComposerOptions): Composer {
     if (pick) modelOverrides.set(detail.id, { ...pick, own: [...pick.own, change] });
     return change;
   };
-  /** The MC answered: the revision the change moved the thread to, or `null` when refused. */
+  /**
+   * The MC answered: the revision the change moved the thread to, or none when it
+   * moved nothing or was refused (`null`). An MC that keeps revisions names one in
+   * every reply that moved the thread, and one that keeps none never counts the
+   * change (`nextPick`), so each thread's own MC decides, wherever it runs.
+   */
   const ownModeAnswered = (change: OwnSelectionChange, revision: number | undefined | null) => {
-    if (typeof revision === "number") repliesNameRevisions = true;
-    change.outcome =
-      revision === null ? "none" : (revision ?? (repliesNameRevisions ? "none" : "moved"));
+    change.outcome = revision ?? "none";
     settlePick(selectedDetail());
     publish();
   };

@@ -374,6 +374,63 @@ step("a change made on another client after it replaces the pick", async (ctx: W
   expect(composer(ctx)).toMatchObject({ selectedInstanceId: "claude", selectedModel: "opus" });
 });
 
+// A cluster: thread one lives on an MC that keeps no selection revision, thread two on
+// one that does. The composer talks to both through one client.
+step(
+  "one thread is on an MC that keeps no selection revision and another on one that does",
+  async (ctx: ControlsWorld) => {
+    const { selectionRevision: _none, ...older } = thread();
+    await restartClient(ctx, { detail: older as never });
+    ctx.fake!.emitShell(
+      shell([
+        row("t1", "Thread one", "2026-07-13T00:00:02.000Z"),
+        row("t2", "Thread two", "2026-07-13T00:00:01.000Z"),
+      ] as never),
+    );
+    ctx.fake!.emitThread({ ...thread(), id: "t2", title: "Thread two" } as never);
+    await settle(ctx);
+    expect(ctx.fake!.currentThread("t1")?.selectionRevision).toBeUndefined();
+    expect(ctx.fake!.currentThread("t2")?.selectionRevision).toBe(0);
+  },
+);
+
+step("the user changed the first thread's access to Supervised", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+O");
+  await settle(ctx);
+  await chooseInPicker(ctx, "Supervised");
+  // Its MC moved the thread and, keeping no revision, named none.
+  expect(ctx.fake!.currentThread("t1")?.runtimeMode).toBe("approval-required");
+});
+
+step(
+  "the user picked {string} for the second thread's next turn",
+  async (ctx: World, name: string) => {
+    await switchTo(ctx, "t2");
+    await pickModel(ctx, name);
+  },
+);
+
+step(
+  "the second thread's MC answers an access change to it without moving the thread",
+  async (ctx: World) => {
+    ctx.fake!.override("setRuntimeMode", async () => undefined);
+    await pressKey(ctx, "Ctrl+O");
+    await settle(ctx);
+    await chooseInPicker(ctx, "Supervised");
+    expect(callsTo(ctx, "setRuntimeMode").map((call) => call.args[0])).toEqual(["t1", "t2"]);
+    expect(ctx.fake!.currentThread("t2")?.selectionRevision).toBe(0);
+  },
+);
+
+step(
+  "a change made on another client to the second thread replaces the pick",
+  async (ctx: World) => {
+    runThreadOn(ctx, "t2", "claude-opus");
+    await settle(ctx);
+    expect(composer(ctx)).toMatchObject({ selectedInstanceId: "claude", selectedModel: "opus" });
+  },
+);
+
 // --- A new thread's defaults come from the machine that owns the project ---------
 
 interface DefaultsWorld extends ControlsWorld {

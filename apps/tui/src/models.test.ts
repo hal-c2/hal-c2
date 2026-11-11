@@ -520,18 +520,9 @@ describe("nextPick", () => {
     expect(follow(pick, 4)).toBeNull();
   });
 
-  it("without revisions in replies, counts only own changes still above the thread's revision", () => {
-    // A reply that names no revision accounts for one move after the change was sent.
-    const early = sent(3);
-    const pick = { ...pickOn(at(3), picked, []), own: [early] };
-    early.outcome = "moved";
-    const rebased = follow(pick, 4);
-    expect(rebased).toEqual({ selection: picked, base: 4, own: [] });
-    expect(follow(rebased, 5)).toBeNull();
-    // A pick made once the thread holds the change does not count it again.
-    const late = sent(3);
-    late.outcome = "moved";
-    expect(pickOn(at(4), picked, [late]).own).toEqual([]);
-    expect(follow(pickOn(at(4), picked, [late]), 5)).toBeNull();
+  it("waits for no more own changes than are unanswered", () => {
+    const pick = { ...pickOn(at(3), picked, []), own: [sent(3)] };
+    // Two moves with one change of its own on the way: one at least is another client's.
+    expect(follow(pick, 5)).toBeNull();
   });
 });
