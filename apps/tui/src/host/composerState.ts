@@ -503,6 +503,31 @@ export interface Composer {
 }
 
 const OFFLINE_REASON = "not connected to the environment";
+/** How long a folder's skills and commands, once read, are offered before being read again. */
+const FOLDER_REREAD_MS = 5 * 60_000;
+
+/**
+ * The provider as a thread working in `cwd` sees it: that folder's snapshot's
+ * skills and commands first, then the entry's own, one per name. Most
+ * providers' skills are a folder's own (Claude's and Codex's entries carry
+ * none), read by the MC when a composer asks for that folder.
+ */
+export const providerInFolder = (provider: ServerProvider, cwd: string): ServerProvider => {
+  const snapshot = provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+  if (!snapshot) return provider;
+  const byName = <T extends { readonly name: string }>(
+    first: ReadonlyArray<T>,
+    then: ReadonlyArray<T>,
+  ) => {
+    const seen = new Set(first.map((entry) => entry.name));
+    return [...first, ...then.filter((entry) => !seen.has(entry.name))];
+  };
+  return {
+    ...provider,
+    skills: byName(snapshot.skills, provider.skills ?? []),
+    slashCommands: byName(snapshot.slashCommands, provider.slashCommands ?? []),
+  };
+};
 
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
@@ -541,6 +566,8 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
   let providers: ReadonlyArray<ServerProvider> = [];
+  /** When each instance and folder's own skills and commands were last asked for. */
+  const foldersAsked = new Map<string, number>();
   /** The accounts the MC's usage hubs report, as its config last said. */
   let usageSources: UsageLimitSourceSnapshots = [];
   /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
@@ -2586,7 +2613,7 @@ export function createComposer(options: ComposerOptions): Composer {
    */
   const openTriggerPicker = (trigger: "/" | "$" | "@") => {
     const model = activeModel();
-    const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
+    const entry = providers.find((candidate) => candidate.instanceId === model?.instanceId);
     if (trigger === "@") {
       const key = target();
       // On a page, "@agent" leads the list: an ask, not a file.
@@ -2627,6 +2654,42 @@ export function createComposer(options: ComposerOptions): Composer {
       openKindPicker(page);
       return;
     }
+    // The folder's own skills and commands are read, and again after five
+    // minutes as the desktop does. A folder not read yet opens the picker once
+    // the read answers, if the character is still the last thing typed; one
+    // read before opens it now on what the MC last read.
+    const cwd = composerCwd();
+    const folder = entry ? `${entry.instanceId}\n${cwd}` : null;
+    if (
+      entry &&
+      folder &&
+      Date.now() - (foldersAsked.get(folder) ?? -Infinity) >= FOLDER_REREAD_MS
+    ) {
+      foldersAsked.set(folder, Date.now());
+      const waits = !entry.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd);
+      const key = target();
+      const reopen = () => {
+        if (waits && target() === key && picker === null && draftFor(key).text.endsWith(trigger)) {
+          openTriggerPicker(trigger);
+        }
+      };
+      void track(
+        client
+          .mcCall<{ readonly providers?: ReadonlyArray<ServerProvider> }>(
+            "server.refreshProviders",
+            {
+              instanceId: entry.instanceId,
+              cwd,
+            },
+          )
+          .then((result) => {
+            if (result?.providers) providers = result.providers;
+            reopen();
+          }, reopen),
+      );
+      if (waits) return;
+    }
+    const provider = entry ? providerInFolder(entry, cwd) : undefined;
     if (trigger === "/") {
       // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
       const commands =

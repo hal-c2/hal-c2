@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -574,6 +575,11 @@ private:
   // The catalogue of the route's environment.
   void refreshCatalogue();
   const composer::Instance* instanceOf(const QJsonObject& selection) const;
+  // The draft's instance with the skills and commands of the folder it works
+  // in, once the MC has read them (askFolder).
+  std::optional<composer::Instance> commandsOf(const QString& target) const;
+  // Asks the MC for the skills and commands of the folder `target` works in.
+  void askFolder(const QString& target);
   // The draft's model: chosen, the thread's (or project default's), else the
   // first ready instance's default.
   QJsonObject selection(const QString& target) const;
@@ -706,6 +712,8 @@ private:
   // This window's stash list is open.
   bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
+  // When each environment, instance and folder may be asked for again.
+  QHash<QString, QDeadlineTimer> m_foldersAsked;
   // The @ search the menu shows: its target, query and checkout, and what came back.
   struct PathSearch {
     QString target;

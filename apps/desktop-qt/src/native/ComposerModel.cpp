@@ -327,6 +327,7 @@ QList<Instance> instances(const QJsonArray& providers) {
     instance.slashCommands = provider.value(QLatin1String("slashCommands")).toArray();
     instance.usageLimits = provider.value(QLatin1String("usageLimits")).toObject();
     instance.skills = provider.value(QLatin1String("skills")).toArray();
+    instance.workspaceSnapshots = provider.value(QLatin1String("workspaceSnapshots")).toArray();
     list.append(instance);
   }
   QStringList drivers;
@@ -340,6 +341,41 @@ QList<Instance> instances(const QJsonArray& providers) {
     return a.isDefault && !b.isDefault;
   });
   return list;
+}
+
+namespace {
+QJsonObject snapshotFor(const Instance& instance, const QString& cwd) {
+  if (cwd.isEmpty()) return {};
+  for (const QJsonValue& value : instance.workspaceSnapshots) {
+    const QJsonObject snapshot = value.toObject();
+    if (str(snapshot, QLatin1String("cwd")) == cwd) return snapshot;
+  }
+  return {};
+}
+
+// `first`'s entries, then those of `then` whose name `first` has not used.
+QJsonArray byName(const QJsonArray& first, const QJsonArray& then) {
+  QJsonArray merged;
+  QSet<QString> seen;
+  for (const QJsonArray* list : {&first, &then}) {
+    for (const QJsonValue& value : *list) {
+      const QString name = str(value.toObject(), QLatin1String("name"));
+      if (seen.contains(name)) continue;
+      seen.insert(name);
+      merged.append(value);
+    }
+  }
+  return merged;
+}
+}  // namespace
+
+Instance inFolder(const Instance& instance, const QString& cwd) {
+  const QJsonObject snapshot = snapshotFor(instance, cwd);
+  if (snapshot.isEmpty()) return instance;
+  Instance seen = instance;
+  seen.skills = byName(snapshot.value(QLatin1String("skills")).toArray(), instance.skills);
+  seen.slashCommands = byName(snapshot.value(QLatin1String("slashCommands")).toArray(), instance.slashCommands);
+  return seen;
 }
 
 const Instance* find(const QList<Instance>& list, const QString& instanceId) {

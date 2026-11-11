@@ -3434,6 +3434,7 @@ void ComposerController::follow() {
 void ComposerController::publish() {
   if (!m_active && !m_previewing) return;
   recoverQueuedEdits();
+  askFolder(target());
   const QVariantMap state = turnState();
   if (state != m_published) {
     m_published = state;
@@ -4152,7 +4153,8 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
 QList<composer::Suggestion> ComposerController::suggestions(const QString& target,
                                                             const std::optional<composer::Trigger>& trigger) const {
   if (!trigger) return {};
-  const composer::Instance* instance = instanceOf(selection(target));
+  const std::optional<composer::Instance> folder = commandsOf(target);
+  const composer::Instance* instance = folder ? &*folder : nullptr;
   if (trigger->kind == QLatin1String("slash-command")) {
     return composer::slashItems(instance, *trigger, planModeOn(instance), setting(QStringLiteral("showSkillsInSlashMenu")).toBool(),
                                 draft(target).trimmed() == u'/' + trigger->query);
@@ -4229,8 +4231,9 @@ bool ComposerController::canSearchPaths(const QString& target) const {
 std::optional<composer::Trigger> ComposerController::triggerOf(const QString& target) const {
   const QString text = draft(target);
   std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
-  if (trigger && trigger->kind == QLatin1String("skill") && !composer::opensSkillMenu(instanceOf(selection(target)), trigger->query)) {
-    return std::nullopt;
+  if (trigger && trigger->kind == QLatin1String("skill")) {
+    const std::optional<composer::Instance> folder = commandsOf(target);
+    if (!composer::opensSkillMenu(folder ? &*folder : nullptr, trigger->query)) return std::nullopt;
   }
   // A slash word in a sentence that starts no name is prose: no menu, so
   // Enter sends it.
@@ -4266,6 +4269,32 @@ void ComposerController::refreshCatalogue() {
 
 const composer::Instance* ComposerController::instanceOf(const QJsonObject& selection) const {
   return composer::find(m_catalogue, selection.value(QLatin1String("instanceId")).toString());
+}
+
+std::optional<composer::Instance> ComposerController::commandsOf(const QString& target) const {
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance) return std::nullopt;
+  return composer::inFolder(*instance, searchPlace(target).second);
+}
+
+// Most providers' skills and many commands are a folder's own (Claude's and
+// Codex's entries carry none): the MC reads them when a composer asks for its
+// folder and announces them with the providers, as `workspaceSnapshots`.
+// Asked once the composer has an instance and a folder, and again after five
+// minutes so a skill added to the project since shows up; a failed read keeps
+// what the MC last read.
+void ComposerController::askFolder(const QString& target) {
+  if (target.isEmpty() || !m_client->isReady()) return;
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance || !instance->enabled) return;
+  const auto [environmentId, cwd] = searchPlace(target);
+  if (cwd.isEmpty() || !m_store->environmentOnline(environmentId)) return;
+  const QString key = environmentId + u'\n' + instance->instanceId + u'\n' + cwd;
+  if (const auto asked = m_foldersAsked.constFind(key); asked != m_foldersAsked.cend() && !asked->hasExpired()) return;
+  m_foldersAsked.insert(key, QDeadlineTimer(std::chrono::minutes(5)));
+  m_client->call(this, environmentId, QStringLiteral("server.refreshProviders"),
+                 QJsonObject{{QStringLiteral("instanceId"), instance->instanceId}, {QStringLiteral("cwd"), cwd}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
 }
 
 QJsonObject ComposerController::selection(const QString& target) const {
