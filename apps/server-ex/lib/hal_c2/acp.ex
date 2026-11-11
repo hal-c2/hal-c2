@@ -838,6 +838,25 @@ defmodule HalC2.Acp do
   defp publish_staged(id, :unauthenticated, false),
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
+  # A probe's fresh session reports each option at the agent's default, but a running
+  # session may have set one since (`put_option/3`, as `session/set_mode` does). The
+  # probe decides which options and choices there are; a value set before stays while
+  # its option still offers it.
+  defp publish_staged(id, :config, config) do
+    set =
+      for %{"id" => key} = option <- :persistent_term.get({__MODULE__, id, :config}, []),
+          into: %{},
+          do: {key, option["currentValue"]}
+
+    config =
+      Enum.map(config, fn option ->
+        value = set[option["id"]]
+        if offers?(option, value), do: Map.put(option, "currentValue", value), else: option
+      end)
+
+    :persistent_term.put({__MODULE__, id, :config}, config)
+  end
+
   defp publish_staged(id, key, value),
     do: :persistent_term.put({__MODULE__, id, key}, value)
 
@@ -2472,6 +2491,11 @@ defmodule HalC2.Acp do
   end
 
   defp plan_option?(_option), do: false
+
+  # Whether `value` is one `option` can hold: a choice it lists, or a boolean's.
+  defp offers?(_option, nil), do: false
+  defp offers?(%{"type" => "boolean"}, value), do: is_boolean(value)
+  defp offers?(option, value), do: Enum.any?(choices(option), &(&1["value"] == value))
 
   # A select's choices, those of its groups included.
   defp choices(option) do

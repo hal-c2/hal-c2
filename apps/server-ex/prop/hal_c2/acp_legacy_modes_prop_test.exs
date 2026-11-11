@@ -5,7 +5,9 @@ defmodule HalC2.AcpLegacyModesPropTest do
   the agent changes mode by itself in a turn (`current_mode_update`, as one leaving
   plan mode does). Whatever order they come in, the agent ends each turn in the mode
   last picked or taken, and the instance's "mode" option shows that mode, so picking
-  the mode the agent left switches it back.
+  the mode the agent left switches it back. A probe of the agent (as a settings change
+  or a listing starts) reads its options from a fresh session in the default mode, and
+  must not make the option show that mode instead.
   """
 
   use ExUnit.Case, async: false
@@ -46,23 +48,36 @@ defmodule HalC2.AcpLegacyModesPropTest do
   def command(state) do
     frequency([
       {3, {:call, __MODULE__, :pick, [state.sends, oneof(@modes)]}},
-      {2, {:call, __MODULE__, :drift, [state.sends, oneof(@modes)]}}
+      {2, {:call, __MODULE__, :drift, [state.sends, oneof(@modes)]}},
+      {1, {:call, __MODULE__, :probe, []}}
     ])
   end
 
   def precondition(state, {:call, _, _, [n, _]}), do: n == state.sends
+  def precondition(_state, {:call, _, :probe, []}), do: true
 
   def next_state(state, _result, {:call, _, _, [_, mode]}),
     do: %{state | sends: state.sends + 1, mode: mode}
 
+  def next_state(state, _result, {:call, _, :probe, []}), do: state
+
   def postcondition(_state, {:call, _, _, [_, mode]}, result),
     do: result == {{"completed", "mode: " <> mode}, mode}
+
+  def postcondition(state, {:call, _, :probe, []}, result), do: result == state.mode
 
   # A turn the user sends in `mode`; the agent says the mode it is in.
   def pick(n, mode), do: turn(n, "say your mode", [%{"id" => "mode", "value" => mode}])
 
   # A turn in which the agent changes to `mode` by itself.
   def drift(n, mode), do: turn(n, "switch yourself to #{mode}", [])
+
+  # The MC reads the agent again from a session of its own, and publishes what it read;
+  # returns the mode the option shows then.
+  def probe do
+    HalC2.Acp.load()
+    shown()
+  end
 
   defp turn(n, text, options) do
     id = "m#{n}"

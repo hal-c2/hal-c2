@@ -653,6 +653,78 @@ defmodule HalC2.AcpTest do
     read_done(String.trim(probe))
   end
 
+  # Found by HalC2.AcpLegacyModesPropTest (merge queue run 43116789842): a probe that
+  # published after a running session had set its mode showed the agent's default mode.
+  test "a probe keeps the mode a running session set while the agent still offers it",
+       %{tmp_dir: dir} do
+    id = "acpRegistry_modes"
+    fake = Path.expand("../support/fake_acme_agent.py", __DIR__)
+
+    File.write!(
+      Path.join(dir, "control.json"),
+      JSON.encode!(%{"acme" => %{"legacyModes" => ["ask", "code", "debug"]}})
+    )
+
+    Application.put_env(:hal_c2, :acp_commands, %{
+      id => ["python3", "-u", fake, "--control", dir, "--name", "acme"]
+    })
+
+    :persistent_term.put(
+      {HalC2.Acp.Catalog, :index},
+      {System.system_time(:millisecond),
+       [
+         %{
+           "id" => "modes-agent",
+           "name" => "Modes agent",
+           "version" => "1.0.0",
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./acme"}}
+           }
+         }
+       ]}
+    )
+
+    on_exit(fn ->
+      HalC2.Acp.forget(id)
+      Application.delete_env(:hal_c2, :acp_commands)
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    end)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            id => %{
+              "driver" => "acpRegistry",
+              "enabled" => true,
+              "config" => %{"agentId" => "modes-agent"}
+            }
+          }
+        },
+        0
+      )
+
+    mode = fn ->
+      {HalC2.Acp, id, :config}
+      |> :persistent_term.get([])
+      |> Enum.find_value(&(&1["id"] == "mode" && &1["currentValue"]))
+    end
+
+    HalC2.Acp.load()
+    assert mode.() == "ask"
+
+    # The thread's session switched to "code" (`session/set_mode`); a later probe's
+    # fresh session starts in "ask" again.
+    HalC2.Acp.put_option(id, "mode", "code")
+    HalC2.Acp.load()
+    assert mode.() == "code"
+
+    # A mode the agent no longer offers gives way to the probe's.
+    HalC2.Acp.put_option(id, "mode", "gone")
+    HalC2.Acp.load()
+    assert mode.() == "ask"
+  end
+
   test "forgetting an instance leaves no generation entry behind" do
     :persistent_term.put({HalC2.Acp, "gone", :generation}, make_ref())
     :persistent_term.put({HalC2.Acp, "gone", :models}, [])
