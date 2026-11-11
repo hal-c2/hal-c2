@@ -22,7 +22,7 @@ missing() {
   for package in "$@"; do installed "$package" || missing+=("$package"); done
 }
 install_debs() {
-  compgen -G "$debs/*.deb" >/dev/null && timeout -k 10 60 sudo dpkg -i "$debs"/*.deb
+  [ $# -gt 0 ] && timeout -k 10 60 sudo dpkg -i "$@"
 }
 
 missing "$@"
@@ -32,12 +32,14 @@ if [ ${#missing[@]} -eq 0 ]; then
 fi
 
 if compgen -G "$debs/*.deb" >/dev/null; then
-  # What the cached .debs add to the image, to take back out if they don't install.
-  added=()
+  # Only what the cached .debs add to the image: a package the image already has may be
+  # newer there than in the cache. Also what to take back out if they don't install.
+  added=() fresh=()
   for deb in "$debs"/*.deb; do
-    package=$(dpkg-deb -f "$deb" Package) && ! installed "$package" && added+=("$package")
+    package=$(dpkg-deb -f "$deb" Package) && ! installed "$package" &&
+      added+=("$package") fresh+=("$deb")
   done
-  if install_debs; then
+  if install_debs "${fresh[@]}"; then
     missing "$@"
     [ ${#missing[@]} -eq 0 ] && exit 0
   fi
@@ -72,7 +74,7 @@ fetch || {
   fetch
 } || exit 1
 sudo rm -rf "$debs/partial" "$debs/lock"
-install_debs
+install_debs "$debs"/*.deb
 # Configures whatever an install left unpacked, then holds it to every package asked for.
 timeout -k 10 30 sudo dpkg --configure -a
 missing "$@"
