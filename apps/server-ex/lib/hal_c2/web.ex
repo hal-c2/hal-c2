@@ -138,6 +138,18 @@ defmodule HalC2.Web do
   def loopback_ip?({0, 0, 0, 0, 0, 0xFFFF, g, _}) when div(g, 256) == 127, do: true
   def loopback_ip?(_ip), do: false
 
+  # Headers a reverse proxy adds; Tailscale Serve (`HalC2.TailscaleServe`) sends the
+  # forwarded ones, and the tailnet identity for a user's device.
+  @proxy_headers ~w(forwarded x-forwarded-for x-forwarded-host x-real-ip tailscale-user-login)
+
+  @doc """
+  Whether `conn` came from this machine and not through a proxy on it: Tailscale
+  Serve connects from loopback on behalf of the tailnet, so a forwarded request is
+  remote. Where the MC's access token may authenticate.
+  """
+  def local_request?(%{remote_ip: ip, req_headers: headers}),
+    do: loopback_ip?(ip) and not Enum.any?(headers, fn {key, _} -> key in @proxy_headers end)
+
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do

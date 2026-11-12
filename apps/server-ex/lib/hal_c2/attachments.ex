@@ -547,22 +547,34 @@ defmodule HalC2.Attachments do
         nil ->
           {:ok, %{"path" => nil, "expiresAt" => favicon_expiry(now)}, "project-favicon-missing"}
 
-        path ->
-          if String.downcase(Path.extname(path)) in @image_extensions do
-            revision = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
+        found ->
+          # A saved path may be a link anywhere: judge and serve what it resolves to.
+          path = HalC2.Workspace.real(found)
 
-            {:ok,
-             Map.merge(
-               %{
-                 "path" => path,
-                 "mimeType" => MIME.from_path(path),
-                 "disposition" => "inline",
-                 "expiresAt" => favicon_expiry(now)
-               },
-               identity(path)
-             ), "v#{revision}-#{Path.basename(path)}"}
-          else
-            error("AssetPreviewTypeValidationError", resource, "Only images are served as icons.")
+          cond do
+            String.downcase(Path.extname(path)) not in @image_extensions ->
+              error(
+                "AssetPreviewTypeValidationError",
+                resource,
+                "Only images are served as icons."
+              )
+
+            HalC2.Workspace.mc_protected?(path) ->
+              error("AssetWorkspaceResolutionError", resource, "That file is not served.")
+
+            true ->
+              revision = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
+
+              {:ok,
+               Map.merge(
+                 %{
+                   "path" => path,
+                   "mimeType" => MIME.from_path(path),
+                   "disposition" => "inline",
+                   "expiresAt" => favicon_expiry(now)
+                 },
+                 identity(path)
+               ), "v#{revision}-#{Path.basename(path)}"}
           end
       end
     else
@@ -948,6 +960,9 @@ defmodule HalC2.Attachments do
     cond do
       String.downcase(Path.extname(resolved)) not in @media_extensions ->
         error("AssetPreviewTypeValidationError", resource, "Only media files are served.")
+
+      HalC2.Workspace.mc_protected?(resolved) ->
+        error("AssetWorkspaceResolutionError", resource, "That file is not served.")
 
       not File.regular?(resolved) ->
         error("AssetWorkspaceAssetNotFoundError", resource, "Media file was not found.")

@@ -27,9 +27,10 @@ defmodule HalC2.Traces do
   def otlp_url, do: Application.get_env(:hal_c2, :otlp_traces_url)
 
   @doc """
-  `url` safe to show a client or write to a log: no userinfo, and no value
-  for a query parameter whose name carries a credential. Collector URLs
-  commonly embed both; the exporter keeps using the real one.
+  `url` safe to show a client or write to a log: no userinfo, and no query
+  values, only their names. Collector URLs commonly carry credentials in both,
+  under names no list keeps up with (`sig`, `credential`); the exporter keeps
+  using the real one.
   """
   def redacted_url(url) when is_binary(url) do
     uri = URI.parse(url)
@@ -42,11 +43,7 @@ defmodule HalC2.Traces do
         query ->
           query
           |> URI.query_decoder()
-          |> Enum.map(fn {key, value} ->
-            if Regex.match?(~r/token|key|secret|password|auth/i, key),
-              do: {key, "[REDACTED]"},
-              else: {key, value}
-          end)
+          |> Enum.map(fn {key, _value} -> {key, "[REDACTED]"} end)
           |> URI.encode_query()
       end
 

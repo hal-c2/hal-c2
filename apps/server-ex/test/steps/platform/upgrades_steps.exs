@@ -1598,7 +1598,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
   defp reload(context, token),
     do: Mc.request(context.mc, :post, "/api/dev/reload", bearer: token)
 
-  defp target, do: "#{Upgrade.version()}-t#{System.unique_integer([:positive])}"
+  # A version newer than the running one: an older one needs "allowDowngrade".
+  defp target do
+    %Version{major: major, minor: minor, patch: patch} = Version.parse!(Upgrade.version())
+    "#{major}.#{minor}.#{patch + 1}-t#{System.unique_integer([:positive])}"
+  end
 
   # A bundle for a fresh target version, added to the MC's cache unless `cache?` is false.
   defp bundle(context, changes \\ %{}, modules \\ [], cache? \\ true) do

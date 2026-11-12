@@ -61,8 +61,11 @@ The MC's own directories are the exception: they hold the credentials every
 scope is checked against (the access token, `secrets/`, the cluster key, the
 databases), so no client file or asset RPC reads, lists, searches or writes
 inside them at any scope, and the access token itself only authenticates from
-this machine. Thread worktrees under the data directory, and a registered
-project's own files wherever it sits, stay reachable.
+this machine. A request a proxy forwarded is not from this machine even when it
+arrives over loopback: Tailscale Serve connects to the MC that way on behalf of the
+tailnet, so its forwarding headers rule the token out. Thread worktrees under the data directory, and the files of a
+project registered inside an MC directory, stay reachable; a project that
+contains an MC directory (one at the home directory, say) does not reach into it.
 
 Signed asset URLs are bearer credentials. A URL for media on the host grants
 access to one canonical file and its device/inode identity, not its containing directory.

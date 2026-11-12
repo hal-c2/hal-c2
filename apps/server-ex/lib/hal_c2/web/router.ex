@@ -564,7 +564,7 @@ defmodule HalC2.Web.Router do
   defp socket_session(conn, %{"token" => token}),
     do:
       if(
-        HalC2.Web.loopback_ip?(conn.remote_ip) and
+        HalC2.Web.local_request?(conn) and
           Plug.Crypto.secure_compare(token, HalC2.Web.token()),
         do: {:ok, nil},
         else: :error
@@ -729,7 +729,7 @@ defmodule HalC2.Web.Router do
     body = with {:ok, body} <- json_body(conn), do: body
 
     cond do
-      not HalC2.Web.loopback_ip?(conn.remote_ip) or
+      not HalC2.Web.local_request?(conn) or
           not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
         send_resp(conn, 401, "")
 
@@ -737,7 +737,7 @@ defmodule HalC2.Web.Router do
         case body do
           %{"bundle" => bundle, "version" => version}
           when is_binary(bundle) and is_binary(version) ->
-            case HalC2.Upgrade.update_from(bundle, version) do
+            case HalC2.Upgrade.update_from(bundle, version, body["allowDowngrade"] == true) do
               {:ok, result} -> json(conn, 200, result)
               {:error, %{"reason" => reason}} -> json(conn, 409, %{"reason" => reason})
             end

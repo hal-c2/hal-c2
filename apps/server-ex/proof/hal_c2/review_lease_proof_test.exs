@@ -56,8 +56,8 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review.mcp/1" => @turn,
       "HalC2.OpenShell.Review.refusal/2" => @reads,
       "HalC2.OpenShell.Review.ended/1" => @reads,
-      "HalC2.OpenShell.Review.ended_settled/1" =>
-        "reads the end once earlier counts are handled; the model handles each count as it is sent",
+      "HalC2.OpenShell.Review.ended_settled/2" =>
+        "reads the end once earlier counts are handled, or says it could not; the model handles each count as it is sent",
       "HalC2.OpenShell.Review handle_call :settle" =>
         "answers once earlier messages are handled; the model handles each as it is sent",
       "HalC2.OpenShell.Review.opener/1" => @reads,

@@ -51,9 +51,9 @@ defmodule HalC2.TracesTest do
 
   test "a collector URL shown to clients or logs carries no credential" do
     assert HalC2.Traces.redacted_url(
-             "https://user:password@collector.example/v1/traces?api_key=secret&service=mc"
+             "https://user:password@collector.example/v1/traces?api_key=secret&credential=c&sig=s&service=mc"
            ) ==
-             "https://collector.example/v1/traces?api_key=%5BREDACTED%5D&service=mc"
+             "https://collector.example/v1/traces?api_key=%5BREDACTED%5D&credential=%5BREDACTED%5D&sig=%5BREDACTED%5D&service=%5BREDACTED%5D"
 
     assert HalC2.Traces.redacted_url("https://collector.example/v1/traces") ==
              "https://collector.example/v1/traces"

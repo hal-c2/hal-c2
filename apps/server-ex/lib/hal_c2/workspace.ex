@@ -163,7 +163,7 @@ defmodule HalC2.Workspace do
 
   defp read_target(root, relative, error) do
     if Path.type(relative) == :absolute do
-      if mc_credential?(relative),
+      if mc_protected?(relative),
         do: error.("workspace_path_outside_root", "'#{relative}' is outside the workspace."),
         else: {:ok, real(relative), relative}
     else
@@ -203,7 +203,7 @@ defmodule HalC2.Workspace do
 
   defp write_target(root, relative, error) do
     if Path.type(relative) == :absolute do
-      if mc_credential?(relative) do
+      if mc_protected?(relative) do
         error.("workspace_path_outside_root", "'#{relative}' is outside the workspace.")
       else
         with {:ok, path} <- existing_text(real(relative), relative, error),
@@ -703,10 +703,10 @@ defmodule HalC2.Workspace do
   @doc """
   Whether client file access may never reach `path`: it resolves to one of
   the MC's credential files, or inside the MC's own directories (or a legacy
-  home) outside any registered project. Thread worktrees under the data
-  directory stay usable, and a project the user registered inside an MC
-  directory (the plain-directory layout tests run in) keeps its own files —
-  its credential neighbours stay blocked either way.
+  home). Thread worktrees under the data directory stay usable, and a project
+  the user registered inside an MC directory (the plain-directory layout tests
+  run in) keeps its own files — its credential neighbours stay blocked either
+  way. A project that contains an MC directory does not open it up.
   """
   def mc_protected?(path) when is_binary(path),
     do: protected_with?(real(path), protection())
@@ -748,9 +748,19 @@ defmodule HalC2.Workspace do
       within?(ctx.worktrees, resolved) -> false
       hard_with?(resolved, ctx) -> true
       not Enum.any?(ctx.roots, &within?(&1, resolved)) -> false
-      Enum.any?(ctx.registered, &within?(&1, resolved)) -> false
+      registered_inside_mc?(resolved, ctx) -> false
       true -> true
     end
+  end
+
+  # A project registered inside an MC directory keeps its own files there; one
+  # that merely contains an MC directory (a project at the user's home) does not
+  # open that directory up.
+  defp registered_inside_mc?(resolved, ctx) do
+    Enum.any?(ctx.registered, fn project ->
+      within?(project, resolved) and
+        Enum.any?(ctx.roots, &(within?(&1, project) and within?(&1, resolved)))
+    end)
   end
 
   # The credential material itself: blocked even inside a registered project

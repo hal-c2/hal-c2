@@ -176,6 +176,19 @@ defmodule HalC2.PushTest do
     assert [_] = Map.keys(stored)
   end
 
+  test "a restart deletes a live session's registration saved before the endpoint rules",
+       %{context: context, phone: phone} do
+    context = register(context, phone)
+    [{session, registration}] = Map.to_list(Push.registrations())
+    stored = JSON.encode!(Map.put(registration, "endpoint", "http://push.example/up"))
+    :ok = HalC2.Store.put_meta("push:" <> session, stored)
+
+    Mc.restart(context.mc)
+
+    assert Push.registrations() == %{}
+    assert HalC2.Store.metas(HalC2.Store.path(), "push:") == %{}
+  end
+
   test "unregistering stops alerts", %{context: context, phone: phone} do
     context = register(context, phone)
     {{:ok, %{}}, context} = World.call(context, "hal-c2.unregisterPush", %{}, "phone")

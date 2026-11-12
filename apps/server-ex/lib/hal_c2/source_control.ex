@@ -224,7 +224,7 @@ defmodule HalC2.SourceControl do
   # shape the CLI could read as its own option.
   defp safe_repository?(name) when is_binary(name) do
     name != "" and String.printable?(name) and not String.starts_with?(name, "-") and
-      not String.contains?(name, [" ", "\t", "\n"])
+      not String.contains?(name, ["\t", "\n"])
   end
 
   defp safe_repository?(_name), do: false

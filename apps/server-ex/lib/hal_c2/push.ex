@@ -215,16 +215,20 @@ defmodule HalC2.Push do
     {:ok, %{state | seen: seen}}
   end
 
-  # Registrations of sessions revoked while the MC was down are deleted, not kept.
+  # Registrations of sessions revoked while the MC was down, and ones saved
+  # before the endpoint rules (an http or private host), are deleted, not kept.
   defp load do
     if Process.whereis(HalC2.Store) do
-      {valid, revoked} =
+      {valid, dropped} =
         HalC2.Store.metas(HalC2.Store.path(), @prefix)
-        |> Enum.map(fn {@prefix <> session, json} -> {session, json} end)
-        |> Enum.split_with(fn {session, _} -> valid_session?(session) end)
+        |> Enum.map(fn {@prefix <> session, json} -> {session, JSON.decode!(json)} end)
+        |> Enum.split_with(fn {session, registration} ->
+          valid_session?(session) and is_binary(registration["endpoint"]) and
+            check_endpoint(registration["endpoint"]) == :ok
+        end)
 
-      for {session, _} <- revoked, do: unpersist(session)
-      Map.new(valid, fn {session, json} -> {session, JSON.decode!(json)} end)
+      for {session, _} <- dropped, do: unpersist(session)
+      Map.new(valid)
     else
       %{}
     end

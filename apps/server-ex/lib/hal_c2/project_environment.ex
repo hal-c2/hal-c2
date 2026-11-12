@@ -126,7 +126,7 @@ defmodule HalC2.ProjectEnvironment do
   # inherited from the MC. Trusting a checkout's variables is not trusting
   # it with any of these.
   @blocked_project_env ~w(
-    NODE_OPTIONS LD_PRELOAD DYLD_INSERT_LIBRARIES BASH_ENV ENV ZDOTDIR
+    NODE_OPTIONS LD_PRELOAD LD_AUDIT DYLD_INSERT_LIBRARIES BASH_ENV ENV ZDOTDIR
     PYTHONSTARTUP RUBYOPT PERL5OPT
     GIT_SSH_COMMAND GIT_EXTERNAL_DIFF GIT_PAGER GIT_DIR GIT_WORK_TREE
     GIT_CONFIG GIT_CONFIG_COUNT

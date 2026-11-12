@@ -80,6 +80,14 @@ defmodule HalC2.UpgradeTest do
 
     assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => "1.1.0"})
     assert reason =~ "allowDowngrade"
+
+    # A bundle on this machine (`--release`) moves back only with the operator's consent.
+    bundle = Path.join(dir, "older.tar.gz")
+    File.write!(bundle, "")
+    assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0")
+    assert reason =~ "allowDowngrade"
+    assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0", true)
+    refute reason =~ "allowDowngrade"
   end
 
   test "an MC run from a checkout does not install versions" do

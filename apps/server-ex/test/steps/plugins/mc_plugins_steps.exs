@@ -90,7 +90,9 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
 
   step "the MC installs a version whose changes need no restart", context do
     context = Release.ensure(context)
-    target = context.release.from <> "-hot"
+    # Newer than the running version: an older one needs "allowDowngrade".
+    %Version{major: major, minor: minor, patch: patch} = Version.parse!(context.release.from)
+    target = "#{major}.#{minor}.#{patch + 1}-hot"
 
     context =
       Release.put_bundle(
@@ -130,7 +132,8 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     test = self()
     Application.put_env(:hal_c2, :restart_exit, &send(test, {:restart_exit, &1}))
     System.put_env("HAL_C2_SERVICE", "1")
-    target = context.release.from <> "-nif"
+    %Version{major: major, minor: minor, patch: patch} = Version.parse!(context.release.from)
+    target = "#{major}.#{minor}.#{patch + 1}-nif"
 
     context =
       Release.put_bundle(

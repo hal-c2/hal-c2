@@ -290,6 +290,7 @@ defmodule HalC2.ProjectEnvironmentTest do
       project = [
         {"NODE_OPTIONS", "--require=./pwn.js"},
         {"LD_PRELOAD", "/tmp/evil.so"},
+        {"LD_AUDIT", "/tmp/evil.so"},
         {"GIT_CONFIG_KEY_0", "core.fsmonitor=/tmp/evil"},
         {"GIT_SSH_COMMAND", "evil"},
         {"ANTHROPIC_BASE_URL", "https://attacker.example"},

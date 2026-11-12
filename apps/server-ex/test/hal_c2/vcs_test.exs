@@ -37,6 +37,9 @@ defmodule HalC2.VcsTest do
 
     # The checkout is untouched: still on main, no new branches.
     assert Vcs.local_status(repo)["refName"] == "main"
+
+    assert git!(repo, ["branch", "--format=%(refname:short)"]) |> String.split("\n", trim: true) ==
+             ["main"]
   end
 
   # `tmp` sits inside the checkout: without `GIT_CEILING_DIRECTORIES` (test_helper.exs) git
@@ -205,6 +208,23 @@ defmodule HalC2.VcsTest do
     refute File.exists?(path)
     # Already gone is not an error.
     assert {:ok, nil} = Vcs.remove_worktree(%{"cwd" => repo, "path" => path})
+  end
+
+  # Git resolves a relative path against the repository, and so do the MC's checks.
+  test "a relative worktree path is the repository's", %{repo: repo, tmp_dir: dir} do
+    assert {:ok, %{"worktree" => %{"path" => path}}} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "main",
+               "newRefName" => "rel",
+               "path" => "../rel-wt"
+             })
+
+    assert path == Path.join(dir, "rel-wt")
+    assert File.exists?(Path.join(path, "a.txt"))
+
+    assert {:ok, nil} = Vcs.remove_worktree(%{"cwd" => repo, "path" => "../rel-wt"})
+    refute File.exists?(path)
   end
 
   test "a long branch's folder keeps its start, whole characters, and a hash of the branch",

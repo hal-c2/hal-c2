@@ -38,7 +38,8 @@ defmodule HalC2.DiagnosticsTest do
   end
 
   test "process commands redact authorization and credential values" do
-    secrets = ["live-bearer", "token-value", "password-value", "api-key-value"]
+    secrets =
+      ["live-bearer", "token-value", "password-value", "api-key-value", "horse", "staple"]
 
     port =
       Port.open({:spawn_executable, "/bin/sh"}, [
@@ -49,7 +50,12 @@ defmodule HalC2.DiagnosticsTest do
           ~s("Authorization":"Bearer live-bearer"),
           "--token=token-value",
           "--password=password-value",
-          "--api-key=api-key-value"
+          "--api-key=api-key-value",
+          "--password",
+          "correct horse",
+          "token=battery staple",
+          "--keep",
+          "visible"
         ]
       ])
 
@@ -63,6 +69,7 @@ defmodule HalC2.DiagnosticsTest do
     assert process["command"] =~ "token=[REDACTED]"
     assert process["command"] =~ "password=[REDACTED]"
     assert process["command"] =~ "api-key=[REDACTED]"
+    assert process["command"] =~ "--keep visible"
     refute Enum.any?(secrets, &String.contains?(process["command"], &1))
 
     assert {:ok, %{"signaled" => true}} =

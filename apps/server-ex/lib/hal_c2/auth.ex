@@ -249,7 +249,7 @@ defmodule HalC2.Auth do
         # The MC's own token is a local file credential: it never authenticates
         # from another machine (remote clients hold revocable paired sessions).
         cond do
-          HalC2.Web.access_token?(token) and HalC2.Web.loopback_ip?(conn.remote_ip) ->
+          HalC2.Web.access_token?(token) and HalC2.Web.local_request?(conn) ->
             {:ok, local_session()}
 
           HalC2.Web.access_token?(token) ->

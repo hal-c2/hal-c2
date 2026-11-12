@@ -506,24 +506,40 @@ defmodule HalC2.Rpc do
     :exit, _ -> %{}
   end
 
-  # The parts of the settings document that name code or credentials to run.
+  # Provider settings that only show or hide things. Every other key, in a
+  # driver's `providers` entry or an instance's `config`, can name what runs or
+  # where its credentials go (binaryPath, launchArgs, homePath, serverUrl,
+  # apiEndpoint, an ACP agent or its distribution, ...), so a key added to the
+  # schema needs the shell's scope until it is listed here.
+  @plain_provider_keys ~w(enabled customModels autoCompactWindow displayName accentColor)
+
+  # The parts of the settings document that name code or credentials to run: every
+  # provider key but the ones that only show, hide or label it. An entry left with
+  # nothing that runs counts as absent, so enabling a provider is not a change.
   defp exec_settings(settings) do
+    exec = fn
+      %{} = entry -> Map.drop(entry, @plain_provider_keys)
+      other -> other
+    end
+
     instances =
-      for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
-        {id,
-         %{
-           "binaryPath" => entry["binaryPath"],
-           "environment" => entry["environment"],
-           "configBinaryPath" => get_in(entry, ["config", "binaryPath"])
-         }}
-      end
+      for {id, %{} = entry} <- settings["providerInstances"] || %{},
+          entry = entry |> exec.() |> Map.update("config", nil, exec),
+          entry = if(entry["config"] == %{}, do: Map.delete(entry, "config"), else: entry),
+          entry != %{},
+          into: %{},
+          do: {id, entry}
+
+    providers =
+      for {driver, entry} <- settings["providers"] || %{},
+          entry = exec.(entry),
+          entry != %{},
+          into: %{},
+          do: {driver, entry}
 
     %{
       "providerInstances" => instances,
-      "pi" =>
-        (get_in(settings, ["providers", "pi"]) || %{})
-        |> Map.take(["binaryPath", "launchArgs"]),
-      "muse" => get_in(settings, ["providers", "muse", "binaryPath"]),
+      "providers" => providers,
       "usageLimitSources" => settings["usageLimitSources"]
     }
   end

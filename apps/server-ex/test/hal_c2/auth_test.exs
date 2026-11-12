@@ -8,8 +8,9 @@ defmodule HalC2.AuthTest do
 
   @moduletag :tmp_dir
 
+  # The MC's home sits beside the test's files: what is inside it no client may write.
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, dir)
+    Application.put_env(:hal_c2, :home, Path.join(dir, "mc"))
     Application.put_env(:hal_c2, :port, 0)
     :persistent_term.erase({HalC2.Web, :token})
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
@@ -185,6 +186,23 @@ defmodule HalC2.AuthTest do
         "method" => "server.getConfig",
         "payload" => %{}
       })
+
+    assert_receive {:tcp, ^socket, _} = message, 5_000
+    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+  end
+
+  # Subscriptions keep flowing to a socket that makes no calls: it is closed too.
+  test "a session deleted from the store loses its idle socket", %{port: port, path: path} do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    {:ok, db} = Sqlite3.open(path)
+    :ok = Sqlite3.execute(db, "DELETE FROM auth_sessions WHERE id = '#{id}'")
+    Sqlite3.close(db)
 
     assert_receive {:tcp, ^socket, _} = message, 5_000
     {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)

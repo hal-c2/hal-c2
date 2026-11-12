@@ -43,5 +43,37 @@ defmodule HalC2.RpcScopesTest do
 
     assert Rpc.required_scopes("hal-c2.writeSettings", changed) ==
              ["orchestration:operate", "terminal:operate"]
+
+    # Any driver's or instance's key that is not known to be plain, a key the
+    # schema gains later included.
+    for {key, value} <- [
+          {"binaryPath", "/tmp/evil"},
+          {"launchArgs", "--evil"},
+          {"homePath", "/tmp/home"},
+          {"serverUrl", "https://attacker.example"},
+          {"apiEndpoint", "https://attacker.example"},
+          {"someFutureKey", "x"}
+        ],
+        settings <- [
+          %{"providers" => %{"codex" => %{key => value}}},
+          %{"providers" => %{"opencode" => %{key => value}}},
+          %{"providerInstances" => %{"x" => %{"driver" => "codex", "config" => %{key => value}}}}
+        ] do
+      assert Rpc.required_scopes("hal-c2.writeSettings", %{"settings" => settings}) ==
+               ["orchestration:operate", "terminal:operate"],
+             inspect(settings)
+    end
+  end
+
+  test "a settings write that only shows or hides providers stays an operate call" do
+    for settings <- [
+          %{},
+          %{"providers" => %{"codex" => %{"enabled" => false, "customModels" => ["m"]}}},
+          %{"providerInstances" => %{}}
+        ] do
+      assert Rpc.required_scopes("hal-c2.writeSettings", %{"settings" => settings}) ==
+               ["orchestration:operate"],
+             inspect(settings)
+    end
   end
 end

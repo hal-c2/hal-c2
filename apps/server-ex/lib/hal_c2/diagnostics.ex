@@ -642,12 +642,18 @@ defmodule HalC2.Diagnostics do
       "\\1[REDACTED]"
     )
     |> String.replace(~r/\bbearer\s+[^\s"',\}]+/i, "Bearer [REDACTED]")
+    # `ps` joins argv with spaces, so an unquoted value (`--password correct
+    # horse`) runs to the next option or the end: over-masking is the safe side.
     |> String.replace(
-      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*["']?)[^\s"',\}]+/i,
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*["'])[^"']*/i,
       "\\1\\2[REDACTED]"
     )
     |> String.replace(
-      ~r/((?<!\S)--(?:token|password|passwd|api[-_]?key|api[-_]?token)\s+["']?)(?!-)[^\s"',\}]+/i,
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*)(?!["'\[]).*?(?=\s+--?[A-Za-z]|\z)/i,
+      "\\1\\2[REDACTED]"
+    )
+    |> String.replace(
+      ~r/((?<!\S)--(?:token|password|passwd|api[-_]?key|api[-_]?token)\s+["']?)(?!-|\[REDACTED\]).*?(?=\s+--?[A-Za-z]|\z)/i,
       "\\1[REDACTED]"
     )
   end

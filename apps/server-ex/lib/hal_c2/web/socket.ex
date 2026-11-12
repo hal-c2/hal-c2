@@ -101,6 +101,7 @@ defmodule HalC2.Web.Socket do
     # A socket opened with a ticket belongs to that client's session.
     session = opts[:session]
     if session, do: HalC2.Auth.connected(session, opts[:client] || %{})
+    if session, do: schedule_recheck()
     trace = opts[:trace]
     if trace, do: Logger.metadata(trace_id: trace)
 
@@ -335,6 +336,18 @@ defmodule HalC2.Web.Socket do
   def handle_info({:hal_c2_session_revoked, session}, %{session: session} = state),
     do: {:stop, :normal, {4401, "session revoked"}, state}
 
+  # A socket that only listens to its subscriptions makes no calls to recheck on.
+  def handle_info(:recheck_session, state) do
+    case revalidate_session(state) do
+      {:ok, state} ->
+        schedule_recheck()
+        {:ok, state}
+
+      :revoked ->
+        {:stop, :normal, {4401, "session revoked"}, state}
+    end
+  end
+
   def handle_info({:rpc_reply, id, reply}, state) do
     frame =
       case reply do
@@ -488,12 +501,16 @@ defmodule HalC2.Web.Socket do
 
   # A session can be revoked outside this process (the auth CLI writes the
   # store directly), where no close message can reach the socket: re-read
-  # its scopes from the store at most every few seconds, so a deleted or
-  # expired session loses its socket on its next call instead of never.
+  # its scopes from the store at most every few seconds, on a call and on a
+  # timer, so a deleted or expired session loses its socket, subscriptions and
+  # all, instead of never.
   @session_recheck_ms 5_000
 
   defp session_recheck_ms,
     do: Application.get_env(:hal_c2, :session_recheck_ms, @session_recheck_ms)
+
+  defp schedule_recheck,
+    do: Process.send_after(self(), :recheck_session, max(session_recheck_ms(), 100))
 
   defp revalidate_session(%{session: nil} = state), do: {:ok, state}
 

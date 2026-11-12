@@ -287,7 +287,14 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     {:ok, _} = Application.ensure_all_started(:inets)
 
     with {:ok, base, token} <- installed_record(home) do
-      body = JSON.encode!(%{"bundle" => path, "version" => manifest(path)["version"]})
+      # The operator chose this checkout's build: moving back to it, from a
+      # worktree behind the installed one, is the explicit choice the gate asks for.
+      body =
+        JSON.encode!(%{
+          "bundle" => path,
+          "version" => manifest(path)["version"],
+          "allowDowngrade" => true
+        })
 
       request =
         {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{String.trim(token)}"}],

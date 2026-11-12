@@ -714,7 +714,7 @@ defmodule HalC2.Vcs do
   """
   def create_worktree(%{"cwd" => cwd, "refName" => ref} = input, opts \\ []) do
     branch = input["newRefName"] || ref
-    path = Path.expand(input["path"] || worktree_path(cwd, branch))
+    path = Path.expand(input["path"] || worktree_path(cwd, branch), cwd)
 
     args =
       if input["newRefName"],
@@ -1002,7 +1002,7 @@ defmodule HalC2.Vcs do
 
   @doc "`vcs.removeWorktree`; a worktree that is already gone is pruned instead."
   def remove_worktree(%{"cwd" => cwd, "path" => path} = input) do
-    path = Path.expand(path)
+    path = Path.expand(path, cwd)
     args = ["worktree", "remove"] ++ if(input["force"], do: ["--force"], else: []) ++ [path]
 
     case Git.run(cwd, args, timeout: worktree_timeout()) do

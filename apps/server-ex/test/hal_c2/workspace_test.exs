@@ -298,4 +298,57 @@ defmodule HalC2.WorkspaceTest do
     assert {:ok, %{"contents" => "worktree file\n"}} =
              Workspace.read_file(%{"cwd" => worktree, "relativePath" => "code.txt"})
   end
+
+  test "a project containing the MC's directories does not reach into them, one inside keeps its files",
+       %{tmp_dir: dir, root: root} do
+    previous = Application.get_env(:hal_c2, :home)
+    home = Path.join(dir, "mc-home")
+    Application.put_env(:hal_c2, :home, home)
+    on_exit(fn -> Application.put_env(:hal_c2, :home, previous) end)
+
+    inner = Path.join(home, "inner")
+    File.mkdir_p!(inner)
+    File.write!(Path.join(home, "settings.json"), ~s({"secret":"mc-settings"}))
+    File.write!(Path.join(inner, "notes.txt"), "inner project\n")
+
+    start_supervised!({HalC2.Store, path: Path.join(dir, "projects.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+    :ok = HalC2.Shell.subscribe(self())
+
+    for {id, path} <- [{"around", dir}, {"inside", inner}] do
+      {:ok, _} =
+        HalC2.Projects.mutate(%{
+          "type" => "project.create",
+          "projectId" => id,
+          "workspaceRoot" => path
+        })
+
+      assert_receive {:hal_c2_shell, {:rows, _, [{^id, _}]}}, 1_000
+    end
+
+    # Not by an absolute path, from any project.
+    assert {:error, %{"_tag" => "ProjectReadFileError"}} =
+             Workspace.read_file(%{
+               "cwd" => root,
+               "relativePath" => Path.join(home, "settings.json")
+             })
+
+    assert {:error, %{"_tag" => "ProjectWriteFileError"}} =
+             Workspace.write_file(%{
+               "cwd" => root,
+               "relativePath" => Path.join(home, "settings.json"),
+               "contents" => "{}"
+             })
+
+    # Nor relatively from the project around it.
+    assert {:error, %{"_tag" => "ProjectReadFileError"}} =
+             Workspace.read_file(%{"cwd" => dir, "relativePath" => "mc-home/settings.json"})
+
+    assert File.read!(Path.join(home, "settings.json")) == ~s({"secret":"mc-settings"})
+
+    # The project registered inside the MC home keeps its own files.
+    assert {:ok, %{"contents" => "inner project\n"}} =
+             Workspace.read_file(%{"cwd" => inner, "relativePath" => "notes.txt"})
+  end
 end

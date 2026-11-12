@@ -111,15 +111,16 @@ defmodule HalC2.Upgrade do
   Updates to `version` from its bundle archive at `path` on this machine
   (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
   clustered with this one update first, taking the bundle from it before this one
-  restarts. How each went is the result's `members`.
+  restarts. How each went is the result's `members`. `allow_downgrade` is the
+  operator's consent to move back to an older version (`"allowDowngrade"`).
   """
-  def update_from(path, version) do
+  def update_from(path, version, allow_downgrade \\ false) do
     if File.regular?(path) do
       # Before the bundle reaches the cache: the boot prune would take it, a version
       # not yet installed being nothing it keeps.
       :ok = await_pruned()
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
-      input = %{"targetVersion" => version}
+      input = %{"targetVersion" => version, "allowDowngrade" => allow_downgrade == true}
       members = update_members(Node.list(), input)
       with {:ok, result} <- hot_update(input), do: {:ok, Map.put(result, "members", members)}
     else
