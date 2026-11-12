@@ -316,10 +316,13 @@ def prompt(pid, sid, text):
             f.write(text + "\n")
         return finish(pid, sid, "wrote " + m.group(1))
     if "which model" in text:
-        # A session handed the thread so far says how many turns it was given.
-        handed = text.count("User: which model") if "<conversation_history>" in text else 0
+        # A session handed the thread so far says how many turns it was given, even
+        # when none of them asked "which model" (a refused turn, say): only a session
+        # handed nothing says nothing of it.
+        handed = text.count("User: which model") if "<conversation_history>" in text else None
         at = " at %s" % level if REASONING else ""
-        return finish(pid, sid, "model: %s" % model + at + (" with %d earlier turns" % handed if handed else ""))
+        given = " with %d earlier turns" % handed if handed is not None else ""
+        return finish(pid, sid, "model: %s" % model + at + given)
     if "report" in text:
         return finish(pid, sid, json.dumps({"argv0": ARGV0, "args": ARGS, "session": sid, "model": model,
                       "env": {k: os.environ[k] for k in LOG_ENV if k in os.environ}}))
