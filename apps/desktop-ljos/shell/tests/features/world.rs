@@ -60,6 +60,16 @@ const WINDOW: (f64, f64) = (1280.0, 800.0);
 /// The longest a wait sleeps before it lets the shell's clock catch up.
 const FRAME: Duration = Duration::from_millis(16);
 
+/// What ljos_webengine promises the engine's thread while the browser has
+/// work, and takes back once it has been quiet for a second.
+const BROWSER_WORK: &str = "the web engine's work";
+/// The longest the browser may keep working before time passes on the
+/// shell's clock. TestWindow's advance waits for every promise, this one
+/// too, and a page that never settles (a script on a 1 ms interval) holds
+/// it for a minute each time (hal-c2/ljos-ui#405): past this, the step
+/// fails instead.
+const BROWSER_SETTLE: Duration = Duration::from_secs(10);
+
 /// Raised by whatever has something for the scenario's thread: the fake
 /// MC's socket, the shell's connection, its cache and its other threads.
 #[derive(Default)]
@@ -754,6 +764,7 @@ impl World {
     /// Lets `ms` pass on the shell's clock, the wall clock staying put.
     pub fn advance(&mut self, ms: u64) -> Outcome {
         self.await_answers()?;
+        self.await_browser()?;
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
@@ -783,6 +794,35 @@ impl World {
             let platform = Platform::of(&shell.engine);
             if platform.pending() == 0 || platform.is_held() || started.elapsed() >= WAIT {
                 return Ok(());
+            }
+            self.pump()?;
+            self.signal.wait(FRAME);
+        }
+    }
+
+    /// Serves the fake MC and runs the browser's work until it has settled
+    /// (BROWSER_WORK taken back), failing after BROWSER_SETTLE rather than
+    /// handing TestWindow's advance a wait it gives up on only after a
+    /// minute, and again at the next one.
+    fn await_browser(&mut self) -> Outcome {
+        let started = Instant::now();
+        loop {
+            let Some(shell) = &self.shell else {
+                return Ok(());
+            };
+            let promises = Platform::of(&shell.engine).promises();
+            let Some(work) = promises
+                .iter()
+                .find(|p| !p.standing && p.what == BROWSER_WORK)
+            else {
+                return Ok(());
+            };
+            if started.elapsed() >= BROWSER_SETTLE {
+                return Err(Failure(format!(
+                    "a browser page never settled: the web engine has had work for {} s \
+                     on end, and time cannot pass on the shell's clock until it settles",
+                    work.since.elapsed().as_secs()
+                )));
             }
             self.pump()?;
             self.signal.wait(FRAME);
