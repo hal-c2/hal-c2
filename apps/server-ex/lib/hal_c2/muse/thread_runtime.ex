@@ -214,15 +214,18 @@ defmodule HalC2.Muse.ThreadRuntime do
     }
 
     with {:ok, state} <- ensure_session(state, turn),
-         # A session Muse no longer had starts afresh with the whole thread.
-         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
-         state = %{state | turn: turn},
          {:ok, state} <- select_model(state, turn.model) do
       state = AppliedModel.record(state, state.model)
-      # A run that ended while the session opened never reaches Muse.
+      # A session Muse no longer had starts afresh with the whole thread, once the
+      # turn surely goes to Muse: one the model switch failed for leaves that to the next.
+      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+      state = %{state | turn: turn}
+
+      # A run that ended while the session opened never reaches Muse, nor does the
+      # thread it was to hand a new session.
       case started(state) do
         :ok -> {:reply, :ok, send_turn(state, turn)}
-        :ended -> {:reply, :ok, %{state | turn: nil}}
+        :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
       {:error, reason, state} ->
@@ -563,6 +566,11 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   defp open_session(state, turn), do: start_session(state, turn)
+
+  # A turn that started afresh (`Handoff.fresh_start/2`) but never reached Muse leaves
+  # the new session as empty as it found it: the next turn hands it the thread.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
 
   defp start_session(state, turn) do
     id = Muse.command_id()

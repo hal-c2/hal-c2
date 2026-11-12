@@ -534,6 +534,44 @@ defmodule HalC2.OrchestrationTest do
     assert String.ends_with?(compact, "/compact")
   end
 
+  # The new conversation a lost one leaves holds nothing until a turn reaches Codex.
+  test "a lost Codex conversation is handed the thread after a turn Codex refused",
+       %{tmp_dir: dir} do
+    inputs = Path.join(dir, "inputs.jsonl")
+    home = Path.join(dir, "codex-home")
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_SESSIONS=1",
+      "CODEX_HOME=" <> home,
+      "FAKE_CODEX_INPUT_LOG=" <> inputs,
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+
+    # Codex loses the conversation, with the runtime that had it open.
+    File.rm_rf!(Path.join(home, "sessions"))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    {:ok, _} = send_message(thread_id, "m2", "refuse to start")
+    _ = await_statuses(thread_id, ["completed", "failed"])
+    {:ok, _} = send_message(thread_id, "m3", "say done")
+    _ = await_statuses(thread_id, ["completed", "failed", "completed"])
+
+    [%{"text" => last} | _] =
+      inputs |> File.read!() |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
+
+    assert last =~ "hello"
+    assert String.ends_with?(last, "say done")
+  end
+
   # A turn on another instance stops the app-server the runtime had; what it had sent
   # by then is still in the runtime's mailbox.
   test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do

@@ -1127,9 +1127,11 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp begin_native_turn(state, turn) do
     with {:ok, state} <- version_gate(state, turn),
          {:ok, state} <- connect(state, turn),
-         {:ok, state, turn} <- open_thread(state, turn),
-         {:ok, native_turn, state} <- start_native_turn(state, turn) do
-      native_turn_started(state, turn, native_turn)
+         {:ok, state, turn} <- open_thread(state, turn) do
+      case start_native_turn(state, turn) do
+        {:ok, native_turn, state} -> native_turn_started(state, turn, native_turn)
+        {:error, reason, state} -> {:error, reason, unsent_fresh(state, turn)}
+      end
     end
   end
 
@@ -1542,6 +1544,11 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, state, turn}
     end
   end
+
+  # A turn that started afresh but Codex refused to start leaves the new conversation
+  # as empty as it found it: the next turn hands it the thread.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
 
   defp not_carried(state, turn, reason) do
     at = Entities.now()
