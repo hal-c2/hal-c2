@@ -13,7 +13,7 @@ defmodule HalC2.ClaudeAuthCachePropTest do
   use ExUnit.Case, async: false
   use PropCheck
 
-  alias HalC2.Claude.Provider
+  alias HalC2.Claude.{AuthCache, Provider}
 
   @keys [
     {"claudeAgent", "/a/claude", 1},
@@ -49,6 +49,61 @@ defmodule HalC2.ClaudeAuthCachePropTest do
         end)
 
       final != :error and tokenless_where_landed(final)
+    end
+  end
+
+  # The table's owner is started by whoever comes first: a read (`table/0`) or
+  # the MC's supervisor. In any order of reads, supervisor starts and stops, the
+  # supervisor always starts, supervises the one owner, and a read finds a table.
+  property "the supervisor starts whatever reads came before it" do
+    forall ops <- list(oneof([:read, :start, :stop])) do
+      stop_owner()
+
+      sup =
+        Enum.reduce_while(ops, nil, fn op, sup ->
+          case owner_step(op, sup) do
+            {:ok, sup} -> {:cont, sup}
+            :error -> {:halt, :error}
+          end
+        end)
+
+      if is_pid(sup), do: Supervisor.stop(sup)
+      stop_owner()
+      sup != :error
+    end
+  end
+
+  defp owner_step(:read, sup) do
+    table = AuthCache.table()
+    if :ets.whereis(table) != :undefined, do: {:ok, sup}, else: :error
+  end
+
+  defp owner_step(:start, nil) do
+    with {:ok, sup} <- Supervisor.start_link([AuthCache], strategy: :one_for_one),
+         [{AuthCache, owner, :worker, _}] <- Supervisor.which_children(sup),
+         true <- owner == Process.whereis(AuthCache) do
+      {:ok, sup}
+    else
+      _ -> :error
+    end
+  end
+
+  defp owner_step(:start, sup), do: {:ok, sup}
+  defp owner_step(:stop, nil), do: {:ok, nil}
+
+  defp owner_step(:stop, sup) do
+    Supervisor.stop(sup)
+    if Process.whereis(AuthCache) == nil, do: {:ok, nil}, else: :error
+  end
+
+  defp stop_owner do
+    if pid = Process.whereis(AuthCache) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      end
     end
   end
 
