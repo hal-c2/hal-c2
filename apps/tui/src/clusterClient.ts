@@ -304,6 +304,8 @@ export function makeClusterClient(
     setRuntimeMode: (threadId, mode) => clientForThread(threadId).setRuntimeMode(threadId, mode),
     setInteractionMode: (threadId, mode) =>
       clientForThread(threadId).setInteractionMode(threadId, mode),
+    setThreadModel: (threadId, modelSelection) =>
+      clientForThread(threadId).setThreadModel(threadId, modelSelection),
     renameThread: (threadId, title) => clientForThread(threadId).renameThread(threadId, title),
     archiveThread: (threadId) => clientForThread(threadId).archiveThread(threadId),
     unarchiveThread: (threadId) => clientForThread(threadId).unarchiveThread(threadId),

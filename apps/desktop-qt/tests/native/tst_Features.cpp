@@ -232,7 +232,6 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:The machine is left out*"),
     QStringLiteral("composer/model-and-mode.feature:A composer that falls back to another account*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback account takes no options*"),
-    QStringLiteral("composer/model-and-mode.feature:A fallback keeps the effort of a model saved under an alias"),
     QStringLiteral("composer/model-and-mode.feature:A custom model named like a Codex alias*"),
     QStringLiteral("composer/model-and-mode.feature:Search results keep the provider's newest-first order"),
     QStringLiteral("composer/model-and-mode.feature:The model picker opens on the favourites*"),

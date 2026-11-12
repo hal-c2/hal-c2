@@ -317,6 +317,37 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
+  it.effect("sends a selection base only with the model it was picked against", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const send = (id: string, picked: boolean) =>
+        startThreadTurn({
+          commandId: CommandId.make(id),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(`message-${id}`),
+            role: "user",
+            text: "Go on",
+            attachments: [],
+          },
+          ...(picked
+            ? { modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" } }
+            : {}),
+          selectionBase: 4,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* send("picked", true);
+      yield* send("unpicked", false);
+
+      expect(commands[0]).toMatchObject({ modelSelection: { model: "gpt-5.4" }, selectionBase: 4 });
+      expect(commands[1]).not.toHaveProperty("modelSelection");
+      expect(commands[1]).not.toHaveProperty("selectionBase");
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
