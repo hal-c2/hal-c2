@@ -48,6 +48,13 @@ fi
 jobs=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100" \
   --jq "$(cat "$(dirname "$0")/failed-jobs.jq") | .[] | [.id, .name, .url, .timed_out] | @tsv")
 
+# A run cancelled before any job failed, most often because someone took the PR out of
+# the queue, has nothing to report.
+if [ -z "$jobs" ]; then
+  echo "run $run was cancelled before any job failed"
+  exit 0
+fi
+
 # A job's log, without timestamps or colour.
 log() {
   curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
@@ -73,9 +80,6 @@ excerpt() {
 
 body="The merge queue run for this PR failed, so it left the queue: [run $run]"
 body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt)."$'\n'
-if [ -z "$jobs" ]; then
-  body+=$'\nNo job failed or timed out in it; the run was cancelled. Re-queue it.\n'
-fi
 while IFS=$'\t' read -r id name url timed_out; do
   [ -n "$id" ] || continue
   if [ "$timed_out" = true ]; then
