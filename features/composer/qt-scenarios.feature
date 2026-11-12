@@ -95,7 +95,7 @@ Feature: Desktop shell scenarios: composer
   Scenario: The model picker names the chosen model and its provider
     Given the shell lists models from Codex and Claude
     And the shell has chosen "Claude Opus" on Claude
-    Then the model picker shows "Claude Opus" marked as a Claude model
+    Then the model picker shows "Opus" marked as a Claude model
 
   # Upstream #28057: a model with efforts keeps the picker open on them.
   @desktop

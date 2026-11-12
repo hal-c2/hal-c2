@@ -53,6 +53,10 @@ void setField(QJsonObject& row, const QString& name, const QString& value) {
     QJsonArray tasks;
     for (int task = 0; task < value.toInt(); ++task) tasks.append(QJsonObject{{QStringLiteral("id"), task}});
     row.insert(name, tasks);
+  } else if (name == QLatin1String("model")) {
+    // "instance/model", the thread's modelSelection.
+    row.insert(QStringLiteral("modelSelection"),
+               QJsonObject{{QStringLiteral("instanceId"), value.section(u'/', 0, 0)}, {QStringLiteral("model"), value.section(u'/', 1)}});
   } else {
     row.insert(name, value);
   }

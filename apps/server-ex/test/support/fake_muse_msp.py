@@ -11,6 +11,8 @@
 #   models    model/list's models (default one Meta model, fake/one)
 #   modelListExit  exit instead of answering model/list
 #   refuseStart {message, data, code}: turn/start is refused with that JSON-RPC error
+#   refuseModels  model ids Muse will not run: session/start opens on fake/one instead,
+#             and session/setModel refuses them
 #   overloaded  {method: n}: the first n calls of method are refused as overloaded (-32001)
 #   turns     [{"match": substring, "steps": [...]}], first match wins
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
@@ -317,9 +319,10 @@ def handle(msg):
     elif method == "session/start":
         sid = params["sessionId"]
         state["session"] = sid
-        save_session(sid, {"history": [], "approvalMode": params.get("approvalMode"),
-                           "modelId": params.get("modelId") or "fake/one"})
-        reply({"session": {"sessionId": answered(sid), "modelId": params.get("modelId") or "fake/one"}})
+        model = params.get("modelId")
+        model = "fake/one" if not model or model in config().get("refuseModels", []) else model
+        save_session(sid, {"history": [], "approvalMode": params.get("approvalMode"), "modelId": model})
+        reply({"session": {"sessionId": answered(sid), "modelId": model}})
     elif method == "session/resume":
         session = load_session(params["sessionId"])
         if session is None:
@@ -331,6 +334,8 @@ def handle(msg):
         session["approvalMode"] = params["mode"]
         save_session(sid, session)
         reply({})
+    elif method == "session/setModel" and params["model"]["modelId"] in config().get("refuseModels", []):
+        return error(-32000, "model not available")
     elif method == "session/setModel":
         session = load_session(sid)
         session["modelId"] = params["model"]["modelId"]

@@ -42,6 +42,7 @@ World::World() {
   // The machine the scenarios run on, whatever runs them; the fake MC has
   // no id unless a scenario gives it one (kThisMachine for this one).
   thisMachine::setIdForTesting(kThisMachine);
+  mc.appliesModes = true;
   start();
 }
 
