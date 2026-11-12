@@ -14,21 +14,7 @@ repo=${GITHUB_REPOSITORY:?}
 stuck=${STUCK_MINUTES:-20}
 now=$(date -u +%s)
 
-# The jobs that failed, and those that timed out: a timeout ends a job cancelled, like the
-# stop jobs' own cancel, but before any stop job started (or with none started, which a
-# wedge that starves the stop job too can cause). A matrix cancels the rest of its
-# entries when one fails, so a cancel beside a failure in the same matrix is not a timeout.
-failed_jobs='
-  def matrix: .name | sub(" \\(.*$"; "");
-  ([.jobs[] | select(.name | startswith("Stop the queue run")) | select(.started_at and .conclusion != "skipped")
-    | .started_at] | min) as $stopped
-  | [.jobs[] | select(.conclusion == "failure") | matrix] as $failed
-  | [.jobs[] | select(.name | startswith("Stop the queue run") | not)
-     | select(.conclusion == "failure"
-              or (.conclusion == "cancelled" and .completed_at < ($stopped // "9999")
-                  and (matrix as $m | $failed | index($m) | not)))
-     | .name]
-  | unique | join(", ")'
+failed_jobs="$(cat "$(dirname "$0")/failed-jobs.jq") | map(.name) | join(\", \")"
 
 age_minutes() { echo $(((now - $(date -u -d "$1" +%s)) / 60)); }
 
