@@ -480,11 +480,13 @@ fn register_loads(steps: &mut Steps) {
         },
     );
     steps.step("a browser tab whose page failed to load", |world, _, _| {
-        // TODO(ljos#387): the refused load never reaches the panel yet.
+        // TODO(ljos#387, ljos#395): the refused load never reaches the
+        // panel yet, and stalls the engine past the runner's watchdog. Once
+        // it does not, the dev server stops and the tab asks again
+        // (`dev_server(world)?.stop()`, `run(world, "preview.refresh")`,
+        // then `wait_to_fail(world)`).
         show_tab(world, "/")?;
-        dev_server(world)?.stop();
-        run(world, "preview.refresh")?;
-        wait_to_fail(world)
+        fail!("the engine stalls on ERR_CONNECTION_REFUSED (ljos#395)")
     });
     steps.step("the load is reported as having stopped", |world, _, _| {
         let brick = panel(world)?;

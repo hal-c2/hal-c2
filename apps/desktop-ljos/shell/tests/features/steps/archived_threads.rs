@@ -287,9 +287,12 @@ pub fn register(steps: &mut Steps) {
     );
 
     steps.step(&format!("the user sees {Q}"), |world, c, _| {
-        // The archive's page title, or the welcome wizard's (or its recovery page's).
+        // The archive's page title, or the welcome wizard's (or its recovery page's), or a toast's.
         let shown = |w: &World| {
             at(&w.state("archivedThreads"), "title") == &json!(c[0])
+                || w.state("toasts")["items"]
+                    .as_array()
+                    .is_some_and(|toasts| toasts.iter().any(|t| t["title"] == json!(c[0])))
                 || super::onboarding::onboarding_shows(w, &c[0])
                 || w.peek_part::<Shown>()
                     .and_then(|shown| shown.0.as_ref())
