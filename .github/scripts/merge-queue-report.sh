@@ -19,6 +19,32 @@ if gh api "repos/$repo/issues/$number/comments?per_page=100" --paginate --jq '.[
   exit 0
 fi
 
+sha=$(gh api "repos/$repo/actions/runs/$run" --jq .head_sha)
+
+# A group rebuilt because a PR ahead left the queue: its old run may fail or be cancelled
+# while this PR waits on in a newer group, so the run is not this PR's to report.
+queued=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -f query='
+  query($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      mergeQueue(branch: "main") {
+        entries(first: 100) { nodes { headCommit { oid } pullRequest { number } } }
+      }
+    }
+  }' --jq ".data.repository.mergeQueue.entries.nodes[]
+           | select(.pullRequest.number == $number and .headCommit.oid != \"$sha\") | .headCommit.oid")
+if [ -n "$queued" ]; then
+  echo "#$number is still queued as $queued; run $run belonged to an older group"
+  exit 0
+fi
+
+# A run whose CI result never finished is a wedge, which the watchdog drops and explains.
+result=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=CI%20result" \
+  --jq '[.check_runs[].status] | if length == 0 then "missing" else (sort | last) end')
+if [ "$result" != completed ]; then
+  echo "run $run's CI result is $result: a wedge, which the watchdog reports"
+  exit 0
+fi
+
 jobs=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100" \
   --jq "$(cat "$(dirname "$0")/failed-jobs.jq") | .[] | [.id, .name, .url, .timed_out] | @tsv")
 
@@ -48,7 +74,7 @@ excerpt() {
 body="The merge queue run for this PR failed, so it left the queue: [run $run]"
 body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt)."$'\n'
 if [ -z "$jobs" ]; then
-  body+=$'\nNo job failed or timed out in it; GitHub cancelled or wedged the run. Re-queue it.\n'
+  body+=$'\nNo job failed or timed out in it; the run was cancelled. Re-queue it.\n'
 fi
 while IFS=$'\t' read -r id name url timed_out; do
   [ -n "$id" ] || continue
