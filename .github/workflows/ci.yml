@@ -307,7 +307,7 @@ jobs:
           # SIGPIPE after grep's early exit can't read as "no plain test failed".
           if [ -z "$failed" ] || grep -qE '^ +[0-9]+\) (test|doctest) ' <(plain "$log"); then exit 1; fi
           mix prop --failed 2>&1 | tee "$RUNNER_TEMP/retry.log"
-          passed=$(plain "$RUNNER_TEMP/retry.log" | sed -nE 's/^Result: ([0-9]+) passed.*/\1/p')
+          passed=$(plain "$RUNNER_TEMP/retry.log" | sed -nE 's/^Result: ([0-9]+)(\/[0-9]+)? passed.*/\1/p')
           if [ "${passed:-0}" -lt "$(wc -l <<<"$failed")" ]; then exit 1; fi
           while read -r name; do echo "::warning title=Flaky property::$name"; done <<<"$failed"
         env:
