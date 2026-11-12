@@ -633,6 +633,12 @@ private:
   enum class ModeKind { Runtime, Interaction };
   void setThreadMode(const QString& target, ModeKind kind, const QString& mode);
   void settleModes();
+  // True while a mode change of the thread must wait in its draft: the MC has
+  // not sent the thread list since the connection came back, or the thread's
+  // outbox still has messages to send, which go in the modes they carry.
+  bool modeWaits(const QString& target) const;
+  // Whether any window's composer is setting the thread's mode.
+  bool settingAnywhere(ModeKind kind, const QString& target) const;
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;

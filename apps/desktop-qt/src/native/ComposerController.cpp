@@ -301,6 +301,7 @@ void ComposerController::activate() {
   // The route environment's providers are the picker's catalogue.
   connect(shell->controller<WorkspaceController>(), &WorkspaceController::configChanged, this, [this] {
     refreshCatalogue();
+    settleModes();
     publish();
   });
   if (auto* settings = shell->controller<SettingsController>()) {
@@ -1673,6 +1674,8 @@ void ComposerController::sendNext(const QString& target) {
     forgetUnsent(delivered);
     if (queue.isEmpty()) {
       m_queues.remove(target);
+      // A mode change made behind the sends goes now.
+      settleModes();
       publish();
     } else {
       sendNext(target);
@@ -4173,10 +4176,18 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
 // another is on its way, which would otherwise land after it.
 // The user's own change, made now: it names no revision, so none made
 // elsewhere refuses it, and the model pick stands past it.
+// On the phone a change the thread cannot be reached for, or one made behind
+// messages waiting in its outbox, stays in the draft: a message sent meanwhile
+// carries it to the outbox, and settleModes sets it once the outbox is empty.
+// It replaces one still on its way, whose answer no longer moves the draft.
 void ComposerController::setThreadMode(const QString& target, ModeKind kind, const QString& mode) {
   const auto thread = m_store->thread(target);
   const bool runtime = kind == ModeKind::Runtime;
   QHash<QString, SettingMode>& settings = settingModes(kind);
+  if (thread && m_waitsOffline && modeWaits(target)) {
+    settings.remove(target);
+    return;
+  }
   // A pick back to the thread's mode still goes while another is on its way.
   if (!thread || ((runtime ? thread->runtimeMode : thread->interactionMode) == mode && !settings.contains(target))) return;
   settings.insert(target, SettingMode{mode});
@@ -4201,6 +4212,9 @@ void ComposerController::setThreadMode(const QString& target, ModeKind kind, con
                                 return settleModes();
                               }
                               settings.remove(target);
+                              // The phone keeps a change the connection took in
+                              // its draft, to be set again once it is back.
+                              if (m_waitsOffline && undelivered(error)) return;
                               const bool runtime = kind == ModeKind::Runtime;
                               toast(runtime ? QStringLiteral("Failed to change the thread's access.")
                                             : QStringLiteral("Failed to change the thread's mode."),
@@ -4216,9 +4230,15 @@ void ComposerController::setThreadMode(const QString& target, ModeKind kind, con
 // Drops the drafts of mode changes the threads' rows now hold, whatever mode
 // they show: the row and the MC's answer travel apart, and another device's
 // change can land with ours or after it. A started thread's draft shows a
-// mode of its own only while a change to it is on its way.
+// mode of its own only while a change to it is on its way, or waits to be
+// made: one the phone kept offline, or one an earlier build saved to go with
+// the next message. Once the thread can be reached and its outbox is empty,
+// that change is made, or dropped where the thread already has it.
 void ComposerController::settleModes() {
   bool changed = false;
+  const auto draftMode = [](Draft& draft, ModeKind kind) -> QString& {
+    return kind == ModeKind::Runtime ? draft.runtimeMode : draft.interactionMode;
+  };
   for (const ModeKind kind : {ModeKind::Runtime, ModeKind::Interaction}) {
     QHash<QString, SettingMode>& settings = settingModes(kind);
     for (auto it = settings.begin(); it != settings.end();) {
@@ -4228,23 +4248,64 @@ void ComposerController::settleModes() {
         ++it;
         continue;
       }
+      const QString target = it.key();
+      const QString mode = it->mode;
       it = settings.erase(it);
+      // A draft showing a later pick keeps it, as one another window sets does.
+      const auto draft = m_drafts.find(target);
+      if (draft == m_drafts.end() || !m_store->thread(target) || draftMode(*draft, kind) != mode || settingAnywhere(kind, target)) continue;
+      draftMode(*draft, kind).clear();
+      changed = true;
     }
   }
+  struct Pending {
+    QString target;
+    ModeKind kind;
+    QString mode;
+  };
+  QList<Pending> pending;
   for (auto it = m_drafts.begin(); it != m_drafts.end(); ++it) {
-    if ((it->runtimeMode.isEmpty() && it->interactionMode.isEmpty()) || !m_store->thread(it.key())) continue;
-    if (!it->runtimeMode.isEmpty() && !m_settingMode.contains(it.key())) {
-      it->runtimeMode.clear();
-      changed = true;
-    }
-    if (!it->interactionMode.isEmpty() && !m_settingInteraction.contains(it.key())) {
-      it->interactionMode.clear();
-      changed = true;
+    if (it->runtimeMode.isEmpty() && it->interactionMode.isEmpty()) continue;
+    const auto thread = m_store->thread(it.key());
+    if (!thread || modeWaits(it.key())) continue;
+    // Read once the provider is known, which says what the modes can be.
+    const composer::Instance* instance = instanceOf(selection(it.key()));
+    if (!instance) continue;
+    for (const ModeKind kind : {ModeKind::Runtime, ModeKind::Interaction}) {
+      if (draftMode(*it, kind).isEmpty() || settingAnywhere(kind, it.key())) continue;
+      const bool runtime = kind == ModeKind::Runtime;
+      // A plan pick waits while plan mode is off, which shows and sends the default.
+      if (!runtime && !planModeOn(instance)) continue;
+      const QString wanted = runtime ? composer::shownRuntimeMode(instance, it->runtimeMode) : it->interactionMode;
+      const QString has = runtime ? thread->runtimeMode : thread->interactionMode;
+      // A thread the MC has no mode for keeps the MC's default.
+      if (wanted == has || (!runtime && has.isEmpty() && wanted == QLatin1String("default"))) {
+        draftMode(*it, kind).clear();
+        changed = true;
+      } else {
+        pending.append({it.key(), kind, wanted});
+      }
     }
   }
-  if (!changed) return;
-  save();
-  publish();
+  if (changed) {
+    save();
+    publish();
+  }
+  for (const Pending& change : std::as_const(pending)) setThreadMode(change.target, change.kind, change.mode);
+}
+
+bool ComposerController::modeWaits(const QString& target) const {
+  if (!m_client->isReady() || !m_store->synchronized() || m_store->snapshots() < m_outboxSince || !m_store->threadOnline(target)) return true;
+  if (m_queues.contains(target)) return true;
+  return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; });
+}
+
+bool ComposerController::settingAnywhere(ModeKind kind, const QString& target) const {
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) {
+    const auto* composer = window->controller<ComposerController>();
+    if (composer && (kind == ModeKind::Runtime ? composer->m_settingMode : composer->m_settingInteraction).contains(target)) return true;
+  }
+  return false;
 }
 
 // A new thread's mode is its draft's; a started thread's is set now.
