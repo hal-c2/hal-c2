@@ -361,7 +361,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     send_bundle(first, version, manifest["platform"], path)
 
     for mc <- mcs do
-      input = [%{"targetVersion" => version}]
+      # The operator named this exact bundle on the command line: rolling back
+      # to it is the explicit choice the RPC gate asks for.
+      input = [%{"targetVersion" => version, "allowDowngrade" => true}]
       {mc, :erpc.call(mc, HalC2.Upgrade, :update, input, :infinity)}
     end
   end

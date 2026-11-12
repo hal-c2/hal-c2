@@ -455,6 +455,11 @@ defmodule HalC2.Upgrade do
       target == from ->
         failure("This MC already runs #{target}.")
 
+      Version.compare(target, from) == :lt and input["allowDowngrade"] != true ->
+        failure(
+          "#{target} is older than the running #{from}; moving back needs \"allowDowngrade\"."
+        )
+
       true ->
         # Before the fetch reads the target's cached bundle or installed release:
         # the boot prune, still removing old versions off this server, may be

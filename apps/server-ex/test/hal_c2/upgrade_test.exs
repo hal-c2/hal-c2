@@ -67,6 +67,21 @@ defmodule HalC2.UpgradeTest do
              Upgrade.plan(bundle(dir, running), nil)
   end
 
+  test "moving to an older version needs allowDowngrade", %{tmp_dir: dir} do
+    System.put_env("RELEASE_ROOT", dir)
+    :persistent_term.put({Upgrade, :version}, "1.2.0")
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+    end)
+
+    start_supervised!(Upgrade)
+
+    assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => "1.1.0"})
+    assert reason =~ "allowDowngrade"
+  end
+
   test "an MC run from a checkout does not install versions" do
     start_supervised!(Upgrade)
 
@@ -143,7 +158,11 @@ defmodule HalC2.UpgradeTest do
     start_supervised!(Upgrade)
     assert_receive {:prune_blocked, prune_pid}
 
-    caller = Task.async(fn -> Upgrade.update(%{"targetVersion" => "1.1.0"}, me) end)
+    caller =
+      Task.async(fn ->
+        Upgrade.update(%{"targetVersion" => "1.1.0", "allowDowngrade" => true}, me)
+      end)
+
     refute_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}, 200
     assert File.dir?(Source.cache_dir("1.1.0"))
 
