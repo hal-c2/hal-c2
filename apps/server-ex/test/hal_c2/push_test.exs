@@ -75,6 +75,13 @@ defmodule HalC2.PushTest do
   test "a registration that cannot be pushed to is refused", %{context: context, phone: phone} do
     for fields <- [
           %{"endpoint" => "ftp://example.com/up"},
+          %{"endpoint" => "http://example.com/up"},
+          %{"endpoint" => "https://localhost/up"},
+          %{"endpoint" => "https://127.0.0.1/up"},
+          %{"endpoint" => "https://10.0.0.1/up"},
+          %{"endpoint" => "https://169.254.169.254/latest/meta-data"},
+          %{"endpoint" => "https://[::1]/up"},
+          %{"endpoint" => "https://metadata.google.internal/up"},
           %{"keys" => %{"p256dh" => "AAAA", "auth" => "AAAA"}},
           %{"quietHours" => %{"start" => 2000, "end" => 0}}
         ] do

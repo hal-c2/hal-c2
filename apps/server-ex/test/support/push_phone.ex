@@ -1,8 +1,9 @@
 defmodule HalC2.Test.PushPhone do
   @moduledoc """
-  A phone's UnifiedPush endpoint on loopback, standing in for a distributor such as
-  ntfy: `start/1` gives the phone a P-256 key and auth secret and serves its endpoint;
-  `messages/1` decrypts what `HalC2.Push` POSTed there, as the phone would.
+  A phone's UnifiedPush endpoint, standing in for a distributor such as ntfy:
+  `start/1` gives the phone a P-256 key and auth secret and serves its endpoint;
+  `messages/1` decrypts what `HalC2.Push` POSTed there, as the phone would. The
+  registration is a public HTTPS URL whose port `post/3` maps to the loopback server.
 
   The endpoint answers 201, or the statuses queued with `answer/2` first. `clock/0` is
   the time `HalC2.Push` reads in tests, moved with `set_clock/1`; `post/3` is its
@@ -29,7 +30,7 @@ defmodule HalC2.Test.PushPhone do
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
 
     %{
-      endpoint: "http://127.0.0.1:#{port}#{path}?up=1",
+      endpoint: "https://push.example:#{port}#{path}?up=1",
       path: path,
       public: public,
       private: private,
@@ -121,7 +122,12 @@ defmodule HalC2.Test.PushPhone do
 
   def post(url, body, urgency) do
     Agent.update(__MODULE__, &%{&1 | urls: [url | &1.urls]})
-    WebPush.post(url, body, urgency)
+    # The registration names a public HTTPS host; the phone serving it is
+    # the loopback server on the same port.
+    local =
+      url |> URI.parse() |> Map.merge(%{scheme: "http", host: "127.0.0.1"}) |> URI.to_string()
+
+    WebPush.post(local, body, urgency)
   end
 
   def posted_urls, do: Agent.get(__MODULE__, &Enum.reverse(&1.urls))

@@ -49,6 +49,16 @@ defmodule HalC2.TracesTest do
     refute_received {:hal_c2_span, "provider.turn", _}
   end
 
+  test "a collector URL shown to clients or logs carries no credential" do
+    assert HalC2.Traces.redacted_url(
+             "https://user:password@collector.example/v1/traces?api_key=secret&service=mc"
+           ) ==
+             "https://collector.example/v1/traces?api_key=%5BREDACTED%5D&service=mc"
+
+    assert HalC2.Traces.redacted_url("https://collector.example/v1/traces") ==
+             "https://collector.example/v1/traces"
+  end
+
   test "subscribing where the registry is not running is a no-op" do
     stop_supervised!(:registry)
     assert HalC2.Traces.subscribe("provider.turn") == :ok

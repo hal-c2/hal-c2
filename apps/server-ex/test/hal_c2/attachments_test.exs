@@ -326,6 +326,57 @@ defmodule HalC2.AttachmentsTest do
     assert {:error, 404, "The file is gone."} = Attachments.serve(token)
   end
 
+  test "a link named like media to another file is not signed" do
+    dir = Application.fetch_env!(:hal_c2, :home)
+    secret = Path.join(dir, "secret.txt")
+    File.write!(secret, "private target")
+    link = Path.join(dir, "looks.png")
+    File.ln_s!(secret, link)
+
+    assert {:error, %{"_tag" => "AssetPreviewTypeValidationError"}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "media-file", "threadId" => "t", "path" => link}
+             })
+  end
+
+  test "a workspace file swapped after signing is not served" do
+    dir = Application.fetch_env!(:hal_c2, :home)
+    # A checkout beside the MC's home, as projects on a real machine are.
+    root = Path.expand("../checkout-outside", dir)
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf(root) end)
+    path = Path.join(root, "notes.txt")
+    File.write!(path, "signed notes")
+    secret = Path.join(dir, "secret.txt")
+    File.write!(secret, "private target")
+
+    {:ok, %{"relativeUrl" => url}} =
+      Attachments.create_url(%{
+        "resource" => %{
+          "_tag" => "draft-workspace-file",
+          "cwd" => root,
+          "path" => "notes.txt"
+        }
+      })
+
+    File.rm!(path)
+    File.ln_s!(secret, path)
+
+    assert {:error, 404, "The file is gone."} = Attachments.serve(asset_token(url))
+  end
+
+  test "an HTML media file is served sandboxed, never sniffed into place" do
+    dir = Application.fetch_env!(:hal_c2, :home)
+    path = Path.join(dir, "page.html")
+    File.write!(path, "<script>alert(1)</script>")
+
+    assert {:ok, 200, headers, stream} = Attachments.serve(asset_token(media_url(path)))
+    assert {"x-content-type-options", "nosniff"} in headers
+    assert {"content-security-policy", csp} = List.keyfind(headers, "content-security-policy", 0)
+    assert csp =~ "sandbox"
+    assert {:ok, "<script>alert(1)</script>", _chunks} = collect_stream(stream)
+  end
+
   test "a media path swapped after open still serves only the signed inode" do
     dir = Application.fetch_env!(:hal_c2, :home)
     path = Path.join(dir, "open.mp4")

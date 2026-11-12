@@ -90,7 +90,12 @@ defmodule HalC2.Push.WebPush do
   end
 
   defp http_options("https:" <> _),
-    do: [timeout: 10_000, connect_timeout: 5_000, ssl: :httpc.ssl_verify_host_options(true)]
+    do: [
+      timeout: 10_000,
+      connect_timeout: 5_000,
+      autoredirect: false,
+      ssl: :httpc.ssl_verify_host_options(true)
+    ]
 
-  defp http_options(_), do: [timeout: 10_000, connect_timeout: 5_000]
+  defp http_options(_), do: [timeout: 10_000, connect_timeout: 5_000, autoredirect: false]
 end

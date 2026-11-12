@@ -73,6 +73,54 @@ defmodule HalC2.DiagnosticsTest do
              })
   end
 
+  test "Pi's split argv has its credential values redacted without eating other options" do
+    {:ok, argv} =
+      HalC2.Pi.resolve_launch_args(
+        "--api-key=pi-secret --model openai/gpt-5 --password=password-secret"
+      )
+
+    argv =
+      argv ++
+        [
+          "--api-token",
+          "api-token-secret",
+          "--authorization",
+          "authorization-secret",
+          "--token",
+          "token-secret",
+          "--password",
+          "--offline"
+        ]
+
+    port =
+      Port.open({:spawn_executable, "/bin/sh"}, [
+        :binary,
+        args: ["-c", ~s(while read line; do echo "$line"; done)] ++ argv
+      ])
+
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    Port.command(port, "ready\n")
+    assert_receive {^port, {:data, "ready\n"}}, 10_000
+
+    {:ok, %{"processes" => processes}} = HalC2.Diagnostics.processes()
+    process = Enum.find(processes, &(&1["pid"] == pid))
+
+    for secret <- ~w(pi-secret password-secret api-token-secret authorization-secret token-secret),
+        do: refute(String.contains?(process["command"], secret))
+
+    assert process["command"] =~ "--api-key [REDACTED]"
+    assert process["command"] =~ "--model openai/gpt-5"
+    assert process["command"] =~ "--password=[REDACTED]"
+    assert process["command"] =~ "--password --offline"
+
+    assert {:ok, %{"signaled" => true}} =
+             HalC2.Diagnostics.signal(%{
+               "pid" => pid,
+               "startTimeMs" => process["startTimeMs"],
+               "signal" => "SIGKILL"
+             })
+  end
+
   test "the sampler's own ps is not listed as one of the MC's processes" do
     {:ok, %{"processes" => processes}} = HalC2.Diagnostics.processes()
     refute Enum.any?(processes, &String.contains?(&1["command"], " -axo pid="))

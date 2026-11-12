@@ -26,6 +26,35 @@ defmodule HalC2.Traces do
   @doc "The collector client spans are forwarded to, if any."
   def otlp_url, do: Application.get_env(:hal_c2, :otlp_traces_url)
 
+  @doc """
+  `url` safe to show a client or write to a log: no userinfo, and no value
+  for a query parameter whose name carries a credential. Collector URLs
+  commonly embed both; the exporter keeps using the real one.
+  """
+  def redacted_url(url) when is_binary(url) do
+    uri = URI.parse(url)
+
+    query =
+      case uri.query do
+        nil ->
+          nil
+
+        query ->
+          query
+          |> URI.query_decoder()
+          |> Enum.map(fn {key, value} ->
+            if Regex.match?(~r/token|key|secret|password|auth/i, key),
+              do: {key, "[REDACTED]"},
+              else: {key, value}
+          end)
+          |> URI.encode_query()
+      end
+
+    %URI{uri | userinfo: nil, query: query} |> URI.to_string()
+  end
+
+  def redacted_url(_url), do: nil
+
   def path, do: Path.join([HalC2.Paths.state_dir(), "logs", "server.trace.ndjson"])
 
   @doc """
@@ -148,7 +177,10 @@ defmodule HalC2.Traces do
         :ok
 
       other ->
-        Logger.warning("Failed to export client OTLP traces to #{url}: #{inspect(other)}")
+        Logger.warning(
+          "Failed to export client OTLP traces to #{redacted_url(url)}: #{inspect(other)}"
+        )
+
         {:error, :export}
     end
   end

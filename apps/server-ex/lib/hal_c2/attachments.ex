@@ -552,12 +552,15 @@ defmodule HalC2.Attachments do
             revision = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
 
             {:ok,
-             %{
-               "path" => path,
-               "mimeType" => MIME.from_path(path),
-               "disposition" => "inline",
-               "expiresAt" => favicon_expiry(now)
-             }, "v#{revision}-#{Path.basename(path)}"}
+             Map.merge(
+               %{
+                 "path" => path,
+                 "mimeType" => MIME.from_path(path),
+                 "disposition" => "inline",
+                 "expiresAt" => favicon_expiry(now)
+               },
+               identity(path)
+             ), "v#{revision}-#{Path.basename(path)}"}
           else
             error("AssetPreviewTypeValidationError", resource, "Only images are served as icons.")
           end
@@ -587,24 +590,37 @@ defmodule HalC2.Attachments do
     end
   end
 
+  @identified_tags ~w(media-file workspace-file draft-workspace-file)
+
   defp asset_claims(resource, _now) do
-    with {:ok, path, mime, name} <- resolve(resource) do
+    with {:ok, path, mime, name} <- resolve(resource),
+         :ok <-
+           if(HalC2.Workspace.mc_credential?(path),
+             do: error("AssetWorkspaceResolutionError", resource, "That file is not served."),
+             else: :ok
+           ) do
+      disposition =
+        if resource["disposition"] in ["inline", "attachment"],
+          do: resource["disposition"],
+          else: if(resource["_tag"] == "attachment", do: "attachment", else: "inline")
+
       claims = %{
         "path" => path,
         "mimeType" => mime,
         "fileName" => name,
-        "disposition" =>
-          resource["disposition"] ||
-            if(resource["_tag"] == "attachment", do: "attachment", else: "inline")
+        "disposition" => disposition
       }
 
       claims = mcp_app_claims(claims, resource)
 
-      # A media file is served only while it is the file that was signed: one
-      # replaced under its name (a rename over it) needs a new URL.
+      # A file at a path is served only while it is the file that was signed:
+      # one replaced under its name (a rename or a symlink over it) needs a
+      # new URL.
       {:ok,
-       if(resource["_tag"] == "media-file", do: Map.merge(claims, identity(path)), else: claims),
-       name}
+       if(resource["_tag"] in @identified_tags,
+         do: Map.merge(claims, identity(path)),
+         else: claims
+       ), name}
     end
   end
 
@@ -693,12 +709,13 @@ defmodule HalC2.Attachments do
       {:ok, %File.Stat{type: :regular}} ->
         case File.read(path) do
           {:ok, html} ->
-            name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+            name = safe_name(claims["fileName"] || Path.basename(path))
 
             {:ok, 200,
              [
                {"content-type", "text/html; charset=utf-8"},
                {"content-disposition", ~s(inline; filename="#{name}")},
+               {"x-content-type-options", "nosniff"},
                {"cache-control", "private, no-cache"}
                | HalC2.McpApps.serve_headers()
              ], HalC2.McpApps.serve_document(html)}
@@ -765,15 +782,39 @@ defmodule HalC2.Attachments do
     end
   end
 
-  defp send_file_answer(caller, ref, file, size, path, claims, headers) do
-    name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+  # Types a browser would run as a document in this origin when navigated to.
+  @active_types ~w(text/html application/xhtml+xml image/svg+xml text/xml application/xml)
 
-    base = [
-      {"content-type", claims["mimeType"] || "application/octet-stream"},
-      {"content-disposition", ~s(#{claims["disposition"] || "inline"}; filename="#{name}")},
-      {"cache-control", "private, max-age=3600"},
-      {"accept-ranges", "bytes"}
-    ]
+  # A name for a quoted-string header: no quote, backslash or control byte
+  # may break out of it.
+  defp safe_name(name), do: String.replace(name, ~r/["\\\x00-\x1F\x7F]/, "_")
+
+  defp send_file_answer(caller, ref, file, size, path, claims, headers) do
+    name = safe_name(claims["fileName"] || Path.basename(path))
+    mime = claims["mimeType"] || "application/octet-stream"
+
+    disposition =
+      if claims["disposition"] in ["inline", "attachment"],
+        do: claims["disposition"],
+        else: "inline"
+
+    # Active content served inline gets the same no-script sandbox as
+    # GitHub-hosted media: it renders, but never as a document of this origin.
+    sandbox =
+      if disposition == "inline" and mime in @active_types,
+        do: [
+          {"content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox"}
+        ],
+        else: []
+
+    base =
+      [
+        {"content-type", mime},
+        {"content-disposition", ~s(#{disposition}; filename="#{name}")},
+        {"x-content-type-options", "nosniff"},
+        {"cache-control", "private, max-age=3600"},
+        {"accept-ranges", "bytes"}
+      ] ++ sandbox
 
     case byte_range(headers["range"], size) do
       nil ->
@@ -875,8 +916,9 @@ defmodule HalC2.Attachments do
         error("AssetAttachmentNotFoundError", resource, "Attachment was not found.")
 
       file ->
-        {:ok, file, resource["mimeType"] || MIME.from_path(file),
-         resource["fileName"] || Path.basename(file)}
+        # The served type is the stored file's, never the caller's say-so:
+        # a caller-chosen type would let any upload be signed as HTML.
+        {:ok, file, MIME.from_path(file), resource["fileName"] || Path.basename(file)}
     end
   end
 
@@ -893,22 +935,25 @@ defmodule HalC2.Attachments do
   defp resolve(%{"_tag" => "draft-workspace-file", "cwd" => cwd, "path" => relative} = r),
     do: project_file(r, cwd, relative)
 
-  # A media file may be anywhere the MC can read, but only a media type.
+  # A media file may be anywhere the MC can read, but only a media type: by
+  # what the path resolves to, so a link named like media reads no other file.
   defp resolve(%{"_tag" => "media-file", "threadId" => thread_id, "path" => path} = resource) do
     full =
       if Path.type(path) == :absolute,
         do: path,
         else: Path.join(thread_root(thread_id) || "/", path)
 
+    resolved = HalC2.Workspace.real(full)
+
     cond do
-      String.downcase(Path.extname(full)) not in @media_extensions ->
+      String.downcase(Path.extname(resolved)) not in @media_extensions ->
         error("AssetPreviewTypeValidationError", resource, "Only media files are served.")
 
-      not File.regular?(full) ->
+      not File.regular?(resolved) ->
         error("AssetWorkspaceAssetNotFoundError", resource, "Media file was not found.")
 
       true ->
-        {:ok, full, media_type(full), Path.basename(full)}
+        {:ok, resolved, media_type(resolved), Path.basename(full)}
     end
   end
 
