@@ -722,13 +722,11 @@ defmodule HalC2.Acp do
   # `:persistent_term` readers can still see a brief torn state during those puts;
   # the lock serializes the publish against `forget/1`, it does not make it atomic
   # for readers. The session writers (`put_models/2`, `put_commands/2`,
-  # `put_config/2`, `put_option/3`, `put_unauthenticated/1`) take the same lock,
-  # so they cannot interleave with
+  # `put_unauthenticated/1`) take the same lock, so they cannot interleave with
   # `forget/1`'s erases, but they are deliberately not generation-gated: they
   # report what a live session currently offers (or that its account is gone),
   # which stays authoritative for that session until the probe `forget/1`
-  # triggers publishes over it — except an option's current value, which a
-  # probe publish keeps from the live session (`publish_staged/3`).
+  # triggers publishes over it.
   # A `:disk` read is a status check (at boot, or a listing's first look):
   # Antigravity answers it from the installed runtime on disk, launching
   # nothing, where other agents are still read from a throwaway session. A
@@ -840,47 +838,24 @@ defmodule HalC2.Acp do
   defp publish_staged(id, :unauthenticated, false),
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
-  # A probe's throwaway session reports its own defaults, so its options' current
-  # values are not the probe's to publish over a live session's: one switched to
-  # another mode while the read ran (`put_option/3`, after `session/set_mode`)
-  # would otherwise show the probe's mode, which no live session is in. The
-  # probe still replaces which options and choices the agent offers, and a held
-  # value is kept only while the probe's option still offers it (a listed
-  # choice, or a boolean option): one it no longer offers would be dropped by
-  # `option_descriptor/1`, leaving the picker with no current value at all
-  # instead of the probe's own default. Runs under the publish lock, so the
-  # values it keeps are those standing when it lands.
-  defp publish_staged(id, :config, staged) when is_list(staged) do
-    values =
-      Map.new(
-        for %{"id" => option} = held <- :persistent_term.get({__MODULE__, id, :config}, []),
-            is_map_key(held, "currentValue"),
-            do: {option, held["currentValue"]}
-      )
+  # A probe's fresh session reports each option at the agent's default, but a running
+  # session may have set one since (`put_option/4`), before a `forget/1` or after. The probe decides which options and choices there are, and
+  # the defaults of those no session set; a value a session set stays while its
+  # option still offers it.
+  defp publish_staged(id, :config, config) do
+    set = :persistent_term.get({__MODULE__, id, :session_set}, %{})
 
-    staged =
-      Enum.map(staged, fn
-        %{"id" => option} = offered ->
-          if is_map_key(values, option) and offered?(offered, values[option]),
-            do: Map.put(offered, "currentValue", values[option]),
-            else: offered
-
-        offered ->
-          offered
+    config =
+      Enum.map(config, fn option ->
+        value = set[option["id"]]
+        if offers?(option, value), do: Map.put(option, "currentValue", value), else: option
       end)
 
-    :persistent_term.put({__MODULE__, id, :config}, staged)
+    :persistent_term.put({__MODULE__, id, :config}, config)
   end
 
   defp publish_staged(id, key, value),
     do: :persistent_term.put({__MODULE__, id, key}, value)
-
-  # Whether `option` as offered still offers `value`: a boolean offers both its
-  # values, a select the choices it lists (its groups' included, as `choices/1`).
-  defp offered?(%{"type" => "boolean"}, value), do: is_boolean(value)
-
-  defp offered?(option, value),
-    do: Enum.any?(choices(option), &(&1["value"] == value))
 
   defp staged_key(id), do: {__MODULE__, :staged, id}
 
@@ -2271,16 +2246,22 @@ defmodule HalC2.Acp do
   Forgets what was read from an instance's agent, so it is probed again. Workspace
   snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
   the user already saw for a folder, and only the next workspace refresh replaces
-  them. `drop/1` is for an instance that is gone.
+  them. So do the values a running session set on its options (`put_option/4`): the
+  next probe's options keep those they still offer. `drop/1` is for an instance that
+  is gone, or that names another agent now.
   """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
   end
 
-  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  @doc """
+  Forgets an instance that was removed: `forget/1`, and its workspace snapshots and
+  session option values too.
+  """
   def drop(id) do
     locked(id, fn ->
       forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :session_set})
       :persistent_term.erase({__MODULE__, id, :workspaces})
       :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
       :ok
@@ -2424,49 +2405,75 @@ defmodule HalC2.Acp do
 
   @doc """
   Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
-  keeps its models, so its session options follow what it last offered.
+  keeps its models, so its session options follow what it last offered. `agent` is
+  the agent the session's runtime was launched on (`config.agentId`); a runtime left
+  on an agent the instance no longer names writes nothing. `:any` skips that check.
   """
-  def put_config(id, config_options) when is_list(config_options) do
+  def put_config(id, config_options, agent \\ :any)
+
+  def put_config(id, config_options, agent) when is_list(config_options) do
     if driver(id) == "acpRegistry" and
-         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :config}, config_options) end)
-      HalC2.Settings.notify_providers()
-    end
+         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options and
+         locked(id, fn ->
+           runs?(id, agent) and :persistent_term.put({__MODULE__, id, :config}, config_options)
+         end) == :ok,
+       do: HalC2.Settings.notify_providers()
 
     :ok
   end
 
-  def put_config(_id, _config_options), do: :ok
+  def put_config(_id, _config_options, _agent), do: :ok
 
-  @doc "Records `value` as what the registry session option `option` now holds."
-  def put_option(id, option, value) do
-    # The read-modify-write runs under the instance's publish lock, as a probe
-    # publish (`publish_staged/3`) and `put_config/2` do: reading `:config`
-    # outside it and writing the result back would overwrite a publish that
-    # landed between the read and the write with the older option list.
-    changed =
-      driver(id) == "acpRegistry" and
-        locked(id, fn ->
-          config = :persistent_term.get({__MODULE__, id, :config}, [])
+  @doc """
+  Records `value` as what the registry session option `option` now holds because a
+  session set it, as `put_config/3` does for `agent`'s runtime. A probe keeps it over
+  the agent's default (`publish_staged/3`); defaults a session merely reports do not.
+  """
+  def put_option(id, option, value, agent \\ :any) do
+    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the
+    # config; and in one lock with the config, so a probe's publish is not undone.
+    if driver(id) == "acpRegistry" and
+         locked(id, fn ->
+           if runs?(id, agent) do
+             session_set(id, %{option => value})
+             key = {__MODULE__, id, :config}
+             old = :persistent_term.get(key, [])
 
-          updated =
-            Enum.map(
-              config,
-              &if(is_map(&1) and &1["id"] == option,
-                do: Map.put(&1, "currentValue", value),
-                else: &1
-              )
-            )
+             new =
+               Enum.map(
+                 old,
+                 &if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1)
+               )
 
-          if updated != config do
-            :persistent_term.put({__MODULE__, id, :config}, updated)
-            true
-          else
-            false
-          end
-        end)
+             new != old and :persistent_term.put(key, new) == :ok
+           end
+         end),
+       do: HalC2.Settings.notify_providers()
 
-    if changed, do: HalC2.Settings.notify_providers()
+    :ok
+  end
+
+  @doc """
+  The registry agent an instance names (`config.agentId`), the one its launch runs;
+  Settings drops the instance when it changes.
+  """
+  def agent_id(id) do
+    with {_driver, entry} <- instance(id), do: get_in(entry, ["config", "agentId"])
+  end
+
+  # Whether a runtime launched on `agent` still runs the instance's agent; Settings
+  # drops the instance when its agent changes (`drop/1`), and an old runtime's later
+  # writes must not come back.
+  defp runs?(_id, :any), do: true
+  defp runs?(id, agent), do: agent_id(id) == agent
+
+  # The option values a session set, which a probe's options keep (`publish_staged/3`).
+  # `forget/1` keeps them, as the session keeps running; `drop/1` erases them.
+  defp session_set(id, values) do
+    key = {__MODULE__, id, :session_set}
+    set = :persistent_term.get(key, %{})
+    merged = Map.merge(set, values)
+    if merged != set, do: :persistent_term.put(key, merged)
     :ok
   end
 
@@ -2537,6 +2544,11 @@ defmodule HalC2.Acp do
   end
 
   defp plan_option?(_option), do: false
+
+  # Whether `value` is one `option` can hold: a choice it lists, or a boolean's.
+  defp offers?(_option, nil), do: false
+  defp offers?(%{"type" => "boolean"}, value), do: is_boolean(value)
+  defp offers?(option, value), do: Enum.any?(choices(option), &(&1["value"] == value))
 
   # A select's choices, those of its groups included.
   defp choices(option) do

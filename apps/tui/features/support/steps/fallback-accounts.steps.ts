@@ -326,3 +326,46 @@ step("picking {string} again offers high effort", async (ctx: World, slug: strin
   expect(composer(ctx)).toMatchObject({ selectedInstanceId: "codex_proxy", selectedModel: slug });
   expect(effortOf(ctx)).toBe("high");
 });
+
+// --- A thread whose account is off is not moved to another ---------------------
+
+step(
+  "a thread runs on {string} on the account {string}",
+  async (ctx: FallbackWorld, model: string, name: string) => {
+    const gpt5 = accountModel(model, "GPT-5");
+    ctx.accounts = [account(name, "codex", [gpt5]), account("Codex Work", "codex", [gpt5])];
+    ctx.saved = {
+      ...thread(),
+      modelSelection: { instanceId: accountId(name), model },
+    } as unknown as OrchestrationThread;
+    await connect(ctx, ctx.saved);
+  },
+);
+
+step(
+  "the composer shows {string} on {string}, which cannot run a turn now",
+  async (ctx: World, model: string, name: string) => {
+    await settle(ctx);
+    expect(composer(ctx)).toMatchObject({
+      routeKind: "server",
+      selectedInstanceId: accountId(name),
+      selectedModel: model,
+    });
+    expect(composer(ctx).notice).toContain(`${name} is disabled`);
+  },
+);
+
+step("a message is not sent until the user picks a model", async (ctx: World) => {
+  await typeIntoPrompt(ctx, "Carry on");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  expect(callsTo(ctx, "sendReply")).toHaveLength(0);
+  expect(composer(ctx).text).toBe("Carry on");
+  expect(composer(ctx).notice).toContain("Pick a model");
+  await pickModel(ctx, "GPT-5", "Codex Work");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  const sent = callsTo(ctx, "sendReply");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.args[3]).toMatchObject({ instanceId: "codex_work", model: "gpt-5" });
+});

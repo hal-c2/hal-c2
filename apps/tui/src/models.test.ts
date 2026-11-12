@@ -8,7 +8,9 @@ import {
   flattenModelOptions,
   modelPickerRows,
   modelSelectionForOption,
+  nextPick,
   pickMatchesThread,
+  pickOn,
   promptEffort,
   providerReady,
   reasoningChoicesFor,
@@ -18,6 +20,8 @@ import {
   ultrathinkInWords,
   withModelSelectionOption,
   withoutUltrathinkPrefix,
+  type OwnSelectionChange,
+  type ThreadPick,
 } from "./models.ts";
 
 const provider = (
@@ -434,5 +438,91 @@ describe("fallback accounts", () => {
     expect(providerReady(codex([builtIn], { enabled: false }))).toBe(false);
     expect(providerReady(codex([builtIn], { status: "error" }))).toBe(false);
     expect(providerReady(codex([builtIn], { availability: "unavailable" }))).toBe(false);
+  });
+});
+
+describe("nextPick", () => {
+  const codex = ProviderInstanceId.make("codex");
+  const picked = { instanceId: codex, model: "gpt-5-codex" };
+  const running = { instanceId: codex, model: "gpt-5" };
+  const at = (selectionRevision: number) => ({ modelSelection: running, selectionRevision });
+  const sent = (sentAt: number): OwnSelectionChange => ({ sentAt, outcome: "pending" });
+  /** The thread's updates in turn, each pick carried to the next: the last pick standing. */
+  const follow = (pick: ThreadPick | null, ...revisions: number[]) =>
+    revisions.reduce<ThreadPick | null>(
+      (current, revision) => (current ? nextPick([], current, at(revision)) : null),
+      pick,
+    );
+
+  it("drops a pick once the thread changes elsewhere, even back to what was picked", () => {
+    const pick = pickOn(at(3), picked, []);
+    expect(nextPick([], pick, at(3))).toBe(pick);
+    expect(nextPick([], pick, at(4))).toBeNull();
+    expect(nextPick([], pick, { modelSelection: picked, selectionRevision: 4 })).toBeNull();
+  });
+
+  it("drops a pick the thread runs when the MC sends no revision", () => {
+    const pick = pickOn({}, picked, []);
+    expect(pick.base).toBeNull();
+    expect(nextPick([], pick, { modelSelection: running })).toBe(pick);
+    expect(nextPick([], pick, { modelSelection: picked })).toBeNull();
+  });
+
+  it("waits for the reply when the thread's update beats it, then stands past its own change", () => {
+    const change = sent(3);
+    const pick = { ...pickOn(at(3), picked, []), own: [change] };
+    // The update lands first: it may be this client's change, so the pick waits unmoved.
+    const waiting = follow(pick, 4);
+    expect(waiting).toBe(pick);
+    change.outcome = 4;
+    const rebased = follow(waiting, 4);
+    expect(rebased).toEqual({ selection: picked, base: 4, own: [] });
+    // Another client's change after it replaces the pick.
+    expect(follow(rebased, 5)).toBeNull();
+  });
+
+  it("stands past its own change when the reply beats the thread's update", () => {
+    const change = sent(3);
+    change.outcome = 4;
+    // Picked after the reply, before the update: the change still lies ahead.
+    const pick = pickOn(at(3), picked, [change]);
+    expect(pick.own).toEqual([change]);
+    expect(follow(pick, 4)).toEqual({ selection: picked, base: 4, own: [] });
+    expect(follow(pick, 4, 5)).toBeNull();
+  });
+
+  it("does not count an own change the thread already holds, so the next change elsewhere wins", () => {
+    // Sent at 3; the update to 4 arrives before the reply, and the user picks at 4.
+    const change = sent(3);
+    const pick = pickOn(at(4), picked, [change]);
+    expect(pick.own).toEqual([]);
+    change.outcome = 4;
+    // Another client's change at 5 is not taken for this client's own.
+    expect(follow(pick, 5)).toBeNull();
+  });
+
+  it("gives way to another client's change that lands between its own change and the reply", () => {
+    const change = sent(3);
+    const pick = { ...pickOn(at(3), picked, []), own: [change] };
+    // Another client's change lands at 4, this client's own at 5.
+    expect(follow(pick, 4)).toBe(pick);
+    expect(follow(pick, 4, 5)).toBeNull();
+    // The reply naming 5 comes while the thread still shows 4: 4 is not this client's.
+    change.outcome = 5;
+    expect(follow(pick, 4)).toBeNull();
+  });
+
+  it("drops a pick when its own change was refused and the thread moved anyway", () => {
+    const change = sent(3);
+    const pick = { ...pickOn(at(3), picked, []), own: [change] };
+    change.outcome = "none";
+    expect(follow(pick, 3)).toBe(pick);
+    expect(follow(pick, 4)).toBeNull();
+  });
+
+  it("waits for no more own changes than are unanswered", () => {
+    const pick = { ...pickOn(at(3), picked, []), own: [sent(3)] };
+    // Two moves with one change of its own on the way: one at least is another client's.
+    expect(follow(pick, 5)).toBeNull();
   });
 });

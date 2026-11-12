@@ -1,16 +1,20 @@
 // The model picker (composer/model-and-mode.feature): every saved custom model
-// is offered (upstream #14961), and a draft's pick gives way to a change made
-// on another client once the thread has taken it (upstream #20886), and a
+// is offered (upstream #14961), and a draft's pick, sent or not, gives way to a later change
+// made on another client (upstream #20886), and a
 // provider's older models wait behind a "Show more" row (upstream #28076).
 import { expect } from "bun:test";
 
-import type { OrchestrationThread, ServerProvider } from "@hal-c2/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type OrchestrationThread,
+  type ServerProvider,
+} from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
-import { PROVIDERS, shell, thread } from "../fakeClient.ts";
+import { PROVIDERS, project, shell, thread, withSelection } from "../fakeClient.ts";
 import { shownText } from "../threadWorld.ts";
 import { findObject, pressKey, resize, settle, type World } from "../world.ts";
-import { composer, updateThread } from "./composer.steps.ts";
+import { callsTo, composer, typeIntoPrompt, updateThread } from "./composer.steps.ts";
 import { chooseInPicker, restartClient, select, type ControlsWorld } from "./controls.steps.ts";
 
 // --- Custom models (upstream #14961) -------------------------------------------
@@ -94,10 +98,11 @@ async function pickModel(ctx: World, name: string): Promise<void> {
 function runThreadOn(ctx: World, id: string, name: string): void {
   const { instanceId, model } = MODELS[name]!;
   const current = ctx.fake!.currentThread(id)!;
-  ctx.fake!.emitThread({
-    ...current,
-    modelSelection: { instanceId, model },
-  } as unknown as OrchestrationThread);
+  ctx.fake!.emitThread(
+    withSelection(current, {
+      modelSelection: { instanceId, model },
+    } as unknown as Partial<OrchestrationThread>),
+  );
 }
 
 step(
@@ -116,13 +121,11 @@ step(
     await switchTo(ctx, "t2");
     await pickModel(ctx, "gpt-5-codex");
     await switchTo(ctx, "t1");
-    // Here, each pick is taken by the thread in turn.
+    // Here, a pick is taken by the thread, then another is left unsent.
     await pickModel(ctx, "gpt-5-codex");
     runThreadOn(ctx, "t1", "gpt-5-codex");
     await settle(ctx);
     await pickModel(ctx, name);
-    runThreadOn(ctx, "t1", name);
-    await settle(ctx);
   },
 );
 
@@ -223,4 +226,262 @@ step("the list scrolls inside the picker", async (ctx: World) => {
   }
   expect(shown()).toContain(0);
   expect(shown()).not.toContain(select(ctx).options.length - 1);
+});
+
+// --- What the composer shows is what runs ---------------------------------------
+
+interface SelectionWorld extends ControlsWorld {
+  /** A change another client made that the MC holds and this client has not heard. */
+  movedElsewhere?: OrchestrationThread;
+}
+
+const selectionOf = (name: string) => {
+  const { instanceId, model } = MODELS[name]!;
+  return { instanceId, model };
+};
+
+step("a thread runs on {string} here", async (ctx: ControlsWorld, name: string) => {
+  await restartClient(ctx, {
+    detail: { ...thread(), modelSelection: selectionOf(name) } as never,
+  });
+  expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+});
+
+step(
+  "a thread runs on {string} on an MC that keeps no selection revision",
+  async (ctx: ControlsWorld, name: string) => {
+    const { selectionRevision: _none, ...detail } = thread();
+    await restartClient(ctx, {
+      detail: { ...detail, modelSelection: selectionOf(name) } as never,
+    });
+    expect(ctx.fake!.currentThread("t1")?.selectionRevision).toBeUndefined();
+    expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+  },
+);
+
+step(
+  "the thread is set to {string} before the message goes with that pick",
+  async (ctx: World, name: string) => {
+    await settle(ctx);
+    const calls = ctx.fake!.calls.filter(
+      (call) => call.method === "setThreadModel" || call.method === "sendReply",
+    );
+    expect(calls.map((call) => call.method)).toEqual(["setThreadModel", "sendReply"]);
+    expect(calls[0]!.args[1]).toMatchObject(selectionOf(name));
+    expect(calls[1]!.args[3]).toMatchObject(selectionOf(name));
+    // No revision to send against.
+    expect(calls[1]!.args[5]).toBeUndefined();
+    expect(ctx.fake!.currentThread("t1")?.modelSelection).toMatchObject(selectionOf(name));
+  },
+);
+
+step("the composer shows {string}, the thread's own now", (ctx: World, name: string) => {
+  expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+});
+
+step("the user picked {string} for its next turn", (ctx: World, name: string) =>
+  pickModel(ctx, name),
+);
+
+// The MC refuses a message picked against an older revision, as it does: the
+// rpc.error's detail names the thread's selection now.
+step(
+  "another client has moved the thread to {string}, which this client has not heard yet",
+  (ctx: SelectionWorld, name: string) => {
+    const moved = withSelection(ctx.fake!.currentThread("t1")!, {
+      modelSelection: selectionOf(name),
+    } as unknown as Partial<OrchestrationThread>);
+    ctx.movedElsewhere = moved;
+    ctx.fake!.override("sendReply", async (...args) => {
+      const base = args[5];
+      if (base !== undefined && base !== moved.selectionRevision) {
+        const message = "This thread changed elsewhere. Check it and send again.";
+        throw Object.assign(new Error(message), {
+          cause: {
+            message,
+            detail: {
+              code: "selection-stale",
+              selectionRevision: moved.selectionRevision,
+              modelSelection: moved.modelSelection,
+            },
+          },
+        });
+      }
+    });
+  },
+);
+
+step(
+  "nothing is sent on the user's behalf and {string} stays in the prompt",
+  async (ctx: World, text: string) => {
+    await settle(ctx);
+    // The one message went with the pick and its base, and was refused; nothing
+    // else changed the thread for the user.
+    const sent = callsTo(ctx, "sendReply");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.args[3]).toMatchObject(selectionOf("gpt-5-codex"));
+    expect(sent[0]!.args[5]).toBe(0);
+    expect(callsTo(ctx, "setThreadModel")).toHaveLength(0);
+    expect(composer(ctx).text).toBe(text);
+  },
+);
+
+step(
+  "the composer shows {string} once the change arrives",
+  async (ctx: SelectionWorld, name: string) => {
+    ctx.fake!.emitThread(ctx.movedElsewhere!);
+    await settle(ctx);
+    expect(composer(ctx)).toMatchObject({
+      selectedInstanceId: MODELS[name]!.instanceId,
+      selectedModel: MODELS[name]!.model,
+    });
+  },
+);
+
+step("the user sends {string} without picking a model", async (ctx: World, text: string) => {
+  await typeIntoPrompt(ctx, text);
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step(
+  "the message names no model, so the turn runs on {string}",
+  (ctx: SelectionWorld, name: string) => {
+    const sent = callsTo(ctx, "sendReply");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.args[3]).toBeUndefined();
+    expect(sent[0]!.args[5]).toBeUndefined();
+    // The MC runs the turn on the thread's own selection, which moved.
+    expect(ctx.movedElsewhere!.modelSelection).toMatchObject(selectionOf(name));
+  },
+);
+
+step("the user changes the thread's access to Supervised", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+O");
+  await settle(ctx);
+  expect(select(ctx).kind).toBe("runtime");
+  await chooseInPicker(ctx, "Supervised");
+  expect(ctx.fake!.currentThread("t1")?.runtimeMode).toBe("approval-required");
+});
+
+step("the composer still shows {string}", (ctx: World, name: string) => {
+  expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+});
+
+step("a change made on another client after it replaces the pick", async (ctx: World) => {
+  runThreadOn(ctx, "t1", "claude-opus");
+  await settle(ctx);
+  expect(composer(ctx)).toMatchObject({ selectedInstanceId: "claude", selectedModel: "opus" });
+});
+
+// A cluster: thread one lives on an MC that keeps no selection revision, thread two on
+// one that does. The composer talks to both through one client.
+step(
+  "one thread is on an MC that keeps no selection revision and another on one that does",
+  async (ctx: ControlsWorld) => {
+    const { selectionRevision: _none, ...older } = thread();
+    await restartClient(ctx, { detail: older as never });
+    ctx.fake!.emitShell(
+      shell([
+        row("t1", "Thread one", "2026-07-13T00:00:02.000Z"),
+        row("t2", "Thread two", "2026-07-13T00:00:01.000Z"),
+      ] as never),
+    );
+    ctx.fake!.emitThread({ ...thread(), id: "t2", title: "Thread two" } as never);
+    await settle(ctx);
+    expect(ctx.fake!.currentThread("t1")?.selectionRevision).toBeUndefined();
+    expect(ctx.fake!.currentThread("t2")?.selectionRevision).toBe(0);
+  },
+);
+
+step("the user changed the first thread's access to Supervised", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+O");
+  await settle(ctx);
+  await chooseInPicker(ctx, "Supervised");
+  // Its MC moved the thread and, keeping no revision, named none.
+  expect(ctx.fake!.currentThread("t1")?.runtimeMode).toBe("approval-required");
+});
+
+step(
+  "the user picked {string} for the second thread's next turn",
+  async (ctx: World, name: string) => {
+    await switchTo(ctx, "t2");
+    await pickModel(ctx, name);
+  },
+);
+
+step(
+  "the second thread's MC answers an access change to it without moving the thread",
+  async (ctx: World) => {
+    ctx.fake!.override("setRuntimeMode", async () => undefined);
+    await pressKey(ctx, "Ctrl+O");
+    await settle(ctx);
+    await chooseInPicker(ctx, "Supervised");
+    expect(callsTo(ctx, "setRuntimeMode").map((call) => call.args[0])).toEqual(["t1", "t2"]);
+    expect(ctx.fake!.currentThread("t2")?.selectionRevision).toBe(0);
+  },
+);
+
+step(
+  "a change made on another client to the second thread replaces the pick",
+  async (ctx: World) => {
+    runThreadOn(ctx, "t2", "claude-opus");
+    await settle(ctx);
+    expect(composer(ctx)).toMatchObject({ selectedInstanceId: "claude", selectedModel: "opus" });
+  },
+);
+
+// --- A new thread's defaults come from the machine that owns the project ---------
+
+interface DefaultsWorld extends ControlsWorld {
+  /** This machine's own settings for new threads. */
+  localDefaults?: { modelSelection: { instanceId: string; model: string }; runtimeMode: string };
+}
+
+step(
+  "this machine starts new threads on {string} with full access",
+  (ctx: DefaultsWorld, name: string) => {
+    ctx.localDefaults = { modelSelection: selectionOf(name), runtimeMode: "full-access" };
+  },
+);
+
+step(
+  "the project's machine starts new threads there on {string} with Supervised access",
+  async (ctx: DefaultsWorld, name: string) => {
+    const local = ctx.localDefaults!;
+    await restartClient(ctx, {
+      shellSnapshot: shell(undefined, [
+        {
+          ...project,
+          defaultModelSelection: local.modelSelection,
+          newThreadModelSelection: selectionOf(name),
+          newThreadRuntimeMode: "approval-required",
+        },
+      ] as never),
+      getServerConfig: async () =>
+        ({
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            defaultModelSelection: local.modelSelection,
+            defaultRuntimeMode: local.runtimeMode,
+          },
+          providers: PROVIDERS,
+        }) as never,
+    });
+  },
+);
+
+step("the user starts a new thread in the project", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+N");
+  await settle(ctx);
+  expect(composer(ctx).routeKind).toBe("draft");
+});
+
+step("the draft is on {string} with Supervised access", (ctx: World, name: string) => {
+  expect(composer(ctx)).toMatchObject({
+    selectedInstanceId: MODELS[name]!.instanceId,
+    selectedModel: MODELS[name]!.model,
+    runtimeMode: "approval-required",
+    runtimeModeLabel: "Supervised",
+  });
 });

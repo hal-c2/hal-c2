@@ -4135,7 +4135,7 @@ defmodule HalC2.Test.Mc.World do
     })
 
     ExUnit.Callbacks.on_exit(fn ->
-      HalC2.Acp.forget(id)
+      HalC2.Acp.drop(id)
       :persistent_term.erase({HalC2.Acp.Catalog, :index})
       Application.put_env(:hal_c2, :acp_commands, commands)
     end)

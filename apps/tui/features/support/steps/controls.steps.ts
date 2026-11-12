@@ -758,13 +758,14 @@ async function sendNextTurn(ctx: World) {
   await settle(ctx);
   const sent = callsTo(ctx, "sendReply");
   expect(sent).toHaveLength(before + 1);
-  const [detail, , , model] = sent.at(-1)!.args as [
+  const [detail, , , picked] = sent.at(-1)!.args as [
     OrchestrationThread,
     string,
     unknown,
     { instanceId: string; model: string; options?: ReadonlyArray<{ id: string; value: unknown }> },
   ];
-  return { detail, model };
+  // With no pick the turn runs on the thread's own selection.
+  return { detail, model: picked ?? detail.modelSelection };
 }
 
 const finished = (detail: OrchestrationThread) =>

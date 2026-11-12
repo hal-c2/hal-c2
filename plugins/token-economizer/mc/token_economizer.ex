@@ -1546,6 +1546,15 @@ defmodule HalC2Plugins.TokenEconomizer do
   # heard since, and until it succeeds no fold moves the watermark (`fold_conv/3`):
   # the runs it could not read are still to fold, and those heard live already did. A
   # segment heard in part that folds unread is read so too, up to the turn after it.
+  #
+  # The read pages back to the watermark, or to the thread's first run with none (a
+  # watermark kept as an id alone has no ordinal to stop at): one page alone would
+  # fold only its runs and move the watermark past them (`fold_history/5`), so the
+  # turns before the page, and what they used, would never be read back. Past
+  # `@history_pages` pages it folds what it read and moves the watermark past that,
+  # losing the turns older than the cap: failing as unread there, as
+  # `history_back/3`'s read does, would retry the same pages at every later turn
+  # and fold none of the thread's history ever.
   defp seed_history(state, thread_id, run_id, project, unit) do
     key = {thread_id, project}
 
@@ -1555,9 +1564,17 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       seeded ->
         before = with {:unread, first} <- seeded, do: first, else: (_ -> run_id)
+        {prune, state} = prune(state, project, unit)
 
-        case history(thread_id, before) do
-          {:ok, history} ->
+        oldest =
+          case Prune.seeded_run(prune, thread_id) do
+            %{"ordinal" => ordinal} when is_integer(ordinal) -> ordinal
+            _ -> 0
+          end
+
+        case page_back(thread_id, before, oldest, [], @history_pages) do
+          # Capped: what was read still folds, as above; turns older than it are lost.
+          {tag, history} when tag in [:ok, :capped] ->
             fold_history(put_in(state.seeded[key], :read), history, key, before, unit)
 
           _unread ->
@@ -1602,9 +1619,14 @@ defmodule HalC2Plugins.TokenEconomizer do
     oldest =
       marks |> Enum.map(& &1["ordinal"]) |> Enum.filter(&is_integer/1) |> Enum.min(fn -> nil end)
 
-    page_back(thread_id, before, oldest, [], @history_pages)
+    case page_back(thread_id, before, oldest, [], @history_pages) do
+      {:capped, _} -> :error
+      read -> read
+    end
   end
 
+  # Past `@history_pages` pages, `{:capped, runs}`: the newest pages, oldest first,
+  # with older runs still behind them.
   defp page_back(thread_id, before, oldest, later, pages) do
     with {:ok, page} <- history(thread_id, before) do
       runs = page ++ later
@@ -1612,7 +1634,7 @@ defmodule HalC2Plugins.TokenEconomizer do
       cond do
         oldest == nil or length(page) < history_page() -> {:ok, runs}
         is_integer(hd(page)["ordinal"]) and hd(page)["ordinal"] <= oldest -> {:ok, runs}
-        pages <= 1 -> :error
+        pages <= 1 -> {:capped, runs}
         true -> page_back(thread_id, hd(page)["runId"], oldest, runs, pages - 1)
       end
     end

@@ -1,0 +1,42 @@
+name: Merge queue watchdog
+
+# GitHub sometimes wedges a merge queue run: the run ends while `CI result` never got a
+# runner, or the run never gets a job. The queue then holds the entry, and everything
+# behind it, for its 120-minute check timeout. This drops such an entry with a comment
+# saying why (.github/scripts/merge-queue-watchdog.sh), and its owner re-queues it.
+#
+# A CI run that ends is when the first wedge shows; the schedule catches a run that never
+# starts.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: merge-queue-watchdog
+
+jobs:
+  watch:
+    name: Drop wedged queue entries
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: write # dequeuePullRequest
+      pull-requests: write # the comment
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - run: .github/scripts/merge-queue-watchdog.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
