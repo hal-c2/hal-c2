@@ -374,8 +374,6 @@ defmodule HalC2.Acp.ThreadRuntime do
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
          {state, turn} = settle_carried(state, turn),
-         # A session the agent no longer had starts afresh with the whole thread.
-         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
          state = %{state | turn: turn},
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
@@ -385,10 +383,17 @@ defmodule HalC2.Acp.ThreadRuntime do
          :ok <- applied(state) do
       state = AppliedModel.record(state, state.model)
 
-      # A run that ended while the session opened never reaches the agent.
+      # A session the agent no longer had starts afresh with the whole thread, once
+      # nothing stands between the turn and the agent: a turn the session would not
+      # switch models for leaves that to the next.
+      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+      state = %{state | turn: turn}
+
+      # A run that ended while the session opened never reaches the agent, nor does
+      # the thread it was to hand a new session.
       case started(state) do
         :ok -> {:reply, :ok, prompt(state, turn)}
-        :ended -> {:reply, :ok, %{state | turn: nil}}
+        :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
       :logout ->
@@ -1791,6 +1796,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     with {:ok, id, state} <- new_session(state, turn),
          do: {:ok, id, Map.put(state, :fresh_start, true)}
   end
+
+  # A turn that started afresh (`Handoff.fresh_start/2`) but never reached the agent
+  # leaves the new session as empty as it found it: the next turn hands it the thread.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
 
   defp new_session(state, turn) do
     servers = mcp_servers(state, turn)

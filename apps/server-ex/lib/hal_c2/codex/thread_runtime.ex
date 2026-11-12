@@ -1128,7 +1128,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     with {:ok, state} <- version_gate(state, turn),
          {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
-         {:ok, native_turn, state} <- start_native_turn(state, turn) do
+         {:ok, native_turn, state, turn} <- send_turn(state, turn) do
       native_turn_started(state, turn, native_turn)
     end
   end
@@ -1534,14 +1534,31 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  # A thread Codex no longer has starts afresh with the whole thread
-  # (`HalC2.Orchestration.Handoff.fresh_start/2`).
   defp open_thread(state, turn) do
-    with {:ok, state} <- ensure_native_thread(state, turn) do
-      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
-      {:ok, state, turn}
+    with {:ok, state} <- ensure_native_thread(state, turn), do: {:ok, state, turn}
+  end
+
+  # Starts `turn` (as `shape` leaves it) in Codex. A thread Codex no longer had
+  # starts afresh with the whole thread (`HalC2.Orchestration.Handoff.fresh_start/2`),
+  # and only a turn that goes to `turn/start` hands it: a goal command that sends
+  # Codex no text (`begin_goal_turn/3`) leaves that to the next turn that does.
+  defp send_turn(state, turn, shape \\ & &1) do
+    {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+    turn = shape.(turn)
+
+    case start_native_turn(state, turn) do
+      {:ok, native_turn, state} -> {:ok, native_turn, state, turn}
+      {:error, reason, state} -> {:error, reason, unsent_fresh(state, turn)}
     end
   end
+
+  # A turn that started afresh but Codex refused to start leaves the new conversation
+  # as empty as it found it: the next turn hands it the thread. Deliberately so for
+  # every refusal, even one Codex may have taken the text for (a timed-out
+  # `turn/start`, or one answered with an earlier run's turn): the thread handed
+  # twice beats a conversation that never had it.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
 
   defp not_carried(state, turn, reason) do
     at = Entities.now()
@@ -3105,7 +3122,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # Codex starts the resumed goal's turn itself: the run waits for it as it does
-  # between a goal's turns.
+  # between a goal's turns. That turn carries none of HAL-C2's text, so a conversation
+  # Codex lost is not handed the thread here: the next turn HAL-C2 sends hands it.
   defp run_goal(state, turn, :resume, _goal) do
     case goal_run_started(state, turn) do
       {:ok, state} ->
@@ -3126,12 +3144,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = Goals.first_turn(turn, objective)
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
          {:ok, _} <- goal_call(state, "thread/goal/set", paused),
-         {:ok, native_turn, state} <- start_native_turn(state, turn),
+         {:ok, native_turn, state, turn} <-
+           send_turn(state, turn, &Goals.first_turn(&1, objective)),
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
       mark = goal_mark()
 
