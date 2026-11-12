@@ -882,11 +882,13 @@ defmodule HalC2.Settings do
     if muse.(settings) != muse.(state.settings), do: HalC2.Acp.forget("muse")
 
     # So is an added instance whose driver, or own or driver's binaryPath, changed
-    # (HalC2.Acp.binary_path/1).
+    # (HalC2.Acp.binary_path/1). One removed, or pointed at another registry agent, is
+    # a different agent: nothing the old one's sessions set carries over.
     binaries = fn settings ->
       for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
         {id,
-         {entry["driver"], get_in(entry, ["config", "binaryPath"]),
+         {get_in(entry, ["config", "agentId"]), entry["driver"],
+          get_in(entry, ["config", "binaryPath"]),
           get_in(settings, ["providers", entry["driver"] || id, "binaryPath"])}}
       end
     end
@@ -895,7 +897,9 @@ defmodule HalC2.Settings do
 
     for id <- Enum.uniq(Map.keys(old) ++ Map.keys(new)),
         old[id] != new[id] do
-      if new[id] == nil, do: HalC2.Acp.drop(id), else: HalC2.Acp.forget(id)
+      if new[id] == nil or elem(new[id], 0) != elem(old[id] || new[id], 0),
+        do: HalC2.Acp.drop(id),
+        else: HalC2.Acp.forget(id)
     end
 
     HalC2.Watchers.notify(state.watchers, {:hal_c2_settings, node(), settings})

@@ -70,8 +70,10 @@ Feature: Sending a thread's turns to its MC
       And the command's "modelSelection.instanceId" is "codex"
 
     @desktop
-    Scenario: Changed modes are set before the message
+    Scenario: Changed modes are set as they are picked, before the message
       Given plan mode is turned on
+      And the MC updates the thread "t1" with:
+        | model | codex/gpt-5 |
       And the composer shows "env-a:t1"
       When the user switches to the "approval-required" and "plan" modes
       And the user sends "Plan it"

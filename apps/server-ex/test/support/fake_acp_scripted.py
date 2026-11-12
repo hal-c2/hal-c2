@@ -15,6 +15,11 @@
 #   modes              session/new's modes
 #   sessionModels      session/new's `models` (currentModelId, availableModels), as Grok reports them
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
+#   modelOptions       {model: [configOption]} options that belong to a model (OpenCode's
+#                      variants): setting the model swaps them in, at their currentValue
+#   rejectUnknownValues  session/set_config_option refuses a value its option does not offer
+#   keepModelOptions   a model's own options keep what was set on them across model
+#                      switches (back on a model, its variant is the one set there last)
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   sessionId          session/new's sessionId (default: a fake one)
 #   hangMethods        methods the agent never answers (it reads on regardless)
@@ -42,6 +47,8 @@
 # (the updates are sent once the cancel came, before the prompt ends), {"exit": code},
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason},
 # {"send": message} (a raw message, such as OpenCode's `opencode/session/child_update`),
+# {"echoOptions": true} (says "model: <model> at <effort>", the session's current values),
+# {"reportOptions": true} (a `config_option_update` with the session's current options),
 # {"hang": true} (never answers the prompt, even to a cancel),
 # {"waitFile": name} (waits until that file appears in FAKE_DIR),
 # {"writeFile": name} (leaves a file in the working folder), {"writeDir": name}
@@ -238,6 +245,14 @@ def run_turn(mid, sid, text):
             open(base + ".db", "w").close()
         elif "send" in step:
             send(dict(step["send"]))
+        elif "echoOptions" in step:
+            now = {o["id"]: o.get("currentValue") for o in current_options(cfg)}
+            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-%s" % mid,
+                         "content": {"type": "text", "text": "model: %s at %s" % (
+                             now.get("model"), now.get("effort"))}})
+        elif "reportOptions" in step:
+            update(sid, {"sessionUpdate": "config_option_update",
+                         "configOptions": current_options(cfg)})
         elif "exit" in step:
             sys.stdout.flush()
             os._exit(step["exit"])
@@ -253,6 +268,17 @@ def run_turn(mid, sid, text):
 
 
 sessions = 0
+chosen = {}  # configId -> value this process's session/set_config_option set
+kept = {}  # model -> {configId: value} its own options were left at (keepModelOptions)
+
+
+def current_options(cfg):
+    options = cfg.get("configOptions", default_options())
+    owned = {o["id"]: o for o in (cfg.get("modelOptions") or {}).get(chosen.get("model"), [])}
+    options = [owned.get(o.get("id"), o) for o in options]
+    return [dict(o, currentValue=chosen[o["id"]]) if o.get("id") in chosen else o for o in options]
+
+
 while True:
     msg = read()
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
@@ -309,6 +335,9 @@ while True:
         send({"id": mid, "error": error})
     elif method in ("session/new", "session/resume", "session/load"):
         sessions += 1
+        if method == "session/new":
+            chosen = {}
+            kept = {}
         result = {"configOptions": cfg.get("configOptions", default_options())}
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
@@ -334,8 +363,27 @@ while True:
               (c for c in cfg.get("configOptions", default_options()) if c["id"] == "model"),
               {"options": []})["options"]]):
         send({"id": mid, "error": {"code": -32602, "message": "Model not found: %s" % params.get("value")}})
+    elif (method == "session/set_config_option" and cfg.get("rejectUnknownValues")
+          and any(o.get("id") == params.get("configId") and "options" in o
+                  and params.get("value") not in [c["value"] for c in o["options"]]
+                  for o in current_options(cfg))):
+        send({"id": mid, "error": {"code": -32602, "message": "Invalid value: %s" % params.get("value")}})
     elif method in ("session/set_config_option", "session/set_mode", "session/set_model"):
-        send({"id": mid, "result": {"configOptions": cfg.get("configOptions", default_options())}})
+        # An option set is its current value from then on, as an agent reports it; a
+        # model brings its own options at their own values.
+        if method == "session/set_config_option":
+            if params.get("configId") == "model":
+                owned = cfg.get("modelOptions") or {}
+                if cfg.get("keepModelOptions"):
+                    was = {o["id"]: o.get("currentValue") for o in current_options(cfg)}["model"]
+                    kept[was] = {o["id"]: chosen[o["id"]] for o in owned.get(was, [])
+                                 if o["id"] in chosen}
+                for o in owned.get(params.get("value"), []):
+                    chosen.pop(o["id"], None)
+                if cfg.get("keepModelOptions"):
+                    chosen.update(kept.get(params.get("value"), {}))
+            chosen[params.get("configId")] = params.get("value")
+        send({"id": mid, "result": {"configOptions": current_options(cfg)}})
     elif method == "session/prompt":
         text = "\n".join(b.get("text", "") for b in params.get("prompt") or [])
         run_turn(mid, params.get("sessionId"), text)

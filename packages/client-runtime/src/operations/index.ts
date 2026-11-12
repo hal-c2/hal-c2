@@ -21,3 +21,4 @@ export {
   updateProject,
   updateThreadMetadata,
 } from "./commands.ts";
+export { selectionStaleRefusal, type SelectionStale } from "./selectionStale.ts";

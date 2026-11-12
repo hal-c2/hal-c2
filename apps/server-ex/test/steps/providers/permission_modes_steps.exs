@@ -461,6 +461,175 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     context
   end
 
+  step "a full access Claude thread with a running turn", context do
+    running_claude(context, "full-access")
+  end
+
+  # The can_use_tool fields Claude Code (2.1.322) sends for each reason it asks.
+  @ask_causes %{
+    "an ask rule in the user's Claude permissions" => %{
+      "decision_reason" =>
+        "Permission rule 'Bash(git push:*)' from user settings requires approval",
+      "decision_reason_type" => "rule"
+    },
+    "a hook in the user's Claude settings" => %{
+      "decision_reason" => "Hook PreToolUse:Bash asked for approval: pushes need a second look",
+      "decision_reason_type" => "hook"
+    },
+    "a safety check Claude never bypasses" => %{
+      "decision_reason" => "The permission check for this command did not finish",
+      "decision_reason_type" => "safetyCheck",
+      "suppress_always_allow_rule" => true
+    },
+    "the organisation's ask ceiling for the tool" => %{
+      "decision_reason_type" => "other",
+      "decision_reason_code" => "org_ask_ceiling"
+    },
+    "an ask rule Claude reports by another reason" => %{
+      "decision_reason_type" => "other",
+      "matched_ask_rule" => %{
+        "source" => "userSettings",
+        "tool_name" => "Bash",
+        "rule_content" => "git push:*"
+      }
+    },
+    "a tool that needs the user" => %{
+      "decision_reason_type" => "other",
+      "requires_user_interaction" => true
+    },
+    "a sandbox override under the read block" => %{"decision_reason_type" => "sandboxOverride"},
+    "a compound command under the read block" => %{
+      "decision_reason_type" => "subcommandResults",
+      "decision_reason_code" => "outside_reads_blocked"
+    },
+    "a compound command" => %{"decision_reason_type" => "subcommandResults"},
+    "a path outside the working directories" => %{
+      "decision_reason_type" => "workingDir",
+      "blocked_path" => "/srv/elsewhere"
+    },
+    "a shell operator Claude asks about" => %{
+      "decision_reason" => "This command uses shell operators that require approval for safety",
+      "decision_reason_type" => "other"
+    }
+  }
+
+  defp running_claude(context, mode) do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{"runtimeMode" => mode})
+
+    World.await_running(context, @thread)
+    context
+  end
+
+  defp claude_runtime(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    pid
+  end
+
+  # What `session` hands the runtime for Claude's `can_use_tool` under `control_id`,
+  # and the request it opens.
+  defp claude_ask(pid, session, control_id, context_fields) do
+    send(
+      pid,
+      {:claude, session,
+       {:permission, control_id, "Bash", %{"command" => "git push"},
+        Map.put(context_fields, "title", "Claude wants to run git push")}}
+    )
+
+    %{"id" => "runtime-request:claudeAgent:#{control_id}"}
+  end
+
+  step ~r/^a supervised Claude turn asks to run a command because of (?<cause>.+)$/,
+       %{args: [cause]} = context do
+    fields = Map.fetch!(@ask_causes, cause)
+    context = running_claude(context, "approval-required")
+    pid = claude_runtime(context)
+
+    request =
+      claude_ask(pid, :sys.get_state(pid).session, "perm-why", fields)
+
+    World.await_value(context, @thread, fn state ->
+      match?(%{"status" => "pending"}, StreamState.get(state, "runtime-request")[request["id"]])
+    end)
+
+    Map.put(context, :request, request)
+  end
+
+  step "Claude's approval still waits on the user", context do
+    # The runtime has handled the switch once it answers a state read.
+    _ = :sys.get_state(claude_runtime(context))
+
+    assert %{"status" => "pending"} =
+             StreamState.get(World.state(context, @thread), "runtime-request")[
+               context.request["id"]
+             ]
+
+    context
+  end
+
+  step "a supervised Claude thread with a running turn", context do
+    running_claude(context, "approval-required")
+  end
+
+  # The ask reaches the runtime after the switch and before the switch is done: the
+  # order the session hands on an ask Claude wrote before it read the switch.
+  step "Claude asks to run a command just before it takes a switch to full access", context do
+    pid = claude_runtime(context)
+    session = :sys.get_state(pid).session
+    :ok = :sys.suspend(pid)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "runtimeMode" => "full-access"
+      })
+
+    request = claude_ask(pid, session, "perm-race", %{})
+    :ok = :sys.resume(pid)
+    Map.put(context, :request, request)
+  end
+
+  step "Claude's asked command is approved without the user", context do
+    World.await_value(context, @thread, fn state ->
+      match?(
+        %{"status" => "resolved", "decision" => "accept"},
+        StreamState.get(state, "runtime-request")[context.request["id"]]
+      )
+    end)
+
+    context
+  end
+
+  step "Claude's running session switches to the {string} permission mode",
+       %{args: [mode]} = context do
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "request"]) == %{"subtype" => "set_permission_mode", "mode" => mode})
+    )
+
+    context
+  end
+
+  step "Claude's waiting command is approved without the user", context do
+    assert %{"behavior" => "allow"} = claude_answer(context)
+
+    World.await_value(context, @thread, fn state ->
+      match?(
+        %{"status" => "resolved", "decision" => "accept"},
+        StreamState.get(state, "runtime-request")[context.request["id"]]
+      )
+    end)
+
+    World.await_idle(context, @thread)
+    assert "allowed" in World.replies(context, @thread)
+    context
+  end
+
   step "a full access thread", context do
     context |> World.fake_providers() |> World.run_turns(@thread, "codex", ["hello"])
   end

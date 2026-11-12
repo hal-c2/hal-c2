@@ -31,10 +31,13 @@ struct Phone {
                                                          {QStringLiteral("createdAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                          {QStringLiteral("updatedAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                          {QStringLiteral("scripts"), QJsonArray()}});
+    // Every thread the MC holds names the model it runs on.
     for (const QString& id : {QStringLiteral("t1"), QStringLiteral("t2")}) {
       mc.threads.insert(id, QJsonObject{{QStringLiteral("id"), id},
                                         {QStringLiteral("projectId"), QStringLiteral("p1")},
                                         {QStringLiteral("title"), id},
+                                        {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
+                                                                                       {QStringLiteral("model"), QStringLiteral("claude-sonnet")}}},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-11-07T09:00:00Z")},
                                         {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")}});
     }
@@ -61,6 +64,7 @@ struct Phone {
     native->client()->setRetryDelays({20});
     native->setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")),
                          home.filePath(QStringLiteral("cache")));
+    native->controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
     native->controller<ComposerController>()->setWaitsOffline(true);
     native->controller<ComposerController>()->setOutboxRetryDelays({10});
     native->restoreWindows();
@@ -110,14 +114,22 @@ struct Phone {
     });
   }
   void dropUnderNextMessage(std::function<void()> then = {}) { dropUnderNext(QStringLiteral("message.dispatch"), std::move(then)); }
-  // The open thread's composer in Plan mode.
-  void planMode() {
+  // The open thread's composer offers Plan mode.
+  void offerPlan() {
     auto* settings = native->controller<SettingsController>();
-    settings->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
     QVERIFY(settings->writeDevice(QStringLiteral("planModeEnabled"), true));
     QTRY_VERIFY(composer().value(QStringLiteral("showInteractionModeToggle")).toBool());
+  }
+  // The open thread's composer in Plan mode.
+  void planMode() {
+    offerPlan();
     bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
     QTRY_COMPARE(composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+  }
+  void goDown() {
+    mc.stopAccepting();
+    mc.drop();
+    QTRY_VERIFY(!native->client()->isReady());
   }
   // The command types the MC was sent, in order.
   QStringList types() const {
@@ -188,8 +200,8 @@ private slots:
   }
 
   // Review of #1159: a send whose answer the connection took goes again as
-  // the message alone. Its mode change went with the first attempt, and sent
-  // again under a fresh command id it could undo one made since elsewhere.
+  // the message alone. Its mode change went before it, and sent again under
+  // a fresh command id it could undo one made since elsewhere.
   void aResentMessageLeavesItsModeChangeBehind() {
     Phone phone;
     phone.start();
@@ -201,7 +213,11 @@ private slots:
     phone.send(QStringLiteral("plan the fix"));
     QTRY_COMPARE(phone.sent(), (QStringList{QStringLiteral("plan the fix"), QStringLiteral("plan the fix")}));
     QTRY_VERIFY(phone.outbox().isEmpty());
-    QCOMPARE(phone.sent(QStringLiteral("thread.interaction-mode.set")).size(), 1);
+    // The mode change went when the user picked it (and again with the
+    // message while the MC had not shown it); none goes with the resend.
+    const QStringList types = phone.types();
+    QCOMPARE(types.mid(types.indexOf(QStringLiteral("message.dispatch"))),
+             (QStringList{QStringLiteral("message.dispatch"), QStringLiteral("message.dispatch")}));
   }
 
   // Review of #1159: a mode change whose answer the connection took is not
@@ -210,6 +226,7 @@ private slots:
   // access rather than approval, say).
   void aModeChangeTheConnectionDroppedGoesAgainBeforeTheMessage() {
     Phone phone;
+    phone.mc.appliesModes = true;
     phone.start();
     QTRY_VERIFY(phone.native->isActive());
     phone.open(QStringLiteral("t1"));
@@ -221,6 +238,67 @@ private slots:
                                QStringLiteral("message.dispatch")};
     QTRY_COMPARE(phone.types(), expected);
     QTRY_VERIFY(phone.outbox().isEmpty());
+  }
+
+  // Review of #1551: a thread switched to Plan mode and approval while the MC
+  // cannot be reached keeps both, rather than flipping back when the change
+  // cannot go, and the message sent then waits and runs in them: the changes
+  // go first when the MC is back.
+  void modesPickedOfflineGoWithTheWaitingMessage() {
+    Phone phone;
+    phone.mc.appliesModes = true;
+    phone.start();
+    QTRY_VERIFY(phone.native->isActive());
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
+    phone.offerPlan();
+    phone.goDown();
+    const qsizetype before = phone.mc.commands.size();
+    phone.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    phone.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
+    // A change that could not go would have come back by now.
+    QCoreApplication::processEvents();
+    QCOMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+    QCOMPARE(phone.composer().value(QStringLiteral("runtimeMode")).toString(), QStringLiteral("approval-required"));
+    phone.send(QStringLiteral("plan the fix"));
+    QTRY_COMPARE(phone.outbox(), QStringList{QStringLiteral("plan the fix")});
+    QCOMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+    phone.mc.startAccepting();
+    QTRY_COMPARE(phone.sent(), QStringList{QStringLiteral("plan the fix")});
+    QTRY_VERIFY(phone.outbox().isEmpty());
+    const QStringList types = phone.types().mid(before);
+    QCOMPARE(types, (QStringList{QStringLiteral("thread.runtime-mode.set"), QStringLiteral("thread.interaction-mode.set"),
+                                 QStringLiteral("message.dispatch")}));
+    QCOMPARE(phone.mc.commands.at(before).value(QLatin1String("runtimeMode")).toString(), QStringLiteral("approval-required"));
+    QCOMPARE(phone.mc.commands.at(before + 1).value(QLatin1String("interactionMode")).toString(), QStringLiteral("plan"));
+    QTRY_COMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+  }
+
+  // Review of #1551: a mode picked offline and not sent with any message
+  // survives a restart (as one an earlier build saved does), and is set once
+  // the MC is back rather than dropped.
+  void aModeKeptInTheDraftIsSetOnceTheMcIsBack() {
+    Phone phone;
+    phone.mc.appliesModes = true;
+    phone.start();
+    QTRY_VERIFY(phone.native->isActive());
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
+    phone.offerPlan();
+    phone.goDown();
+    phone.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    QCoreApplication::processEvents();
+    QCOMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+    const qsizetype before = phone.mc.commands.size();
+
+    phone.close();
+    phone.mc.startAccepting();
+    phone.start();
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.types().mid(before), QStringList{QStringLiteral("thread.interaction-mode.set")});
+    QCOMPARE(phone.mc.commands.at(before).value(QLatin1String("interactionMode")).toString(), QStringLiteral("plan"));
+    QTRY_COMPARE(phone.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("interactionMode")).toString(), QStringLiteral("plan"));
+    QTRY_COMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
   }
 };
 

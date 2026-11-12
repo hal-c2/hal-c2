@@ -2,10 +2,11 @@
 // setOption, selection), against a fake MC: the effort a model shows is the last one
 // set or sent for it on this device, else the one its thread (or, for a new thread,
 // the project) saved with it, else the provider's default, whatever is picked in
-// between and however the provider's model list changes. An account that cannot run
-// a turn hands what it shows to another account of its driver that lists the model;
-// failing that a thread keeps it and a new thread starts on the first provider that
-// can run. What a target shows never names a model under another provider.
+// between and however the provider's model list changes. A thread shows its own
+// selection whether or not its account can run a turn. A new thread's account that
+// cannot hands what it shows to another account of its driver that lists the model,
+// failing that the first provider that can run. What a target shows never names a
+// model under another provider.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -113,13 +114,14 @@ struct Model {
     const QString model = modelsOf(instance, extra).first();
     return {instance, model, keptFor(instance, model)};
   }
-  // What the target shows. An account that is down hands its model to another
-  // ready account of the same driver that lists it; failing that a thread keeps
-  // it, and a new thread starts on the first provider that can run.
+  // What the target shows. A thread keeps its own. A new thread's account that
+  // is down hands its model to another ready account of the same driver that
+  // lists it; failing that it starts on the first provider that can run.
   Sel selection(const QString& target) const {
     const Sel chosen = picked.value(target, base.value(target));
+    if (isThread(target)) return chosen;
     if (!down.contains(chosen.instance)) {
-      if (!isThread(target) && !lists(chosen.instance, chosen.model)) return defaultOf(chosen.instance);
+      if (!lists(chosen.instance, chosen.model)) return defaultOf(chosen.instance);
       return chosen;
     }
     for (const QString& other : kInstances) {
@@ -127,7 +129,6 @@ struct Model {
       const std::optional<QString> own = keptFor(other, chosen.model);
       return {other, chosen.model, own ? own : chosen.effort};
     }
-    if (isThread(target)) return chosen;
     for (const QString& other : kInstances) {
       if (!down.contains(other)) return defaultOf(other);
     }

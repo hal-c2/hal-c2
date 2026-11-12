@@ -1138,9 +1138,11 @@ defmodule HalC2.Test.Mc.World do
   @doc """
   Waits until `fun`, given a thread stream's `HalC2.StreamState`, returns something
   other than `nil`/`false`, and returns that. Subscribes the test process to the
-  stream and re-checks on each of its commits.
+  stream and re-checks on each of its commits. The wait is receipt-driven, so
+  `timeout` is only a safety net: long enough for a fake agent's process to start
+  on a loaded machine, and under ExUnit's 60 s so a real hang fails here, named.
   """
-  def await_stream(stream_id, fun, timeout \\ 5_000) do
+  def await_stream(stream_id, fun, timeout \\ 30_000) do
     :ok = HalC2.Streams.subscribe(stream_id, self(), nil)
     check_stream(stream_id, fun, System.monotonic_time(:millisecond) + timeout)
   end
@@ -4133,7 +4135,7 @@ defmodule HalC2.Test.Mc.World do
     })
 
     ExUnit.Callbacks.on_exit(fn ->
-      HalC2.Acp.forget(id)
+      HalC2.Acp.drop(id)
       :persistent_term.erase({HalC2.Acp.Catalog, :index})
       Application.put_env(:hal_c2, :acp_commands, commands)
     end)

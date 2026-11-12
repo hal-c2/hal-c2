@@ -65,7 +65,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   @project {@project_id, @provider}
   @tools ~w(CronCreate Workflow CronList ScheduleWakeup)
   @threads ~w(a b)
-  # Well under the 50 turns a history read returns.
+  # Well under the seed read's cap (20 pages of 3 here), so the model may take a
+  # read back to reach every ended turn; a thread past the cap loses its oldest
+  # turns, which the history tests pin instead.
   @max_runs 30
 
   property "tool pruning knows every use it heard or read back, over restarts, missed uses, failed reads, rollbacks and forks",
@@ -514,10 +516,16 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
-  def precondition(s, {:call, _, :start, [thread | _]}),
+  # `first?` and the ordinal are as generated, also while shrinking: a start
+  # shrunk to a thread's first with `first?` false would run on a stream the
+  # harness never created the thread's rows on, whose history then reads as a
+  # deleted thread's, which no real turn can do.
+  def precondition(s, {:call, _, :start, [thread, _run, ordinal, _new?, first?]}),
     do:
       not Map.has_key?(s.open, thread) and s.runs < @max_runs and
-        thread not in (s.gone ++ s.away)
+        thread not in (s.gone ++ s.away) and
+        first? == not Map.has_key?(s.threads, thread) and
+        ordinal == next_ordinal(s, thread)
 
   def precondition(s, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}),
     do: precondition(s, {:call, m, :start, [thread, run, ordinal, new?, first?]})

@@ -97,6 +97,12 @@ DEFAULT_MODELS = [["acme/fast", "Fast"], ["acme/smart", "Smart"]]
 models = CONTROL.get("models", DEFAULT_MODELS)
 model = models[0][0] if models else None
 
+# "reasoning": {model: level} the level each model starts at, reported as Grok does (the
+# models' `_meta.reasoningEffort`) and set with session/set_model's `_meta`. A session
+# opens at its model's level, and "which model" says the level it runs at.
+REASONING = CONTROL.get("reasoning")
+level = (REASONING or {}).get(model)
+
 # "modes": the agent's own session modes, the first being the one it starts in.
 # "keepMode": the mode stays with the session, so a restarted agent resumes in it.
 modes = CONTROL.get("modes", [])
@@ -310,9 +316,13 @@ def prompt(pid, sid, text):
             f.write(text + "\n")
         return finish(pid, sid, "wrote " + m.group(1))
     if "which model" in text:
-        # A session handed the thread so far says how many turns it was given.
-        handed = text.count("User: which model") if "<conversation_history>" in text else 0
-        return finish(pid, sid, "model: %s" % model + (" with %d earlier turns" % handed if handed else ""))
+        # A session handed the thread so far says how many turns it was given, even
+        # when none of them asked "which model" (a refused turn, say): only a session
+        # handed nothing says nothing of it.
+        handed = text.count("User: which model") if "<conversation_history>" in text else None
+        at = " at %s" % level if REASONING else ""
+        given = " with %d earlier turns" % handed if handed is not None else ""
+        return finish(pid, sid, "model: %s" % model + at + given)
     if "report" in text:
         return finish(pid, sid, json.dumps({"argv0": ARGV0, "args": ARGS, "session": sid, "model": model,
                       "env": {k: os.environ[k] for k in LOG_ENV if k in os.environ}}))
@@ -404,6 +414,11 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
+        if REASONING:
+            level = REASONING.get(model)
+            result["models"] = {"currentModelId": model, "availableModels": [
+                {"modelId": v, "name": n, "_meta": {"reasoningEffort": REASONING[v]} if v in REASONING else {}}
+                for v, n in models]}
         if legacy_modes:
             result["modes"] = {"currentModeId": legacy_mode,
                                "availableModes": [mode_entry(m) for m in legacy_modes]}
@@ -417,8 +432,13 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and params.get("configId") == "model":
             send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})
             continue
+        # "refuseModels": models the session will not switch to.
+        if params.get("configId") == "model" and params["value"] in CONTROL.get("refuseModels", []):
+            send({"id": mid, "error": {"code": -32000, "message": "model not available"}})
+            continue
         if params.get("configId") == "model":
             model = params["value"]
+            level = (REASONING or {}).get(model)
         if params.get("configId") == "mode":
             mode = params["value"]
             if CONTROL.get("keepMode"):
@@ -429,6 +449,12 @@ for line in sys.stdin:
         send({"id": mid, "result": {"configOptions": config_options()}})
     elif method == "session/set_model" and CONTROL.get("legacyModels"):
         model = params["modelId"]
+        send({"id": mid, "result": {}})
+    elif method == "session/set_model" and REASONING and params["modelId"] in CONTROL.get("refuseModels", []):
+        send({"id": mid, "error": {"code": -32000, "message": "model not available"}})
+    elif method == "session/set_model" and REASONING:
+        model = params["modelId"]
+        level = (params.get("_meta") or {}).get("reasoningEffort") or REASONING.get(model)
         send({"id": mid, "result": {}})
     elif method == "session/prompt":
         prompt(mid, params["sessionId"], "\n".join(b.get("text", "") for b in params["prompt"]))

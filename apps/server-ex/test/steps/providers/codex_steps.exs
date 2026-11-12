@@ -2969,6 +2969,79 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- what the turn runs on ------------------------------------------------------------------------------
+
+  step ~s(a Codex thread whose turn ran at reasoning "low" on the "fast" service tier), context do
+    Map.put(context, :pending_launch, %{
+      instance: "codex",
+      fields: %{
+        "modelSelection" => %{
+          "instanceId" => "codex",
+          "model" => "gpt-6-luna",
+          "options" => [
+            %{"id" => "reasoningEffort", "value" => "low"},
+            %{"id" => "serviceTier", "value" => "fast"}
+          ]
+        }
+      }
+    })
+  end
+
+  step "the user takes the reasoning level and service tier off the thread and sends again",
+       context do
+    title = World.current_thread(context)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.model-selection.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, title),
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-6-luna"}
+      })
+
+    context = World.post_message(context, title, "again")
+    World.await_idle(context, title)
+    context
+  end
+
+  step "the next turn is sent to Codex at {string} with no service tier",
+       %{args: [effort]} = context do
+    [first, second] =
+      context
+      |> World.provider_log("codex")
+      |> Enum.filter(&(get_in(&1, ["in", "method"]) == "turn/start"))
+      |> Enum.map(&get_in(&1, ["in", "params"]))
+
+    assert first["effort"] == "low" and first["serviceTier"] == "fast"
+    assert second["effort"] == effort
+    # Named as null: Codex would otherwise keep the tier the first turn set.
+    assert Map.has_key?(second, "serviceTier") and second["serviceTier"] == nil
+    context
+  end
+
+  step "Codex reroutes the turn to {string}", %{args: [model]} = context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "model/rerouted", %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => runtime.turn.native_turn_id,
+      "fromModel" => runtime.turn.model,
+      "toModel" => model,
+      "reason" => "highRiskCyberActivity"
+    })
+  end
+
+  step "the run records {string} as the model it ran on", %{args: [model]} = context do
+    World.await_run(context, @thread, &(&1["appliedModel"] == model))
+    context
+  end
+
+  step "the thread shows the notice {string}", %{args: [text]} = context do
+    item = await_item(context, &(&1["type"] == "system_notice" and &1["title"] == text))
+    assert item["status"] == "completed"
+    context
+  end
+
   # --- retries and failures --------------------------------------------------------------------------------
 
   defp codex_error(context, error, will_retry) do
