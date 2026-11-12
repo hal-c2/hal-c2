@@ -525,6 +525,7 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
       for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
       QJsonObject result{{QStringLiteral("sequence"), commands.size()}};
       if (appliesModes) applyMode(rpc.payload, result);
+      for (const auto& answer : std::as_const(answering)) answer(rpc.payload, result);
       // A mode change names the version of the rows that holds it, as the MC does.
       if (versioned && (type == QLatin1String("thread.runtime-mode.set") || type == QLatin1String("thread.interaction-mode.set"))) {
         result.insert(QStringLiteral("shell"), QJsonObject{{QStringLiteral("mc"), name},

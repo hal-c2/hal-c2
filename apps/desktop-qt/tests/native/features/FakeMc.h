@@ -166,6 +166,9 @@ public:
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
   QList<std::function<void(const QJsonObject& command)>> effects;
+  // What an accepted command's answer says besides its sequence, such as the
+  // selection revision a send's model moved the thread to.
+  QList<std::function<void(const QJsonObject& command, QJsonObject& answer)>> answering;
   // Checkouts whose whole status a domain fakes, by folder: the `vcs`
   // snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
   QHash<QString, std::function<QJsonObject()>> checkouts;

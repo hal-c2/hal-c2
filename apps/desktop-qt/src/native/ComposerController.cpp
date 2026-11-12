@@ -2278,9 +2278,11 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index, Dispatch
       return dispatchAll(rest, index, done);
     }
   }
-  // The send's own mode change moves the revision on like the user's.
+  // The send's own mode change moves the revision on like the user's, and so
+  // does its pick: a pick made next, while the row still lags, moves past it.
   std::shared_ptr<OwnChange> own;
-  if (type == QLatin1String("thread.runtime-mode.set") || type == QLatin1String("thread.interaction-mode.set")) {
+  if (type == QLatin1String("thread.runtime-mode.set") || type == QLatin1String("thread.interaction-mode.set") ||
+      command.contains(QLatin1String("selectionBase"))) {
     own = ownSent(send.target);
   }
   m_client->dispatchCommand(this, send.environmentId, command,
