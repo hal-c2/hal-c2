@@ -1460,7 +1460,9 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
   # --- a queued message whose provider cannot start ----------------------------------
 
-  # "Next" was queued for Claude, whose command is not there to start.
+  # "Next" was queued for Claude, whose command is not there to start. The user picked
+  # Claude for it (`selectionPicked`), so it keeps that pick rather than following the
+  # thread (`HalC2.Orchestration.Selection`).
   step "the running turn completes and the provider for {string} cannot be started",
        %{args: [text]} = context do
     World.put_app_env(:claude_command, [Path.join(context.mc.home, "no-such-claude")])
@@ -1469,7 +1471,8 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       World.put_entity(context, context.thread, "run", run_for(context, text)["id"], %{
         "s" => %{
           "providerInstanceId" => "claudeAgent",
-          "modelSelection" => selection("claudeAgent")
+          "modelSelection" => selection("claudeAgent"),
+          "selectionPicked" => true
         }
       })
 
