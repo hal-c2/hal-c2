@@ -63,6 +63,7 @@ public:
   using Done = std::function<void(const std::optional<QString>& error)>;
 
   SettingsController(ShellBridge*, McClient* client, QObject* parent = nullptr);
+  ~SettingsController() override;
 
   // Subscribes to the MC's config and reads its settings.
   void activate() override;
@@ -161,6 +162,7 @@ private:
   void fail(const QString& error);
   void watchDevice();
   void deviceFileChanged();
+  bool readDevice();
   // In `window` (the one that made the change), else the one in use.
   void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }

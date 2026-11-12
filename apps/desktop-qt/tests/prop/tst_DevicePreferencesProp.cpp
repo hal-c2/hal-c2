@@ -20,7 +20,7 @@
 // desktop has saves waiting at a time, except that the other may save and
 // quit, which writes its save at once. A desktop's own write lands before
 // it hears the file: what it wrote is what it read, and a save made before it
-// hears is made over that.
+// hears, or while the write is on its way, is made over that.
 
 #include "Prop.h"
 
@@ -33,8 +33,10 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonDocument>
+#include <QDeadlineTimer>
 #include <QSaveFile>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <array>
 #include <memory>
@@ -359,6 +361,47 @@ struct Land : Command {
   void show(std::ostream& os) const override { os << "Land desktop " << desktop; }
 };
 
+// The desktop saves while its write is on its way, or has reached the disk
+// and not been taken in yet (or, when it is too quick, after it landed): the
+// save goes over what that write landed. The desktop has heard the file, so
+// the write changes nothing else it shows.
+struct SaveInFlight : Command {
+  Save change;
+
+  void checkPreconditions(const Model& model) const override {
+    const int d = change.desktop;
+    RC_PRE(model.pending[d] && !model.broken && !model.unreadable[d] && mayWait(model, d));
+    RC_PRE(model.gone || model.file == model.read[d]);
+  }
+  void apply(Model& model) const override {
+    land(model, change.desktop);
+    hear(model, change.desktop);
+    save(model, change.desktop, change.next(model));
+  }
+  void run(const Model& model, Sut& sut) const override {
+    const int d = change.desktop;
+    Model landed = model;
+    land(landed, d);
+    // An earlier write lands first; what is pending then goes as one write.
+    // Neither desktop hears the file meanwhile.
+    sut.deafen(true);
+    const bool started = prop::until([&] { return !sut.writer(d)->writing(); }) &&
+                         prop::until([&] { return sut.writer(d)->writing() || sut.writer(d)->idle(); });
+    sut.deafen(false);
+    RC_ASSERT(started);
+    // Without the event loop, so the landing is not taken in.
+    const QDeadlineTimer limit(5000);
+    while (!(QFile::exists(sut.path()) && sut.file() == landed.file) && !limit.hasExpired()) QThread::msleep(1);
+    Model next = model;
+    apply(next);
+    check(next, sut, d, change.call(sut), true);
+  }
+  void show(std::ostream& os) const override {
+    change.show(os);
+    os << ", while its write is on its way";
+  }
+};
+
 struct Restart : Command {
   int desktop = *rc::gen::inRange(0, 2);
 
@@ -418,7 +461,8 @@ private slots:
       sut.start(1);
       rc::state::check(Model{}, sut,
                        rc::state::gen::execOneOfWithArgs<Save, Save, SaveEntry, SaveEntry, SaveTwice, SaveAndQuit, Hear, Hear,
-                                                         Land, Land, Restart, Break, Repair, Delete>());
+                                                         Land, Land, SaveInFlight, SaveInFlight, Restart, Break, Repair,
+                                                         Delete>());
     }));
   }
 };

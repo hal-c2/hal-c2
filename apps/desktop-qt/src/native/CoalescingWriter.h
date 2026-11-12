@@ -68,6 +68,9 @@ class CoalescingWriter : public QObject {
  signals:
   // A write started off the GUI thread failed.
   void failed();
+  // A write started off the GUI thread landed: `given` is what it was given,
+  // and `written` what the file took (after a merge, what that made).
+  void wrote(const QByteArray& given, const QByteArray& written);
 
  private:
   void put(Content content);
@@ -91,6 +94,7 @@ class CoalescingWriter : public QObject {
   // The delay ran out while a write was on its way: the next goes once it lands.
   bool m_due = false;
   Content m_inFlightContent;
-  QFuture<bool> m_inFlight;
-  QFutureWatcher<bool> m_watcher;
+  // What the file took, or nothing: the write failed.
+  QFuture<std::optional<QByteArray>> m_inFlight;
+  QFutureWatcher<std::optional<QByteArray>> m_watcher;
 };

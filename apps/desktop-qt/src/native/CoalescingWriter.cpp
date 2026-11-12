@@ -27,14 +27,16 @@ bool replace(const QString& path, const QByteArray& bytes) {
   return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
 }
 
-bool store(const QString& path, const CoalescingWriter::Content& content, const CoalescingWriter::Merge& merge) {
+// What the file took (nothing for a removal), or nothing at all: it failed.
+std::optional<QByteArray> store(const QString& path, const CoalescingWriter::Content& content, const CoalescingWriter::Merge& merge) {
+  const auto taken = [](bool ok, const QByteArray& bytes) { return ok ? std::optional(bytes) : std::nullopt; };
   // Gone, and not merely out of reach behind a file where its folder goes.
   if (!content) {
-    if (QFile::remove(path)) return true;
+    if (QFile::remove(path)) return QByteArray();
     const QFileInfo folder(QFileInfo(path).absolutePath());
-    return !QFile::exists(path) && (folder.isDir() || !folder.exists());
+    return taken(!QFile::exists(path) && (folder.isDir() || !folder.exists()), {});
   }
-  if (!merge) return replace(path, *content);
+  if (!merge) return taken(replace(path, *content), *content);
   // Another writer in this process reads only once this one has replaced the
   // file. Another process can still save between the read and the replace.
   static QMutex merging;
@@ -42,9 +44,9 @@ bool store(const QString& path, const CoalescingWriter::Content& content, const 
   QFile file(path);
   std::optional<QByteArray> held;
   if (file.open(QIODevice::ReadOnly)) held = file.readAll();
-  else if (file.exists()) return false;
+  else if (file.exists()) return std::nullopt;
   const std::optional<QByteArray> merged = merge(*content, held);
-  return merged && replace(path, *merged);
+  return merged ? taken(replace(path, *merged), *merged) : std::nullopt;
 }
 
 }  // namespace
@@ -91,7 +93,7 @@ void CoalescingWriter::start() {
   if (m_busy || !m_pending) return;
   Content content = *std::exchange(m_pending, std::nullopt);
   if (known(content)) return;
-  auto promise = std::make_shared<QPromise<bool>>();
+  auto promise = std::make_shared<QPromise<std::optional<QByteArray>>>();
   promise->start();
   m_busy = true;
   m_inFlightContent = content;
@@ -106,10 +108,11 @@ void CoalescingWriter::start() {
 void CoalescingWriter::settle(bool wait) {
   if (!m_busy || (!wait && !m_inFlight.isFinished())) return;
   m_inFlight.waitForFinished();
-  const bool ok = m_inFlight.resultCount() > 0 && m_inFlight.result();
+  const std::optional<QByteArray> written = m_inFlight.resultCount() > 0 ? m_inFlight.result() : std::nullopt;
   m_busy = false;
-  landed(m_inFlightContent, ok);
-  if (!ok) emit failed();
+  landed(m_inFlightContent, written.has_value());
+  if (!written) emit failed();
+  else if (m_inFlightContent) emit wrote(*m_inFlightContent, *written);
 }
 
 void CoalescingWriter::landed(const Content& content, bool ok) {
@@ -141,6 +144,6 @@ bool CoalescingWriter::flush() {
   settle(true);
   if (!m_pending || m_path.isEmpty()) return !m_pending;
   Content content = *std::exchange(m_pending, std::nullopt);
-  if (!known(content)) landed(content, store(m_path, content, m_merge));
+  if (!known(content)) landed(content, store(m_path, content, m_merge).has_value());
   return !m_pending;
 }

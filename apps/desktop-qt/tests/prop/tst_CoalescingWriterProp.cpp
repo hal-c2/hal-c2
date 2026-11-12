@@ -9,6 +9,11 @@
 // line there, carrying the writer's over, whenever no write is on its way.
 // Once the writes are done the file holds both the writer's latest and the
 // other app's, unless the writer removed the file since.
+//
+// Each write that lands off the GUI thread says what it was given and what
+// the file took (wrote()), in order, and the file holds that then; once the
+// writes are done, the last said is the latest, unless something since was
+// written at once.
 
 #include "Prop.h"
 
@@ -19,6 +24,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "CoalescingWriter.h"
 
@@ -37,6 +43,9 @@ struct Model {
   bool merging = false;
   int other = 0;
   bool otherKept = false;
+  // The latest given goes off the GUI thread: nothing since was written at
+  // once (a flush, a quit) or removed.
+  bool told = false;
 };
 
 // Writes what was given and keeps the other app's line.
@@ -55,6 +64,12 @@ struct Sut {
   bool merging = false;
   // The newest version the file was seen holding.
   int floor = 0;
+  // What wrote() said, with the version the file held then; and the newest
+  // it said.
+  std::vector<std::pair<int, std::optional<int>>> said;
+  // Whether what wrote() said the file took is what it held then.
+  std::vector<bool> wroteHeld;
+  int told = 0;
 
   QString folder() const { return dir.filePath(QStringLiteral("sub")); }
   QString aside() const { return dir.filePath(QStringLiteral("aside")); }
@@ -65,25 +80,45 @@ struct Sut {
     writer->setDelay(delay);
     writer->setPath(path());
     if (merging) writer->setMerge(keepOther);
+    QObject::connect(writer.get(), &CoalescingWriter::wrote, writer.get(),
+                     [this](const QByteArray& given, const QByteArray& written) {
+                       said.emplace_back(given.mid(1).toInt(), peek('v'));
+                       wroteHeld.push_back(peekAll() == written);
+                     });
   }
 
   // The version on the file's line starting with `tag`, or nothing when there is none.
-  std::optional<int> line(char tag) const {
+  std::optional<int> peek(char tag) const {
     QFile file(path());
     if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
-    const QList<QByteArray> lines = file.readAll().split('\n');
     std::optional<int> version;
-    for (const QByteArray& line : lines) {
-      RC_ASSERT(line.startsWith('v') || (merging && line.startsWith('o')));
+    for (const QByteArray& line : file.readAll().split('\n'))
       if (line.startsWith(tag)) version = line.mid(1).toInt();
-    }
     return version;
+  }
+  QByteArray peekAll() const {
+    QFile file(path());
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+  }
+  std::optional<int> line(char tag) const {
+    QFile file(path());
+    if (file.open(QIODevice::ReadOnly))
+      for (const QByteArray& line : file.readAll().split('\n')) RC_ASSERT(line.startsWith('v') || (merging && line.startsWith('o')));
+    return peek(tag);
   }
   // The version the file holds, or nothing when there is none.
   std::optional<int> read() const { return line('v'); }
 
-  // Never older than what it held before.
+  // Never older than what it held before, nor than what wrote() said before.
   void observe(const Model& model) {
+    for (const auto& [given, held] : said) {
+      RC_ASSERT(given >= told);
+      RC_ASSERT(held == given);
+      told = given;
+    }
+    said.clear();
+    for (const bool held : wroteHeld) RC_ASSERT(held);
+    wroteHeld.clear();
     if (model.blocked) return;
     const auto version = read();
     if (!version) return;
@@ -93,6 +128,8 @@ struct Sut {
 
   // What the file holds is the model's latest.
   void expectLatest(const Model& model) {
+    observe(model);
+    if (model.told) RC_ASSERT(told == model.latest);
     const auto version = read();
     if (model.present) {
       RC_ASSERT(version.has_value());
@@ -117,6 +154,7 @@ struct Edit : Command {
   void apply(Model& model) const override {
     model.latest += 1;
     model.present = true;
+    model.told = true;
     if (!model.blocked) model.sure = true;
   }
   void run(const Model& model, Sut& sut) const override {
@@ -144,6 +182,7 @@ struct Remove : Command {
     model.latest += 1;
     model.present = false;
     model.otherKept = false;
+    model.told = false;
     if (!model.blocked) model.sure = true;
   }
   void run(const Model& model, Sut& sut) const override {
@@ -183,12 +222,15 @@ struct Flush : Command {
   explicit Flush(const Model&) {}
   void apply(Model& model) const override {
     if (!model.blocked) model.sure = true;
+    model.told = false;
   }
   void run(const Model& model, Sut& sut) const override {
     const bool ok = sut.writer->flush();
     if (model.blocked) return;
     RC_ASSERT(ok);
-    sut.expectLatest(model);
+    Model next = model;
+    apply(next);
+    sut.expectLatest(next);
   }
   void show(std::ostream& os) const override { os << "Flush"; }
 };
@@ -202,6 +244,7 @@ struct WriteNow : Command {
     model.latest += 1;
     model.present = true;
     model.sure = true;
+    model.told = false;
   }
   void run(const Model& model, Sut& sut) const override {
     if (model.blocked) {
@@ -272,10 +315,15 @@ struct Other : Command {
 struct Quit : Command {
   explicit Quit(const Model& model) { RC_PRE(!model.blocked); }
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.blocked); }
-  void apply(Model& model) const override { model.sure = true; }
+  void apply(Model& model) const override {
+    model.sure = true;
+    model.told = false;
+  }
   void run(const Model& model, Sut& sut) const override {
     sut.writer.reset();
-    sut.expectLatest(model);
+    Model next = model;
+    apply(next);
+    sut.expectLatest(next);
     sut.open();
   }
   void show(std::ostream& os) const override { os << "Quit"; }
