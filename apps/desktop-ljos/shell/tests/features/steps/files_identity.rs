@@ -13,7 +13,7 @@ use hal_c2_shell::controllers::theme::Themes;
 use ljos::prelude::Value;
 use serde_json::{Value as Json, json};
 
-use super::fake_files::{fake_files, sign_file};
+use super::fake_files::{fake_files, not_found, sign_file};
 use super::settings::{fake_config, publish_themes};
 use crate::brick::{self, Brick};
 use crate::fake_mc::{FakeMc, Rpc};
@@ -542,6 +542,11 @@ pub fn register(steps: &mut Steps) {
         // A favicon the project has or the user picked, else the MC's "none"
         // (apps/server-ex attachments.ex).
         mc.on_rpc("assets.createUrl", create_url);
+        // The fake MC holds no picture for a signed icon (nor for the
+        // timeline's token-N attachments), and says so on the I/O thread: a
+        // fetch started while TestWindow advances is answered there, not
+        // left out until its image wait gives up (on_download).
+        mc.on_download("/api/assets/token", |_| not_found());
         mc.on_raw("/api/auth/session", |mc, stream, head| {
             serve_session(mc, stream, head);
             Ok(())
