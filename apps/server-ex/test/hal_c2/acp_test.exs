@@ -600,6 +600,97 @@ defmodule HalC2.AcpTest do
     assert File.read!(probes) == "probe\n"
   end
 
+  test "a probe read does not overwrite the mode a live session set meanwhile", %{tmp_dir: dir} do
+    instance = "acpRegistry_probe_modes"
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    agent = Path.join(dir, "agent")
+
+    # The probe holds its `initialize` until released, then opens a throwaway
+    # session in its default legacy mode ("ask").
+    File.write!(agent, """
+    #!/usr/bin/env python3
+    import json, sys
+    request = json.loads(sys.stdin.readline())
+    open("#{started}", "w").write("held\\n")
+    open("#{release}").read()
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
+    model = {"id": "model", "name": "Model", "type": "select", "currentValue": "acme/fast",
+             "options": [{"value": "acme/fast", "name": "Fast"}]}
+    modes = {"currentModeId": "ask",
+             "availableModes": [{"id": m, "name": m} for m in ("ask", "code", "debug")]}
+    answer(json.loads(sys.stdin.readline()),
+           {"sessionId": "s", "configOptions": [model], "modes": modes})
+    sys.stdin.read()
+    """)
+
+    File.chmod!(agent, 0o755)
+    Application.put_env(:hal_c2, :acp_commands, %{instance => [agent]})
+
+    :persistent_term.put(
+      {HalC2.Acp.Catalog, :index},
+      {System.system_time(:millisecond),
+       [
+         %{
+           "id" => "probe-modes-agent",
+           "name" => "Probe modes agent",
+           "version" => "1.0.0",
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./acme"}}
+           }
+         }
+       ]}
+    )
+
+    on_exit(fn ->
+      HalC2.Acp.forget(instance)
+      Application.delete_env(:hal_c2, :acp_commands)
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    end)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            instance => %{
+              "driver" => "acpRegistry",
+              "enabled" => true,
+              "config" => %{"agentId" => "probe-modes-agent"}
+            }
+          }
+        },
+        0
+      )
+
+    modes = %{
+      "currentModeId" => "ask",
+      "availableModes" => for(m <- ~w(ask code debug), do: %{"id" => m, "name" => m})
+    }
+
+    reload = Task.async(fn -> HalC2.Acp.reload(instance) end)
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, "held\n"}}, 10_000
+
+    # A live session opens and is switched to "code" while the probe runs: the
+    # writes a thread runtime makes at `session/new` and `session/set_mode`.
+    HalC2.Acp.put_config(
+      instance,
+      HalC2.Acp.session_config(%{"configOptions" => [], "modes" => modes})
+    )
+
+    HalC2.Acp.put_option(instance, "mode", "code")
+
+    File.write!(release, "go\n")
+    assert :ok = Task.await(reload, 10_000)
+
+    config = :persistent_term.get({HalC2.Acp, instance, :config}, [])
+    assert Enum.find_value(config, &(&1["id"] == "mode" && &1["currentValue"])) == "code"
+    assert inspect(:persistent_term.get({HalC2.Acp, instance, :models}, nil)) =~ "acme/fast"
+  end
+
   # Reads the grok instance from a fake agent that, holding the read's `initialize`
   # (`request`), waits until the test has forgotten the instance and then runs `script`
   # (Python). Returns once that read has published what it would and finished. The agent

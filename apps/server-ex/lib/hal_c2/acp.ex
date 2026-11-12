@@ -726,7 +726,8 @@ defmodule HalC2.Acp do
   # `forget/1`'s erases, but they are deliberately not generation-gated: they
   # report what a live session currently offers (or that its account is gone),
   # which stays authoritative for that session until the probe `forget/1`
-  # triggers publishes over it.
+  # triggers publishes over it — except an option's current value, which a
+  # probe publish keeps from the live session (`publish_staged/3`).
   # A `:disk` read is a status check (at boot, or a listing's first look):
   # Antigravity answers it from the installed runtime on disk, launching
   # nothing, where other agents are still read from a throwaway session. A
@@ -837,6 +838,34 @@ defmodule HalC2.Acp do
   # the flag instead of storing `false`; other staged values are stored as read.
   defp publish_staged(id, :unauthenticated, false),
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
+
+  # A probe's throwaway session reports its own defaults, so its options' current
+  # values are not the probe's to publish over a live session's: one switched to
+  # another mode while the read ran (`put_option/3`, after `session/set_mode`)
+  # would otherwise show the probe's mode, which no live session is in. The
+  # probe still replaces which options and choices the agent offers. Runs under
+  # the publish lock, so the values it keeps are those standing when it lands.
+  defp publish_staged(id, :config, staged) when is_list(staged) do
+    values =
+      Map.new(
+        for %{"id" => option} = held <- :persistent_term.get({__MODULE__, id, :config}, []),
+            is_map_key(held, "currentValue"),
+            do: {option, held["currentValue"]}
+      )
+
+    staged =
+      Enum.map(staged, fn
+        %{"id" => option} = offered ->
+          if is_map_key(values, option),
+            do: Map.put(offered, "currentValue", values[option]),
+            else: offered
+
+        offered ->
+          offered
+      end)
+
+    :persistent_term.put({__MODULE__, id, :config}, staged)
+  end
 
   defp publish_staged(id, key, value),
     do: :persistent_term.put({__MODULE__, id, key}, value)
