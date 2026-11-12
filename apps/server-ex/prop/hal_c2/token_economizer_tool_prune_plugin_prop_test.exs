@@ -65,7 +65,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   @project {@project_id, @provider}
   @tools ~w(CronCreate Workflow CronList ScheduleWakeup)
   @threads ~w(a b)
-  # Well under the 50 turns a history read returns.
+  # Well under the seed read's cap (20 pages of 3 here), so the model may take a
+  # read back to reach every ended turn; a thread past the cap loses its oldest
+  # turns, which the history tests pin instead.
   @max_runs 30
 
   property "tool pruning knows every use it heard or read back, over restarts, missed uses, failed reads, rollbacks and forks",
