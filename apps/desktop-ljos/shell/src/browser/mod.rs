@@ -65,10 +65,6 @@ pub fn supported() -> bool {
 }
 
 /// Registers the browser's types and Ljós's web engine (`QtWebEngine`).
-/// TODO(ljos#354, ljos#355, ljos#356): `WebEngineView` lacks
-/// `permissionRequested`, `navigationRequested` and
-/// `desktopMediaRequested`, which BrowserPanel handles in a `Connections`
-/// that ignores them until it has them.
 pub fn register(engine: &Engine) {
     ljos_webengine::register(engine);
     engine

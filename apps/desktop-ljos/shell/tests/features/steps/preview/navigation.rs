@@ -381,15 +381,15 @@ fn register_loads(steps: &mut Steps) {
             match code {
                 // TODO(ljos#387): neither reaches the panel as a failed load
                 // yet; the engine shows its own error page instead.
-                "ERR_CONNECTION_REFUSED" => {
-                    // The dev server stops, and the page is asked again.
-                    dev_server(world)?.stop();
-                    run(world, "preview.refresh")?;
-                }
-                "ERR_TOO_MANY_REDIRECTS" => {
-                    dev_server(world)?.redirect("/loop", "/loop");
-                    let url = server_url(world, "/loop")?;
-                    go(world, &url)?;
+                // TODO(ljos#395): either load stalls the engine past the
+                // runner's watchdog. Once it does not, ERR_CONNECTION_REFUSED
+                // stops the dev server and asks again
+                // (`dev_server(world)?.stop()`, then
+                // `run(world, "preview.refresh")`), and ERR_TOO_MANY_REDIRECTS
+                // goes to a path that redirects to itself
+                // (`dev_server(world)?.redirect("/loop", "/loop")`).
+                "ERR_CONNECTION_REFUSED" | "ERR_TOO_MANY_REDIRECTS" => {
+                    fail!("the engine stalls on {code} (ljos#395)");
                 }
                 _ => {
                     // What the network does not do on the loopback, as the

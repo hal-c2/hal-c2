@@ -575,8 +575,8 @@ fn register_devices(steps: &mut Steps) {
                 },
                 |w| format!("every frame to load {url}; {}", state(w, brick)),
             )?;
-            // TODO(ljos#357): desktop-qt also grabs each frame to see the page
-            // drawn; Ljós's test window has no grab yet, so the painted list
+            // TODO(ljos#399): desktop-qt also grabs each frame to see the page
+            // drawn; Rust cannot read a grab's pixels yet, so the painted list
             // stands in.
             wait_for_engine(
                 world,

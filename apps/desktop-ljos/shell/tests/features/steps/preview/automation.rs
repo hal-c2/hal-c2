@@ -95,8 +95,8 @@ impl AutomationPage for ViewPage {
         });
     }
     fn grab(&self, engine: &Engine, done: GrabDone) {
-        // TODO(ljos#357): Ljós's items have no grabToImage, so the page never
-        // has a picture to give; a PNG of the grabbed image once they do.
+        // TODO(ljos#399): the brick's grabToImage hands on `result.image`,
+        // which Rust cannot read the pixels of; a PNG of them once it can.
         BrowserPage::grab(engine, self.page, move |e, _| done(e, None));
     }
     fn url(&self) -> String {
