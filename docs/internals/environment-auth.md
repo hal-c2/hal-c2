@@ -57,6 +57,13 @@ absolute paths outside a project. This lets clients display artifacts that an
 agent writes in a temporary directory. Relative paths and writes still follow
 the [workspace path rules](../../apps/server-ex/lib/hal_c2/workspace.ex).
 
+The MC's own directories are the exception: they hold the credentials every
+scope is checked against (the access token, `secrets/`, the cluster key, the
+databases), so no client file or asset RPC reads, lists, searches or writes
+inside them at any scope, and the access token itself only authenticates from
+this machine. Thread worktrees under the data directory, and a registered
+project's own files wherever it sits, stay reachable.
+
 Signed asset URLs are bearer credentials. A URL for media on the host grants
 access to one canonical file and its device/inode identity, not its containing directory.
 [Asset access](../../apps/server-ex/lib/hal_c2/attachments.ex) rechecks the opened

@@ -127,6 +127,15 @@ defmodule HalC2.Web do
     end
   end
 
+  @doc """
+  Whether `ip` is this machine (127.0.0.0/8 or ::1): the only place the MC's
+  access token, a file any local process of the user can read, may authenticate
+  from. Remote clients pair into revocable sessions instead.
+  """
+  def loopback_ip?({127, _, _, _}), do: true
+  def loopback_ip?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  def loopback_ip?(_ip), do: false
+
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do
@@ -153,11 +162,8 @@ defmodule HalC2.Web do
 
             {:error, :enoent} ->
               token = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
-              File.mkdir_p!(Path.dirname(path))
-              # Owner-only before the secret is written.
-              File.write!(path, "")
-              File.chmod!(path, 0o600)
-              File.write!(path, token)
+              HalC2.Paths.mkdir_private!(Path.dirname(path))
+              :ok = HalC2.Paths.write_replace(path, token, 0o600)
               token
           end
 

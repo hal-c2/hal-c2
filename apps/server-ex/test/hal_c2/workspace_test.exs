@@ -254,4 +254,48 @@ defmodule HalC2.WorkspaceTest do
     assert {:error, %{"failure" => "binary_file"}} =
              Workspace.read_file(%{"cwd" => root, "relativePath" => "nulls.dat"})
   end
+
+  test "the MC's own directories are never read, listed or written through workspace RPCs",
+       %{tmp_dir: dir, root: root} do
+    previous = Application.get_env(:hal_c2, :home)
+    home = Path.join(dir, "mc-home")
+    Application.put_env(:hal_c2, :home, home)
+    on_exit(fn -> Application.put_env(:hal_c2, :home, previous) end)
+
+    worktree = Path.join([home, "worktrees", "thread-1"])
+    File.mkdir_p!(worktree)
+    File.write!(Path.join(home, "access-token"), "master-token\n")
+    File.write!(Path.join(worktree, "code.txt"), "worktree file\n")
+
+    # Absolute host read of the MC's token.
+    assert {:error, %{"_tag" => "ProjectReadFileError"}} =
+             Workspace.read_file(%{
+               "cwd" => root,
+               "relativePath" => Path.join(home, "access-token")
+             })
+
+    # Relative read and listing rooted inside the MC home.
+    assert {:error, %{"_tag" => "ProjectReadFileError"}} =
+             Workspace.read_file(%{"cwd" => home, "relativePath" => "access-token"})
+
+    assert {:error, %{"_tag" => "ProjectListEntriesError"}} =
+             Workspace.list_entries(%{"cwd" => home})
+
+    assert {:error, %{"_tag" => "ProjectSearchContentsError"}} =
+             Workspace.search_contents(%{"cwd" => home, "query" => "master-token"})
+
+    # Absolute write-back into the MC home.
+    assert {:error, %{"_tag" => "ProjectWriteFileError"}} =
+             Workspace.write_file(%{
+               "cwd" => root,
+               "relativePath" => Path.join(home, "access-token"),
+               "contents" => "replaced"
+             })
+
+    assert File.read!(Path.join(home, "access-token")) == "master-token\n"
+
+    # Thread worktrees under the data directory stay usable.
+    assert {:ok, %{"contents" => "worktree file\n"}} =
+             Workspace.read_file(%{"cwd" => worktree, "relativePath" => "code.txt"})
+  end
 end
