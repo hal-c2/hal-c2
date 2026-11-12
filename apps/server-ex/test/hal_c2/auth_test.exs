@@ -154,6 +154,61 @@ defmodule HalC2.AuthTest do
     assert_received {:hal_c2_session_revoked, ^id}
   end
 
+  test "revoking a session through the store API closes its live socket", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, %{id: id}} = HalC2.Auth.session(access)
+    connect_socket(id)
+
+    assert HalC2.Auth.revoke_session(path, id)
+    assert_receive {:socket, {:hal_c2_session_revoked, ^id}}
+  end
+
+  test "a nested subject token is an invalid grant and leaves Auth running", %{
+    port: port,
+    path: path
+  } do
+    assert :error = HalC2.Auth.exchange(%{"x" => "y"})
+
+    body =
+      URI.encode_query(%{
+        "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
+      }) <> "&subject_token%5Bx%5D=y"
+
+    assert {400, %{"error" => "invalid_grant"}} =
+             post_form("http://127.0.0.1:#{port}/oauth/token", body)
+
+    assert {:ok, _, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+  end
+
+  test "pairing link TTLs are integers from one second to one day", %{port: port, path: path} do
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    {:ok, %{"credential" => credential}} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => admin_scopes})
+
+    {:ok, access, _, _} = HalC2.Auth.exchange(credential)
+
+    for ttl <- [1_000, 86_400_000] do
+      assert {:ok, %{"expiresAt" => _}} = HalC2.Auth.create_pairing_link(%{"ttlMs" => ttl})
+    end
+
+    existing = HalC2.Auth.pairing_links()
+
+    for ttl <- [0, 999, 86_400_001, 1.5, "1000", true, %{"seconds" => 1}] do
+      assert {:error, :invalid_ttl} = HalC2.Auth.create_pairing_link(%{"ttlMs" => ttl})
+    end
+
+    assert HalC2.Auth.pairing_links() == existing
+
+    assert {400, %{"_tag" => "EnvironmentRequestInvalidError"}} =
+             request(:post, "http://127.0.0.1:#{port}/api/auth/pairing-token", access, %{
+               "ttlMs" => "forever"
+             })
+
+    assert {:ok, _} = HalC2.Auth.create_pairing_link(%{})
+  end
+
   # A ticket request reads its session, then inserts the ticket; a revoke between the
   # two must not leave a ticket for the revoked session.
   test "a ticket requested just before its session was revoked is refused", %{path: path} do
@@ -648,7 +703,7 @@ defmodule HalC2.AuthTest do
   end
 
   defp post_form(url, form) do
-    body = URI.encode_query(form)
+    body = if is_binary(form), do: form, else: URI.encode_query(form)
 
     {:ok, {{_, status, _}, _, resp}} =
       :httpc.request(:post, {url, [], ~c"application/x-www-form-urlencoded", body}, [], [])

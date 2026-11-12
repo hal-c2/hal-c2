@@ -239,15 +239,20 @@ defmodule HalC2.Web.Router do
   # No server-initiated stream: every answer comes back on its request.
   get "/mcp", do: send_resp(conn, 405, "")
 
-  # Ends the MCP session the header names; one this MC no longer has is fine.
+  # Ends the MCP session the header names, for the credential that opened
+  # it; one this MC no longer has is fine.
   delete "/mcp" do
+    authorization = conn |> get_req_header("authorization") |> List.first()
+
     case conn |> get_req_header("mcp-session-id") |> List.first() do
       nil ->
         send_resp(conn, 200, "")
 
       session_id ->
-        HalC2.Mcp.end_session(session_id)
-        send_resp(conn, 200, "")
+        case HalC2.Mcp.end_session(authorization, session_id) do
+          :ok -> send_resp(conn, 200, "")
+          :error -> send_resp(conn, 401, "")
+        end
     end
   end
 
@@ -555,9 +560,15 @@ defmodule HalC2.Web.Router do
     HalC2.Auth.take_ticket(ticket, proof && {proof, conn.method, request_url(conn)})
   end
 
-  # The MC's own access token, for local tools and development.
-  defp socket_session(_conn, %{"token" => token}),
-    do: if(Plug.Crypto.secure_compare(token, HalC2.Web.token()), do: {:ok, nil}, else: :error)
+  # The MC's own access token, for local tools and development: this machine only.
+  defp socket_session(conn, %{"token" => token}),
+    do:
+      if(
+        HalC2.Web.loopback_ip?(conn.remote_ip) and
+          Plug.Crypto.secure_compare(token, HalC2.Web.token()),
+        do: {:ok, nil},
+        else: :error
+      )
 
   defp socket_session(_conn, _), do: :error
 
@@ -718,7 +729,8 @@ defmodule HalC2.Web.Router do
     body = with {:ok, body} <- json_body(conn), do: body
 
     cond do
-      not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
+      not HalC2.Web.loopback_ip?(conn.remote_ip) or
+          not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
         send_resp(conn, 401, "")
 
       HalC2.Upgrade.release_root() != nil ->
