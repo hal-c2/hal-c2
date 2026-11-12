@@ -4,6 +4,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
   such a session is open, a model change, by a message or by setting the thread's
   model, is refused and leaves the thread's model alone, across session resets and
   runtime restarts, and the session being stopped. A session that offers switching takes every change.
+  A message's model that is not refused becomes the thread's.
 
   A model the session will not switch to fails the turn before the agent hears it, and
   leaves the model the session had for the next turn.
@@ -95,10 +96,10 @@ defmodule HalC2.AcpModelSwitchPropTest do
 
   def next_state(state, _result, {:call, _, :turn, [_, model, _]}) do
     state = %{state | sends: state.sends + 1}
-    # A message's model is its run's; the thread keeps its own.
+    # A message's model is the thread's from then on, as the composer shows what ran.
     if refused?(state, model),
       do: state,
-      else: %{state | opened: true, lost: false, turns: state.turns + 1}
+      else: %{state | model: model, opened: true, lost: false, turns: state.turns + 1}
   end
 
   # The refused turn's session is open; what it was to be handed waits for the next turn.
@@ -115,8 +116,8 @@ defmodule HalC2.AcpModelSwitchPropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :turn, [_, model, level]}, result) do
-    # A lost session after only a refused turn has no earlier turns to be handed.
-    handed = if state.lost and state.turns > 0, do: " with #{state.turns} earlier turns", else: ""
+    # A lost session is handed the thread, even when it holds only a refused turn.
+    handed = if state.lost, do: " with #{state.turns} earlier turns", else: ""
 
     cond do
       refused?(state, model) ->
