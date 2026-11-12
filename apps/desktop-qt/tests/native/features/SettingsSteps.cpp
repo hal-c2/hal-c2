@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QSaveFile>
 #include <QSet>
 
 #include <optional>
@@ -394,6 +395,21 @@ const Steps steps([] {
   step(QStringLiteral("the desktop reports this device's preferences could not be saved"), [](World& world, const Captures&, const Table&) {
     expect(settings(world)->deviceError().startsWith(QLatin1String("Cannot save")),
            QStringLiteral("the store reports \"%1\"").arg(settings(world)->deviceError()));
+  });
+  // Another desktop on this home writes the file itself, as QSaveFile does.
+  step(QStringLiteral("another app on this device (?:saved|saves) the device preference %1 as %1").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         QJsonObject saved;
+         if (QFile file(preferencesPath(world)); file.open(QIODevice::ReadOnly)) saved = QJsonDocument::fromJson(file.readAll()).object();
+         saved.insert(c[0], c[1]);
+         QSaveFile file(preferencesPath(world));
+         if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(saved).toJson()) < 0 || !file.commit()) {
+           fail(QStringLiteral("cannot write %1").arg(file.fileName()));
+         }
+       });
+  step(QStringLiteral("the desktop holds the device preference %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return settings(world)->deviceSettings().value(c[0]) == c[1]; },
+                  [&] { return QStringLiteral("this device to hold %1 as %2; it holds %3").arg(c[0], c[1], show(settings(world)->deviceSettings().toVariantMap())); });
   });
   step(QStringLiteral("the device preference %1 is not set").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(!settings(world)->deviceSettings().contains(c[0]),

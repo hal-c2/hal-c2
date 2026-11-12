@@ -3,6 +3,8 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QPointer>
 
@@ -32,6 +34,60 @@ bool writable(const QString& path) {
     folder = QFileInfo(parent);
   }
   return folder.isDir() && folder.isWritable();
+}
+
+// The preferences file's object: empty when there is no file, nothing when it
+// cannot be read.
+std::optional<QJsonObject> readPreferences(const QString& path) {
+  QFile file(path);
+  if (!file.exists()) return QJsonObject();
+  if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) return std::nullopt;
+  return doc.object();
+}
+
+// What `next` changed from `base`, put on `disk`: a key another app on this
+// home saved since `base` was read stays unless this change is to that key.
+// Objects merge key by key (one provider's model beside another's), as the
+// MC's carry_over does, one this app had not read yet as if it were empty; any
+// other value, a list among them, is replaced whole.
+QJsonObject carryOver(QJsonObject disk, const QJsonObject& base, const QJsonObject& next) {
+  QStringList keys = base.keys() + next.keys();
+  keys.removeDuplicates();
+  for (const QString& key : keys) {
+    const QJsonValue value = next.value(key);
+    const QJsonValue read = base.value(key);
+    if (read == value) continue;
+    const QJsonValue held = disk.value(key);
+    if (value.isObject() && (read.isObject() || read.isUndefined()) && held.isObject()) {
+      disk.insert(key, carryOver(held.toObject(), read.toObject(), value.toObject()));
+    } else if (next.contains(key)) {
+      disk.insert(key, value);
+    } else {
+      disk.remove(key);
+    }
+  }
+  return disk;
+}
+
+// A device save as its writer is given it: what this desktop last read from
+// the file, and what it shows.
+QByteArray changeOf(const QJsonObject& read, const QJsonObject& shown) {
+  return QJsonDocument(QJsonArray{read, shown}).toJson(QJsonDocument::Compact);
+}
+
+// What a device save writes, made as the write goes (on the writer's thread):
+// what this desktop changed since it read the file, over what the file holds
+// then. A file that is gone takes what it shows whole; one that does not read
+// is left for the user to repair, and the write fails.
+std::optional<QByteArray> mergeDevice(const QByteArray& change, const std::optional<QByteArray>& held) {
+  const QJsonArray pair = QJsonDocument::fromJson(change).array();
+  const QJsonObject shown = pair.at(1).toObject();
+  if (!held) return QJsonDocument(shown).toJson();
+  const QJsonDocument doc = QJsonDocument::fromJson(*held);
+  if (!doc.isObject()) return std::nullopt;
+  return QJsonDocument(carryOver(doc.object(), pair.at(0).toObject(), shown)).toJson();
 }
 
 QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonValue& value) {
@@ -141,8 +197,26 @@ const Row* rowOf(const QString& key) {
 
 SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* parent)
     : QObject(parent), m_client(client) {
+  // This desktop's own save landed: what it wrote is what it read, as a fresh
+  // read would give, with what it changed since it handed that save over (a
+  // change back included). Then what another app saved while it was on its
+  // way. What waits to be written was made over the old base: it goes over
+  // this one.
+  connect(&m_deviceFile, &CoalescingWriter::wrote, this, [this](const QByteArray& given, const QByteArray& written) {
+    const QJsonObject read = QJsonDocument::fromJson(written).object();
+    const QJsonObject device = carryOver(read, QJsonDocument::fromJson(given).array().at(1).toObject(), m_device);
+    const bool changed = device != m_device;
+    m_device = device;
+    m_deviceRead = read;
+    if (!readDevice() && changed) emit deviceChanged();
+    if (!m_deviceFile.idle()) m_deviceFile.write(changeOf(m_deviceRead, m_device));
+  });
   connect(&m_deviceFile, &CoalescingWriter::failed, this, [this] {
-    m_deviceError = QStringLiteral("Cannot save %1").arg(m_devicePath);
+    // What another app saved while the write was on its way. A file edited by
+    // hand into something that does not read refuses the write: what this
+    // desktop changed goes once it reads again, or is deleted.
+    readDevice();
+    m_deviceError = (m_deviceUnreadable ? QStringLiteral("Cannot read %1") : QStringLiteral("Cannot save %1")).arg(m_devicePath);
     emit deviceChanged();
     toast(QStringLiteral("Setting not saved"), m_deviceError);
   });
@@ -156,6 +230,13 @@ SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* 
     ++m_generation;
     emit settingsChanged();
   });
+}
+
+// A save on its way lands while this desktop can still take it in, so what
+// was saved meanwhile goes over it, before the writer's own flush at quit.
+SettingsController::~SettingsController() {
+  const QSignalBlocker quiet(this);
+  m_deviceFile.flush();
 }
 
 void SettingsController::activate() {
@@ -521,26 +602,73 @@ void SettingsController::toast(const QString& title, const QString& reason, Nati
 }
 
 void SettingsController::setDevicePath(const QString& path) {
-  // What is still on its way lands before the file is read again, and the
-  // writer forgets what it last wrote: the file may have changed since.
+  // What is still on its way lands before the file is read again.
+  m_deviceFile.setMerge(mergeDevice);
   m_deviceFile.setPath({});
   m_deviceFile.setPath(path);
   m_devicePath = path;
-  QJsonObject device;
-  QString error;
-  QFile file(path);
-  if (file.exists()) {
-    QJsonParseError parse;
-    const QByteArray saved = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
-    const QJsonDocument doc = QJsonDocument::fromJson(saved, &parse);
-    if (doc.isObject()) m_deviceFile.setWritten(saved);
-    if (doc.isObject()) device = doc.object();
-    else error = QStringLiteral("Cannot read %1").arg(path);
-  }
-  m_device = device;
-  m_deviceError = error;
-  m_deviceUnreadable = !error.isEmpty();
+  const std::optional<QJsonObject> saved = readPreferences(path);
+  m_device = saved.value_or(QJsonObject());
+  m_deviceRead = m_device;
+  m_deviceUnreadable = !saved;
+  m_deviceError = saved ? QString() : QStringLiteral("Cannot read %1").arg(path);
+  watchDevice();
   emit deviceChanged();
+}
+
+// Every desktop on this home (another process of it, the Ljós desktop) shares
+// the file, and QSaveFile replaces it, which ends a watch on the file itself:
+// its directory is watched too, and the file again whenever it is back.
+void SettingsController::watchDevice() {
+  if (!m_deviceWatcher) {
+    m_deviceWatcher = new QFileSystemWatcher(this);
+    connect(m_deviceWatcher, &QFileSystemWatcher::fileChanged, this, &SettingsController::deviceFileChanged);
+    connect(m_deviceWatcher, &QFileSystemWatcher::directoryChanged, this, &SettingsController::deviceFileChanged);
+  }
+  const QStringList watched = m_deviceWatcher->files() + m_deviceWatcher->directories();
+  if (!watched.isEmpty()) m_deviceWatcher->removePaths(watched);
+  if (m_devicePath.isEmpty()) return;
+  const QString dir = QFileInfo(m_devicePath).absolutePath();
+  if (QFileInfo(dir).isDir()) m_deviceWatcher->addPath(dir);
+  if (QFile::exists(m_devicePath)) m_deviceWatcher->addPath(m_devicePath);
+}
+
+// Another app saved the file, or this desktop's own save landed. While a
+// write of this desktop's is on its way, the file is read once it lands
+// instead. A file that reads again after it did not takes what could not land
+// (one that is gone is written whole).
+void SettingsController::deviceFileChanged() {
+  if (m_deviceFile.writing()) return;
+  const bool repaired = m_deviceUnreadable;
+  if (readDevice() && repaired && deviceUnsaved()) m_deviceFile.write(changeOf(m_deviceRead, m_device));
+}
+
+// Shows what the file holds, with what this desktop changed since it last
+// read it over that. One that cannot be read keeps what this desktop shows
+// and refuses saves until it reads again or is deleted. False when there was
+// nothing new to show.
+bool SettingsController::readDevice() {
+  if (m_deviceWatcher && QFile::exists(m_devicePath) && !m_deviceWatcher->files().contains(m_devicePath)) {
+    m_deviceWatcher->addPath(m_devicePath);
+  }
+  const bool gone = !QFile::exists(m_devicePath);
+  const std::optional<QJsonObject> saved = gone ? QJsonObject() : readPreferences(m_devicePath);
+  if (!saved) {
+    if (m_deviceUnreadable) return false;
+    m_deviceUnreadable = true;
+    m_deviceError = QStringLiteral("Cannot read %1").arg(m_devicePath);
+    emit deviceChanged();
+    return false;
+  }
+  if (!m_deviceUnreadable && (gone || *saved == m_deviceRead)) return false;
+  if (!gone) {
+    m_device = carryOver(*saved, m_deviceRead, m_device);
+    m_deviceRead = *saved;
+  }
+  m_deviceUnreadable = false;
+  m_deviceError.clear();
+  emit deviceChanged();
+  return true;
 }
 
 bool SettingsController::setDeviceSettings(const QJsonObject& device) {
@@ -550,10 +678,14 @@ bool SettingsController::setDeviceSettings(const QJsonObject& device) {
     error = QStringLiteral("Cannot read %1").arg(m_devicePath);
   } else if (m_devicePath.isEmpty()) {
     error = QStringLiteral("This device has nowhere to keep its preferences.");
+  } else if (!readPreferences(m_devicePath)) {
+    // Edited by hand into something that does not read: left for the user to repair.
+    m_deviceUnreadable = true;
+    error = QStringLiteral("Cannot read %1").arg(m_devicePath);
   } else if (!writable(m_devicePath)) {
     error = QStringLiteral("Cannot save %1").arg(m_devicePath);
   } else {
-    m_deviceFile.write(QJsonDocument(device).toJson());
+    m_deviceFile.write(changeOf(m_deviceRead, device));
   }
   if (!error.isEmpty()) {
     m_deviceError = error;
