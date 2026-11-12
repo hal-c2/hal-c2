@@ -465,7 +465,63 @@ defmodule HalC2.Rpc do
       when method in ~w(invite join remove switch update),
       do: ["access:write", "terminal:operate"]
 
+  def required_scopes("plugins." <> method, _payload)
+      when method in ~w(rescan enable restart compile),
+      do: ["access:write", "terminal:operate"]
+
+  def required_scopes("server." <> method, _payload)
+      when method in ~w(updateServer updateServerWithProgress),
+      do: ["access:write", "terminal:operate"]
+
+  # Registering or moving a workspace root points file writes at a new part of
+  # the host, as a shell could: `terminal:operate` on top of operate.
+  def required_scopes("projects.mutate", %{"type" => "project.create"}),
+    do: ["orchestration:operate", "terminal:operate"]
+
+  def required_scopes("projects.mutate", %{"type" => "project.update"} = payload) do
+    if Map.has_key?(payload, "workspaceRoot"),
+      do: ["orchestration:operate", "terminal:operate"],
+      else: ["orchestration:operate"]
+  end
+
+  # A settings write that changes what the MC executes (a provider binary, its
+  # environment or launch args, a usage-limit source) needs the shell's scope;
+  # one that leaves those fields as they are stays an operate call.
+  def required_scopes("hal-c2.writeSettings", %{"settings" => %{} = settings}) do
+    if exec_settings(settings) == exec_settings(current_settings()),
+      do: ["orchestration:operate"],
+      else: ["orchestration:operate", "terminal:operate"]
+  end
+
   def required_scopes(method, payload), do: [required_scope(method, payload)]
+
+  defp current_settings do
+    HalC2.Settings.settings()
+  catch
+    :exit, _ -> %{}
+  end
+
+  # The parts of the settings document that name code or credentials to run.
+  defp exec_settings(settings) do
+    instances =
+      for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
+        {id,
+         %{
+           "binaryPath" => entry["binaryPath"],
+           "environment" => entry["environment"],
+           "configBinaryPath" => get_in(entry, ["config", "binaryPath"])
+         }}
+      end
+
+    %{
+      "providerInstances" => instances,
+      "pi" =>
+        (get_in(settings, ["providers", "pi"]) || %{})
+        |> Map.take(["binaryPath", "launchArgs"]),
+      "muse" => get_in(settings, ["providers", "muse", "binaryPath"]),
+      "usageLimitSources" => settings["usageLimitSources"]
+    }
+  end
 
   @doc """
   The session scope a client needs to call `method` with `payload`. A
@@ -491,6 +547,8 @@ defmodule HalC2.Rpc do
   @doc "The session scope a client needs to call `method`, whatever it passes."
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
+  # Launching a host program (an editor) is shell work, not orchestration.
+  def required_scope("shell.openInEditor"), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"
   # The access list, as `/api/auth/*` guards it.
   def required_scope("hal-c2." <> m) when m in ~w(pairingLinks clients), do: "access:read"
