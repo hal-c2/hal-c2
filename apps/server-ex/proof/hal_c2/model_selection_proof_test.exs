@@ -9,6 +9,10 @@ defmodule HalC2.ModelSelectionProofTest do
     model: "model_selection.maude",
     module: "MODEL-SELECTION",
     check: "MODEL-SELECTION-PROPS",
+    # Its slowest checks (the liveness one from start(1, 1, 1, 0, 0, 0, 1, fix) and the
+    # deadlock search from start(1, 1, 1, 0, 1, 0, 1, fix)) take about 5 and 4 minutes on
+    # a workstation, past the default on a CI runner.
+    timeout: 1_200_000,
     code: [
       {:exports, HalC2.Orchestration.Selection},
       {:exports, HalC2.Orchestration.NewThread}
