@@ -60,37 +60,50 @@ const WINDOW: (f64, f64) = (1280.0, 800.0);
 /// The longest a wait sleeps before it lets the shell's clock catch up.
 const FRAME: Duration = Duration::from_millis(16);
 
-/// The longest TestWindow's advance may wait on end for what was
-/// promised. It waits for every promise, and a browser page that never
-/// settles keeps one out: the browser's work while a script runs on a
-/// 1 ms interval, a page whose load ends without a picture and starts
-/// again. Answers keep arriving all the while, so Platform::finish gives
-/// up only after a minute, at each of the advance's stops
-/// (hal-c2/ljos-ui#405). Past this, the step fails instead. A page still
-/// loading counts too, so this leaves a cold CEF start on a GPU-less
-/// runner room, while a stuck page fails well inside the runner's 120 s
-/// watchdog.
+/// The longest one advance of TestWindow's may wait for what was promised.
+/// It waits for every promise, and a browser page that never settles
+/// keeps one out: the browser's work while a script runs on a 1 ms
+/// interval, a page whose load ends without a picture and starts again.
+/// Answers keep arriving all the while, so Platform::finish gives up only
+/// after a minute, at each of the advance's stops (hal-c2/ljos-ui#405).
+/// Past this, the step fails instead. A page still loading counts too, so
+/// this leaves a cold CEF start on a GPU-less runner room, while a stuck
+/// page fails well inside the runner's 120 s watchdog.
 const STALL: Duration = Duration::from_secs(30);
-/// Calls further apart than this are separate waits.
-const STALL_GAP: Duration = Duration::from_millis(500);
+/// Calls further apart than this were not one wait: the time between them
+/// went to a frame or a timer, not to waiting.
+const STALL_GAP: Duration = Duration::from_millis(100);
 
-/// What TestWindow calls while its advance waits on promises: fails the
-/// step once the waiting has gone on for STALL. The wait cannot be told
-/// to stop, so this panics out of it, which fails the scenario as a
-/// step's Err would.
-fn fail_stalled(platform: Rc<Platform>) -> impl FnMut() + 'static {
-    let mut since = Instant::now();
-    let mut last = since;
-    move || {
+/// How long the current advance has waited for what was promised, as
+/// TestWindow tells it while it waits (serve_while_waiting).
+#[derive(Default)]
+struct Stall {
+    waited: Cell<Duration>,
+    last: Cell<Option<Instant>>,
+}
+
+impl Stall {
+    /// A new advance: nothing waited yet.
+    fn reset(&self) {
+        self.waited.set(Duration::ZERO);
+        self.last.set(None);
+    }
+
+    /// Called while the advance waits: fails the step once it has waited
+    /// STALL. The wait cannot be told to stop, so this panics out of it,
+    /// which fails the scenario as a step's Err would.
+    fn waiting(&self, platform: &Platform) {
         let now = Instant::now();
-        if now - last > STALL_GAP {
-            since = now;
+        if let Some(last) = self.last.get()
+            && now - last < STALL_GAP
+        {
+            self.waited.set(self.waited.get() + (now - last));
         }
-        last = now;
-        if now - since >= STALL {
+        self.last.set(Some(now));
+        if self.waited.get() >= STALL {
             let waiting: Vec<_> = platform.promises().into_iter().map(|p| p.what).collect();
             panic!(
-                "the shell's clock is stuck: TestWindow has waited {} s on end for {}",
+                "the shell's clock is stuck: one advance has waited {} s for {}",
                 STALL.as_secs(),
                 waiting.join(", ")
             );
@@ -209,6 +222,7 @@ pub struct World {
     parts: HashMap<std::any::TypeId, Box<dyn std::any::Any>>,
     now: DateTime<Utc>,
     signal: Arc<Signal>,
+    stall: Rc<Stall>,
     recorded: Rc<Recorded>,
     /// Where the shell keeps its files (the last route, config), across
     /// restarts.
@@ -246,6 +260,7 @@ impl World {
                 .expect("the scenarios' time")
                 .with_timezone(&Utc),
             signal,
+            stall: Rc::default(),
             recorded: Rc::default(),
             home,
             shell: None,
@@ -265,7 +280,8 @@ impl World {
         install_text_compiler(&engine);
         // Before the shell starts, for its timers to start on the window's clock.
         let mut window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
-        window.serve_while_waiting(fail_stalled(Platform::of(&engine)));
+        let (stall, platform) = (self.stall.clone(), Platform::of(&engine));
+        window.serve_while_waiting(move || stall.waiting(&platform));
         let wake = |signal: &Arc<Signal>| {
             let signal = signal.clone();
             move || signal.notify()
@@ -796,6 +812,7 @@ impl World {
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
+        self.stall.reset();
         shell
             .window
             .advance(ms)
