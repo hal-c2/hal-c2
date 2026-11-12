@@ -67,8 +67,10 @@ const BROWSER_WORK: &str = "the web engine's work";
 /// shell's clock. TestWindow's advance waits for every promise, this one
 /// too, and a page that never settles (a script on a 1 ms interval) holds
 /// it for a minute each time (hal-c2/ljos-ui#405): past this, the step
-/// fails instead.
-const BROWSER_SETTLE: Duration = Duration::from_secs(10);
+/// fails instead. A page still loading counts too, quiet second included,
+/// so this leaves a cold CEF start on a GPU-less runner room, while a busy
+/// page still fails well inside the runner's 120 s watchdog.
+const BROWSER_SETTLE: Duration = Duration::from_secs(30);
 
 /// Raised by whatever has something for the scenario's thread: the fake
 /// MC's socket, the shell's connection, its cache and its other threads.
