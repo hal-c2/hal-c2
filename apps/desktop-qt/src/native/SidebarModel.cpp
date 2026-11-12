@@ -224,6 +224,9 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.interactionMode = row.value(QLatin1String("interactionMode")).toString(QStringLiteral("default"));
   thread.runtimeMode = row.value(QLatin1String("runtimeMode")).toString();
   thread.modelSelection = row.value(QLatin1String("modelSelection")).toObject();
+  if (const auto revision = row.value(QLatin1String("selectionRevision")); revision.isDouble()) {
+    thread.selectionRevision = qint64(revision.toDouble());
+  }
   thread.settledOverride = stringField(row, "settledOverride");
   thread.settledAt = stringField(row, "settledAt");
   thread.unsettledAt = stringField(row, "unsettledAt");

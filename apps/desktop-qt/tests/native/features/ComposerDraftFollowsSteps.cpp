@@ -1,5 +1,6 @@
-// A model picked in a draft gives way once the thread runs it, so a change
-// made on another client shows here (features/composer/model-and-mode.feature).
+// A model picked in a draft gives way once the thread's selection changes from
+// the one the pick was made against, so a change made on another client shows
+// here (features/composer/model-and-mode.feature).
 
 #include <QJsonObject>
 #include <QVariantMap>
@@ -29,16 +30,19 @@ QString otherThread(World& world) {
   if (!world.mc.threads.contains(id)) {
     world.mc.threads.insert(id, {{S("id"), id}, {S("title"), S("Other")}, {S("projectId"), kProject},
                                    {S("createdAt"), S("2026-09-23T09:00:00Z")}, {S("updatedAt"), S("2026-09-23T09:00:00Z")},
-                                   {S("modelSelection"), QJsonObject{{S("instanceId"), S("codex")}, {S("model"), S("gpt-5")}}}});
+                                   {S("modelSelection"), QJsonObject{{S("instanceId"), S("codex")}, {S("model"), S("gpt-5")}}},
+                                   {S("selectionRevision"), 3}});
     world.mc.sendRow(id, world.mc.threads.value(id));
     world.sync();
   }
   return threadKey(id, world);
 }
 
+// The MC moves the thread's selection revision on with every change to what it runs on.
 void setModel(World& world, const QString& instanceId, const QString& model) {
   QJsonObject& row = world.mc.threads[kThread];
   row.insert(S("modelSelection"), QJsonObject{{S("instanceId"), instanceId}, {S("model"), model}});
+  row.insert(S("selectionRevision"), row.value(S("selectionRevision")).toInt() + 1);
   world.mc.sendRow(kThread, row);
   world.sync();
 }
@@ -64,11 +68,10 @@ const Steps steps([] {
     look(world, otherThread(world), false);
     pick(world, S("gpt-5-codex"));
     look(world, threadKey(kThread, world));
-    // This thread's pick, sent: the MC records the model the turn ran on.
     setModel(world, S("codex"), S("gpt-5-codex"));
     expectOn(world, S("codex"), S("gpt-5-codex"));
+    // This thread's pick stays unsent: the change elsewhere is to the revision it was made against.
     pick(world, c[0]);
-    setModel(world, S("codex"), c[0]);
   });
   step(S("then changed the thread to %1 on another client").arg(q), [](World& world, const Captures& c, const Table&) {
     setModel(world, S("claudeAgent"), c[0]);

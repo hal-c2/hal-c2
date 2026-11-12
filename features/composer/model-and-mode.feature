@@ -265,7 +265,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # What the composer shows is what runs: a pick is made against what the thread ran then
   # (its selection revision), and the newest deliberate choice wins.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A send picked against a selection that moved elsewhere is refused
     Given a thread runs on "gpt-5" here
     And the user picked "gpt-5-codex" for its next turn
@@ -275,7 +275,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "This thread moved to Opus on Claude elsewhere. Check it and send again."
     And the composer shows "claude-opus" once the change arrives
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A send with no pick keeps a change made on another client
     Given a thread runs on "gpt-5" here
     And another client has moved the thread to "claude-opus", which this client has not heard yet
@@ -284,7 +284,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # An MC that keeps no selection revision takes a message's model into the thread only on a
   # steer or a provider switch, so the client makes the pick the thread's before it sends.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A pick reaches the thread on an MC that keeps no selection revision
     Given a thread runs on "gpt-5" on an MC that keeps no selection revision
     And the user picked "gpt-5-codex" for its next turn
@@ -293,7 +293,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the composer shows "gpt-5-codex", the thread's own now
     But a change made on another client after it replaces the pick
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: The user's own access change keeps their unsent pick
     Given a thread runs on "gpt-5" here
     And the user picked "gpt-5-codex" for its next turn
@@ -304,7 +304,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # An MC that keeps a selection revision names, in its reply, the one an own change moved
   # the thread to; a reply naming none moved nothing. Each thread is judged by its own MC, so
   # what one machine of a cluster answers says nothing about another's threads.
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: In a cluster, each machine's answers decide only its own threads' picks
     Given one thread is on an MC that keeps no selection revision and another on one that does
     And the user changed the first thread's access to Supervised
@@ -313,7 +313,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer still shows "gpt-5-codex"
     But a change made on another client to the second thread replaces the pick
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A thread whose account is off keeps it rather than move to another
     Given a thread runs on "gpt-5" on the account "Codex Personal"
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -321,6 +321,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer shows "gpt-5" on "Codex Personal", which cannot run a turn now
     And a message is not sent until the user picks a model
 
+  # The desktop and phone take the model of the thread they show into a new thread unless the
+  # project sets one of its own, so the open thread's model wins over the project row's (#1525).
   @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A new thread on another machine shows that machine's defaults
     Given this machine starts new threads on "gpt-5" with full access
@@ -1027,7 +1029,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account. A started thread no longer falls back (see "A thread
   # whose account is off keeps it"); the alias still resolves to its model, effort and all.
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A thread saved under a model alias keeps its effort
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     When the user opens the thread

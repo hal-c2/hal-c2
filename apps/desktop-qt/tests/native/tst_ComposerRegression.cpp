@@ -767,8 +767,8 @@ private slots:
     QStringList types;
     for (const QJsonObject& command : std::as_const(shell.mc.commands)) types.append(command.value(QLatin1String("type")).toString());
     QCOMPARE(types, QStringList{QStringLiteral("message.dispatch")});
-    const QJsonObject message = shell.mc.commands.constLast();
-    QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
+    // With no pick the message names no model: the MC runs the thread on its own.
+    QVERIFY(!shell.mc.commands.constLast().contains(QLatin1String("modelSelection")));
   }
 
   // A model picked in a started thread's draft stayed the draft's after the
@@ -794,6 +794,53 @@ private slots:
     QTRY_VERIFY(shell.native->store()->thread(shell.key)->modelSelection.value(QLatin1String("model")) == QLatin1String("gpt-b"));
     runOn(QStringLiteral("gpt-a"));
     QTRY_COMPARE(shows(), QStringLiteral("gpt-a"));
+  }
+
+  // A send's pick moves the thread on, and its answer names the revision before
+  // the row arrives. A pick made meanwhile went out against the row's older
+  // revision and was refused for this client's own send (tst_ComposerSelectionProp).
+  void aPickMadeBeforeTheRowShowsTheLastSendStillGoes() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto codex = [](const QString& slug) {
+      return QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}};
+    };
+    QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+    row.insert(QStringLiteral("modelSelection"), codex(QStringLiteral("gpt-a")));
+    row.insert(QStringLiteral("selectionRevision"), 1);
+    shell.mc.threads.insert(QStringLiteral("t1"), row);
+    // Refuses a stale send, and takes a send's model into the thread.
+    shell.mc.appliesModes = true;
+    shell.mc.answering.append([&shell](const QJsonObject& command, QJsonObject& answer) {
+      if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch") || !command.contains(QLatin1String("modelSelection"))) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      if (row.value(QLatin1String("modelSelection")) == command.value(QLatin1String("modelSelection"))) return;
+      const int next = row.value(QLatin1String("selectionRevision")).toInt() + 1;
+      row.insert(QStringLiteral("modelSelection"), command.value(QLatin1String("modelSelection")));
+      row.insert(QStringLiteral("selectionRevision"), next);
+      answer.insert(QStringLiteral("selectionRevision"), next);
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QTRY_VERIFY(shell.native->store()->thread(shell.key)->selectionRevision == 1);
+    const auto pickAndSend = [&shell](const QString& slug, const QString& text) {
+      shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                             QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}});
+      shell.type(text);
+      shell.submit(text);
+    };
+    shell.mc.lagRows = true;
+    pickAndSend(QStringLiteral("gpt-b"), QStringLiteral("first"));
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QTRY_VERIFY(shell.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("selectionRevision")).toInt() == 2);
+
+    pickAndSend(QStringLiteral("gpt-a"), QStringLiteral("second"));
+    QTRY_COMPARE(shell.dispatched(), 2);
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("selectionBase")).toInt(), 2);
+    QTRY_COMPARE(shell.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-a")));
+    QVERIFY(!shell.offersRestore());
   }
 
   // The model and mode a new thread carried into the project's draft counted

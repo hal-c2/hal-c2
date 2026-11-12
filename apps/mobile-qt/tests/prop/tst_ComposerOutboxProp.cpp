@@ -8,7 +8,8 @@
 // being sent" until it has), and the app is closed and opened again, online
 // or not; a restart offline shows the cached thread and takes sends before the
 // MC has answered. The connection also drops under a send's mode change, which
-// the MC took or never got. No message is lost, none reaches the MC twice,
+// the MC took or never got, and the user switches a thread to Plan mode while
+// the MC is away, which the composer keeps showing. No message is lost, none reaches the MC twice,
 // none comes back to the draft to be sent again, none runs under a mode the
 // user had left, and none is sent while it is away.
 
@@ -23,6 +24,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
+#include "WorkspaceController.h"
 
 namespace prop = halc2::prop;
 
@@ -41,8 +43,14 @@ struct Model {
   // What each thread's MC holds from the user, and what waits on the phone.
   QMap<QString, QStringList> sent;
   QMap<QString, QStringList> waiting;
-  // The messages sent in Plan mode.
+  // The messages sent in Plan mode, the threads the user switched to it, and
+  // the ones switched while the MC was away.
   QSet<QString> planned;
+  QSet<QString> plan;
+  QSet<QString> plannedOffline;
+  // Whether the MC was reached since the app opened. Opened without it, the
+  // phone only previews: its composer has no providers and so offers no Plan.
+  bool reached = true;
   int written = 0;
 };
 
@@ -82,12 +90,15 @@ struct Sut {
                                                  {QStringLiteral("updatedAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                  {QStringLiteral("scripts"), QJsonArray()},
                                              });
+    // Every thread the MC holds names the model it runs on.
     for (const QString& id : kThreads) {
       mc.threads.insert(id, QJsonObject{{QStringLiteral("id"), id},
                                         {QStringLiteral("projectId"), QStringLiteral("p1")},
                                         {QStringLiteral("title"), id},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-11-07T09:00:00Z")},
-                                        {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")}});
+                                        {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")},
+                                        {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
+                                                                                       {QStringLiteral("model"), QStringLiteral("claude-sonnet")}}}});
     }
     const QJsonArray providers{QJsonObject{
         {QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
@@ -164,7 +175,10 @@ struct Sut {
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
     if (up) {
-      RC_ASSERT(prop::until([this] { return online(); }));
+      // Online once it also has the providers, which it keeps for offline.
+      RC_ASSERT(prop::until([this] {
+        return online() && native->controller<WorkspaceController>()->environmentConfig().contains(QLatin1String("providers"));
+      }));
     } else {
       RC_ASSERT(prop::until([this] { return native->store()->previewing(); }));
     }
@@ -342,6 +356,10 @@ void verify(const Model& m, Sut& sut) {
   RC_ASSERT(sut.outbox() == m.waiting.value(m.open));
   // Nothing the phone sent comes back to be sent again.
   RC_ASSERT(sut.draft().isEmpty());
+  // A thread switched to Plan mode while the MC is away shows it until it is back.
+  if (!m.up && m.reached && m.plannedOffline.contains(m.open)) {
+    RC_ASSERT(sut.composerState().value(QStringLiteral("interactionMode")) == QLatin1String("plan"));
+  }
   // A message sent in Plan mode ran in Plan mode.
   for (const QString& text : m.planned) {
     if (!sut.ranUnder.contains(text)) continue;
@@ -375,6 +393,7 @@ struct Send : Command {
     ++m.written;
     m.open = thread;
     (m.up ? m.sent : m.waiting)[thread].append(text);
+    if (m.plan.contains(thread) && m.reached) m.planned.insert(text);
   }
   void run(const Model& m0, Sut& sut) const override {
     const qsizetype connections = sut.mc.connections.size();
@@ -430,6 +449,7 @@ struct SendPlanDropped : Command {
     m.open = thread;
     m.sent[thread].append(text);
     m.planned.insert(text);
+    m.plan.insert(thread);
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.planMode(thread);
@@ -442,6 +462,26 @@ struct SendPlanDropped : Command {
   void show(std::ostream& os) const override {
     os << "SendPlanDropped(" << thread.toStdString() << ", " << text.toStdString() << (took ? ", took" : ", lost") << ")";
   }
+};
+
+// The user switches a thread to Plan mode while the MC is away. The change
+// cannot go, and the composer keeps it rather than flipping back: a message
+// sent meanwhile carries it from the outbox, and it is set once the MC is back.
+struct PickPlanOffline : Command {
+  QString thread = pick(kThreads);
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.up && m.reached); }
+  void apply(Model& m) const override {
+    m.open = thread;
+    m.plan.insert(thread);
+    m.plannedOffline.insert(thread);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.planMode(thread);
+    // A change that could not go would have come back by now.
+    QCoreApplication::processEvents();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "PickPlanOffline(" << thread.toStdString() << ")"; }
 };
 
 // A message sent while its file is still uploading waits in the outbox and
@@ -482,6 +522,8 @@ struct ComeBack : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.up); }
   void apply(Model& m) const override {
     m.up = true;
+    m.reached = true;
+    m.plannedOffline.clear();
     for (auto it = m.waiting.cbegin(); it != m.waiting.cend(); ++it) m.sent[it.key()].append(it.value());
     m.waiting.clear();
   }
@@ -494,6 +536,7 @@ struct ComeBack : Command {
 
 // The app is closed and opened again on the thread it showed.
 struct Restart : Command {
+  void apply(Model& m) const override { m.reached = m.up; }
   void run(const Model& m0, Sut& sut) const override {
     sut.restart(m0.up);
     sut.open(m0.open);
@@ -514,10 +557,21 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, SendPlanDropped, SendWhileUploading, GoDown, ComeBack, Restart>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, SendPlanDropped, SendWhileUploading, PickPlanOffline, GoDown, ComeBack, Restart>()));
       rc::state::runAll(commands, model, sut);
       // Every message the MC was sent twice was sent again after a drop.
       const QStringList ids = sut.dispatched();
+      // Names each send the MC never kept, for a failure that has not
+      // replayed from its seed (hal-c2/hal-c2#1547).
+      for (const QJsonObject& command : sut.mc.commands) {
+        if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) continue;
+        const QString thread = command.value(QLatin1String("threadId")).toString();
+        const QString id = command.value(QLatin1String("messageId")).toString();
+        const auto& kept = sut.messages[thread];
+        if (std::none_of(kept.cbegin(), kept.cend(), [&](const QJsonObject& message) { return message.value(QLatin1String("id")) == id; })) {
+          RC_LOG() << "never kept: " << thread.toStdString() << " " << command.value(QLatin1String("text")).toString().toStdString() << " " << id.toStdString() << std::endl;
+        }
+      }
       RC_ASSERT(QSet<QString>(ids.cbegin(), ids.cend()).size() == qsizetype(sut.sent(kThreads[0]).size() + sut.sent(kThreads[1]).size()));
     }));
   }
