@@ -722,7 +722,8 @@ defmodule HalC2.Acp do
   # `:persistent_term` readers can still see a brief torn state during those puts;
   # the lock serializes the publish against `forget/1`, it does not make it atomic
   # for readers. The session writers (`put_models/2`, `put_commands/2`,
-  # `put_unauthenticated/1`) take the same lock, so they cannot interleave with
+  # `put_config/2`, `put_option/3`, `put_unauthenticated/1`) take the same lock,
+  # so they cannot interleave with
   # `forget/1`'s erases, but they are deliberately not generation-gated: they
   # report what a live session currently offers (or that its account is gone),
   # which stays authoritative for that session until the probe `forget/1`
@@ -843,8 +844,12 @@ defmodule HalC2.Acp do
   # values are not the probe's to publish over a live session's: one switched to
   # another mode while the read ran (`put_option/3`, after `session/set_mode`)
   # would otherwise show the probe's mode, which no live session is in. The
-  # probe still replaces which options and choices the agent offers. Runs under
-  # the publish lock, so the values it keeps are those standing when it lands.
+  # probe still replaces which options and choices the agent offers, and a held
+  # value is kept only while the probe's option still offers it (a listed
+  # choice, or a boolean option): one it no longer offers would be dropped by
+  # `option_descriptor/1`, leaving the picker with no current value at all
+  # instead of the probe's own default. Runs under the publish lock, so the
+  # values it keeps are those standing when it lands.
   defp publish_staged(id, :config, staged) when is_list(staged) do
     values =
       Map.new(
@@ -856,7 +861,7 @@ defmodule HalC2.Acp do
     staged =
       Enum.map(staged, fn
         %{"id" => option} = offered ->
-          if is_map_key(values, option),
+          if is_map_key(values, option) and offered?(offered, values[option]),
             do: Map.put(offered, "currentValue", values[option]),
             else: offered
 
@@ -869,6 +874,13 @@ defmodule HalC2.Acp do
 
   defp publish_staged(id, key, value),
     do: :persistent_term.put({__MODULE__, id, key}, value)
+
+  # Whether `option` as offered still offers `value`: a boolean offers both its
+  # values, a select the choices it lists (its groups' included, as `choices/1`).
+  defp offered?(%{"type" => "boolean"}, value), do: is_boolean(value)
+
+  defp offered?(option, value),
+    do: Enum.any?(choices(option), &(&1["value"] == value))
 
   defp staged_key(id), do: {__MODULE__, :staged, id}
 
@@ -2428,10 +2440,34 @@ defmodule HalC2.Acp do
 
   @doc "Records `value` as what the registry session option `option` now holds."
   def put_option(id, option, value) do
-    {__MODULE__, id, :config}
-    |> :persistent_term.get([])
-    |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
-    |> then(&put_config(id, &1))
+    # The read-modify-write runs under the instance's publish lock, as a probe
+    # publish (`publish_staged/3`) and `put_config/2` do: reading `:config`
+    # outside it and writing the result back would overwrite a publish that
+    # landed between the read and the write with the older option list.
+    changed =
+      driver(id) == "acpRegistry" and
+        locked(id, fn ->
+          config = :persistent_term.get({__MODULE__, id, :config}, [])
+
+          updated =
+            Enum.map(
+              config,
+              &if(is_map(&1) and &1["id"] == option,
+                do: Map.put(&1, "currentValue", value),
+                else: &1
+              )
+            )
+
+          if updated != config do
+            :persistent_term.put({__MODULE__, id, :config}, updated)
+            true
+          else
+            false
+          end
+        end)
+
+    if changed, do: HalC2.Settings.notify_providers()
+    :ok
   end
 
   @max_options 16

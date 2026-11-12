@@ -691,6 +691,227 @@ defmodule HalC2.AcpTest do
     assert inspect(:persistent_term.get({HalC2.Acp, instance, :models}, nil)) =~ "acme/fast"
   end
 
+  # Starts a registry probe read whose agent holds `initialize` on a FIFO, then
+  # answers `session/new` with `session_python` (Python that calls `answer/2`).
+  # Returns the reload task and the FIFO to release the probe with.
+  defp held_registry_probe(dir, instance, agent_id, session_python) do
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    agent = Path.join(dir, "agent")
+
+    File.write!(agent, """
+    #!/usr/bin/env python3
+    import json, sys
+    request = json.loads(sys.stdin.readline())
+    open("#{started}", "w").write("held\\n")
+    open("#{release}").read()
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
+    #{session_python}
+    sys.stdin.read()
+    """)
+
+    File.chmod!(agent, 0o755)
+    Application.put_env(:hal_c2, :acp_commands, %{instance => [agent]})
+
+    :persistent_term.put(
+      {HalC2.Acp.Catalog, :index},
+      {System.system_time(:millisecond),
+       [
+         %{
+           "id" => agent_id,
+           "name" => agent_id,
+           "version" => "1.0.0",
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./acme"}}
+           }
+         }
+       ]}
+    )
+
+    on_exit(fn ->
+      HalC2.Acp.forget(instance)
+      Application.delete_env(:hal_c2, :acp_commands)
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    end)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            instance => %{
+              "driver" => "acpRegistry",
+              "enabled" => true,
+              "config" => %{"agentId" => agent_id}
+            }
+          }
+        },
+        0
+      )
+
+    reload = Task.async(fn -> HalC2.Acp.reload(instance) end)
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, "held\n"}}, 10_000
+    {reload, release}
+  end
+
+  test "a probe read keeps a live value only while it still offers it", %{tmp_dir: dir} do
+    instance = "acpRegistry_probe_kept_values"
+
+    # The probe's session offers modes "ask"/"code" (no "debug"), thinking
+    # "low"/"high" and a boolean "fast", all at their defaults.
+    {reload, release} =
+      held_registry_probe(dir, instance, "probe-kept-values-agent", """
+      model = {"id": "model", "name": "Model", "type": "select", "currentValue": "acme/fast",
+               "options": [{"value": "acme/fast", "name": "Fast"}]}
+      thinking = {"id": "thinking", "name": "Thinking", "type": "select", "currentValue": "low",
+                  "options": [{"value": v, "name": v} for v in ("low", "high")]}
+      fast = {"id": "fast", "name": "Fast", "type": "boolean", "currentValue": False}
+      modes = {"currentModeId": "ask",
+               "availableModes": [{"id": m, "name": m} for m in ("ask", "code")]}
+      answer(json.loads(sys.stdin.readline()),
+             {"sessionId": "s", "configOptions": [model, thinking, fast], "modes": modes})
+      """)
+
+    live_modes = %{
+      "currentModeId" => "ask",
+      "availableModes" => for(m <- ~w(ask code debug), do: %{"id" => m, "name" => m})
+    }
+
+    live_options = [
+      %{
+        "id" => "thinking",
+        "name" => "Thinking",
+        "type" => "select",
+        "currentValue" => "low",
+        "options" => for(v <- ~w(low high), do: %{"value" => v, "name" => v})
+      },
+      %{"id" => "fast", "name" => "Fast", "type" => "boolean", "currentValue" => false}
+    ]
+
+    HalC2.Acp.put_config(
+      instance,
+      HalC2.Acp.session_config(%{"configOptions" => live_options, "modes" => live_modes})
+    )
+
+    # "debug" is no longer offered by the probe, "high" still is, and a boolean
+    # offers both its values.
+    HalC2.Acp.put_option(instance, "mode", "debug")
+    HalC2.Acp.put_option(instance, "thinking", "high")
+    HalC2.Acp.put_option(instance, "fast", true)
+
+    File.write!(release, "go\n")
+    assert :ok = Task.await(reload, 10_000)
+
+    config = :persistent_term.get({HalC2.Acp, instance, :config}, [])
+    current = Map.new(config, &{&1["id"], &1["currentValue"]})
+    # Not offered any more: the probe's own default stands, not no value at all.
+    assert current["mode"] == "ask"
+    assert current["thinking"] == "high"
+    assert current["fast"] == true
+
+    shown = Map.new(HalC2.Acp.session_options(instance), &{&1["id"], &1["currentValue"]})
+    assert shown["mode"] == "ask"
+  end
+
+  test "put_option does not overwrite a config published while it waited for the lock" do
+    instance = "acpRegistry_option_race"
+    on_exit(fn -> HalC2.Acp.forget(instance) end)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            instance => %{
+              "driver" => "acpRegistry",
+              "enabled" => true,
+              "config" => %{"agentId" => "option-race-agent"}
+            }
+          }
+        },
+        0
+      )
+
+    select = fn id, values, current ->
+      %{
+        "id" => id,
+        "type" => "select",
+        "currentValue" => current,
+        "options" => for(v <- values, do: %{"value" => v, "name" => v})
+      }
+    end
+
+    HalC2.Acp.put_config(instance, [
+      select.("mode", ~w(ask code), "ask"),
+      select.("thinking", ~w(low high), "low")
+    ])
+
+    published = [
+      select.("mode", ~w(ask code debug), "ask"),
+      select.("thinking", ~w(low high), "high"),
+      select.("agent", ~w(build plan), "build")
+    ]
+
+    test_pid = self()
+
+    # Holds the instance's publish lock, then publishes `published` under it, as
+    # a probe publish (`publish_staged/3`) does: a `:persistent_term` put of
+    # `:config` inside the lock. Ordering that publish inside `put_option/3`'s
+    # read-write window needs the lock held, because a FIFO-held probe and
+    # `put_option/3` would otherwise race to take it in either order.
+    holder =
+      spawn(fn ->
+        :global.trans(
+          {{HalC2.Acp, instance}, self()},
+          fn ->
+            send(test_pid, :lock_held)
+
+            receive do
+              :publish -> :persistent_term.put({HalC2.Acp, instance, :config}, published)
+            end
+          end,
+          [node()]
+        )
+      end)
+
+    on_exit(fn -> if Process.alive?(holder), do: Process.exit(holder, :kill) end)
+    assert_receive :lock_held, 10_000
+
+    setter =
+      spawn(fn ->
+        receive do
+          :go ->
+            HalC2.Acp.put_option(instance, "mode", "code")
+            send(test_pid, :put_done)
+        end
+      end)
+
+    on_exit(fn -> if Process.alive?(setter), do: :erlang.trace(setter, false, [:send]) end)
+    :erlang.trace(setter, true, [:send, {:tracer, self()}])
+    send(setter, :go)
+
+    # `put_option/3` has asked the lock server for the instance lock: under the
+    # old read-then-write it had already read the old config by now, while an
+    # atomic one has not read it yet.
+    assert_receive {:trace, ^setter, :send,
+                    {:"$gen_call", _, {:set_lock, {{HalC2.Acp, ^instance}, ^setter}}}, _},
+                   10_000
+
+    :erlang.trace(setter, false, [:send])
+    send(holder, :publish)
+    assert_receive :put_done, 10_000
+
+    config = :persistent_term.get({HalC2.Acp, instance, :config}, [])
+    current = Map.new(config, &{&1["id"], &1["currentValue"]})
+    # The published options and choices stand, with `put_option/3` applied on top.
+    assert current == %{"mode" => "code", "thinking" => "high", "agent" => "build"}
+
+    assert Enum.find(config, &(&1["id"] == "mode"))["options"] ==
+             Enum.find(published, &(&1["id"] == "mode"))["options"]
+  end
+
   # Reads the grok instance from a fake agent that, holding the read's `initialize`
   # (`request`), waits until the test has forgotten the instance and then runs `script`
   # (Python). Returns once that read has published what it would and finished. The agent
