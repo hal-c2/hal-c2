@@ -163,6 +163,34 @@ defmodule HalC2.AuthTest do
     assert_receive {:socket, {:hal_c2_session_revoked, ^id}}
   end
 
+  # The CLI revokes from another VM, where no close message can reach the
+  # socket: deleting the row directly stands in for it here.
+  test "a session deleted from the store loses its socket on its next call",
+       %{port: port, path: path} do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    {:ok, db} = Sqlite3.open(path)
+    :ok = Sqlite3.execute(db, "DELETE FROM auth_sessions WHERE id = '#{id}'")
+    Sqlite3.close(db)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "rpc",
+        "id" => 91_001,
+        "environment" => HalC2.Environment.id(),
+        "method" => "server.getConfig",
+        "payload" => %{}
+      })
+
+    assert_receive {:tcp, ^socket, _} = message, 5_000
+    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+  end
+
   test "a nested subject token is an invalid grant and leaves Auth running", %{
     port: port,
     path: path
@@ -181,7 +209,7 @@ defmodule HalC2.AuthTest do
     assert {:ok, _, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
   end
 
-  test "pairing link TTLs are integers from one second to one day", %{port: port, path: path} do
+  test "pairing link TTLs are integers from one second to one day", %{port: port} do
     admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
 
     {:ok, %{"credential" => credential}} =

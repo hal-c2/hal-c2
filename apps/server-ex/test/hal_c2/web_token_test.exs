@@ -10,8 +10,11 @@ defmodule HalC2.WebTokenTest do
     for {ip, expected} <- [
           {{127, 0, 0, 1}, :ok},
           {{0, 0, 0, 0, 0, 0, 0, 1}, :ok},
+          # IPv4-mapped loopback, as a dual-stack `::` listener reports it.
+          {{0, 0, 0, 0, 0, 65_535, 32_512, 1}, :ok},
           {{192, 168, 1, 5}, :error},
-          {{100, 64, 0, 2}, :error}
+          {{100, 64, 0, 2}, :error},
+          {{0, 0, 0, 0, 0, 65_535, 49_152, 257}, :error}
         ] do
       conn =
         conn(:get, "/api/auth/session")

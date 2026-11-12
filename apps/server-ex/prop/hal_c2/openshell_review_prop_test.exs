@@ -362,7 +362,9 @@ defmodule HalC2.OpenShellReviewPropTest do
   def spent(t, key, n) do
     ending(t, fn ->
       :ok = Review.spent(t, key, n)
-      settle()
+      # What a plugin reads as the turn the count came from ends: the count's verdict.
+      Review.ended_settled(t)
+      flush()
     end)
   end
 

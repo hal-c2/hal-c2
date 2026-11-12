@@ -475,6 +475,11 @@ defmodule HalC2.Rpc do
 
   # Registering or moving a workspace root points file writes at a new part of
   # the host, as a shell could: `terminal:operate` on top of operate.
+  # Cloning registers its destination as a workspace root on completion.
+  def required_scopes("projectClone." <> method, _payload)
+      when method in ~w(start retry),
+      do: ["orchestration:operate", "terminal:operate"]
+
   def required_scopes("projects.mutate", %{"type" => "project.create"}),
     do: ["orchestration:operate", "terminal:operate"]
 

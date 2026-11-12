@@ -171,7 +171,10 @@ defmodule HalC2.Web.Socket do
         {:ok, unsubscribe(state, id)}
 
       {:ok, {:rpc, id, environment, method, payload}} ->
-        {:ok, rpc(state, id, environment, method, payload)}
+        case rpc(state, id, environment, method, payload) do
+          {:stop, _, _, _} = stop -> stop
+          state -> {:ok, state}
+        end
 
       {:error, reason} ->
         {:push, Protocol.encode(%{"t" => "error", "reason" => reason}), state}
@@ -489,12 +492,16 @@ defmodule HalC2.Web.Socket do
   # expired session loses its socket on its next call instead of never.
   @session_recheck_ms 5_000
 
+  defp session_recheck_ms,
+    do: Application.get_env(:hal_c2, :session_recheck_ms, @session_recheck_ms)
+
   defp revalidate_session(%{session: nil} = state), do: {:ok, state}
 
   defp revalidate_session(state) do
     now = System.monotonic_time(:millisecond)
+    checked = Map.get(state, :session_checked_at)
 
-    if now - Map.get(state, :session_checked_at, 0) < @session_recheck_ms do
+    if checked && now - checked < session_recheck_ms() do
       {:ok, state}
     else
       case HalC2.Auth.session_scopes(state.session) do

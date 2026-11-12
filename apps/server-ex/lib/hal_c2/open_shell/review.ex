@@ -198,6 +198,25 @@ defmodule HalC2.OpenShell.Review do
     end
   end
 
+  @doc """
+  `ended/1` once the counts already sent to this server (`spent/3`) are settled. A
+  turn's end follows its last count, so a budget it went over has ended the sandbox
+  by the time its plugin asks why the turn ended.
+  """
+  def ended_settled(thread_id) do
+    server = Process.whereis(__MODULE__)
+
+    if server && server != self() do
+      try do
+        GenServer.call(server, :settle, 5_000)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    ended(thread_id)
+  end
+
   @doc "A sentence for why a review's sandbox ended, for its thread and its row."
   def ended_text("time"), do: "The review ran past its time limit and its sandbox was deleted."
 
@@ -424,6 +443,8 @@ defmodule HalC2.OpenShell.Review do
   end
 
   @impl true
+  def handle_call(:settle, _from, state), do: {:reply, :ok, state}
+
   def handle_call(:conn, _from, %{conn: nil} = state) do
     case Client.connect() do
       {:ok, conn} ->

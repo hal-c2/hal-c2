@@ -24,6 +24,12 @@ defmodule HalC2.RpcScopesTest do
 
     assert Rpc.required_scopes("projects.mutate", %{"type" => "project.update"}) ==
              ["orchestration:operate"]
+
+    for method <- ~w(projectClone.start projectClone.retry) do
+      assert Rpc.required_scopes(method, %{}) ==
+               ["orchestration:operate", "terminal:operate"],
+             method
+    end
   end
 
   test "opening an editor is shell work" do

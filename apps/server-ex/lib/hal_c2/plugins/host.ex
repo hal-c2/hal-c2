@@ -238,7 +238,7 @@ defmodule HalC2.Plugins.Host do
   def sandbox_ended(id, thread_id) do
     with :ok <- permit(id, "threads:create"),
          true <- HalC2.OpenShell.Review.opener(thread_id) in [nil, id] || nil do
-      case HalC2.OpenShell.Review.ended(thread_id) do
+      case HalC2.OpenShell.Review.ended_settled(thread_id) do
         reason when reason in ~w(time output tokens) -> HalC2.OpenShell.Review.ended_text(reason)
         _ -> nil
       end

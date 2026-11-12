@@ -134,6 +134,8 @@ defmodule HalC2.Web do
   """
   def loopback_ip?({127, _, _, _}), do: true
   def loopback_ip?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  # A dual-stack listener (`host: "::"`) reports IPv4 loopback in mapped form.
+  def loopback_ip?({0, 0, 0, 0, 0, 0xFFFF, g, _}) when div(g, 256) == 127, do: true
   def loopback_ip?(_ip), do: false
 
   @doc "Whether `token` is the MC's access token (once the listener has read it)."

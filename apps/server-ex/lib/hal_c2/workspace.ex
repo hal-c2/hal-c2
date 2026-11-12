@@ -275,8 +275,10 @@ defmodule HalC2.Workspace do
   end
 
   defp drop_protected(matches, root) do
-    if overlaps_protected?(root),
-      do: Enum.reject(matches, &mc_protected?(Path.join(root, &1["path"]))),
+    ctx = protection()
+
+    if overlaps_protected?(root, ctx),
+      do: Enum.reject(matches, &protected_with?(real(Path.join(root, &1["path"])), ctx)),
       else: matches
   end
 
@@ -317,9 +319,13 @@ defmodule HalC2.Workspace do
 
     files = Enum.reject(files, &String.starts_with?(&1, ".git/"))
 
+    # Names only here (reads re-check resolved paths), so the lexical path
+    # decides: no per-file symlink walk over a whole checkout.
+    ctx = protection()
+
     files =
-      if overlaps_protected?(root),
-        do: Enum.reject(files, &mc_protected?(Path.join(root, &1))),
+      if overlaps_protected?(root, ctx),
+        do: Enum.reject(files, &protected_with?(Path.expand(Path.join(root, &1)), ctx)),
         else: files
 
     directories =
@@ -702,42 +708,59 @@ defmodule HalC2.Workspace do
   directory (the plain-directory layout tests run in) keeps its own files —
   its credential neighbours stay blocked either way.
   """
-  def mc_protected?(path) when is_binary(path) do
-    resolved = real(path)
-
-    cond do
-      within?(real(Path.join(HalC2.Paths.data_dir(), "worktrees")), resolved) -> false
-      hard_protected?(resolved) -> true
-      not Enum.any?(protected_roots(), &within?(&1, resolved)) -> false
-      Enum.any?(registered_roots(), &within?(&1, resolved)) -> false
-      true -> true
-    end
-  end
+  def mc_protected?(path) when is_binary(path),
+    do: protected_with?(real(path), protection())
 
   def mc_protected?(_path), do: false
 
   @doc "Whether `path` is an MC directory itself, or inside its credential files."
   def mc_own_dir?(path) when is_binary(path) do
+    ctx = protection()
     resolved = real(path)
-    resolved in protected_roots() or hard_protected?(resolved)
+    resolved in ctx.roots or hard_with?(resolved, ctx)
   end
 
   def mc_own_dir?(_path), do: false
 
   @doc "Whether `path` resolves to the MC's credential material itself."
-  def mc_credential?(path) when is_binary(path), do: hard_protected?(real(path))
+  def mc_credential?(path) when is_binary(path), do: hard_with?(real(path), protection())
   def mc_credential?(_path), do: false
+
+  # The roots the checks below compare against, resolved once: a scan or a
+  # search filters many files against one of these, never re-resolving the
+  # MC's or the registered projects' roots per file.
+  defp protection do
+    legacy =
+      for name <- HalC2.Paths.legacy_names(),
+          do: real(Path.join(HalC2.Paths.user_home(), name))
+
+    %{
+      roots: Enum.uniq(Enum.map(Map.values(HalC2.Paths.dirs()), &real/1) ++ legacy),
+      legacy: legacy,
+      data: real(HalC2.Paths.data_dir()),
+      worktrees: real(Path.join(HalC2.Paths.data_dir(), "worktrees")),
+      registered: registered_roots()
+    }
+  end
+
+  defp protected_with?(resolved, ctx) do
+    cond do
+      within?(ctx.worktrees, resolved) -> false
+      hard_with?(resolved, ctx) -> true
+      not Enum.any?(ctx.roots, &within?(&1, resolved)) -> false
+      Enum.any?(ctx.registered, &within?(&1, resolved)) -> false
+      true -> true
+    end
+  end
 
   # The credential material itself: blocked even inside a registered project
   # that happens to contain the MC's directories.
-  defp hard_protected?(resolved) do
-    data = real(HalC2.Paths.data_dir())
-
-    resolved == Path.join(data, "access-token") or
-      within?(Path.join(data, "secrets"), resolved) or
-      within?(Path.join(data, "cluster"), resolved) or
-      Enum.any?(legacy_roots(), &within?(&1, resolved)) or
-      (Path.dirname(resolved) in protected_roots() and
+  defp hard_with?(resolved, ctx) do
+    resolved == Path.join(ctx.data, "access-token") or
+      within?(Path.join(ctx.data, "secrets"), resolved) or
+      within?(Path.join(ctx.data, "cluster"), resolved) or
+      Enum.any?(ctx.legacy, &within?(&1, resolved)) or
+      (Path.dirname(resolved) in ctx.roots and
          String.contains?(Path.basename(resolved), ".sqlite"))
   end
 
@@ -747,21 +770,11 @@ defmodule HalC2.Workspace do
     :exit, _ -> []
   end
 
-  defp legacy_roots do
-    for name <- HalC2.Paths.legacy_names(),
-        do: real(Path.join(HalC2.Paths.user_home(), name))
-  end
-
-  defp protected_roots do
-    dirs = HalC2.Paths.dirs() |> Map.values()
-    Enum.uniq(Enum.map(dirs, &real/1) ++ legacy_roots())
-  end
-
   # Whether any protected root overlaps `root` (inside it, or containing it):
   # the only case where per-file filtering of a scan or search can bite.
-  defp overlaps_protected?(root) do
+  defp overlaps_protected?(root, ctx) do
     resolved = real(root)
-    Enum.any?(protected_roots(), &(within?(resolved, &1) or within?(&1, resolved)))
+    Enum.any?(ctx.roots, &(within?(resolved, &1) or within?(&1, resolved)))
   end
 
   # A path under the root, which must stay under it once symlinks resolve.
