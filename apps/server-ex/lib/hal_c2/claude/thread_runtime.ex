@@ -35,7 +35,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Subprocess.Durable
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.StreamState
 
   @state_version 12
@@ -2378,10 +2378,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp claude_message(_message, %{turn: nil} = state), do: state
 
   defp claude_message(
-         %{"type" => "system", "subtype" => "init", "session_id" => session_id},
+         %{"type" => "system", "subtype" => "init", "session_id" => session_id} = message,
          state
        ) do
     ids = state.turn.ids
+    # The model the CLI resolved its `--model` to.
+    state = AppliedModel.record(state, message["model"])
 
     if session_id != state.session_id do
       commit(state, fn stream ->
@@ -2412,6 +2414,15 @@ defmodule HalC2.Claude.ThreadRuntime do
       if uuid = message["uuid"],
         do: update_in(state.turn, &(&1 |> Map.put(:head, uuid) |> Map.delete(:resumed_at))),
         else: state
+
+    # The model that answered: a fallback Claude took shows here. A subagent's is its own.
+    state =
+      with nil <- message["parent_tool_use_id"],
+           model when model != "<synthetic>" <- get_in(message, ["message", "model"]) do
+        AppliedModel.record(state, model)
+      else
+        _ -> state
+      end
 
     # The context meter reads the last request's usage, not the turn's total.
     state =

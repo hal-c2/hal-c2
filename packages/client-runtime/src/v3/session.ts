@@ -740,11 +740,13 @@ export function makeV3Session(input: {
 
     const dispatchCommand = forward(
       ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-      (command: { readonly commandId: string; readonly type: string }, message) =>
+      // The cause keeps the MC's detail, such as a selection-stale refusal's current selection.
+      (command: { readonly commandId: string; readonly type: string }, message, cause) =>
         new OrchestrationV2DispatchCommandError({
           commandId: command.commandId as never,
           commandType: command.type as never,
           message,
+          cause,
         }),
     );
 

@@ -169,6 +169,9 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
+    ...(thread.selectionRevision === undefined
+      ? {}
+      : { selectionRevision: thread.selectionRevision }),
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequests: thread.pullRequests ?? [],
@@ -797,6 +800,9 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
+    ...(thread.selectionRevision === undefined
+      ? {}
+      : { selectionRevision: thread.selectionRevision }),
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequests: thread.pullRequests ?? [],

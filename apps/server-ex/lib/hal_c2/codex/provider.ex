@@ -753,6 +753,24 @@ defmodule HalC2.Codex.Provider do
     end)
   end
 
+  @doc """
+  The value instance `id`'s list marks as the default for `model`'s option `option`
+  (`"reasoningEffort"`, say), or nil when the list does not know the model or the
+  option has no default.
+  """
+  def default_option(id, model, option) do
+    slug = current_slug(model)
+
+    with %{"capabilities" => %{"optionDescriptors" => descriptors}} <-
+           Enum.find(entry_models(id), &(&1["slug"] == slug)),
+         %{"options" => options} <- Enum.find(descriptors, &(&1["id"] == option)),
+         %{"id" => value} <- Enum.find(options, & &1["isDefault"]) do
+      value
+    else
+      _ -> nil
+    end
+  end
+
   @doc "The model Codex knows `model` as today: an older alias names its current id."
   def current_slug(model), do: Map.get(@aliases, model, model)
 

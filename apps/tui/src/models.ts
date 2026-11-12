@@ -165,6 +165,94 @@ export function pickMatchesThread(
   return left.size === right.size && [...left].every(([id, value]) => right.get(id) === value);
 }
 
+/**
+ * One of this client's own access or plan/build changes on a thread. `sentAt` is the
+ * thread's `selectionRevision` when it was sent (null from an MC that keeps none).
+ * `outcome` is "pending" until the MC answers, then the revision its reply says the
+ * change moved the thread to, or "none" when it moved nothing (refused, or a reply
+ * that names no revision: an MC that keeps revisions names one whenever it moves).
+ * The composer settles `outcome` in place, so every pick holding the change sees it.
+ */
+export interface OwnSelectionChange {
+  readonly sentAt: number | null;
+  outcome: "pending" | "none" | number;
+}
+
+/**
+ * A model pick on a started thread, made against the thread's `selectionRevision`
+ * (`base`, null from an MC that sends none). `own` holds this client's own mode
+ * changes that may still move the revision past `base` without replacing the pick.
+ */
+export interface ThreadPick {
+  readonly selection: ModelSelection;
+  readonly base: number | null;
+  readonly own: ReadonlyArray<OwnSelectionChange>;
+}
+
+/**
+ * Whether an own change may still move a thread now at `revision`: its reply names a
+ * later revision, or it is unanswered and was sent at `revision` or later.
+ * One sent earlier may already be in `revision` (the update can beat the reply), so
+ * it never counts: counting it again would take another client's change for its own.
+ */
+export function ownChangeAhead(change: OwnSelectionChange, revision: number): boolean {
+  if (typeof change.outcome === "number") return change.outcome > revision;
+  if (change.outcome === "none") return false;
+  return change.sentAt !== null && change.sentAt >= revision;
+}
+
+/** A pick made now on `thread`, holding the own changes that may still move it on. */
+export function pickOn(
+  thread: { readonly selectionRevision?: number | undefined },
+  selection: ModelSelection,
+  own: ReadonlyArray<OwnSelectionChange>,
+): ThreadPick {
+  const base = thread.selectionRevision ?? null;
+  return {
+    selection,
+    base,
+    own: base === null ? [] : own.filter((change) => ownChangeAhead(change, base)),
+  };
+}
+
+/**
+ * What becomes of a pick once the thread changes. Its base moves only across
+ * revisions this client's own replies account for, so it stands past them; any
+ * other change drops it, its own send being taken included. While an own change is
+ * unanswered it may be the one that moved the thread, so the pick waits, unmoved,
+ * for the reply to say. An MC without revisions drops the pick once the thread runs it.
+ */
+export function nextPick(
+  options: ReadonlyArray<ModelOption>,
+  pick: ThreadPick,
+  thread: {
+    readonly modelSelection: ModelSelection;
+    readonly selectionRevision?: number | undefined;
+  },
+): ThreadPick | null {
+  const revision = thread.selectionRevision;
+  const base = pick.base;
+  if (revision === undefined || base === null) {
+    return pickMatchesThread(options, pick.selection, thread.modelSelection) ? null : pick;
+  }
+  if (revision < base) return null;
+  if (revision === base) return pick;
+  const named = new Set(
+    pick.own.flatMap((change) => (typeof change.outcome === "number" ? [change.outcome] : [])),
+  );
+  const pending = pick.own.filter((change) => change.outcome === "pending").length;
+  let unaccounted = 0;
+  for (let at = base + 1; at <= revision; at++) if (!named.has(at)) unaccounted++;
+  // Each unanswered own change may yet name one revision; any more are another client's.
+  if (unaccounted > pending) return null;
+  if (unaccounted > 0) return pick;
+  const own = pick.own.filter(
+    (change) =>
+      change.outcome === "pending" || (change.outcome !== "none" && change.outcome > revision),
+  );
+  return { ...pick, base: revision, own };
+}
+
 /** Create a complete selection for a newly chosen model, using its defaults. */
 export function modelSelectionForOption(option: ModelOption): ModelSelection {
   const descriptors = option.capabilities

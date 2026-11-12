@@ -1108,6 +1108,23 @@ Feature: Codex
       | fast mode on and no service tier       | on the "fast" service tier    |
       | fast mode off and no service tier      | without naming a service tier |
 
+  # Codex keeps the effort and service tier a turn sets for the thread's later turns, so
+  # taking them off the thread has to set them back, or the next turn runs on the old ones.
+  @mc
+  Scenario: A reasoning level and service tier taken off a Codex thread are set back
+    Given a Codex model whose default reasoning is "high"
+    And a Codex thread whose turn ran at reasoning "low" on the "fast" service tier
+    When the user sends a message
+    And the user takes the reasoning level and service tier off the thread and sends again
+    Then the next turn is sent to Codex at "high" with no service tier
+
+  @mc
+  Scenario: A Codex turn moved to another model says so
+    Given a Codex turn is running
+    When Codex reroutes the turn to "gpt-5.4-mini"
+    Then the run records "gpt-5.4-mini" as the model it ran on
+    And the thread shows the notice "This turn runs on gpt-5.4-mini, not the selected gpt-5.4."
+
   @mc
   Scenario: Codex without the HAL-C2 tools is given no HAL-C2 instructions
     Given a Codex thread that has no "hal-c2" server attached
