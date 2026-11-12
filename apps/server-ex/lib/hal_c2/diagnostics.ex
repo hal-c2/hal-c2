@@ -66,11 +66,11 @@ defmodule HalC2.Diagnostics do
     name =
       if is_binary(signal), do: signal |> String.trim() |> String.trim_leading("SIG"), else: ""
 
-    with true <- name in ["INT", "KILL"] || :bad_signal,
-         {:ok, rows} <- tree(os_pid()),
+    with {:ok, rows} <- tree(os_pid()),
          %{started: seen} <- Enum.find(rows, &(&1.pid == pid)) || :not_ours,
          true <- pid != os_pid() || :server,
          true <- abs(seen - started) < 2_000 || :replaced,
+         true <- name in ["INT", "KILL"] || :bad_signal,
          {_, 0} <- System.cmd("kill", ["-#{name}", "#{pid}"], stderr_to_stdout: true) do
       {:ok, Map.merge(result, %{"signaled" => true, "message" => none()})}
     else

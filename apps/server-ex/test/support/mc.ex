@@ -4265,7 +4265,7 @@ defmodule HalC2.Test.Mc.Terminal do
   end
 
   @doc "Where a folder named in the feature lives for this scenario (not created)."
-  def folder(context, path), do: Path.join(context.mc.home, "fs" <> path)
+  def folder(context, path), do: HalC2.Test.Mc.Host.path(context, path)
 
   @doc "`folder/2`, created."
   def mkdir(context, path) do
@@ -4764,9 +4764,15 @@ defmodule HalC2.Test.Mc.Host do
   """
 
   @doc "Where a feature's path (`/home/sam/shop`, `~/code`) really is in this scenario."
-  def path(context, "/" <> _ = path), do: Path.join(context.mc.home, "fs") <> path
+  def path(context, "/" <> _ = path), do: root(context) <> path
   def path(context, "~" <> rest), do: home(context) <> rest
   def path(_context, path), do: path
+
+  @doc """
+  The scenario machine's `/`: beside the MC's home, not in it, since the MC keeps
+  agents and file browsing out of its own directories (`HalC2.Workspace`).
+  """
+  def root(%{mc: %{home: home}}), do: home <> "-fs"
 
   @doc "The scenario's `$HOME` (`/home/sam`), set for the MC on first call."
   def home(context) do
