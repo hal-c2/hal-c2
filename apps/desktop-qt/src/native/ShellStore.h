@@ -120,6 +120,10 @@ public:
   bool synchronized() const { return m_synchronized; }
   // How many `shell` frames have landed: one per (re)subscription the MC answered.
   quint64 snapshots() const { return m_snapshots; }
+  // Counts the news of the cluster's members: a descriptor, or a member going
+  // online, offline or away. What the MC refused for an environment it did not
+  // know (McPluginController) is asked again once this moves.
+  quint64 roster() const { return m_roster; }
   // Why the MC turned the shell subscription down (its `error` frame); empty
   // once a snapshot lands. The rows it had stay as they were.
   QString problem() const { return m_problem; }
@@ -199,5 +203,6 @@ private:
   bool m_previewing = false;
   bool m_synchronized = false;
   quint64 m_snapshots = 0;
+  quint64 m_roster = 0;
   QString m_problem;
 };

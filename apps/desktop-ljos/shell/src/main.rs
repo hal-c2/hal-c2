@@ -60,7 +60,7 @@ use hal_c2_shell::{Launch, store};
 use ljos::CoalesceKey;
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
-use ljos::{App, ShellConfig};
+use ljos::{App, ColorSpace, ShellConfig};
 
 const ROOT: &str = qml::DEFAULT_SHELL;
 /// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
@@ -616,7 +616,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
     // Read once and kept. On macOS and Windows that runs a command, which
     // the UI thread's first ask would otherwise wait for.
     std::thread::spawn(hal_c2_shell::this_machine::id);
-    let config = ShellConfig::new("HAL-C2").with_size(options.size.0 as f32, options.size.1 as f32);
+    // Untagged, as Qt Quick's windows are, so the shell's colours look on a
+    // wide-gamut display as desktop-qt's do (LJOS_COLOR_SPACE overrides).
+    let config = ShellConfig::new("HAL-C2")
+        .with_size(options.size.0 as f32, options.size.1 as f32)
+        .with_color_space(ColorSpace::Untagged);
     app.shell_config(config)
         .on_message(|_: &Engine, _: Message| {})
         .run_with(move |setup| {

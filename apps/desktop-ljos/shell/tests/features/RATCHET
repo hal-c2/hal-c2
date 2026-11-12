@@ -1459,6 +1459,7 @@ planning/planner.feature: The user picks the board and its date fields from list
 planning/planner.feature: The user picks the planner's Slack channel in its settings
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
+plugins/plugin-catalog.feature: A member's MC plugins are listed once the cluster learns it
 plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
 plugins/plugin-catalog.feature: The plugin list has a section for each environment's MC plugins
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
@@ -1714,9 +1715,20 @@ preview/surfaces.feature: A page cannot open a local or inline address as a popu
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [file:///etc/hosts]
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [javascript:alert(1)]
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [view-source:https://acme.dev]
+preview/surfaces.feature: A page cannot raise a system notification in the app's name
+preview/surfaces.feature: A page may ask for some things and not others [anything else a page can ask for, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the camera, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the list of installed fonts, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the microphone, refused]
+preview/surfaces.feature: A page may ask for some things and not others [to put text on the clipboard, allowed]
+preview/surfaces.feature: A page may ask for some things and not others [to show notifications, refused]
 preview/surfaces.feature: A page taken off is timed by its own MC's clock, not another MC's
 preview/surfaces.feature: A page that fills its space cannot be resized from its edges
 preview/surfaces.feature: A page that opens a blank window keeps its own page
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [data]
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [file]
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [javascript]
+preview/surfaces.feature: A page's link to another app asks before opening it
 preview/surfaces.feature: A page's title is remembered while its browser is not shown
 preview/surfaces.feature: A popup cannot open further popups
 preview/surfaces.feature: A project remembers its last fifty pages
@@ -1725,6 +1737,7 @@ preview/surfaces.feature: A recent page can be taken off the new tab's list
 preview/surfaces.feature: A recent page shows its title, its address and when it was visited
 preview/surfaces.feature: A recent page without a title is listed by its address
 preview/surfaces.feature: A second size picked while one waits is turned away
+preview/surfaces.feature: A size the desktop cannot apply says so and is undone
 preview/surfaces.feature: A tab stays muted when its page navigates
 preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [127.0.0.1:8080, http://127.0.0.1:8080]
 preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [example.com, https://example.com]
@@ -1754,6 +1767,7 @@ preview/surfaces.feature: Recent pages are kept tidy [the same page twice, the p
 preview/surfaces.feature: Recent pages kept before they were kept per project go to the first project shown
 preview/surfaces.feature: Reloading becomes stopping while the page loads
 preview/surfaces.feature: Returning to a thread keeps a page's newest title
+preview/surfaces.feature: The Devices view draws its pages at the screen's pixels in a zoomed app
 preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Left arrow, 390 by 800]
 preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Right arrow, 410 by 800]
 preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Shift and Right arrow, 450 by 800]
@@ -1763,6 +1777,7 @@ preview/surfaces.feature: The desktop lists the thread's browser tabs to open in
 preview/surfaces.feature: The desktop remembers the history of the twenty most recently used projects
 preview/surfaces.feature: The desktop's list of browser tabs follows the MC
 preview/surfaces.feature: The device toolbar is closed from its own control
+preview/surfaces.feature: The devices view follows the page where it goes
 preview/surfaces.feature: The history of one project does not appear in another
 preview/surfaces.feature: The page in a browser tab can be opened in the user's browser
 preview/surfaces.feature: The toolbar waits while a new size is being applied
@@ -1775,6 +1790,7 @@ preview/surfaces.feature: The user previews the page at a device size
 preview/surfaces.feature: The user previews the page at a size of their own
 preview/surfaces.feature: The user reloads a page after the dev server restarts
 preview/surfaces.feature: The user rotates the previewed device
+preview/surfaces.feature: The user sees the page at several sizes side by side
 preview/surfaces.feature: The user shows a device toolbar above a tab's page
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, in, 110%]
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, out, 90%]

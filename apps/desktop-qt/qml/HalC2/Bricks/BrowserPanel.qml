@@ -48,9 +48,6 @@ Rectangle {
     // What Browser.permissions calls each thing a page can ask for.
     readonly property var permissionKinds: {
         const kinds = {};
-        // TODO(ljos#354): Ljós's QtWebEngine has no WebEnginePermission yet.
-        if (typeof WebEnginePermission === "undefined")
-            return kinds;
         kinds[WebEnginePermission.PermissionType.ClipboardReadWrite] = "clipboard";
         kinds[WebEnginePermission.PermissionType.Notifications] = "notifications";
         kinds[WebEnginePermission.PermissionType.Geolocation] = "geolocation";
@@ -717,26 +714,13 @@ Rectangle {
                         // A blank window that is not a popup has nothing to
                         // show in the tab: left unopened, it is refused.
                     }
-                    // The engine's requests, in a Connections so an engine
-                    // without them still draws the page.
-                    // TODO(ljos#354, ljos#355, ljos#356): handlers on the view
-                    // once Ljós's WebEngineView has these signals.
-                    Connections {
-                        target: webView
-                        ignoreUnknownSignals: true
-
-                        function onPermissionRequested(permission) {
-                            root.permissionAsked(permission);
-                        }
-                        // A page never captures the screen or a window.
-                        function onDesktopMediaRequested(request) {
-                            request.cancel();
-                        }
-                        // A link to another app (slack:, mailto:) is the user's to open.
-                        function onNavigationRequested(request) {
-                            if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
-                                request.reject();
-                        }
+                    onPermissionRequested: permission => root.permissionAsked(permission)
+                    // A page never captures the screen or a window.
+                    onDesktopMediaRequested: request => request.cancel()
+                    // A link to another app (slack:, mailto:) is the user's to open.
+                    onNavigationRequested: request => {
+                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
+                            request.reject();
                     }
                     Component.onCompleted: {
                         webView.zoomFactor = page.zoom;
@@ -1098,18 +1082,10 @@ Rectangle {
                 onNewWindowRequested: request => {}
                 onWindowCloseRequested: popup.close()
 
-                // TODO(ljos#354, ljos#355): as on the tab's view.
-                Connections {
-                    target: popupView
-                    ignoreUnknownSignals: true
-
-                    function onPermissionRequested(permission) {
-                        root.permissionAsked(permission);
-                    }
-                    function onNavigationRequested(request) {
-                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
-                            request.reject();
-                    }
+                onPermissionRequested: permission => root.permissionAsked(permission)
+                onNavigationRequested: request => {
+                    if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
+                        request.reject();
                 }
             }
 

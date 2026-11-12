@@ -158,10 +158,10 @@ fn parent(world: &World, item: ObjectId) -> Option<ObjectId> {
     }
 }
 
-/// The scale `item` is drawn at: its own and every parent's.
+/// The scale `item`'s parent is drawn at: what `item` is drawn in.
 fn inherited_scale(world: &World, item: ObjectId) -> f64 {
     let mut scale = 1.0;
-    let mut at = Some(item);
+    let mut at = parent(world, item);
     while let Some(each) = at {
         let own = real(world, each, "scale");
         scale *= if own == 0.0 { 1.0 } else { own };
@@ -353,6 +353,11 @@ fn drag_right_edge(world: &mut World, by: f64, release: bool) -> Outcome {
     world.sync()
 }
 
+/// The tab's own view, shown or behind the Devices view.
+fn tab_view(world: &World, brick: Brick) -> Option<ObjectId> {
+    brick.find(world, "browserView").ok().flatten()
+}
+
 fn devices_frame(world: &World, id: &str) -> Option<ObjectId> {
     panel_of(world).and_then(|b| find(world, b, &format!("browserDevicesFrame-{id}")))
 }
@@ -466,7 +471,11 @@ fn register_zoom(steps: &mut Steps) {
         )?;
         // The page is drawn at the screen's pixels: the app's zoom is undone
         // around it.
-        let stage = item(world, "browserPage")?;
+        // The page's stage, shown or behind the Devices view.
+        let brick = panel(world)?;
+        let Some(stage) = brick.find(world, "browserPage")? else {
+            fail!("no browserPage");
+        };
         let app_zoom = real(world, panel_item, "appZoom");
         let scale = real(world, stage, "scale");
         expect!(
@@ -565,7 +574,7 @@ fn register_devices(steps: &mut Steps) {
                 lefts[1],
                 lefts[2]
             );
-            let url = view_url(world, brick);
+            let url = tab_view(world, brick).map_or(String::new(), |v| read_text(world, v, "url"));
             wait_for_engine(
                 world,
                 |w| {
@@ -575,8 +584,8 @@ fn register_devices(steps: &mut Steps) {
                 },
                 |w| format!("every frame to load {url}; {}", state(w, brick)),
             )?;
-            // TODO(ljos#357): desktop-qt also grabs each frame to see the page
-            // drawn; Ljós's test window has no grab yet, so the painted list
+            // TODO(ljos#399): desktop-qt also grabs each frame to see the page
+            // drawn; Rust cannot read a grab's pixels yet, so the painted list
             // stands in.
             wait_for_engine(
                 world,
@@ -593,7 +602,9 @@ fn register_devices(steps: &mut Steps) {
         "every device in the view draws its page at the screen's pixels, filling its frame",
         |world, _, _| {
             let brick = panel(world)?;
-            let tab_view = item(world, "browserView")?;
+            let Some(tab_view) = tab_view(world, brick) else {
+                fail!("no browserView");
+            };
             for id in DEVICES {
                 let Some(frame) = devices_frame(world, id) else {
                     fail!("no {id} frame");
@@ -621,10 +632,25 @@ fn register_devices(steps: &mut Steps) {
             Ok(())
         },
     );
+    // TODO(ljos#399): desktop-qt reads the corner pixel of a grab of each
+    // page; Rust cannot read a grab's pixels yet.
+    steps.step(
+        "(?:the page is|every device in the view draws the page) (?:drawn )?on white",
+        |_, _, _| fail!("the page's colour cannot be read yet (ljos#399)"),
+    );
     steps.step("the user navigates to another page", |world, _, _| {
         dev_server(world)?.page("/other", "Other", "");
         super::browser::evaluate(world, "location.href = '/other'; true")?;
-        wait_for_title(world, "Other")
+        let brick = panel(world)?;
+        if view(world, brick).is_some() {
+            return wait_for_title(world, "Other");
+        }
+        // The tab's page goes on loading behind the Devices view.
+        wait_for_engine(
+            world,
+            |w| tab_view(w, brick).is_some_and(|v| read_text(w, v, "title") == "Other"),
+            |w| format!("the tab to show Other; {}", state(w, brick)),
+        )
     });
     steps.step("every device in the view shows that page", |world, _, _| {
         let url = server_url(world, "/other")?;

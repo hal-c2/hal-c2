@@ -4,7 +4,7 @@
 //! and the real DefaultShell window that draws them: desktop-qt's
 //! McPluginSteps.cpp, with the helpers Plugins.h declares for it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, ObjectId, Value};
@@ -62,6 +62,11 @@ struct FakeMcPlugins {
     /// What `plugins.compile` finds, by plugin; a check passes when none is
     /// set.
     checks: HashMap<String, Json>,
+    /// Environments whose `plugins` shape is refused as an unknown
+    /// environment, as the MC refuses a member the cluster does not know yet.
+    unknown: HashSet<String>,
+    /// How many `plugins` shapes were refused.
+    refused: usize,
 }
 
 fn environment_of(mc: &FakeMc, environment: &str) -> String {
@@ -246,6 +251,13 @@ fn extension(mc: &mut FakeMc) {
 
     mc.on_shape("plugins", |mc, id, shape| {
         let environment = environment_of(mc, &text(&shape["environment"]));
+        let fake = mc.part::<FakeMcPlugins>();
+        if fake.unknown.contains(&environment) {
+            fake.refused += 1;
+            mc.send(&json!({"t": "error", "id": id, "reason": "unknown environment"}));
+            mc.forget(id);
+            return Ok(());
+        }
         let list = plugins_json(
             mc.part::<FakeMcPlugins>()
                 .plugins
@@ -1904,6 +1916,29 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    // A member the MC does not know yet, as right after it restarts.
+    steps.step(
+        "the MC refuses another environment's plugins as an unknown environment",
+        |world, _, _| {
+            let here = world.mc.environment_id.clone();
+            publish_plugin(world, &here, code_review());
+            publish_plugin(world, OTHER_ENVIRONMENT, other_plugin());
+            fake(world).unknown.insert(OTHER_ENVIRONMENT.to_owned());
+            world.mc.join_named(OTHER_ENVIRONMENT);
+            shell(world)?;
+            wait_status(world, CODE_REVIEW, "running")?;
+            world.wait_for_with(
+                |w| w.mc.peek::<FakeMcPlugins>().is_some_and(|f| f.refused > 0),
+                describe,
+            )
+        },
+    );
+    steps.step("the cluster learns that environment", |world, _, _| {
+        fake(world).unknown.remove(OTHER_ENVIRONMENT);
+        // The shell announces the member again once it knows it.
+        world.mc.join_named(OTHER_ENVIRONMENT);
+        Ok(())
+    });
     steps.step(
         "each environment's MC plugins are listed under that environment",
         |world, _, _| {

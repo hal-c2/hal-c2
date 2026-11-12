@@ -8417,6 +8417,33 @@
                   "type": "int"
                 }
               ]
+            },
+            {
+              "name": "navigationRequested",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "QtObject"
+                }
+              ]
+            },
+            {
+              "name": "permissionRequested",
+              "parameters": [
+                {
+                  "name": "permission",
+                  "type": "QtObject"
+                }
+              ]
+            },
+            {
+              "name": "desktopMediaRequested",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "QtObject"
+                }
+              ]
             }
           ],
           "methods": [
@@ -9437,6 +9464,354 @@
                   "type": "var"
                 }
               ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngineNavigationRequest",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [
+            {
+              "name": "NavigationType",
+              "keys": [
+                [
+                  "LinkClickedNavigation",
+                  0
+                ],
+                [
+                  "TypedNavigation",
+                  1
+                ],
+                [
+                  "FormSubmittedNavigation",
+                  2
+                ],
+                [
+                  "BackForwardNavigation",
+                  3
+                ],
+                [
+                  "ReloadNavigation",
+                  4
+                ],
+                [
+                  "OtherNavigation",
+                  5
+                ],
+                [
+                  "RedirectNavigation",
+                  6
+                ]
+              ]
+            },
+            {
+              "name": "NavigationRequestAction",
+              "keys": [
+                [
+                  "AcceptRequest",
+                  0
+                ],
+                [
+                  "IgnoreRequest",
+                  255
+                ]
+              ]
+            }
+          ],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "url",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "isMainFrame",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "hasFormData",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "navigationType",
+              "type": "NavigationType",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "action",
+              "type": "NavigationRequestAction",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "actionChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "accept",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reject",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEnginePermission",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [
+            {
+              "name": "PermissionType",
+              "keys": [
+                [
+                  "Unsupported",
+                  0
+                ],
+                [
+                  "MediaAudioCapture",
+                  1
+                ],
+                [
+                  "MediaVideoCapture",
+                  2
+                ],
+                [
+                  "MediaAudioVideoCapture",
+                  3
+                ],
+                [
+                  "DesktopVideoCapture",
+                  4
+                ],
+                [
+                  "DesktopAudioVideoCapture",
+                  5
+                ],
+                [
+                  "MouseLock",
+                  6
+                ],
+                [
+                  "Notifications",
+                  7
+                ],
+                [
+                  "Geolocation",
+                  8
+                ],
+                [
+                  "ClipboardReadWrite",
+                  9
+                ],
+                [
+                  "LocalFontsAccess",
+                  10
+                ]
+              ]
+            },
+            {
+              "name": "State",
+              "keys": [
+                [
+                  "Invalid",
+                  0
+                ],
+                [
+                  "Ask",
+                  1
+                ],
+                [
+                  "Granted",
+                  2
+                ],
+                [
+                  "Denied",
+                  3
+                ]
+              ]
+            }
+          ],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "origin",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "permissionType",
+              "type": "PermissionType",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "state",
+              "type": "State",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "stateChanged"
+            },
+            {
+              "name": "isValid",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "isValidChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "grant",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "deny",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reset",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngineDesktopMediaRequest",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "screensModel",
+              "type": "ListModel",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "windowsModel",
+              "type": "ListModel",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "selectScreen",
+              "parameters": [
+                {
+                  "name": "index",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "selectWindow",
+              "parameters": [
+                {
+                  "name": "index",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "cancel",
+              "parameters": [],
               "returnType": "void"
             }
           ]

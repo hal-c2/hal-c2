@@ -225,7 +225,7 @@ fn png() -> Vec<u8> {
     bytes
 }
 
-fn not_found() -> Download {
+pub(crate) fn not_found() -> Download {
     Download {
         status: 404,
         content_type: "text/plain",
