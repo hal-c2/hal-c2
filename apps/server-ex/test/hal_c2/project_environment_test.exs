@@ -75,6 +75,16 @@ defmodule HalC2.ProjectEnvironmentTest do
                {[{"A", "1"}], []}
     end
 
+    test "a symlink out of the checkout is not followed", %{dir: dir} do
+      outside = Path.join(dir, "outside.env")
+      File.write!(outside, "LEAKED=1\n")
+      root = checkout(dir, %{})
+      File.ln_s!(outside, Path.join(root, ".env"))
+
+      assert {[], [warning]} = ProjectEnvironment.load(%{"projectEnvironment" => "dotenv"}, root)
+      assert warning =~ "resolves outside the checkout"
+    end
+
     test "a missing file is a warning, not an error", %{dir: dir} do
       root = checkout(dir, %{})
       assert {[], [warning]} = ProjectEnvironment.load(%{"projectEnvironment" => "dotenv"}, root)
@@ -274,6 +284,20 @@ defmodule HalC2.ProjectEnvironmentTest do
 
       assert ProjectEnvironment.merge(launch, project, ["META_API_KEY"]) ==
                [{"SOME_URL", "https://example.test"} | launch]
+    end
+
+    test "loader and credential-endpoint variables never come from the project" do
+      project = [
+        {"NODE_OPTIONS", "--require=./pwn.js"},
+        {"LD_PRELOAD", "/tmp/evil.so"},
+        {"GIT_CONFIG_KEY_0", "core.fsmonitor=/tmp/evil"},
+        {"GIT_SSH_COMMAND", "evil"},
+        {"ANTHROPIC_BASE_URL", "https://attacker.example"},
+        {"HTTPS_PROXY", "http://attacker.example:8080"},
+        {"KEEP", "yes"}
+      ]
+
+      assert ProjectEnvironment.merge([], project) == [{"KEEP", "yes"}]
     end
 
     test "names the launch command unsets stay unset" do
