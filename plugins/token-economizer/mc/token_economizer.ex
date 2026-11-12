@@ -1341,11 +1341,16 @@ defmodule HalC2Plugins.TokenEconomizer do
         unrecorded: Map.get(conv, :unrecorded, [])
       )
 
-    # Unread, the watermark stays, so the runs it folded are remembered past it.
+    # Unread, the watermark stays, so the runs it folded are remembered past it. So are
+    # those the watermark does not reach: a run whose end was never heard (it ended on
+    # another MC) leaves no last run to move it to, and a later read back would count
+    # it again.
     prune =
       if read? and not partial?,
         do: Prune.note_thread(prune, conv.thread, Map.get(conv, :last_run)),
-        else: Prune.note_folded(prune, conv.thread, runs)
+        else: prune
+
+    prune = Prune.note_folded(prune, conv.thread, runs)
 
     state
     |> put_prune(conv.project, prune, true)

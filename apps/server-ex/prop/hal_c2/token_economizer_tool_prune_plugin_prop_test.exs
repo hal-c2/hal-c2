@@ -210,6 +210,23 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       down: [],
       up: [],
       start: ["b", "r3", 2, true, false]
+    ],
+    # a's r4 ends on the other MC, unheard here, and folds as the next conversation
+    # starts; a segment heard in part then reads the history back past it.
+    unheard_end: [
+      start: ["a", "r1", 1, true, true],
+      down: [],
+      up: [],
+      finish: ["a", "r1", 1],
+      start: ["a", "r4", 2, false, false],
+      thread_moved: ["a", "r4", 2],
+      thread_returned: ["a"],
+      slow_start: ["a", "r5", 3, false],
+      finish: ["a", "r5", 3],
+      start: ["a", "r6", 4, false, false],
+      use: ["a", "r6", 1, "ScheduleWakeup", true, :own],
+      finish: ["a", "r6", 4],
+      start: ["a", "r7", 5, true, false]
     ]
   ]
 
