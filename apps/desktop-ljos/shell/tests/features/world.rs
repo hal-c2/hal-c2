@@ -60,17 +60,43 @@ const WINDOW: (f64, f64) = (1280.0, 800.0);
 /// The longest a wait sleeps before it lets the shell's clock catch up.
 const FRAME: Duration = Duration::from_millis(16);
 
-/// What ljos_webengine promises the engine's thread while the browser has
-/// work, and takes back once it has been quiet for a second.
-const BROWSER_WORK: &str = "the web engine's work";
-/// The longest the browser may keep working before time passes on the
-/// shell's clock. TestWindow's advance waits for every promise, this one
-/// too, and a page that never settles (a script on a 1 ms interval) holds
-/// it for a minute each time (hal-c2/ljos-ui#405): past this, the step
-/// fails instead. A page still loading counts too, quiet second included,
-/// so this leaves a cold CEF start on a GPU-less runner room, while a busy
-/// page still fails well inside the runner's 120 s watchdog.
-const BROWSER_SETTLE: Duration = Duration::from_secs(30);
+/// The longest TestWindow's advance may wait on end for what was
+/// promised. It waits for every promise, and a browser page that never
+/// settles keeps one out: the browser's work while a script runs on a
+/// 1 ms interval, a page whose load ends without a picture and starts
+/// again. Answers keep arriving all the while, so Platform::finish gives
+/// up only after a minute, at each of the advance's stops
+/// (hal-c2/ljos-ui#405). Past this, the step fails instead. A page still
+/// loading counts too, so this leaves a cold CEF start on a GPU-less
+/// runner room, while a stuck page fails well inside the runner's 120 s
+/// watchdog.
+const STALL: Duration = Duration::from_secs(30);
+/// Calls further apart than this are separate waits.
+const STALL_GAP: Duration = Duration::from_millis(500);
+
+/// What TestWindow calls while its advance waits on promises: fails the
+/// step once the waiting has gone on for STALL. The wait cannot be told
+/// to stop, so this panics out of it, which fails the scenario as a
+/// step's Err would.
+fn fail_stalled(platform: Rc<Platform>) -> impl FnMut() + 'static {
+    let mut since = Instant::now();
+    let mut last = since;
+    move || {
+        let now = Instant::now();
+        if now - last > STALL_GAP {
+            since = now;
+        }
+        last = now;
+        if now - since >= STALL {
+            let waiting: Vec<_> = platform.promises().into_iter().map(|p| p.what).collect();
+            panic!(
+                "the shell's clock is stuck: TestWindow has waited {} s on end for {}",
+                STALL.as_secs(),
+                waiting.join(", ")
+            );
+        }
+    }
+}
 
 /// Raised by whatever has something for the scenario's thread: the fake
 /// MC's socket, the shell's connection, its cache and its other threads.
@@ -238,7 +264,8 @@ impl World {
             .build_engine();
         install_text_compiler(&engine);
         // Before the shell starts, for its timers to start on the window's clock.
-        let window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
+        let mut window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
+        window.serve_while_waiting(fail_stalled(Platform::of(&engine)));
         let wake = |signal: &Arc<Signal>| {
             let signal = signal.clone();
             move || signal.notify()
@@ -766,7 +793,6 @@ impl World {
     /// Lets `ms` pass on the shell's clock, the wall clock staying put.
     pub fn advance(&mut self, ms: u64) -> Outcome {
         self.await_answers()?;
-        self.await_browser()?;
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
@@ -796,35 +822,6 @@ impl World {
             let platform = Platform::of(&shell.engine);
             if platform.pending() == 0 || platform.is_held() || started.elapsed() >= WAIT {
                 return Ok(());
-            }
-            self.pump()?;
-            self.signal.wait(FRAME);
-        }
-    }
-
-    /// Serves the fake MC and runs the browser's work until it has settled
-    /// (BROWSER_WORK taken back), failing after BROWSER_SETTLE rather than
-    /// handing TestWindow's advance a wait it gives up on only after a
-    /// minute, and again at the next one.
-    fn await_browser(&mut self) -> Outcome {
-        let started = Instant::now();
-        loop {
-            let Some(shell) = &self.shell else {
-                return Ok(());
-            };
-            let promises = Platform::of(&shell.engine).promises();
-            let Some(work) = promises
-                .iter()
-                .find(|p| !p.standing && p.what == BROWSER_WORK)
-            else {
-                return Ok(());
-            };
-            if started.elapsed() >= BROWSER_SETTLE {
-                return Err(Failure(format!(
-                    "a browser page never settled: the web engine has had work for {} s \
-                     on end, and time cannot pass on the shell's clock until it settles",
-                    work.since.elapsed().as_secs()
-                )));
             }
             self.pump()?;
             self.signal.wait(FRAME);
