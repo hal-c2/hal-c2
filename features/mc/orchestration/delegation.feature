@@ -927,14 +927,16 @@ Feature: Delegating tasks to subagents
     And completions that arrive together share one wake turn
 
   # Upstream #22579: a completion that waited in the queue started on the model the thread had
-  # when it was queued, and put the thread back on it.
+  # when it was queued, and put the thread back on it. Upstream's fix kept a message the user
+  # queued on the model it was queued with; here it gives way to the later switch on purpose,
+  # as every queued pick does (composer/model-and-mode.feature, the selection revision).
   @mc @priority-high
   Scenario: A queued completion starts on the model the thread has now
     Given the completion of "one" is queued for "parent" while it works on "gpt-5.4"
     When the user switches "parent" to "gpt-5.5" before the completion is delivered
     Then the wake for "one" runs on "gpt-5.5"
     And the thread "parent" stays on "gpt-5.5"
-    But a message the user queued keeps the model it was queued with
+    And a message the user queued before the switch runs on "gpt-5.5" too
 
   @mc
   Scenario: Each delegated result reaches its caller exactly once

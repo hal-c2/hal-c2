@@ -49,6 +49,16 @@ defmodule HalC2.Shell do
   Between MCs, `peer_hello` carries the version one holds of the other and is
   answered with `peer_rows` from it. A change is pushed as the one row after the
   version the peer was last sent; a peer that finds a gap before it asks again.
+
+  ## New-thread defaults
+
+  This MC's project rows carry what a new thread there runs on
+  (`newThreadModelSelection`, `newThreadRuntimeMode`; `HalC2.Orchestration.NewThread`),
+  so a client drafting a thread on any machine shows that machine's defaults. They
+  follow settings and the provider list, which is read outside this server and kept,
+  and are not stored: the store holds rows as their streams wrote them. Until the list
+  is first read, a project with no configured default has no `newThreadModelSelection`
+  (or the one its row kept from the last run): null means no provider can run.
   """
 
   use GenServer
@@ -320,11 +330,20 @@ defmodule HalC2.Shell do
 
     # This run's version 0 is the rows in the store; rows kept from the last run that
     # differ from them were changes it lost on the way down.
-    changed = replace_rows(node(), Map.new(stored, fn {id, kind, row} -> {id, {kind, row}} end))
+    HalC2.Settings.watch(self())
+
+    changed =
+      replace_rows(
+        node(),
+        Map.new(stored, fn {id, kind, row} -> {id, with_defaults(id, {kind, row}, nil)} end)
+      )
+
     :ets.match_delete(@revs, {{node(), :_}, :_})
     :ets.insert(@mcs, {node(), HalC2.Environment.descriptor()})
     connected = transport().connected()
-    state = %{online: MapSet.new([node() | connected]), own: new_version()}
+
+    state =
+      read_providers(%{online: MapSet.new([node() | connected]), own: new_version()})
 
     # Subscribers of the last run stay subscribed: clients are sent this MC's rows
     # whole in the new epoch, the rest what changed.
@@ -415,7 +434,13 @@ defmodule HalC2.Shell do
     )
 
     :ets.insert(@versions, Map.to_list(Map.get(state, :versions, %{})))
-    %{online: state.online, own: Map.get_lazy(state, :own, &new_version/0)}
+    migrate(%{online: state.online, own: Map.get_lazy(state, :own, &new_version/0)})
+  end
+
+  # Before project rows carried their new-thread defaults.
+  defp migrate(state) when not is_map_key(state, :providers) do
+    HalC2.Settings.watch(self())
+    read_providers(Map.put(state, :providers, nil))
   end
 
   defp migrate(state), do: state
@@ -517,23 +542,7 @@ defmodule HalC2.Shell do
 
   @impl true
   def handle_cast({:put_row, stream_id, kind_row}, state) do
-    case :ets.lookup(@table, {node(), stream_id}) do
-      [{_, ^kind_row}] ->
-        {:noreply, state}
-
-      _ ->
-        {epoch, held} = state.own
-        rev = held + 1
-        :ets.insert(@table, {{node(), stream_id}, kind_row})
-        :ets.insert(@revs, {{node(), stream_id}, rev})
-        rows = [{stream_id, kind_row}]
-
-        for peer <- transport().connected(),
-            do: push_rows(peer, {epoch, rev}, held, [{stream_id, kind_row, rev}], false)
-
-        notify(node(), rows, %{epoch: epoch, rev: rev, reset: false})
-        {:noreply, %{state | own: {epoch, rev}}}
-    end
+    {:noreply, put_own(state, [{stream_id, with_defaults(stream_id, kind_row, state.providers)}])}
   end
 
   # Like rows, a descriptor from a peer that is not online was sent before it was
@@ -648,7 +657,114 @@ defmodule HalC2.Shell do
     {:noreply, state}
   end
 
+  def handle_info({:hal_c2_settings, _mc, _settings}, state),
+    do: {:noreply, redecorate(state)}
+
+  def handle_info({:hal_c2_providers_changed, _mc}, state), do: {:noreply, read_providers(state)}
+
+  # A list that could not be read leaves the one kept. Notices that came while it was
+  # read are answered by one more read.
+  def handle_info({:new_thread_providers, ref, providers}, %{providers_read: ref} = state) do
+    state = %{state | providers: providers || state.providers, providers_read: nil}
+    state = redecorate(state)
+
+    if Map.get(state, :providers_again),
+      do: {:noreply, read_providers(%{state | providers_again: false})},
+      else: {:noreply, state}
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  # This MC's `rows` (`[{id, kind_row}]`), each that differs from what it has written,
+  # pushed to peers and told to subscribers.
+  defp put_own(state, rows) do
+    Enum.reduce(rows, state, fn {stream_id, kind_row}, state ->
+      case :ets.lookup(@table, {node(), stream_id}) do
+        [{_, ^kind_row}] ->
+          state
+
+        _ ->
+          {epoch, held} = state.own
+          rev = held + 1
+          :ets.insert(@table, {{node(), stream_id}, kind_row})
+          :ets.insert(@revs, {{node(), stream_id}, rev})
+
+          for peer <- transport().connected(),
+              do: push_rows(peer, {epoch, rev}, held, [{stream_id, kind_row, rev}], false)
+
+          notify(node(), [{stream_id, kind_row}], %{epoch: epoch, rev: rev, reset: false})
+          %{state | own: {epoch, rev}}
+      end
+    end)
+  end
+
+  # A project row with the defaults a new thread there gets, without reading the
+  # provider list here: it probes provider CLIs. Until the list is read (`providers`
+  # nil), a project with no configured default keeps the selection its row already
+  # has, from the last run where the shell restarted, while its provider is on, or
+  # none: a null selection means no provider can run, not that it is not known yet.
+  defp with_defaults(id, {"project", row}, providers) do
+    defaults = HalC2.Orchestration.NewThread.defaults(row, providers)
+    row = Map.put(row, "newThreadRuntimeMode", defaults["runtimeMode"])
+
+    selection =
+      if providers != nil or defaults["modelSelection"] != nil,
+        do: {:ok, defaults["modelSelection"]},
+        else: kept_selection(id)
+
+    case selection do
+      {:ok, selection} -> {"project", Map.put(row, "newThreadModelSelection", selection)}
+      :error -> {"project", Map.delete(row, "newThreadModelSelection")}
+    end
+  end
+
+  defp with_defaults(_id, kind_row, _providers), do: kind_row
+
+  # Kept only while its provider is still on for the project: settings can have turned
+  # it off since, while this MC was down or before the provider list was read.
+  defp kept_selection(id) do
+    case :ets.lookup(@table, {node(), id}) do
+      [{_, {"project", %{"newThreadModelSelection" => %{"instanceId" => instance} = selection}}}]
+      when is_binary(instance) ->
+        if HalC2.Settings.provider_on?(id, instance), do: {:ok, selection}, else: :error
+
+      [{_, {"project", %{"newThreadModelSelection" => nil}}}] ->
+        {:ok, nil}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp redecorate(state) do
+    rows =
+      for [id, {"project", _} = kind_row] <- :ets.match(@table, {{node(), :"$1"}, :"$2"}),
+          do: {id, with_defaults(id, kind_row, state.providers)}
+
+    put_own(state, rows)
+  end
+
+  # One read at a time: provider notices come in bursts, and each read probes CLIs.
+  defp read_providers(%{providers_read: ref} = state) when is_reference(ref),
+    do: Map.put(state, :providers_again, true)
+
+  defp read_providers(state) do
+    shell = self()
+    ref = make_ref()
+
+    Task.start(fn ->
+      providers =
+        try do
+          HalC2.Environment.providers()
+        catch
+          _, _ -> nil
+        end
+
+      send(shell, {:new_thread_providers, ref, providers})
+    end)
+
+    state |> Map.put_new(:providers, nil) |> Map.put(:providers_read, ref)
+  end
 
   # The rows read from the store when the shell started have no entry: version 0.
   defp default_rev([], id), do: [{id, 0}]

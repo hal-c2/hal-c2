@@ -501,6 +501,12 @@ export const OrchestrationV2Run = Schema.Struct({
   queueHeld: Schema.optional(Schema.Boolean),
   /** A run that set up the thread's worktree as it started. */
   workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
+  /**
+   * A queued user message's: whether its model is the user's pick. A pick gives way to
+   * a later change of the thread's, and then the run names the thread's choice. Absent
+   * on the MC's own messages, which keep what they name.
+   */
+  selectionPicked: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -2852,9 +2858,26 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+/** The code of a pick refused because the thread moved on (`selectionBase`). */
+export const SELECTION_STALE = "selection-stale";
+
+/**
+ * The `detail` of a `selection-stale` refusal (the rpc error's `message` is the
+ * sentence to show): what the thread runs on now, and its revision, for the client to
+ * show and ask again against.
+ */
+export const OrchestrationV2SelectionStale = Schema.Struct({
+  code: Schema.Literal(SELECTION_STALE),
+  selectionRevision: NonNegativeInt,
+  modelSelection: Schema.NullOr(ModelSelection),
+});
+export type OrchestrationV2SelectionStale = typeof OrchestrationV2SelectionStale.Type;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
