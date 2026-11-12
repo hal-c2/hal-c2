@@ -61,7 +61,7 @@ const WINDOW: (f64, f64) = (1280.0, 800.0);
 const FRAME: Duration = Duration::from_millis(16);
 
 /// The longest one advance of TestWindow's may wait for what was promised.
-/// It waits for every promise, and a browser page that never settles
+/// It waits for every promise and picture, and a browser page that never settles
 /// keeps one out: the browser's work while a script runs on a 1 ms
 /// interval, a page whose load ends without a picture and starts again.
 /// Answers keep arriving all the while, so Platform::finish gives up only
@@ -102,10 +102,15 @@ impl Stall {
         self.last.set(Some(now));
         if self.waited.get() >= STALL {
             let waiting: Vec<_> = platform.promises().into_iter().map(|p| p.what).collect();
-            panic!(
-                "the shell's clock is stuck: one advance has waited {} s for {}",
-                STALL.as_secs(),
+            // Nothing promised: the wait is the ImageStore's, for a picture.
+            let waiting = if waiting.is_empty() {
+                "a picture under way".to_owned()
+            } else {
                 waiting.join(", ")
+            };
+            panic!(
+                "the shell's clock is stuck: one advance has waited {} s for {waiting}",
+                STALL.as_secs(),
             );
         }
     }
