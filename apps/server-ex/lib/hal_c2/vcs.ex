@@ -577,6 +577,10 @@ defmodule HalC2.Vcs do
   one when there is none.
   """
   def switch_ref(%{"cwd" => cwd, "refName" => ref}) do
+    with :ok <- check_ref(cwd, ref, "vcs.switchRef"), do: do_switch_ref(cwd, ref)
+  end
+
+  defp do_switch_ref(cwd, ref) do
     local? = ref?(cwd, "refs/heads/#{ref}")
     remote? = ref?(cwd, "refs/remotes/#{ref}")
     tracking = if remote?, do: tracking_branch(cwd, ref)
@@ -618,7 +622,14 @@ defmodule HalC2.Vcs do
 
   @doc "`vcs.createRef`: a branch at HEAD, switched to when asked."
   def create_ref(%{"cwd" => cwd, "refName" => ref} = input) do
-    with :ok <- run(cwd, ["branch", ref], "vcs.createRef", "git branch create failed"),
+    with :ok <- check_ref(cwd, ref, "vcs.createRef"),
+         :ok <-
+           if(match?({:ok, _}, Git.ok(cwd, ["check-ref-format", "--branch", ref])),
+             do: :ok,
+             else:
+               {:error, git_error(cwd, "vcs.createRef", "'#{ref}' is not a valid branch name")}
+           ),
+         :ok <- run(cwd, ["branch", "--", ref], "vcs.createRef", "git branch create failed"),
          {:ok, _} <- if(input["switchRef"], do: switch_ref(input), else: {:ok, nil}) do
       changed(cwd)
       {:ok, %{"refName" => ref}}
@@ -703,7 +714,7 @@ defmodule HalC2.Vcs do
   """
   def create_worktree(%{"cwd" => cwd, "refName" => ref} = input, opts \\ []) do
     branch = input["newRefName"] || ref
-    path = input["path"] || worktree_path(cwd, branch)
+    path = Path.expand(input["path"] || worktree_path(cwd, branch))
 
     args =
       if input["newRefName"],
@@ -714,7 +725,13 @@ defmodule HalC2.Vcs do
     fresh = not File.exists?(path)
     new_branch = input["newRefName"] && not branch?(cwd, input["newRefName"])
 
-    with :ok <-
+    with :ok <- check_ref(cwd, ref, "vcs.createWorktree"),
+         :ok <-
+           if(input["newRefName"],
+             do: check_ref(cwd, input["newRefName"], "vcs.createWorktree"),
+             else: :ok
+           ),
+         :ok <-
            run(
              cwd,
              args,
@@ -743,7 +760,7 @@ defmodule HalC2.Vcs do
        do: clear_worktree(cwd, path, branch)
 
   defp clear_cut_short({:error, _}, cwd, _path, branch) when is_binary(branch) do
-    Git.run(cwd, ["branch", "-D", branch])
+    Git.run(cwd, ["branch", "-D", "--", branch])
     changed(cwd)
   end
 
@@ -760,7 +777,7 @@ defmodule HalC2.Vcs do
     Git.run(cwd, ["worktree", "remove", "--force", path], timeout: worktree_timeout())
     File.rm_rf(path)
     Git.run(cwd, ["worktree", "prune"])
-    for name <- List.wrap(branch), do: Git.run(cwd, ["branch", "-D", name])
+    for name <- List.wrap(branch), do: Git.run(cwd, ["branch", "-D", "--", name])
     changed(cwd)
   end
 
@@ -985,6 +1002,7 @@ defmodule HalC2.Vcs do
 
   @doc "`vcs.removeWorktree`; a worktree that is already gone is pruned instead."
   def remove_worktree(%{"cwd" => cwd, "path" => path} = input) do
+    path = Path.expand(path)
     args = ["worktree", "remove"] ++ if(input["force"], do: ["--force"], else: []) ++ [path]
 
     case Git.run(cwd, args, timeout: worktree_timeout()) do
@@ -1011,6 +1029,22 @@ defmodule HalC2.Vcs do
   defp changed(cwd), do: HalC2.Vcs.Watch.refresh(cwd)
 
   defp ref?(cwd, ref), do: match?({:ok, _}, Git.ok(cwd, ["show-ref", "--verify", "--quiet", ref]))
+
+  # A client-supplied ref reaches git as a positional argument: never a shape
+  # git could read as its own option, and only characters a ref may hold.
+  defp safe_ref?(ref) when is_binary(ref) do
+    ref != "" and String.printable?(ref) and not String.starts_with?(ref, "-") and
+      not String.contains?(ref, ["..", " ", "~", "^", ":", "?", "*", "[", "\\"]) and
+      not String.ends_with?(ref, ["/", ".lock"])
+  end
+
+  defp safe_ref?(_ref), do: false
+
+  defp check_ref(cwd, ref, operation) do
+    if safe_ref?(ref),
+      do: :ok,
+      else: {:error, git_error(cwd, operation, "'#{inspect(ref)}' is not a valid ref name")}
+  end
 
   defp run(cwd, args, operation, detail, opts \\ []) do
     case Git.run(cwd, args, [max_bytes: 1024 * 1024] ++ opts) do

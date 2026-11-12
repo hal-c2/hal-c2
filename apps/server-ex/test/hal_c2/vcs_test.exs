@@ -24,6 +24,21 @@ defmodule HalC2.VcsTest do
     %{repo: repo, other: other}
   end
 
+  test "a ref that looks like a git option is refused before git runs", %{repo: repo} do
+    for ref <- ["--force", "--orphan=x", "-D", "--delete-merged=main", "a b", "a..b"] do
+      assert {:error, %{"_tag" => "GitCommandError"}} =
+               Vcs.switch_ref(%{"cwd" => repo, "refName" => ref}),
+             ref
+
+      assert {:error, %{"_tag" => "GitCommandError"}} =
+               Vcs.create_ref(%{"cwd" => repo, "refName" => ref}),
+             ref
+    end
+
+    # The checkout is untouched: still on main, no new branches.
+    assert Vcs.local_status(repo)["refName"] == "main"
+  end
+
   # `tmp` sits inside the checkout: without `GIT_CEILING_DIRECTORIES` (test_helper.exs) git
   # would find the checkout from a scratch folder, and a git action there would commit
   # and push the developer's work.
