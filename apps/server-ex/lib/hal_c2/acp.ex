@@ -838,6 +838,22 @@ defmodule HalC2.Acp do
   defp publish_staged(id, :unauthenticated, false),
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
+  # A probe's fresh session reports each option at the agent's default, but a running
+  # session may have set one since (`put_option/4`), before a `forget/1` or after. The probe decides which options and choices there are, and
+  # the defaults of those no session set; a value a session set stays while its
+  # option still offers it.
+  defp publish_staged(id, :config, config) do
+    set = :persistent_term.get({__MODULE__, id, :session_set}, %{})
+
+    config =
+      Enum.map(config, fn option ->
+        value = set[option["id"]]
+        if offers?(option, value), do: Map.put(option, "currentValue", value), else: option
+      end)
+
+    :persistent_term.put({__MODULE__, id, :config}, config)
+  end
+
   defp publish_staged(id, key, value),
     do: :persistent_term.put({__MODULE__, id, key}, value)
 
@@ -2230,16 +2246,22 @@ defmodule HalC2.Acp do
   Forgets what was read from an instance's agent, so it is probed again. Workspace
   snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
   the user already saw for a folder, and only the next workspace refresh replaces
-  them. `drop/1` is for an instance that is gone.
+  them. So do the values a running session set on its options (`put_option/4`): the
+  next probe's options keep those they still offer. `drop/1` is for an instance that
+  is gone, or that names another agent now.
   """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
   end
 
-  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  @doc """
+  Forgets an instance that was removed: `forget/1`, and its workspace snapshots and
+  session option values too.
+  """
   def drop(id) do
     locked(id, fn ->
       forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :session_set})
       :persistent_term.erase({__MODULE__, id, :workspaces})
       :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
       :ok
@@ -2383,26 +2405,76 @@ defmodule HalC2.Acp do
 
   @doc """
   Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
-  keeps its models, so its session options follow what it last offered.
+  keeps its models, so its session options follow what it last offered. `agent` is
+  the agent the session's runtime was launched on (`config.agentId`); a runtime left
+  on an agent the instance no longer names writes nothing. `:any` skips that check.
   """
-  def put_config(id, config_options) when is_list(config_options) do
+  def put_config(id, config_options, agent \\ :any)
+
+  def put_config(id, config_options, agent) when is_list(config_options) do
     if driver(id) == "acpRegistry" and
-         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :config}, config_options) end)
-      HalC2.Settings.notify_providers()
-    end
+         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options and
+         locked(id, fn ->
+           runs?(id, agent) and :persistent_term.put({__MODULE__, id, :config}, config_options)
+         end) == :ok,
+       do: HalC2.Settings.notify_providers()
 
     :ok
   end
 
-  def put_config(_id, _config_options), do: :ok
+  def put_config(_id, _config_options, _agent), do: :ok
 
-  @doc "Records `value` as what the registry session option `option` now holds."
-  def put_option(id, option, value) do
-    {__MODULE__, id, :config}
-    |> :persistent_term.get([])
-    |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
-    |> then(&put_config(id, &1))
+  @doc """
+  Records `value` as what the registry session option `option` now holds because a
+  session set it, as `put_config/3` does for `agent`'s runtime. A probe keeps it over
+  the agent's default (`publish_staged/3`); defaults a session merely reports do not.
+  """
+  def put_option(id, option, value, agent \\ :any) do
+    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the
+    # config; and in one lock with the config, so a probe's publish is not undone.
+    if driver(id) == "acpRegistry" and
+         locked(id, fn ->
+           if runs?(id, agent) do
+             session_set(id, %{option => value})
+             key = {__MODULE__, id, :config}
+             old = :persistent_term.get(key, [])
+
+             new =
+               Enum.map(
+                 old,
+                 &if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1)
+               )
+
+             new != old and :persistent_term.put(key, new) == :ok
+           end
+         end),
+       do: HalC2.Settings.notify_providers()
+
+    :ok
+  end
+
+  @doc """
+  The registry agent an instance names (`config.agentId`), the one its launch runs;
+  Settings drops the instance when it changes.
+  """
+  def agent_id(id) do
+    with {_driver, entry} <- instance(id), do: get_in(entry, ["config", "agentId"])
+  end
+
+  # Whether a runtime launched on `agent` still runs the instance's agent; Settings
+  # drops the instance when its agent changes (`drop/1`), and an old runtime's later
+  # writes must not come back.
+  defp runs?(_id, :any), do: true
+  defp runs?(id, agent), do: agent_id(id) == agent
+
+  # The option values a session set, which a probe's options keep (`publish_staged/3`).
+  # `forget/1` keeps them, as the session keeps running; `drop/1` erases them.
+  defp session_set(id, values) do
+    key = {__MODULE__, id, :session_set}
+    set = :persistent_term.get(key, %{})
+    merged = Map.merge(set, values)
+    if merged != set, do: :persistent_term.put(key, merged)
+    :ok
   end
 
   @max_options 16
@@ -2472,6 +2544,11 @@ defmodule HalC2.Acp do
   end
 
   defp plan_option?(_option), do: false
+
+  # Whether `value` is one `option` can hold: a choice it lists, or a boolean's.
+  defp offers?(_option, nil), do: false
+  defp offers?(%{"type" => "boolean"}, value), do: is_boolean(value)
+  defp offers?(option, value), do: Enum.any?(choices(option), &(&1["value"] == value))
 
   # A select's choices, those of its groups included.
   defp choices(option) do
