@@ -29,6 +29,7 @@ mod browser;
 mod device;
 mod history;
 mod navigation;
+mod permissions;
 
 /// The MC's browser tabs, oldest change first, and how it answers a close.
 struct FakePreviews {
@@ -469,6 +470,7 @@ pub fn register(steps: &mut Steps) {
     browser::register(steps);
     history::register(steps);
     navigation::register(steps);
+    permissions::register(steps);
     device::register(steps);
 
     steps.step(

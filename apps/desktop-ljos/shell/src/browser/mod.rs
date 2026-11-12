@@ -224,7 +224,7 @@ fn browser(engine: &Engine) -> Option<ObjectId> {
     if !made {
         let permissions = engine.create_native(
             PagePermissionsObject {
-                question: Value::Undefined,
+                question: question_json(None).to_value(),
                 inner: Rc::default(),
             },
             Some(browser),
@@ -341,8 +341,8 @@ pub fn pages(engine: &Engine) -> Vec<(String, ObjectId)> {
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "PagePermissions", uncreatable)]
 pub struct PagePermissionsObject {
-    /// The question on screen, `{id, tabId, kind, origin, url}`, or
-    /// undefined.
+    /// The question on screen, `{id, tabId, kind, origin, url}`, or `{}`
+    /// as desktop-qt's empty map, so a brick may read its fields.
     #[qml(readonly, notify)]
     question: Value,
     #[qml(skip)]
@@ -373,15 +373,12 @@ fn tell_question(engine: &Engine) {
     let Some(obj) = permissions(engine) else {
         return;
     };
-    let Ok(question) = engine.with::<PagePermissionsObject, _>(obj, |p| {
-        p.inner
-            .borrow()
-            .question()
-            .map(permissions::Question::to_json)
-    }) else {
+    let Ok(question) =
+        engine.with::<PagePermissionsObject, _>(obj, |p| p.inner.borrow().question().cloned())
+    else {
         return;
     };
-    let value = question.map_or(Value::Undefined, |q| q.to_value());
+    let value = question_json(question).to_value();
     warn(
         engine,
         engine.set_internal(obj, PagePermissionsObject::QUESTION, value),

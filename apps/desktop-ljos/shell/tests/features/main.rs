@@ -241,6 +241,18 @@ fn main() -> ExitCode {
     // as tst_Features.cpp does. Before any other thread starts.
     // SAFETY: nothing else runs yet.
     unsafe { std::env::set_var("TZ", "UTC") };
+    // Chromium draws off screen here, and on the desktop's display it would
+    // share the user's clipboard with the pages the scenarios copy from and
+    // read: Ozone's headless platform keeps a clipboard of its own.
+    if std::env::var_os("LJOS_WEBENGINE_CHROMIUM_FLAGS").is_none() {
+        // SAFETY: nothing else runs yet.
+        unsafe {
+            std::env::set_var(
+                "LJOS_WEBENGINE_CHROMIUM_FLAGS",
+                "--ozone-platform=headless --use-fake-device-for-media-stream --proxy-server=127.0.0.1:9",
+            )
+        };
+    }
     std::panic::set_hook(Box::new(|info| {
         PANICS.with(|p| p.borrow_mut().push(info.to_string()));
     }));

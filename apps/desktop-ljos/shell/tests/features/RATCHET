@@ -1715,9 +1715,20 @@ preview/surfaces.feature: A page cannot open a local or inline address as a popu
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [file:///etc/hosts]
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [javascript:alert(1)]
 preview/surfaces.feature: A page cannot open a local or inline address as a popup [view-source:https://acme.dev]
+preview/surfaces.feature: A page cannot raise a system notification in the app's name
+preview/surfaces.feature: A page may ask for some things and not others [anything else a page can ask for, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the camera, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the list of installed fonts, refused]
+preview/surfaces.feature: A page may ask for some things and not others [the microphone, refused]
+preview/surfaces.feature: A page may ask for some things and not others [to put text on the clipboard, allowed]
+preview/surfaces.feature: A page may ask for some things and not others [to show notifications, refused]
 preview/surfaces.feature: A page taken off is timed by its own MC's clock, not another MC's
 preview/surfaces.feature: A page that fills its space cannot be resized from its edges
 preview/surfaces.feature: A page that opens a blank window keeps its own page
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [data]
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [file]
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [javascript]
+preview/surfaces.feature: A page's link to another app asks before opening it
 preview/surfaces.feature: A page's title is remembered while its browser is not shown
 preview/surfaces.feature: A popup cannot open further popups
 preview/surfaces.feature: A project remembers its last fifty pages

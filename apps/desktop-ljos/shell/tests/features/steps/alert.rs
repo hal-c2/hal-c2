@@ -375,7 +375,7 @@ fn mode_of(label: &str) -> Option<&'static str> {
 }
 
 /// The window is somewhere else while `title` completes.
-fn completes_in_background(world: &mut World, title: &str) -> Outcome {
+pub fn completes_in_background(world: &mut World, title: &str) -> Outcome {
     fake(world).platform.borrow_mut().focused = false;
     alerts(world)?;
     working(world, title, "")?;
