@@ -42,12 +42,16 @@ defmodule HalC2.ThreadFilesPropTest do
           HalC2.Shell
         ])
 
+        # A folder of its own: the MC's home is never a workspace root.
+        work = Path.join(home, "work")
+        File.mkdir_p!(work)
+
         {:ok, _} =
           HalC2.Projects.mutate(%{
             "type" => "project.create",
             "projectId" => "demo",
             "title" => "demo",
-            "workspaceRoot" => home
+            "workspaceRoot" => work
           })
 
         {history, state, result} = run_commands(__MODULE__, cmds)
