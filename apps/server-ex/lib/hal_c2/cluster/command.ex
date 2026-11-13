@@ -176,16 +176,6 @@ defmodule HalC2.Cluster.Command do
   end
 
   # This home's running MC over loopback, once it proves it holds the token
-  # (`HalC2.Web.local_mc/2`), on the port its runtime record names.
-  defp mc do
-    port = HalC2.Web.running_port()
-
-    case HalC2.Web.local_mc(port) do
-      {base, token} ->
-        {:ok, base, token}
-
-      nil ->
-        {:error, "No MC of #{HalC2.Paths.data_dir()} answers on port #{port}; is it running?"}
-    end
-  end
+  # (`HalC2.Web.local_mc/2`), at the host and port its runtime record names.
+  defp mc, do: HalC2.Web.local_mc()
 end

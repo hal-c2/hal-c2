@@ -85,14 +85,15 @@ defmodule HalC2.WebTokenTest do
     port = start_mc()
     token = HalC2.Web.token()
 
-    assert HalC2.Web.local_mc(port) == {"http://127.0.0.1:#{port}", token}
+    assert HalC2.Web.local_mc({nil, port}) == {:ok, "http://127.0.0.1:#{port}", token}
   end
 
   test "a program holding the MC's port is never sent the token" do
     token = HalC2.Web.token()
     port = squat(fn _path -> ok_json(~s({"proof":"a guess"})) end)
 
-    assert HalC2.Web.local_mc(port) == nil
+    assert {:error, message} = HalC2.Web.local_mc({nil, port})
+    assert message =~ "answers at http://127.0.0.1:#{port}"
     assert_receive {:request, request}
     refute request =~ token
     refute request =~ ~r/authorization/i
@@ -103,15 +104,8 @@ defmodule HalC2.WebTokenTest do
   test "a program passing the challenge on to the real MC is not taken for it" do
     mc = start_mc()
 
-    relay =
-      squat(fn path ->
-        {:ok, {{_, 200, _}, _, body}} =
-          :httpc.request(:get, {~c"http://127.0.0.1:#{mc}#{path}", []}, [], body_format: :binary)
-
-        ok_json(body)
-      end)
-
-    assert HalC2.Web.local_mc(relay) == nil
+    relay = squat(fn path -> ok_json(relayed("127.0.0.1", mc, path)) end)
+    assert {:error, _} = HalC2.Web.local_mc({nil, relay})
     assert_receive {:request, _}
 
     redirect =
@@ -120,36 +114,52 @@ defmodule HalC2.WebTokenTest do
           "content-length: 0\r\nconnection: close\r\n\r\n"
       end)
 
-    assert HalC2.Web.local_mc(redirect) == nil
+    assert {:error, _} = HalC2.Web.local_mc({nil, redirect})
     assert_receive {:request, _}
+  end
+
+  # An MC bound to 127.0.0.2 leaves 127.0.0.1 on its port free: a tool configured with
+  # the default host would dial whatever takes it, which passes the challenge on.
+  test "a local tool reaches the MC where it binds, not where the tool is configured" do
+    mc = start_mc("127.0.0.2")
+    token = HalC2.Web.token()
+
+    relay = squat(fn path -> ok_json(relayed("127.0.0.2", mc, path)) end, mc)
+    assert {:error, _} = HalC2.Web.local_mc({nil, mc})
+    assert_receive {:request, _}
+
+    assert HalC2.Web.running_listener() == {"127.0.0.2", mc}
+    assert HalC2.Web.local_mc() == {:ok, "http://127.0.0.2:#{mc}", token}
+    assert relay == mc
+  end
+
+  test "an MC on every interface is reached on IPv4 loopback" do
+    port = start_mc("::")
+
+    assert HalC2.Web.local_mc({"::", port}) ==
+             {:ok, "http://127.0.0.1:#{port}", HalC2.Web.token()}
   end
 
   # Only an address the MC itself holds: on a loopback port it leaves free, a squatter
   # could relay the challenge to it over a connection from loopback.
   test "a local tool reaches the MC only at an address the MC holds" do
     for {host, expected} <- [
+          {nil, "127.0.0.1"},
           {"127.0.0.1", "127.0.0.1"},
           {"127.72.0.57", "127.72.0.57"},
-          {"::1", "[::1]"},
           {"0.0.0.0", "127.0.0.1"},
           {"::", "127.0.0.1"},
           {"localhost", "127.0.0.1"},
+          {"::1", nil},
           {"192.168.1.5", nil},
           {"fd7a:115c:a1e0::1", nil},
           {"mc.example", nil}
         ],
-        do: assert(HalC2.Web.loopback_host(host) == expected, host)
+        do: assert(HalC2.Web.loopback_host(host) == expected, inspect(host))
 
     HalC2.Web.token()
-    previous = Application.fetch_env(:hal_c2, :host)
-    Application.put_env(:hal_c2, :host, "192.168.1.5")
-
-    on_exit(fn ->
-      with {:ok, host} <- previous, do: Application.put_env(:hal_c2, :host, host)
-      if previous == :error, do: Application.delete_env(:hal_c2, :host)
-    end)
-
-    assert HalC2.Web.local_mc(1) == nil
+    assert {:error, message} = HalC2.Web.local_mc({"192.168.1.5", 1})
+    assert message =~ "listens on 192.168.1.5 only"
   end
 
   test "the MC answers a proof only for a challenge, and only from this machine" do
@@ -174,24 +184,37 @@ defmodule HalC2.WebTokenTest do
     assert HalC2.Web.Router.call(proxied, []).status == 403
   end
 
-  # This home's MC on a port of its own, stopped with the test.
-  defp start_mc do
-    previous = Application.fetch_env(:hal_c2, :port)
-    Application.put_env(:hal_c2, :port, 0)
+  # This home's MC on a port of its own, bound to `host`, stopped with the test. Its
+  # runtime record says where, as a running MC's does.
+  defp start_mc(host \\ "127.0.0.1") do
+    for {key, value} <- [port: 0, host: host] do
+      previous = Application.fetch_env(:hal_c2, key)
+      Application.put_env(:hal_c2, key, value)
 
-    on_exit(fn ->
-      with {:ok, port} <- previous, do: Application.put_env(:hal_c2, :port, port)
-      if previous == :error, do: Application.delete_env(:hal_c2, :port)
-    end)
+      on_exit(fn ->
+        with {:ok, value} <- previous, do: Application.put_env(:hal_c2, key, value)
+        if previous == :error, do: Application.delete_env(:hal_c2, key)
+      end)
+    end
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    File.mkdir_p!(Path.dirname(HalC2.RuntimeRecord.path()))
+    File.write!(HalC2.RuntimeRecord.path(), JSON.encode!(HalC2.RuntimeRecord.record()))
     port
   end
 
-  # A program on a loopback port answering one request with `answer.(path)`; the test
-  # is sent the request it read.
-  defp squat(answer) do
-    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+  # What the MC at `host:port` answers to `path`, as a program passing it on gets it.
+  defp relayed(host, port, path) do
+    {:ok, {{_, 200, _}, _, body}} =
+      :httpc.request(:get, {~c"http://#{host}:#{port}#{path}", []}, [], body_format: :binary)
+
+    body
+  end
+
+  # A program on 127.0.0.1 (on `port`, else any) answering one request with
+  # `answer.(path)`; the test is sent the request it read.
+  defp squat(answer, port \\ 0) do
+    {:ok, listen} = :gen_tcp.listen(port, [:binary, active: false, ip: {127, 0, 0, 1}])
     {:ok, port} = :inet.port(listen)
     test = self()
 

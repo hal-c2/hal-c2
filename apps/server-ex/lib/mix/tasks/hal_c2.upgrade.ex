@@ -131,11 +131,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
     # The token goes only to a listener that proves it holds it.
     {base, token} =
-      HalC2.Web.local_mc() ||
-        Mix.raise(
-          "No MC of #{HalC2.Paths.data_dir()} answers on port #{HalC2.Web.running_port()}; " <>
-            "start one with `mise run mc`"
-        )
+      case HalC2.Web.local_mc() do
+        {:ok, base, token} -> {base, token}
+        {:error, message} -> Mix.raise(message)
+      end
 
     # This checkout's build, so an MC started from another checkout moves to it.
     body = JSON.encode!(%{"build" => Mix.Project.build_path()})

@@ -9,12 +9,17 @@ defmodule HalC2.Web do
     # The token file exists from boot, so local tools can read it before any client connects.
     _ = token()
 
+    # `::` takes IPv4 too, as `0.0.0.0` would, even where IPv6 sockets default to
+    # IPv6 only: clients and local tools then reach it at 127.0.0.1 everywhere, and no
+    # other program can take that port there (`loopback_host/1`).
+    transport = if host == "::", do: [transport_options: [ipv6_v6only: false]], else: []
+
     [
       plug: HalC2.Web.Entry,
       ip: ip,
       port: port,
       startup_log: false,
-      thousand_island_options: [supervisor_options: [name: HalC2.Web.Listener]]
+      thousand_island_options: [supervisor_options: [name: HalC2.Web.Listener]] ++ transport
     ]
     |> Bandit.child_spec()
     # A fixed id, so the listener can be stopped and started by name.
@@ -190,42 +195,52 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  The loopback URL and access token of the MC on `port` whose token is at `path` (this
-  home's by default), for a local tool to call it with: `{url, token}` once the
-  listener there has proved it holds the token without being sent it (`holds_token?/2`),
-  nil when nothing there can (no MC runs, or another program holds the port). Nil too
-  for an MC bound to one non-loopback address (`loopback_host/1`): the loopback port is
-  free for anyone to take, and such a squatter can relay the challenge to that MC.
+  The loopback URL and access token of this home's MC, for a local tool to call it
+  with: `{:ok, url, token}` once the listener there has proved it holds the token
+  without being sent it (`holds_token?/2`). `{:error, message}` when nothing there can
+  (no MC runs, or another program holds the port), or when the MC listens where a local
+  tool does not reach it (`loopback_host/1`): on a loopback port it leaves free, a
+  squatter could relay the challenge to it. `listener` is the `{host, port}` the MC
+  binds, the running one's by default (`running_listener/0`), so the tool reaches it
+  whatever host and port the tool itself is configured with.
   """
   # sobelow_skip ["Traversal.FileModule"]
-  # Reads only an MC's own token file: this home's, or the installed MC's the
-  # upgrade task found under its home.
-  def local_mc(port \\ running_port(), path \\ token_path()) do
-    host = loopback_host(Application.get_env(:hal_c2, :host))
-    base = host && "http://#{host}:#{port}"
+  # Reads only this home's token file, or a test's.
+  def local_mc(listener \\ running_listener(), path \\ token_path()) do
+    {host, port} = listener
 
-    with true <- is_binary(base),
-         {:ok, token} <- File.read(path),
-         token = String.trim(token),
-         true <- holds_token?(base, token) do
-      {base, token}
-    else
-      _ -> nil
+    case loopback_host(host) do
+      nil ->
+        {:error,
+         "The MC of #{HalC2.Paths.data_dir()} listens on #{host} only; " <>
+           "local tools reach it at 127.0.0.1"}
+
+      loopback ->
+        base = "http://#{loopback}:#{port}"
+
+        with {:ok, token} <- File.read(path),
+             token = String.trim(token),
+             true <- holds_token?(base, token) do
+          {:ok, base, token}
+        else
+          _ -> {:error, "No MC of #{HalC2.Paths.data_dir()} answers at #{base}; is it running?"}
+        end
     end
   end
 
   @doc """
-  The port this home's running MC listens on, as its runtime record names it (an MC
-  started with `--port`), else the configured one.
+  The `{host, port}` this home's running MC binds, as its runtime record names them
+  (an MC started with `--host` or `--port`), else the configured ones. The host is nil
+  for the default, loopback.
   """
   # sobelow_skip ["Traversal.FileModule"]
   # Reads only this home's runtime record.
-  def running_port do
+  def running_listener do
     with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
-         {:ok, %{"port" => port}} when is_integer(port) <- JSON.decode(json) do
-      port
+         {:ok, %{"port" => port} = record} when is_integer(port) <- JSON.decode(json) do
+      {record["host"], port}
     else
-      _ -> port()
+      _ -> {Application.get_env(:hal_c2, :host), port()}
     end
   end
 
@@ -255,18 +270,18 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  Where a local tool reaches an MC bound to `host`: that host when it is a loopback
-  address, `127.0.0.1` when it is a wildcard (which listens there too) or unset, nil for one
-  non-loopback address. The MC holds the address returned, so while it runs no other
-  program listens there on its port.
+  Where a local tool reaches an MC bound to `host`: that host when it is an IPv4
+  loopback address, `127.0.0.1` when it is a wildcard (which listens there too, `::`
+  included, see `child_spec/1`) or unset, nil otherwise. The MC holds the address
+  returned, so while it runs no other program listens there on its port. Nil for `::1`
+  as well: the tools' HTTP client (httpc) dials IPv4 only.
   """
-  def loopback_host(host) when host in [nil, "0.0.0.0", "::"], do: "127.0.0.1"
+  def loopback_host(host) when host in [nil, "0.0.0.0", "::", "localhost"], do: "127.0.0.1"
 
   def loopback_host(host) when is_binary(host) do
     case :inet.parse_address(String.to_charlist(host)) do
       {:ok, {127, _, _, _}} -> host
-      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> "[::1]"
-      _ -> if host == "localhost", do: "127.0.0.1"
+      _ -> nil
     end
   end
 

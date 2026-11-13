@@ -139,10 +139,11 @@ defmodule Mix.Tasks.HalC2.Auth do
   # `key` of the running MC's answer to `POST path`, or nil when no MC of this home
   # answers (none has run, it is stopped, or another program holds the port), for the
   # caller to do the work in the store instead. The token goes only to a listener that
-  # proved it holds it (`HalC2.Web.local_mc/1`). An MC that answers `false` found
-  # nothing to revoke; the store then says the same.
+  # proved it holds it (`HalC2.Web.local_mc/2`); an MC this tool does not reach still
+  # drops a session revoked in the store within its next session recheck. An MC that
+  # answers `false` found nothing to revoke; the store then says the same.
   defp through_mc(path, body, key) do
-    with {base, token} <- HalC2.Web.local_mc(),
+    with {:ok, base, token} <- HalC2.Web.local_mc(),
          request =
            {~c"#{base}#{path}", [{~c"authorization", ~c"Bearer #{token}"}], ~c"application/json",
             JSON.encode!(body)},
