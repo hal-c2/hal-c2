@@ -101,9 +101,9 @@ defmodule HalC2.Cluster.Command do
   def request(method, path, body \\ nil, timeout \\ 30_000) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    with {:ok, token} <- token() do
+    with {:ok, base, token} <- mc() do
       headers = [{~c"authorization", ~c"Bearer #{token}"}]
-      url = to_charlist(origin() <> path)
+      url = to_charlist(base <> path)
 
       request =
         if method == :get,
@@ -121,7 +121,7 @@ defmodule HalC2.Cluster.Command do
           {:error, "The MC answered #{status}: #{answer}"}
 
         {:error, _} ->
-          {:error, "No MC answers at #{origin()}; is it running?"}
+          {:error, "No MC answers at #{base}; is it running?"}
       end
     end
   end
@@ -133,16 +133,16 @@ defmodule HalC2.Cluster.Command do
   def stream(path, body, timeout, progress) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    with {:ok, token} <- token() do
+    with {:ok, base, token} <- mc() do
       request =
-        {to_charlist(origin() <> path), [{~c"authorization", ~c"Bearer #{token}"}],
+        {to_charlist(base <> path), [{~c"authorization", ~c"Bearer #{token}"}],
          ~c"application/json", JSON.encode!(body)}
 
       options = [sync: false, stream: :self, body_format: :binary]
 
       case :httpc.request(:post, request, [timeout: timeout], options) do
         {:ok, ref} -> lines(ref, "", "", timeout, progress)
-        {:error, _} -> {:error, "No MC answers at #{origin()}; is it running?"}
+        {:error, _} -> {:error, "No MC answers at #{base}; is it running?"}
       end
     end
   end
@@ -175,20 +175,26 @@ defmodule HalC2.Cluster.Command do
     end
   end
 
-  defp token do
-    case File.read(HalC2.Web.token_path()) do
-      {:ok, token} -> {:ok, String.trim(token)}
-      {:error, _} -> {:error, "No MC has run from #{HalC2.Paths.data_dir()}"}
+  # This home's running MC over loopback, once it proves it holds the token
+  # (`HalC2.Web.local_mc/2`), on the port its runtime record names, else where it would.
+  defp mc do
+    port = record_port() || HalC2.Web.port()
+
+    case HalC2.Web.local_mc(port) do
+      {base, token} ->
+        {:ok, base, token}
+
+      nil ->
+        {:error, "No MC of #{HalC2.Paths.data_dir()} answers on port #{port}; is it running?"}
     end
   end
 
-  # The running MC's own record of where it listens, else where it would.
-  defp origin do
+  defp record_port do
     with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
-         {:ok, %{"origin" => origin}} <- JSON.decode(json) do
-      origin
+         {:ok, %{"port" => port}} when is_integer(port) <- JSON.decode(json) do
+      port
     else
-      _ -> HalC2.Web.base_url()
+      _ -> nil
     end
   end
 end

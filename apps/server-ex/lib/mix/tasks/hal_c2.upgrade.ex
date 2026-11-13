@@ -128,16 +128,14 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp local do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:inets)
-    base = HalC2.Web.base_url()
 
-    token =
-      case File.read(HalC2.Web.token_path()) do
-        {:ok, token} ->
-          String.trim(token)
-
-        {:error, _} ->
-          Mix.raise("No MC has run from #{HalC2.Paths.data_dir()}; start one with `mise run mc`")
-      end
+    # The token goes only to a listener that proves it holds it.
+    {base, token} =
+      HalC2.Web.local_mc() ||
+        Mix.raise(
+          "No MC of #{HalC2.Paths.data_dir()} answers on port #{HalC2.Web.port()}; " <>
+            "start one with `mise run mc`"
+        )
 
     # This checkout's build, so an MC started from another checkout moves to it.
     body = JSON.encode!(%{"build" => Mix.Project.build_path()})
@@ -286,7 +284,8 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp local_release(path, home) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    with {:ok, base, token} <- installed_record(home) do
+    with {:ok, record_base, token} <- installed_record(home),
+         {:ok, base} <- proved(record_base, token) do
       # The operator chose this checkout's build: moving back to it, from a
       # worktree behind the installed one, is the explicit choice the gate asks for.
       body =
@@ -326,6 +325,17 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     else
       {:error, reason} -> Mix.raise(reason)
     end
+  end
+
+  # The installed MC at `record_base`, over loopback once it proves it holds `token`,
+  # so the token never goes to another program holding its port.
+  defp proved(record_base, token) do
+    %URI{host: host, port: port} = URI.parse(record_base)
+    base = "http://#{HalC2.Web.loopback_host(host)}:#{port}"
+
+    if HalC2.Web.holds_token?(base, token),
+      do: {:ok, base},
+      else: {:error, "No installed MC answers at #{base} with the token under its home"}
   end
 
   defp loaded(mc, changed, restart) do

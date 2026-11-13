@@ -190,34 +190,59 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  The loopback URL and access token of this home's running MC, for a local tool to
-  call it with: `{url, token}` once the listener on `port` has proved it holds the
-  token without being sent it, nil when nothing there can (no MC runs, or another
-  program holds the port). An MC bound to one non-loopback address is not reached.
+  The loopback URL and access token of the MC on `port` whose token is at `path` (this
+  home's by default), for a local tool to call it with: `{url, token}` once the
+  listener there has proved it holds the token without being sent it (`holds_token?/2`),
+  nil when nothing there can (no MC runs, or another program holds the port). An MC
+  bound to one non-loopback address is not reached.
   """
-  def local_mc(port \\ port()) do
-    challenge = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
-    base = "http://#{loopback()}:#{port}"
-    request = {~c"#{base}/.well-known/hal-c2/proof?challenge=#{challenge}", []}
+  # sobelow_skip ["Traversal.FileModule"]
+  # Reads only an MC's own token file: this home's, or the installed MC's the
+  # upgrade task found under its home.
+  def local_mc(port \\ port(), path \\ token_path()) do
+    base = "http://#{loopback_host(Application.get_env(:hal_c2, :host))}:#{port}"
 
-    with {:ok, token} <- File.read(token_path()),
+    with {:ok, token} <- File.read(path),
          token = String.trim(token),
-         {:ok, _} <- Application.ensure_all_started(:inets),
-         {:ok, {{_, 200, _}, _, reply}} <-
-           :httpc.request(:get, request, [timeout: 5_000], body_format: :binary),
-         {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply),
-         true <- Plug.Crypto.secure_compare(proof, proof(token, challenge)) do
+         true <- holds_token?(base, token) do
       {base, token}
     else
       _ -> nil
     end
   end
 
-  defp loopback do
-    if Application.get_env(:hal_c2, :host) == "::1", do: "[::1]", else: "127.0.0.1"
+  @doc """
+  Whether the listener at `base` proves it holds `token` by answering a fresh challenge
+  with `proof/2`, so the token can be sent there. The MC answers only from loopback,
+  so a program squatting on loopback cannot relay the challenge to an MC elsewhere.
+  """
+  def holds_token?(base, token) do
+    challenge = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
+    request = {~c"#{base}/.well-known/hal-c2/proof?challenge=#{challenge}", []}
+
+    with {:ok, _} <- Application.ensure_all_started(:inets),
+         {:ok, {{_, 200, _}, _, reply}} <-
+           :httpc.request(:get, request, [timeout: 5_000], body_format: :binary),
+         {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply) do
+      Plug.Crypto.secure_compare(proof, proof(token, challenge))
+    else
+      _ -> false
+    end
   end
 
-  @doc "What `local_mc/1` expects the listener to answer to `challenge`."
+  @doc """
+  Where a local tool reaches an MC bound to `host`: that host when it is a loopback
+  address, else `127.0.0.1` (a wildcard listens there too).
+  """
+  def loopback_host(host) do
+    case is_binary(host) && :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> host
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> "[::1]"
+      _ -> "127.0.0.1"
+    end
+  end
+
+  @doc "What `holds_token?/2` expects the listener to answer to `challenge`."
   def proof(token, challenge) do
     :crypto.mac(:hmac, :sha256, token, "hal-c2 local proof\n" <> challenge)
     |> Base.url_encode64(padding: false)

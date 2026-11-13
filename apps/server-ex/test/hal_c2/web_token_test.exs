@@ -118,19 +118,22 @@ defmodule HalC2.WebTokenTest do
     refute request =~ ~r/authorization/i
   end
 
-  test "the MC answers a proof only for a challenge" do
-    conn = HalC2.Web.Router.call(conn(:get, "/.well-known/hal-c2/proof"), [])
-    assert conn.status == 400
+  test "the MC answers a proof only for a challenge, and only from this machine" do
+    challenge = String.duplicate("a", 32)
+    path = "/.well-known/hal-c2/proof?challenge=#{challenge}"
 
-    conn =
-      HalC2.Web.Router.call(
-        conn(:get, "/.well-known/hal-c2/proof?challenge=#{String.duplicate("a", 32)}"),
-        []
-      )
+    assert HalC2.Web.Router.call(conn(:get, "/.well-known/hal-c2/proof"), []).status == 400
 
+    conn = HalC2.Web.Router.call(conn(:get, path), [])
     assert conn.status == 200
+    assert JSON.decode!(conn.resp_body)["proof"] == HalC2.Web.proof(HalC2.Web.token(), challenge)
 
-    assert JSON.decode!(conn.resp_body)["proof"] ==
-             HalC2.Web.proof(HalC2.Web.token(), String.duplicate("a", 32))
+    # A squatter on loopback relaying the challenge to an MC on a LAN address, or
+    # through a proxy on this machine, gets no proof.
+    lan = conn(:get, path) |> Map.put(:remote_ip, {192, 168, 1, 5})
+    assert HalC2.Web.Router.call(lan, []).status == 403
+
+    proxied = conn(:get, path) |> put_req_header("x-forwarded-for", "100.64.0.2")
+    assert HalC2.Web.Router.call(proxied, []).status == 403
   end
 end
