@@ -359,6 +359,16 @@ defmodule HalC2.AttachmentsTest do
                }
              })
 
+    # Except the browser preview's captures, which the MC keeps there to show.
+    capture = Path.join(HalC2.Mcp.Preview.artifacts_dir(), "browser-screenshot-1.png")
+    File.mkdir_p!(Path.dirname(capture))
+    File.write!(capture, @png)
+
+    assert {:ok, %{"relativeUrl" => _}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "media-file", "threadId" => "t", "path" => capture}
+             })
+
     # A saved icon path may point anywhere, so a link named like an image is
     # judged by the token it leads to.
     checkout = Path.join(files(), "checkout")
