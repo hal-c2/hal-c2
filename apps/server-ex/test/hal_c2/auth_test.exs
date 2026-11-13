@@ -192,21 +192,26 @@ defmodule HalC2.AuthTest do
     assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
   end
 
-  # Subscriptions keep flowing to a socket that makes no calls: it is closed too.
-  test "a session deleted from the store loses its idle socket", %{port: port, path: path} do
+  # Subscriptions keep flowing to a socket that makes no calls: its session recheck
+  # closes it, which is how a revoke the CLI made in the store reaches a running MC.
+  test "a session deleted from the store loses its subscribed socket",
+       %{port: port, path: path} do
     Application.put_env(:hal_c2, :session_recheck_ms, 0)
     on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
 
     {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    {:ok, _} = HalC2.Streams.commit("store-revoke-th", :thread, [{"note", "n1", %{}}])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "store-revoke-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
     socket = Mint.HTTP.get_socket(client.conn)
 
     {:ok, db} = Sqlite3.open(path)
     :ok = Sqlite3.execute(db, "DELETE FROM auth_sessions WHERE id = '#{id}'")
     Sqlite3.close(db)
+    {:ok, _} = HalC2.Streams.commit("store-revoke-th", :thread, [{"note", "n2", %{}}])
 
-    assert_receive {:tcp, ^socket, _} = message, 5_000
-    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
-    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+    assert closed_with(client, socket) == {:close, 4401, "session revoked"}
   end
 
   # The CLI revokes through the running MC: a subscribed socket closes at once, without
@@ -789,5 +794,23 @@ defmodule HalC2.AuthTest do
 
     {:ok, {{_, status, _}, _, resp}} = :httpc.request(method, req, [], [])
     {status, JSON.decode!(to_string(resp))}
+  end
+
+  # The close frame the socket ends with, past any subscription data sent before it.
+  defp closed_with(client, socket) do
+    assert_receive {:tcp, ^socket, _} = message, 5_000
+    {:ok, conn, responses} = Mint.WebSocket.stream(client.conn, message)
+
+    {ws, frames} =
+      for {:data, _, data} <- responses, reduce: {client.ws, []} do
+        {ws, seen} ->
+          {:ok, ws, frames} = Mint.WebSocket.decode(ws, data)
+          {ws, seen ++ frames}
+      end
+
+    case Enum.find(frames, &match?({:close, _, _}, &1)) do
+      nil -> closed_with(%{client | conn: conn, ws: ws}, socket)
+      close -> close
+    end
   end
 end
