@@ -348,13 +348,15 @@ defmodule Mix.Tasks.HalC2.Upgrade do
             {:ok, base}
 
           :predates ->
+            # The single file installs into the home its environment names, as the MC does.
             env =
               case home do
-                {:root, root} -> "HAL_C2_HOME=#{root} "
+                {:root, root} -> "HAL_C2_HOME=#{shell_quote(root)} "
+                {:mc, dir} -> "HAL_C2_MC_HOME=#{shell_quote(dir)} "
                 _ -> ""
               end
 
-            single = String.replace_suffix(bundle, ".tar.gz", "")
+            single = shell_quote(String.replace_suffix(bundle, ".tar.gz", ""))
 
             {:error,
              "The installed MC at #{base} predates the proof local tools ask for before " <>
@@ -366,6 +368,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
         end
     end
   end
+
+  # `path` as one shell word, so a printed command still runs when copied.
+  defp shell_quote(path), do: "'" <> String.replace(path, "'", ~S('\'')) <> "'"
 
   defp loaded(mc, changed, restart) do
     Mix.shell().info("#{mc}: upgraded #{length(changed)} modules in place")

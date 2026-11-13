@@ -671,8 +671,27 @@ defmodule HalC2.UpgradeTest do
   end
 
   # An MC from before the local proof answers it 404, as any unknown path: it is
-  # pointed at the build just made, not told no MC runs.
+  # pointed at the build just made, in the home it runs from, not told no MC runs.
   test "an installed MC from before the local proof is told to install this build" do
+    bundle = "/build/hal-c2-mc-2.0.0-linux-x64.tar.gz"
+
+    for {home, command} <- [
+          {{:root, "/srv/hal-c2"},
+           "`HAL_C2_HOME='/srv/hal-c2' '/build/hal-c2-mc-2.0.0-linux-x64' install`"},
+          {{:mc, "/srv/my MC's"},
+           ~S(`HAL_C2_MC_HOME='/srv/my MC'\''s' '/build/hal-c2-mc-2.0.0-linux-x64' install`)},
+          {nil, "`'/build/hal-c2-mc-2.0.0-linux-x64' install`"}
+        ] do
+      base = "http://127.0.0.1:#{answering_404()}"
+
+      assert {:error, message} = Mix.Tasks.HalC2.Upgrade.proved(base, "token", bundle, home)
+      assert message =~ "predates the proof"
+      assert String.ends_with?(message, command), message
+    end
+  end
+
+  # A listener answering one request 404, as an MC without the route does.
+  defp answering_404 do
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
     {:ok, port} = :inet.port(listen)
 
@@ -683,18 +702,7 @@ defmodule HalC2.UpgradeTest do
       :gen_tcp.close(socket)
     end)
 
-    bundle = "/build/hal-c2-mc-2.0.0-linux-x64.tar.gz"
-
-    assert {:error, message} =
-             Mix.Tasks.HalC2.Upgrade.proved(
-               "http://127.0.0.1:#{port}",
-               "token",
-               bundle,
-               {:root, "/srv/hal-c2"}
-             )
-
-    assert message =~ "predates the proof"
-    assert message =~ "`HAL_C2_HOME=/srv/hal-c2 /build/hal-c2-mc-2.0.0-linux-x64 install`"
+    port
   end
 
   test "a socket opened before an upgrade keeps its subscriptions" do
