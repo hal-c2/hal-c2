@@ -170,6 +170,38 @@ defmodule HalC2.ProjectEnvironmentTest do
                {[{"PATH", "/envrc/bin:/mise/bin:" <> System.get_env("PATH")}], []}
     end
 
+    # direnv is a program the MC starts: what mise loaded reaches it only as far as it
+    # could reach a provider launch, never a loader or git-program control.
+    test "direnv runs without the blocked variables mise loaded", %{dir: dir} do
+      fake(
+        dir,
+        "mise",
+        ~s({"NODE_OPTIONS":"-r /x","BASH_ENV":"/x","GIT_CONFIG_KEY_0":"k","A":"1"})
+      )
+
+      path = Path.join(dir, "seen-direnv")
+
+      File.write!(path, """
+      #!/bin/sh
+      printf '{"SEEN":"%s|%s|%s|%s"}' "${NODE_OPTIONS-unset}" "${BASH_ENV-unset}" \\
+        "${GIT_CONFIG_KEY_0-unset}" "$A"
+      """)
+
+      File.chmod!(path, 0o755)
+      commands = Application.get_env(:hal_c2, :project_environment_commands, %{})
+
+      Application.put_env(
+        :hal_c2,
+        :project_environment_commands,
+        Map.put(commands, "direnv", path)
+      )
+
+      root = checkout(dir, %{"mise.toml" => "", ".envrc" => ""})
+
+      {vars, []} = ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root)
+      assert List.keyfind(vars, "SEEN", 0) == {"SEEN", "unset|unset|unset|1"}
+    end
+
     test "mise and direnv share one time limit", %{dir: dir} do
       path = Path.join(dir, "slow-mise")
       File.write!(path, "#!/bin/sh\nexec sleep 30\n")

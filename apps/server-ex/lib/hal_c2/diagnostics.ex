@@ -649,7 +649,7 @@ defmodule HalC2.Diagnostics do
       "\\1\\2[REDACTED]"
     )
     |> String.replace(
-      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*)(?!["'\[]).*?(?=\s+--?[A-Za-z]|\z)/i,
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*)(?!["']|\[REDACTED\]).*?(?=\s+--?[A-Za-z]|\z)/i,
       "\\1\\2[REDACTED]"
     )
     |> String.replace(

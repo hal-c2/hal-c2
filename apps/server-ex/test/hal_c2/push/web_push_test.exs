@@ -52,4 +52,54 @@ defmodule HalC2.Push.WebPushTest do
     assert WebPush.decrypt(WebPush.encrypt("hello", public, auth), other_private, auth) ==
              :error
   end
+
+  describe "post/4" do
+    # The request never leaves: an endpoint whose name resolves to this machine is gone.
+    test "a host that resolves to a private address is refused before connecting" do
+      assert WebPush.resolve("localhost") == :private
+      assert WebPush.post("https://localhost:1/push", "body", "normal") == :gone
+    end
+
+    # The connection goes to the address checked, under the endpoint's own name, so
+    # what DNS answers at connect time does not matter.
+    test "the request goes to the resolved address, naming the endpoint's host" do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(listen)
+      test = self()
+
+      spawn_link(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        {:ok, hello} = :gen_tcp.recv(socket, 0, 5_000)
+        send(test, {:client_hello, hello})
+        :gen_tcp.close(socket)
+      end)
+
+      pinned = fn "push.invalid" -> {:ok, {127, 0, 0, 1}} end
+
+      assert {:retry, _} =
+               WebPush.post("https://push.invalid:#{port}/p", "body", "normal", pinned)
+
+      assert_receive {:client_hello, hello}, 5_000
+      assert hello =~ "push.invalid"
+    end
+
+    test "public addresses are the internet's, and the rest are not" do
+      for address <- [{8, 8, 8, 8}, {1, 1, 1, 1}, {0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111}],
+          do: assert(WebPush.public_address?(address))
+
+      for address <- [
+            {127, 0, 0, 1},
+            {10, 1, 2, 3},
+            {172, 16, 0, 1},
+            {192, 168, 1, 1},
+            {169, 254, 169, 254},
+            {100, 100, 100, 100},
+            {0, 0, 0, 0, 0, 0, 0, 1},
+            {0xFD7A, 0x115C, 0xA1E0, 0, 0, 0, 0, 1},
+            {0xFE80, 0, 0, 0, 0, 0, 0, 1},
+            {0, 0, 0, 0, 0, 0xFFFF, 0x7F00, 1}
+          ],
+          do: refute(WebPush.public_address?(address))
+    end
+  end
 end

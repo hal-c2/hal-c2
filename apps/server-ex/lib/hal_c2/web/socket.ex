@@ -47,7 +47,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 11
+  @state_version 12
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -1322,6 +1322,13 @@ defmodule HalC2.Web.Socket do
       |> Map.merge(%{following: %{}, trace: nil, opened_at: System.monotonic_time(:millisecond)})
       |> Map.put(:v, 11)
       |> migrate()
+
+  # Version 12: a socket with a session rechecks it on a timer, started here for one
+  # opened before, which no recheck reaches otherwise.
+  defp migrate(%{v: 11} = state) do
+    if state.session, do: schedule_recheck()
+    state |> Map.put(:v, 12) |> migrate()
+  end
 
   defp migrate(%{v: 9} = state),
     do: state |> Map.merge(%{terminal_windows: %{}, v: 10}) |> migrate()

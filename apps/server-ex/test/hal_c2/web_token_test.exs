@@ -52,4 +52,32 @@ defmodule HalC2.WebTokenTest do
       assert {:error, "invalid_credential", nil} = HalC2.Auth.authenticate(conn), header
     end
   end
+
+  # The listener cannot tell a raw TCP forward from a local process, so what HAL-C2
+  # publishes itself is Serve's HTTPS reverse proxy, which marks what it forwards
+  # (`tailscale serve --https`), never a `--tcp` forward. The stand-in fails on anything
+  # but `--https`.
+  test "HAL-C2 publishes over Tailscale as a proxy that marks what it forwards",
+       %{tmp_dir: dir} do
+    state = Path.join(dir, "tailscale.json")
+    File.write!(state, JSON.encode!(%{"self" => %{"DNSName" => "box.tail.ts.net."}}))
+    saved = Application.get_env(:hal_c2, :tailscale_command)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:hal_c2, :tailscale_command, saved),
+        else: Application.delete_env(:hal_c2, :tailscale_command)
+    end)
+
+    Application.put_env(:hal_c2, :tailscale_command, [
+      "env",
+      "FAKE_TAILSCALE_STATE=#{state}",
+      Path.expand("../support/fake_tailscale.py", __DIR__)
+    ])
+
+    assert {:ok, "https://box.tail.ts.net"} = HalC2.TailscaleServe.publish(3780)
+
+    assert %{"serve" => %{"box.tail.ts.net:443" => "http://127.0.0.1:3780"}} =
+             state |> File.read!() |> JSON.decode!()
+  end
 end

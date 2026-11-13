@@ -525,7 +525,7 @@ defmodule HalC2.Rpc do
     instances =
       for {id, %{} = entry} <- settings["providerInstances"] || %{},
           entry = entry |> exec.() |> Map.update("config", nil, exec),
-          entry = if(entry["config"] == %{}, do: Map.delete(entry, "config"), else: entry),
+          entry = if(entry["config"] in [nil, %{}], do: Map.delete(entry, "config"), else: entry),
           entry != %{},
           into: %{},
           do: {id, entry}

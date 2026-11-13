@@ -86,6 +86,9 @@ defmodule HalC2.UpgradeTest do
     File.write!(bundle, "")
     assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0")
     assert reason =~ "allowDowngrade"
+    # Refused before any member is asked, so the bundle never reached the cache they
+    # take it from.
+    refute File.exists?(HalC2.Upgrade.Source.cache_dir("1.1.0"))
     assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0", true)
     refute reason =~ "allowDowngrade"
   end
@@ -688,7 +691,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 11
+    assert state.v == 12
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -714,6 +717,40 @@ defmodule HalC2.UpgradeTest do
              )
 
     assert %{"t" => "terminal", "id" => 3} = JSON.decode!(IO.iodata_to_binary(frame))
+  end
+
+  # A socket opened before sessions were rechecked on a timer starts the timer as it
+  # migrates, so one that only listens to its subscriptions still loses a revoked session.
+  test "a v11 socket with a session starts its session recheck" do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    state = %{
+      v: 11,
+      session: "sess-old",
+      scopes: :all,
+      subs: %{1 => {:config, node()}},
+      by_stream: %{},
+      by_terminal: %{{:settings, node()} => %{1 => nil}},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    assert {:push, _, migrated} =
+             HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
+
+    assert migrated.v == 12
+    assert_receive :recheck_session, 1_000
+
+    refute_received :recheck_session
+
+    assert {:push, _, %{v: 12}} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_keybindings, node(), []},
+               %{state | session: nil}
+             )
+
+    refute_receive :recheck_session, 200
   end
 
   test "a v6 socket's terminal subscription migrates to per-subscription state" do
@@ -742,7 +779,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 11
+    assert migrated.v == 12
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
@@ -833,11 +870,11 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v11, so the returned state is that migration
+    # v7 state is first migrated to v12, so the returned state is that migration
     # (less `opened_at`, the clock at migration).
     migrated =
       Map.merge(state, %{
-        v: 11,
+        v: 12,
         terminals: %{},
         lost: %{},
         terminal_windows: %{},

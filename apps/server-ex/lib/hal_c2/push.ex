@@ -95,37 +95,19 @@ defmodule HalC2.Push do
     end
   end
 
-  # This checks the literal host, not DNS: a public name can still resolve or rebind
-  # to a private address. WebPush disables redirects, so a redirect cannot send the
-  # request to a second, unchecked host either.
+  # The literal host; `WebPush.post/3` checks what it resolves to as it sends.
   defp public_host?(host) do
     host = host |> String.downcase() |> String.trim_trailing(".")
 
     case :inet.parse_address(String.to_charlist(host)) do
       {:ok, address} ->
-        public_address?(address)
+        WebPush.public_address?(address)
 
       {:error, _} ->
         Regex.match?(~r/^[a-z0-9.-]+$/, host) and
           host != "metadata.google.internal" and
           host != "localhost" and not String.ends_with?(host, ".localhost")
     end
-  end
-
-  defp public_address?({a, b, _, _}) do
-    not (a in [0, 10, 127] or a >= 224 or {a, b} == {169, 254} or
-           (a == 172 and b in 16..31) or {a, b} == {192, 168} or
-           (a == 100 and b in 64..127) or {a, b} in [{198, 18}, {198, 19}])
-  end
-
-  # An IPv4-mapped address is its IPv4 address's reachability, not a public one.
-  defp public_address?({0, 0, 0, 0, 0, 0xFFFF, g, h}) do
-    public_address?({div(g, 256), rem(g, 256), div(h, 256), rem(h, 256)})
-  end
-
-  defp public_address?({a, b, c, d, e, f, _, _}) do
-    not ({a, b, c, d, e, f} == {0, 0, 0, 0, 0, 0} or a in 0xFC00..0xFDFF or
-           a in 0xFE80..0xFEBF or a in 0xFF00..0xFFFF)
   end
 
   defp decode(value, field) do

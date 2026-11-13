@@ -226,7 +226,8 @@ defmodule HalC2.ProjectEnvironment do
               [path, "export", "json"]
         end
 
-      case run(argv, cwd, base ++ [{"DIRENV_LOG_FORMAT", ""}], deadline) do
+      # mise's variables reach direnv only as far as they could reach a launch.
+      case run(argv, cwd, merge([{"DIRENV_LOG_FORMAT", ""}], base), deadline) do
         {:ok, out} ->
           decoded("direnv", out, cwd)
 

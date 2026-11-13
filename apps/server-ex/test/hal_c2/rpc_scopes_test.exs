@@ -69,7 +69,11 @@ defmodule HalC2.RpcScopesTest do
     for settings <- [
           %{},
           %{"providers" => %{"codex" => %{"enabled" => false, "customModels" => ["m"]}}},
-          %{"providerInstances" => %{}}
+          %{"providerInstances" => %{}},
+          # An instance with no config reads as one with an empty config.
+          %{"providerInstances" => %{"x" => %{"enabled" => true}}},
+          %{"providerInstances" => %{"x" => %{"displayName" => "X", "config" => %{}}}},
+          %{"providerInstances" => %{"x" => %{"config" => %{"enabled" => true}}}}
         ] do
       assert Rpc.required_scopes("hal-c2.writeSettings", %{"settings" => settings}) ==
                ["orchestration:operate"],

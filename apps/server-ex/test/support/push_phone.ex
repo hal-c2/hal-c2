@@ -123,11 +123,9 @@ defmodule HalC2.Test.PushPhone do
   def post(url, body, urgency) do
     Agent.update(__MODULE__, &%{&1 | urls: [url | &1.urls]})
     # The registration names a public HTTPS host; the phone serving it is
-    # the loopback server on the same port.
-    local =
-      url |> URI.parse() |> Map.merge(%{scheme: "http", host: "127.0.0.1"}) |> URI.to_string()
-
-    WebPush.post(local, body, urgency)
+    # the loopback server on the same port, which its name resolves to here.
+    local = url |> URI.parse() |> Map.put(:scheme, "http") |> URI.to_string()
+    WebPush.post(local, body, urgency, fn "push.example" -> {:ok, {127, 0, 0, 1}} end)
   end
 
   def posted_urls, do: Agent.get(__MODULE__, &Enum.reverse(&1.urls))

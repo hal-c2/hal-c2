@@ -209,6 +209,28 @@ defmodule HalC2.AuthTest do
     assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
   end
 
+  # The CLI revokes through the running MC: a subscribed socket closes at once, without
+  # waiting for its next session recheck.
+  test "a session revoked from the CLI closes its subscribed socket at once", %{port: port} do
+    _ = HalC2.Web.token()
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    {:ok, _} = HalC2.Streams.commit("cli-revoke-th", :thread, [{"note", "n1", %{}}])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "cli-revoke-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    Mix.shell(Mix.Shell.Process)
+    on_exit(fn -> Mix.shell(Mix.Shell.IO) end)
+    Mix.Tasks.HalC2.Auth.run(["session", "revoke", id])
+    assert_received {:mix_shell, :info, [message]}
+    assert message == "#{id}: the session was revoked"
+
+    assert_receive {:tcp, ^socket, _} = message, 1_000
+    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+  end
+
   test "a nested subject token is an invalid grant and leaves Auth running", %{
     port: port,
     path: path
