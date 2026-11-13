@@ -1378,14 +1378,18 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     root = World.project(context, "shop enterprise").root
     World.git!(root, ["remote", "add", "origin", "git@github.example.com:#{repository}.git"])
 
-    # Signed in to it as `gh auth login --hostname` leaves it: only a host gh is
-    # configured for is a GitHub Enterprise one.
+    # Signed in to it as `gh auth login --hostname` leaves it, beside any host already
+    # signed in to: only a host gh is configured for is a GitHub Enterprise one.
     context = gh_config(context)
 
-    File.write!(Path.join(context.gh_config, "hosts.yml"), """
-    github.example.com:
-        user: monalisa
-    """)
+    File.write!(
+      Path.join(context.gh_config, "hosts.yml"),
+      """
+      github.example.com:
+          user: monalisa
+      """,
+      [:append]
+    )
 
     context
   end
