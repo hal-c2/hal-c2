@@ -197,7 +197,7 @@ defmodule HalC2.Web do
   @doc """
   The loopback URL and access token of this home's MC, for a local tool to call it
   with: `{:ok, url, token}` once the listener there has proved it holds the token
-  without being sent it (`holds_token?/2`). `{:error, message}` when nothing there can
+  without being sent it (`prove/2`). `{:error, message}` when nothing there can
   (no MC runs, or another program holds the port), or when the MC listens where a local
   tool does not reach it (`loopback_host/1`): on a loopback port it leaves free, a
   squatter could relay the challenge to it. `listener` is the `{host, port}` the MC
@@ -220,10 +220,16 @@ defmodule HalC2.Web do
 
         with {:ok, token} <- File.read(path),
              token = String.trim(token),
-             true <- holds_token?(base, token) do
+             :ok <- prove(base, token) do
           {:ok, base, token}
         else
-          _ -> {:error, "No MC of #{HalC2.Paths.data_dir()} answers at #{base}; is it running?"}
+          :predates ->
+            {:error,
+             "The MC at #{base} predates the proof local tools ask for before sending its " <>
+               "token; restart it once on this build (`mise run mc`)"}
+
+          _ ->
+            {:error, "No MC of #{HalC2.Paths.data_dir()} answers at #{base}; is it running?"}
         end
     end
   end
@@ -245,13 +251,16 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  Whether the listener at `base` proves it holds `token` by answering a fresh challenge
-  with `proof/3` for the very address and port dialled, so the token can be sent
-  there. A program at `base` that relays the challenge to, or redirects it to, an MC
-  elsewhere gets that MC's proof for its own address, which does not match. The MC
+  `:ok` when the listener at `base` proves it holds `token` by answering a fresh
+  challenge with `proof/3` for the very address and port dialled, so the token can be
+  sent there. A program at `base` that relays the challenge to, or redirects it to, an
+  MC elsewhere gets that MC's proof for its own address, which does not match. The MC
   answers only from loopback, so it cannot be relayed through a LAN address either.
+  `:predates` when the listener has no proof route (404), as an MC built before it
+  answers: it gets no token this way until restarted on a build that has the route.
+  `:error` otherwise.
   """
-  def holds_token?(base, token) do
+  def prove(base, token) do
     %URI{host: host, port: port} = URI.parse(base)
     challenge = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
     request = {~c"#{base}/.well-known/hal-c2/proof?challenge=#{challenge}", []}
@@ -262,10 +271,12 @@ defmodule HalC2.Web do
            :httpc.request(:get, request, [timeout: 5_000, autoredirect: false],
              body_format: :binary
            ),
-         {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply) do
-      Plug.Crypto.secure_compare(proof, proof(token, challenge, {address, port}))
+         {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply),
+         true <- Plug.Crypto.secure_compare(proof, proof(token, challenge, {address, port})) do
+      :ok
     else
-      _ -> false
+      {:ok, {{_, 404, _}, _, _}} -> :predates
+      _ -> :error
     end
   end
 
@@ -286,7 +297,7 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  What `holds_token?/2` expects the listener to answer to `challenge` on a connection
+  What `prove/2` expects the listener to answer to `challenge` on a connection
   to `{address, port}`, the listener's own end of it.
   """
   def proof(token, challenge, {address, port}) do

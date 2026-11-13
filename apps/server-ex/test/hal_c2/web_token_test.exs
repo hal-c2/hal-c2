@@ -140,6 +140,20 @@ defmodule HalC2.WebTokenTest do
              {:ok, "http://127.0.0.1:#{port}", HalC2.Web.token()}
   end
 
+  # An MC built before the proof route answers 404 there, as any unknown path.
+  test "an MC from before the proof is told apart from no MC at all" do
+    HalC2.Web.token()
+
+    port =
+      squat(fn _path ->
+        "HTTP/1.1 404 Not Found\r\ncontent-length: 9\r\nconnection: close\r\n\r\nnot found"
+      end)
+
+    assert {:error, message} = HalC2.Web.local_mc({nil, port})
+    assert message =~ "predates the proof"
+    assert_receive {:request, _}
+  end
+
   # Only an address the MC itself holds: on a loopback port it leaves free, a squatter
   # could relay the challenge to it over a connection from loopback.
   test "a local tool reaches the MC only at an address the MC holds" do

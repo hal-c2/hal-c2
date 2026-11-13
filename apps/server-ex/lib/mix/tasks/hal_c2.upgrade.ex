@@ -339,9 +339,19 @@ defmodule Mix.Tasks.HalC2.Upgrade do
       loopback ->
         base = "http://#{loopback}:#{port}"
 
-        if HalC2.Web.holds_token?(base, token),
-          do: {:ok, base},
-          else: {:error, "No installed MC answers at #{base} with the token under its home"}
+        case HalC2.Web.prove(base, token) do
+          :ok ->
+            {:ok, base}
+
+          :predates ->
+            {:error,
+             "The installed MC at #{base} predates the proof local tools ask for before " <>
+               "sending its token, so it cannot be upgraded in place this once: " <>
+               "restart its service once on the new release (`hal-c2-mc-<version>-<platform> restart`)"}
+
+          :error ->
+            {:error, "No installed MC answers at #{base} with the token under its home"}
+        end
     end
   end
 
