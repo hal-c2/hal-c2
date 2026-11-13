@@ -199,7 +199,11 @@ defmodule HalC2.ProjectEnvironmentTest do
       root = checkout(dir, %{"mise.toml" => "", ".envrc" => ""})
 
       {vars, []} = ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root)
-      assert List.keyfind(vars, "SEEN", 0) == {"SEEN", "unset|unset|unset|1"}
+
+      # direnv still inherits the MC's own environment (a CI runner sets git config
+      # there); only what mise loaded is filtered.
+      own = Enum.map(~w(NODE_OPTIONS BASH_ENV GIT_CONFIG_KEY_0), &(System.get_env(&1) || "unset"))
+      assert List.keyfind(vars, "SEEN", 0) == {"SEEN", Enum.join(own ++ ["1"], "|")}
     end
 
     test "mise and direnv share one time limit", %{dir: dir} do
