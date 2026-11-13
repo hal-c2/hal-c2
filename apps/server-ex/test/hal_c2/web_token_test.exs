@@ -120,6 +120,12 @@ defmodule HalC2.WebTokenTest do
 
   # An MC bound to 127.0.0.2 leaves 127.0.0.1 on its port free: a tool configured with
   # the default host would dial whatever takes it, which passes the challenge on.
+  # Linux routes all of 127/8 to loopback; macOS only 127.0.0.1 unless aliased.
+  @tag skip:
+         (case :gen_tcp.listen(0, ip: {127, 0, 0, 2}) do
+            {:ok, socket} -> :gen_tcp.close(socket) && false
+            {:error, _} -> "127.0.0.2 is not a loopback address on this machine"
+          end)
   test "a local tool reaches the MC where it binds, not where the tool is configured" do
     mc = start_mc("127.0.0.2")
     token = HalC2.Web.token()

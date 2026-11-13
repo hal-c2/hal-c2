@@ -670,6 +670,33 @@ defmodule HalC2.UpgradeTest do
     assert reason =~ "access-token"
   end
 
+  # An MC from before the local proof answers it 404, as any unknown path: it is
+  # pointed at the build just made, not told no MC runs.
+  test "an installed MC from before the local proof is told to install this build" do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listen)
+      {:ok, _request} = :gen_tcp.recv(socket, 0, 5_000)
+      :gen_tcp.send(socket, "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+      :gen_tcp.close(socket)
+    end)
+
+    bundle = "/build/hal-c2-mc-2.0.0-linux-x64.tar.gz"
+
+    assert {:error, message} =
+             Mix.Tasks.HalC2.Upgrade.proved(
+               "http://127.0.0.1:#{port}",
+               "token",
+               bundle,
+               {:root, "/srv/hal-c2"}
+             )
+
+    assert message =~ "predates the proof"
+    assert message =~ "`HAL_C2_HOME=/srv/hal-c2 /build/hal-c2-mc-2.0.0-linux-x64 install`"
+  end
+
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, one
     # per followed stream, and one id per followed terminal.

@@ -284,7 +284,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     {:ok, _} = Application.ensure_all_started(:inets)
 
     with {:ok, record_base, token} <- installed_record(home),
-         {:ok, base} <- proved(record_base, token) do
+         {:ok, base} <- proved(record_base, token, path, home) do
       # The operator chose this checkout's build: moving back to it, from a
       # worktree behind the installed one, is the explicit choice the gate asks for.
       body =
@@ -328,8 +328,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   # The installed MC at `record_base`, over loopback once it proves it holds `token`,
   # so the token never goes to another program holding its port. One bound to a single
-  # non-loopback address is not reached this way (`HalC2.Web.loopback_host/1`).
-  defp proved(record_base, token) do
+  # non-loopback address is not reached this way (`HalC2.Web.loopback_host/1`). One
+  # from before the proof is pointed at the single-file MC built beside `bundle`
+  # (`mix hal_c2.bundle`), not the one it was installed from: run, it unpacks this
+  # release into the MC's home, and `install` rewrites the service to run it.
+  @doc false
+  def proved(record_base, token, bundle, home) do
     %URI{host: host, port: port} = URI.parse(record_base)
 
     case HalC2.Web.loopback_host(host) do
@@ -344,10 +348,18 @@ defmodule Mix.Tasks.HalC2.Upgrade do
             {:ok, base}
 
           :predates ->
+            env =
+              case home do
+                {:root, root} -> "HAL_C2_HOME=#{root} "
+                _ -> ""
+              end
+
+            single = String.replace_suffix(bundle, ".tar.gz", "")
+
             {:error,
              "The installed MC at #{base} predates the proof local tools ask for before " <>
-               "sending its token, so it cannot be upgraded in place this once: " <>
-               "restart its service once on the new release (`hal-c2-mc-<version>-<platform> restart`)"}
+               "sending its token, so it cannot be upgraded in place this once. Install " <>
+               "this build as its service instead: `#{env}#{single} install`"}
 
           :error ->
             {:error, "No installed MC answers at #{base} with the token under its home"}
