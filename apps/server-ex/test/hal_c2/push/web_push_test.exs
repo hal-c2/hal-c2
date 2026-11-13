@@ -83,6 +83,22 @@ defmodule HalC2.Push.WebPushTest do
       assert hello =~ "push.invalid"
     end
 
+    test "an informational status before the answer does not end the wait" do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(listen)
+
+      spawn_link(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        {:ok, _request} = :gen_tcp.recv(socket, 0, 5_000)
+        :gen_tcp.send(socket, "HTTP/1.1 103 Early Hints\r\n\r\n")
+        :gen_tcp.send(socket, "HTTP/1.1 201 Created\r\ncontent-length: 0\r\n\r\n")
+        {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)
+      end)
+
+      pinned = fn "push.invalid" -> {:ok, {127, 0, 0, 1}} end
+      assert WebPush.post("http://push.invalid:#{port}/p", "body", "normal", pinned) == :delivered
+    end
+
     test "public addresses are the internet's, and the rest are not" do
       for address <- [{8, 8, 8, 8}, {1, 1, 1, 1}, {0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111}],
           do: assert(WebPush.public_address?(address))

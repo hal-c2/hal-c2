@@ -128,11 +128,12 @@ defmodule HalC2.Push.WebPush do
     end
   end
 
+  # The final status: an informational 1xx keeps the request open for the real one.
   defp await_status(conn, ref, deadline) do
     case Mint.HTTP.recv(conn, 0, max(deadline - System.monotonic_time(:millisecond), 0)) do
       {:ok, conn, responses} ->
         case Enum.find_value(responses, fn
-               {:status, ^ref, status} -> status
+               {:status, ^ref, status} when status >= 200 -> status
                _ -> nil
              end) do
           nil -> await_status(conn, ref, deadline)
