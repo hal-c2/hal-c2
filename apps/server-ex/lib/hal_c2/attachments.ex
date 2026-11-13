@@ -922,6 +922,11 @@ defmodule HalC2.Attachments do
 
   defp byte_range(_range, _size), do: nil
 
+  # The browser preview's screenshots and recordings: media the MC writes into
+  # its own data directory for the clients to show.
+  defp browser_capture?(resolved),
+    do: HalC2.Workspace.within?(HalC2.Workspace.real(HalC2.Mcp.Preview.artifacts_dir()), resolved)
+
   defp resolve(%{"_tag" => "attachment", "attachmentId" => id} = resource) do
     case path(%{"id" => id}) do
       nil ->
@@ -946,11 +951,6 @@ defmodule HalC2.Attachments do
 
   defp resolve(%{"_tag" => "draft-workspace-file", "cwd" => cwd, "path" => relative} = r),
     do: project_file(r, cwd, relative)
-
-  # The browser preview's screenshots and recordings: media the MC writes into
-  # its own data directory for the clients to show.
-  defp browser_capture?(resolved),
-    do: HalC2.Workspace.within?(HalC2.Workspace.real(HalC2.Mcp.Preview.artifacts_dir()), resolved)
 
   # A media file may be anywhere the MC can read, but only a media type: by
   # what the path resolves to, so a link named like media reads no other file.
