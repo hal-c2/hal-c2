@@ -80,4 +80,57 @@ defmodule HalC2.WebTokenTest do
     assert %{"serve" => %{"box.tail.ts.net:443" => "http://127.0.0.1:3780"}} =
              state |> File.read!() |> JSON.decode!()
   end
+
+  test "a local tool gets the token for this home's MC, which proves it holds it" do
+    previous = Application.get_env(:hal_c2, :port)
+    Application.put_env(:hal_c2, :port, 0)
+    on_exit(fn -> Application.put_env(:hal_c2, :port, previous) end)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    token = HalC2.Web.token()
+
+    assert HalC2.Web.local_mc(port) == {"http://127.0.0.1:#{port}", token}
+  end
+
+  test "a program holding the MC's port is never sent the token" do
+    token = HalC2.Web.token()
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
+    test = self()
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listen)
+      {:ok, request} = :gen_tcp.recv(socket, 0, 5_000)
+      send(test, {:request, request})
+      body = ~s({"proof":"a guess"})
+
+      :gen_tcp.send(
+        socket,
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n" <>
+          "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
+      )
+
+      :gen_tcp.close(socket)
+    end)
+
+    assert HalC2.Web.local_mc(port) == nil
+    assert_receive {:request, request}
+    refute request =~ token
+    refute request =~ ~r/authorization/i
+  end
+
+  test "the MC answers a proof only for a challenge" do
+    conn = HalC2.Web.Router.call(conn(:get, "/.well-known/hal-c2/proof"), [])
+    assert conn.status == 400
+
+    conn =
+      HalC2.Web.Router.call(
+        conn(:get, "/.well-known/hal-c2/proof?challenge=#{String.duplicate("a", 32)}"),
+        []
+      )
+
+    assert conn.status == 200
+
+    assert JSON.decode!(conn.resp_body)["proof"] ==
+             HalC2.Web.proof(HalC2.Web.token(), String.duplicate("a", 32))
+  end
 end

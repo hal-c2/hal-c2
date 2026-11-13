@@ -137,15 +137,14 @@ defmodule Mix.Tasks.HalC2.Auth do
   end
 
   # `key` of the running MC's answer to `POST path`, or nil when no MC of this home
-  # answers (none has run, it is stopped, or another holds the port), for the caller
-  # to do the work in the store instead. An MC that answers `false` found nothing to
-  # revoke; the store then says the same.
+  # answers (none has run, it is stopped, or another program holds the port), for the
+  # caller to do the work in the store instead. The token goes only to a listener that
+  # proved it holds it (`HalC2.Web.local_mc/1`). An MC that answers `false` found
+  # nothing to revoke; the store then says the same.
   defp through_mc(path, body, key) do
-    with {:ok, token} <- File.read(HalC2.Web.token_path()),
-         {:ok, _} <- Application.ensure_all_started(:inets),
+    with {base, token} <- HalC2.Web.local_mc(),
          request =
-           {~c"#{HalC2.Web.base_url()}#{path}",
-            [{~c"authorization", ~c"Bearer #{String.trim(token)}"}], ~c"application/json",
+           {~c"#{base}#{path}", [{~c"authorization", ~c"Bearer #{token}"}], ~c"application/json",
             JSON.encode!(body)},
          {:ok, {{_, 200, _}, _, reply}} <-
            :httpc.request(:post, request, [timeout: 10_000], body_format: :binary),

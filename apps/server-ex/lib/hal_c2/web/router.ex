@@ -41,6 +41,19 @@ defmodule HalC2.Web.Router do
     conn |> put_resp_content_type("application/json") |> send_resp(200, body)
   end
 
+  # A local tool asks the listener on this home's port to prove it holds the access
+  # token before sending it: anything else could be holding the port.
+  get "/.well-known/hal-c2/proof" do
+    case fetch_query_params(conn).query_params do
+      %{"challenge" => challenge} when byte_size(challenge) in 16..128 ->
+        body = JSON.encode_to_iodata!(%{"proof" => HalC2.Web.proof(HalC2.Web.token(), challenge)})
+        conn |> put_resp_content_type("application/json") |> send_resp(200, body)
+
+      _ ->
+        send_resp(conn, 400, "")
+    end
+  end
+
   # A pairing link opened in a browser lands here. The MC serves no app, so the
   # page says where the link goes instead of answering "not found".
   get "/" do
