@@ -383,6 +383,32 @@ Feature: OpenCode
     When the user switches an OpenCode thread to plan mode
     Then the turn runs with OpenCode's plan agent
 
+  # OpenCode keeps the agent and variant a turn set for the session's later turns, so taking
+  # them off the thread has to set them back, or the next turn runs on the old ones.
+  Scenario: An OpenCode agent and variant taken off the thread go back to the session's own
+    Given an OpenCode session that opened on the agent "build" and the "low" variant
+    When a turn runs with the agent "reviewer" and the "high" variant and the next with neither
+    Then the next turn sets the agent back to "build" and the variant back to "low"
+
+  # OpenCode reports its options as a turn changes them; what the session opened on stays the same.
+  Scenario: An OpenCode agent and variant taken off the thread go back even after OpenCode reports its options
+    Given an OpenCode session that opened on the agent "build" and the "low" variant
+    And OpenCode reports its options in the middle of each turn
+    When a turn runs with the agent "reviewer" and the "high" variant and the next with neither
+    Then the next turn sets the agent back to "build" and the variant back to "low"
+
+  # Variants belong to a model, so the variant the session opened on goes back only on that model.
+  Scenario: An OpenCode turn on another model is not sent a variant that model does not offer
+    Given an OpenCode session that opened on "anthropic/claude-sonnet-4" at the "max" variant
+    When a turn runs on a model that offers no "max" variant, with no variant chosen
+    Then the turn runs and OpenCode is not asked for the "max" variant
+
+  # Each model has its own variant, the one OpenCode reports when the session first lands on it.
+  Scenario: A variant taken off the thread goes back to the turn's model's own on a model the session did not open on
+    Given an OpenCode session that opened on "anthropic/claude-sonnet-4" at the "max" variant
+    When a turn runs on another model at the "high" variant and the next on it with none
+    Then the next turn sets the variant back to "medium", that model's own
+
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message

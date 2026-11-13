@@ -122,6 +122,8 @@ defmodule HalC2.OrchestrationTest do
   end
 
   # Waits on the thread's own event stream until its run reaches a terminal status.
+  # The waits below follow the thread's stream with no deadline of their own: how long
+  # a turn takes is the machine's, and ExUnit's timeout bounds the test.
   defp await_run(thread_id, status) do
     receive do
       {:hal_c2_stream, ^thread_id, _} ->
@@ -131,8 +133,6 @@ defmodule HalC2.OrchestrationTest do
           [%{"status" => ^status} | _] -> state
           _ -> await_run(thread_id, status)
         end
-    after
-      5_000 -> flunk("run never reached #{status}")
     end
   end
 
@@ -534,6 +534,83 @@ defmodule HalC2.OrchestrationTest do
     assert String.ends_with?(compact, "/compact")
   end
 
+  # The new conversation a lost one leaves holds nothing until a turn reaches Codex.
+  test "a lost Codex conversation is handed the thread after a turn Codex refused",
+       %{tmp_dir: dir} do
+    inputs = Path.join(dir, "inputs.jsonl")
+    home = Path.join(dir, "codex-home")
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_SESSIONS=1",
+      "CODEX_HOME=" <> home,
+      "FAKE_CODEX_INPUT_LOG=" <> inputs,
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+
+    # Codex loses the conversation, with the runtime that had it open.
+    File.rm_rf!(Path.join(home, "sessions"))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    {:ok, _} = send_message(thread_id, "m2", "refuse to start")
+    _ = await_statuses(thread_id, ["completed", "failed"])
+    {:ok, _} = send_message(thread_id, "m3", "say done")
+    _ = await_statuses(thread_id, ["completed", "failed", "completed"])
+
+    [%{"text" => last} | _] =
+      inputs |> File.read!() |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
+
+    assert last =~ "hello"
+    assert String.ends_with?(last, "say done")
+  end
+
+  # A `/goal` command sends Codex no text, so the turn after it hands the new
+  # conversation the thread.
+  test "a lost Codex conversation is handed the thread after a /goal command",
+       %{tmp_dir: dir} do
+    inputs = Path.join(dir, "inputs.jsonl")
+    home = Path.join(dir, "codex-home")
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_SESSIONS=1",
+      "CODEX_HOME=" <> home,
+      "FAKE_CODEX_INPUT_LOG=" <> inputs,
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+
+    # Codex loses the conversation, with the runtime that had it open.
+    File.rm_rf!(Path.join(home, "sessions"))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    {:ok, _} = send_message(thread_id, "m2", "/goal")
+    _ = await_statuses(thread_id, ["completed", "completed"])
+    {:ok, _} = send_message(thread_id, "m3", "say done")
+    _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+
+    [%{"text" => last} | _] =
+      inputs |> File.read!() |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
+
+    assert last =~ "hello"
+    assert String.ends_with?(last, "say done")
+  end
+
   # A turn on another instance stops the app-server the runtime had; what it had sent
   # by then is still in the runtime's mailbox.
   test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do
@@ -732,8 +809,6 @@ defmodule HalC2.OrchestrationTest do
     if StreamState.list(current(thread_id), "provider-turn") == [] do
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_provider_turn(thread_id)
-      after
-        5_000 -> flunk("no provider turn")
       end
     end
   end
@@ -1241,9 +1316,7 @@ defmodule HalC2.OrchestrationTest do
     :ok = HalC2.Shell.subscribe(self())
 
     # Search lists active threads from the sidebar rows.
-    unless HalC2.Shell.row(node(), thread_id) do
-      assert_receive {:hal_c2_shell, _}, 2_000
-    end
+    :ok = HalC2.Streams.flush_shell(thread_id)
 
     assert {:ok, %{"matches" => [%{"threadId" => ^thread_id, "source" => "assistant"} = match]}} =
              HalC2.Search.threads(%{"query" => "FROM CODEX"})
@@ -1717,9 +1790,7 @@ defmodule HalC2.OrchestrationTest do
     await_statuses(thread_id, ["completed"])
     :ok = HalC2.Shell.subscribe(self())
 
-    unless HalC2.Shell.row(node(), thread_id) do
-      assert_receive {:hal_c2_shell, _}, 2_000
-    end
+    :ok = HalC2.Streams.flush_shell(thread_id)
 
     %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
     rpc = &HalC2.Mcp.handle(auth, JSON.encode!(Map.merge(%{"jsonrpc" => "2.0", "id" => 1}, &1)))
@@ -1776,9 +1847,7 @@ defmodule HalC2.OrchestrationTest do
     await_statuses(thread_id, ["completed"])
     :ok = HalC2.Shell.subscribe(self())
 
-    unless HalC2.Shell.row(node(), thread_id) do
-      assert_receive {:hal_c2_shell, _}, 2_000
-    end
+    :ok = HalC2.Streams.flush_shell(thread_id)
 
     %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
 
@@ -1806,9 +1875,7 @@ defmodule HalC2.OrchestrationTest do
     await_statuses(parent_id, ["running"])
     :ok = HalC2.Shell.subscribe(self())
 
-    unless HalC2.Shell.row(node(), parent_id) do
-      assert_receive {:hal_c2_shell, _}, 2_000
-    end
+    :ok = HalC2.Streams.flush_shell(parent_id)
 
     %{authorization: auth} = HalC2.Mcp.server(parent_id, "codex")
 
@@ -3805,10 +3872,16 @@ defmodule HalC2.OrchestrationTest do
 
       await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
+      # The subagent is recorded, then its progress.
+      state =
+        await_state(thread_id, fn state ->
+          StreamState.get(state, "subagent")["node:subagent:claudeAgent:agent-unseen"][
+            "progress"
+          ] != nil
+        end)
+
       assert %{"runId" => ^run_id, "status" => "running", "progress" => "Reading lib"} =
-               StreamState.get(current(thread_id), "subagent")[
-                 "node:subagent:claudeAgent:agent-unseen"
-               ]
+               StreamState.get(state, "subagent")["node:subagent:claudeAgent:agent-unseen"]
 
       claude_says(thread_id, notification("task-unseen", "agent-unseen", "completed", "LGTM"))
       await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
@@ -5197,6 +5270,45 @@ defmodule HalC2.OrchestrationTest do
       assert "resumed at None fork False history True" in replies(state)
     end
 
+    test "a Claude turn on another model than the one picked records it and says so" do
+      System.put_env("FAKE_CLAUDE_RUNS_MODEL", "claude-sonnet-4-5-20250929")
+      on_exit(fn -> System.delete_env("FAKE_CLAUDE_RUNS_MODEL") end)
+      thread_id = launch("hello")
+      await_statuses(thread_id, ["completed"])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "where are we", claude())
+      state = await_statuses(thread_id, ["completed", "completed"])
+      [_, run] = runs(state)
+      assert run["appliedModel"] == "claude-sonnet-4-5-20250929"
+      text = "This turn runs on claude-sonnet-4-5-20250929, not the selected haiku."
+
+      assert [%{"status" => "completed", "runId" => run_id}] =
+               for(i <- StreamState.list(state, "turn-item"), i["title"] == text, do: i)
+
+      assert run_id == run["id"]
+    end
+
+    # The model a native thread opened on belongs to the turn that opened it: a turn
+    # Codex refused leaves none for the next turn on the same thread to record.
+    test "a Codex turn after a refused one records no model the refused one opened on" do
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_THREAD_MODEL=gpt-5.4-mini",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("refuse to start")
+      await_statuses(thread_id, ["failed"])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "hello")
+      state = await_statuses(thread_id, ["failed", "completed"])
+      [_, run] = runs(state)
+      refute Map.has_key?(run, "appliedModel")
+      refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "system_notice"))
+    end
+
     test "provider.switch moves the next run to the new provider, with the conversation" do
       thread_id = launch("hello")
       await_statuses(thread_id, ["completed"])
@@ -5358,6 +5470,32 @@ defmodule HalC2.OrchestrationTest do
       assert set_model.() == refused
     end
 
+    # A model the session will not switch to fails the turn before the agent hears it,
+    # rather than running it on the model the session already had.
+    test "an ACP turn whose model the agent will not switch to is refused" do
+      System.put_env("FAKE_ACP_REFUSE_MODEL", "fake/two")
+      on_exit(fn -> System.delete_env("FAKE_ACP_REFUSE_MODEL") end)
+      thread_id = launch("hello", "grok")
+      state = await_statuses(thread_id, ["completed"])
+      assert [%{"appliedModel" => "gpt-5.4"}] = runs(state)
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.model-selection.set",
+          "threadId" => thread_id,
+          "modelSelection" => %{"instanceId" => "grok", "model" => "fake/two"}
+        })
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "where are we")
+      after_refusal = await_statuses(thread_id, ["completed", "failed"])
+      [_, refused] = runs(after_refusal)
+
+      assert refused["failure"] =~ "Could not switch to the model fake/two (model not available)"
+      refute Map.has_key?(refused, "appliedModel")
+      # The agent never answered the refused turn.
+      assert length(replies(after_refusal)) == length(replies(state))
+    end
+
     test "merging a fork back brings its newer work to the parent's next run" do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))
@@ -5389,21 +5527,25 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  # The thread's sidebar row once `done?` holds of it. The row is flushed from its
+  # stream before each look rather than waited for, and each change to the stream
+  # (followed in `launch/1`) or to the sidebar is a reason to look again.
   defp await_shell_row(thread_id, done?) do
+    :ok = HalC2.Streams.flush_shell(thread_id)
+
     case HalC2.Shell.row(node(), thread_id) do
       {"thread", row} ->
-        if done?.(row), do: :ok, else: await_shell_message(thread_id, done?)
+        if done?.(row), do: :ok, else: await_shell_change(thread_id, done?)
 
       _ ->
-        await_shell_message(thread_id, done?)
+        await_shell_change(thread_id, done?)
     end
   end
 
-  defp await_shell_message(thread_id, done?) do
+  defp await_shell_change(thread_id, done?) do
     receive do
+      {:hal_c2_stream, ^thread_id, _} -> await_shell_row(thread_id, done?)
       {:hal_c2_shell, {:rows, _, _}} -> await_shell_row(thread_id, done?)
-    after
-      5_000 -> flunk("the sidebar row never got there")
     end
   end
 
@@ -5415,8 +5557,6 @@ defmodule HalC2.OrchestrationTest do
     else
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_state(thread_id, done?)
-      after
-        5_000 -> flunk("the thread's stream never got there")
       end
     end
   end
@@ -5427,8 +5567,6 @@ defmodule HalC2.OrchestrationTest do
     else
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_thread(thread_id, done?)
-      after
-        5_000 -> flunk("the thread never got there")
       end
     end
   end
@@ -5442,8 +5580,6 @@ defmodule HalC2.OrchestrationTest do
         if length(runs) == count and Enum.all?(runs, &(&1["status"] == "completed")),
           do: state,
           else: await_runs(thread_id, count)
-    after
-      5_000 -> flunk("runs never completed")
     end
   end
 
@@ -5453,8 +5589,6 @@ defmodule HalC2.OrchestrationTest do
         if Enum.any?(StreamState.list(current(thread_id), "turn-item"), &(&1["type"] == type)),
           do: :ok,
           else: await_item(thread_id, type)
-    after
-      5_000 -> flunk("no #{type} item")
     end
   end
 
@@ -5531,8 +5665,6 @@ defmodule HalC2.OrchestrationTest do
     else
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_turn_item(thread_id, id)
-      after
-        5_000 -> flunk("no turn item #{id}")
       end
     end
   end
@@ -5650,11 +5782,6 @@ defmodule HalC2.OrchestrationTest do
     else
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
-      after
-        5_000 ->
-          flunk(
-            "runs never reached #{inspect(statuses)}: #{inspect(Enum.map(runs(state), & &1["status"]))}"
-          )
       end
     end
   end
@@ -5710,8 +5837,6 @@ defmodule HalC2.OrchestrationTest do
           [%{"status" => "pending"} = request] -> request
           _ -> await_request(thread_id)
         end
-    after
-      5_000 -> flunk("no approval request")
     end
   end
 end

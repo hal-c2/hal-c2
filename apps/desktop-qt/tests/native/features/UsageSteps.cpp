@@ -128,7 +128,8 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     mc.reply(rpc, QJsonObject{{QStringLiteral("outcome"), fake.creditOutcome}});
   });
   mc.onRpc(QStringLiteral("server.refreshProviders"), [&mc](const FakeMc::Rpc& rpc) {
-    ++mc.part<FakeUsage>().limitChecks;
+    // A folder's read (the composer's skills) leaves quota alone, as the MC's does.
+    if (!rpc.payload.contains(QLatin1String("cwd"))) ++mc.part<FakeUsage>().limitChecks;
     // Each environment re-reads its own providers.
     const FakeConfig& config = fakeConfig(mc);
     const QJsonObject& own = config.elsewhere.contains(rpc.environment) ? config.elsewhere[rpc.environment] : config.config;

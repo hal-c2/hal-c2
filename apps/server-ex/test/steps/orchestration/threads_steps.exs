@@ -196,9 +196,18 @@ defmodule HalC2.Steps.Orchestration.Threads do
     after_update = World.thread(context, thread)
     assert after_update[key] == value
 
-    # Only the named field (and the update time) moved.
-    assert Map.drop(after_update, [key, "updatedAt"]) ==
-             Map.drop(context.thread_before, [key, "updatedAt"])
+    # Only the named field (and the update time) moved, and a mode that changed moves
+    # the thread's selection revision by one (`HalC2.Orchestration.Selection`).
+    before = context.thread_before
+    revision = HalC2.Orchestration.Selection.revision(before)
+
+    moved? = key in ~w(runtimeMode interactionMode) and before[key] != value
+
+    assert HalC2.Orchestration.Selection.revision(after_update) ==
+             if(moved?, do: revision + 1, else: revision)
+
+    assert Map.drop(after_update, [key, "updatedAt", "selectionRevision"]) ==
+             Map.drop(before, [key, "updatedAt", "selectionRevision"])
 
     context
   end

@@ -17,7 +17,21 @@ defmodule HalC2.Claude.AuthCache do
     %{id: __MODULE__, start: {__MODULE__, :start_link, [nil]}}
   end
 
-  def start_link(_arg), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  @doc """
+  Starts the table's owner under the caller. A service that starts before this one
+  may have asked for the table already (`table/0`), which made an owner nobody
+  supervises: the caller takes that one over instead of failing the MC's boot.
+  """
+  def start_link(_arg) do
+    case GenServer.start_link(__MODULE__, nil, name: __MODULE__) do
+      {:error, {:already_started, pid}} ->
+        Process.link(pid)
+        {:ok, pid}
+
+      other ->
+        other
+    end
+  end
 
   @doc "The sign-in reads' table, made (with its owner) on first use."
   @spec table() :: :ets.table()

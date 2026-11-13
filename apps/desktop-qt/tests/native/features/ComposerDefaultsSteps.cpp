@@ -178,7 +178,10 @@ const Steps steps([] {
     });
     world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), c[0]}});
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("use it")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
-    expect(lastMessage(world).value(QLatin1String("modelSelection")).toObject().value(QLatin1String("model")) == c[0], QStringLiteral("the turn did not run on %1").arg(c[0]));
+    // A pick of the model the thread already runs is no pick: the message names none, and the thread's own runs.
+    const QJsonObject sent = lastMessage(world).value(QLatin1String("modelSelection")).toObject();
+    const QJsonObject runs = sent.isEmpty() ? world.mc.threads.value(kThread).value(QLatin1String("modelSelection")).toObject() : sent;
+    expect(runs.value(QLatin1String("model")) == c[0], QStringLiteral("the turn did not run on %1").arg(c[0]));
   });
   step(QStringLiteral("the user starts a new thread on Codex"), [](World& world, const Captures&, const Table&) { newThread(world); });
   step(QStringLiteral("%1 is chosen").arg(q), [](World& world, const Captures& c, const Table&) {

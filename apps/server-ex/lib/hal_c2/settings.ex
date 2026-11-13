@@ -159,9 +159,12 @@ defmodule HalC2.Settings do
   the project's switch where it has one, and one the project turned off says so. What
   an agent in that project may pick a provider from.
   """
-  def providers_for(project_id) do
+  def providers_for(project_id), do: providers_for(project_id, HalC2.Environment.providers())
+
+  @doc "`providers` (`HalC2.Environment.providers/0`, read once) as `providers_for/1` gives them."
+  def providers_for(project_id, providers) do
     settings = settings()
-    Enum.map(HalC2.Environment.providers(), &project_provider(settings, &1, project_id))
+    Enum.map(providers, &project_provider(settings, &1, project_id))
   end
 
   defp project_provider(settings, %{"instanceId" => instance} = entry, project_id) do
@@ -882,11 +885,13 @@ defmodule HalC2.Settings do
     if muse.(settings) != muse.(state.settings), do: HalC2.Acp.forget("muse")
 
     # So is an added instance whose driver, or own or driver's binaryPath, changed
-    # (HalC2.Acp.binary_path/1).
+    # (HalC2.Acp.binary_path/1). One removed, or pointed at another registry agent, is
+    # a different agent: nothing the old one's sessions set carries over.
     binaries = fn settings ->
       for {id, %{} = entry} <- settings["providerInstances"] || %{}, into: %{} do
         {id,
-         {entry["driver"], get_in(entry, ["config", "binaryPath"]),
+         {get_in(entry, ["config", "agentId"]), entry["driver"],
+          get_in(entry, ["config", "binaryPath"]),
           get_in(settings, ["providers", entry["driver"] || id, "binaryPath"])}}
       end
     end
@@ -895,7 +900,9 @@ defmodule HalC2.Settings do
 
     for id <- Enum.uniq(Map.keys(old) ++ Map.keys(new)),
         old[id] != new[id] do
-      if new[id] == nil, do: HalC2.Acp.drop(id), else: HalC2.Acp.forget(id)
+      if new[id] == nil or elem(new[id], 0) != elem(old[id] || new[id], 0),
+        do: HalC2.Acp.drop(id),
+        else: HalC2.Acp.forget(id)
     end
 
     HalC2.Watchers.notify(state.watchers, {:hal_c2_settings, node(), settings})

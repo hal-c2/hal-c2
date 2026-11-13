@@ -27,7 +27,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   alias HalC2.Codex.{GeneratedImages, Goals}
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch, Unrecorded}
+  alias HalC2.Orchestration.{AppliedModel, Entities, TurnWatch, Unrecorded}
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -1113,8 +1113,10 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
 
+  # A model a turn's native thread opened on is that turn's: one whose turn never
+  # started (`native_turn_started/3`) is not the next turn's on the same thread.
   defp begin_turn(state, turn) do
-    state = goal_thread(state, turn)
+    state = state |> Map.delete(:opened_model) |> goal_thread(turn)
 
     case Goals.command(turn) do
       nil -> begin_native_turn(state, turn)
@@ -1126,7 +1128,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     with {:ok, state} <- version_gate(state, turn),
          {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
-         {:ok, native_turn, state} <- start_native_turn(state, turn) do
+         {:ok, native_turn, state, turn} <- send_turn(state, turn) do
       native_turn_started(state, turn, native_turn)
     end
   end
@@ -1192,7 +1194,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       :ok ->
         state = state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)
         observe_started(state)
-        {:ok, state}
+        {opened, state} = Map.pop(state, :opened_model)
+        {:ok, AppliedModel.record(state, opened)}
 
       # The run ended while Codex started its turn: nothing wants the turn now. Codex
       # took the prompt all the same, which the run's start says: a run that ended
@@ -1531,14 +1534,31 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  # A thread Codex no longer has starts afresh with the whole thread
-  # (`HalC2.Orchestration.Handoff.fresh_start/2`).
   defp open_thread(state, turn) do
-    with {:ok, state} <- ensure_native_thread(state, turn) do
-      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
-      {:ok, state, turn}
+    with {:ok, state} <- ensure_native_thread(state, turn), do: {:ok, state, turn}
+  end
+
+  # Starts `turn` (as `shape` leaves it) in Codex. A thread Codex no longer had
+  # starts afresh with the whole thread (`HalC2.Orchestration.Handoff.fresh_start/2`),
+  # and only a turn that goes to `turn/start` hands it: a goal command that sends
+  # Codex no text (`begin_goal_turn/3`) leaves that to the next turn that does.
+  defp send_turn(state, turn, shape \\ & &1) do
+    {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+    turn = shape.(turn)
+
+    case start_native_turn(state, turn) do
+      {:ok, native_turn, state} -> {:ok, native_turn, state, turn}
+      {:error, reason, state} -> {:error, reason, unsent_fresh(state, turn)}
     end
   end
+
+  # A turn that started afresh but Codex refused to start leaves the new conversation
+  # as empty as it found it: the next turn hands it the thread. Deliberately so for
+  # every refusal, even one Codex may have taken the text for (a timed-out
+  # `turn/start`, or one answered with an earlier run's turn): the thread handed
+  # twice beats a conversation that never had it.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
 
   defp not_carried(state, turn, reason) do
     at = Entities.now()
@@ -1671,8 +1691,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     case result do
-      {:ok, %{"thread" => %{"id" => id}}} ->
-        {:ok, %{state | native_thread_id: id}}
+      {:ok, %{"thread" => %{"id" => id}} = reply} ->
+        {:ok, opened(state, id, reply)}
 
       {:error, reason} when turn.native_thread_id != nil ->
         resume_failed(state, params, reason)
@@ -1680,6 +1700,16 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  # The native thread Codex opened, and the model it says the thread runs on, which
+  # the turn records once it starts (`native_turn_started/3`). A thread of another id
+  # holds none of the options earlier turns set on the last one (`selected_options/3`).
+  defp opened(state, id, reply) do
+    state
+    |> Map.put(:opened_model, reply["model"])
+    |> then(&if(id != state.native_thread_id, do: Map.put(&1, :sent_options, %{}), else: &1))
+    |> Map.put(:native_thread_id, id)
   end
 
   @thread_in_use "This conversation is open in another Codex client, such as the Codex app, " <>
@@ -1697,8 +1727,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
       recoverable_resume?(reason) ->
         case Connection.call(state.conn, "thread/start", params) do
-          {:ok, %{"thread" => %{"id" => id}}} ->
-            {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
+          {:ok, %{"thread" => %{"id" => id}} = reply} ->
+            {:ok, Map.put(opened(state, id, reply), :fresh_start, true)}
 
           {:error, reason} ->
             {:error, reason, state}
@@ -1888,7 +1918,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     params = if context, do: Map.put(params, "additionalContext", context), else: params
 
-    params = Map.merge(params, selected_options(Map.get(turn, :options, %{})))
+    {options, state} = selected_options(state, turn)
+    params = Map.merge(params, options)
 
     case Connection.call(state.conn, "turn/start", params) do
       # Codex answering a new run's start with an earlier run's turn has not
@@ -2423,6 +2454,15 @@ defmodule HalC2.Codex.ThreadRuntime do
        )
        when turn_id != current,
        do: state
+
+  # Codex moving the turn to another model than the one it was started on (a model
+  # it routes a flagged request away from, say) is recorded on the run, with a notice.
+  defp notification(
+         "model/rerouted",
+         %{"threadId" => thread, "toModel" => model},
+         %{native_thread_id: thread} = state
+       ),
+       do: AppliedModel.record(state, model)
 
   # A turn's first final answer streams as it comes; a later one is held back
   # until it finishes, when a repeat of an earlier answer (or an empty one) is
@@ -3082,7 +3122,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # Codex starts the resumed goal's turn itself: the run waits for it as it does
-  # between a goal's turns.
+  # between a goal's turns. That turn carries none of HAL-C2's text, so a conversation
+  # Codex lost is not handed the thread here: the next turn HAL-C2 sends hands it.
   defp run_goal(state, turn, :resume, _goal) do
     case goal_run_started(state, turn) do
       {:ok, state} ->
@@ -3103,12 +3144,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = Goals.first_turn(turn, objective)
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
          {:ok, _} <- goal_call(state, "thread/goal/set", paused),
-         {:ok, native_turn, state} <- start_native_turn(state, turn),
+         {:ok, native_turn, state, turn} <-
+           send_turn(state, turn, &Goals.first_turn(&1, objective)),
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
       mark = goal_mark()
 
@@ -3440,18 +3481,48 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | items: Map.drop(state.items, Map.keys(persistent))}
   end
 
-  # The model options the user picked: reasoning effort and service tier.
-  defp selected_options(options) do
-    tier =
-      options["serviceTier"] || if(options["fastMode"] == true, do: "fast")
+  # The model options the user picked: reasoning effort and service tier. Codex keeps
+  # what `turn/start` sets for the thread's later turns, so an option an earlier turn
+  # set that this one leaves unpicked is set back: the tier to none (Standard, which
+  # "default" also names), the effort to the model's default. Unpicked from the start,
+  # neither is named, and Codex runs on its own config.
+  defp selected_options(state, turn) do
+    options = Map.get(turn, :options, %{})
+    tier = options["serviceTier"] || if(options["fastMode"] == true, do: "fast")
+    sent = Map.get(state, :sent_options, %{})
 
-    %{}
-    |> then(
-      &if is_binary(options["reasoningEffort"]),
-        do: Map.put(&1, "effort", options["reasoningEffort"]),
-        else: &1
-    )
-    |> then(&if is_binary(tier), do: Map.put(&1, "serviceTier", tier), else: &1)
+    picked =
+      %{}
+      |> then(
+        &if is_binary(options["reasoningEffort"]),
+          do: Map.put(&1, "effort", options["reasoningEffort"]),
+          else: &1
+      )
+      |> then(
+        &if is_binary(tier),
+          do: Map.put(&1, "serviceTier", if(tier != "default", do: tier)),
+          else: &1
+      )
+
+    reset =
+      %{}
+      |> then(
+        &if Map.has_key?(sent, "serviceTier"), do: Map.put(&1, "serviceTier", nil), else: &1
+      )
+      |> then(fn reset ->
+        default =
+          Map.has_key?(sent, "effort") &&
+            HalC2.Codex.Provider.default_option(
+              Entities.instance(turn.ids),
+              turn.model,
+              "reasoningEffort"
+            )
+
+        if is_binary(default), do: Map.put(reset, "effort", default), else: reset
+      end)
+
+    options = Map.merge(reset, picked)
+    {options, Map.put(state, :sent_options, Map.merge(sent, options))}
   end
 
   defp error_code(code) when is_binary(code), do: code

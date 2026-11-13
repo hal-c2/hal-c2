@@ -1,6 +1,6 @@
-// Where the composer names a thread's permissions: on the toolbar only when
-// they differ from the default, in a new thread's context strip, and in the
-// model control's footer (features/composer/model-and-mode.feature).
+// Where the composer names a thread's permissions: always on a started
+// thread's toolbar, in a new thread's context strip, and in the model
+// control's footer (features/composer/model-and-mode.feature).
 
 #include <algorithm>
 
@@ -115,13 +115,6 @@ const Steps steps([] {
       return QStringLiteral("the footer to read %1; it reads %2 and the composer shows %3")
           .arg(c[0], permissions->property("displayText").toString(), show(composer(world)));
     });
-  });
-  step(QStringLiteral("the composer does not name the permissions"), [](World& world, const Captures&, const Table&) {
-    drawn(world);
-    expect(composer(world).value(QStringLiteral("runtimeMode")) == composer(world).value(QStringLiteral("defaultRuntimeMode")),
-           QStringLiteral("the thread's permissions are not the default; the composer shows %1").arg(show(composer(world))));
-    expect(!shown(world, QStringLiteral("runtimeModePicker")) && !shown(world, QStringLiteral("contextPermissions")),
-           QStringLiteral("the composer names the permissions"));
   });
   step(QStringLiteral("the user sets the thread's permissions to (.+) from the effort menu"), [](World& world, const Captures& c, const Table&) {
     drawn(world);

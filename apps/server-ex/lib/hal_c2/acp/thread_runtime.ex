@@ -34,12 +34,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 20
+  @state_version 21
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -217,6 +217,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        thread_id: thread_id,
        conn: nil,
        agent: nil,
+       # The registry agent (`config.agentId`) the instance named at launch.
+       agent_id: nil,
        # Whether the agent is Kimi Code, whose tool calls `Kimi.update/1` reshapes.
        kimi: false,
        # Kimi's session records while its subagents run (`read_wire/1`): %{session, dir,
@@ -366,22 +368,32 @@ defmodule HalC2.Acp.ThreadRuntime do
         orphans: %{}
     }
 
+    state = Map.put(state, :unapplied, [])
+
     with :ok <- Antigravity.check_turn(turn),
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
          {state, turn} = settle_carried(state, turn),
-         # A session the agent no longer had starts afresh with the whole thread.
-         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
          state = %{state | turn: turn},
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
          {:ok, state} <- set_session_options(state, turn),
-         state = set_parameters(state, turn) do
-      # A run that ended while the session opened never reaches the agent.
+         state = set_parameters(state, turn),
+         :ok <- applied(state) do
+      state = AppliedModel.record(state, state.model)
+
+      # A session the agent no longer had starts afresh with the whole thread, once
+      # nothing stands between the turn and the agent: a turn the session would not
+      # switch models for leaves that to the next.
+      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+      state = %{state | turn: turn}
+
+      # A run that ended while the session opened never reaches the agent, nor does
+      # the thread it was to hand a new session.
       case started(state) do
         :ok -> {:reply, :ok, prompt(state, turn)}
-        :ended -> {:reply, :ok, %{state | turn: nil}}
+        :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
       :logout ->
@@ -1442,6 +1454,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 19} = state),
     do: state |> Map.put_new(:agent_cancelled, false) |> Map.put(:v, 20) |> migrate()
 
+  # A runtime from before knows its instance, and its agent is the one it names now.
+  defp migrate(%{v: 20} = state),
+    do:
+      state
+      |> Map.merge(%{v: 21, agent_id: agent_id(state[:agent])})
+      |> migrate()
+
+  defp agent_id(nil), do: nil
+  defp agent_id(instance), do: HalC2.Acp.agent_id(instance)
+
   # --- session -------------------------------------------------------------------
 
   # A signed-out registry agent is not started for a thread: it could only refuse the
@@ -1458,12 +1480,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # The agent's permission mode is set when it starts, so a new mode means a new process.
   # So does a changed MCP credential: the header, env and bridge the live
-  # session carries would otherwise keep a token the flipped setting revoked.
+  # session carries would otherwise keep a token the flipped setting revoked. And so
+  # does an instance pointed at another registry agent: the next turn runs that one.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
        when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode do
-    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)),
-      do: {:ok, state},
-      else: ensure_session(%{state | session_id: nil}, turn)
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) and
+         agent_id(agent) == state.agent_id,
+       do: {:ok, state},
+       else: ensure_session(%{state | session_id: nil}, turn)
   end
 
   defp ensure_session(state, turn) do
@@ -1591,6 +1615,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          state
          | conn: conn,
            agent: instance,
+           agent_id: agent_id(instance),
            kimi: Kimi.agent?(instance),
            mode: mode,
            server: server,
@@ -1772,6 +1797,11 @@ defmodule HalC2.Acp.ThreadRuntime do
          do: {:ok, id, Map.put(state, :fresh_start, true)}
   end
 
+  # A turn that started afresh (`Handoff.fresh_start/2`) but never reached the agent
+  # leaves the new session as empty as it found it: the next turn hands it the thread.
+  defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
+  defp unsent_fresh(state, _turn), do: state
+
   defp new_session(state, turn) do
     servers = mcp_servers(state, turn)
 
@@ -1886,11 +1916,31 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     if named? or new?, do: record_model_switch(state, turn, named?)
     # A session without older modes drops those of the session before it.
-    remember_model(
-      if(named?, do: state, else: %{state | model: nil}),
-      Map.put_new(result, "modes", nil)
-    )
+    state =
+      remember_model(
+        if(named?, do: state, else: %{state | model: nil}),
+        Map.put_new(result, "modes", nil)
+      )
+
+    # What the session opened on is what a pick taken off the thread goes back to. Only
+    # the open sets it: a mid-session update reports the current state, picks included.
+    state =
+      state
+      |> Map.put(:opened_config, state.config)
+      |> Map.put(:variants, %{})
+      |> landed()
+
+    if grok?(state),
+      do: Map.put(state, :opened_reasoning, session_reasoning(result)),
+      else: state
   end
+
+  # OpenCode's variants belong to a model: the one it reports when the session first
+  # lands on a model is that model's own, what a turn picking none goes back to.
+  defp landed(%{agent: "opencode", model: model} = state) when is_binary(model),
+    do: Map.update(state, :variants, %{}, &Map.put_new(&1, model, state.config["effort"]))
+
+  defp landed(state), do: state
 
   defp record_model_switch(state, turn, switches?) do
     commit(state, fn stream ->
@@ -1912,8 +1962,17 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = remember_config(state, result)
 
+    # Only a result naming the session's models says which level it is on.
     state =
-      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
+      if grok?(state) and is_map(result["models"]) do
+        Map.put(
+          state,
+          :reasoning,
+          session_reasoning(result)[get_in(result, ["models", "currentModelId"])]
+        )
+      else
+        state
+      end
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
@@ -1952,7 +2011,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     options =
       HalC2.Acp.session_config(%{"configOptions" => result["configOptions"], "modes" => modes})
 
-    HalC2.Acp.put_config(state.agent, options)
+    HalC2.Acp.put_config(state.agent, options, state.agent_id)
+
+    # What each option offers (`configId` -> its choices' values).
+    state =
+      Map.put(
+        state,
+        :choices,
+        Map.new(options, &{&1["id"], Enum.map(flat_choices(&1), fn c -> c["value"] end)})
+      )
 
     %{
       state
@@ -1981,15 +2048,25 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
     end
 
+    # An agent taken off the thread goes back to the one the session opened on (build,
+    # when it opened in plan), and a variant to the turn's model's own while it still
+    # offers it, as OpenCode keeps what was set last.
+    opened = Map.get(state, :opened_config, %{})
+    default = Map.get(state, :variants, %{})[state.model]
+    default = if default in (Map.get(state, :choices, %{})["effort"] || []), do: default
+
     agent =
       value.("agent") ||
         cond do
           turn.interaction_mode == "plan" -> "plan"
+          opened["mode"] not in [nil, "plan"] -> opened["mode"]
           state.config["mode"] == "plan" -> "build"
           true -> nil
         end
 
-    state |> set_config("mode", agent) |> set_config("effort", value.("variant"))
+    state
+    |> set_config("mode", agent)
+    |> set_config("effort", value.("variant") || default)
   end
 
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
@@ -2079,7 +2156,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         {:error, reason} ->
           Logger.warning("could not set Cursor's model options: #{redacted(reason)}")
-          state
+          unapplied(state, "the model #{model} with its options", reason)
       end
     else
       state
@@ -2133,12 +2210,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp redacted(reason), do: reason |> inspect() |> HalC2.Acp.Stderr.redact()
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
-  defp plan_choice(option) do
-    option["options"]
-    |> List.wrap()
-    |> Enum.flat_map(&(&1["options"] || [&1]))
-    |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
-  end
+  defp plan_choice(option),
+    do:
+      Enum.find_value(
+        flat_choices(option),
+        &(&1["value"] in ["plan", "architect"] && &1["value"])
+      )
+
+  # An option's choices, those of its groups included.
+  defp flat_choices(option),
+    do: option["options"] |> List.wrap() |> Enum.flat_map(&(&1["options"] || [&1]))
 
   # An agent with older ACP modes says when it changes mode itself, leaving plan mode
   # for one, in or between turns. The "mode" option follows, so picking the mode it
@@ -2146,7 +2227,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp mode_changed(%{legacy_modes: %{} = modes} = state, %{"currentModeId" => id})
        when is_binary(id) and is_map_key(state.config, "mode") do
     if Enum.any?(List.wrap(modes["availableModes"]), &(is_map(&1) and &1["id"] == id)) do
-      HalC2.Acp.put_option(state.agent, "mode", id)
+      HalC2.Acp.put_option(state.agent, "mode", id, state.agent_id)
 
       %{
         state
@@ -2160,10 +2241,13 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp mode_changed(state, _update), do: state
 
-  # A mode of the session's older ACP modes is set through `session/set_mode`.
+  # A mode of the session's older ACP modes is set through `session/set_mode`. One the
+  # session already holds is recorded again, as the instance may have been dropped
+  # (another agent named, then this one again) while the session ran on.
   defp set_config(%{legacy_modes: %{} = modes} = state, "mode", value)
        when is_binary(value) and is_map_key(state.config, "mode") do
     if state.config["mode"] == value do
+      HalC2.Acp.put_option(state.agent, "mode", value, state.agent_id)
       state
     else
       case Connection.call(state.conn, "session/set_mode", %{
@@ -2171,7 +2255,7 @@ defmodule HalC2.Acp.ThreadRuntime do
              "modeId" => value
            }) do
         {:ok, _} ->
-          HalC2.Acp.put_option(state.agent, "mode", value)
+          HalC2.Acp.put_option(state.agent, "mode", value, state.agent_id)
 
           %{
             state
@@ -2181,7 +2265,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         {:error, reason} ->
           Logger.warning("could not set the mode to #{value}: #{redacted(reason)}")
-          state
+          unapplied(state, "the mode #{value}", reason)
       end
     end
   end
@@ -2189,6 +2273,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp set_config(state, id, value)
        when (is_binary(value) or is_boolean(value)) and is_map_key(state.config, id) do
     if state.config[id] == value do
+      HalC2.Acp.put_option(state.agent, id, value, state.agent_id)
       state
     else
       case Connection.call(
@@ -2199,11 +2284,12 @@ defmodule HalC2.Acp.ThreadRuntime do
            ) do
         {:ok, result} ->
           state = remember_config(state, result || %{})
+          HalC2.Acp.put_option(state.agent, id, value, state.agent_id)
           %{state | config: Map.put(state.config, id, value)}
 
         {:error, reason} ->
           Logger.warning("could not set #{id} to #{value}: #{redacted(reason)}")
-          state
+          unapplied(state, "#{id} #{value}", reason)
       end
     end
   end
@@ -2220,7 +2306,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            "value" => model
          }) do
       {:ok, result} ->
-        {:ok, remember_config(%{state | model: model}, result || %{})}
+        {:ok, landed(remember_config(%{state | model: model}, result || %{}))}
 
       {:error, reason} ->
         {:error,
@@ -2287,18 +2373,24 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
   # keeps the model the session has. A reasoning level goes with the model, as
   # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
-  # differs from the level the session is on. Omitting a level on the same model leaves
-  # Grok's own default alone, so only a changed model or a changed level is sent.
+  # differs from the level the session is on. No level picked is the level the model
+  # started at when the session opened: Grok keeps a level set by an earlier turn, so
+  # one taken off the thread is set back, and Grok's own level is otherwise left alone.
   @grok_default_model "grok-build"
   @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
 
   defp grok_model(state, model, options) do
     requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    target = requested || state.model
     provided = options["reasoningEffort"]
-    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+
+    effort =
+      if is_binary(provided) and provided =~ @grok_effort,
+        do: provided,
+        else: Map.get(state, :opened_reasoning, %{})[target]
+
     model_changed = requested != nil and requested != state.model
     effort_changed = effort != nil and effort != Map.get(state, :reasoning)
-    target = requested || state.model
 
     cond do
       (not model_changed and not effort_changed) or target == nil ->
@@ -2323,24 +2415,20 @@ defmodule HalC2.Acp.ThreadRuntime do
 
           {:error, reason} ->
             Logger.warning("could not select #{target}: #{redacted(reason)}")
-            state
+            unapplied(state, "the model #{target}", reason)
         end
     end
   end
 
-  # The level of reasoning the model a Grok session starts on is at.
-  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
-    with model when is_map(model) <-
-           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
-         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
-         true <- effort =~ @grok_effort do
-      effort
-    else
-      _ -> nil
-    end
+  # The level of reasoning each model a Grok session offers starts at, by model.
+  defp session_reasoning(%{"models" => %{"availableModels" => [_ | _] = models}}) do
+    for %{"modelId" => id, "_meta" => %{"reasoningEffort" => effort}} <- models,
+        is_binary(effort) and effort =~ @grok_effort,
+        into: %{},
+        do: {id, effort}
   end
 
-  defp session_reasoning(_result), do: nil
+  defp session_reasoning(_result), do: %{}
 
   # "Pi default" leaves the model to the user's own Pi settings, and a registry agent's
   # default to the agent when its session offers no model of that name.
@@ -2367,23 +2455,40 @@ defmodule HalC2.Acp.ThreadRuntime do
         remember_config(%{state | model: model}, result || %{})
 
       # A resumed session may not say which method its agent switches models with.
-      {:error, _} when state.model_method == "session/set_config_option" ->
+      {:error, first} when state.model_method == "session/set_config_option" ->
         case select_model(state, "session/set_model", model) do
           {:ok, _} ->
             %{state | model: model, model_method: "session/set_model"}
 
           {:error, reason} ->
             Logger.warning("could not select #{model}: #{redacted(reason)}")
-            state
+            unapplied(state, "the model #{model}", first)
         end
 
       {:error, reason} ->
         Logger.warning("could not select #{model}: #{redacted(reason)}")
-        state
+        unapplied(state, "the model #{model}", reason)
     end
   end
 
   defp set_model_now(state, _model), do: state
+
+  # A model or option the turn picked that the agent would not switch to: the turn is
+  # refused (`applied/1`) rather than run on what the session had before.
+  defp unapplied(state, what, reason),
+    do: Map.update(state, :unapplied, [{what, reason}], &(&1 ++ [{what, reason}]))
+
+  defp applied(state) do
+    case Map.get(state, :unapplied, []) do
+      [] ->
+        :ok
+
+      [{what, reason} | _] ->
+        {:refused,
+         "Could not switch to #{what} (#{format(reason)}), so the turn was not sent. " <>
+           "Try again, or pick another.", state}
+    end
+  end
 
   defp select_model(state, "session/set_model", model),
     do:

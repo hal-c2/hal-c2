@@ -75,6 +75,18 @@ bool stillSending(const QJsonValue& detail) {
   return detail.toObject().value(QLatin1String("code")) == QLatin1String("message_still_sending");
 }
 
+// The thread's model, runtime or interaction mode changed after the choice
+// the send carries was made: the MC took none of it.
+bool selectionStale(const QJsonValue& detail) {
+  return detail.toObject().value(QLatin1String("code")) == QLatin1String("selection-stale");
+}
+
+// The base a choice sent to the thread goes with: the revision of its
+// selection it was made against. None from an MC that counts none.
+void withBase(QJsonObject& command, const std::optional<qint64>& base) {
+  if (base) command.insert(QStringLiteral("selectionBase"), double(*base));
+}
+
 // The title of an approval whose request names none.
 QString approvalTitle(const QString& kind) {
   if (kind == QLatin1String("mcp-elicitation")) return QStringLiteral("App access approval");
@@ -266,7 +278,7 @@ void ComposerController::activate() {
     carryDrafts();
     forgetTakenPicks();
     reconcileUnsent();
-    settleRuntimeModes();
+    settleModes();
     refreshPathSearch();
     drainOutbox();
     publish();
@@ -288,6 +300,7 @@ void ComposerController::activate() {
   // The route environment's providers are the picker's catalogue.
   connect(shell->controller<WorkspaceController>(), &WorkspaceController::configChanged, this, [this] {
     refreshCatalogue();
+    settleModes();
     publish();
   });
   if (auto* settings = shell->controller<SettingsController>()) {
@@ -496,7 +509,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     m_drafts[target].runtimeMode = mode;
     save();
     publish();
-    setThreadRuntimeMode(target, mode);
+    setThreadMode(target, ModeKind::Runtime, mode);
     return true;
   }
   if (action == QLatin1String("composer.interactionMode.set")) {
@@ -959,22 +972,54 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const bool implement = planFollowUp && trimmed.isEmpty();
 
   const QString createdAt = sidebar::formatIso(m_now());
-  const QJsonObject modelSelection = selection(target);
-  // Only a mode the user changed is set; a thread the MC has no mode for
-  // keeps the MC's default. A saved mode the provider no longer offers is
-  // set to the mode the composer shows instead, so the turn runs as read.
-  QString runtimeMode = pickedRuntimeMode(target);
-  if (!runtimeMode.isEmpty()) {
-    runtimeMode = composer::shownRuntimeMode(instanceOf(modelSelection), runtimeMode);
-  } else if (!thread->runtimeMode.isEmpty()) {
-    const QString shown = composer::shownRuntimeMode(instanceOf(modelSelection), thread->runtimeMode);
-    if (shown != thread->runtimeMode) runtimeMode = shown;
+  // Only what the user picked goes: with no pick the thread runs on what it
+  // holds when the turn starts, so a change made elsewhere since stands. A
+  // thread whose own provider is known not to run here needs a pick
+  // (composerState); one the catalogue cannot judge yet is the MC's to run.
+  const Draft& picks = m_drafts.value(target);
+  const bool modelPicked = picks.modelSelection.has_value();
+  if (!modelPicked && !thread->modelSelection.isEmpty() && !m_catalogue.isEmpty()) {
+    const composer::Instance* own = instanceOf(thread->modelSelection);
+    if (!own || !own->ready()) {
+      toast(QStringLiteral("Choose a model to send"),
+            QStringLiteral("This thread's provider is unavailable here. Pick a model, then send again."));
+      return true;
+    }
   }
-  QString interactionMode = interactionModeOf(target);
-  if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
-  if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
+  const QJsonObject shownSelection = selection(target);
+  const QJsonObject modelSelection = modelPicked ? shownSelection : QJsonObject();
+  // The modes are set as the user picks them (setThreadMode), and a change on
+  // its way carries its mode. The send sets one where the composer shows
+  // another than the thread will have: a saved mode the provider no longer
+  // offers, or the mode a plan's follow-up chooses. The phone's outbox also
+  // sets one still on its way: the connection may be lost under that change,
+  // and the message, sent again later, must not run in the old mode (setting
+  // the mode a thread has moves nothing). Like the user's, these name no
+  // revision, and are this client's own changes, which the model pick stands
+  // past.
+  const composer::Instance* shownInstance = instanceOf(shownSelection);
+  const auto held = [&](ModeKind kind, const QString& rowMode) {
+    const auto setting = settingModes(kind).constFind(target);
+    return setting != settingModes(kind).cend() && !m_waitsOffline ? setting->mode : rowMode;
+  };
+  QString runtimeMode;
+  const QString heldRuntime = held(ModeKind::Runtime, thread->runtimeMode);
+  const QString pickedRuntime = pickedRuntimeMode(target);
+  if (const QString wanted = pickedRuntime.isEmpty() ? heldRuntime : pickedRuntime; !wanted.isEmpty()) {
+    if (const QString shown = composer::shownRuntimeMode(shownInstance, wanted); shown != heldRuntime) runtimeMode = shown;
+  }
+  const QString heldInteraction = held(ModeKind::Interaction, thread->interactionMode);
+  QString interactionMode = planFollowUp ? (implement ? QStringLiteral("default") : QStringLiteral("plan")) : interactionModeOf(target);
+  // A thread the MC has no mode for keeps the MC's default.
+  if (interactionMode == heldInteraction || (heldInteraction.isEmpty() && interactionMode == QLatin1String("default"))) {
+    interactionMode.clear();
+  }
+  // The pick names the revision it was made against; dispatchAll moves it on
+  // past this client's own changes.
+  const std::optional<qint64> base =
+      modelPicked && thread->selectionRevision ? std::optional<qint64>(picks.pickBase.value_or(*thread->selectionRevision)) : std::nullopt;
   QList<QJsonObject> commands;
-  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode && m_settingMode.value(target).mode != runtimeMode) {
+  if (!runtimeMode.isEmpty()) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
         {QStringLiteral("threadId"), thread->id},
@@ -982,7 +1027,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         {QStringLiteral("createdAt"), createdAt},
     });
   }
-  if (!interactionMode.isEmpty() && interactionMode != thread->interactionMode) {
+  if (!interactionMode.isEmpty()) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("thread.interaction-mode.set")},
         {QStringLiteral("threadId"), thread->id},
@@ -996,8 +1041,20 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const QString instanceId = str(modelSelection, QLatin1String("instanceId"));
   const QString current = str(thread->modelSelection, QLatin1String("instanceId"));
   if (!instanceId.isEmpty() && !current.isEmpty() && instanceId != current) {
-    commands.append({
+    QJsonObject command{
         {QStringLiteral("type"), QStringLiteral("provider.switch")},
+        {QStringLiteral("threadId"), thread->id},
+        {QStringLiteral("modelSelection"), modelSelection},
+        {QStringLiteral("createdAt"), createdAt},
+    };
+    withBase(command, base);
+    commands.append(command);
+  } else if (modelPicked && !thread->selectionRevision && !composer::pickMatchesThread(modelSelection, thread->modelSelection)) {
+    // An MC that counts no revisions runs a plain send on the message's model
+    // but keeps the thread's own: the pick is saved to the thread first, so
+    // it is what the thread runs and every client shows.
+    commands.append({
+        {QStringLiteral("type"), QStringLiteral("thread.model-selection.set")},
         {QStringLiteral("threadId"), thread->id},
         {QStringLiteral("modelSelection"), modelSelection},
         {QStringLiteral("createdAt"), createdAt},
@@ -1013,8 +1070,12 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
       {QStringLiteral("attachments"), QJsonArray()},
       {QStringLiteral("titleSeed"), planFollowUp || trimmed.isEmpty() ? thread->title : trimmed},
   };
-  if (!modelSelection.isEmpty()) message.insert(QStringLiteral("modelSelection"), modelSelection);
-  rememberModel(modelSelection);
+  if (!modelSelection.isEmpty()) {
+    message.insert(QStringLiteral("modelSelection"), modelSelection);
+    withBase(message, base);
+  }
+  // This device's memory of the model and its options, picked or not.
+  rememberModel(shownSelection);
   if (implement) {
     message.insert(QStringLiteral("sourcePlanRef"),
                    QJsonObject{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("planId"), str(plan, QLatin1String("id"))}});
@@ -1027,7 +1088,6 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     message.insert(QStringLiteral("dispatchMode"), QJsonObject{{QStringLiteral("type"), QStringLiteral("start_immediately")}});
   }
   Draft& draft = m_drafts[target];
-  if (planFollowUp) draft.interactionMode = interactionMode;
 
   // Implementing from the plan's own button leaves the draft alone.
   const QList<Attachment> attachments = fromDraft ? std::exchange(draft.attachments, {}) : QList<Attachment>();
@@ -1037,11 +1097,11 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   withExcerpts(message, contexts);
   commands.append(message);
   const QString messageId = str(message, QLatin1String("messageId"));
-  // What the outbox sends again, and gives back with a refusal.
-  const QJsonObject choices{{QStringLiteral("modelSelection"), modelSelection},
-                            {QStringLiteral("runtimeMode"),
-                             composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(target))},
-                            {QStringLiteral("interactionMode"), interactionMode.isEmpty() ? interactionModeOf(target) : interactionMode}};
+  // What the outbox gives back with a refusal or an edit: the model pick,
+  // with the revision it was made against.
+  QJsonObject choices;
+  if (modelPicked) choices.insert(QStringLiteral("modelSelection"), modelSelection);
+  if (base) choices.insert(QStringLiteral("selectionBase"), double(*base));
   if (waits) {
     m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.kept && unsent.target == target; });
     Unsent waiting{target, target, messageId, std::nullopt, fromDraft ? text : QString(), attachments, contexts};
@@ -1556,8 +1616,8 @@ void ComposerController::sendNext(const QString& target) {
         waitAgain(target, unsent);
         return;
       }
-      if (m_waitsOffline) {
-        restoreRefused(target, unsent, *error);
+      if (m_waitsOffline || selectionStale(detail)) {
+        restoreRefused(target, unsent, *error, detail);
         return;
       }
       if (unanswered(error)) {
@@ -1613,6 +1673,8 @@ void ComposerController::sendNext(const QString& target) {
     forgetUnsent(delivered);
     if (queue.isEmpty()) {
       m_queues.remove(target);
+      // A mode change made behind the sends goes now.
+      settleModes();
       publish();
     } else {
       sendNext(target);
@@ -1738,7 +1800,9 @@ void ComposerController::waitAgain(const QString& target, const QList<Send>& sen
   publish();
 }
 
-void ComposerController::restoreRefused(const QString& target, const QList<Send>& sends, const QString& error) {
+void ComposerController::restoreRefused(const QString& target, const QList<Send>& sends, const QString& error,
+                                        const QJsonValue& detail) {
+  const bool stale = selectionStale(detail);
   QStringList prompts;
   QList<Attachment> attachments;
   QList<Excerpt> contexts;
@@ -1752,7 +1816,9 @@ void ComposerController::restoreRefused(const QString& target, const QList<Send>
     }
     forgetUnsent(send.messageId);
   }
-  if (!sends.isEmpty() && sends.constFirst().planFollowUp) {
+  if (stale) {
+    toastStale(detail);
+  } else if (!sends.isEmpty() && sends.constFirst().planFollowUp) {
     toast(QStringLiteral("Plan follow-up not sent"), error.isEmpty() ? QStringLiteral("Failed to send plan follow-up.") : error);
   } else {
     toast(QStringLiteral("Failed to send message"), error);
@@ -1764,11 +1830,13 @@ void ComposerController::restoreRefused(const QString& target, const QList<Send>
   Draft& kept = m_drafts[target];
   kept.attachments = attachments + kept.attachments;
   kept.excerpts = contexts + kept.excerpts;
-  if (choices.value(QLatin1String("modelSelection")).isObject() && !choices.value(QLatin1String("modelSelection")).toObject().isEmpty()) {
-    kept.modelSelection = choices.value(QLatin1String("modelSelection")).toObject();
+  // A stale send's picks were made against what the thread has left: the
+  // composer shows the thread's own, for the user to check.
+  if (stale) {
+    dropPicks(kept);
+  } else {
+    restoreChoices(kept, choices);
   }
-  if (const QString mode = str(choices, QLatin1String("runtimeMode")); !mode.isEmpty()) kept.runtimeMode = mode;
-  if (const QString mode = str(choices, QLatin1String("interactionMode")); !mode.isEmpty()) kept.interactionMode = mode;
   if (restored != typed) setText(target, restored, int(restored.size()));
   save();
   publish();
@@ -1799,11 +1867,8 @@ bool ComposerController::editWaiting(const QString& target, const QString& messa
   Draft& kept = m_drafts[target];
   kept.attachments = unsent.attachments + kept.attachments;
   kept.excerpts = unsent.excerpts + kept.excerpts;
-  if (const QJsonObject model = unsent.choices.value(QLatin1String("modelSelection")).toObject(); !model.isEmpty()) {
-    kept.modelSelection = model;
-  }
-  if (const QString mode = str(unsent.choices, QLatin1String("runtimeMode")); !mode.isEmpty()) kept.runtimeMode = mode;
-  if (const QString mode = str(unsent.choices, QLatin1String("interactionMode")); !mode.isEmpty()) kept.interactionMode = mode;
+  restoreChoices(kept, unsent.choices);
+  forgetTakenPicks();
   const QString typed = draft(target);
   const QString text = typed.isEmpty() ? unsent.prompt : unsent.prompt.isEmpty() ? typed : unsent.prompt + QStringLiteral("\n\n") + typed;
   setText(target, text, int(text.size()));
@@ -1921,19 +1986,148 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 // rest come back to the draft: into it when it is empty, else behind a toast
 // that restores them once it is. A new thread's first send waits for the
 // shell to know whether the thread exists.
-// A model picked in a started thread's draft that the thread now runs is the
-// thread's again, so a change made on another client shows here; a pick the
-// thread has not taken stays (upstream #20886).
+// A started thread's model pick gives way once the thread moves past it, its
+// own send being taken included, so a change made on another client shows
+// here and no pick made before it undoes it. This client's own mode changes
+// are not such a change: the pick stands past them (`nextPick`). From an MC
+// that counts no revisions, a model the thread now runs is the thread's again
+// and a pick it has not taken stays (upstream #20886).
 void ComposerController::forgetTakenPicks() {
   bool forgot = false;
+  for (auto it = m_own.begin(); it != m_own.end();) {
+    const auto thread = m_store->thread(it.key());
+    const std::optional<qint64> revision = thread ? thread->selectionRevision : std::nullopt;
+    it->removeIf([&](const std::shared_ptr<OwnChange>& change) {
+      return change->answered && (!revision || !ownAhead(*change, *revision));
+    });
+    it = it->isEmpty() ? m_own.erase(it) : std::next(it);
+  }
   for (auto it = m_drafts.begin(); it != m_drafts.end(); ++it) {
     if (!it->modelSelection || it->multipleModels) continue;
     const auto thread = m_store->thread(it.key());
-    if (!thread || !composer::pickMatchesThread(*it->modelSelection, thread->modelSelection)) continue;
-    it->modelSelection.reset();
+    if (!thread) continue;
+    const std::optional<qint64> base = it->pickBase;
+    if (nextPick(*it, *thread)) {
+      forgot = forgot || it->pickBase != base;
+      continue;
+    }
+    dropPicks(*it);
     forgot = true;
   }
   if (forgot) save();
+}
+
+bool ComposerController::ownAhead(const OwnChange& change, qint64 revision) {
+  if (change.answered) return change.revision && *change.revision > revision;
+  // One sent before `revision` may already be in it: the row can beat the
+  // answer, and counting it again would take another client's change for it.
+  return change.sentAt && *change.sentAt >= revision;
+}
+
+// The pick moves its base only across revisions this client's own answers
+// name. While one of its own changes is unanswered, that change may be what
+// moved the thread, so the pick waits, unmoved, for the answer to say.
+bool ComposerController::nextPick(Draft& draft, const sidebar::Thread& thread) const {
+  const std::optional<qint64> revision = thread.selectionRevision;
+  if (!revision || !draft.pickBase) return !composer::pickMatchesThread(*draft.modelSelection, thread.modelSelection);
+  const qint64 base = *draft.pickBase;
+  if (*revision < base) return false;
+  if (*revision == base) return true;
+  QSet<qint64> named;
+  qsizetype pending = 0;
+  for (const auto& change : std::as_const(draft.pickOwn)) {
+    if (!change->answered) ++pending;
+    if (change->revision) named.insert(*change->revision);
+  }
+  qint64 unaccounted = 0;
+  for (qint64 at = base + 1; at <= *revision; ++at) unaccounted += named.contains(at) ? 0 : 1;
+  // Each unanswered change may yet name one revision; any more are another client's.
+  if (unaccounted > pending) return false;
+  if (unaccounted > 0) return true;
+  draft.pickBase = *revision;
+  draft.pickOwn.removeIf([&](const std::shared_ptr<OwnChange>& change) { return change->answered && !ownAhead(*change, *revision); });
+  return true;
+}
+
+// Each pick is made fresh against what the thread holds now, with the own
+// changes that may still move it on.
+void ComposerController::notePick(const QString& target) {
+  Draft& draft = m_drafts[target];
+  draft.pickOwn.clear();
+  const auto thread = m_store->thread(target);
+  if (!thread || !thread->selectionRevision) {
+    draft.pickBase.reset();
+    return;
+  }
+  draft.pickBase = *thread->selectionRevision;
+  for (const auto& change : m_own.value(target)) {
+    if (ownAhead(*change, *draft.pickBase)) draft.pickOwn.append(change);
+  }
+}
+
+std::shared_ptr<ComposerController::OwnChange> ComposerController::ownSent(const QString& target) {
+  const auto thread = m_store->thread(target);
+  auto change = std::make_shared<OwnChange>();
+  change->sentAt = thread ? thread->selectionRevision : std::nullopt;
+  m_own[target].append(change);
+  if (auto draft = m_drafts.find(target); draft != m_drafts.end() && draft->modelSelection) draft->pickOwn.append(change);
+  return change;
+}
+
+bool ComposerController::ownPending(const QString& target) const {
+  const OwnChanges changes = m_own.value(target);
+  return std::any_of(changes.cbegin(), changes.cend(), [](const auto& change) { return !change->answered; });
+}
+
+// The MC answers with the revision a change moved the thread to. An MC that
+// counts revisions names one in every answer that moved the thread, and one
+// that counts none never counts the change, so each thread's own MC decides.
+void ComposerController::ownAnswered(const QString& target, const std::shared_ptr<OwnChange>& change, const QJsonValue& reply,
+                                     bool took) {
+  change->answered = true;
+  if (const QJsonValue moved = reply.toObject().value(QLatin1String("selectionRevision")); took && moved.isDouble()) {
+    change->revision = qint64(moved.toDouble());
+  }
+  // Sends that waited for the answers go now, made past this client's own changes.
+  if (!ownPending(target)) {
+    const QList<std::function<void()>> waiting = m_afterOwn.take(target);
+    for (const auto& resume : waiting) resume();
+  }
+  forgetTakenPicks();
+  publish();
+}
+
+void ComposerController::dropPicks(Draft& draft) {
+  draft.modelSelection.reset();
+  draft.pickBase.reset();
+  draft.pickOwn.clear();
+}
+
+void ComposerController::restoreChoices(Draft& draft, const QJsonObject& choices) {
+  const QJsonObject model = choices.value(QLatin1String("modelSelection")).toObject();
+  if (model.isEmpty()) return;
+  draft.modelSelection = model;
+  draft.pickOwn.clear();
+  draft.pickBase.reset();
+  if (const QJsonValue base = choices.value(QLatin1String("selectionBase")); base.isDouble()) draft.pickBase = qint64(base.toDouble());
+}
+
+void ComposerController::toastStale(const QJsonValue& detail) {
+  const QJsonObject refusal = detail.toObject();
+  QJsonObject now = refusal.value(QLatin1String("modelSelection")).toObject();
+  if (now.isEmpty()) now = refusal.value(QLatin1String("selection")).toObject().value(QLatin1String("modelSelection")).toObject();
+  const QString instanceId = str(now, QLatin1String("instanceId"));
+  const QString model = str(now, QLatin1String("model"));
+  QString modelName = model;
+  QString provider = instanceId;
+  if (const composer::Instance* instance = composer::find(m_catalogue, instanceId)) {
+    if (!instance->displayName.isEmpty()) provider = instance->displayName;
+    if (const QString name = str(composer::findModel(*instance, model), QLatin1String("name")); !name.isEmpty()) modelName = name;
+  }
+  const QString where = modelName.isEmpty() || provider.isEmpty() ? QStringLiteral("This thread changed elsewhere.")
+                                                                  : QStringLiteral("This thread moved to %1 on %2 elsewhere.").arg(modelName, provider);
+  NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Message not sent"),
+                                                             where + QStringLiteral(" Check it and send again."));
 }
 
 void ComposerController::reconcileUnsent() {
@@ -2050,16 +2244,79 @@ ComposerController::Excerpt ComposerController::excerptOf(const QJsonObject& kep
           kept.value(QLatin1String("review")).toObject(), kept.value(QLatin1String("thread")).toObject()};
 }
 
+// A send's model pick names the revision it was made against. It is made past
+// this client's own changes before it goes: the pick in the draft moved on
+// across them (`nextPick`), and so does the next command once one before it
+// in the send answers the revision right after its base. Nothing else moves
+// it, so a change made elsewhere meanwhile refuses it (`selection-stale`).
 void ComposerController::dispatchAll(const Send& send, qsizetype index, Dispatched done) {
-  m_client->dispatchCommand(this, send.environmentId, send.commands.at(index),
-                            [this, send, index, done](const QJsonValue& detail, const std::optional<QString>& error) {
+  const QJsonObject& command = send.commands.at(index);
+  const QString type = str(command, QLatin1String("type"));
+  if (command.contains(QLatin1String("selectionBase"))) {
+    // The MC takes calls side by side, so a pick sent while one of this
+    // client's own changes is on its way could reach it before or after
+    // that change: it waits for the answer, then is made past it.
+    if (ownPending(send.target)) {
+      m_afterOwn[send.target].append([this, send, index, done] { dispatchAll(send, index, done); });
+      return;
+    }
+    qint64 base = qint64(command.value(QLatin1String("selectionBase")).toDouble());
+    const Draft picks = m_drafts.value(send.target);
+    if (picks.modelSelection && picks.pickBase && *picks.pickBase > base &&
+        *picks.modelSelection == command.value(QLatin1String("modelSelection")).toObject()) {
+      base = *picks.pickBase;
+    }
+    QSet<qint64> named;
+    for (const auto& change : m_own.value(send.target)) {
+      if (change->revision) named.insert(*change->revision);
+    }
+    while (named.contains(base + 1)) ++base;
+    if (base != qint64(command.value(QLatin1String("selectionBase")).toDouble())) {
+      Send rest = send;
+      rebase(rest, index, base);
+      return dispatchAll(rest, index, done);
+    }
+  }
+  // The send's own mode change moves the revision on like the user's, and so
+  // does its pick: a pick made next, while the row still lags, moves past it.
+  std::shared_ptr<OwnChange> own;
+  if (type == QLatin1String("thread.runtime-mode.set") || type == QLatin1String("thread.interaction-mode.set") ||
+      command.contains(QLatin1String("selectionBase"))) {
+    own = ownSent(send.target);
+  }
+  m_client->dispatchCommand(this, send.environmentId, command,
+                            [this, send, index, done, own](const QJsonValue& detail, const std::optional<QString>& error) {
+                              if (own) ownAnswered(send.target, own, detail, !error);
                               if (!error && index + 1 < send.commands.size()) {
-                                if (m_waitsOffline) forgetAnswered(send.messageId, send.commands.at(index));
-                                dispatchAll(send, index + 1, done);
+                                const QJsonObject answered = send.commands.at(index);
+                                Send rest = send;
+                                const QJsonObject next = rest.commands.at(index + 1);
+                                const QJsonValue moved = detail.toObject().value(QLatin1String("selectionRevision"));
+                                if (moved.isDouble() && next.contains(QLatin1String("selectionBase")) &&
+                                    qint64(moved.toDouble()) == qint64(next.value(QLatin1String("selectionBase")).toDouble()) + 1) {
+                                  rebase(rest, index + 1, qint64(moved.toDouble()));
+                                }
+                                if (m_waitsOffline) forgetAnswered(send.messageId, answered);
+                                dispatchAll(rest, index + 1, done);
                                 return;
                               }
                               done(error, error ? detail : QJsonValue());
                             });
+}
+
+// The send's choice at `index` made against `base`, in the outbox too, where a
+// refusal gives the picks back from.
+void ComposerController::rebase(Send& send, qsizetype index, qint64 base) {
+  QJsonObject& next = send.commands[index];
+  const QJsonObject before = next;
+  next.insert(QStringLiteral("selectionBase"), double(base));
+  for (Unsent& unsent : m_kept.unsent) {
+    if (unsent.messageId != send.messageId) continue;
+    for (QJsonObject& kept : unsent.commands) {
+      if (kept == before) kept = next;
+    }
+    if (unsent.choices.contains(QLatin1String("selectionBase"))) unsent.choices.insert(QStringLiteral("selectionBase"), double(base));
+  }
 }
 
 // A mode change the MC answered leaves the outbox's record of its send: sent
@@ -3100,6 +3357,12 @@ QJsonObject ComposerController::baseSelection(const QString& key) const {
 }
 
 QJsonObject ComposerController::newThreadSelection(const QString& environmentId, const QString& projectId) const {
+  // The project's MC names the model a new thread there starts on, resolved
+  // from its own settings and providers; the rest is for an MC that does not.
+  if (!projectId.isEmpty()) {
+    const QJsonObject named = m_store->projectRow(environmentId, projectId).value(QLatin1String("newThreadModelSelection")).toObject();
+    if (!named.isEmpty()) return named;
+  }
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   const auto setting = [settings](const QString& path) {
     return settings ? QJsonValue::fromVariant(settings->value(path)).toObject() : QJsonObject();
@@ -3433,6 +3696,7 @@ void ComposerController::follow() {
 void ComposerController::publish() {
   if (!m_active && !m_previewing) return;
   recoverQueuedEdits();
+  askFolder(target());
   const QVariantMap state = turnState();
   if (state != m_published) {
     m_published = state;
@@ -3911,60 +4175,149 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
 // goes once the MC holds it; a refused change goes too, so the picker shows the
 // mode the thread really has. A pick back to the thread's mode still goes while
 // another is on its way, which would otherwise land after it.
-void ComposerController::setThreadRuntimeMode(const QString& target, const QString& mode) {
+// The user's own change, made now: it names no revision, so none made
+// elsewhere refuses it, and the model pick stands past it.
+// On the phone a change the thread cannot be reached for, or one made behind
+// messages waiting in its outbox, stays in the draft: a message sent meanwhile
+// carries it to the outbox, and settleModes sets it once the outbox is empty.
+// It replaces one still on its way, whose answer no longer moves the draft.
+void ComposerController::setThreadMode(const QString& target, ModeKind kind, const QString& mode) {
   const auto thread = m_store->thread(target);
-  if (!thread || (thread->runtimeMode == mode && !m_settingMode.contains(target))) return;
-  m_settingMode.insert(target, {mode});
-  m_client->dispatchCommand(this, thread->environmentId,
-                            {
-                                {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
-                                {QStringLiteral("threadId"), thread->id},
-                                {QStringLiteral("runtimeMode"), mode},
-                            },
-                            [this, target, mode](const QJsonValue& result, const std::optional<QString>& error) {
-                              if (m_settingMode.value(target).mode != mode) return;
+  const bool runtime = kind == ModeKind::Runtime;
+  QHash<QString, SettingMode>& settings = settingModes(kind);
+  if (thread && m_waitsOffline && modeWaits(target)) {
+    settings.remove(target);
+    return;
+  }
+  // A pick back to the thread's mode still goes while another is on its way.
+  if (!thread || ((runtime ? thread->runtimeMode : thread->interactionMode) == mode && !settings.contains(target))) return;
+  settings.insert(target, SettingMode{mode});
+  const QJsonObject command{
+      {QStringLiteral("type"), runtime ? QStringLiteral("thread.runtime-mode.set") : QStringLiteral("thread.interaction-mode.set")},
+      {QStringLiteral("threadId"), thread->id},
+      {runtime ? QStringLiteral("runtimeMode") : QStringLiteral("interactionMode"), mode},
+  };
+  const auto own = ownSent(target);
+  m_client->dispatchCommand(this, thread->environmentId, command,
+                            [this, target, kind, mode, own](const QJsonValue& result, const std::optional<QString>& error) {
+                              ownAnswered(target, own, result, !error);
+                              QHash<QString, SettingMode>& settings = settingModes(kind);
+                              if (settings.value(target).mode != mode) return;
                               if (!error) {
                                 const QJsonObject shell = result.toObject().value(QLatin1String("shell")).toObject();
-                                SettingMode& setting = m_settingMode[target];
+                                SettingMode& setting = settings[target];
                                 setting.accepted = true;
                                 setting.mc = shell.value(QLatin1String("mc")).toString();
                                 setting.epoch = shell.value(QLatin1String("epoch")).toString();
                                 setting.rev = qint64(shell.value(QLatin1String("rev")).toDouble());
-                                return settleRuntimeModes();
+                                return settleModes();
                               }
-                              m_settingMode.remove(target);
-                              toast(QStringLiteral("Failed to change the thread's access."), *error);
-                              if (m_drafts.value(target).runtimeMode != mode) return;
-                              m_drafts[target].runtimeMode.clear();
+                              settings.remove(target);
+                              // The phone keeps a change the connection took in
+                              // its draft, to be set again once it is back.
+                              if (m_waitsOffline && undelivered(error)) return;
+                              const bool runtime = kind == ModeKind::Runtime;
+                              toast(runtime ? QStringLiteral("Failed to change the thread's access.")
+                                            : QStringLiteral("Failed to change the thread's mode."),
+                                    *error);
+                              QString& shown = runtime ? m_drafts[target].runtimeMode : m_drafts[target].interactionMode;
+                              if (shown != mode) return;
+                              shown.clear();
                               save();
                               publish();
                             });
 }
 
-// Drops the drafts of access changes the threads' rows now hold, whatever mode
+// Drops the drafts of mode changes the threads' rows now hold, whatever mode
 // they show: the row and the MC's answer travel apart, and another device's
-// change can land with ours or after it.
-void ComposerController::settleRuntimeModes() {
+// change can land with ours or after it. A started thread's draft shows a
+// mode of its own only while a change to it is on its way, or waits to be
+// made: one the phone kept offline, or one an earlier build saved to go with
+// the next message. Once the thread can be reached and its outbox is empty,
+// that change is made, or dropped where the thread already has it.
+void ComposerController::settleModes() {
   bool changed = false;
-  for (auto it = m_settingMode.begin(); it != m_settingMode.end();) {
-    const auto thread = m_store->thread(it.key());
-    // From an MC that names no version, the row is as good as it gets.
-    const bool landed = it->accepted && (it->epoch.isEmpty() || m_store->reached(it->mc, it->epoch, it->rev));
-    if (thread && !landed) {
-      ++it;
-      continue;
-    }
-    if (m_drafts.contains(it.key()) && m_drafts[it.key()].runtimeMode == it->mode) {
-      m_drafts[it.key()].runtimeMode.clear();
+  const auto draftMode = [](Draft& draft, ModeKind kind) -> QString& {
+    return kind == ModeKind::Runtime ? draft.runtimeMode : draft.interactionMode;
+  };
+  for (const ModeKind kind : {ModeKind::Runtime, ModeKind::Interaction}) {
+    QHash<QString, SettingMode>& settings = settingModes(kind);
+    for (auto it = settings.begin(); it != settings.end();) {
+      // From an MC that names no version, the row is as good as it gets.
+      const bool landed = it->accepted && (it->epoch.isEmpty() || m_store->reached(it->mc, it->epoch, it->rev));
+      if (m_store->thread(it.key()) && !landed) {
+        ++it;
+        continue;
+      }
+      const QString target = it.key();
+      const QString mode = it->mode;
+      it = settings.erase(it);
+      // A draft showing a later pick keeps it, as one another window sets does.
+      const auto draft = m_drafts.find(target);
+      if (draft == m_drafts.end() || !m_store->thread(target) || draftMode(*draft, kind) != mode || settingAnywhere(kind, target)) continue;
+      draftMode(*draft, kind).clear();
       changed = true;
     }
-    it = m_settingMode.erase(it);
   }
-  if (!changed) return;
-  save();
-  publish();
+  struct Pending {
+    QString target;
+    ModeKind kind;
+    QString mode;
+  };
+  QList<Pending> pending;
+  for (auto it = m_drafts.begin(); it != m_drafts.end(); ++it) {
+    if (it->runtimeMode.isEmpty() && it->interactionMode.isEmpty()) continue;
+    const auto thread = m_store->thread(it.key());
+    if (!thread || modeWaits(it.key())) continue;
+    // Read once the provider is known, which says what the modes can be.
+    const composer::Instance* instance = instanceOf(selection(it.key()));
+    if (!instance) continue;
+    for (const ModeKind kind : {ModeKind::Runtime, ModeKind::Interaction}) {
+      if (draftMode(*it, kind).isEmpty() || settingAnywhere(kind, it.key())) continue;
+      const bool runtime = kind == ModeKind::Runtime;
+      // On the desktop a started thread's permissions pick counts only while it
+      // is on its way (pickedRuntimeMode): one kept past a quit gives way to
+      // what the thread was given since.
+      if (runtime && !m_waitsOffline) {
+        draftMode(*it, kind).clear();
+        changed = true;
+        continue;
+      }
+      // A plan pick waits while plan mode is off, which shows and sends the default.
+      if (!runtime && !planModeOn(instance)) continue;
+      const QString wanted = runtime ? composer::shownRuntimeMode(instance, it->runtimeMode) : it->interactionMode;
+      const QString has = runtime ? thread->runtimeMode : thread->interactionMode;
+      // A thread the MC has no mode for keeps the MC's default.
+      if (wanted == has || (!runtime && has.isEmpty() && wanted == QLatin1String("default"))) {
+        draftMode(*it, kind).clear();
+        changed = true;
+      } else {
+        pending.append({it.key(), kind, wanted});
+      }
+    }
+  }
+  if (changed) {
+    save();
+    publish();
+  }
+  for (const Pending& change : std::as_const(pending)) setThreadMode(change.target, change.kind, change.mode);
 }
 
+bool ComposerController::modeWaits(const QString& target) const {
+  if (!m_client->isReady() || !m_store->synchronized() || m_store->snapshots() < m_outboxSince || !m_store->threadOnline(target)) return true;
+  if (m_queues.contains(target)) return true;
+  return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; });
+}
+
+bool ComposerController::settingAnywhere(ModeKind kind, const QString& target) const {
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) {
+    const auto* composer = window->controller<ComposerController>();
+    if (composer && (kind == ModeKind::Runtime ? composer->m_settingMode : composer->m_settingInteraction).contains(target)) return true;
+  }
+  return false;
+}
+
+// A new thread's mode is its draft's; a started thread's is set now.
 void ComposerController::setInteractionMode(const QString& target, const QString& mode) {
   if (mode != QLatin1String("plan") && mode != QLatin1String("default")) return;
   if (mode == QLatin1String("plan") && !planModeOn(instanceOf(selection(target)))) return;
@@ -3973,6 +4326,7 @@ void ComposerController::setInteractionMode(const QString& target, const QString
   m_drafts[target].carried = false;
   save();
   publish();
+  setThreadMode(target, ModeKind::Interaction, mode);
 }
 
 void ComposerController::rememberModel(const QJsonObject& selection) {
@@ -4020,6 +4374,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
       }
     }
   }
+  notePick(target);
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
   kept.carried = false;
@@ -4057,6 +4412,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   m_kept.modelOptions.insert(chosen.value(QLatin1String("instanceId")).toString() + u'\n' +
                                  chosen.value(QLatin1String("model")).toString(),
                              *options);
+  notePick(target);
   m_drafts[target].modelSelection = chosen;
   m_drafts[target].carried = false;
   forgetTakenPicks();
@@ -4151,7 +4507,8 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
 QList<composer::Suggestion> ComposerController::suggestions(const QString& target,
                                                             const std::optional<composer::Trigger>& trigger) const {
   if (!trigger) return {};
-  const composer::Instance* instance = instanceOf(selection(target));
+  const std::optional<composer::Instance> folder = commandsOf(target);
+  const composer::Instance* instance = folder ? &*folder : nullptr;
   if (trigger->kind == QLatin1String("slash-command")) {
     return composer::slashItems(instance, *trigger, planModeOn(instance), setting(QStringLiteral("showSkillsInSlashMenu")).toBool(),
                                 draft(target).trimmed() == u'/' + trigger->query);
@@ -4228,8 +4585,9 @@ bool ComposerController::canSearchPaths(const QString& target) const {
 std::optional<composer::Trigger> ComposerController::triggerOf(const QString& target) const {
   const QString text = draft(target);
   std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
-  if (trigger && trigger->kind == QLatin1String("skill") && !composer::opensSkillMenu(instanceOf(selection(target)), trigger->query)) {
-    return std::nullopt;
+  if (trigger && trigger->kind == QLatin1String("skill")) {
+    const std::optional<composer::Instance> folder = commandsOf(target);
+    if (!composer::opensSkillMenu(folder ? &*folder : nullptr, trigger->query)) return std::nullopt;
   }
   // A slash word in a sentence that starts no name is prose: no menu, so
   // Enter sends it.
@@ -4261,10 +4619,50 @@ void ComposerController::refreshPathSearch() {
 void ComposerController::refreshCatalogue() {
   const QJsonObject config = NativeShell::of(this)->controller<WorkspaceController>()->environmentConfig();
   m_catalogue = composer::instances(config.value(QLatin1String("providers")).toArray());
+  ++m_catalogues;
 }
 
 const composer::Instance* ComposerController::instanceOf(const QJsonObject& selection) const {
   return composer::find(m_catalogue, selection.value(QLatin1String("instanceId")).toString());
+}
+
+std::optional<composer::Instance> ComposerController::commandsOf(const QString& target) const {
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance) return std::nullopt;
+  return composer::inFolder(*instance, searchPlace(target).second);
+}
+
+// Most providers' skills and many commands are a folder's own (Claude's and
+// Codex's entries carry none): the MC reads them when a composer asks for its
+// folder and announces them with the providers, as `workspaceSnapshots`.
+// Asked once the composer has an instance and a folder, one read at a time;
+// again after five minutes so a skill added to the project since shows up;
+// half a minute after a read that failed; and at once when a catalogue
+// announced since the MC kept the folder no longer has it (the MC restarted).
+void ComposerController::askFolder(const QString& target) {
+  if (target.isEmpty() || !m_client->isReady()) return;
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance || !instance->enabled) return;
+  const auto [environmentId, cwd] = searchPlace(target);
+  if (cwd.isEmpty() || !m_store->environmentOnline(environmentId)) return;
+  const QString key = environmentId + u'\n' + instance->instanceId + u'\n' + cwd;
+  if (const auto asked = m_foldersAsked.constFind(key); asked != m_foldersAsked.cend()) {
+    if (asked->reading) return;
+    const bool lost = asked->kept && m_catalogues > asked->answeredAt && !composer::hasRead(*instance, cwd);
+    if (!asked->stands.hasExpired() && !lost) return;
+  }
+  m_foldersAsked.insert(key, FolderAsk{.reading = true});
+  m_client->call(this, environmentId, QStringLiteral("server.refreshProviders"),
+                 QJsonObject{{QStringLiteral("instanceId"), instance->instanceId}, {QStringLiteral("cwd"), cwd}},
+                 [this, key, instanceId = instance->instanceId, cwd](const QJsonValue& result, const std::optional<QString>& error) {
+                   using namespace std::chrono;
+                   const QList<composer::Instance> answered =
+                       composer::instances(result.toObject().value(QLatin1String("providers")).toArray());
+                   const composer::Instance* entry = composer::find(answered, instanceId);
+                   m_foldersAsked.insert(key, FolderAsk{.kept = !error && entry && composer::hasRead(*entry, cwd),
+                                                        .answeredAt = m_catalogues,
+                                                        .stands = QDeadlineTimer(error ? seconds(30) : minutes(5))});
+                 });
 }
 
 QJsonObject ComposerController::selection(const QString& target) const {
@@ -4283,10 +4681,18 @@ QJsonObject ComposerController::selection(const QString& target) const {
     return next;
   };
   const QString instanceId = chosen.value(QLatin1String("instanceId")).toString();
-  if (instanceId.isEmpty()) return firstReady();
-  const QString model = chosen.value(QLatin1String("model")).toString();
-  const composer::Instance* instance = instanceOf(chosen);
   const bool isThread = bool(m_store->thread(target));
+  // A started thread shows what it holds, unavailable as it may be: what a
+  // send with no pick runs on is the thread's, never one made up here.
+  if (instanceId.isEmpty()) return isThread ? chosen : firstReady();
+  const composer::Instance* instance = instanceOf(chosen);
+  // A model saved under an alias is the built-in model it names, its options
+  // kept; a custom model of that name is not it.
+  if (const QString slug = instance ? composer::fallbackModelSlug(*instance, chosen.value(QLatin1String("model")).toString()) : QString();
+      !slug.isEmpty()) {
+    chosen.insert(QStringLiteral("model"), slug);
+  }
+  const QString model = chosen.value(QLatin1String("model")).toString();
   if (instance && instance->ready()) {
     if (model.isEmpty()) {
       chosen.insert(QStringLiteral("model"), composer::defaultModel(*instance));
@@ -4304,7 +4710,8 @@ QJsonObject ComposerController::selection(const QString& target) const {
     }
     return chosen;
   }
-  // The chosen account cannot run a turn: another account of the same driver
+  if (isThread) return chosen;
+  // A draft's account cannot run a turn: another account of the same driver
   // that lists the model takes over, with the options last given to the model
   // there, or the ones picked for it here when it has none of its own.
   if (instance) {
@@ -4321,9 +4728,8 @@ QJsonObject ComposerController::selection(const QString& target) const {
       return chosen;
     }
   }
-  // A thread keeps its own provider and model, unavailable as they may be; a
-  // draft or a page's ask starts on the first provider that can run instead.
-  return isThread ? chosen : firstReady();
+  // A draft or a page's ask starts on the first provider that can run instead.
+  return firstReady();
 }
 
 bool ComposerController::planModeOn(const composer::Instance* instance) const {
@@ -4331,7 +4737,7 @@ bool ComposerController::planModeOn(const composer::Instance* instance) const {
 }
 
 QString ComposerController::pickedRuntimeMode(const QString& target) const {
-  if (m_store->thread(target) && !m_settingMode.contains(target)) return {};
+  if (m_store->thread(target) && !m_settingMode.contains(target) && !m_waitsOffline) return {};
   return m_drafts.value(target).runtimeMode;
 }
 
@@ -4340,25 +4746,30 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
   if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
   // A new thread, or a page's ask: its project's default permissions, else
   // the default for new threads (Settings → Project defaults).
-  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
+  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(m_client->environment(), pageProject());
   if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
-    return newThreadRuntimeMode(kept->projectId);
+    return newThreadRuntimeMode(kept->environmentId, kept->projectId);
   }
   return QStringLiteral("full-access");
 }
 
-// The permissions a new thread of the target's project starts in: the
-// composer names a thread's own only when they differ from these.
+// The permissions a new thread of the target's project starts in.
 QString ComposerController::defaultRuntimeModeOf(const QString& target) const {
-  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
-  if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->projectId);
+  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(m_client->environment(), pageProject());
+  if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->environmentId, thread->projectId);
   if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
-    return newThreadRuntimeMode(kept->projectId);
+    return newThreadRuntimeMode(kept->environmentId, kept->projectId);
   }
-  return newThreadRuntimeMode(QString());
+  return newThreadRuntimeMode(QString(), QString());
 }
 
-QString ComposerController::newThreadRuntimeMode(const QString& projectId) const {
+// The project's MC names what a new thread there starts in; from an MC that
+// does not, the settings this client's MC holds.
+QString ComposerController::newThreadRuntimeMode(const QString& environmentId, const QString& projectId) const {
+  if (!projectId.isEmpty()) {
+    const QString named = m_store->projectRow(environmentId, projectId).value(QLatin1String("newThreadRuntimeMode")).toString();
+    if (!named.isEmpty()) return named;
+  }
   if (const auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(projectId),
                                 QStringLiteral("defaultRuntimeMode")}) {
@@ -4490,11 +4901,18 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   } else if (offline) {
     placeholder = QStringLiteral("Ask for changes, send follow-ups, or attach images");
   }
+  // A started thread whose own provider cannot run here sends nothing until
+  // the user picks one: the composer never swaps it for another. One the
+  // catalogue cannot judge yet (none listed, or none named) is the MC's to run.
+  const bool needsPick = thread && !isDraft && !page && !kept.modelSelection && !thread->modelSelection.isEmpty() &&
+                         !m_catalogue.isEmpty() && (!instance || !instance->ready());
   QVariant disabledReason = QVariant::fromValue(nullptr);
   if (offline) {
     disabledReason = QStringLiteral("Not connected");
   } else if (noProvider) {
     disabledReason = QStringLiteral("No provider available");
+  } else if (needsPick) {
+    disabledReason = QStringLiteral("Choose a model to send");
   }
 
   auto* keys = NativeShell::of(this)->controller<KeybindingController>();
@@ -4567,7 +4985,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("citations"), citations},
       {QStringLiteral("placeholder"), placeholder},
       {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
-      {QStringLiteral("canSend"), !(busy || offline || noProvider) && (hasContent || showPlanFollowUp)},
+      {QStringLiteral("canSend"), !(busy || offline || noProvider || needsPick) && (hasContent || showPlanFollowUp)},
       {QStringLiteral("sendDisabledReason"), disabledReason},
       {QStringLiteral("isRunning"), isRunning},
       // The send waits for the connection (setWaitsOffline): the send control says Queue.
@@ -4830,6 +5248,7 @@ void ComposerController::setStorePath(const QString& path) {
     kept.runtimeMode = entry.value(QLatin1String("runtimeMode")).toString();
     kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
     kept.carried = entry.value(QLatin1String("carried")).toBool();
+    if (const QJsonValue base = entry.value(QLatin1String("selectionBase")); base.isDouble()) kept.pickBase = qint64(base.toDouble());
     kept.projectId = entry.value(QLatin1String("projectId")).toString();
   }
   QFile images(imagesPath());
@@ -4901,6 +5320,7 @@ bool ComposerController::save(bool now) const {
     if (!kept.runtimeMode.isEmpty()) entry.insert(QStringLiteral("runtimeMode"), kept.runtimeMode);
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
     if (kept.carried) entry.insert(QStringLiteral("carried"), true);
+    if (kept.pickBase) entry.insert(QStringLiteral("selectionBase"), double(*kept.pickBase));
     if (!kept.projectId.isEmpty()) entry.insert(QStringLiteral("projectId"), kept.projectId);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }

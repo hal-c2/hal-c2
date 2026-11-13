@@ -1,0 +1,70 @@
+name: Merge queue watchdog
+
+# GitHub sometimes wedges a merge queue run: the run ends while `CI result` never got a
+# runner, or the run never gets a job. The queue then holds the entry, and everything
+# behind it, for its 120-minute check timeout. This drops such an entry with a comment
+# saying why (.github/scripts/merge-queue-watchdog.sh), and its owner re-queues it.
+#
+# A CI run that ends is when the first wedge shows; the schedule catches a run that never
+# starts.
+#
+# A queue run that fails also gets the PR a comment naming the jobs that failed or timed
+# out and their failed tests (.github/scripts/merge-queue-report.sh): the queue itself
+# only says the PR left it.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  watch:
+    name: Drop wedged queue entries
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group'
+    # Job-level, so a pending watch replacing another never drops a report.
+    concurrency:
+      group: merge-queue-watchdog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: write # dequeuePullRequest
+      pull-requests: write # the comment
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - run: .github/scripts/merge-queue-watchdog.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  report:
+    name: Report a failed queue run on its PR
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group'
+      && github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: write # the comment
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - run: .github/scripts/merge-queue-report.sh "$RUN_ID" "$RUN_ATTEMPT" "$QUEUE_BRANCH"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          QUEUE_BRANCH: ${{ github.event.workflow_run.head_branch }}

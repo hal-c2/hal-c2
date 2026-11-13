@@ -4058,6 +4058,211 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- an agent and variant taken off the thread ----------------------------------------------------------
+
+  defp agent_and_variant(agent, variant) do
+    [
+      %{
+        "id" => "mode",
+        "name" => "Mode",
+        "type" => "enum",
+        "currentValue" => agent,
+        "options" => Enum.map(~w(build plan reviewer), &%{"value" => &1, "name" => &1})
+      },
+      %{
+        "id" => "effort",
+        "name" => "Effort",
+        "type" => "enum",
+        "currentValue" => variant,
+        "options" => Enum.map(~w(low high), &%{"value" => &1, "name" => &1})
+      }
+    ]
+  end
+
+  step "an OpenCode session that opened on the agent {string} and the {string} variant",
+       %{args: [agent, variant]} = context do
+    config = %{
+      "configOptions" => models(@connected)["configOptions"] ++ agent_and_variant(agent, variant)
+    }
+
+    context
+    |> FakeAcp.install("opencode", config, enabled: true)
+    |> FakeAcp.thread(@thread)
+  end
+
+  step "a turn runs with the agent {string} and the {string} variant and the next with neither",
+       %{args: [agent, variant]} = context do
+    selection = fn options ->
+      %{
+        "modelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => elem(hd(@connected), 0),
+          "options" => options
+        }
+      }
+    end
+
+    picked = [%{"id" => "agent", "value" => agent}, %{"id" => "variant", "value" => variant}]
+    context = FakeAcp.send_message(context, "hello", nil, selection.(picked))
+    FakeAcp.await_run(context, "completed")
+    context = FakeAcp.send_message(context, "again", nil, selection.([]))
+    FakeAcp.await_runs(context, 2)
+    Map.put(context, :picked, [{"mode", agent}, {"effort", variant}])
+  end
+
+  step "the next turn sets the agent back to {string} and the variant back to {string}",
+       %{args: [agent, variant]} = context do
+    {first, second} =
+      context
+      |> FakeAcp.log()
+      |> Enum.flat_map(fn
+        %{"recv" => %{"method" => "session/prompt"}} ->
+          [:prompt]
+
+        %{
+          "recv" => %{
+            "method" => "session/set_config_option",
+            "params" => %{"configId" => id, "value" => value}
+          }
+        }
+        when id in ["mode", "effort"] ->
+          [{id, value}]
+
+        _ ->
+          []
+      end)
+      |> Enum.split_while(&(&1 != :prompt))
+
+    assert first == context.picked
+    assert Enum.reject(second, &(&1 == :prompt)) == [{"mode", agent}, {"effort", variant}]
+    context
+  end
+
+  step "OpenCode reports its options in the middle of each turn", context do
+    # As OpenCode does when a turn changes them: the session's current agent and variant.
+    report = %{
+      "update" => %{
+        "sessionUpdate" => "config_option_update",
+        "configOptions" =>
+          models(@connected)["configOptions"] ++ agent_and_variant("reviewer", "high")
+      }
+    }
+
+    FakeAcp.configure(context, "opencode", fn config ->
+      Map.update!(
+        config,
+        "turns",
+        &[%{"match" => "hello", "steps" => [report, %{"text" => "hi"}]} | &1]
+      )
+    end)
+  end
+
+  # --- a variant the next model does not offer ---------------------------------------------------------
+
+  defp variants(current, choices) do
+    %{
+      "id" => "effort",
+      "name" => "Effort",
+      "type" => "enum",
+      "currentValue" => current,
+      "options" => Enum.map(choices, &%{"value" => &1, "name" => &1})
+    }
+  end
+
+  step "an OpenCode session that opened on {string} at the {string} variant",
+       %{args: [model, variant]} = context do
+    [other] = for {id, _} <- @connected, id != model, do: id
+
+    config = %{
+      "configOptions" =>
+        models(Enum.sort_by(@connected, &(elem(&1, 0) != model)))["configOptions"] ++
+          [variants(variant, ~w(high max))],
+      "modelOptions" => %{
+        model => [variants(variant, ~w(high max))],
+        other => [variants("medium", ~w(low medium high))]
+      },
+      "rejectUnknownValues" => true
+    }
+
+    context
+    |> FakeAcp.install("opencode", config, enabled: true)
+    |> FakeAcp.thread(@thread)
+    |> Map.put(:other_model, other)
+  end
+
+  step "a turn runs on a model that offers no {string} variant, with no variant chosen",
+       context do
+    selection = %{
+      "modelSelection" => %{
+        "instanceId" => "opencode",
+        "model" => context.other_model,
+        "options" => []
+      }
+    }
+
+    context = FakeAcp.send_message(context, "hello", nil, selection)
+    Map.put(context, :run, FakeAcp.await_runs(context, 1))
+  end
+
+  step "the turn runs and OpenCode is not asked for the {string} variant",
+       %{args: [variant]} = context do
+    assert [%{"status" => "completed"}] = HalC2.StreamState.list(context.run, "run")
+
+    refute Enum.any?(
+             FakeAcp.received(context, "session/set_config_option"),
+             &match?(%{"params" => %{"configId" => "effort", "value" => ^variant}}, &1)
+           )
+
+    context
+  end
+
+  step "a turn runs on another model at the {string} variant and the next on it with none",
+       %{args: [variant]} = context do
+    selection = fn options ->
+      %{
+        "modelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => context.other_model,
+          "options" => options
+        }
+      }
+    end
+
+    picked = [%{"id" => "variant", "value" => variant}]
+    context = FakeAcp.send_message(context, "hello", nil, selection.(picked))
+    FakeAcp.await_run(context, "completed")
+    context = FakeAcp.send_message(context, "again", nil, selection.([]))
+    Map.put(context, :run, FakeAcp.await_runs(context, 2))
+  end
+
+  step "the next turn sets the variant back to {string}, that model's own",
+       %{args: [variant]} = context do
+    assert [%{"status" => "completed"}, %{"status" => "completed"}] =
+             HalC2.StreamState.list(context.run, "run")
+
+    efforts =
+      context
+      |> FakeAcp.log()
+      |> Enum.flat_map(fn
+        %{"recv" => %{"method" => "session/prompt"}} ->
+          [:prompt]
+
+        %{
+          "recv" => %{
+            "method" => "session/set_config_option",
+            "params" => %{"configId" => "effort", "value" => value}
+          }
+        } ->
+          [value]
+
+        _ ->
+          []
+      end)
+
+    assert [_picked, :prompt, ^variant, :prompt] = efforts
+    context
+  end
+
   # --- steering keeps the turn's agent and variant ---------------------------------------------------------
 
   step "an OpenCode turn is running with the agent {string} and the {string} variant in plan mode",

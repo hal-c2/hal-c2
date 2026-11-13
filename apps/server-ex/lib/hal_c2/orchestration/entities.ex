@@ -342,6 +342,8 @@ defmodule HalC2.Orchestration.Entities do
       "modelSelection" => input["modelSelection"],
       "runtimeMode" => input["runtimeMode"] || "full-access",
       "interactionMode" => input["interactionMode"] || "default",
+      # Moves on with every change to the four fields above (`Orchestration.Selection`).
+      "selectionRevision" => 0,
       "branch" => get_in(input, ["workspaceStrategy", "branch"]),
       "worktreePath" => nil,
       "activeProviderThreadId" => nil,

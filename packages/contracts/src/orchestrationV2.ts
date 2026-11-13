@@ -364,6 +364,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
+  selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   /** Pull request the user linked to this thread (#8160); optional so
@@ -499,6 +501,12 @@ export const OrchestrationV2Run = Schema.Struct({
   queueHeld: Schema.optional(Schema.Boolean),
   /** A run that set up the thread's worktree as it started. */
   workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
+  /**
+   * A queued user message's: whether its model is the user's pick. A pick gives way to
+   * a later change of the thread's, and then the run names the thread's choice. Absent
+   * on the MC's own messages, which keep what they name.
+   */
+  selectionPicked: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -519,6 +527,11 @@ export const OrchestrationV2Run = Schema.Struct({
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** A failed run's own failure text, as its provider gave it. */
   failure: Schema.optional(Schema.String),
+  /**
+   * The model the provider reported running the run on, where it reports one. A
+   * different model than `modelSelection.model` also puts a notice on the thread.
+   */
+  appliedModel: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1612,6 +1625,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
+  selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   /** Pull request the user linked to this thread (#8160). */
@@ -2604,18 +2619,24 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.interaction-mode.set"),
     commandId: CommandId,
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -2639,6 +2660,8 @@ export const OrchestrationV2Command = Schema.Union([
     /** Seed the temporary title and generate a durable replacement for the first message. */
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
@@ -2835,9 +2858,26 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+/** The code of a pick refused because the thread moved on (`selectionBase`). */
+export const SELECTION_STALE = "selection-stale";
+
+/**
+ * The `detail` of a `selection-stale` refusal (the rpc error's `message` is the
+ * sentence to show): what the thread runs on now, and its revision, for the client to
+ * show and ask again against.
+ */
+export const OrchestrationV2SelectionStale = Schema.Struct({
+  code: Schema.Literal(SELECTION_STALE),
+  selectionRevision: NonNegativeInt,
+  modelSelection: Schema.NullOr(ModelSelection),
+});
+export type OrchestrationV2SelectionStale = typeof OrchestrationV2SelectionStale.Type;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -2940,6 +2980,11 @@ export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   shell: Schema.optional(
     Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),
   ),
+  // Present exactly when this command changed what the thread runs on: the
+  // `selectionRevision` it moved the thread to. A client whose unsent pick was made at
+  // `r` moves its `selectionBase` to `r + 1` only when its own command answers `r + 1`;
+  // any other answer, or none, means the revision is not its own to take.
+  selectionRevision: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

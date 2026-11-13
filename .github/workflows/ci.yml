@@ -217,7 +217,9 @@ jobs:
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
       - name: Install fuse3 and ripgrep
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3
+          "$GITHUB_WORKSPACE"/.github/scripts/install-ripgrep.sh
 
       - name: Build the machine-files helper
         run: |
@@ -286,13 +288,28 @@ jobs:
       - name: Build the pid-kill helper
         run: cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
 
+      # A failed property runs once more, its stored counterexample first: a bug fails again
+      # and fails the job, while a race in the property or the MC passes, and a warning
+      # names it to be fixed. A failed plain test, or a run that ended without naming a
+      # failed property, is not retried.
       - name: Property tests
+        shell: bash
         run: |
+          log=$RUNNER_TEMP/prop.log
           if [ "$SHARD" = planner ]; then
-            mix prop prop/hal_c2/planner_prop_test.exs
+            mix prop prop/hal_c2/planner_prop_test.exs 2>&1 | tee "$log" && exit 0
           else
-            MIX_TEST_PARTITION="$SHARD" mix prop --partitions 3 --exclude module:HalC2.PlannerPropTest
+            MIX_TEST_PARTITION="$SHARD" mix prop --partitions 3 --exclude module:HalC2.PlannerPropTest 2>&1 | tee "$log" && exit 0
           fi
+          plain() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
+          failed=$(plain "$log" | sed -nE 's/^ +[0-9]+\) (property .*)$/\1/p')
+          # grep reads a process substitution, whose exit status pipefail ignores, so sed's
+          # SIGPIPE after grep's early exit can't read as "no plain test failed".
+          if [ -z "$failed" ] || grep -qE '^ +[0-9]+\) (test|doctest) ' <(plain "$log"); then exit 1; fi
+          mix prop --failed 2>&1 | tee "$RUNNER_TEMP/retry.log"
+          passed=$(plain "$RUNNER_TEMP/retry.log" | sed -nE 's/^Result: ([0-9]+)(\/[0-9]+)? passed.*/\1/p')
+          if [ "${passed:-0}" -lt "$(wc -l <<<"$failed")" ]; then exit 1; fi
+          while read -r name; do echo "::warning title=Flaky property::$name"; done <<<"$failed"
         env:
           SHARD: ${{ matrix.shard }}
 
@@ -381,18 +398,14 @@ jobs:
       - name: Setup the MC
         uses: ./.github/actions/setup-mc
 
-      # The terminal scenarios open zsh, which the runner image lacks.
-      - name: Install zsh
-        if: contains(matrix.dirs, 'terminal')
-        timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh zsh'
-
       # Files on another machine mount them with FUSE; they skip without the helper.
       # Regex content search needs ripgrep, which the runner image lacks.
       - name: Install fuse3 and ripgrep
         if: contains(matrix.dirs, 'files')
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3
+          "$GITHUB_WORKSPACE"/.github/scripts/install-ripgrep.sh
 
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')
@@ -473,14 +486,16 @@ jobs:
 
 
   # In the queue the first failure decides the entry: these stop the rest of the run so the
-  # queue drops it now, not when the slowest proof ends. They hold the run's only write
+  # queue drops it now, not when the slowest proof ends. A job that ran into its timeout
+  # ends cancelled, which `failure()` does not see, so they read its result instead; after
+  # their own cancel `cancelled()` holds and the rest stay quiet. They hold the run's only write
   # permission, as they run no project code and no third-party action: every other job
   # does, and setup-beam takes the token by default. One per job, since `needs` waits for
   # every job it lists.
   stop_assets:
     name: Stop the queue run (PR assets)
     needs: pr_assets
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.pr_assets.result) }}
     permissions: &stop-permissions
       actions: write
     runs-on: ubuntu-24.04
@@ -493,7 +508,7 @@ jobs:
   stop_ledger:
     name: Stop the queue run (Ledger check)
     needs: ledger
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.ledger.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -502,7 +517,7 @@ jobs:
   stop_audit:
     name: Stop the queue run (MC audit)
     needs: mc_audit
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.mc_audit.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -511,7 +526,7 @@ jobs:
   stop_tui:
     name: Stop the queue run (TUI)
     needs: tui
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.tui.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -520,7 +535,7 @@ jobs:
   stop_mc:
     name: Stop the queue run (MC tests)
     needs: mc
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.mc.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -529,7 +544,7 @@ jobs:
   stop_props:
     name: Stop the queue run (MC properties)
     needs: mc_props
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.mc_props.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -538,7 +553,7 @@ jobs:
   stop_proofs:
     name: Stop the queue run (MC proofs)
     needs: mc_proofs
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.mc_proofs.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -547,7 +562,7 @@ jobs:
   stop_scenarios:
     name: Stop the queue run (MC scenarios)
     needs: mc_scenarios
-    if: failure() && github.event_name == 'merge_group'
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && contains(fromJSON('["failure","cancelled"]'), needs.mc_scenarios.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2

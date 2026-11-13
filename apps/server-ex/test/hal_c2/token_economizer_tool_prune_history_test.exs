@@ -294,6 +294,26 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
     assert prune["foldedRuns"] == %{}
   end
 
+  test "a turn whose end was never heard counts once, though the history is read back after it folds",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = observe(state, started(thread, "r2", p, %{}))
+    # r2 ends unheard (the thread moved to another MC, which ended it); the next
+    # conversation folds its segment.
+    ended(thread, "r2", 2, [])
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+    assert state.prunes[project]["prompts"] == 2
+
+    # The plugin starts again, and reads back what ran since the watermark.
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r4", p, %{"newConversation" => true}))
+    assert state.prunes[project]["prompts"] == 2
+  end
+
   test "a segment the feed dropped some of, in which a subagent worked, is no evidence any tool went unused",
        %{thread: thread, project: p} do
     project = {p, "claudeAgent"}
@@ -859,6 +879,58 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
 
     assert {nil, state} = shape(state, "other", "o2", p)
     assert state.unresolved == %{}
+  end
+
+  test "turns that ran while the plugin was down are read back past the last page, not only it",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    # r1 used CronList, and 51 turns end after it, all before the plugin starts:
+    # r1 is older than the 50 runs one history read returns.
+    ended(thread, "r1", 1, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronList"}])
+    for n <- 2..52, do: ended(thread, "r#{n}", n, [])
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r53", p, %{}))
+
+    assert state.seeded[{thread, project}] == :read
+    prune = state.prunes[project]
+    assert "CronList" in prune["used"]
+    assert prune["prompts"] == 52
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r52", "ordinal" => 52}
+  end
+
+  test "turns older than the seed read's cap are lost, but the newest cap folds and moves the watermark",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    Application.put_env(:hal_c2, :token_economizer_history_page, 2)
+    on_exit(fn -> Application.delete_env(:hal_c2, :token_economizer_history_page) end)
+
+    # The cap is 20 pages of 2 runs. Of the 45 turns that ended before the plugin
+    # starts, r1 is older than it and r6 is the oldest run it still reaches.
+    ended(thread, "r1", 1, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronList"}])
+    for n <- 2..5, do: ended(thread, "r#{n}", n, [])
+    ended(thread, "r6", 6, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+    for n <- 7..45, do: ended(thread, "r#{n}", n, [])
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r46", p, %{}))
+
+    assert state.seeded[{thread, project}] == :read
+    prune = state.prunes[project]
+    assert "CronCreate" in prune["used"]
+    refute "CronList" in prune["used"]
+    assert prune["prompts"] == 40
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r45", "ordinal" => 45}
+
+    # The next turn does not reread the whole cap: only r46, heard live, folds.
+    ended(thread, "r46", 46, [])
+    state = observe(state, finished(thread, "r46", 46))
+    state = observe(state, started(thread, "r47", p, %{"newConversation" => true}))
+
+    assert state.seeded[{thread, project}] == :read
+    prune = state.prunes[project]
+    assert prune["prompts"] == 41
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r46", "ordinal" => 46}
   end
 
   test "a subagent's use heard with no project is its thread's project's at once, though the thread never runs again",

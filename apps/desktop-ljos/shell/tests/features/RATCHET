@@ -201,7 +201,6 @@ composer/model-and-mode.feature: A custom model named like a Codex alias stays t
 composer/model-and-mode.feature: A draft follows a model change made on another client
 composer/model-and-mode.feature: A fallback account takes no options that were not picked for what it shows ["Claude Team", with high effort of its own, "Claude Team" at its own high effort]
 composer/model-and-mode.feature: A fallback account takes no options that were not picked for what it shows [only a Codex account, the Codex model at its default effort]
-composer/model-and-mode.feature: A fallback keeps the effort of a model saved under an alias
 composer/model-and-mode.feature: A favourite older model is listed outside the folded section
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+a, the permissions]
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+e, the current effort]
@@ -226,8 +225,10 @@ composer/model-and-mode.feature: A saved model its provider no longer lists is k
 composer/model-and-mode.feature: A search that matches no model says so
 composer/model-and-mode.feature: A second instance with no draft model of its own uses its own default
 composer/model-and-mode.feature: A short name the model manifest gives wins over the worked-out one
+composer/model-and-mode.feature: A started thread always names its permissions
 composer/model-and-mode.feature: A started thread can move to another provider
 composer/model-and-mode.feature: A started thread names its machine without offering others
+composer/model-and-mode.feature: A thread saved under a model alias keeps its effort
 composer/model-and-mode.feature: A thread still preparing its worktree says "New worktree" until checkout finishes
 composer/model-and-mode.feature: A thread whose saved permissions its provider no longer offers is shown as Supervised
 composer/model-and-mode.feature: An agent's own options do not crowd the model control
@@ -267,7 +268,6 @@ composer/model-and-mode.feature: The composer names the model's effort as the us
 composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Extra High, Word, "Extra High"]
 composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Low, Bars, one bar]
 composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Max, Bars, "Max"]
-composer/model-and-mode.feature: The composer names the permissions only when they differ from the default
 composer/model-and-mode.feature: The last model used with each provider is remembered
 composer/model-and-mode.feature: The machine is left out when it is the only one and it is this one
 composer/model-and-mode.feature: The model button shows the name the user would say [Claude, Claude Opus 5.5, Opus 5.5]
@@ -412,7 +412,7 @@ composer/sending-turns.feature: An attached image shows as a thumbnail in the co
 composer/sending-turns.feature: An empty first message launches nothing
 composer/sending-turns.feature: An image alone can be sent
 composer/sending-turns.feature: An image goes up before the new thread is launched with it
-composer/sending-turns.feature: Changed modes are set before the message
+composer/sending-turns.feature: Changed modes are set as they are picked, before the message
 composer/sending-turns.feature: Stop interrupts a run still waiting on background work
 composer/sending-turns.feature: Stop interrupts the thread the window shows
 composer/sending-turns.feature: Stop with nothing running does nothing

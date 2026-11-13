@@ -691,19 +691,35 @@ defmodule HalC2.StreamsTest do
     :ok = HalC2.Shell.subscribe(self())
     {:ok, _} = Streams.commit("th-4", :thread, thread("th-4", %{"projectId" => "p"}))
 
-    # Rows are recomputed shortly after a commit, not on every one.
-    assert_receive {:hal_c2_shell, {:rows, mc, [{"th-4", {"thread", row}}]}}, 1_000
+    # Rows are recomputed shortly after a commit, not on every one; the flush is the
+    # receipt that this one went out.
+    :ok = Streams.flush_shell("th-4")
+    assert {mc, {"thread", row}} = shell_row_sent("th-4")
     assert mc == node()
     assert %{"id" => "th-4", "title" => "t", "projectId" => "p", "status" => "idle"} = row
 
     {:ok, _} =
       Streams.commit("th-4", :thread, [{"thread", "th-4", %{"s" => %{"title" => "Renamed"}}}])
 
-    assert_receive {:hal_c2_shell, {:rows, _, [{"th-4", {"thread", %{"title" => "Renamed"}}}]}},
-                   1_000
+    :ok = Streams.flush_shell("th-4")
+    assert {_, {"thread", %{"title" => "Renamed"}}} = shell_row_sent("th-4")
 
     assert [{"thread", %{"title" => "Renamed"}}] =
              for({{_, "th-4"}, kind_row} <- HalC2.Shell.rows(), do: kind_row)
+  end
+
+  # The first row of `id` the shell has sent this process, whatever else came with it
+  # or before it.
+  defp shell_row_sent(id) do
+    receive do
+      {:hal_c2_shell, {:rows, mc, rows}} ->
+        case List.keyfind(rows, id, 0) do
+          {^id, kind_row} -> {mc, kind_row}
+          nil -> shell_row_sent(id)
+        end
+    after
+      0 -> flunk("the shell sent no row of #{id}")
+    end
   end
 
   # A stream stopping between `Streams.ensure/1` and the call that follows it, as its

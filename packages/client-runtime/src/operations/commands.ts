@@ -178,6 +178,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly context?: import("@hal-c2/contracts").OrchestrationMessageContext;
   };
   readonly modelSelection?: ModelSelection;
+  /** The thread's selectionRevision the modelSelection was picked against; sent only with it. */
+  readonly selectionBase?: number;
   readonly titleSeed?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -621,6 +623,15 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+/** A message's model pick and the revision it was made against; the base never goes alone. */
+const pickedSelection = (input: StartThreadTurnInput) =>
+  input.modelSelection === undefined
+    ? {}
+    : {
+        modelSelection: input.modelSelection,
+        ...(input.selectionBase === undefined ? {} : { selectionBase: input.selectionBase }),
+      };
+
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
@@ -696,7 +707,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       text: input.message.text,
       ...(context ? { context } : {}),
       attachments,
-      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...pickedSelection(input),
       ...(input.sourceProposedPlan === undefined
         ? {}
         : { sourcePlanRef: input.sourceProposedPlan }),
@@ -758,7 +769,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     ...(context ? { context } : {}),
     attachments,
     ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
-    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+    ...pickedSelection(input),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
     ...(serverResolvesCommandContext && requestedMode !== "queue"
       ? { deliveryIntent: requestedMode }

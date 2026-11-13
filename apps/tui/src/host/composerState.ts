@@ -17,6 +17,7 @@ import {
   type ThreadEnvMode,
   type VcsRef,
 } from "@hal-c2/contracts";
+import { selectionStaleRefusal } from "@hal-c2/client-runtime/operations";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { createModelSelection } from "@hal-c2/shared/model";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
@@ -68,7 +69,9 @@ import {
   modelOptionStates,
   modelPickerRows,
   modelSelectionForOption,
-  pickMatchesThread,
+  nextPick,
+  ownChangeAhead,
+  pickOn,
   promptEffort,
   providerReady,
   reasoningChoicesForSelection,
@@ -78,6 +81,8 @@ import {
   withoutUltrathinkPrefix,
   type EffortBars,
   type ModelOption,
+  type OwnSelectionChange,
+  type ThreadPick,
   type ModelOptionState,
 } from "../models.ts";
 import {
@@ -261,8 +266,10 @@ export interface TuiComposerState {
   readonly runtimeModeLabel: string;
   readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
   /**
-   * The footer names the permissions: always for a new thread's first
-   * message, otherwise only when they differ from the project's default.
+   * The footer names the permissions whenever the prompt has a thread,
+   * a new thread or a page to run in — the default included, so choosing
+   * the default still shows that the choice landed. (Upstream #25869
+   * named them only when they differed from the default.)
    */
   readonly namesAccess: boolean;
   /** The footer shows only the model and the primary action. */
@@ -503,6 +510,42 @@ export interface Composer {
 }
 
 const OFFLINE_REASON = "not connected to the environment";
+/** How long a folder's skills and commands, once read, are offered before being read again. */
+const FOLDER_REREAD_MS = 5 * 60_000;
+/** How long after a failed read of a folder it is asked for again. */
+const FOLDER_RETRY_MS = 30_000;
+
+const hasFolder = (provider: ServerProvider, cwd: string) =>
+  provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd) ?? false;
+
+/**
+ * The provider as a thread working in `cwd` sees it: that folder's snapshot's
+ * skills and commands first, then the entry's own, one per name. Most
+ * providers' skills are a folder's own (Claude's and Codex's entries carry
+ * none), read by the MC when a composer asks for that folder.
+ */
+export const providerInFolder = (provider: ServerProvider, cwd: string): ServerProvider => {
+  const snapshot = provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+  if (!snapshot) return provider;
+  const byName = <T extends { readonly name: string }>(
+    first: ReadonlyArray<T>,
+    then: ReadonlyArray<T>,
+  ) => {
+    const seen = new Set(first.map((entry) => entry.name));
+    return [...first, ...then.filter((entry) => !seen.has(entry.name))];
+  };
+  return {
+    ...provider,
+    skills: byName(snapshot.skills, provider.skills ?? []),
+    slashCommands: byName(snapshot.slashCommands, provider.slashCommands ?? []),
+  };
+};
+
+/** A project row, with the new-thread defaults its MC resolves (absent from older MCs). */
+type ProjectRow = NonNullable<Parameters<typeof resolveProjectSettings>[2]> & {
+  readonly newThreadModelSelection?: ModelSelection | null | undefined;
+  readonly newThreadRuntimeMode?: RuntimeMode | undefined;
+};
 
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
@@ -511,7 +554,59 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const drafts = new Map<string, Draft>();
   const interactionOverrides = new Map<string, ProviderInteractionMode>();
-  const modelOverrides = new Map<string, ModelSelection>();
+  /** The model picked on each started thread, until the thread moves past it (`nextPick`). */
+  const modelOverrides = new Map<string, ThreadPick>();
+  /** This client's own mode changes on each thread that may still move its revision on. */
+  const ownChanges = new Map<string, OwnSelectionChange[]>();
+  const pickHere = (detail: OrchestrationThread, selection: ModelSelection): ThreadPick =>
+    pickOn(detail, selection, ownChanges.get(detail.id) ?? []);
+  const ownModePending = (threadId: string) =>
+    (ownChanges.get(threadId) ?? []).some((change) => change.outcome === "pending");
+  /**
+   * A mode change of this client's own moves the thread's revision on without
+   * replacing the pick; its reply says to which revision (`nextPick`).
+   */
+  const ownModeSent = (detail: OrchestrationThread): OwnSelectionChange => {
+    const change: OwnSelectionChange = {
+      sentAt: detail.selectionRevision ?? null,
+      outcome: "pending",
+    };
+    ownChanges.set(detail.id, [...(ownChanges.get(detail.id) ?? []), change]);
+    const pick = modelOverrides.get(detail.id);
+    if (pick) modelOverrides.set(detail.id, { ...pick, own: [...pick.own, change] });
+    return change;
+  };
+  /**
+   * The MC answered: the revision the change moved the thread to, or none when it
+   * moved nothing or was refused (`null`). An MC that keeps revisions names one in
+   * every reply that moved the thread, and one that keeps none never counts the
+   * change (`nextPick`), so each thread's own MC decides, wherever it runs.
+   */
+  const ownModeAnswered = (change: OwnSelectionChange, revision: number | undefined | null) => {
+    change.outcome = revision ?? "none";
+    settlePick(selectedDetail());
+    publish();
+  };
+  /**
+   * A pick gives way once the thread moves past it, its own send being taken
+   * included, so a later change made on another client shows (upstream #20886).
+   */
+  const settlePick = (detail: OrchestrationThread | null) => {
+    if (!detail) return;
+    const revision = detail.selectionRevision;
+    const own = (ownChanges.get(detail.id) ?? []).filter(
+      (change) =>
+        change.outcome === "pending" ||
+        (revision !== undefined && ownChangeAhead(change, revision)),
+    );
+    if (own.length > 0) ownChanges.set(detail.id, own);
+    else ownChanges.delete(detail.id);
+    const pick = modelOverrides.get(detail.id);
+    if (!pick) return;
+    const next = nextPick(modelOptions, pick, detail);
+    if (next === null) modelOverrides.delete(detail.id);
+    else if (next !== pick) modelOverrides.set(detail.id, next);
+  };
   /** What the user chose on a page's prompt, by its key: an ask runs with it. */
   const pageChoices = new Map<
     string,
@@ -541,6 +636,15 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
   let providers: ReadonlyArray<ServerProvider> = [];
+  /**
+   * Each instance and folder whose own skills and commands were asked for:
+   * whether the read is still out, whether the MC kept what it read, and
+   * until when the answer stands.
+   */
+  const foldersAsked = new Map<
+    string,
+    { readonly reading: boolean; readonly kept: boolean; readonly stands: number }
+  >();
   /** The accounts the MC's usage hubs report, as its config last said. */
   let usageSources: UsageLimitSourceSnapshots = [];
   /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
@@ -687,10 +791,10 @@ export function createComposer(options: ComposerOptions): Composer {
    * What a turn runs on when the chosen account cannot run one (upstream #23957):
    * a ready account of the same driver that lists the model takes over, with the
    * options last given to the model there, else the ones picked here. Failing
-   * that a thread keeps its own, and a draft or a page's ask takes the first
-   * ready account's default model.
+   * that a draft or a page's ask takes the first ready account's default model.
+   * A started thread never comes here: it shows what it runs (`threadModel`).
    */
-  const runnable = (selection: ModelSelection | null, isThread: boolean): ModelSelection | null => {
+  const runnable = (selection: ModelSelection | null): ModelSelection | null => {
     const chosen = selection
       ? providers.find((provider) => provider.instanceId === selection.instanceId)
       : undefined;
@@ -709,26 +813,30 @@ export function createComposer(options: ComposerOptions): Composer {
         if (slug !== null) return on(candidate.instanceId, slug, selection);
       }
     }
-    if (isThread) return selection;
     for (const candidate of providers) {
       const slug = providerReady(candidate) ? defaultModelSlug(candidate) : null;
       if (slug !== null) return on(candidate.instanceId, slug);
     }
     return selection;
   };
+  /** What a started thread's composer shows: the user's pick, else what it runs, never another account. */
   const threadModel = (detail: OrchestrationThread): ModelSelection | null =>
-    runnable(
-      modelOverrides.get(detail.id) ??
-        resolveModelSelection(modelOptions, detail.modelSelection) ??
-        detail.modelSelection ??
-        null,
-      true,
-    );
+    modelOverrides.get(detail.id)?.selection ?? ownModel(detail.modelSelection);
+  /** A thread's selection on its own account, a model saved under an alias ("5.4") named as listed. */
+  const ownModel = (selection: ModelSelection | null | undefined): ModelSelection | null => {
+    if (!selection) return null;
+    const account = providers.find((provider) => provider.instanceId === selection.instanceId);
+    const slug = account ? fallbackModelSlug(account, selection.model) : null;
+    const listed =
+      slug !== null && slug !== selection.model
+        ? createModelSelection(selection.instanceId, slug, selection.options)
+        : selection;
+    return resolveModelSelection(modelOptions, listed) ?? listed;
+  };
   const newModel = (): ModelSelection | null =>
     newDraft
       ? runnable(
           resolveModelSelection(modelOptions, newDraft.modelSelection) ?? newDraft.modelSelection,
-          false,
         )
       : null;
   // A page's ask runs where the user picked, else where the MC says; on the model a new
@@ -739,30 +847,32 @@ export function createComposer(options: ComposerOptions): Composer {
     const id = pageProjectId(page);
     return id === null ? null : (projects().find((project) => project.id === id) ?? null);
   };
-  const pageDefaults = (page: ComposerPage) =>
-    resolveProjectSettings(settings, pageProjectId(page) as never, pageProject(page)).settings;
   /**
-   * The model new threads in a project start on: the project's own, even on an
-   * account that is off (`runnable` falls back from it, keeping its options,
-   * upstream #23957), else the environment's.
+   * The model new threads in a project start on: what the MC that owns the project
+   * says, else the project's own, even on an account that is off (`runnable` falls
+   * back from it, keeping its options, upstream #23957), else the environment's.
    */
-  const newThreadModel = (
-    projectId: string | null,
-    project: Parameters<typeof resolveProjectSettings>[2],
-  ) => {
+  const newThreadModel = (projectId: string | null, project: ProjectRow | null | undefined) => {
+    if (project?.newThreadModelSelection) return project.newThreadModelSelection;
     const resolved = resolveProjectSettings(settings, projectId as never, project);
     return (
       resolved.overrides.defaultModelSelection ?? resolved.settings.defaultModelSelection ?? null
     );
   };
+  /** The access new threads in a project start with: the owning MC's word, else the settings here. */
+  const newThreadRuntime = (projectId: string | null, project: ProjectRow | null | undefined) =>
+    project?.newThreadRuntimeMode ??
+    resolveProjectSettings(settings, projectId as never, project).settings.defaultRuntimeMode;
   const pageModel = (page: ComposerPage): ModelSelection | null => {
     const chosen = pageChoices.get(page.key)?.modelSelection;
-    if (chosen) return runnable(resolveModelSelection(modelOptions, chosen) ?? chosen, false);
+    if (chosen) return runnable(resolveModelSelection(modelOptions, chosen) ?? chosen);
     const projectId = pageProjectId(page);
     const latest = (store.getState().shell?.threads ?? [])
       .filter((thread) => thread.projectId === projectId && !thread.archivedAt)
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    const carried = latest ? (modelOverrides.get(latest.id) ?? latest.modelSelection) : null;
+    const carried = latest
+      ? (modelOverrides.get(latest.id)?.selection ?? latest.modelSelection)
+      : null;
     const selection =
       newThreadModel(projectId, pageProject(page)) ??
       carried ??
@@ -770,11 +880,11 @@ export function createComposer(options: ComposerOptions): Composer {
       null;
     return runnable(
       selection ? (resolveModelSelection(modelOptions, selection) ?? selection) : null,
-      false,
     );
   };
   const pageRuntime = (page: ComposerPage): RuntimeMode =>
-    pageChoices.get(page.key)?.runtimeMode ?? pageDefaults(page).defaultRuntimeMode;
+    pageChoices.get(page.key)?.runtimeMode ??
+    newThreadRuntime(pageProjectId(page), pageProject(page));
   const pageInteraction = (page: ComposerPage): ProviderInteractionMode =>
     pageChoices.get(page.key)?.interactionMode ?? "default";
   const choosePage = (
@@ -860,13 +970,6 @@ export function createComposer(options: ComposerOptions): Composer {
       : page
         ? pageRuntime(page)
         : (detail?.runtimeMode ?? "full-access");
-    const defaultRuntimeMode = page
-      ? pageDefaults(page).defaultRuntimeMode
-      : resolveProjectSettings(
-          settings,
-          (detail?.projectId ?? null) as never,
-          projects().find((candidate) => candidate.id === detail?.projectId),
-        ).settings.defaultRuntimeMode;
     const project = newProject();
     const placeholder = newDraft
       ? project
@@ -989,7 +1092,7 @@ export function createComposer(options: ComposerOptions): Composer {
         label: RUNTIME_MODE_META[mode].label,
         description: RUNTIME_MODE_META[mode].description,
       })),
-      namesAccess: !!newDraft || runtimeMode !== defaultRuntimeMode,
+      namesAccess: !!newDraft || !!page || !!detail,
       compact,
       rows: rowsOverride ?? autoRows(draft.text),
       surfaceWidth,
@@ -1051,13 +1154,25 @@ export function createComposer(options: ComposerOptions): Composer {
     return option?.buttonLabel ?? option?.label ?? model.model;
   };
 
+  const providerName = (provider: ServerProvider) =>
+    provider.displayName ?? provider.driver ?? provider.instanceId;
+  /** The account a selection runs on, as the user knows it. */
+  const providerLabel = (model: ModelSelection): string => {
+    const provider = providers.find((candidate) => candidate.instanceId === model.instanceId);
+    if (provider) return providerName(provider);
+    return (
+      modelOptions.find((option) => option.instanceId === model.instanceId)?.providerLabel ??
+      model.instanceId
+    );
+  };
+
   /** Why the selected model's provider cannot run a turn right now, and how to fix it. */
   const providerNotice = (model: ModelSelection | null): string | null => {
     const provider = model
       ? providers.find((candidate) => candidate.instanceId === model.instanceId)
       : undefined;
     if (!provider) return null;
-    const name = provider.displayName ?? provider.driver ?? provider.instanceId;
+    const name = providerName(provider);
     const then = "then ^K → Refresh providers";
     if (provider.enabled === false) {
       return `${name} is disabled: enable it in provider settings, ${then}.`;
@@ -1727,7 +1842,7 @@ export function createComposer(options: ComposerOptions): Composer {
         );
         return;
       }
-      modelOverrides.set(detail.id, selection);
+      modelOverrides.set(detail.id, pickHere(detail, selection));
     }
     store.setStatus(`Model → ${option.model} (next turn)`, "success");
     publish();
@@ -1747,7 +1862,7 @@ export function createComposer(options: ComposerOptions): Composer {
     else {
       const detail = selectedDetail();
       if (!detail) return;
-      modelOverrides.set(detail.id, next);
+      modelOverrides.set(detail.id, pickHere(detail, next));
     }
     const label =
       modelOptionStates(modelOptions, selection).find((option) => option.id === id)?.label ??
@@ -1855,11 +1970,17 @@ export function createComposer(options: ComposerOptions): Composer {
       return;
     }
     const detail = selectedDetail();
-    if (!detail) return;
+    // A pick back to the thread's mode still goes while another is on its way.
+    if (!detail || (detail.runtimeMode === mode && !ownModePending(detail.id))) return;
+    const change = ownModeSent(detail);
     void track(
-      client
-        .setRuntimeMode(detail.id, mode)
-        .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error")),
+      client.setRuntimeMode(detail.id, mode).then(
+        (revision) => ownModeAnswered(change, revision),
+        (error) => {
+          ownModeAnswered(change, null);
+          store.setStatus(`access change failed: ${String(error)}`, "error");
+        },
+      ),
     );
     store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
   };
@@ -1876,15 +1997,24 @@ export function createComposer(options: ComposerOptions): Composer {
     const detail = selectedDetail();
     if (!detail) return;
     const threadId = detail.id;
+    if (threadInteraction(detail) === next) {
+      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+      return;
+    }
     interactionOverrides.set(threadId, next);
     store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
     publish();
+    const change = ownModeSent(detail);
     void track(
-      client.setInteractionMode(threadId, next).catch((error) => {
-        if (interactionOverrides.get(threadId) === next) interactionOverrides.delete(threadId);
-        store.setStatus(`mode change failed: ${String(error)}`, "error");
-        publish();
-      }),
+      client.setInteractionMode(threadId, next).then(
+        (revision) => ownModeAnswered(change, revision),
+        (error) => {
+          ownModeAnswered(change, null);
+          if (interactionOverrides.get(threadId) === next) interactionOverrides.delete(threadId);
+          store.setStatus(`mode change failed: ${String(error)}`, "error");
+          publish();
+        },
+      ),
     );
   };
 
@@ -2049,14 +2179,12 @@ export function createComposer(options: ComposerOptions): Composer {
       });
     const context = contextFor(savedMode ?? "local");
     const project = list[context.projectIndex] ?? null;
-    // As in the web client: the project's default (its own, else the environment's),
-    // then what the open thread's composer shows, then the model last sent with.
-    const defaults = resolveProjectSettings(
-      settings,
-      (project?.id ?? null) as never,
-      project,
-    ).settings;
-    const carried = thread ? (modelOverrides.get(thread.id) ?? thread.modelSelection) : null;
+    // What the project's MC says a new thread there gets, else as in the web client:
+    // the project's default (its own, else the environment's), then what the open
+    // thread's composer shows, then the model last sent with.
+    const carried = thread
+      ? (modelOverrides.get(thread.id)?.selection ?? thread.modelSelection)
+      : null;
     const modelSelection =
       newThreadModel(project?.id ?? null, project) ??
       carried ??
@@ -2068,7 +2196,7 @@ export function createComposer(options: ComposerOptions): Composer {
       originKey: selectionKey(selection),
       projectId: project?.id ?? null,
       modelSelection: resolveModelSelection(modelOptions, modelSelection) ?? modelSelection,
-      runtimeMode: defaults.defaultRuntimeMode,
+      runtimeMode: newThreadRuntime(project?.id ?? null, project),
       interactionMode: "default",
       workspaceMode: context.workspaceMode,
       branch: context.branch,
@@ -2260,20 +2388,40 @@ export function createComposer(options: ComposerOptions): Composer {
       return;
     }
     closeLimits();
+    // Only the user's pick rides on the message: with none the turn runs on what the
+    // thread runs then, and a thread whose account cannot run is never moved to another.
+    const pick = modelOverrides.get(detail.id);
+    const runsOn = threadModel(detail);
+    const account = runsOn
+      ? providers.find((candidate) => candidate.instanceId === runsOn.instanceId)
+      : undefined;
+    if (account && !providerReady(account)) {
+      const reason = `${providerName(account)} cannot run a turn now. Pick a model (Ctrl+Shift+M) to send.`;
+      sendFailures.set(key, reason);
+      store.setStatus(`Not sent: ${reason}`, "error");
+      publish();
+      return;
+    }
     const submitted = draft;
     sendFailures.delete(key);
     replyPending = true;
     store.setStatus("Sending reply…", "busy");
     publish();
+    // An MC that keeps no selection revision takes a message's model into the thread
+    // only on a steer or a provider switch, so the pick is made the thread's first, as
+    // before: the thread then shows what the turn runs, and the pick is dropped.
+    const threadTakes = detail.selectionRevision === undefined ? pick?.selection : undefined;
     void track(
       Promise.resolve()
+        .then(() => (threadTakes ? client.setThreadModel(detail.id, threadTakes) : undefined))
         .then(() =>
           client.sendReply(
             { ...detail, interactionMode: threadInteraction(detail) },
             text,
             submitted.images.map((image) => image.upload),
-            threadModel(detail) ?? undefined,
-            ...(contexts.length > 0 ? [{ version: 1 as const, records: [...contexts] }] : []),
+            pick?.selection,
+            contexts.length > 0 ? { version: 1 as const, records: [...contexts] } : undefined,
+            pick?.base ?? undefined,
           ),
         )
         .then(
@@ -2292,6 +2440,19 @@ export function createComposer(options: ComposerOptions): Composer {
           },
           (error) => {
             replyPending = false;
+            // The thread changed elsewhere first: the pick goes, and the words stay to check.
+            const stale = selectionStaleRefusal(error);
+            if (stale) {
+              if (modelOverrides.get(detail.id) === pick) modelOverrides.delete(detail.id);
+              const now = stale.modelSelection ?? selectedDetail()?.modelSelection ?? null;
+              const moved = now
+                ? `This thread moved to ${modelButtonLabel(now)} on ${providerLabel(now)} elsewhere. Check it and send again.`
+                : "This thread's model changed elsewhere. Check it and send again.";
+              sendFailures.set(key, moved);
+              store.setStatus(moved, "warning");
+              publish();
+              return;
+            }
             const reason = error instanceof Error ? error.message : String(error);
             // The status line has room for a few words; the composer says it in full.
             sendFailures.set(key, reason);
@@ -2586,7 +2747,7 @@ export function createComposer(options: ComposerOptions): Composer {
    */
   const openTriggerPicker = (trigger: "/" | "$" | "@") => {
     const model = activeModel();
-    const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
+    const entry = providers.find((candidate) => candidate.instanceId === model?.instanceId);
     if (trigger === "@") {
       const key = target();
       // On a page, "@agent" leads the list: an ask, not a file.
@@ -2627,6 +2788,57 @@ export function createComposer(options: ComposerOptions): Composer {
       openKindPicker(page);
       return;
     }
+    // The folder's own skills and commands are read, one read at a time: the
+    // first time, again after five minutes as the desktop does, half a minute
+    // after a read that failed, and at once when the MC kept them but its
+    // providers no longer have them (it restarted). With nothing to offer
+    // until the first read answers, the picker opens then, if the character is
+    // still the last thing typed; otherwise it opens now on what there is.
+    const cwd = composerCwd();
+    const folder = entry && cwd ? `${entry.instanceId}\n${cwd}` : null;
+    const asked = folder ? foldersAsked.get(folder) : undefined;
+    if (
+      entry &&
+      folder &&
+      !asked?.reading &&
+      (asked === undefined || Date.now() >= asked.stands || (asked.kept && !hasFolder(entry, cwd)))
+    ) {
+      foldersAsked.set(folder, { reading: true, kept: false, stands: Infinity });
+      const own =
+        trigger === "/"
+          ? (withUsageLimitsCommands([entry], usageSources)[0]?.slashCommands ?? []).length > 0
+          : (entry.skills ?? []).some((skill) => skill.enabled);
+      const waits = !own && !hasFolder(entry, cwd);
+      const key = target();
+      const answered = (kept: boolean, after: number) => {
+        foldersAsked.set(folder, { reading: false, kept, stands: Date.now() + after });
+        if (waits && target() === key && picker === null && draftFor(key).text.endsWith(trigger)) {
+          openTriggerPicker(trigger);
+        }
+      };
+      void track(
+        client
+          .mcCall<{ readonly providers?: ReadonlyArray<ServerProvider> }>(
+            "server.refreshProviders",
+            {
+              instanceId: entry.instanceId,
+              cwd,
+            },
+          )
+          .then(
+            (result) => {
+              if (result?.providers) providers = result.providers;
+              const read = result?.providers?.find(
+                (candidate) => candidate.instanceId === entry.instanceId,
+              );
+              answered(read ? hasFolder(read, cwd) : false, FOLDER_REREAD_MS);
+            },
+            () => answered(false, FOLDER_RETRY_MS),
+          ),
+      );
+      if (waits) return;
+    }
+    const provider = entry ? providerInFolder(entry, cwd) : undefined;
     if (trigger === "/") {
       // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
       const commands =
@@ -2819,12 +3031,7 @@ export function createComposer(options: ComposerOptions): Composer {
     if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
       interactionOverrides.delete(detail.id);
     }
-    // Once the thread runs the draft's pick, the pick is dropped, so a later
-    // change made on another client shows (upstream #20886).
-    const pick = detail ? modelOverrides.get(detail.id) : undefined;
-    if (detail && pick && pickMatchesThread(modelOptions, pick, detail.modelSelection)) {
-      modelOverrides.delete(detail.id);
-    }
+    settlePick(detail);
     publish();
   };
 

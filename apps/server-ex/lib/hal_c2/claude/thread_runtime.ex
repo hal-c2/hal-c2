@@ -35,7 +35,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Subprocess.Durable
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.StreamState
 
   @state_version 12
@@ -214,6 +214,23 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   @doc """
+  The thread's access changed. A running turn's session takes Claude's permission mode
+  for it at once, and when that is bypassing permissions the tool approvals Claude
+  asked only for its old mode are allowed. Sent without waiting: the thread record already holds the change,
+  and a busy Claude must not hold up the user's switch. Between turns the next turn
+  takes the mode as it starts (`ensure_session/2`).
+  """
+  @spec set_runtime_mode(String.t(), String.t()) :: :ok
+  def set_runtime_mode(thread_id, mode) do
+    case Registry.lookup(HalC2.Claude.Registry, thread_id) do
+      [{pid, _}] -> send(pid, {:runtime_mode, mode})
+      [] -> :ok
+    end
+
+    :ok
+  end
+
+  @doc """
   Rewinds the conversation: drops the live session, so the next turn resumes the
   recorded session at the new head (`nativeConversationHeadRef`), or starts a new
   one when the rollback goes back to the thread's start.
@@ -284,6 +301,13 @@ defmodule HalC2.Claude.ThreadRuntime do
        # (`:once` for rules when Claude forbids remembering the answer) or
        # `{:question, control id, input}`.
        requests: %{},
+       # The open tool approvals Claude asked only because of its permission mode,
+       # which a switch to Full access approves (`allow_mode_asks/1`).
+       mode_asks: MapSet.new(),
+       # A switch to Full access Claude took, until the marker it sent itself arrives
+       # (`{:mode_switched, ref}`): an ask for its mode before then was written before
+       # Claude read the switch.
+       switching: nil,
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
        # How the session's CLI was started (`Provider.launch/3`); a turn on another model
@@ -695,7 +719,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, state}
 
       {{:permission, control_id, tool, suggestions}, requests} ->
-        # Claude forbade remembering this one (`suppressAlwaysAllowRule`): a session
+        # Claude forbade remembering this one (`suppress_always_allow_rule`): a session
         # grant the card did not offer declines.
         decision =
           case response["decision"] || "decline" do
@@ -852,7 +876,9 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     # When Claude forbids an always-allow rule, the approval offers only decline and
     # approve (Upstream #22546).
-    once? = context["suppressAlwaysAllowRule"] == true
+    # The CLI writes it snake_case; the SDKs' camelCase spelling stays read.
+    once? =
+      context["suppress_always_allow_rule"] == true or context["suppressAlwaysAllowRule"] == true
 
     options =
       if once?,
@@ -874,7 +900,23 @@ defmodule HalC2.Claude.ThreadRuntime do
     request =
       {:permission, id, tool, if(once?, do: :once, else: context["permission_suggestions"])}
 
-    {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+    state = %{state | requests: Map.put(state.requests, request_id, request)}
+
+    # Claude reuses an answered request's id, so each ask sets its own id's place.
+    mode_ask? = not once? and mode_ask?(context)
+
+    mode_asks =
+      if mode_ask?,
+        do: MapSet.put(state.mode_asks, request_id),
+        else: MapSet.delete(state.mode_asks, request_id)
+
+    state = %{state | mode_asks: mode_asks}
+
+    # Claude wrote it before it read the switch to Full access, so it goes as the
+    # switch's others did.
+    state = if mode_ask? and state.switching, do: allow_mode_asks(state), else: state
+
+    {:noreply, state}
   end
 
   def handle_info({:claude, session, {:elicitation, id, _request}}, %{turn: nil} = state) do
@@ -984,7 +1026,101 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_info(:flush, state),
     do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
+  # `set_runtime_mode/2`. The turn is judged again as it was at its start
+  # (`bypass_policy/1`), so Full access where Claude's settings forbid bypassing runs as
+  # they allow and says why. Plan mode, a read-only run and a launch argument's
+  # permission flag keep their mode, as they would on the next turn.
+  def handle_info({:runtime_mode, mode}, %{turn: turn, session: session} = state)
+      when turn != nil and session != nil do
+    turn = turn |> Map.delete(:bypass_limited) |> Map.put(:runtime_mode, mode) |> bypass_policy()
+    permission = permission_mode(turn)
+
+    case set_permission_mode(state, permission) do
+      :ok ->
+        state = announce_bypass(%{state | turn: turn, permission_mode: permission}, turn)
+
+        # The session hands on what Claude wrote before its answer to the switch ahead
+        # of that answer, so those asks are already in the mailbox, ahead of this marker.
+        state =
+          if permission == "bypassPermissions" do
+            ref = make_ref()
+            send(self(), {:mode_switched, ref})
+            allow_mode_asks(%{state | switching: ref})
+          else
+            %{state | switching: nil}
+          end
+
+        {:noreply, state}
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("a running Claude turn kept its permission mode: #{inspect(reason)}")
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:runtime_mode, _mode}, state), do: {:noreply, state}
+
+  def handle_info({:mode_switched, ref}, %{switching: ref} = state),
+    do: {:noreply, %{state | switching: nil}}
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  defp set_permission_mode(%{permission_mode: mode}, mode), do: :ok
+
+  defp set_permission_mode(state, mode) do
+    timeout = Application.get_env(:hal_c2, :claude_reattach_timeout_ms, 10_000)
+
+    case Session.control(state.session, "set_permission_mode", %{"mode" => mode}, timeout) do
+      {:error, reason} -> {:error, reason}
+      # Answered, or held for a CLI still taking its MCP servers, which sends it next.
+      _ -> :ok
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  # Whether Claude would not have asked had it been bypassing permissions. Claude Code
+  # (2.1.322's permission flow) still asks then for its ask rules, its hooks, the safety
+  # checks it holds bypass-immune, a sandbox override under the read block, a tool that
+  # needs the user, and an organisation's ask ceiling; it allows every other ask, such
+  # as a compound command's (`subcommandResults`) or a path outside the working
+  # directories (`workingDir`).
+  @asks_in_every_mode ["rule", "hook", "safetyCheck", "sandboxOverride"]
+  @codes_in_every_mode ["org_ask_ceiling", "outside_reads_blocked"]
+  defp mode_ask?(context) do
+    context["decision_reason_type"] not in @asks_in_every_mode and
+      context["decision_reason_code"] not in @codes_in_every_mode and
+      context["matched_ask_rule"] == nil and context["requires_user_interaction"] != true
+  end
+
+  # The tool approvals Claude asked only for its mode (`mode_asks`), which a session
+  # bypassing permissions would not have asked, answered as the user's "Approve" would
+  # be. What Claude asks in every mode (ask rules, safety checks, hooks), its
+  # questions, dialogs and MCP confirmations still wait on the user.
+  defp allow_mode_asks(state) do
+    state =
+      Enum.reduce(state.requests, state, fn
+        {request_id, {:permission, control_id, _tool, _suggestions}}, state ->
+          if MapSet.member?(state.mode_asks, request_id) do
+            Session.answer_permission(state.session, control_id, :allow)
+
+            resolve_request(
+              %{state | requests: Map.delete(state.requests, request_id)},
+              request_id,
+              "accept"
+            )
+          else
+            state
+          end
+
+        _other, state ->
+          state
+      end)
+
+    # The prompts closed since they were asked are forgotten here.
+    %{state | mode_asks: MapSet.filter(state.mode_asks, &Map.has_key?(state.requests, &1))}
+  end
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
   defoverridable handle_info: 2, handle_call: 3
@@ -1064,6 +1200,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:usage_instance, nil)
        |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
+       |> Map.put_new(:mode_asks, MapSet.new())
+       |> Map.put_new(:switching, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
        |> Map.put_new(:placed, nil)
@@ -2240,10 +2378,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp claude_message(_message, %{turn: nil} = state), do: state
 
   defp claude_message(
-         %{"type" => "system", "subtype" => "init", "session_id" => session_id},
+         %{"type" => "system", "subtype" => "init", "session_id" => session_id} = message,
          state
        ) do
     ids = state.turn.ids
+    # The model the CLI resolved its `--model` to.
+    state = AppliedModel.record(state, message["model"])
 
     if session_id != state.session_id do
       commit(state, fn stream ->
@@ -2274,6 +2414,15 @@ defmodule HalC2.Claude.ThreadRuntime do
       if uuid = message["uuid"],
         do: update_in(state.turn, &(&1 |> Map.put(:head, uuid) |> Map.delete(:resumed_at))),
         else: state
+
+    # The model that answered: a fallback Claude took shows here. A subagent's is its own.
+    state =
+      with nil <- message["parent_tool_use_id"],
+           model when model != "<synthetic>" <- get_in(message, ["message", "model"]) do
+        AppliedModel.record(state, model)
+      else
+        _ -> state
+      end
 
     # The context meter reads the last request's usage, not the turn's total.
     state =

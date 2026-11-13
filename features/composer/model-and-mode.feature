@@ -233,6 +233,54 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | Ultrathink: the cache    | Ultrathink: the cache    |
       | /home/sam/app.ts is odd  | Ultrathink: /home/sam/app.ts is odd |
 
+  # What the composer shows is what runs. Every change to a thread's model, provider,
+  # runtime or interaction mode moves its selection revision; a send carries the
+  # revision its pick was made against, and the MC refuses it once that has moved on.
+  @mc @priority-high
+  Scenario: A send picked against a selection that has since changed is refused
+    Given another client has moved the thread to "gpt-5.5"
+    When the user sends a message picked on "gpt-5.4" against the selection they saw
+    Then the send is refused as stale, naming "gpt-5.5"
+    And the thread still runs on "gpt-5.5"
+
+  @mc @priority-high
+  Scenario: A send that picks nothing keeps a model chosen elsewhere
+    Given another client has moved the thread to "gpt-5.5"
+    When the user sends a message that picks nothing
+    Then its turn runs on "gpt-5.5"
+
+  @mc @priority-high
+  Scenario: A message that names another model on the same account changes the thread's model
+    When the user sends a message that names "gpt-5.5"
+    Then its turn runs on "gpt-5.5"
+    And the thread runs on "gpt-5.5" at selection revision 1
+
+  @mc
+  Scenario: A queued message's pick gives way to a later change
+    Given the agent is working
+    And the user has queued a message that names "gpt-5.4"
+    When another client moves the thread to "gpt-5.5"
+    And the agent finishes its turn
+    Then the queued message runs on "gpt-5.5"
+
+  @mc
+  Scenario: A change to what a thread runs on answers with the revision it made
+    When a client switches the thread to planning
+    Then the reply names selection revision 1
+    When a client switches the thread to planning
+    Then the reply names no selection revision
+
+  @mc
+  Scenario: A thread created without a model names the one it runs on
+    Given new threads default to "gpt-5.5"
+    When a client creates a thread without naming a model or permissions
+    Then the new thread is recorded as running "gpt-5.5" in full access
+
+  @mc
+  Scenario: A project tells clients what a new thread there runs on
+    When new threads default to "gpt-5.5"
+    Then the project's sidebar row says a new thread there runs "gpt-5.5" in full access
+
   @desktop @mobile @backlog-mobile
   Scenario: Favourite models are listed first and can be unfavourited
     When the user marks "claude-opus" as a favourite
@@ -262,6 +310,73 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user returns to the thread here
     Then the draft is on "claude-opus"
     But an unsent pick in another thread's draft is kept
+
+  # What the composer shows is what runs: a pick is made against what the thread ran then
+  # (its selection revision), and the newest deliberate choice wins.
+  @shared @backlog-mobile @priority-high
+  Scenario: A send picked against a selection that moved elsewhere is refused
+    Given a thread runs on "gpt-5" here
+    And the user picked "gpt-5-codex" for its next turn
+    And another client has moved the thread to "claude-opus", which this client has not heard yet
+    When the user sends "Ship it"
+    Then nothing is sent on the user's behalf and "Ship it" stays in the prompt
+    And the user is told "This thread moved to Opus on Claude elsewhere. Check it and send again."
+    And the composer shows "claude-opus" once the change arrives
+
+  @shared @backlog-mobile @priority-high
+  Scenario: A send with no pick keeps a change made on another client
+    Given a thread runs on "gpt-5" here
+    And another client has moved the thread to "claude-opus", which this client has not heard yet
+    When the user sends "Carry on" without picking a model
+    Then the message names no model, so the turn runs on "claude-opus"
+
+  # An MC that keeps no selection revision takes a message's model into the thread only on a
+  # steer or a provider switch, so the client makes the pick the thread's before it sends.
+  @shared @backlog-mobile @priority-high
+  Scenario: A pick reaches the thread on an MC that keeps no selection revision
+    Given a thread runs on "gpt-5" on an MC that keeps no selection revision
+    And the user picked "gpt-5-codex" for its next turn
+    When the user sends "Ship it"
+    Then the thread is set to "gpt-5-codex" before the message goes with that pick
+    And the composer shows "gpt-5-codex", the thread's own now
+    But a change made on another client after it replaces the pick
+
+  @shared @backlog-mobile
+  Scenario: The user's own access change keeps their unsent pick
+    Given a thread runs on "gpt-5" here
+    And the user picked "gpt-5-codex" for its next turn
+    When the user changes the thread's access to Supervised
+    Then the composer still shows "gpt-5-codex"
+    But a change made on another client after it replaces the pick
+
+  # An MC that keeps a selection revision names, in its reply, the one an own change moved
+  # the thread to; a reply naming none moved nothing. Each thread is judged by its own MC, so
+  # what one machine of a cluster answers says nothing about another's threads.
+  @shared @backlog-mobile
+  Scenario: In a cluster, each machine's answers decide only its own threads' picks
+    Given one thread is on an MC that keeps no selection revision and another on one that does
+    And the user changed the first thread's access to Supervised
+    And the user picked "gpt-5-codex" for the second thread's next turn
+    When the second thread's MC answers an access change to it without moving the thread
+    Then the composer still shows "gpt-5-codex"
+    But a change made on another client to the second thread replaces the pick
+
+  @shared @backlog-mobile @priority-high
+  Scenario: A thread whose account is off keeps it rather than move to another
+    Given a thread runs on "gpt-5" on the account "Codex Personal"
+    And "Codex Personal" is turned off and the account "Codex Work" is ready
+    When the user opens the thread
+    Then the composer shows "gpt-5" on "Codex Personal", which cannot run a turn now
+    And a message is not sent until the user picks a model
+
+  # The desktop and phone take the model of the thread they show into a new thread unless the
+  # project sets one of its own, so the open thread's model wins over the project row's (#1525).
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A new thread on another machine shows that machine's defaults
+    Given this machine starts new threads on "gpt-5" with full access
+    And the project's machine starts new threads there on "claude-opus" with Supervised access
+    When the user starts a new thread in the project
+    Then the draft is on "claude-opus" with Supervised access
 
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: The last model used with each provider is remembered
@@ -677,15 +792,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | Max        | Bars    | "Max"                     |
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
-  # default; they change from the effort menu or the permissions key.
+  # default; they change from the effort menu or the permissions key. HAL-C2 departs from
+  # upstream here: a started thread always names its permissions, because switching a
+  # thread back to the default left no sign that the switch happened.
   @shared @backlog-mobile @priority-high
-  Scenario: The composer names the permissions only when they differ from the default
+  Scenario: A started thread always names its permissions
     Given the default permissions are Supervised
     And the open thread runs in Supervised
     When the user looks at the composer
-    Then the composer does not name the permissions
+    Then the composer names "Supervised" beside the model
     When the user sets the thread's permissions to Full access from the effort menu
     Then the composer names "Full access" beside the model
+    When the user sets the thread's permissions to Supervised from the effort menu
+    Then the composer names "Supervised" beside the model
 
   # The composer showed the permissions picked before the app last quit, over what the thread
   # was given since on another device: a pick waits only for the MC to take it.
@@ -697,7 +816,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the app quits before the MC answers and starts again on the thread
     And another device gives the thread Full access
     Then the model control's permissions read "Full access"
-    And the composer does not name the permissions
+    And the composer names "Full access" beside the model
 
   # The phone's system back steps out of the model control's permissions menu
   # before it leaves the control (MobileShell.stepBack). The steps are in
@@ -968,13 +1087,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | only a Codex account                           | the Codex model at its default effort       |
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
-  # composer fell back to another account.
+  # composer fell back to another account. A started thread no longer falls back (see "A thread
+  # whose account is off keeps it"); the alias still resolves to its model, effort and all.
   @shared @backlog-mobile
-  Scenario: A fallback keeps the effort of a model saved under an alias
+  Scenario: A thread saved under a model alias keeps its effort
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
-    And "Codex Personal" is turned off and the account "Codex Work" is ready
     When the user opens the thread
-    Then the composer shows "gpt-5.4" on "Codex Work" at high effort
+    Then the composer shows "gpt-5.4" on "Codex Personal" at high effort
     But a custom model named "5.4" on "Codex Personal" is not taken for "gpt-5.4"
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the

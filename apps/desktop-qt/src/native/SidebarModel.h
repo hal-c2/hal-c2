@@ -53,6 +53,9 @@ struct Thread {
   QString interactionMode;
   QString runtimeMode;
   QJsonObject modelSelection;
+  // Counts changes to the thread's model, runtime mode and interaction mode; a
+  // composer pick holds the one it was made against. Nothing from an older MC.
+  std::optional<qint64> selectionRevision;
   Nullable settledOverride;
   Nullable settledAt;
   Nullable unsettledAt;

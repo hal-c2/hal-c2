@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 import { ProjectIconOverride, ProjectScript } from "./project.ts";
 
 /** Project summary shared by the V2 shell and application project APIs. */
@@ -12,6 +13,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  /** What a new thread here gets, resolved by the MC that owns the project; absent from older MCs, and the selection until that MC has read its providers. Null: no provider can run. */
+  newThreadModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  newThreadRuntimeMode: Schema.optional(RuntimeMode),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to hal-c2.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),

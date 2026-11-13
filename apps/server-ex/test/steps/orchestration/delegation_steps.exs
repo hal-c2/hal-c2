@@ -2531,7 +2531,10 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "a message the user queued keeps the model it was queued with", context do
+  # Queued on the old model before the switch: its pick gives way to the later one
+  # (`HalC2.Orchestration.Selection`), unlike upstream #22579.
+  step "a message the user queued before the switch runs on {string} too",
+       %{args: [model]} = context do
     parent = context.task_parent
 
     state =
@@ -2551,7 +2554,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
         get_in(messages, [run["userMessageId"], "text"]) == "say user later"
       end)
 
-    assert run["modelSelection"]["model"] == "gpt-5.4"
+    assert run["modelSelection"]["model"] == model
+    assert World.thread(context, parent)["modelSelection"]["model"] == model
     context
   end
 
