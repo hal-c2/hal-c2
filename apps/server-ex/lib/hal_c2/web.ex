@@ -200,7 +200,7 @@ defmodule HalC2.Web do
   # sobelow_skip ["Traversal.FileModule"]
   # Reads only an MC's own token file: this home's, or the installed MC's the
   # upgrade task found under its home.
-  def local_mc(port \\ port(), path \\ token_path()) do
+  def local_mc(port \\ running_port(), path \\ token_path()) do
     host = loopback_host(Application.get_env(:hal_c2, :host))
     base = host && "http://#{host}:#{port}"
 
@@ -215,19 +215,40 @@ defmodule HalC2.Web do
   end
 
   @doc """
+  The port this home's running MC listens on, as its runtime record names it (an MC
+  started with `--port`), else the configured one.
+  """
+  # sobelow_skip ["Traversal.FileModule"]
+  # Reads only this home's runtime record.
+  def running_port do
+    with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
+         {:ok, %{"port" => port}} when is_integer(port) <- JSON.decode(json) do
+      port
+    else
+      _ -> port()
+    end
+  end
+
+  @doc """
   Whether the listener at `base` proves it holds `token` by answering a fresh challenge
-  with `proof/2`, so the token can be sent there. The MC answers only from loopback,
-  so a program squatting on loopback cannot relay the challenge to an MC elsewhere.
+  with `proof/3` for the very address and port dialled, so the token can be sent
+  there. A program at `base` that relays the challenge to, or redirects it to, an MC
+  elsewhere gets that MC's proof for its own address, which does not match. The MC
+  answers only from loopback, so it cannot be relayed through a LAN address either.
   """
   def holds_token?(base, token) do
+    %URI{host: host, port: port} = URI.parse(base)
     challenge = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
     request = {~c"#{base}/.well-known/hal-c2/proof?challenge=#{challenge}", []}
 
-    with {:ok, _} <- Application.ensure_all_started(:inets),
+    with {:ok, address} <- :inet.parse_address(String.to_charlist(host)),
+         {:ok, _} <- Application.ensure_all_started(:inets),
          {:ok, {{_, 200, _}, _, reply}} <-
-           :httpc.request(:get, request, [timeout: 5_000], body_format: :binary),
+           :httpc.request(:get, request, [timeout: 5_000, autoredirect: false],
+             body_format: :binary
+           ),
          {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply) do
-      Plug.Crypto.secure_compare(proof, proof(token, challenge))
+      Plug.Crypto.secure_compare(proof, proof(token, challenge, {address, port}))
     else
       _ -> false
     end
@@ -249,9 +270,18 @@ defmodule HalC2.Web do
     end
   end
 
-  @doc "What `holds_token?/2` expects the listener to answer to `challenge`."
-  def proof(token, challenge) do
-    :crypto.mac(:hmac, :sha256, token, "hal-c2 local proof\n" <> challenge)
+  @doc """
+  What `holds_token?/2` expects the listener to answer to `challenge` on a connection
+  to `{address, port}`, the listener's own end of it.
+  """
+  def proof(token, challenge, {address, port}) do
+    address =
+      with {0, 0, 0, 0, 0, 0xFFFF, g, h} <- address,
+           do: :inet.ipv4_mapped_ipv6_address({0, 0, 0, 0, 0, 0xFFFF, g, h})
+
+    endpoint = "#{:inet.ntoa(address)} #{port}"
+
+    :crypto.mac(:hmac, :sha256, token, "hal-c2 local proof\n#{endpoint}\n" <> challenge)
     |> Base.url_encode64(padding: false)
   end
 

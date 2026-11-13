@@ -43,7 +43,8 @@ defmodule HalC2.Web.Router do
 
   # A local tool asks the listener on this home's port to prove it holds the access
   # token before sending it: anything else could be holding the port. Only from
-  # loopback, where the token authenticates, so no squatter relays it from elsewhere.
+  # loopback, where the token authenticates, so no squatter relays it from elsewhere,
+  # and for this connection's own end, so no squatter passes on another listener's.
   get "/.well-known/hal-c2/proof" do
     conn = fetch_query_params(conn)
 
@@ -52,7 +53,8 @@ defmodule HalC2.Web.Router do
         send_resp(conn, 403, "")
 
       %{"challenge" => challenge} when byte_size(challenge) in 16..128 ->
-        proof = HalC2.Web.proof(HalC2.Web.token(), challenge)
+        %{address: address, port: port} = get_sock_data(conn)
+        proof = HalC2.Web.proof(HalC2.Web.token(), challenge, {address, port})
         body = JSON.encode_to_iodata!(%{"proof" => proof})
         conn |> put_resp_content_type("application/json") |> send_resp(200, body)
 

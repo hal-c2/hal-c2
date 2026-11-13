@@ -246,7 +246,6 @@ Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/claude/ski
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/claude/skills.ex | path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster/command.ex | Elixir.HalC2.RuntimeRecord
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster/distribution.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/desktop_update.ex | install_path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/devices.ex | file

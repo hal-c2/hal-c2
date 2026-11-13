@@ -82,15 +82,7 @@ defmodule HalC2.WebTokenTest do
   end
 
   test "a local tool gets the token for this home's MC, which proves it holds it" do
-    previous = Application.fetch_env(:hal_c2, :port)
-    Application.put_env(:hal_c2, :port, 0)
-
-    on_exit(fn ->
-      with {:ok, port} <- previous, do: Application.put_env(:hal_c2, :port, port)
-      if previous == :error, do: Application.delete_env(:hal_c2, :port)
-    end)
-
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    port = start_mc()
     token = HalC2.Web.token()
 
     assert HalC2.Web.local_mc(port) == {"http://127.0.0.1:#{port}", token}
@@ -98,29 +90,38 @@ defmodule HalC2.WebTokenTest do
 
   test "a program holding the MC's port is never sent the token" do
     token = HalC2.Web.token()
-    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
-    {:ok, port} = :inet.port(listen)
-    test = self()
-
-    spawn_link(fn ->
-      {:ok, socket} = :gen_tcp.accept(listen)
-      {:ok, request} = :gen_tcp.recv(socket, 0, 5_000)
-      send(test, {:request, request})
-      body = ~s({"proof":"a guess"})
-
-      :gen_tcp.send(
-        socket,
-        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n" <>
-          "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
-      )
-
-      :gen_tcp.close(socket)
-    end)
+    port = squat(fn _path -> ok_json(~s({"proof":"a guess"})) end)
 
     assert HalC2.Web.local_mc(port) == nil
     assert_receive {:request, request}
     refute request =~ token
     refute request =~ ~r/authorization/i
+  end
+
+  # The MC proves the address and port it was reached at, so a program on another
+  # loopback port gets a proof that is not for its own.
+  test "a program passing the challenge on to the real MC is not taken for it" do
+    mc = start_mc()
+
+    relay =
+      squat(fn path ->
+        {:ok, {{_, 200, _}, _, body}} =
+          :httpc.request(:get, {~c"http://127.0.0.1:#{mc}#{path}", []}, [], body_format: :binary)
+
+        ok_json(body)
+      end)
+
+    assert HalC2.Web.local_mc(relay) == nil
+    assert_receive {:request, _}
+
+    redirect =
+      squat(fn path ->
+        "HTTP/1.1 302 Found\r\nlocation: http://127.0.0.1:#{mc}#{path}\r\n" <>
+          "content-length: 0\r\nconnection: close\r\n\r\n"
+      end)
+
+    assert HalC2.Web.local_mc(redirect) == nil
+    assert_receive {:request, _}
   end
 
   # Only an address the MC itself holds: on a loopback port it leaves free, a squatter
@@ -159,7 +160,10 @@ defmodule HalC2.WebTokenTest do
 
     conn = HalC2.Web.Router.call(conn(:get, path), [])
     assert conn.status == 200
-    assert JSON.decode!(conn.resp_body)["proof"] == HalC2.Web.proof(HalC2.Web.token(), challenge)
+    # Plug.Test's connection ends at 127.0.0.1:111318.
+    expected = HalC2.Web.proof(HalC2.Web.token(), challenge, {{127, 0, 0, 1}, 111_318})
+    assert JSON.decode!(conn.resp_body)["proof"] == expected
+    assert expected != HalC2.Web.proof(HalC2.Web.token(), challenge, {{127, 0, 0, 1}, 111_319})
 
     # A squatter on loopback relaying the challenge to an MC on a LAN address, or
     # through a proxy on this machine, gets no proof.
@@ -168,5 +172,43 @@ defmodule HalC2.WebTokenTest do
 
     proxied = conn(:get, path) |> put_req_header("x-forwarded-for", "100.64.0.2")
     assert HalC2.Web.Router.call(proxied, []).status == 403
+  end
+
+  # This home's MC on a port of its own, stopped with the test.
+  defp start_mc do
+    previous = Application.fetch_env(:hal_c2, :port)
+    Application.put_env(:hal_c2, :port, 0)
+
+    on_exit(fn ->
+      with {:ok, port} <- previous, do: Application.put_env(:hal_c2, :port, port)
+      if previous == :error, do: Application.delete_env(:hal_c2, :port)
+    end)
+
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    port
+  end
+
+  # A program on a loopback port answering one request with `answer.(path)`; the test
+  # is sent the request it read.
+  defp squat(answer) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+    test = self()
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listen)
+      {:ok, request} = :gen_tcp.recv(socket, 0, 5_000)
+      send(test, {:request, request})
+      [_, path | _] = String.split(request, " ", parts: 3)
+      :gen_tcp.send(socket, answer.(path))
+      :gen_tcp.close(socket)
+    end)
+
+    port
+  end
+
+  defp ok_json(body) do
+    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n" <>
+      "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
   end
 end

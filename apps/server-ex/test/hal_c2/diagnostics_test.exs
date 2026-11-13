@@ -40,7 +40,7 @@ defmodule HalC2.DiagnosticsTest do
   test "process commands redact authorization and credential values" do
     secrets =
       ["live-bearer", "token-value", "password-value", "api-key-value", "horse", "staple"] ++
-        ["bracketed-secret"]
+        ["bracketed-secret", "marker-prefixed", "spaced-marker"]
 
     port =
       Port.open({:spawn_executable, "/bin/sh"}, [
@@ -56,6 +56,9 @@ defmodule HalC2.DiagnosticsTest do
           "correct horse",
           "token=battery staple",
           "--api-token=[bracketed-secret]",
+          "--password=[REDACTED]marker-prefixed",
+          "--token",
+          "[REDACTED]spaced-marker",
           "--keep",
           "visible"
         ]

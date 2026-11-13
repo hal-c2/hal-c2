@@ -133,7 +133,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     {base, token} =
       HalC2.Web.local_mc() ||
         Mix.raise(
-          "No MC of #{HalC2.Paths.data_dir()} answers on port #{HalC2.Web.port()}; " <>
+          "No MC of #{HalC2.Paths.data_dir()} answers on port #{HalC2.Web.running_port()}; " <>
             "start one with `mise run mc`"
         )
 

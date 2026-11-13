@@ -176,9 +176,9 @@ defmodule HalC2.Cluster.Command do
   end
 
   # This home's running MC over loopback, once it proves it holds the token
-  # (`HalC2.Web.local_mc/2`), on the port its runtime record names, else where it would.
+  # (`HalC2.Web.local_mc/2`), on the port its runtime record names.
   defp mc do
-    port = record_port() || HalC2.Web.port()
+    port = HalC2.Web.running_port()
 
     case HalC2.Web.local_mc(port) do
       {base, token} ->
@@ -186,15 +186,6 @@ defmodule HalC2.Cluster.Command do
 
       nil ->
         {:error, "No MC of #{HalC2.Paths.data_dir()} answers on port #{port}; is it running?"}
-    end
-  end
-
-  defp record_port do
-    with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
-         {:ok, %{"port" => port}} when is_integer(port) <- JSON.decode(json) do
-      port
-    else
-      _ -> nil
     end
   end
 end
