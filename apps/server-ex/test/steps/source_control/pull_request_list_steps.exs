@@ -902,17 +902,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   # Signs `login` in to github.com the way `gh auth login` and `gh auth switch` leave
   # it, in a gh configuration of the scenario's own, with no token in the environment.
   defp sign_in_as(context, login) do
-    context =
-      if context[:gh_config] do
-        context
-      else
-        for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
-            do: World.put_os_env(name, nil)
-
-        config = Mc.tmp_dir(context.mc, "gh-config")
-        World.put_os_env("GH_CONFIG_DIR", config)
-        Map.put(context, :gh_config, config)
-      end
+    context = gh_config(context)
 
     File.write!(Path.join(context.gh_config, "hosts.yml"), """
     github.com:
@@ -923,6 +913,20 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     """)
 
     context
+  end
+
+  # A gh configuration of the scenario's own, with no token in the environment.
+  defp gh_config(context) do
+    if context[:gh_config] do
+      context
+    else
+      for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
+          do: World.put_os_env(name, nil)
+
+      config = Mc.tmp_dir(context.mc, "gh-config")
+      World.put_os_env("GH_CONFIG_DIR", config)
+      Map.put(context, :gh_config, config)
+    end
   end
 
   # What `gh api rate_limit` says of the GraphQL budget: `remaining`, resetting at `reset`.
@@ -1373,6 +1377,16 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context = World.create_project(context, "shop enterprise")
     root = World.project(context, "shop enterprise").root
     World.git!(root, ["remote", "add", "origin", "git@github.example.com:#{repository}.git"])
+
+    # Signed in to it as `gh auth login --hostname` leaves it: only a host gh is
+    # configured for is a GitHub Enterprise one.
+    context = gh_config(context)
+
+    File.write!(Path.join(context.gh_config, "hosts.yml"), """
+    github.example.com:
+        user: monalisa
+    """)
+
     context
   end
 
