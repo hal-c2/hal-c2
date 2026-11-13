@@ -328,14 +328,22 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   end
 
   # The installed MC at `record_base`, over loopback once it proves it holds `token`,
-  # so the token never goes to another program holding its port.
+  # so the token never goes to another program holding its port. One bound to a single
+  # non-loopback address is not reached this way (`HalC2.Web.loopback_host/1`).
   defp proved(record_base, token) do
     %URI{host: host, port: port} = URI.parse(record_base)
-    base = "http://#{HalC2.Web.loopback_host(host)}:#{port}"
 
-    if HalC2.Web.holds_token?(base, token),
-      do: {:ok, base},
-      else: {:error, "No installed MC answers at #{base} with the token under its home"}
+    case HalC2.Web.loopback_host(host) do
+      nil ->
+        {:error, "The installed MC listens on #{host} only; a local tool reaches it on loopback"}
+
+      loopback ->
+        base = "http://#{loopback}:#{port}"
+
+        if HalC2.Web.holds_token?(base, token),
+          do: {:ok, base},
+          else: {:error, "No installed MC answers at #{base} with the token under its home"}
+    end
   end
 
   defp loaded(mc, changed, restart) do

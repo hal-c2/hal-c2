@@ -82,9 +82,14 @@ defmodule HalC2.WebTokenTest do
   end
 
   test "a local tool gets the token for this home's MC, which proves it holds it" do
-    previous = Application.get_env(:hal_c2, :port)
+    previous = Application.fetch_env(:hal_c2, :port)
     Application.put_env(:hal_c2, :port, 0)
-    on_exit(fn -> Application.put_env(:hal_c2, :port, previous) end)
+
+    on_exit(fn ->
+      with {:ok, port} <- previous, do: Application.put_env(:hal_c2, :port, port)
+      if previous == :error, do: Application.delete_env(:hal_c2, :port)
+    end)
+
     {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
     token = HalC2.Web.token()
 
@@ -116,6 +121,34 @@ defmodule HalC2.WebTokenTest do
     assert_receive {:request, request}
     refute request =~ token
     refute request =~ ~r/authorization/i
+  end
+
+  # Only an address the MC itself holds: on a loopback port it leaves free, a squatter
+  # could relay the challenge to it over a connection from loopback.
+  test "a local tool reaches the MC only at an address the MC holds" do
+    for {host, expected} <- [
+          {"127.0.0.1", "127.0.0.1"},
+          {"127.72.0.57", "127.72.0.57"},
+          {"::1", "[::1]"},
+          {"0.0.0.0", "127.0.0.1"},
+          {"::", "127.0.0.1"},
+          {"localhost", "127.0.0.1"},
+          {"192.168.1.5", nil},
+          {"fd7a:115c:a1e0::1", nil},
+          {"mc.example", nil}
+        ],
+        do: assert(HalC2.Web.loopback_host(host) == expected, host)
+
+    HalC2.Web.token()
+    previous = Application.fetch_env(:hal_c2, :host)
+    Application.put_env(:hal_c2, :host, "192.168.1.5")
+
+    on_exit(fn ->
+      with {:ok, host} <- previous, do: Application.put_env(:hal_c2, :host, host)
+      if previous == :error, do: Application.delete_env(:hal_c2, :host)
+    end)
+
+    assert HalC2.Web.local_mc(1) == nil
   end
 
   test "the MC answers a proof only for a challenge, and only from this machine" do

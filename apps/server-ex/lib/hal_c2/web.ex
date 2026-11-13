@@ -193,16 +193,19 @@ defmodule HalC2.Web do
   The loopback URL and access token of the MC on `port` whose token is at `path` (this
   home's by default), for a local tool to call it with: `{url, token}` once the
   listener there has proved it holds the token without being sent it (`holds_token?/2`),
-  nil when nothing there can (no MC runs, or another program holds the port). An MC
-  bound to one non-loopback address is not reached.
+  nil when nothing there can (no MC runs, or another program holds the port). Nil too
+  for an MC bound to one non-loopback address (`loopback_host/1`): the loopback port is
+  free for anyone to take, and such a squatter can relay the challenge to that MC.
   """
   # sobelow_skip ["Traversal.FileModule"]
   # Reads only an MC's own token file: this home's, or the installed MC's the
   # upgrade task found under its home.
   def local_mc(port \\ port(), path \\ token_path()) do
-    base = "http://#{loopback_host(Application.get_env(:hal_c2, :host))}:#{port}"
+    host = loopback_host(Application.get_env(:hal_c2, :host))
+    base = host && "http://#{host}:#{port}"
 
-    with {:ok, token} <- File.read(path),
+    with true <- is_binary(base),
+         {:ok, token} <- File.read(path),
          token = String.trim(token),
          true <- holds_token?(base, token) do
       {base, token}
@@ -232,13 +235,17 @@ defmodule HalC2.Web do
 
   @doc """
   Where a local tool reaches an MC bound to `host`: that host when it is a loopback
-  address, else `127.0.0.1` (a wildcard listens there too).
+  address, `127.0.0.1` when it is a wildcard (which listens there too) or unset, nil for one
+  non-loopback address. The MC holds the address returned, so while it runs no other
+  program listens there on its port.
   """
-  def loopback_host(host) do
-    case is_binary(host) && :inet.parse_address(String.to_charlist(host)) do
+  def loopback_host(host) when host in [nil, "0.0.0.0", "::"], do: "127.0.0.1"
+
+  def loopback_host(host) when is_binary(host) do
+    case :inet.parse_address(String.to_charlist(host)) do
       {:ok, {127, _, _, _}} -> host
       {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> "[::1]"
-      _ -> "127.0.0.1"
+      _ -> if host == "localhost", do: "127.0.0.1"
     end
   end
 
