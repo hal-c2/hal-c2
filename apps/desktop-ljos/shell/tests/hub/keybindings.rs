@@ -193,7 +193,9 @@ fn route_thread(hub: &Hub) -> String {
 }
 
 fn object(hub: &Hub) -> ljos::prelude::ObjectId {
-    hub.engine.singleton::<KeybindingsObject>().unwrap()
+    hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<KeybindingsObject>(&hub.engine)
+        .unwrap()
 }
 
 #[test]

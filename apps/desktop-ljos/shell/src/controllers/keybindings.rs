@@ -1467,7 +1467,7 @@ fn jump_to(engine: &Engine, key: &str) {
 /// `Keybindings` in QML.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Keybindings", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct KeybindingsObject {
     /// The command registry (CommandRegistry).
     #[qml(notify, readonly)]

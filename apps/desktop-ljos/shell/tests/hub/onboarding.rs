@@ -280,7 +280,9 @@ impl Rig {
     fn terminal_object(&self) -> Value {
         read(
             &self.engine,
-            self.engine.singleton::<OnboardingObject>().unwrap(),
+            hal_c2_shell::bridge::Bridge::main(&self.engine)
+                .singleton::<OnboardingObject>(&self.engine)
+                .unwrap(),
             "terminal",
         )
     }

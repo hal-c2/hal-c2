@@ -26,10 +26,10 @@
 //!
 //! What every window shares and Ljós keeps once per engine stays engine
 //! wide: the hooks of the shared controllers (settings, ...) wake every
-//! window's closures, each as its own window. QML still finds the first
-//! window's singletons (see [`Bridge::singleton`]), so the app shows one
-//! window; the others are built and run headless until the shell's
-//! singletons are window-scoped (TODO(#569), [`set_window_opener`]).
+//! window's closures, each as its own window. Each window's root reads its
+//! own bridge as `Shell`, and its own of every other singleton that is one
+//! for each window ([`Bridge::in_scope`]), as desktop-qt's engine per window
+//! does.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -237,6 +237,8 @@ pub struct Window {
     mc: Rc<WindowMc>,
     /// What its controllers' timers belong to, gone with it.
     owner: Option<ObjectId>,
+    /// The root that shows it ([`attach_root`]).
+    root: Cell<Option<ObjectId>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -262,6 +264,8 @@ struct Host {
     stage: Cell<Stage>,
     state_dir: RefCell<Option<PathBuf>>,
     opener: RefCell<Option<Opener>>,
+    /// Whether the Dock's reopening is followed ([`attach_root`]).
+    reopening: Cell<bool>,
 }
 
 impl Host {
@@ -363,6 +367,7 @@ fn add_window(engine: &Engine, host: &Host, id: String, bridge: Bridge) -> Rc<Wi
         handlers: RefCell::default(),
         mc: mc.clone(),
         owner,
+        root: Cell::new(None),
     });
     // Listed before its controllers are built, which may read its files.
     host.windows.borrow_mut().push(window.clone());
@@ -628,6 +633,8 @@ fn tear_down(engine: &Engine, window: &Rc<Window>) {
     if let Some(owner) = window.owner {
         engine.destroy(owner);
     }
+    // Its root reads the bridge's objects: it goes first.
+    crate::runtime::window_closed(engine, id);
     bridge.close(engine);
     // Its route, panels and terminals; the drafts are every window's.
     if let Some(dir) = host.state_dir.borrow().as_deref() {
@@ -705,34 +712,41 @@ pub fn finish_writes(engine: &Engine, wait: Duration, then: impl FnOnce(&Engine)
 }
 
 /// Makes `root` what window `id` shows: closing it closes the window
-/// ([`close_window`]), and the main one's shows again when its user opens
-/// the app with no window shown, as a click on its Dock icon does on macOS
-/// (desktop-qt's ShellRuntime::closed and ShellWindows::reopen). The app
-/// keeps running with its last window closed
+/// ([`close_window`]), and the first open window's shows again when its
+/// user opens the app with no window shown, as a click on its Dock icon
+/// does on macOS (desktop-qt's ShellRuntime::closed and
+/// ShellWindows::reopen). The app keeps running with its last window closed
 /// (`App::quit_on_last_window_closed(false)`): [`close_window`] says when it
 /// ends.
 pub fn attach_root(engine: &Engine, id: &str, root: ObjectId) {
+    let host = Host::of(engine);
+    if let Some(window) = host.window(id) {
+        window.root.set(Some(root));
+    }
     let closing = id.to_owned();
     let _ = engine.connect_by_name(root, "closing", move |engine, _| {
         close_window(engine, &closing)
     });
-    if id != MAIN {
+    if host.reopening.replace(true) {
         return;
     }
     let Ok(app) = engine.singleton::<Application>() else {
         return;
     };
-    let _ = engine.signal_index(app, "reopened").and_then(|reopened| {
-        engine.connect_to(app, reopened, root, move |engine, args| {
-            // A reloaded shell's old root lasts until the next frame
-            // ([`crate::runtime`]): only the generation shown comes back.
-            let shown = crate::runtime::window(engine).is_none_or(|w| w == root);
-            if shown && matches!(args.first(), Some(Value::Bool(false))) {
-                for show in ["show", "raise", "requestActivate"] {
-                    let _ = engine.invoke_by_name(root, show, &[]);
-                }
+    let _ = engine.connect_by_name(app, "reopened", |engine, args| {
+        if !matches!(args.first(), Some(Value::Bool(false))) {
+            return;
+        }
+        let root = Host::of(engine)
+            .windows
+            .borrow()
+            .first()
+            .and_then(|w| w.root.get());
+        if let Some(root) = root.filter(|&r| engine.is_alive(r)) {
+            for show in ["show", "raise", "requestActivate"] {
+                let _ = engine.invoke_by_name(root, show, &[]);
             }
-        })
+        }
     });
 }
 

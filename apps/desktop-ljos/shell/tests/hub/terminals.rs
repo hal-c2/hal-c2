@@ -48,7 +48,9 @@ fn shown(hub: &Hub, name: &str) -> Value {
 }
 
 fn singleton(hub: &Hub) -> ljos::prelude::ObjectId {
-    hub.engine.singleton::<TerminalsObject>().unwrap()
+    hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<TerminalsObject>(&hub.engine)
+        .unwrap()
 }
 
 /// The `terminal` shapes followed, by terminal id.

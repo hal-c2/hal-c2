@@ -100,7 +100,9 @@ fn a_key_declared_before_the_bindings_follows_its_publishes() {
     let engine = common::engine(source, Rc::new(Disconnected::default()));
     let bridge = Bridge::of(&engine);
     bridge.declare_key(&engine, "later");
-    let root = engine.create_from_url("Main", None, Vec::new()).unwrap();
+    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+        .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
+        .unwrap();
     assert_eq!(text(&engine, root, "later"), "unset");
     bridge.publish(&engine, "later", json!({"n": 7}));
     assert_eq!(text(&engine, root, "later"), "7");

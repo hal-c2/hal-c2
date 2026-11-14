@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
-use ljos::ljos_engine::QmlSingleton;
+use ljos::ljos_engine::{QmlSingleton, SingletonScope};
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{
@@ -66,7 +66,7 @@ type ClipboardWriter = Rc<dyn Fn(&str) -> bool>;
 /// `Shell` in `HalC2.Shell`.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Shell", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct ShellBridge {
     #[qml(constant, readonly)]
     protocol_version: i32,
@@ -474,8 +474,10 @@ impl Bridge {
         if let Some(obj) = state.main.get() {
             return Bridge(obj);
         }
+        // One for each window ([`Bridge::in_scope`]): the first window's is
+        // made here, as the others' are in [`Bridge::new_window`].
         let obj = engine
-            .singleton::<ShellBridge>()
+            .create_native(ShellBridge::default(), None)
             .expect("HalC2.Shell is registered (crate::register)");
         state.main.set(Some(obj));
         Bridge::made(engine, &state, obj);
@@ -546,9 +548,13 @@ impl Bridge {
             at.map(|at| bridges.remove(at).1)
         };
         let Some(own) = own else { return };
-        let objects = std::mem::take(&mut *own.objects.borrow_mut());
-        for (_, obj) in objects {
-            engine.destroy(obj);
+        // The first window's root stays, hidden, as the view's: it still
+        // reads its objects.
+        if state.main.get() != Some(self.0) {
+            let objects = std::mem::take(&mut *own.objects.borrow_mut());
+            for (_, obj) in objects {
+                engine.destroy(obj);
+            }
         }
         own.interceptors.borrow_mut().clear();
         own.watchers.borrow_mut().clear();
@@ -628,22 +634,20 @@ impl Bridge {
         made
     }
 
-    /// This window's `T`: the engine's singleton for the first window, an
-    /// object of its own for each other.
-    ///
-    /// TODO(#569): QML still finds the engine's, so another window's bricks
-    /// cannot see their own. Ljós now makes a native singleton, and a QML
-    /// singleton that reads one, one per window (`scope = "window"`,
-    /// `Engine::set_singleton_in`); this becomes that once the per-window
-    /// types are window-scoped.
+    /// This window's `T`, made on first use: what everything under the
+    /// window's root reads as `T` ([`Bridge::in_scope`]). A type that is
+    /// one for the engine is the engine's.
     pub fn singleton<T: QmlSingleton + Default>(
         self,
         engine: &Engine,
     ) -> Result<ObjectId, EngineError> {
-        if Some(self.0) == BridgeState::of(engine).main.get() || !self.is_open(engine) {
+        if T::SCOPE == SingletonScope::Engine {
             return engine.singleton::<T>();
         }
-        let own = self.own(engine).expect("an open bridge has its own");
+        if TypeId::of::<T>() == TypeId::of::<ShellBridge>() {
+            return Ok(self.0);
+        }
+        let own = self.own(engine).ok_or(EngineError::DeadObject(self.0))?;
         let id = TypeId::of::<T>();
         if let Some(found) = own.objects.borrow().iter().find(|(t, _)| *t == id) {
             return Ok(found.1);
@@ -651,6 +655,21 @@ impl Bridge {
         let obj = engine.create_native(T::default(), None)?;
         own.objects.borrow_mut().push((id, obj));
         Ok(obj)
+    }
+
+    /// Runs `f`, in which the host makes this window's root: everything
+    /// under it reads this bridge as `Shell`, and its own of each other
+    /// type that is one for each window (desktop-qt's engine per window,
+    /// NativeShell::windowFor). A scope no root took ends with `f`.
+    pub fn in_scope<R>(self, engine: &Engine, f: impl FnOnce() -> R) -> R {
+        let scope = engine.window_scope();
+        for give in crate::WINDOW_SINGLETONS {
+            give(engine, self, scope);
+        }
+        let made = engine.in_window_scope(scope, f);
+        // Refused once a root owns it, which then ends it.
+        let _ = engine.close_window_scope(scope);
+        made
     }
 
     pub fn object(self) -> ObjectId {

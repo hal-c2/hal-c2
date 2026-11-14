@@ -105,6 +105,37 @@ pub fn register(engine: &Engine) {
     bridge::Bridge::of(engine);
 }
 
+/// Gives `scope` the bridge's own `T` ([`bridge::Bridge::in_scope`]).
+fn give<T: ljos::ljos_engine::QmlSingleton + Default>(
+    engine: &Engine,
+    bridge: bridge::Bridge,
+    scope: ljos::prelude::WindowScope,
+) {
+    let given = bridge
+        .singleton::<T>(engine)
+        .and_then(|obj| engine.set_singleton_in::<T>(scope, obj));
+    if let Err(e) = given {
+        eprintln!(
+            "hal-c2-shell: a window's {}: {e}",
+            std::any::type_name::<T>()
+        );
+    }
+}
+
+/// Every type that is one for each window, as desktop-qt's engine per
+/// window has its own of each: the window's bridge gives its root them.
+pub(crate) const WINDOW_SINGLETONS: &[fn(&Engine, bridge::Bridge, ljos::prelude::WindowScope)] = &[
+    give::<bridge::ShellBridge>,
+    give::<controllers::keybindings::KeybindingsObject>,
+    give::<controllers::space::SpacesObject>,
+    give::<controllers::threads::ThreadsObject>,
+    give::<controllers::panel::PanelObject>,
+    give::<controllers::terminals::TerminalsObject>,
+    give::<controllers::theme::ThemesObject>,
+    give::<controllers::onboarding::OnboardingObject>,
+    give::<controllers::palette::PaletteObject>,
+];
+
 /// What the shell is launched with: main.cpp's options, and the MC
 /// host/main.ts hands over (`{origin, token}`; the token stays with the
 /// connection).
@@ -325,7 +356,12 @@ pub fn launch_folders(arguments: &[String]) -> (Vec<String>, Vec<String>) {
 /// project, or finds it, and starts a thread there; then comes to the
 /// front (main.cpp's `launch`).
 pub fn open_folders(engine: &Engine, folders: &[String]) {
-    let bridge = bridge::Bridge::of(engine);
+    // desktop-qt hands them to the first window's bridge; once that window
+    // has closed, to the oldest one open, where desktop-qt would lose them.
+    let bridge = controller::windows(engine)
+        .first()
+        .and_then(|id| controller::window_bridge(engine, id))
+        .unwrap_or_else(|| bridge::Bridge::of(engine));
     for folder in folders {
         bridge.dispatch(
             engine,

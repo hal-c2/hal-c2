@@ -21,7 +21,9 @@ struct AddProject {
 
 /// The palette's `PaletteModel`.
 pub fn palette(world: &World) -> Outcome<ObjectId> {
-    match world.engine().singleton::<PaletteObject>() {
+    match hal_c2_shell::bridge::Bridge::main(world.engine())
+        .singleton::<PaletteObject>(world.engine())
+    {
         Ok(object) => Ok(object),
         Err(_) => fail!("the shell has no command palette"),
     }

@@ -879,15 +879,9 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::open_folders(engine, &folders)
                 });
             }
-            // TODO(#569): desktop-qt's ShellWindows shows another window
-            // for `window.new` and the "New window" command, and reopens the
-            // saved ones, here:
-            // controller::set_window_opener with a native window around a
-            // new root, then controller::restore_windows. The controllers
-            // keep a set per window already (controller::open_window), but
-            // a window's `Shell` must be the bridge they publish on, which
-            // waits on window-scoped singletons (see Bridge::singleton), so
-            // the desktop keeps to one.
+            // desktop-qt's ShellWindows: `window.new`, the "New window"
+            // command and the saved windows each show a root of their own.
+            controller::set_window_opener(&engine, hal_c2_shell::runtime::open_window);
             // An in-app pairing names this desktop as `--pair` does.
             controller::with::<ConnectionHealth, _>(&engine, |health, _| {
                 health.set_pairing_client(pairing_client())
@@ -933,7 +927,13 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::theme::set_application_font(&engine);
             // The user's shell or the built-in one, made again as their
             // files change.
-            hal_c2_shell::runtime::open(&engine, true).map_err(Into::into)
+            let root = hal_c2_shell::runtime::open(&engine, true);
+            // The others saved open reopen once the first shows
+            // (NativeShell::restoreWindows after windows.start()).
+            if root.is_ok() {
+                controller::restore_windows(&engine);
+            }
+            root.map_err(Into::into)
         })
         .map_err(|e| e.to_string());
     if let Some(host) = hosted.borrow_mut().take() {

@@ -224,7 +224,8 @@ fn port_of(url: &str) -> i64 {
 
 fn model_object(world: &World) -> Outcome<ObjectId> {
     let engine = world.engine();
-    let Ok(panel) = engine.singleton::<PanelObject>() else {
+    let Ok(panel) = hal_c2_shell::bridge::Bridge::main(&engine).singleton::<PanelObject>(&engine)
+    else {
         fail!("the shell has no right panel");
     };
     match engine.read_by_name(panel, "previews") {

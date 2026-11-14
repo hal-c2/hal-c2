@@ -36,6 +36,7 @@ use ljos::prelude::{
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::bridge::Bridge;
 use crate::controller;
 use crate::qml::{self, Roots};
 
@@ -114,8 +115,12 @@ struct RuntimeState {
     roots: RefCell<Option<Roots>>,
     /// `<config>/shell.qml`, when there is a config dir.
     user_shell: RefCell<Option<PathBuf>>,
-    /// The window of the generation shown.
-    shown: Cell<Option<ObjectId>>,
+    /// Each open window's root of the generation shown, by window id,
+    /// oldest window first.
+    shown: RefCell<Vec<(String, ObjectId)>>,
+    /// The root the host shows as its view, which a reload's root takes
+    /// over ([`retire`]) and closing the window only hides.
+    view: Cell<Option<ObjectId>>,
     /// The sources as the generation shown was made of them.
     fingerprint: Cell<u64>,
     debounce: Cell<Option<ObjectId>>,
@@ -167,12 +172,64 @@ pub fn open(engine: &Engine, watch: bool) -> Result<ObjectId, String> {
     }
     let seen = state.roots.borrow().as_ref().map(fingerprint);
     next_generation(engine, &state, seen);
-    state.shown.get().ok_or_else(|| last_error(engine))
+    let root = window(engine).ok_or_else(|| last_error(engine))?;
+    state.view.set(Some(root));
+    Ok(root)
 }
 
-/// The window of the generation shown; none before [`open`].
+/// The root the first open window shows; none before [`open`].
 pub fn window(engine: &Engine) -> Option<ObjectId> {
-    RuntimeState::of(engine).shown.get()
+    RuntimeState::of(engine)
+        .shown
+        .borrow()
+        .first()
+        .map(|(_, root)| *root)
+}
+
+/// The root window `id` shows.
+pub fn root_of(engine: &Engine, id: &str) -> Option<ObjectId> {
+    RuntimeState::of(engine)
+        .shown
+        .borrow()
+        .iter()
+        .find(|(shown, _)| shown == id)
+        .map(|(_, root)| *root)
+}
+
+/// The opener of [`controller::set_window_opener`]: a root of the shell
+/// shown now for `window`, in a platform window of its own (desktop-qt's
+/// ShellWindows::add, an engine per window there).
+pub fn open_window(engine: &Engine, window: &controller::Window) {
+    let state = RuntimeState::of(engine);
+    let made = make_shell(engine, &state, window.bridge);
+    let Some(root) = made.root else {
+        engine.log(
+            LogLevel::Critical,
+            "hal_c2.shell",
+            format!("window {}: {}", window.id, made.error),
+        );
+        return;
+    };
+    controller::attach_root(engine, &window.id, root);
+    state.shown.borrow_mut().push((window.id.clone(), root));
+}
+
+/// Lets go of closed window `id`'s root, before its bridge goes: the
+/// host's view is only hidden, as the host shows it while the app runs.
+pub fn window_closed(engine: &Engine, id: &str) {
+    let state = RuntimeState::of(engine);
+    let root = {
+        let mut shown = state.shown.borrow_mut();
+        let Some(at) = shown.iter().position(|(shown, _)| shown == id) else {
+            return;
+        };
+        shown.remove(at).1
+    };
+    if state.view.get() == Some(root) {
+        let _ = engine.invoke_by_name(root, "hide", &[]);
+    } else {
+        engine.destroy(root);
+    }
 }
 
 /// Compiles the roots again and makes the next generation, as ShellRuntime
@@ -238,64 +295,119 @@ fn last_error(engine: &Engine) -> String {
         .unwrap_or_default()
 }
 
-/// The user's shell if there is one and it loads, else the built-in one,
-/// in place of the generation shown (ShellRuntime::reload). `seen` is the
-/// sources' fingerprint from before they were compiled.
-fn next_generation(engine: &Engine, state: &RuntimeState, seen: Option<u64>) {
-    let cx = Cx::new(engine, runtime(engine));
-    let mut error = String::new();
-    let mut made = None;
-    let mut using_user_shell = false;
-    let user_shell = state.user_shell.borrow().clone();
-    if let Some(path) = user_shell.filter(|p| p.is_file()) {
-        match make(engine, qml::USER_SHELL, &path.to_string_lossy()) {
-            Ok(window) => {
-                made = Some(window);
-                using_user_shell = true;
-            }
-            Err(e) => {
-                engine.log(
-                    LogLevel::Warning,
-                    "hal_c2.shell",
-                    format!("user shell failed, falling back to default: {e}"),
-                );
-                error = e;
+/// A shell root for the window of `bridge`, made in its scope so that it
+/// reads the window's own singletons ([`Bridge::in_scope`]).
+struct Made {
+    root: Option<ObjectId>,
+    using_user_shell: bool,
+    error: String,
+}
+
+/// The user's shell if there is one and it loads, else the built-in one.
+fn make_shell(engine: &Engine, state: &RuntimeState, bridge: Bridge) -> Made {
+    bridge.in_scope(engine, || {
+        let mut error = String::new();
+        let user_shell = state.user_shell.borrow().clone();
+        if let Some(path) = user_shell.filter(|p| p.is_file()) {
+            match make(engine, qml::USER_SHELL, &path.to_string_lossy()) {
+                Ok(root) => {
+                    return Made {
+                        root: Some(root),
+                        using_user_shell: true,
+                        error,
+                    };
+                }
+                Err(e) => {
+                    engine.log(
+                        LogLevel::Warning,
+                        "hal_c2.shell",
+                        format!("user shell failed, falling back to default: {e}"),
+                    );
+                    error = e;
+                }
             }
         }
-    }
-    if made.is_none() {
         match make(engine, qml::DEFAULT_SHELL, qml::DEFAULT_SHELL) {
-            Ok(window) => made = Some(window),
+            Ok(root) => Made {
+                root: Some(root),
+                using_user_shell: false,
+                error,
+            },
             Err(e) => {
                 engine.log(
                     LogLevel::Critical,
                     "hal_c2.shell",
                     format!("default shell failed: {e}"),
                 );
-                error = if error.is_empty() {
+                let error = if error.is_empty() {
                     e
                 } else {
                     format!("{error}\n{e}")
                 };
+                Made {
+                    root: None,
+                    using_user_shell: false,
+                    error,
+                }
             }
         }
+    })
+}
+
+/// The windows a generation is made for: the open ones, oldest first, or
+/// the first window's alone before the controllers have started.
+fn targets(engine: &Engine) -> Vec<(String, Bridge)> {
+    let open: Vec<(String, Bridge)> = controller::windows(engine)
+        .into_iter()
+        .filter_map(|id| controller::window_bridge(engine, &id).map(|b| (id, b)))
+        .collect();
+    if open.is_empty() {
+        vec![(controller::MAIN.to_owned(), Bridge::main(engine))]
+    } else {
+        open
     }
+}
+
+/// The next generation of every open window's root, in place of the one
+/// shown (ShellRuntime::reload, which each window's runtime does). `seen`
+/// is the sources' fingerprint from before they were compiled. What the
+/// runtime says (`usingUserShell`, `lastError`) is the first window's.
+fn next_generation(engine: &Engine, state: &RuntimeState, seen: Option<u64>) {
+    let cx = Cx::new(engine, runtime(engine));
     if let Some(seen) = seen {
         state.fingerprint.set(seen);
     }
-    let _ = cx.set(ShellRuntime::LAST_ERROR, Atom::from(error.as_str()));
-    let Some(window) = made else {
+    let generation = cx.get(ShellRuntime::GENERATION).unwrap_or_default() + 1;
+    let mut first: Option<Made> = None;
+    for (id, bridge) in targets(engine) {
+        let made = make_shell(engine, state, bridge);
+        if let Some(root) = made.root {
+            controller::attach_root(engine, &id, root);
+            let old = {
+                let mut shown = state.shown.borrow_mut();
+                match shown.iter_mut().find(|(shown, _)| *shown == id) {
+                    Some(entry) => Some(std::mem::replace(&mut entry.1, root)),
+                    None => {
+                        shown.push((id.clone(), root));
+                        None
+                    }
+                }
+            };
+            if let Some(old) = old {
+                retire(engine, state, old, root, generation);
+            }
+        }
+        first.get_or_insert(made);
+    }
+    let first = first.expect("a generation has a window");
+    let _ = cx.set(ShellRuntime::LAST_ERROR, Atom::from(first.error.as_str()));
+    if first.root.is_none() {
         // Neither: the window shown stays, and the overlay says why until
         // the next change tries again.
         let _ = cx.notify(ShellRuntime::GENERATION.index);
         return;
-    };
-    controller::attach_root(engine, controller::MAIN, window);
-    let generation = cx.get(ShellRuntime::GENERATION).unwrap_or_default() + 1;
-    if let Some(old) = state.shown.replace(Some(window)) {
-        retire(engine, old, window, generation);
     }
-    let _ = cx.set(ShellRuntime::USING_USER_SHELL, using_user_shell);
+    let _ = cx.set(ShellRuntime::USING_USER_SHELL, first.using_user_shell);
     let _ = cx.set(ShellRuntime::GENERATION, generation);
 }
 
@@ -323,7 +435,7 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
 /// Each swap is logged (`hal_c2.shell`, which the app prints): a window
 /// left empty after a reload says here whether the swap was asked, and the
 /// host's warning that it "cannot be shown" says whether it was made.
-fn retire(engine: &Engine, old: ObjectId, new: ObjectId, generation: i32) {
+fn retire(engine: &Engine, state: &RuntimeState, old: ObjectId, new: ObjectId, generation: i32) {
     if !engine.is_alive(old) {
         // The host destroys a root it could not show, and keeps the one
         // before it.
@@ -340,11 +452,16 @@ fn retire(engine: &Engine, old: ObjectId, new: ObjectId, generation: i32) {
     #[cfg(target_os = "macos")]
     crate::macos_window::root_replaced(engine, old, new);
     match ljos::window::replace_root(engine, old, new) {
-        Ok(()) => engine.log(
-            LogLevel::Info,
-            "hal_c2.shell",
-            format!("generation {generation}: {new:?} takes the window of {old:?}"),
-        ),
+        Ok(()) => {
+            if state.view.get() == Some(old) {
+                state.view.set(Some(new));
+            }
+            engine.log(
+                LogLevel::Info,
+                "hal_c2.shell",
+                format!("generation {generation}: {new:?} takes the window of {old:?}"),
+            )
+        }
         Err(e) => {
             engine.log(
                 LogLevel::Info,

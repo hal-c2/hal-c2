@@ -82,8 +82,8 @@ fn fixture() -> (Engine, ObjectId, ObjectId) {
         common::compile(&[("Main", MAIN)], &[]),
         Rc::new(Disconnected::default()),
     );
-    let root = engine
-        .create_from_url("Main", None, Vec::new())
+    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+        .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
         .expect("Main is made");
     let model = DiffModel::create(&engine, None).expect("the model is made");
     engine
