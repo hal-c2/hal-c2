@@ -111,15 +111,13 @@ pub struct Draft {
 
 /// A change of this client's own to a thread's runtime or interaction
 /// mode: it moves the thread's selectionRevision on without replacing a
-/// model pick. `sent_at` is the revision the row had when it went (None
-/// from an MC that counts none); `revision` the one its answer named, None
-/// when it moved nothing or was refused. Settled in place, so every pick
-/// holding it sees it.
+/// model pick. `revision` is the one its answer named, None when it moved
+/// nothing or was refused. Settled in place, so every pick holding it sees
+/// it.
 pub type OwnChange = Rc<RefCell<Own>>;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Own {
-    pub sent_at: Option<i64>,
     pub answered: bool,
     pub revision: Option<i64>,
 }
@@ -130,10 +128,11 @@ impl Own {
         if self.answered {
             return self.revision.is_some_and(|moved| moved > revision);
         }
-        // One sent before `revision` may already be in it: the row can beat
-        // the answer, and counting it again would take another client's
-        // change for it.
-        self.sent_at.is_some_and(|at| at >= revision)
+        // Until it answers it may be any revision past the one it went at,
+        // even one the row already shows: a pick made meanwhile waits for
+        // the answer rather than take the revision it names for another
+        // client's.
+        true
     }
 }
 

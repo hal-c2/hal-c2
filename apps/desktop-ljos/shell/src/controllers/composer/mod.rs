@@ -999,10 +999,7 @@ impl Composer {
 
     /// A mode change sent from here: the pick on the target stands past it.
     pub(super) fn own_sent(&mut self, engine: &Engine, target: &str) -> kept::OwnChange {
-        let change = kept::OwnChange::new(std::cell::RefCell::new(kept::Own {
-            sent_at: thread_of(engine, target).and_then(|t| t.selection_revision),
-            ..kept::Own::default()
-        }));
+        let change = kept::OwnChange::new(std::cell::RefCell::new(kept::Own::default()));
         self.own
             .entry(target.to_owned())
             .or_default()

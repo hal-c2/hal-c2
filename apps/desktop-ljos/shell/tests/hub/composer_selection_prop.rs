@@ -15,7 +15,7 @@
 //! (a pick is saved to the thread before the send, and nothing carries a
 //! base).
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use hal_c2_shell::controllers::composer;
 use hal_c2_shell::controllers::settings::Settings;
@@ -136,17 +136,16 @@ struct Sut {
     violations: Vec<String>,
 }
 
-thread_local! {
-    static RUNS: Cell<u32> = const { Cell::new(0) };
-}
+/// Each run's scratch home: cargo runs the properties side by side.
+static RUNS: AtomicU32 = AtomicU32::new(0);
 
 impl Sut {
     fn new(kind: Kind) -> Sut {
-        let run = RUNS.with(|r| {
-            r.set(r.get() + 1);
-            r.get()
-        });
-        let hub = on_threads_with(launch_in(&format!("selection-prop-{run}")), &["t1"]);
+        let run = RUNS.fetch_add(1, Ordering::Relaxed);
+        let hub = on_threads_with(
+            launch_in(&format!("selection-prop-{kind:?}-{run}")),
+            &["t1"],
+        );
         providers(&hub);
         Settings::of(&hub.engine).write_device(&hub.engine, "planModeEnabled", json!(true));
         let mut sut = Sut {
@@ -565,4 +564,21 @@ proptest! {
     ) {
         run(Kind::Old, ops)?;
     }
+}
+
+/// A model picked while this client's own access change, sent before a
+/// change from elsewhere, is still unanswered: the send waits for it and
+/// goes past both of this client's changes, not refused for them.
+#[test]
+fn a_pick_made_while_an_earlier_own_change_is_unanswered_goes_past_it() {
+    let ops = vec![
+        Op::Hold,
+        Op::Elsewhere(0, 0),
+        Op::PickAccess(0, false),
+        Op::Elsewhere(1, 0),
+        Op::PickModel(0),
+        Op::PickAccess(1, false),
+        Op::Submit(false),
+    ];
+    run(Kind::Named, ops).unwrap();
 }
