@@ -596,7 +596,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
       rpc!(context, "server.signalProcess", %{
         "pid" => context.target["pid"],
         "startTimeMs" => context.target["startTimeMs"],
-        "signal" => "SIGTERM"
+        "signal" => "SIGKILL"
       })
 
     Map.put(context, :signal, result)

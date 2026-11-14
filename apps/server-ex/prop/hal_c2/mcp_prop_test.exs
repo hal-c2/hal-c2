@@ -2,8 +2,9 @@ defmodule HalC2.McpPropTest do
   @moduledoc """
   `HalC2.Mcp` against a model of its promises: a thread's credential answers
   until it is revoked or the server restarts; `initialize` always answers 200
-  for a live credential and opens a session; a session lives until it ends,
-  its credential is revoked, or the server restarts. Code loaded over the
+  for a live credential and opens a session; a session lives until the
+  credential that opened it ends it, its credential is revoked, or the server
+  restarts. Code loaded over the
   running server (`reload`, a `code_change` as a release upgrade runs) and a server
   whose sessions table was never made (`lose_sessions_table`, as one started
   before sessions were kept) must not break the handshake: sessions are lost,
@@ -100,9 +101,10 @@ defmodule HalC2.McpPropTest do
     HalC2.Mcp.session?(session_id)
   end
 
-  def end_session(handle) do
+  # A `DELETE /mcp` for session `handle`, carrying `caller`'s credential.
+  def end_session(caller, handle) do
     session_id = Agent.get(registry(), & &1.sessions[handle]) || "no-such-session"
-    HalC2.Mcp.end_session(session_id)
+    HalC2.Mcp.end_session(auth(caller), session_id)
   end
 
   def revoke(thread), do: HalC2.Mcp.revoke(thread)
@@ -140,7 +142,7 @@ defmodule HalC2.McpPropTest do
       {4, {:call, __MODULE__, :initialize, [caller()]}},
       {3, {:call, __MODULE__, :ping_as, [caller()]}},
       {3, {:call, __MODULE__, :session_live, [oneof(handles)]}},
-      {2, {:call, __MODULE__, :end_session, [oneof(handles)]}},
+      {2, {:call, __MODULE__, :end_session, [caller(), oneof(handles)]}},
       {2, {:call, __MODULE__, :revoke, [oneof(@threads)]}},
       {1, {:call, __MODULE__, :lose_sessions_table, []}},
       {1, {:call, __MODULE__, :reload, []}},
@@ -163,8 +165,11 @@ defmodule HalC2.McpPropTest do
     %{state | sessions: sessions, next: state.next + 1}
   end
 
-  def next_state(state, _result, {:call, _, :end_session, [handle]}),
-    do: %{state | sessions: Map.delete(state.sessions, handle)}
+  def next_state(state, _result, {:call, _, :end_session, [caller, handle]} = call) do
+    if may_end?(state, call) and state.sessions[handle] == caller,
+      do: %{state | sessions: Map.delete(state.sessions, handle)},
+      else: state
+  end
 
   def next_state(state, _result, {:call, _, :revoke, [thread]}) do
     %{
@@ -193,5 +198,13 @@ defmodule HalC2.McpPropTest do
   def postcondition(state, {:call, _, :session_live, [handle]}, result),
     do: result == Map.has_key?(state.sessions, handle)
 
+  def postcondition(state, {:call, _, :end_session, _} = call, result),
+    do: result == if(may_end?(state, call), do: :ok, else: :error)
+
   def postcondition(_state, _call, result), do: result == :ok
+
+  # Only a live credential ends a session, and only one it opened: a session this
+  # MC no longer has ends for any live credential.
+  defp may_end?(state, {:call, _, :end_session, [caller, handle]}),
+    do: MapSet.member?(state.creds, caller) and state.sessions[handle] in [nil, caller]
 end

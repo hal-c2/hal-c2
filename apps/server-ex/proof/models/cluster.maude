@@ -119,16 +119,23 @@ mod CLUSTER is
   eq newer(e(D, A, R, U, V), e(D', A', R', U', V')) =
        U > U' or (U == U' and (D > D' or (D == D' and V > V'))) .
 
-  --- merge_entry(ours, theirs)
+  --- merge_entry(ours, theirs): only admissions carrying the newest removal count.
+  --- A fresh local admission carries the removal it answers; a partitioned copy does not.
   op mergeE : Entry Entry -> Entry .
   eq mergeE(E, none) = E .
   eq mergeE(none, E) = E .
   eq mergeE(e(D, A, R, U, V), e(D', A', R', U', V')) =
        with(if newer(e(D', A', R', U', V'), e(D, A, R, U, V))
             then e(D', A', R', U', V') else e(D, A, R, U, V) fi,
-            max(A, A'), mx(R, R')) .
+            ma(A, nn(R), A', nn(R'), nn(mx(R, R'))), mx(R, R')) .
+  op ma : Nat Nat Nat Nat Nat -> Nat .
+  eq ma(A, J, A', J', K) =
+       max(if J == K then A else 0 fi, if J' == K then A' else 0 fi) .
   op with : Entry Nat Stamp -> Entry .
   eq with(e(D, A, R, U, V), A', R') = e(D, A', R', U, V) .
+  op rm : Entry -> Stamp .
+  eq rm(none) = never .
+  eq rm(e(D, A, R, U, V)) = R .
 
   --- merge(local, incoming, own_id): an entry for own_id in incoming changes nothing in
   --- the own entry, but one that says something else and was updated no earlier gets
@@ -245,13 +252,14 @@ mod CLUSTER is
 
   --- code -----------------------------------------------------------------------------
 
-  --- admit/1, for a machine that is no member (any more): a fresh entry.
+  --- admit/1, for a machine that is no member (any more): a fresh admission carrying
+  --- any removal it answers.
   crl [admit] :
     { mc(N, true, Tb, V) time(T) skew(N, K) admits(s F) made(X, A, J) heard(N, H) C }
     => { hear(N, only(X, E), mergeIn(N, only(X, E),
            mc(N, true, Tb, V) time(T) skew(N, K) admits(F) made(X, max(A, S), J)
            heard(N, H) lateIf(S <= max(ha(H[X]), hr(H[X])), N, X) C)) }
-    if X =/= N /\ not member(Tb[X]) /\ S := stamp(T + K, Tb) /\ E := e(0, S, never, S, V) .
+    if X =/= N /\ not member(Tb[X]) /\ S := stamp(T + K, Tb) /\ E := e(0, S, rm(Tb[X]), S, V) .
 
   --- remove/1
   crl [remove] :

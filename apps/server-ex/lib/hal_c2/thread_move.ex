@@ -759,6 +759,16 @@ defmodule HalC2.ThreadMove do
   have stopped waiting by then, so its answer is what decides.
   """
   def accept(data, from, opts) do
+    # The move id names the staging directory and is deleted afterwards: only
+    # the generated shape (url-safe base64, no separators) may reach the disk.
+    if is_binary(opts[:move]) and Regex.match?(~r/^[A-Za-z0-9_-]+$/, opts[:move]) do
+      accept_staged(data, from, opts)
+    else
+      {:error, "the move name is not one this MC could have been given"}
+    end
+  end
+
+  defp accept_staged(data, from, opts) do
     {:ok, %{"thread" => %{"id" => id, "title" => title}} = archive} = JSON.decode(data)
     # A move's own directory: an earlier move of the thread may still be staging.
     staged = Path.join(incoming(), opts[:move])
@@ -772,7 +782,8 @@ defmodule HalC2.ThreadMove do
       # answers in between.
       :global.trans(taking_lock(id), fn -> take(archive, from, opts, id, title) end, [node()])
     after
-      File.rm_rf(staged)
+      # Only ever a directory under `incoming/`, whatever named it.
+      if HalC2.Workspace.within?(incoming(), staged), do: File.rm_rf(staged)
     end
   end
 

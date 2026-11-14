@@ -135,12 +135,24 @@ defmodule HalC2.Editors do
 
   defp placeholder_value(_file_parameter, file), do: file
 
+  # The target is expanded to an absolute path first: a relative name that
+  # starts with `-` would otherwise reach the editor as one of its own flags.
   defp args(style, target) do
     case {style, Regex.run(~r/^(.*?):(\d+)(?::(\d+))?$/, target)} do
-      {:goto, [_ | _]} -> ["--goto", target]
-      {:line_column, [_, path, line]} -> ["--line", line, path]
-      {:line_column, [_, path, line, column]} -> ["--line", line, "--column", column, path]
-      _ -> [target]
+      {:goto, [_, path, line]} ->
+        ["--goto", "#{Path.expand(path)}:#{line}"]
+
+      {:goto, [_, path, line, column]} ->
+        ["--goto", "#{Path.expand(path)}:#{line}:#{column}"]
+
+      {:line_column, [_, path, line]} ->
+        ["--line", line, Path.expand(path)]
+
+      {:line_column, [_, path, line, column]} ->
+        ["--line", line, "--column", column, Path.expand(path)]
+
+      _ ->
+        [Path.expand(target)]
     end
   end
 

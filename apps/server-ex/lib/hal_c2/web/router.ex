@@ -41,6 +41,28 @@ defmodule HalC2.Web.Router do
     conn |> put_resp_content_type("application/json") |> send_resp(200, body)
   end
 
+  # A local tool asks the listener on this home's port to prove it holds the access
+  # token before sending it: anything else could be holding the port. Only from
+  # loopback, where the token authenticates, so no squatter relays it from elsewhere,
+  # and for this connection's own end, so no squatter passes on another listener's.
+  get "/.well-known/hal-c2/proof" do
+    conn = fetch_query_params(conn)
+
+    case HalC2.Web.local_request?(conn) && conn.query_params do
+      false ->
+        send_resp(conn, 403, "")
+
+      %{"challenge" => challenge} when byte_size(challenge) in 16..128 ->
+        %{address: address, port: port} = get_sock_data(conn)
+        proof = HalC2.Web.proof(HalC2.Web.token(), challenge, {address, port})
+        body = JSON.encode_to_iodata!(%{"proof" => proof})
+        conn |> put_resp_content_type("application/json") |> send_resp(200, body)
+
+      _ ->
+        send_resp(conn, 400, "")
+    end
+  end
+
   # A pairing link opened in a browser lands here. The MC serves no app, so the
   # page says where the link goes instead of answering "not found".
   get "/" do
@@ -239,15 +261,20 @@ defmodule HalC2.Web.Router do
   # No server-initiated stream: every answer comes back on its request.
   get "/mcp", do: send_resp(conn, 405, "")
 
-  # Ends the MCP session the header names; one this MC no longer has is fine.
+  # Ends the MCP session the header names, for the credential that opened
+  # it; one this MC no longer has is fine.
   delete "/mcp" do
+    authorization = conn |> get_req_header("authorization") |> List.first()
+
     case conn |> get_req_header("mcp-session-id") |> List.first() do
       nil ->
         send_resp(conn, 200, "")
 
       session_id ->
-        HalC2.Mcp.end_session(session_id)
-        send_resp(conn, 200, "")
+        case HalC2.Mcp.end_session(authorization, session_id) do
+          :ok -> send_resp(conn, 200, "")
+          :error -> send_resp(conn, 401, "")
+        end
     end
   end
 
@@ -555,9 +582,15 @@ defmodule HalC2.Web.Router do
     HalC2.Auth.take_ticket(ticket, proof && {proof, conn.method, request_url(conn)})
   end
 
-  # The MC's own access token, for local tools and development.
-  defp socket_session(_conn, %{"token" => token}),
-    do: if(Plug.Crypto.secure_compare(token, HalC2.Web.token()), do: {:ok, nil}, else: :error)
+  # The MC's own access token, for local tools and development: this machine only.
+  defp socket_session(conn, %{"token" => token}),
+    do:
+      if(
+        HalC2.Web.local_request?(conn) and
+          Plug.Crypto.secure_compare(token, HalC2.Web.token()),
+        do: {:ok, nil},
+        else: :error
+      )
 
   defp socket_session(_conn, _), do: :error
 
@@ -718,14 +751,15 @@ defmodule HalC2.Web.Router do
     body = with {:ok, body} <- json_body(conn), do: body
 
     cond do
-      not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
+      not HalC2.Web.local_request?(conn) or
+          not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
         send_resp(conn, 401, "")
 
       HalC2.Upgrade.release_root() != nil ->
         case body do
           %{"bundle" => bundle, "version" => version}
           when is_binary(bundle) and is_binary(version) ->
-            case HalC2.Upgrade.update_from(bundle, version) do
+            case HalC2.Upgrade.update_from(bundle, version, body["allowDowngrade"] == true) do
               {:ok, result} -> json(conn, 200, result)
               {:error, %{"reason" => reason}} -> json(conn, 409, %{"reason" => reason})
             end

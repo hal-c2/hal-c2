@@ -248,7 +248,7 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc "The scenario's filesystem root (`/` of `Host.path/2`)."
-  def fs(context), do: Path.join(context.mc.home, "fs")
+  def fs(context), do: Host.root(context)
 
   @doc "The migration's file copy: records each source, then copies."
   def copy(from, to) do

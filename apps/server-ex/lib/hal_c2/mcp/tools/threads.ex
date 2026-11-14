@@ -161,8 +161,8 @@ defmodule HalC2.Mcp.Tools.Threads do
          do: {:ok, %{"sequence" => sequence, "targetThreadId" => target}}
   end
 
-  def run("hal_c2_thread_update", %{"action" => action} = args, %{row: me}) do
-    with {:ok, row} <- project_thread(me, args["threadId"]),
+  def run("hal_c2_thread_update", %{"action" => action} = args, caller) do
+    with {:ok, row} <- writable(caller, args["threadId"]),
          {:ok, command} <- metadata_command(action, args, row) do
       id = "command:mcp:thread-update:#{action}:" <> (args["clientRequestId"] || command_id())
 
