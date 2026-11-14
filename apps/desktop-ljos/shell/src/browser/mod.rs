@@ -95,8 +95,9 @@ pub fn start(engine: &Engine) {
 #[qml(module = "HalC2.Shell", name = "Browser", uncreatable)]
 #[ljos::prelude::qml_singleton]
 pub struct BrowserObject {
-    /// The profile pages share: none, so they use the engine's default.
-    #[qml(constant, readonly)]
+    /// The profile pages share: the HAL-C2 home's own ([`set_profile`]),
+    /// or none, so they use the engine's default.
+    #[qml(readonly, notify)]
     profile: Value,
     /// "bottom" or "right".
     #[qml(notify, write = Self::keep_dock)]
@@ -213,6 +214,47 @@ impl BrowserObject {
     /// A page came or went.
     #[qml(signal)]
     fn pages_changed();
+}
+
+/// The in-app browser's pages keep their cookies and storage with the
+/// home's data and their cache with its cache, apart from any other browser
+/// on the machine (desktop-qt's main.cpp). What a page may ask for is
+/// `Browser.permissions`' to answer, never the engine's to remember.
+///
+/// TODO(hal-c2/ljos-ui#456): Ljós keeps a profile only under
+/// its own root (`$XDG_DATA_HOME/<app>/ljos-webengine`), ignores
+/// `cachePath`, and has no `persistentPermissionsPolicy`; until it does,
+/// the pages keep their data under that root, named `hal-c2`.
+pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std::path::Path) {
+    let Some(browser) = browser(engine) else {
+        return;
+    };
+    let profile = ljos_webengine::WebEngineProfile {
+        storage_name: "hal-c2".to_owned(),
+        off_the_record: false,
+        persistent_storage_path: data_dir.join("browser").to_string_lossy().into_owned(),
+        cache_path: cache_dir.join("browser").to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    match engine.create_native(profile, Some(browser)) {
+        Ok(profile) => warn(
+            engine,
+            engine.set_internal(browser, BrowserObject::PROFILE, Value::Object(profile)),
+        ),
+        Err(e) => warn(engine, Err(e)),
+    }
+}
+
+/// The profile [`set_profile`] gave the pages, if any.
+pub fn profile(engine: &Engine) -> Option<ObjectId> {
+    let browser = engine.singleton::<BrowserObject>().ok()?;
+    match engine
+        .with::<BrowserObject, _>(browser, |b| b.profile.clone())
+        .ok()?
+    {
+        Value::Object(profile) => Some(profile),
+        _ => None,
+    }
 }
 
 fn browser(engine: &Engine) -> Option<ObjectId> {

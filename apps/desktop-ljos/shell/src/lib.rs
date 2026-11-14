@@ -37,6 +37,8 @@ pub mod qr;
 pub mod runtime;
 pub mod saved_environments;
 pub mod scripted_run;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod secret_service;
 pub mod session;
 pub mod settings_page;
 pub mod sidebar_model;
@@ -254,6 +256,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("preferences.json")),
     );
+    if let (Some(data), Some(cache)) = (&launch.data_dir, &launch.cache_dir) {
+        browser::set_profile(engine, data, cache);
+    }
     browser::start(engine);
     match &launch.mc_origin {
         Some(origin) => {

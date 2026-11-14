@@ -12,8 +12,8 @@ use ljos::prelude::Engine;
 use crate::bridge::{Acting, Bridge};
 use crate::json::Json;
 use crate::mc::{
-    BytesReply, Mc, OnCall, OnFrame, OnReady, OnStatus, OnStream, Reply, Resume, Status, StreamId,
-    StreamMessage, SubId,
+    BytesReply, Mc, OnCall, OnFrame, OnReady, OnStatus, OnStream, Reply, Resume, Route, Status,
+    StreamId, StreamMessage, SubId,
 };
 
 /// For whom the MC's answers run.
@@ -274,6 +274,16 @@ impl Mc for WindowMc {
 
     fn open(&self, origin: &str, token: &str) -> Result<(), String> {
         self.inner.open(origin, token)
+    }
+
+    // A saved environment's link is the app's, like its route: its owner
+    // binds what it hears.
+    fn spawn_link(&self) -> Option<Rc<dyn Mc>> {
+        self.inner.spawn_link()
+    }
+
+    fn set_route(&self, route: Route) {
+        self.inner.set_route(route);
     }
 
     fn dispatch_command(&self, environment: &str, command: Json, reply: Reply) {

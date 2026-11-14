@@ -41,8 +41,20 @@ pub const FLUSH_DELAY_MS: u64 = 500;
 
 pub type Row = Map<String, Value>;
 
+/// The client a `shell` subscription came on: the shell's own, or the link
+/// to a saved environment, named by that environment's id
+/// (desktop-qt's ShellStore links).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Client {
+    Own,
+    Link(String),
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 struct McRows {
+    /// The client whose shell lists it; none for one read from the cache
+    /// that no client has listed yet this run.
+    link: Option<Client>,
     environment_id: String,
     capabilities: Row,
     environment: Row,
@@ -138,6 +150,8 @@ impl Changes {
 #[derive(Default)]
 pub struct ShellStore {
     mcs: BTreeMap<String, McRows>,
+    /// The saved environments linked to ([`ShellStore::add_link`]).
+    links: BTreeSet<String>,
     cache: Option<Rc<LocalCache>>,
     origin: String,
     unsaved: BTreeMap<String, Unsaved>,
@@ -304,12 +318,19 @@ impl ShellStore {
         &self.origin
     }
 
-    /// What a `shell` subscription carries as `have`: each MC's version as held.
+    /// What the shell's own `shell` subscription carries as `have`: each
+    /// MC's version as held.
     pub fn have(&self) -> Value {
+        self.have_for(&Client::Own)
+    }
+
+    /// What `client`'s `shell` subscription carries as `have`: the versions
+    /// of the MCs it speaks for.
+    pub fn have_for(&self, client: &Client) -> Value {
         Value::Object(
             self.mcs
                 .iter()
-                .filter(|(_, mc)| !mc.epoch.is_empty())
+                .filter(|(_, mc)| !mc.epoch.is_empty() && self.answers_for(client, mc))
                 .map(|(name, mc)| (name.clone(), json!([mc.epoch, mc.rev])))
                 .collect(),
         )
@@ -383,10 +404,109 @@ impl ShellStore {
         self.synchronized = true;
     }
 
-    /// Applies one frame of the `shell` subscription; whether it changed
-    /// anything.
+    /// Starts holding what the saved environment `environment_id`'s own
+    /// link lists; whether it was not linked already.
+    pub fn add_link(&mut self, environment_id: &str) -> bool {
+        self.links.insert(environment_id.to_owned())
+    }
+
+    /// Stops holding what the link to `environment_id` lists: its MCs go
+    /// when the environment is `forget`ten, else they stay, listed by no
+    /// client, until one lists them again. Whether anything changed.
+    pub fn remove_link(&mut self, environment_id: &str, forget: bool) -> bool {
+        if !self.links.remove(environment_id) {
+            return false;
+        }
+        let link = Client::Link(environment_id.to_owned());
+        let names: Vec<String> = self
+            .mcs
+            .iter()
+            .filter(|(_, mc)| {
+                mc.link.as_ref() == Some(&link)
+                    || (mc.link.is_none() && mc.environment_id == environment_id)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        let changed = forget && !names.is_empty();
+        for name in names {
+            if forget {
+                self.remove_mc(&name);
+            } else if let Some(mc) = self.mcs.get_mut(&name) {
+                mc.link = None;
+            }
+        }
+        changed
+    }
+
+    /// The saved environment whose link serves `environment_id`; none when
+    /// the shell's own client does, or no client lists it yet and it is not
+    /// linked.
+    pub fn link_serving(&self, environment_id: &str) -> Option<String> {
+        if let Some((_, mc)) = self.serving(environment_id) {
+            return match &mc.link {
+                Some(Client::Link(link)) => Some(link.clone()),
+                _ => None,
+            };
+        }
+        self.links.get(environment_id).cloned()
+    }
+
+    /// The saved environment whose link listed `mc`; none for the shell's
+    /// own client's.
+    pub fn link_of(&self, mc: &str) -> Option<String> {
+        match self.mcs.get(mc).and_then(|m| m.link.as_ref()) {
+            Some(Client::Link(link)) => Some(link.clone()),
+            _ => None,
+        }
+    }
+
+    /// The saved environments linked to.
+    pub fn links(&self) -> &BTreeSet<String> {
+        &self.links
+    }
+
+    /// Whether `client`'s snapshot speaks for `mc`: the client that listed
+    /// it, or, for one kept from the last run, the link of its environment,
+    /// and the shell's own client for any no link serves.
+    fn answers_for(&self, client: &Client, mc: &McRows) -> bool {
+        match &mc.link {
+            Some(link) => link == client,
+            None if self.links.contains(&mc.environment_id) => {
+                *client == Client::Link(mc.environment_id.clone())
+            }
+            None => *client == Client::Own,
+        }
+    }
+
+    /// Applies one frame of the shell's own `shell` subscription; whether it
+    /// changed anything.
     pub fn apply(&mut self, frame: &Frame) -> bool {
-        match frame.get("t").and_then(Value::as_str).unwrap_or("") {
+        self.apply_from(frame, &Client::Own)
+    }
+
+    /// Applies one frame of `client`'s `shell` subscription; whether it
+    /// changed anything. A frame about an MC claims it for that client, and
+    /// a snapshot removes only the MCs that client speaks for.
+    pub fn apply_from(&mut self, frame: &Frame, client: &Client) -> bool {
+        let kind = frame.get("t").and_then(Value::as_str).unwrap_or("");
+        if !matches!(
+            kind,
+            "shell" | "error" | "shell.environment" | "shell.mc" | "shell.rows"
+        ) {
+            return false;
+        }
+        // A saved environment's own refusal is that link's status
+        // (SavedEnvironments), not the shell's problem.
+        if kind == "error" && *client != Client::Own {
+            return false;
+        }
+        if let Some(mc) = frame.get("mc").and_then(Value::as_str)
+            && !mc.is_empty()
+            && frame.get("removed").and_then(Value::as_bool) != Some(true)
+        {
+            self.mcs.entry(mc.to_owned()).or_default().link = Some(client.clone());
+        }
+        match kind {
             "shell" => {
                 // The cluster's members, and the rows this client lacks of
                 // each: all of them for an MC marked `reset` (or sent by an
@@ -398,6 +518,7 @@ impl ShellStore {
                 for mc in mcs.into_iter().flatten() {
                     let name = text(mc.get("mc"));
                     listed.insert(name.clone());
+                    self.mcs.entry(name.clone()).or_default().link = Some(client.clone());
                     if mc.get("reset").and_then(Value::as_bool).unwrap_or(true) {
                         self.reset_rows(&name, &mut replaced);
                     }
@@ -407,11 +528,12 @@ impl ShellStore {
                     entry.given_up = mc.get("trying").and_then(Value::as_bool) == Some(false);
                     self.set_version(&name, mc.get("epoch"), mc.get("rev"));
                 }
+                // Only the MCs this client speaks for: another link's are its own.
                 let gone: Vec<String> = self
                     .mcs
-                    .keys()
-                    .filter(|name| !listed.contains(*name))
-                    .cloned()
+                    .iter()
+                    .filter(|(name, mc)| !listed.contains(*name) && self.answers_for(client, mc))
+                    .map(|(name, _)| name.clone())
                     .collect();
                 for name in gone {
                     self.remove_mc(&name);
@@ -422,10 +544,13 @@ impl ShellStore {
                     self.put_row(&text(at(0)), &text(at(1)), &text(at(2)), object(at(3)));
                 }
                 self.forget_threads(&replaced);
-                self.synchronized = true;
-                self.previewing = false;
-                self.snapshots += 1;
-                self.problem.clear();
+                // The shell's own MC is the one whose word makes the rows live.
+                if *client == Client::Own {
+                    self.synchronized = true;
+                    self.previewing = false;
+                    self.snapshots += 1;
+                    self.problem.clear();
+                }
                 self.flush();
             }
             "error" => {
@@ -827,6 +952,8 @@ struct Slot {
     installed: RefCell<Vec<Waiting>>,
     /// The pending flush, desktop-qt's single-shot timer.
     flush: Cell<Option<TimerId>>,
+    /// Each saved environment's link and its `shell` subscription.
+    links: RefCell<BTreeMap<String, crate::mc::Held>>,
 }
 
 /// Puts a store over `cache` in the engine and subscribes it to `mc`'s
@@ -862,6 +989,63 @@ pub fn install(engine: &Engine, mc: &Rc<dyn Mc>, cache: Option<Rc<LocalCache>>) 
     let waiting = std::mem::take(&mut *slot.installed.borrow_mut());
     for f in waiting {
         f(engine);
+    }
+}
+
+/// Subscribes the store to the `shell` shape of `link`, the client of the
+/// saved environment `environment_id`, beside the shell's own: what it lists
+/// is held as that link's (desktop-qt's ShellStore::addLink). Once per link
+/// until [`remove_link`]; nothing before the store is installed.
+pub fn add_link(engine: &Engine, environment_id: &str, link: Rc<dyn Mc>) {
+    let Some(store) = get(engine) else {
+        return;
+    };
+    let slot = engine.extension::<Slot>();
+    if slot.links.borrow().contains_key(environment_id) {
+        return;
+    }
+    store.borrow_mut().add_link(environment_id);
+    let client = Client::Link(environment_id.to_owned());
+    let weak = Rc::downgrade(&store);
+    let asking = client.clone();
+    let resume = Box::new(move || {
+        let have = weak
+            .upgrade()
+            .and_then(|s| s.try_borrow().ok().map(|s| s.have_for(&asking)))
+            .unwrap_or_else(|| json!({}));
+        let mut frame = Frame::new();
+        frame.insert("have".into(), have);
+        frame
+    });
+    let weak = Rc::downgrade(&store);
+    let id = link.subscribe(
+        json!({"type": "shell"}),
+        Box::new(move |engine, frame| {
+            let Some(store) = weak.upgrade() else {
+                return;
+            };
+            let changed = store.borrow_mut().apply_from(frame, &client);
+            settle(engine, Changes::changed(changed));
+        }),
+        Some(resume),
+    );
+    slot.links
+        .borrow_mut()
+        .insert(environment_id.to_owned(), (link, id));
+}
+
+/// Ends the link to `environment_id`: its MCs go when the environment is
+/// `forget`ten (removed), else they stay until a client lists them again
+/// (desktop-qt's ShellStore::removeLink).
+pub fn remove_link(engine: &Engine, environment_id: &str, forget: bool) {
+    let slot = engine.extension::<Slot>();
+    let removed = slot.links.borrow_mut().remove(environment_id);
+    if let Some((link, id)) = removed {
+        link.unsubscribe(id);
+    }
+    if let Some(store) = get(engine) {
+        let changed = store.borrow_mut().remove_link(environment_id, forget);
+        settle(engine, Changes::changed(changed));
     }
 }
 

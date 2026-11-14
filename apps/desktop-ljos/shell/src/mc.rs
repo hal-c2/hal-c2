@@ -17,8 +17,10 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
+
+use chrono::{DateTime, Utc};
 
 use hal_c2_mc::stream::Stream;
 pub use hal_c2_mc::stream::{StreamEnd, StreamEvent};
@@ -103,6 +105,13 @@ pub enum StreamMessage {
     Binary(Vec<u8>),
 }
 
+/// Which other client serves what is addressed to an environment (and, when
+/// the shape names one, a cluster MC): none when this one does.
+/// A subscription held on another client: that client, and its id there.
+pub type Held = (Rc<dyn Mc>, SubId);
+
+pub type Route = Rc<dyn Fn(&str, &str) -> Option<Rc<dyn Mc>>>;
+
 /// The MC as a controller sees it: desktop-qt's `McClient` without its
 /// QObject context (a controller keeps a `Weak` to itself instead).
 pub trait Mc {
@@ -160,6 +169,28 @@ pub trait Mc {
     fn open(&self, _origin: &str, _token: &str) -> Result<(), String> {
         Err("this shell cannot open another MC".into())
     }
+    /// A new client of its own, for a saved environment: delivered with this
+    /// one and given its timings. None where there is no I/O to share (a
+    /// fake), so no saved environment connects.
+    fn spawn_link(&self) -> Option<Rc<dyn Mc>> {
+        None
+    }
+    /// When the credential it was opened with runs out (None: never, or
+    /// unknown); a renewal moves it.
+    fn set_credential_expiry(&self, _expires_at: Option<DateTime<Utc>>) {}
+    fn credential_expiry(&self) -> Option<DateTime<Utc>> {
+        None
+    }
+    /// Opens as [`Mc::open`], at an MC that must say it serves
+    /// `environment` (a saved environment's).
+    fn open_expecting(&self, origin: &str, token: &str, _environment: &str) -> Result<(), String> {
+        self.open(origin, token)
+    }
+    /// Closes the socket for good: no retry follows.
+    fn close(&self) {}
+    /// Sends calls and subscriptions addressed to an environment another
+    /// client serves through that client (desktop-qt's McClient::setRoute).
+    fn set_route(&self, _route: Route) {}
     /// `orchestration.dispatchCommand` with a fresh commandId, where
     /// `environment` is served.
     fn dispatch_command(&self, environment: &str, mut command: Json, reply: Reply) {
@@ -306,7 +337,19 @@ pub struct Connection {
     streams: RefCell<HashMap<u64, OpenStream>>,
     next_stream: Cell<u64>,
     calls: Rc<Calls>,
+    /// The saved environments' clients ([`Mc::spawn_link`]), delivered with
+    /// this one.
+    links: RefCell<Vec<Weak<Connection>>>,
+    route: RefCell<Option<Route>>,
+    /// Subscriptions another client serves: the id given out, and that
+    /// client's own.
+    forwarded: RefCell<HashMap<u64, Held>>,
+    next_forwarded: Cell<u64>,
 }
+
+/// Where the ids of forwarded subscriptions start, above any the client
+/// gives.
+const FORWARDED: u64 = 1 << 62;
 
 /// Who follows the calls ([`Mc::on_call`]), and the calls that went out
 /// since the last delivery: a call has no engine to tell them with, so they
@@ -353,7 +396,25 @@ impl Connection {
             streams: RefCell::default(),
             next_stream: Cell::new(0),
             calls: Rc::default(),
+            links: RefCell::default(),
+            route: RefCell::default(),
+            forwarded: RefCell::default(),
+            next_forwarded: Cell::new(FORWARDED),
         }
+    }
+
+    /// The client that serves `environment` (or the cluster MC `mc`) when
+    /// another does; never this one.
+    fn routed(&self, environment: &str, mc: &str) -> Option<Rc<dyn Mc>> {
+        if environment.is_empty() && mc.is_empty() {
+            return None;
+        }
+        let route = self.route.borrow().clone()?;
+        route(environment, mc)
+    }
+
+    fn forwarded(&self, id: SubId) -> Option<Held> {
+        self.forwarded.borrow().get(&id.0).cloned()
     }
 
     pub fn client(&self) -> &McClient {
@@ -371,6 +432,19 @@ impl Connection {
     /// Hands what the I/O thread and the streams said to the callbacks, in
     /// order.
     pub fn deliver(&self, engine: &Engine) {
+        self.deliver_own(engine);
+        // Taken out while they run: a callback may spawn a link.
+        let links: Vec<Rc<Connection>> = {
+            let mut links = self.links.borrow_mut();
+            links.retain(|link| link.strong_count() > 0);
+            links.iter().filter_map(Weak::upgrade).collect()
+        };
+        for link in links {
+            link.deliver(engine);
+        }
+    }
+
+    fn deliver_own(&self, engine: &Engine) {
         let started = std::mem::take(&mut *self.calls.started.borrow_mut());
         for event in &started {
             self.calls.notify(engine, event);
@@ -420,6 +494,9 @@ impl Mc for Connection {
     }
 
     fn call(&self, environment: &str, method: &str, payload: Json, reply: Reply) {
+        if let Some(link) = self.routed(environment, "") {
+            return link.call(environment, method, payload, reply);
+        }
         let client = self.client.downgrade();
         let addressed = environment.to_owned();
         let id = self.calls.next.get() + 1;
@@ -500,6 +577,19 @@ impl Mc for Connection {
     }
 
     fn subscribe(&self, shape: Json, mut on_frame: OnFrame, resume: Option<Resume>) -> SubId {
+        let field = |key: &str| shape.get(key).and_then(Json::as_str).unwrap_or_default();
+        let environment = match field("environment") {
+            "" => field("environmentId"),
+            named => named,
+        }
+        .to_owned();
+        if let Some(link) = self.routed(&environment, field("mc")) {
+            let theirs = link.subscribe(shape, on_frame, resume);
+            let id = self.next_forwarded.get();
+            self.next_forwarded.set(id + 1);
+            self.forwarded.borrow_mut().insert(id, (link, theirs));
+            return SubId(id);
+        }
         let frame = move |frame: &Frame| with_delivering(|engine| on_frame(engine, frame));
         SubId(match resume {
             Some(resume) => self.client.subscribe_resuming(shape, frame, resume),
@@ -508,15 +598,25 @@ impl Mc for Connection {
     }
 
     fn unsubscribe(&self, id: SubId) {
-        self.client.unsubscribe(id.0);
+        let forwarded = self.forwarded.borrow_mut().remove(&id.0);
+        match forwarded {
+            Some((link, theirs)) => link.unsubscribe(theirs),
+            None => self.client.unsubscribe(id.0),
+        }
     }
 
     fn more(&self, id: SubId, items: u32) {
-        self.client.more(id.0, items);
+        match self.forwarded(id) {
+            Some((link, theirs)) => link.more(theirs, items),
+            None => self.client.more(id.0, items),
+        }
     }
 
     fn ack(&self, id: SubId, sequence: i64) {
-        self.client.ack(id.0, sequence);
+        match self.forwarded(id) {
+            Some((link, theirs)) => link.ack(theirs, sequence),
+            None => self.client.ack(id.0, sequence),
+        }
     }
 
     fn on_ready_changed(&self, mut f: OnReady) {
@@ -565,6 +665,38 @@ impl Mc for Connection {
 
     fn open(&self, origin: &str, token: &str) -> Result<(), String> {
         Connection::open(self, origin, token)
+    }
+
+    fn spawn_link(&self) -> Option<Rc<dyn Mc>> {
+        let wake = self.wake.clone();
+        let link = Rc::new(Connection::spawn(move || {
+            (wake.lock().unwrap_or_else(|e| e.into_inner()))()
+        }));
+        self.client.copy_timings_to(&link.client);
+        self.links.borrow_mut().push(Rc::downgrade(&link));
+        Some(link)
+    }
+
+    fn set_credential_expiry(&self, expires_at: Option<DateTime<Utc>>) {
+        self.client.set_credential_expiry(expires_at);
+    }
+
+    fn credential_expiry(&self) -> Option<DateTime<Utc>> {
+        self.client.credential_expiry()
+    }
+
+    fn open_expecting(&self, origin: &str, token: &str, environment: &str) -> Result<(), String> {
+        let origin = url::Url::parse(origin).map_err(|e| format!("{origin}: {e}"))?;
+        self.client.open_expecting(origin, token, environment);
+        Ok(())
+    }
+
+    fn close(&self) {
+        self.client.close();
+    }
+
+    fn set_route(&self, route: Route) {
+        *self.route.borrow_mut() = Some(route);
     }
 
     fn open_stream(

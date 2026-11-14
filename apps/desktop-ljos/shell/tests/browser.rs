@@ -32,3 +32,34 @@ fn writing_back_the_layout_the_device_has_saves_nothing() {
     assert_eq!(number(&engine, root, "share"), 0.4);
     assert_ne!(Settings::of(&engine).device_error(), "");
 }
+
+/// The pages keep their storage in the HAL-C2 home's own `browser`
+/// directories (desktop-qt's NativeShell browser profile), not the engine's
+/// default profile.
+#[test]
+fn the_pages_profile_lives_in_the_home() {
+    let (engine, _root) = shell(MAIN, Rc::new(Disconnected::default()));
+    let home = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a home");
+    let (data, cache) = (home.path().join("data"), home.path().join("cache"));
+    hal_c2_shell::browser::set_profile(&engine, &data, &cache);
+    let profile = hal_c2_shell::browser::profile(&engine).expect("a profile");
+    let storage = engine
+        .with::<ljos_webengine::WebEngineProfile, _>(profile, |p| {
+            (
+                p.storage_name.clone(),
+                p.off_the_record,
+                p.persistent_storage_path.clone(),
+                p.cache_path.clone(),
+            )
+        })
+        .expect("a WebEngineProfile");
+    assert_eq!(
+        storage,
+        (
+            "hal-c2".to_owned(),
+            false,
+            data.join("browser").to_string_lossy().into_owned(),
+            cache.join("browser").to_string_lossy().into_owned(),
+        )
+    );
+}

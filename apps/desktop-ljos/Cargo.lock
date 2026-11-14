@@ -2471,6 +2471,7 @@ dependencies = [
  "libc",
  "ljos",
  "ljos_quick3d",
+ "ljos_secrets",
  "ljos_webengine",
  "notify",
  "objc2 0.6.5",
@@ -4102,6 +4103,18 @@ dependencies = [
  "bitflags 2.13.2",
  "smallvec",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ljos_secrets"
+version = "0.0.0"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=c2443e1593f56acfbf97d9f7f7fde921f3984f5d#c2443e1593f56acfbf97d9f7f7fde921f3984f5d"
+dependencies = [
+ "blocking",
+ "objc2-core-foundation",
+ "thiserror 2.0.21",
+ "windows-sys 0.52.0",
+ "zbus",
 ]
 
 [[package]]

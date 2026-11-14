@@ -200,6 +200,10 @@ pub type PageStep = Rc<dyn Fn(&mut World, &Captures) -> Outcome>;
 
 pub struct World {
     pub mc: FakeMc,
+    /// The MCs of other environments a scenario paired with (Studio's), by
+    /// name: pumped with [`World::mc`].
+    pub others: Vec<FakeMc>,
+    extensions: Vec<Extension>,
     /// The draft the last new thread opened.
     pub draft_id: String,
     /// The command the last "receives" step found.
@@ -250,6 +254,8 @@ impl World {
         this_machine::set_id_for_testing(Some(THIS_MACHINE.into()));
         let mut world = World {
             mc: FakeMc::start(signal.clone(), extensions),
+            others: Vec::new(),
+            extensions: extensions.to_vec(),
             draft_id: String::new(),
             command: None,
             checked_commands: HashSet::new(),
@@ -273,6 +279,22 @@ impl World {
         };
         world.start();
         world
+    }
+
+    /// The other environment's MC named `name`, started (with the steps'
+    /// extensions, as [`World::mc`]) and given to `configure` the first time.
+    pub fn other_mc(&mut self, name: &str, configure: impl FnOnce(&mut FakeMc)) -> &mut FakeMc {
+        let index = match self.others.iter().position(|mc| mc.name == name) {
+            Some(index) => index,
+            None => {
+                let mut mc = FakeMc::start(self.signal.clone(), &self.extensions);
+                mc.name = name.to_owned();
+                configure(&mut mc);
+                self.others.push(mc);
+                self.others.len() - 1
+            }
+        };
+        &mut self.others[index]
     }
 
     /// As main.rs wires it.
@@ -962,6 +984,12 @@ impl World {
             let mut any = self.mc.pump();
             if let Some(failure) = self.mc.take_failure() {
                 return Err(failure);
+            }
+            for other in &mut self.others {
+                any |= other.pump();
+                if let Some(failure) = other.take_failure() {
+                    return Err(failure);
+                }
             }
             if let Some(shell) = &mut self.shell {
                 let engine = &shell.engine;

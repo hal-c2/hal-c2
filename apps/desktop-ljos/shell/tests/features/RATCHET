@@ -446,6 +446,7 @@ connections/connection-health.feature: A connection is ready only after the envi
 connections/connection-health.feature: A connection that does not answer the check on foregrounding is replaced at once
 connections/connection-health.feature: A connection that is not set up within 15 seconds counts as failed
 connections/connection-health.feature: A connection with nothing to say is kept alive every 25 seconds
+connections/connection-health.feature: A damaged record of saved environments is set aside and the app starts with none
 connections/connection-health.feature: A device that lost every network waits and says it is offline
 connections/connection-health.feature: A device that lost one of its two networks keeps trying
 connections/connection-health.feature: A disconnect that fails says why
@@ -489,6 +490,7 @@ connections/connection-health.feature: Disconnecting from a thread's notice hide
 connections/connection-health.feature: Foregrounding probes a healthy connection instead of replacing it
 connections/connection-health.feature: Foregrounding wakes a waiting retry
 connections/connection-health.feature: One connection serves every MC of a cluster
+connections/connection-health.feature: Only the environment with the bad credential stops
 connections/connection-health.feature: Only the whole branch list of a repository is kept
 connections/connection-health.feature: Pairing fails when the system's secure storage refuses to keep the credential
 connections/connection-health.feature: Pull request lookups and live subscriptions are never reported as slow
