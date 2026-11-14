@@ -270,7 +270,8 @@ struct Host {
     /// Whether the Dock's reopening is followed ([`attach_root`]).
     reopening: Cell<bool>,
     /// Saved windows no root could be made for at restore: still saved,
-    /// files and all, to come back once the shell can show them.
+    /// files and all, to come back once the shell can show them
+    /// ([`reopen_set_aside`]).
     set_aside: RefCell<Vec<String>>,
 }
 
@@ -538,10 +539,10 @@ pub fn valid_window_id(id: &str) -> bool {
 }
 
 /// Opens window `id` (raised if it is open already), or a new one under a
-/// fresh id when `id` is none or not a valid one. Its controllers come up
-/// as far as the others are (previewing or active), the open windows are
-/// saved, and the opener shows it. The window's id, unless the shell has
-/// not started.
+/// fresh id when `id` is none, not a valid one, or a closing window's. Its
+/// controllers come up as far as the others are (previewing or active), the
+/// open windows are saved, and the opener shows it. The window's id, unless
+/// the shell has not started.
 pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
     let host = Host::of(engine);
     // The id of a window set aside opens it as it was saved.
@@ -557,7 +558,10 @@ fn open_saved(engine: &Engine, id: Option<&str>, restored: bool) -> Option<Strin
         open.bridge.window_command(engine, "raise");
         return Some(open.id.clone());
     }
-    let id = match id.filter(|id| valid_window_id(id)) {
+    // A window still closing keeps its id until it goes: its root and its
+    // files are found by it.
+    let closing = |id: &str| host.closing.borrow().iter().any(|w| w.id == id);
+    let id = match id.filter(|id| valid_window_id(id) && !closing(id)) {
         Some(id) => id.to_owned(),
         None => hal_c2_mc::new_uuid().replace('-', "")[..12].to_owned(),
     };
@@ -588,8 +592,9 @@ pub fn close_window(engine: &Engine, id: &str) {
 }
 
 /// Closes window `id`, which no root could be made for. One restored from
-/// `shell-windows.json` stays saved there with its files, to come back once
-/// the shell can show it; a new one goes as [`close_window`] has it.
+/// `shell-windows.json` stays saved there with its files, to come back at
+/// the next generation that shows the shell ([`reopen_set_aside`]) or the
+/// next launch; a new one goes as [`close_window`] has it.
 pub fn set_aside_window(engine: &Engine, id: &str) {
     let host = Host::of(engine);
     // The last window is not closed but quits ([`close_window`]).
@@ -800,6 +805,23 @@ pub fn restore_windows(engine: &Engine) {
     }
     for id in saved_windows(&host) {
         if host.window(&id).is_none() {
+            open_saved(engine, Some(&id), true);
+        }
+    }
+}
+
+/// Opens the windows set aside ([`set_aside_window`]) again, as they were
+/// saved: after a generation that showed the shell. One still closing
+/// waits for the next.
+pub fn reopen_set_aside(engine: &Engine) {
+    let host = Host::of(engine);
+    if !can_open(engine) {
+        return;
+    }
+    let kept = host.set_aside.borrow().clone();
+    for id in kept {
+        let closing = host.closing.borrow().iter().any(|w| w.id == id);
+        if !closing && host.window(&id).is_none() {
             open_saved(engine, Some(&id), true);
         }
     }

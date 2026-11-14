@@ -1501,31 +1501,40 @@ impl Default for KeybindingsObject {
     }
 }
 
+/// Runs `f` with the keymap of the window that owns `cx.this`, as that
+/// window: a key pressed in one window is not run in the window in front.
+/// As is when no open window owns it.
+fn mine<R>(cx: &Cx, f: impl FnOnce(Keymap) -> R) -> R {
+    let engine = cx.engine;
+    match Bridge::holding(engine, cx.this) {
+        Some(bridge) => bridge.act(engine, || f(Keymap::of(engine))),
+        None => f(Keymap::of(engine)),
+    }
+}
+
 #[qml_impl]
 impl KeybindingsObject {
     /// A window shortcut fired; `focus` is {terminal, composer, editable}.
     #[qml(invokable)]
     fn press(cx: &Cx, sequence: Atom, focus: Json) -> bool {
-        Keymap::of(cx.engine).press(cx.engine, &sequence, Focus::from_json(&focus))
+        mine(cx, |keymap| {
+            keymap.press(cx.engine, &sequence, Focus::from_json(&focus))
+        })
     }
 
     #[qml(invokable)]
     fn shortcut_label(cx: &Cx, command: Atom) -> Atom {
-        Atom::from(
-            Keymap::of(cx.engine)
-                .shortcut_label(cx.engine, &command)
-                .as_str(),
-        )
+        Atom::from(mine(cx, |keymap| keymap.shortcut_label(cx.engine, &command)).as_str())
     }
 
     #[qml(invokable)]
     fn record_key(cx: &Cx, key: i32, modifiers: i32) -> Atom {
-        Atom::from(Keymap::of(cx.engine).record_key(key, modifiers).as_str())
+        Atom::from(mine(cx, |keymap| keymap.record_key(key, modifiers)).as_str())
     }
 
     #[qml(invokable)]
     fn key_label(cx: &Cx, key: Atom) -> Atom {
-        Atom::from(Keymap::of(cx.engine).key_label(&key).as_str())
+        Atom::from(mine(cx, |keymap| keymap.key_label(&key)).as_str())
     }
 
     #[qml(invokable)]
@@ -1552,39 +1561,41 @@ impl KeybindingsObject {
 
     #[qml(invokable)]
     fn conflicts(cx: &Cx, row_id: Atom, key: Atom, when: Atom) -> Vec<String> {
-        Keymap::of(cx.engine).conflicts(&row_id, &key, &when)
+        mine(cx, |keymap| keymap.conflicts(&row_id, &key, &when))
     }
 
     #[qml(invokable)]
     fn command_options(cx: &Cx) -> Vec<String> {
-        Keymap::of(cx.engine).command_options()
+        mine(cx, |keymap| keymap.command_options())
     }
 
     #[qml(invokable)]
     fn save(cx: &Cx, command: Atom, key: Atom, when: Json, replacing: Json) {
         let when = when.as_str().unwrap_or_default();
         let replacing = replacing.is_object().then_some(&replacing);
-        Keymap::of(cx.engine).save(cx.engine, &command, &key, when, replacing);
+        mine(cx, |keymap| {
+            keymap.save(cx.engine, &command, &key, when, replacing)
+        });
     }
 
     #[qml(invokable)]
     fn remove(cx: &Cx, row: Json) {
-        Keymap::of(cx.engine).remove(cx.engine, &row);
+        mine(cx, |keymap| keymap.remove(cx.engine, &row));
     }
 
     #[qml(invokable)]
     fn reset(cx: &Cx, row: Json) {
-        Keymap::of(cx.engine).reset(cx.engine, &row);
+        mine(cx, |keymap| keymap.reset(cx.engine, &row));
     }
 
     #[qml(invokable)]
     fn reset_all(cx: &Cx) {
-        Keymap::of(cx.engine).reset_all(cx.engine);
+        mine(cx, |keymap| keymap.reset_all(cx.engine));
     }
 
     #[qml(invokable)]
     fn open_file(cx: &Cx) {
-        Keymap::of(cx.engine).open_file(cx.engine);
+        mine(cx, |keymap| keymap.open_file(cx.engine));
     }
 }
 

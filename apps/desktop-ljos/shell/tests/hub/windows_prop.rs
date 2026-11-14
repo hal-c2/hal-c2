@@ -36,6 +36,8 @@ enum Op {
     Close(usize),
     /// `set_aside_window`, as when no root could be made for it.
     SetAside(usize),
+    /// `reopen_set_aside`, as a generation that shows the shell does.
+    Reopen,
     Navigate(usize, &'static str),
     Width(usize, bool),
     /// `backendError` published from a window.
@@ -55,6 +57,7 @@ fn op() -> impl Strategy<Value = Op> {
         2 => pick.prop_map(Op::New),
         4 => pick.prop_map(Op::Close),
         2 => pick.prop_map(Op::SetAside),
+        1 => Just(Op::Reopen),
         2 => (pick, proptest::sample::select(&SECTIONS[..])).prop_map(|(i, s)| Op::Navigate(i, s)),
         2 => (pick, any::<bool>()).prop_map(|(i, narrow)| Op::Width(i, narrow)),
         1 => (pick, 0u8..3).prop_map(|(i, v)| Op::Share(i, v)),
@@ -94,6 +97,8 @@ macro_rules! hub {
 
 struct World {
     hub: Option<Hub>,
+    /// The state directory every restart reuses, gone with the world.
+    _state: tempfile::TempDir,
     dir: PathBuf,
     open: Vec<Open>,
     /// Closed windows: their bridge and their timer, gone for good.
@@ -120,12 +125,12 @@ impl World {
     }
 
     fn new() -> World {
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("hub-windows-prop");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+        let dir = state.path().to_owned();
         let hub = World::launch(&dir);
         let base_subscriptions = hub.mc.subscriptions().len();
         let mut world = World {
+            _state: state,
             dir,
             open: Vec::new(),
             closed: Vec::new(),
@@ -236,6 +241,17 @@ impl World {
                     self.closed.push((gone.bridge, gone.timer));
                 }
                 engine.process_deferred_deletes();
+            }
+            Op::Reopen => {
+                controller::reopen_set_aside(engine);
+                for (id, section) in std::mem::take(&mut self.aside) {
+                    let record = self.opened(&id);
+                    self.open.push(Open {
+                        section,
+                        restored: true,
+                        ..record
+                    });
+                }
             }
             Op::Navigate(i, section) => {
                 let at = self.pick(i);

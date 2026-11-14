@@ -412,6 +412,8 @@ fn next_generation(engine: &Engine, state: &RuntimeState, seen: Option<u64>) {
     }
     let _ = cx.set(ShellRuntime::USING_USER_SHELL, first.using_user_shell);
     let _ = cx.set(ShellRuntime::GENERATION, generation);
+    // A window the broken shell could not show at restore comes back now.
+    controller::reopen_set_aside(engine);
 }
 
 /// A window of `key`, or why there is none. `name` is what the error calls

@@ -544,6 +544,16 @@ impl Bridge {
         bridge.is_open(engine).then_some(bridge)
     }
 
+    /// The open window whose own [`Bridge::singleton`] `obj` is.
+    pub fn holding(engine: &Engine, obj: ObjectId) -> Option<Bridge> {
+        let state = BridgeState::of(engine);
+        let bridges = state.bridges.borrow();
+        bridges
+            .iter()
+            .find(|(_, own)| own.objects.borrow().iter().any(|(_, o)| *o == obj))
+            .map(|(b, _)| Bridge(*b))
+    }
+
     /// Whether this bridge's window is still there.
     pub fn is_open(self, engine: &Engine) -> bool {
         BridgeState::of(engine).is_open(self.0)

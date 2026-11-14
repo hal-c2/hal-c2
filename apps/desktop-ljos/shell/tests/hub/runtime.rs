@@ -602,11 +602,9 @@ fn a_saved_window_no_shell_can_be_made_for_at_restore_keeps_its_saved_state() {
     let saved = std::fs::read_to_string(state.join("shell-windows.json")).unwrap();
     assert!(saved.contains("two") && !saved.contains("three"), "{saved}");
 
-    // Once the shell can show it, it comes back as it was saved.
+    // Once a reload shows the shell, it comes back as it was saved.
     write(&dir.path().join("app/Main.qml"), BUILT_IN);
-    let compiled = qml::compile(&roots(&dir)).unwrap();
-    hub.engine.set_component_source(compiled.source);
-    controller::restore_windows(&hub.engine);
+    runtime::reload(&hub.engine);
     hub.advance(1);
     assert!(runtime::root_of(&hub.engine, "two").is_some());
     assert_eq!(controller::windows(&hub.engine), vec![MAIN, "two"]);
