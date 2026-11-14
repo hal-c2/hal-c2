@@ -105,7 +105,7 @@ Item {
     }
 
     function rich(html) {
-        return richHead + Md.inlineStyles(html, styleRules) + "</body></html>";
+        return richHead + html + "</body></html>";
     }
 
     // A segment's item, whose functions are the delegate's own.
@@ -344,9 +344,6 @@ Item {
         readonly property bool previewed: root.linkPreviews !== null && hoveredLink.length > 0 && root.linkPreviews.address === hoveredLink
 
         textFormat: TextEdit.RichText
-        // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
-        // Its plain text, since `text` here is the HTML document.
-        Accessible.name: getText(0, length)
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         readOnly: true
         selectByMouse: true
@@ -403,6 +400,7 @@ Item {
             shown: richText.previewed
             address: richText.hoveredLink
             pointer: linkPointer.point.position
+            hostWindow: richText.Window.window
         }
         // Offers what can be done with the link under a point.
         function linkMenu(position, scenePosition) {
@@ -893,6 +891,8 @@ Item {
                         Component.onCompleted: {
                             syncLines();
                             measure();
+                            for (let r = 0; r < lines.count; ++r)
+                                lineAt(r)?.layout();
                             tableBody.forceLayout();
                             measureCells.restart();
                         }
@@ -939,8 +939,14 @@ Item {
                                             const box = boxAt(c);
                                             return box ? box.text : null;
                                         }
+                                        // Sizes the row now, not at the next frame.
+                                        function layout() {
+                                            cellRow.forceLayout();
+                                        }
                                         width: tableScroll.contentWidth
-                                        height: cellRow.rowHeight + 1
+                                        height: cellRow.height + 1
+                                        // As tall as its tallest cell: each cell sizes itself,
+                                        // so the row follows cells made after it.
                                         Row {
                                             id: cellRow
                                             Repeater {
@@ -954,7 +960,7 @@ Item {
                                                     readonly property string html: line.modelData[index] ?? ""
                                                     readonly property alias text: cellText
                                                     width: (grid.widths[index] ?? 0) * grid.stretch
-                                                    height: cellRow.rowHeight
+                                                    height: (grid.expanded && !line.head ? cellText.height : 19.5) + (line.head ? 17.6 : 14.4)
                                                     clip: true
                                                     RichText {
                                                         id: cellText
@@ -970,18 +976,9 @@ Item {
                                                     }
                                                 }
                                             }
-                                            readonly property real rowHeight: {
-                                                let h = 0;
-                                                for (let c = 0; c < cells.count; ++c) {
-                                                    const text = line.cell(c);
-                                                    if (text)
-                                                        h = Math.max(h, grid.expanded && !line.head ? text.height : 19.5);
-                                                }
-                                                return h + (line.head ? 17.6 : 14.4);
-                                            }
                                         }
                                         Rectangle {
-                                            y: cellRow.rowHeight
+                                            y: cellRow.height
                                             width: parent.width
                                             height: 1
                                             color: Qt.alpha(root.borderColor, root.borderColor.a * 0.6)

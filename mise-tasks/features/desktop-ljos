@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Run desktop-qt's feature scenarios against desktop-ljos with a coverage report: [globs relative to features/] [--backlog] [--raise] [--list]"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+# No globs runs what desktop-qt runs. A glob may name scenarios after a colon
+# (threads/snooze.feature:Snoozing*). --backlog runs the @backlog and
+# @backlog-desktop scenarios instead; --raise adds the scenarios that newly
+# pass to shell/tests/features/RATCHET; --list names the scenarios and runs none.
+set -euo pipefail
+exec mise exec -- cargo test -q -p hal_c2_shell --test features -- "$@"

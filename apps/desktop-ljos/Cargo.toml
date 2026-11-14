@@ -1,0 +1,46 @@
+[workspace]
+members = ["shell", "mc"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
+# add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
+# .cargo/config.toml rather than editing this line.
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d", default-features = false }
+ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d" }
+ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d" }
+hal_c2_mc = { path = "mc" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
+
+# The Terminal's VT parser (hof_vt's libghostty-vt) is the hot path even in
+# a debug build. Its build script builds Ghostty's Zig in Debug mode whenever
+# cargo says DEBUG, which any debug info does (line tables too): several
+# times slower, so none here. As Ljós Hof's own Cargo.toml.
+[profile.dev.package.libghostty-vt-sys]
+opt-level = 3
+debug = false
+
+# desktop-ljos:inspect's build: release code with its symbols and line tables
+# kept, so a stack sampled from a stuck UI thread names its functions. Its own
+# profile, so switching between it and a plain run does not rebuild either.
+[profile.inspect]
+inherits = "release"
+strip = false
+debug = "line-tables-only"
+# Its line tables would build Ghostty's Zig in Debug mode (see above).
+[profile.inspect.package.libghostty-vt-sys]
+debug = false

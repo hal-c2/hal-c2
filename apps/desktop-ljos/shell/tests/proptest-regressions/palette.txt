@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 356983daadff738f932db8a5e1232185c39baede3b917bed7edbe006c3564037 # shrinks to ops = [Show, Type("alpha b"), ThreadRow { id: "t4", title: "Login" }]

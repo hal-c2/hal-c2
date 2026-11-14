@@ -202,8 +202,28 @@ int World::shellSubscriptions() const {
   return count;
 }
 
+// The fake MC answers on this thread, so while one event handler holds the
+// thread (a disk or CPU the machine's load starves) no answer can come. Only
+// time the loop was free to take one counts toward the 5 s a lost answer is
+// given: each pass is charged at most kPass, however long it was held.
 void World::waitFor(const std::function<bool()>& condition, const std::function<QString()>& what) {
-  if (!QTest::qWaitFor(condition, 5000)) fail(QStringLiteral("timed out waiting for ") + what());
+  constexpr qint64 kWait = 5000;
+  constexpr qint64 kPass = 50;
+  qint64 charged = 0;
+  qint64 held = 0;
+  QElapsedTimer pass;
+  while (!condition()) {
+    if (charged >= kWait) fail(QStringLiteral("timed out waiting for ") + what());
+    pass.start();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    held += qMax<qint64>(pass.elapsed() - kPass, 0);
+    if (condition()) break;
+    QTest::qSleep(10);
+    charged += qMin(pass.elapsed(), kPass);
+  }
+  // Says that load held the wait, and for how long, in a passing run.
+  if (held > 1000) qWarning("[wait] the event loop was held %lld ms waiting for %s", static_cast<long long>(held), qPrintable(what()));
 }
 
 void World::waitFor(const std::function<bool()>& condition, const QString& what) {

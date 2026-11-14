@@ -494,6 +494,17 @@ const Steps steps([] {
     const bool wraps = c[0] == QLatin1String("wraps");
     expect(wraps ? lines > 1 : lines == 1, QStringLiteral("the long cell takes %1 lines").arg(lines));
   });
+  step(QStringLiteral("every row of the table holds its cells' text"), [](World& world, const Captures&, const Table&) {
+    const QList<QQuickItem*> cells = within(reply(world), QStringLiteral("tableCell"));
+    expect(!cells.isEmpty(), QStringLiteral("the table has no cells"));
+    for (int i = 0; i < cells.size(); ++i) {
+      // The cell's box is its row's height and clips the text.
+      const QQuickItem* cell = cells[i];
+      const qreal bottom = cell->y() + cell->height();
+      const qreal row = cell->parentItem()->height();
+      expect(cell->y() >= 0 && bottom <= row, QStringLiteral("cell %1's text ends at %2 in a row %3 tall").arg(i).arg(bottom).arg(row));
+    }
+  });
 
   // Untrusted text.
   step(QStringLiteral("the agent answers with HTML and an image"), [](World& world, const Captures&, const Table&) {

@@ -34,8 +34,10 @@ Rectangle {
     // What stands between the user and the opened setting, shown in place of
     // the page: {text, choices: [{label, action, payload}]}, or null. A setting
     // some selected environment cannot have offers the environments that can;
-    // one set per environment offers every project.
-    readonly property var notice: {
+    // one set per environment offers every project. Not `notice`: a page's own
+    // `notice` (ConnectionsSettings', ClusterSettings') would override it and
+    // hide the page whenever the page reports something.
+    readonly property var scopeNotice: {
         if (target === null || scope === null) return null;
         if (target.capability) {
             const targets = scope.targets ?? [];
@@ -109,7 +111,7 @@ Rectangle {
             Qt.callLater(reveal);
             return;
         }
-        if (notice !== null) return;
+        if (scopeNotice !== null) return;
         // A setting hidden until another is on opens at that one.
         let target = descendant(column, route.target);
         if ((target === null || !target.visible) && page.target?.within)
@@ -146,7 +148,7 @@ Rectangle {
     onFocusedItemChanged: if (focusedItem !== null) revealFocus(focusedItem)
     onTargetSeqChanged: Qt.callLater(reveal)
     // The setting a notice stood in for is shown once the notice goes.
-    onNoticeChanged: if (notice === null) Qt.callLater(reveal)
+    onScopeNoticeChanged: if (scopeNotice === null) Qt.callLater(reveal)
     Component.onCompleted: Qt.callLater(reveal)
     color: Theme.palette.color("canvas", "#0b0b0d")
 
@@ -182,13 +184,13 @@ Rectangle {
             ColumnLayout {
                 objectName: "settingsNotice"
 
-                visible: page.notice !== null
+                visible: page.scopeNotice !== null
                 Layout.fillWidth: true
                 spacing: Theme.space.md
 
                 Label {
                     Layout.fillWidth: true
-                    text: page.notice?.text ?? ""
+                    text: page.scopeNotice?.text ?? ""
                     color: page.foreground
                     font.pixelSize: Theme.type.body.size
                     wrapMode: Text.Wrap
@@ -199,7 +201,7 @@ Rectangle {
                     spacing: Theme.space.sm
 
                     Repeater {
-                        model: page.notice?.choices ?? []
+                        model: page.scopeNotice?.choices ?? []
 
                         delegate: ShellButton {
                             required property var modelData
@@ -215,7 +217,7 @@ Rectangle {
             ColumnLayout {
                 id: lead
 
-                visible: page.notice === null
+                visible: page.scopeNotice === null
                 Layout.fillWidth: true
                 spacing: Theme.space.md
             }
@@ -236,7 +238,7 @@ Rectangle {
                     // A row every selected environment must support is listed once they do.
                     visible: {
                         Settings.document;
-                        if (page.notice !== null) return false;
+                        if (page.scopeNotice !== null) return false;
                         return !modelData.requires || Settings.supports(modelData.requires);
                     }
                     sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : modelData.component === "backgroundActivity" ? backgroundActivityRow : settingRow

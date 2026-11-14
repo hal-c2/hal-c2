@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QList>
 #include <QString>
 
@@ -13,6 +14,8 @@ namespace computerNotices {
 
 // The window, drawn by DefaultShell from the source tree's bricks.
 QQuickWindow* window(World& world);
+// The window, drawn by `shell` (a document importing HalC2.Bricks) instead.
+QQuickWindow* window(World& world, const QByteArray& shell);
 QList<QQuickItem*> shownNamed(QQuickWindow* window, const QString& name);
 // The cluster member `name`, with a thread of it open in the window.
 void lookAt(World& world, const QString& name);

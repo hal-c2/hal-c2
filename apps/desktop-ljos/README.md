@@ -1,0 +1,100 @@
+# desktop-ljos
+
+An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+as they are and puts a Rust `HalC2.Shell` under them.
+
+- `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
+  controllers behind `Shell.state` (desktop-qt's NativeController and NativeShell), and the seam to the MC.
+- `mc/` is the MC client, desktop-qt's McClient in Rust.
+- `qml/` is the entry (`Main.qml`) and the QML half of `HalC2.Shell`: stubs for what is not ported yet, each
+  naming the C++ class it stands in for, holding only what the bricks read.
+
+Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native types, as one import path
+whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
+fails only where it is made, as in Qt. It takes about a second in a debug build.
+
+The build also compiles them ahead of time: `shell/build.rs` lowers their bindings and handlers to Rust
+(`ljos::build::compile_dirs_with_types_to_rust`) against `shell/ljostypes.json`, the shell's native types as
+`shell/tests/shell_tree.rs` writes them (`LJOS_TYPES=write cargo test -p hal_c2_shell --test shell_tree` after a
+change to a native type). A file runs that code while it is the file it was made from, and dynamically once it is
+edited, so reloads work as before; what the generator refuses runs dynamically too. Two costs: a brick that does
+not compile fails the build, not only `--check`, and an edited brick rebuilds the shell. The build script's stderr
+(`target/*/build/hal_c2_shell-*/stderr`) lists what each file compiled and why the rest did not.
+
+## Run, check and render
+
+Ljós needs rustc 1.98; `mise.toml` here pins it.
+
+```sh
+mise run desktop-ljos                                   # the window; --mc-origin URL --mc-token TOKEN
+mise run desktop-ljos:check                             # compile the QML; fails when a file does not
+mise run desktop-ljos:render                            # .hal-c2/desktop-ljos.png without a window
+mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mode":"dark"}'
+```
+
+On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
+the Dock and the app switcher name an app by its bundle.
+
+As desktop-qt does, the window runs the desktop host (`../desktop-qt/host/main.ts` under `node`, or
+`--host-entry`/`--node`/`HAL_C2_NODE_BIN`), which finds or starts the MC on this machine; `--url LINK` (what
+`mise run desktop-ljos` passes, from `mise run mc:pair`; `--standalone` leaves it out) has it pair with that MC
+instead. `--mc-origin URL --mc-token TOKEN` (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect
+without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
+one. `--home-dir DIR` keeps the client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
+what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
+
+The window makes its shell again when a QML file changes: this checkout's (or `--qml-dir`'s, or
+`HAL_C2_QML_DIR`'s) and the config dir's. A `shell.qml` there replaces the built-in shell and `qml/` beside it is
+on the import path; one that does not load falls back to the built-in shell with the error in its overlay.
+
+A scripted run is `--action NAME[=JSON]` and `--key CHORD` steps, replayed in the order given 1.5 s apart once
+the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 when there is no picture) taken
+1.5 s after the last: `hal-c2-ljos --action settings.open --key Ctrl+K --screenshot out.png`. A chord reaches the
+shell's keymap, not the focused control.
+
+`check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
+`DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, libghostty-vt through
+Ljós Hof's `hof_vt`). Building the terminal needs Zig (`mise.toml` pins it) and fetches Ghostty's source once.
+
+## Browser pages
+
+The browser tabs (`BrowserPanel`'s `WebEngineView`) are Chromium pages drawn off-screen through CEF, Ljós's
+`ljos_webengine`. The `cef` crate fetches CEF's distribution (about 335 MB, 1.5 GB unpacked) when a build first
+needs it: point `CEF_PATH` at a directory outside the repository and it is fetched there once, and copied beside the
+binaries (`libcef.so` and its resources, found through an `$ORIGIN` rpath) on every build. `strip --strip-debug` on
+`libcef.so` there takes it to under 500 MB; CI keeps it that way by CEF's version. CEF starts its other processes
+from `ljos-webengine-helper`, built beside `hal-c2-ljos`. On macOS CEF loads from an application bundle that
+Ljós's `ljos-webengine-bundle` makes; until the build makes one, a browser tab says it cannot load.
+
+## Inspect
+
+Built with the `mcp` feature, the window serves Ljós's MCP inspector (the scene, clicks, timings and how the
+window is painted) when `LJOS_MCP` names its capabilities; the token file goes to `target/ljos` below the
+working directory (or `LJOS_MCP_DIR`):
+
+```sh
+LJOS_MCP=inspect,input cargo run -p hal_c2_shell --features mcp
+```
+
+`mise run desktop-ljos:inspect` opens the shell that way (its token in `apps/desktop-ljos/target/ljos`), `mise run
+desktop-ljos:observe` opens Ljós's observer on it (processes, mailboxes, objects, traces, a picture of the object
+picked), and `mise run desktop-ljos:attach` serves its inspector on stdio for an MCP client. The last two run
+Ljós's own `ljos` command, built at the pinned rev by `mise run desktop-ljos:cli`.
+
+A UI thread stuck in a turn answers no inspector tool. `desktop-ljos:inspect` builds with symbols (the `inspect`
+profile, in `target/inspect`) and lets your own processes attach, so `eu-stack -p <pid> -1` shows where it is.
+
+## Tests
+
+```sh
+cd apps/desktop-ljos && mise exec -- cargo test -p hal_c2_shell
+```
+
+They build the app headlessly through `ljos::App`, compile QML written in the test, and drive time with a
+virtual clock.
+
+## Ljós
+
+The shell is an application of the `ljos` facade alone (`App`, `#[derive(QmlObject)]`, `ljos::item`,
+`ljos::keys`, `ljos::system`, `ljos::window`, `ljos::dev`, `ljos::render`), and its tests of `ljos::testing`.

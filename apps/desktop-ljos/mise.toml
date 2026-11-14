@@ -1,0 +1,6 @@
+# Ljós needs this Rust; `mise install` from here installs it.
+[tools]
+rust = { version = "1.98.1", components = "rustfmt,clippy" }
+# The Terminal's libghostty-vt (hof_vt) is built from Ghostty's source by its
+# build script, with the Zig Ljós Hof pins.
+zig = "0.17.1"

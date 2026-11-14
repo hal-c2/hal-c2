@@ -16,6 +16,7 @@
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "SettingsController.h"
+#include "Stream.h"
 #include "Turn.h"
 #include "World.h"
 
@@ -42,6 +43,11 @@ void openThreadWithSkill(World& world) {
                                                                                             {QStringLiteral("description"), QStringLiteral("Review the changes")},
                                                                                             {QStringLiteral("enabled"), true}}}}}});
   openTurnThread(world);
+  // A started thread offers the skills of what it runs on: Claude here.
+  QJsonObject& row = world.mc.threads[stream::kThread];
+  row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), QStringLiteral("sonnet")}});
+  world.mc.sendRow(stream::kThread, row);
+  world.sync();
   composerBrick(world);
 }
 

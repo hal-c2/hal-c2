@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 
 class NativeWindow;
@@ -62,6 +63,7 @@ public:
   using Done = std::function<void(const std::optional<QString>& error)>;
 
   SettingsController(ShellBridge*, McClient* client, QObject* parent = nullptr);
+  ~SettingsController() override;
 
   // Subscribes to the MC's config and reads its settings.
   void activate() override;
@@ -84,14 +86,20 @@ public:
 
   // This device's preferences file; read now, saved there on change, and
   // read again when another app on this home saves it. A save writes only
-  // the keys it changes over what the file holds, so no app's change is lost
-  // to another's stale copy.
+  // the keys it changes over what the file holds as the write goes, so no
+  // app's change is lost to another's stale copy, and what this desktop heard
+  // keeps its own changes that have not landed yet.
   void setDevicePath(const QString& path);
   QString devicePath() const { return m_devicePath; }
   QJsonObject deviceSettings() const { return m_device; }
   // Replaces this device's preferences; false (and `deviceError`) when they
-  // cannot be saved, leaving them as they were.
+  // cannot be saved, leaving them as they were. Written once changes pause,
+  // off the GUI thread (CoalescingWriter); a write that fails there later
+  // keeps the change, says `deviceError` and is tried again on the next.
   bool setDeviceSettings(const QJsonObject& device);
+  // This desktop shows changes the file did not hold when it last read it:
+  // still to be written, or written and not read back yet.
+  bool deviceUnsaved() const { return m_deviceRead != m_device || !m_deviceFile.idle(); }
   Q_INVOKABLE QVariant deviceValue(const QString& key) const { return m_device.value(key).toVariant(); }
   // One preference; null removes it.
   Q_INVOKABLE bool writeDevice(const QString& key, const QVariant& value);
@@ -154,6 +162,7 @@ private:
   void fail(const QString& error);
   void watchDevice();
   void deviceFileChanged();
+  bool readDevice();
   // In `window` (the one that made the change), else the one in use.
   void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }
@@ -176,7 +185,11 @@ private:
   QJsonObject m_config;
   QJsonArray m_themes;
   QString m_devicePath;
+  // A child, so a test can wait for its writes to land.
+  CoalescingWriter m_deviceFile{this};
+  // What this desktop shows, and what the file held when it last read it.
   QJsonObject m_device;
+  QJsonObject m_deviceRead;
   QString m_deviceError;
   bool m_deviceUnreadable = false;
   QFileSystemWatcher* m_deviceWatcher = nullptr;

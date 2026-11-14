@@ -6,6 +6,7 @@
 #include <QVariant>
 
 #include "AgentsModel.h"
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 #include "PanelStage.h"
 #include "PullRequestLinkPreviews.h"
@@ -285,8 +286,8 @@ private:
   // keeps the latest kStoredThreads.
   QStringList m_recent;
   int m_width = defaultWidth;
-  QString m_storePath;
-  QByteArray m_saved;
+  // shell-panel.json, written off the GUI thread.
+  CoalescingWriter m_storeFile;
   // What `panel` last said, to tell a toggle from a thread's own layout.
   QString m_publishedThread;
   bool m_publishedOpen = false;

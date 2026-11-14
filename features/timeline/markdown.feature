@@ -274,6 +274,14 @@ Feature: Formatted messages
     When the user expands the table cells
     Then the long cell wraps
 
+  # desktop-ljos drew every row at its padding alone, the text spilling over the row lines: the
+  # row's height did not follow the cells made after it.
+  @desktop @mobile @backlog-mobile
+  Scenario: A table's rows grow to fit their wrapped cells
+    Given the agent's reply has a table with a long cell
+    Then the long cell wraps
+    And every row of the table holds its cells' text
+
   # Upstream #20878: an expanded table kept its full width, so wrapped columns ran out of view.
   # Upstream #26449: every table opens this way, whatever the word wrap setting and the width.
   @shared @backlog

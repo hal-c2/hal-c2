@@ -17,6 +17,7 @@
 #include <optional>
 #include <utility>
 
+#include "CoalescingWriter.h"
 #include "ComposerModel.h"
 
 #include "NativeController.h"
@@ -615,6 +616,13 @@ private:
   std::optional<composer::Trigger> triggerOf(const QString& target) const;
   void refreshPathSearch();
 
+  // The mode the user picked for the target, empty when none counts: a new
+  // thread keeps its pick until it starts, an existing thread only while the
+  // MC has not taken it. One kept past that (the app quit first, or a new
+  // thread's draft carried it in) would hide what the thread was given since.
+  // The phone keeps an offline pick until it is set (settleModes).
+  QString pickedRuntimeMode(const QString& target) const;
+
   // The catalogue of the route's environment.
   void refreshCatalogue();
   const composer::Instance* instanceOf(const QJsonObject& selection) const;
@@ -643,7 +651,8 @@ private:
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
   // False when the drafts and stash could not be written.
-  bool save() const;
+  // Written once edits pause (CoalescingWriter); `now` writes before returning and says whether it did.
+  bool save(bool now = false) const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
@@ -693,8 +702,9 @@ private:
     // brought yet when the next is sent.
     QHash<QString, QString> delivered;
     QString path;
-    // The images last written beside the drafts (imagesPath), so a keystroke
-    // does not rewrite them.
+    CoalescingWriter file;
+    CoalescingWriter imagesFile;
+    // The images last given to imagesFile, so a keystroke does not rewrite them.
     QString images;
     // The threads whose `queue.resume` the MC has not answered: one request
     // at a time per thread, whichever window asks.
