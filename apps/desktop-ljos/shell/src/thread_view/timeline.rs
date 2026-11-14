@@ -351,6 +351,25 @@ struct AttachmentUrl {
 
 type Entities = BTreeMap<String, BTreeMap<String, Obj>>;
 
+/// The fields an item's stream appends to.
+const STREAMED: [&str; 5] = ["text", "output", "markdown", "progress", "summary"];
+
+/// Whether `now` is `was` with text appended to some of its streamed
+/// fields, as an item's stream leaves it; any other field that changed
+/// (a title that was empty) restates it, as a set does.
+fn only_appended(was: &Obj, now: &Obj) -> bool {
+    was.len() == now.len()
+        && now.iter().all(|(key, value)| match (was.get(key), value) {
+            (Some(Json::String(before)), Json::String(after))
+                if STREAMED.contains(&key.as_str()) =>
+            {
+                after.starts_with(before.as_str())
+            }
+            (Some(before), after) => before == after,
+            (None, _) => false,
+        })
+}
+
 /// Names another thread of this one's environment by id; empty when it is
 /// not known.
 pub type ThreadTitles = Rc<dyn Fn(&str) -> String>;
@@ -1316,7 +1335,7 @@ impl Timeline {
         self.open_subagent_groups.clear();
         let rows = self.project();
         self.apply_rows(rows, &HashSet::new());
-        self.everything_changed(&HashSet::new());
+        self.everything_changed(&HashSet::new(), &HashSet::new());
     }
 
     /// Projects' titles by id, for where a subagent works.
@@ -1393,7 +1412,7 @@ impl Timeline {
         self.fork_shown = shown;
         let rows = self.project();
         self.apply_rows(rows, &HashSet::new());
-        self.everything_changed(&HashSet::new());
+        self.everything_changed(&HashSet::new(), &HashSet::new());
     }
 
     /// The fork's run as a turn item: its items group under it, as a run's
@@ -1750,8 +1769,8 @@ impl Timeline {
         self.cursor.handle = text(frame, "handle").to_owned();
         self.cursor.offset = offset_of(frame, "offset").unwrap_or(0);
         self.cursor.floor = offset_of(frame, "floor");
-        let changed = self.changed_since(&before);
-        self.everything_changed(&changed);
+        let (changed, restated) = self.changed_since(&before);
+        self.everything_changed(&changed, &restated);
         if self.has_earlier() != had_earlier {
             self.out.push(Out::EarlierChanged);
         }
@@ -1760,26 +1779,35 @@ impl Timeline {
     }
 
     /// The turn items whose rows read differently than they did with
-    /// `before`: the item itself, or the request or subagent it shows.
-    fn changed_since(&self, before: &Entities) -> HashSet<String> {
+    /// `before`: the item itself, or the request or subagent it shows. And
+    /// of those, the ones changed in more than what streamed into them, as
+    /// a patch's appends ([`Self::restated`]).
+    fn changed_since(&self, before: &Entities) -> (HashSet<String>, HashSet<String>) {
         let was = |kind: &str, id: &str| before.get(kind).and_then(|m| m.get(id));
         let differs = |kind: &str, id: &str| {
             !id.is_empty() && was(kind, id).unwrap_or(&NONE) != self.entity(kind, id)
         };
-        self.entities("turn-item")
-            .iter()
-            .filter(|(id, item)| {
-                was("turn-item", id).unwrap_or(&NONE) != *item
-                    || differs("runtime-request", text(item, "requestId"))
-                    || differs("subagent", text(item, "subagentId"))
-            })
-            .map(|(id, _)| id.clone())
-            .collect()
+        let mut changed = HashSet::new();
+        let mut restated = HashSet::new();
+        for (id, item) in self.entities("turn-item") {
+            let was_item = was("turn-item", id);
+            let others = differs("runtime-request", text(item, "requestId"))
+                || differs("subagent", text(item, "subagentId"));
+            if was_item.unwrap_or(&NONE) == item && !others {
+                continue;
+            }
+            changed.insert(id.clone());
+            if others || !was_item.is_some_and(|was| only_appended(was, item)) {
+                restated.insert(id.clone());
+            }
+        }
+        (changed, restated)
     }
 
-    fn everything_changed(&mut self, changed: &HashSet<String>) {
-        // Set against a snapshot, not patched: whatever differs is drawn.
-        self.restated.clone_from(changed);
+    fn everything_changed(&mut self, changed: &HashSet<String>, restated: &HashSet<String>) {
+        // Set against a snapshot, not patched: whatever differs is drawn,
+        // but streaming that was missed is still only streaming.
+        self.restated.clone_from(restated);
         self.sort_items();
         self.restructure(changed);
         self.out.extend([
@@ -1962,8 +1990,8 @@ impl Timeline {
                 .insert(entity.id.clone(), entity.fields.clone());
         }
         self.cursor = thread.cursor.clone();
-        let changed = self.changed_since(&before);
-        self.everything_changed(&changed);
+        let (changed, restated) = self.changed_since(&before);
+        self.everything_changed(&changed, &restated);
         if self.has_earlier() {
             self.out.push(Out::EarlierChanged);
         }

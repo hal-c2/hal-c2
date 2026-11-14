@@ -490,13 +490,7 @@ fn pairing_client() -> pairing::Client {
 }
 
 fn host_name() -> String {
-    std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .or_else(|| std::env::var("COMPUTERNAME").ok())
-        .map(|h| h.trim().to_owned())
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "this computer".into())
+    hal_c2_shell::this_machine::host_name().unwrap_or_else(|| "this computer".into())
 }
 
 /// What the QML says that is wrong, on stderr, each message once, and which

@@ -1212,6 +1212,46 @@ fn a_group_redraws_for_its_members_status_not_their_progress() {
     assert!(redrawn(&w));
 }
 
+// Regression (timeline_prop): progress a member streamed while the client
+// was away, read back from a snapshot, is still only progress.
+#[test]
+fn a_snapshot_of_a_members_progress_does_not_redraw_its_group() {
+    let mut w = World::new();
+    w.seq = 4;
+    let rows = |progress: &str, status: &str| {
+        vec![
+            row("run", run("running")),
+            row("subagent", json!({"id": "agent-1", "model": "opus"})),
+            row(
+                "turn-item",
+                item(
+                    "suba-2",
+                    "subagent",
+                    2,
+                    json!({"subagentId": "agent-1", "progress": progress, "status": status}),
+                ),
+            ),
+            row(
+                "turn-item",
+                item("suba-3", "subagent", 3, json!({"subagentId": "agent-1"})),
+            ),
+        ]
+    };
+    w.snapshot(rows("", "running"));
+    let group = w.tl.row_id(w.last_of("subagents")).unwrap().to_owned();
+    let redrawn = |w: &World| w.view.redrawn.iter().any(|(id, _)| *id == group);
+    w.view.redrawn.clear();
+    w.snapshot(rows("a", "running"));
+    assert!(!redrawn(&w));
+    w.snapshot(rows("a", "failed"));
+    assert!(redrawn(&w));
+    // A field that does not stream, set where it was empty, is a change.
+    w.snapshot(rows("a", ""));
+    w.view.redrawn.clear();
+    w.snapshot(rows("a", "running"));
+    assert!(redrawn(&w));
+}
+
 #[test]
 fn a_subagent_model_changed_back_redraws_nothing() {
     let mut w = World::new();

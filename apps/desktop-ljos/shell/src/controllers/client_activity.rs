@@ -107,7 +107,7 @@ impl ClientActivity {
 
 /// Whether the application is `Active` (`Qt.application.state`); focused
 /// when there is no application to ask.
-fn focused(engine: &Engine) -> bool {
+pub(crate) fn focused(engine: &Engine) -> bool {
     let Ok(app) = engine.singleton::<Application>() else {
         return true;
     };
@@ -134,7 +134,7 @@ fn client_id(engine: &Engine) -> String {
 
 /// The wall clock (the engine's, pinned in tests) as
 /// `2026-10-16T12:00:00.000Z`.
-fn now_iso8601(engine: &Engine) -> String {
+pub(crate) fn now_iso8601(engine: &Engine) -> String {
     chrono::DateTime::from_timestamp_millis(sidebar::now_ms(engine))
         .unwrap_or_default()
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")

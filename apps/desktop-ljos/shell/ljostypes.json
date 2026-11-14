@@ -5080,6 +5080,45 @@
           ]
         },
         {
+          "name": "PreviewAutomation",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": true,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "activity",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activityChanged"
+            },
+            {
+              "name": "reduceMotion",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "reduceMotionChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
           "name": "TimelineModel",
           "since": "1.0",
           "base": null,
