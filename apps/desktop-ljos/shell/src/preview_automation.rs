@@ -10,7 +10,8 @@
 //! drops a host that answers late. A status is answered at once. Anything
 //! else waits for the tab's previous request: one page, one action at a time.
 //! An agent keeps off a page whose developer tools are open, and the user's
-//! own input inside the page interrupts what the agent is doing there.
+//! typing inside the page interrupts what the agent is doing there (their
+//! clicks too, once Ljós reports them: hal-c2/ljos-ui#459).
 //!
 //! The PreviewAutomation controller (controllers/preview_automation.rs)
 //! makes the app's host and attaches each browser tab's page.

@@ -629,6 +629,10 @@ impl BrowserPage {
         }
         let tab = snapshot(engine, &inner);
         BrowserPage::update(engine, obj, |core| core.follow(tab));
+        // A page's previews say whose thread its tab is.
+        if !inner.enrolled.borrow().is_empty() {
+            pages_changed(engine);
+        }
     }
 
     /// Shows MC tab `tab`.

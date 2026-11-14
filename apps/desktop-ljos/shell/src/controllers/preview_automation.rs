@@ -51,8 +51,8 @@ pub struct PreviewAutomation {
     mc: Rc<dyn Mc>,
     me: Me<Self>,
     host: Option<PreviewAutomationHost>,
-    /// Each page's driver, and the tab it was made for.
-    driven: HashMap<ObjectId, (Rc<BrowserAutomationPage>, String)>,
+    /// Each page's driver, and the tab and thread it was made for.
+    driven: HashMap<ObjectId, Driven>,
 }
 
 impl Controller for PreviewAutomation {
@@ -93,6 +93,17 @@ impl Controller for PreviewAutomation {
             });
         }
         Settings::of(engine).on_settings_changed(publish_motion);
+        // The user's typing in a page interrupts the agent there, as
+        // desktop-qt's BrowserAutomationPage's key press does.
+        // TODO(hal-c2/ljos-ui#459): the user's click in a page too, once a
+        // view reports the pointer presses it is given.
+        let me = self.me.clone();
+        ljos::keys::add_key_filter(engine, move |engine, _, ev| {
+            if ev.kind == ljos::keys::KeyKind::Press {
+                me.run_after(engine, |c, engine| c.typed(engine));
+            }
+            false
+        });
         self.offer(engine);
         self.attach_pages(engine);
         self.focus(engine);
@@ -120,18 +131,31 @@ impl PreviewAutomation {
         let Some(host) = self.host.clone() else {
             return;
         };
-        let pages = browser::pages(engine);
+        // Each page showing a tab of a thread's previews; one whose
+        // previews come after its tab is here once they do.
+        let pages: Vec<(String, ObjectId, String)> = browser::pages(engine)
+            .into_iter()
+            .filter_map(|(tab, page)| {
+                let previews = BrowserPage::previews(engine, page)?;
+                let thread = ThreadPreviews::read(engine, previews, |p| p.thread().to_owned())?;
+                Some((tab, page, thread))
+            })
+            .collect();
         // Gone pages took their drivers with them; a page now showing
-        // another tab gets a new one, so the host never mistakes it for the
-        // old tab's.
+        // another tab or thread gets a new one, so the host never mistakes
+        // it for the old tab's.
         let stale: Vec<ObjectId> = self
             .driven
             .iter()
-            .filter(|(page, (_, tab))| !pages.iter().any(|(t, p)| p == *page && t == tab))
+            .filter(|(page, d)| {
+                !pages
+                    .iter()
+                    .any(|(t, p, th)| p == *page && *t == d.tab && *th == d.thread)
+            })
             .map(|(page, _)| *page)
             .collect();
         for page in stale {
-            let Some((driver, tab)) = self.driven.remove(&page) else {
+            let Some(Driven { driver, tab, .. }) = self.driven.remove(&page) else {
                 continue;
             };
             driver.release(engine);
@@ -143,20 +167,31 @@ impl PreviewAutomation {
                 host.detach(engine, &tab);
             }
         }
-        for (tab, page) in pages {
+        for (tab, page, thread) in pages {
             if self.driven.contains_key(&page) {
                 continue;
             }
-            let Some(previews) = BrowserPage::previews(engine, page) else {
-                continue;
-            };
-            let Some(thread) = ThreadPreviews::read(engine, previews, |p| p.thread().to_owned())
-            else {
-                continue;
-            };
             let driver = BrowserAutomationPage::new(engine, page, &tab, &host);
-            self.driven.insert(page, (driver.clone(), tab.clone()));
-            host.attach(engine, &thread, &tab, driver);
+            host.attach(engine, &thread, &tab, driver.clone());
+            self.driven.insert(
+                page,
+                Driven {
+                    driver,
+                    tab,
+                    thread,
+                },
+            );
+        }
+    }
+
+    /// A key the user pressed: the page that has the keyboard was the
+    /// user's to drive, not the agent's.
+    fn typed(&mut self, engine: &Engine) {
+        let Some(host) = &self.host else { return };
+        for d in self.driven.values() {
+            if d.driver.has_keys(engine) {
+                host.human_input(engine, &d.tab);
+            }
         }
     }
 
@@ -170,6 +205,12 @@ impl PreviewAutomation {
 /// The app's host, once the controller made one (a build with the browser).
 pub fn host(engine: &Engine) -> Option<PreviewAutomationHost> {
     controller::with::<PreviewAutomation, _>(engine, |c, _| c.host.clone()).flatten()
+}
+
+struct Driven {
+    driver: Rc<BrowserAutomationPage>,
+    tab: String,
+    thread: String,
 }
 
 fn same(page: &Rc<dyn AutomationPage>, driver: &Rc<BrowserAutomationPage>) -> bool {
@@ -341,6 +382,11 @@ impl BrowserAutomationPage {
 
     fn view(&self, engine: &Engine) -> Option<ObjectId> {
         BrowserPage::view(engine, self.page).filter(|v| engine.is_alive(*v))
+    }
+
+    /// Whether the page's view has the keyboard.
+    fn has_keys(&self, engine: &Engine) -> bool {
+        matches!(self.view_read(engine, "activeFocus"), Value::Bool(true))
     }
 
     fn view_read(&self, engine: &Engine, name: &str) -> Value {
