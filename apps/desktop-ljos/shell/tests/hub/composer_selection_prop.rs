@@ -600,6 +600,22 @@ fn a_pick_made_while_a_send_waits_for_own_answers_leaves_the_send_current() {
     run(Kind::Named, ops).unwrap();
 }
 
+/// A send held behind this client's own access change, then a new pick and
+/// an interaction change made while it waits: the access change answers
+/// after its row shows, and the send still goes past both changes.
+#[test]
+fn a_held_send_goes_past_an_own_change_its_row_already_showed() {
+    let ops = vec![
+        Op::Hold,
+        Op::PickAccess(0, false),
+        Op::PickModel(2),
+        Op::Submit(false),
+        Op::PickModel(0),
+        Op::PickInteraction(1, false),
+    ];
+    run(Kind::Named, ops).unwrap();
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
