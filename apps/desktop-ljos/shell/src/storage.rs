@@ -162,13 +162,18 @@ fn nested(root: Option<PathBuf>, [config, data, state, cache]: [PathBuf; 4]) -> 
 /// What could not move stays where it was, and the old level goes once it is
 /// empty. Run at every start; with nothing at the old level it reads one
 /// missing directory per kind.
-pub fn carry_over(paths: &StoragePaths) {
+///
+/// Returns each database it left split from its journal, which must not be
+/// opened until a later start joins them (or someone does by hand).
+pub fn carry_over(paths: &StoragePaths) -> Vec<String> {
+    let mut stranded = Vec::new();
     for kind in [&paths.config, &paths.data, &paths.state, &paths.cache] {
         let old = kind.join(OLD_CLIENT_DIR);
         if std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir()) {
-            merge_into(&old, kind, &|a, b| std::fs::rename(a, b));
+            stranded.extend(merge_into(&old, kind, &|a, b| std::fs::rename(a, b)));
         }
     }
+    stranded
 }
 
 /// SQLite's files beside a database, which belong to it and move with it.
@@ -187,10 +192,10 @@ fn taken(path: &Path) -> bool {
 
 type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
 
-fn merge_into(from: &Path, to: &Path, rename: Rename) {
-    finish_carrying(from, to, rename);
+fn merge_into(from: &Path, to: &Path, rename: Rename) -> Vec<String> {
+    let mut stranded = finish_carrying(from, to, rename);
     let Ok(entries) = std::fs::read_dir(from) else {
-        return;
+        return stranded;
     };
     let names: Vec<String> = entries
         .flatten()
@@ -211,9 +216,9 @@ fn merge_into(from: &Path, to: &Path, rename: Rename) {
                         .filter(|sidecar| names.contains(sidecar)),
                 )
                 .collect();
-            move_together(from, to, &set, rename);
+            stranded.extend(move_together(from, to, &set, rename));
         } else if is_dir(&source) && is_dir(&target) {
-            merge_into(&source, &target, rename);
+            stranded.extend(merge_into(&source, &target, rename));
         }
     }
     // A sidecar whose database is gone from both levels has nothing to
@@ -228,77 +233,137 @@ fn merge_into(from: &Path, to: &Path, rename: Rename) {
     }
     // Only an emptied directory goes.
     let _ = std::fs::remove_dir(from);
+    stranded
 }
 
-/// Beside a database being moved with its sidecars: until it goes, the
-/// files of that name at both levels are one set.
-const CARRYING: &str = ".carrying";
+/// A record, beside the destination, of a database moving with its sidecars:
+/// until it goes, the files it names at both levels are one set. The name is
+/// carry_over's own, and only a record that starts with CARRYING_HEADER is
+/// one; any other file of that name is left alone.
+const CARRYING_PREFIX: &str = ".hal-c2-carrying.";
+const CARRYING_HEADER: &str = "hal-c2 carry_over: one set\n";
 
 fn carrying_marker(to: &Path, name: &str) -> PathBuf {
-    to.join(format!("{name}{CARRYING}"))
+    to.join(format!("{CARRYING_PREFIX}{name}"))
+}
+
+/// The set a carrying record names, or None when the file is not one.
+fn carrying_set(marker: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(marker).ok()?;
+    let set: Vec<String> = text
+        .strip_prefix(CARRYING_HEADER)?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let plain = |n: &String| !n.is_empty() && !n.contains(['/', '\\']) && n != "." && n != "..";
+    (!set.is_empty() && set.iter().all(plain)).then_some(set)
 }
 
 /// Moves a database with its sidecars, or, when one fails to move, puts back
 /// what did: a database never lands without the journal holding its
 /// committed pages. A move the process does not live to finish is finished
 /// on the next start (finish_carrying).
-fn move_together(from: &Path, to: &Path, set: &[String], rename: Rename) {
+fn move_together(from: &Path, to: &Path, set: &[String], rename: Rename) -> Option<String> {
     let marker = carrying_marker(to, &set[0]);
-    if set.len() > 1 && std::fs::write(&marker, b"").is_err() {
-        return;
+    if set.len() > 1 {
+        // A file already there is someone else's: the set waits.
+        let created = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(format!("{CARRYING_HEADER}{}\n", set.join("\n")).as_bytes())?;
+                file.sync_all()
+            });
+        if created.is_err() {
+            return None;
+        }
     }
     for (moved, name) in set.iter().enumerate() {
         if rename(&from.join(name), &to.join(name)).is_err() {
-            let mut back_home = true;
+            let mut stuck = Vec::new();
             for back in &set[..moved] {
                 if let Err(error) = rename(&to.join(back), &from.join(back)) {
-                    back_home = false;
-                    eprintln!(
-                        "hal-c2: {} moved to {} without the rest of its database, \
-                         and could not go back: {error}",
-                        from.join(back).display(),
-                        to.display()
-                    );
+                    stuck.push(format!("{back} ({error})"));
                 }
             }
-            // A set split for good stays marked, so a later start joins it.
-            if back_home {
-                let _ = std::fs::remove_file(&marker);
+            if stuck.is_empty() {
+                if set.len() > 1 {
+                    let _ = std::fs::remove_file(&marker);
+                }
+                return None;
             }
-            return;
+            // A set split for good stays recorded, so a later start joins it.
+            return Some(format!(
+                "{} moved to {} without the rest of its database, and could not go back",
+                stuck.join(", "),
+                to.display()
+            ));
         }
     }
-    let _ = std::fs::remove_file(&marker);
+    if set.len() > 1 {
+        let _ = std::fs::remove_file(&marker);
+    }
+    None
 }
 
 /// Joins what an interrupted move_together left a level down to the part
-/// that already moved, before anything opens it.
-fn finish_carrying(from: &Path, to: &Path, rename: Rename) {
+/// that already moved, before anything opens it. A set whose files are at
+/// both levels is not joined: what sits at the destination is not all its.
+fn finish_carrying(from: &Path, to: &Path, rename: Rename) -> Vec<String> {
+    let mut stranded = Vec::new();
     let Ok(entries) = std::fs::read_dir(to) else {
-        return;
+        return stranded;
     };
     for entry in entries.flatten() {
-        let Some(name) = entry.file_name().into_string().ok() else {
+        let is_record = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| n.starts_with(CARRYING_PREFIX));
+        let Some(set) = is_record.then(|| carrying_set(&entry.path())).flatten() else {
             continue;
         };
-        let Some(base) = name.strip_suffix(CARRYING).filter(|b| !b.is_empty()) else {
-            continue;
-        };
-        let mut joined = true;
-        for part in std::iter::once(base.to_string()).chain(
-            SQLITE_SIDECARS
-                .iter()
-                .map(|suffix| format!("{base}{suffix}")),
-        ) {
-            let (source, target) = (from.join(&part), to.join(&part));
-            if taken(&source) && (taken(&target) || rename(&source, &target).is_err()) {
-                joined = false;
+        let behind: Vec<&String> = set.iter().filter(|n| taken(&from.join(n))).collect();
+        let moved = set
+            .iter()
+            .any(|n| taken(&to.join(n)) && !taken(&from.join(n)));
+        let clash = behind.iter().any(|n| taken(&to.join(n)));
+        if clash {
+            // Nothing of the set moved: it is whole where it was, and stays.
+            if !moved {
+                let _ = std::fs::remove_file(entry.path());
+            } else {
+                stranded.push(format!(
+                    "{} in {} is split from the rest of it in {}, and something else took its place",
+                    set[0],
+                    to.display(),
+                    from.display()
+                ));
             }
+            continue;
         }
-        if joined {
+        let failed: Vec<String> = behind
+            .iter()
+            .filter_map(|n| {
+                rename(&from.join(n), &to.join(n))
+                    .err()
+                    .map(|error| format!("{n} ({error})"))
+            })
+            .collect();
+        if failed.is_empty() {
             let _ = std::fs::remove_file(entry.path());
+        } else {
+            stranded.push(format!(
+                "{} in {} is missing {}, which could not move up from {}",
+                set[0],
+                to.display(),
+                failed.join(", "),
+                from.display()
+            ));
         }
     }
+    stranded
 }
 
 fn is_dir(path: &Path) -> bool {
@@ -656,7 +721,7 @@ mod tests {
                 std::fs::rename(a, b)
             }
         };
-        merge_into(&old, &paths.cache, &stuck_wal);
+        assert!(merge_into(&old, &paths.cache, &stuck_wal).is_empty());
         for name in [
             "client-cache.sqlite",
             "client-cache.sqlite-wal",
@@ -683,7 +748,12 @@ mod tests {
         let paths = on_unix(&[], Some(root.to_str().unwrap()));
         let old = paths.cache.join(OLD_CLIENT_DIR);
         // The process ended after the database moved, before its journal.
-        write(&carrying_marker(&paths.cache, "client-cache.sqlite"), "");
+        write(
+            &carrying_marker(&paths.cache, "client-cache.sqlite"),
+            &format!(
+                "{CARRYING_HEADER}client-cache.sqlite\nclient-cache.sqlite-wal\nclient-cache.sqlite-shm\n"
+            ),
+        );
         write(&paths.cache.join("client-cache.sqlite"), "db");
         write(&old.join("client-cache.sqlite-wal"), "wal");
         write(&old.join("client-cache.sqlite-shm"), "shm");
@@ -698,6 +768,120 @@ mod tests {
         );
         assert!(!carrying_marker(&paths.cache, "client-cache.sqlite").exists());
         assert!(!old.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_set_cut_short_before_it_moved_stays_whole_beside_a_new_database() {
+        let root = scratch("carry-over-db-clash");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        // Recorded, then the process ended before a file moved, and
+        // desktop-qt made its own database since.
+        write(
+            &carrying_marker(&paths.cache, "client-cache.sqlite"),
+            &format!("{CARRYING_HEADER}client-cache.sqlite\nclient-cache.sqlite-wal\n"),
+        );
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        write(&paths.cache.join("client-cache.sqlite"), "qt");
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite")).as_deref(),
+            Some("qt")
+        );
+        assert!(!paths.cache.join("client-cache.sqlite-wal").exists());
+        assert_eq!(
+            read(&old.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert_eq!(
+            read(&old.join("client-cache.sqlite")).as_deref(),
+            Some("db")
+        );
+        assert!(!carrying_marker(&paths.cache, "client-cache.sqlite").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_where_the_record_would_go_is_left_alone() {
+        let root = scratch("carry-over-db-foreign-record");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        let record = carrying_marker(&paths.cache, "client-cache.sqlite");
+        write(&record, "mine");
+        write(&paths.cache.join("notes.carrying"), "also mine");
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        carry_over(&paths);
+        assert_eq!(read(&record).as_deref(), Some("mine"));
+        assert_eq!(
+            read(&paths.cache.join("notes.carrying")).as_deref(),
+            Some("also mine")
+        );
+        // The set waits, together, rather than move unrecorded.
+        assert!(old.join("client-cache.sqlite").exists());
+        assert!(old.join("client-cache.sqlite-wal").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_set_cut_short_before_it_moved_moves_whole_on_the_next_start() {
+        let root = scratch("carry-over-db-unmoved");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        // Recorded, then the process ended before a file moved.
+        write(
+            &carrying_marker(&paths.cache, "client-cache.sqlite"),
+            &format!("{CARRYING_HEADER}client-cache.sqlite\nclient-cache.sqlite-wal\n"),
+        );
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite")).as_deref(),
+            Some("db")
+        );
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert!(!carrying_marker(&paths.cache, "client-cache.sqlite").exists());
+        assert!(!old.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_database_whose_journal_cannot_join_it_is_reported_until_it_does() {
+        let root = scratch("carry-over-db-stranded");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        // The database moved, the process ended, and the journal is stuck.
+        write(
+            &carrying_marker(&paths.cache, "client-cache.sqlite"),
+            &format!("{CARRYING_HEADER}client-cache.sqlite\nclient-cache.sqlite-wal\n"),
+        );
+        write(&paths.cache.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        let stuck_wal = |a: &Path, b: &Path| {
+            if a.ends_with("client-cache.sqlite-wal") {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::rename(a, b)
+            }
+        };
+        let stranded = merge_into(&old, &paths.cache, &stuck_wal);
+        assert_eq!(stranded.len(), 1, "{stranded:?}");
+        assert!(stranded[0].contains("client-cache.sqlite-wal"));
+        assert!(carrying_marker(&paths.cache, "client-cache.sqlite").exists());
+
+        // A later start that can move it joins the set and reports nothing.
+        assert!(carry_over(&paths).is_empty());
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert!(!carrying_marker(&paths.cache, "client-cache.sqlite").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -278,11 +278,24 @@ fn main() -> ExitCode {
     if options.check {
         return check(&options.roots);
     }
-    connect_to(&mut options);
+    if let Err(stranded) = connect_to(&mut options) {
+        for what in stranded {
+            eprintln!("hal-c2-ljos: {what}");
+        }
+        eprintln!(
+            "hal-c2-ljos: not starting, so nothing opens a database without its journal; \
+             move the files named together, or delete them all"
+        );
+        return ExitCode::FAILURE;
+    }
     // A folder named while the app already runs on this home goes to that
     // window, and this launch ends here: no second MC starts, and a
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
-    if !options.folders.is_empty() && single_instance::forward(&options.state_dir, &options.folders)
+    // A launch asked for a picture draws its own window instead.
+    let picture = options.screenshot.is_some() || options.render.is_some();
+    if !picture
+        && !options.folders.is_empty()
+        && single_instance::forward(&options.state_dir, &options.folders)
     {
         return ExitCode::SUCCESS;
     }
@@ -372,7 +385,7 @@ fn check(roots: &Roots) -> ExitCode {
 /// Which MC the shell connects to and where it keeps what it was sent: the
 /// one named, else the one `--pair` pairs with, else the one the desktop
 /// host names (main.cpp's BackendProcess).
-fn connect_to(options: &mut Options) {
+fn connect_to(options: &mut Options) -> Result<(), Vec<String>> {
     // A shell built from source, or one on the development profile, is
     // Dev (StageController), so it is never mistaken for the installed app.
     hal_c2_shell::controllers::stage::set_app_stage(if dev(options) { "Dev" } else { "" });
@@ -383,7 +396,10 @@ fn connect_to(options: &mut Options) {
     };
     let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
     // What an earlier shell kept a level down moves up before anything reads.
-    hal_c2_shell::storage::carry_over(&paths);
+    let stranded = hal_c2_shell::storage::carry_over(&paths);
+    if !stranded.is_empty() {
+        return Err(stranded);
+    }
     // The user's theme, plugins, preferences and shell sit in the config
     // home's `shell`, desktop-qt's too, unless `--config-dir` names another.
     // Made up front so their watchers are live from the start (main.cpp).
@@ -411,6 +427,7 @@ fn connect_to(options: &mut Options) {
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
     options.launch.state_dir = Some(paths.state);
+    Ok(())
 }
 
 /// Spends a `--pair` link on the MC it names; without one, or without
