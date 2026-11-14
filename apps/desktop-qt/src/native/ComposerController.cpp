@@ -942,8 +942,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                          });
   const bool waits =
       m_waitsOffline && fromDraft &&
-      (!connected || uploading || m_outboxHeld.contains(target) ||
-       std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; }));
+      (!connected || uploading || m_outboxHeld.contains(target) || outboxWaits(target));
   // Else nothing leaves while the MC is out of reach: the draft stays as it is.
   if (!connected && !waits) {
     NativeShell::of(this)->controller<ToastController>()->show(
