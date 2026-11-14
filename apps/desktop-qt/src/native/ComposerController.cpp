@@ -508,8 +508,9 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!known || mode == runtimeModeOf(target)) return true;
     m_drafts[target].runtimeMode = mode;
     save();
-    publish();
+    // Shown once it is on its way: an existing thread's pick counts only then (pickedRuntimeMode).
     setThreadMode(target, ModeKind::Runtime, mode);
+    publish();
     return true;
   }
   if (action == QLatin1String("composer.interactionMode.set")) {
@@ -941,8 +942,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                          });
   const bool waits =
       m_waitsOffline && fromDraft &&
-      (!connected || uploading || m_outboxHeld.contains(target) ||
-       std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; }));
+      (!connected || uploading || m_outboxHeld.contains(target) || outboxWaits(target));
   // Else nothing leaves while the MC is out of reach: the draft stays as it is.
   if (!connected && !waits) {
     NativeShell::of(this)->controller<ToastController>()->show(
@@ -1995,6 +1995,14 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 void ComposerController::forgetTakenPicks() {
   bool forgot = false;
   for (auto it = m_own.begin(); it != m_own.end();) {
+    // A send on its way is made past this client's answers when it goes
+    // (`dispatchAll`), after its images are stored and the sends ahead of it
+    // and the answers it waits for are in, so it needs them all, the ones the
+    // row shows too. So does one the outbox sends again (`waitAgain`).
+    if (m_queues.contains(it.key()) || outboxWaits(it.key())) {
+      ++it;
+      continue;
+    }
     const auto thread = m_store->thread(it.key());
     const std::optional<qint64> revision = thread ? thread->selectionRevision : std::nullopt;
     it->removeIf([&](const std::shared_ptr<OwnChange>& change) {
@@ -2019,9 +2027,12 @@ void ComposerController::forgetTakenPicks() {
 
 bool ComposerController::ownAhead(const OwnChange& change, qint64 revision) {
   if (change.answered) return change.revision && *change.revision > revision;
-  // One sent before `revision` may already be in it: the row can beat the
-  // answer, and counting it again would take another client's change for it.
-  return change.sentAt && *change.sentAt >= revision;
+  // Until it answers it may be any revision past the one it went at, even one
+  // the row already shows: a pick made meanwhile waits for the answer rather
+  // than take the revision it names for another client's (#1581). It never
+  // takes another client's change for its own: `nextPick` drops the pick once
+  // more revisions are unaccounted for than its changes still pending.
+  return true;
 }
 
 // The pick moves its base only across revisions this client's own answers
@@ -2066,9 +2077,7 @@ void ComposerController::notePick(const QString& target) {
 }
 
 std::shared_ptr<ComposerController::OwnChange> ComposerController::ownSent(const QString& target) {
-  const auto thread = m_store->thread(target);
   auto change = std::make_shared<OwnChange>();
-  change->sentAt = thread ? thread->selectionRevision : std::nullopt;
   m_own[target].append(change);
   if (auto draft = m_drafts.find(target); draft != m_drafts.end() && draft->modelSelection) draft->pickOwn.append(change);
   return change;
@@ -4305,7 +4314,10 @@ void ComposerController::settleModes() {
 
 bool ComposerController::modeWaits(const QString& target) const {
   if (!m_client->isReady() || !m_store->synchronized() || m_store->snapshots() < m_outboxSince || !m_store->threadOnline(target)) return true;
-  if (m_queues.contains(target)) return true;
+  return m_queues.contains(target) || outboxWaits(target);
+}
+
+bool ComposerController::outboxWaits(const QString& target) const {
   return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; });
 }
 
