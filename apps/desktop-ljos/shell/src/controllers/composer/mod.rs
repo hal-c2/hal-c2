@@ -933,7 +933,14 @@ impl Composer {
                 )
             })
             .collect();
+        let waiting = &self.after_own;
         self.own.retain(|key, changes| {
+            // A send waiting for this client's answers is made past them
+            // once they are in (`dispatch_all`), so it needs them all, the
+            // ones the row shows too.
+            if waiting.contains_key(key) {
+                return true;
+            }
             let revision = revisions.get(key).copied().flatten();
             changes.retain(|change| {
                 let change = change.borrow();
