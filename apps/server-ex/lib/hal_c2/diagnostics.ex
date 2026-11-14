@@ -62,20 +62,22 @@ defmodule HalC2.Diagnostics do
   @doc "`server.signalProcess`: only a process under this MC, and only the one that was seen."
   def signal(%{"pid" => pid, "startTimeMs" => started, "signal" => signal}) do
     result = %{"pid" => pid, "signal" => signal}
+    # The contract's two signals only: the name reaches `kill` as its flag.
+    name =
+      if is_binary(signal), do: signal |> String.trim() |> String.trim_leading("SIG"), else: ""
 
     with {:ok, rows} <- tree(os_pid()),
          %{started: seen} <- Enum.find(rows, &(&1.pid == pid)) || :not_ours,
          true <- pid != os_pid() || :server,
          true <- abs(seen - started) < 2_000 || :replaced,
-         {_, 0} <-
-           System.cmd("kill", ["-#{String.trim_leading(signal, "SIG")}", "#{pid}"],
-             stderr_to_stdout: true
-           ) do
+         true <- name in ["INT", "KILL"] || :bad_signal,
+         {_, 0} <- System.cmd("kill", ["-#{name}", "#{pid}"], stderr_to_stdout: true) do
       {:ok, Map.merge(result, %{"signaled" => true, "message" => none()})}
     else
       reason ->
         message =
           case reason do
+            :bad_signal -> "Only SIGINT and SIGKILL can be sent from here."
             :not_ours -> "That process is not one this MC started."
             :server -> "The MC itself cannot be signalled from here."
             :replaced -> "That process has already exited."
@@ -635,10 +637,24 @@ defmodule HalC2.Diagnostics do
       ~r/(authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token)?\s*)[^\s"',\}]+/i,
       "\\1[REDACTED]"
     )
-    |> String.replace(~r/\bbearer\s+[^\s"',\}]+/i, "Bearer [REDACTED]")
     |> String.replace(
-      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*["']?)[^\s"',\}]+/i,
+      ~r/((?<!\S)--authorization\s+["']?(?:(?:bearer|basic|token)\s+)?)(?!-)[^\s"',\}]+/i,
+      "\\1[REDACTED]"
+    )
+    |> String.replace(~r/\bbearer\s+[^\s"',\}]+/i, "Bearer [REDACTED]")
+    # `ps` joins argv with spaces, so an unquoted value (`--password correct
+    # horse`) runs to the next option or the end: over-masking is the safe side.
+    |> String.replace(
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*["'])[^"']*/i,
       "\\1\\2[REDACTED]"
+    )
+    |> String.replace(
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*)(?!["']|\[REDACTED\](?:\s+--?[A-Za-z]|\z)).*?(?=\s+--?[A-Za-z]|\z)/i,
+      "\\1\\2[REDACTED]"
+    )
+    |> String.replace(
+      ~r/((?<!\S)--(?:token|password|passwd|api[-_]?key|api[-_]?token)\s+["']?)(?!-|\[REDACTED\](?:\s+--?[A-Za-z]|\z)).*?(?=\s+--?[A-Za-z]|\z)/i,
+      "\\1[REDACTED]"
     )
   end
 

@@ -74,6 +74,8 @@ defmodule HalC2.MixProject do
       {:exqlite, "~> 0.41"},
       # The OpenShell gateway's gRPC API (HalC2.OpenShell.Client), over Mint with mTLS.
       {:grpc, "~> 1.0"},
+      # Web Push delivery (HalC2.Push.WebPush), connecting to the address it vetted.
+      {:mint, "~> 1.11"},
       {:mint_web_socket, "~> 1.0"},
       # The security ratchet in CI (`mix deps.audit`, `mix sobelow.check`), never
       # compiled into a release.

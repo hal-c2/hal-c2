@@ -217,7 +217,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Examples:
       | situation                                          | code                |
       | "caller" already works in a worktree               | already_in_worktree |
-      | "caller" is archived                               | invalid_request     |
+      | "caller" is archived                               | parent_not_active   |
       | the requested path is relative                     | invalid_request     |
       | the project folder is not a git repository          | invalid_request     |
       | branch "feature/x" already exists                  | invalid_request     |

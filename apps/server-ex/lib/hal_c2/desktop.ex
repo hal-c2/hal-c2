@@ -33,8 +33,10 @@ defmodule HalC2.Desktop do
     if port = bootstrap["port"], do: Application.put_env(:hal_c2, :port, port)
     if host = bootstrap["host"], do: Application.put_env(:hal_c2, :host, host)
 
-    if token = bootstrap["desktopBootstrapToken"],
-      do: Application.put_env(:hal_c2, :desktop_token, token)
+    if token = bootstrap["desktopBootstrapToken"] do
+      Application.put_env(:hal_c2, :desktop_token, token)
+      Application.put_env(:hal_c2, :desktop_token_expires_at, HalC2.Auth.now() + :timer.hours(24))
+    end
 
     :ok
   end

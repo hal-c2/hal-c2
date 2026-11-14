@@ -67,6 +67,32 @@ defmodule HalC2.UpgradeTest do
              Upgrade.plan(bundle(dir, running), nil)
   end
 
+  test "moving to an older version needs allowDowngrade", %{tmp_dir: dir} do
+    System.put_env("RELEASE_ROOT", dir)
+    :persistent_term.put({Upgrade, :version}, "1.2.0")
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+    end)
+
+    start_supervised!(Upgrade)
+
+    assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => "1.1.0"})
+    assert reason =~ "allowDowngrade"
+
+    # A bundle on this machine (`--release`) moves back only with the operator's consent.
+    bundle = Path.join(dir, "older.tar.gz")
+    File.write!(bundle, "")
+    assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0")
+    assert reason =~ "allowDowngrade"
+    # Refused before any member is asked, so the bundle never reached the cache they
+    # take it from.
+    refute File.exists?(HalC2.Upgrade.Source.cache_dir("1.1.0"))
+    assert {:error, %{"reason" => reason}} = Upgrade.update_from(bundle, "1.1.0", true)
+    refute reason =~ "allowDowngrade"
+  end
+
   test "an MC run from a checkout does not install versions" do
     start_supervised!(Upgrade)
 
@@ -143,7 +169,11 @@ defmodule HalC2.UpgradeTest do
     start_supervised!(Upgrade)
     assert_receive {:prune_blocked, prune_pid}
 
-    caller = Task.async(fn -> Upgrade.update(%{"targetVersion" => "1.1.0"}, me) end)
+    caller =
+      Task.async(fn ->
+        Upgrade.update(%{"targetVersion" => "1.1.0", "allowDowngrade" => true}, me)
+      end)
+
     refute_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}, 200
     assert File.dir?(Source.cache_dir("1.1.0"))
 
@@ -640,6 +670,41 @@ defmodule HalC2.UpgradeTest do
     assert reason =~ "access-token"
   end
 
+  # An MC from before the local proof answers it 404, as any unknown path: it is
+  # pointed at the build just made, in the home it runs from, not told no MC runs.
+  test "an installed MC from before the local proof is told to install this build" do
+    bundle = "/build/hal-c2-mc-2.0.0-linux-x64.tar.gz"
+
+    for {home, command} <- [
+          {{:root, "/srv/hal-c2"},
+           "`HAL_C2_HOME='/srv/hal-c2' '/build/hal-c2-mc-2.0.0-linux-x64' install`"},
+          {{:mc, "/srv/my MC's"},
+           ~S(`HAL_C2_MC_HOME='/srv/my MC'\''s' '/build/hal-c2-mc-2.0.0-linux-x64' install`)},
+          {nil, "`'/build/hal-c2-mc-2.0.0-linux-x64' install`"}
+        ] do
+      base = "http://127.0.0.1:#{answering_404()}"
+
+      assert {:error, message} = Mix.Tasks.HalC2.Upgrade.proved(base, "token", bundle, home)
+      assert message =~ "predates the proof"
+      assert String.ends_with?(message, command), message
+    end
+  end
+
+  # A listener answering one request 404, as an MC without the route does.
+  defp answering_404 do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+
+    spawn_link(fn ->
+      {:ok, socket} = :gen_tcp.accept(listen)
+      {:ok, _request} = :gen_tcp.recv(socket, 0, 5_000)
+      :gen_tcp.send(socket, "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+      :gen_tcp.close(socket)
+    end)
+
+    port
+  end
+
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, one
     # per followed stream, and one id per followed terminal.
@@ -661,7 +726,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 11
+    assert state.v == 12
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -687,6 +752,40 @@ defmodule HalC2.UpgradeTest do
              )
 
     assert %{"t" => "terminal", "id" => 3} = JSON.decode!(IO.iodata_to_binary(frame))
+  end
+
+  # A socket opened before sessions were rechecked on a timer starts the timer as it
+  # migrates, so one that only listens to its subscriptions still loses a revoked session.
+  test "a v11 socket with a session starts its session recheck" do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    state = %{
+      v: 11,
+      session: "sess-old",
+      scopes: :all,
+      subs: %{1 => {:config, node()}},
+      by_stream: %{},
+      by_terminal: %{{:settings, node()} => %{1 => nil}},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    assert {:push, _, migrated} =
+             HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
+
+    assert migrated.v == 12
+    assert_receive :recheck_session, 1_000
+
+    refute_received :recheck_session
+
+    assert {:push, _, %{v: 12}} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_keybindings, node(), []},
+               %{state | session: nil}
+             )
+
+    refute_receive :recheck_session, 200
   end
 
   test "a v6 socket's terminal subscription migrates to per-subscription state" do
@@ -715,7 +814,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 11
+    assert migrated.v == 12
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
@@ -806,11 +905,11 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v11, so the returned state is that migration
+    # v7 state is first migrated to v12, so the returned state is that migration
     # (less `opened_at`, the clock at migration).
     migrated =
       Map.merge(state, %{
-        v: 11,
+        v: 12,
         terminals: %{},
         lost: %{},
         terminal_windows: %{},

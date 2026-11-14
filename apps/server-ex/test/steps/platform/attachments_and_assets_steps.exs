@@ -83,8 +83,15 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   defp token(url),
     do: url |> String.replace_prefix("/api/assets/", "") |> String.split("/") |> hd()
 
+  # A file on the host, outside the MC's directories, whose files are never served.
+  defp host_dir(context) do
+    dir = Mc.Host.path(context, "/tmp/host-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    dir
+  end
+
   defp host_file(context, name, bytes) do
-    path = Path.join(Mc.tmp_dir(context.mc, "host"), name)
+    path = Path.join(host_dir(context), name)
     File.write!(path, bytes)
     path
   end
@@ -144,7 +151,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
       {%{
          "_tag" => "media-file",
          "threadId" => thread(context),
-         "path" => Path.join(Mc.tmp_dir(context.mc, "host"), "gone.png")
+         "path" => Path.join(host_dir(context), "gone.png")
        }, nil}
 
   defp resource(_context, "a project the MC does not know"),
@@ -778,8 +785,10 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   step "an asset URL issued by another member", context do
     {mc, peer} = Mc.cluster(context.mc)
     bytes = png(3 * HalC2.Attachments.chunk_bytes() + 117)
-    path = Path.join(peer.home, "peer-chart.png")
-    File.mkdir_p!(peer.home)
+    # Beside the peer's home: the MC serves no file inside its own directories.
+    dir = peer.home <> "-fs"
+    path = Path.join(dir, "peer-chart.png")
+    File.mkdir_p!(dir)
     File.write!(path, bytes)
 
     resource = %{"_tag" => "media-file", "threadId" => "th-peer", "path" => path}

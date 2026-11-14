@@ -26,7 +26,9 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Auth handle_cast {:connected, _, _, _}" => ~w(registerLive registerGone),
       "HalC2.Auth handle_call {:revoke_client, _}" =>
         ~w(revokeStart revokeRows revokeRowsNone revokeTicket revokeTicketsDone revokeClose revokeDone),
-      "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => "socketCloses"
+      "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => "socketCloses",
+      # The socket's own re-read of a session revoked outside the MC (the auth CLI).
+      "HalC2.Web.Socket handle_info :recheck_session" => ~w(readFull readNone)
     },
     abstracts: %{
       "HalC2.Auth.session_subject/1" =>
