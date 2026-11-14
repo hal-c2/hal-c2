@@ -291,8 +291,15 @@ fn main() -> ExitCode {
     // A folder named while the app already runs on this home goes to that
     // window, and this launch ends here: no second MC starts, and a
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
-    // A launch asked for a picture draws its own window instead.
+    // A launch asked for a picture draws its own window instead, of the MC
+    // as it is: it adds no projects and starts no threads.
     let picture = options.screenshot.is_some() || options.render.is_some();
+    if picture && !options.folders.is_empty() {
+        eprintln!(
+            "hal-c2-ljos: a picture opens no folders, so not {}",
+            options.folders.join(", ")
+        );
+    }
     if !picture
         && !options.folders.is_empty()
         && single_instance::forward(&options.state_dir, &options.folders)
