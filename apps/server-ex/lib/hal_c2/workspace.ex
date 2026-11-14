@@ -17,6 +17,12 @@ defmodule HalC2.Workspace do
   needs `terminal:operate` for it. A relative write whose canonical root is not a
   registered project or worktree needs that scope too (`HalC2.Rpc.required_scope/2`).
   Nothing here ties the path to the thread.
+
+  The MC's own directories are the one exception to host-wide reads: they hold the
+  credentials every scope is checked against (`access-token`, `secrets/`, the
+  cluster key, the databases), so no client file RPC reads, lists, searches or
+  writes inside them at any scope (`mc_protected?/1`). Thread worktrees live under
+  the data directory and stay usable.
   """
 
   use GenServer
@@ -157,7 +163,9 @@ defmodule HalC2.Workspace do
 
   defp read_target(root, relative, error) do
     if Path.type(relative) == :absolute do
-      {:ok, real(relative), relative}
+      if mc_protected?(relative),
+        do: error.("workspace_path_outside_root", "'#{relative}' is outside the workspace."),
+        else: {:ok, real(relative), relative}
     else
       with {:ok, path} <- inside_file(root, relative, error),
            do: {:ok, path, normalize(relative)}
@@ -195,8 +203,12 @@ defmodule HalC2.Workspace do
 
   defp write_target(root, relative, error) do
     if Path.type(relative) == :absolute do
-      with {:ok, path} <- existing_text(real(relative), relative, error),
-           do: {:ok, path, relative}
+      if mc_protected?(relative) do
+        error.("workspace_path_outside_root", "'#{relative}' is outside the workspace.")
+      else
+        with {:ok, path} <- existing_text(real(relative), relative, error),
+             do: {:ok, path, relative}
+      end
     else
       with {:ok, path} <- inside_file(root, relative, error),
            :ok <- mkdir(Path.dirname(path), error),
@@ -243,14 +255,14 @@ defmodule HalC2.Workspace do
 
       case grep(root, query, regex, input) do
         {:ok, matches, truncated} ->
-          {:ok, %{"matches" => matches, "truncated" => truncated}}
+          {:ok, %{"matches" => drop_protected(matches, root), "truncated" => truncated}}
 
         # A regex that does not compile is searched for literally.
         {:regex_error, message} ->
           with {:ok, matches, truncated} <- grep(root, query, false, input) do
             {:ok,
              %{
-               "matches" => matches,
+               "matches" => drop_protected(matches, root),
                "truncated" => truncated,
                "regexFallbackError" => message
              }}
@@ -260,6 +272,14 @@ defmodule HalC2.Workspace do
           entries_error("ProjectSearchContentsError", cwd, "search_index_search_failed", message)
       end
     end
+  end
+
+  defp drop_protected(matches, root) do
+    ctx = protection()
+
+    if overlaps_protected?(root, ctx),
+      do: Enum.reject(matches, &protected_with?(real(Path.join(root, &1["path"])), ctx)),
+      else: matches
   end
 
   @doc "A path under `root` that stays under it once symlinks resolve (asset URLs)."
@@ -298,6 +318,15 @@ defmodule HalC2.Workspace do
       end
 
     files = Enum.reject(files, &String.starts_with?(&1, ".git/"))
+
+    # Names only here (reads re-check resolved paths), so the lexical path
+    # decides: no per-file symlink walk over a whole checkout.
+    ctx = protection()
+
+    files =
+      if overlaps_protected?(root, ctx),
+        do: Enum.reject(files, &protected_with?(Path.expand(Path.join(root, &1)), ctx)),
+        else: files
 
     directories =
       files
@@ -653,7 +682,15 @@ defmodule HalC2.Workspace do
 
     case File.stat(root) do
       {:ok, %File.Stat{type: :directory}} ->
-        {:ok, root}
+        if mc_protected?(root),
+          do:
+            entries_error(
+              tag,
+              cwd,
+              "workspace_root_not_found",
+              "'#{cwd}' does not exist."
+            ),
+          else: {:ok, root}
 
       {:ok, _} ->
         entries_error(tag, cwd, "workspace_root_not_directory", "'#{cwd}' is not a folder.")
@@ -661,6 +698,93 @@ defmodule HalC2.Workspace do
       {:error, _} ->
         entries_error(tag, cwd, "workspace_root_not_found", "'#{cwd}' does not exist.")
     end
+  end
+
+  @doc """
+  Whether client file access may never reach `path`: it resolves to one of
+  the MC's credential files, or inside the MC's own directories (or a legacy
+  home). Thread worktrees under the data directory stay usable, and a project
+  the user registered inside an MC directory (the plain-directory layout tests
+  run in) keeps its own files — its credential neighbours stay blocked either
+  way. A project that contains an MC directory does not open it up.
+  """
+  def mc_protected?(path) when is_binary(path),
+    do: protected_with?(real(path), protection())
+
+  def mc_protected?(_path), do: false
+
+  @doc "Whether `path` is an MC directory itself, or inside its credential files."
+  def mc_own_dir?(path) when is_binary(path) do
+    ctx = protection()
+    resolved = real(path)
+    resolved in ctx.roots or hard_with?(resolved, ctx)
+  end
+
+  def mc_own_dir?(_path), do: false
+
+  @doc "Whether `path` resolves to the MC's credential material itself."
+  def mc_credential?(path) when is_binary(path), do: hard_with?(real(path), protection())
+  def mc_credential?(_path), do: false
+
+  # The roots the checks below compare against, resolved once: a scan or a
+  # search filters many files against one of these, never re-resolving the
+  # MC's or the registered projects' roots per file.
+  defp protection do
+    legacy =
+      for name <- HalC2.Paths.legacy_names(),
+          do: real(Path.join(HalC2.Paths.user_home(), name))
+
+    %{
+      roots: Enum.uniq(Enum.map(Map.values(HalC2.Paths.dirs()), &real/1) ++ legacy),
+      legacy: legacy,
+      data: real(HalC2.Paths.data_dir()),
+      worktrees: real(Path.join(HalC2.Paths.data_dir(), "worktrees")),
+      registered: registered_roots()
+    }
+  end
+
+  defp protected_with?(resolved, ctx) do
+    cond do
+      within?(ctx.worktrees, resolved) -> false
+      hard_with?(resolved, ctx) -> true
+      not Enum.any?(ctx.roots, &within?(&1, resolved)) -> false
+      registered_inside_mc?(resolved, ctx) -> false
+      true -> true
+    end
+  end
+
+  # A project registered inside an MC directory keeps its own files there; one
+  # that merely contains an MC directory (a project at the user's home) does not
+  # open that directory up.
+  defp registered_inside_mc?(resolved, ctx) do
+    Enum.any?(ctx.registered, fn project ->
+      within?(project, resolved) and
+        Enum.any?(ctx.roots, &(within?(&1, project) and within?(&1, resolved)))
+    end)
+  end
+
+  # The credential material itself: blocked even inside a registered project
+  # that happens to contain the MC's directories.
+  defp hard_with?(resolved, ctx) do
+    resolved == Path.join(ctx.data, "access-token") or
+      within?(Path.join(ctx.data, "secrets"), resolved) or
+      within?(Path.join(ctx.data, "cluster"), resolved) or
+      Enum.any?(ctx.legacy, &within?(&1, resolved)) or
+      (Path.dirname(resolved) in ctx.roots and
+         String.contains?(Path.basename(resolved), ".sqlite"))
+  end
+
+  defp registered_roots do
+    Enum.map(HalC2.Projects.roots(), &canonical_root/1)
+  catch
+    :exit, _ -> []
+  end
+
+  # Whether any protected root overlaps `root` (inside it, or containing it):
+  # the only case where per-file filtering of a scan or search can bite.
+  defp overlaps_protected?(root, ctx) do
+    resolved = real(root)
+    Enum.any?(ctx.roots, &(within?(resolved, &1) or within?(&1, resolved)))
   end
 
   # A path under the root, which must stay under it once symlinks resolve.
@@ -673,6 +797,9 @@ defmodule HalC2.Workspace do
 
       not within?(real(root), real(Path.join(root, relative))) ->
         error.("resolved_path_outside_root", "'#{relative}' resolves outside the workspace.")
+
+      mc_protected?(Path.join(root, relative)) ->
+        error.("workspace_path_outside_root", "'#{relative}' is outside the workspace.")
 
       true ->
         {:ok, Path.join(root, relative)}

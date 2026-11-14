@@ -45,6 +45,11 @@ defmodule HalC2.WorkspaceWritePropTest do
 
   defp start_case do
     dir = HalC2.Prop.scratch_home("workspace-write")
+    # The MC keeps writes out of its own directories, so they sit beside the folders
+    # the case writes to rather than around them.
+    home = Path.join(dir, "mc")
+    File.mkdir_p!(home)
+    HalC2.Prop.put_env(:home, home)
     root = Path.join(dir, "project")
     outside = Path.join(dir, "outside")
     File.mkdir_p!(root)
@@ -55,7 +60,7 @@ defmodule HalC2.WorkspaceWritePropTest do
     Process.put(:outside, outside)
 
     HalC2.Prop.start_services([
-      {HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")},
+      {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
       HalC2.Streams,
       HalC2.Shell,
       HalC2.Workspace

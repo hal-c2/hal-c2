@@ -17,7 +17,7 @@ defmodule HalC2.ClusterMembersTest do
     )
   end
 
-  test "a removal outlives an older admission and yields to a newer one" do
+  test "a removal outlives admissions that have not seen it and yields to an authorized rejoin" do
     admitted = %{"b" => entry(admittedAt: 1)}
     removed = %{"b" => entry(removedAt: 5, updatedAt: 5)}
 
@@ -26,8 +26,15 @@ defmodule HalC2.ClusterMembersTest do
     # A member that was away and still has the old admission does not undo it.
     refute Cluster.member?(Cluster.merge(removed, admitted, "a")["b"])
 
-    readmitted = Cluster.merge(merged, %{"b" => entry(admittedAt: 9, updatedAt: 9)}, "a")
+    # A timestamp alone does not authorize a rejoin: the admission must carry the removal
+    # it answers, as the local join path stamps it.
+    stale = %{"b" => entry(admittedAt: 9, updatedAt: 9)}
+    refute Cluster.member?(Cluster.merge(merged, stale, "a")["b"])
+
+    readmission = %{"b" => entry(admittedAt: 9, removedAt: 5, updatedAt: 9)}
+    readmitted = Cluster.merge(merged, readmission, "a")
     assert Cluster.member?(readmitted["b"])
+    assert Cluster.merge(readmission, removed, "a") == readmitted
   end
 
   test "a removal after an admission outranks it when the admitting clock ran ahead" do
@@ -43,8 +50,31 @@ defmodule HalC2.ClusterMembersTest do
     # Admitting it again, after seeing the removal, outranks that in turn.
     readmitted_at = Cluster.stamp(removal)
     assert readmitted_at > removed_at
-    readmission = %{"b" => entry(admittedAt: readmitted_at, updatedAt: readmitted_at)}
+
+    readmission = %{
+      "b" => entry(admittedAt: readmitted_at, removedAt: removed_at, updatedAt: readmitted_at)
+    }
+
     assert Cluster.member?(Cluster.merge(removal, readmission, "a")["b"])
+  end
+
+  test "a partitioned member's far-future admission cannot undo a removal on heal" do
+    # A removed R at 5 while partitioned from B. B still pins R and has its admission
+    # from a clock far ahead; neither B nor R has seen A's removal.
+    a = %{"r" => entry(admittedAt: 1, removedAt: 5, updatedAt: 5)}
+    b = %{"r" => entry(admittedAt: 9, updatedAt: 9)}
+    assert Cluster.member?(b["r"])
+
+    healed = Cluster.merge(a, b, "a")
+    refute Cluster.member?(healed["r"])
+    assert Cluster.merge(b, a, "b") == healed
+
+    # A fresh invite admitted after seeing the tombstone carries it, so the rejoin also
+    # takes effect on B when its next gossip arrives.
+    rejoin = %{"r" => entry(admittedAt: 10, removedAt: 5, updatedAt: 10)}
+    readmitted = Cluster.merge(healed, rejoin, "a")
+    assert Cluster.member?(readmitted["r"])
+    assert Cluster.merge(b, readmitted, "b") == readmitted
   end
 
   test "the entry updated last carries the label and addresses" do

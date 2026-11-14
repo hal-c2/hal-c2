@@ -8,12 +8,18 @@ defmodule HalC2.AttachmentsTest do
   @moduletag :tmp_dir
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3>>
 
+  # The MC home is a folder of its own: media and checkouts sit beside it, as on
+  # a real machine, since nothing inside the MC's directories is served.
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, dir)
+    home = Path.join(dir, "mc")
+    File.mkdir_p!(home)
+    Application.put_env(:hal_c2, :home, home)
     :persistent_term.erase({Attachments, :secret})
     on_exit(fn -> :persistent_term.erase({Attachments, :secret}) end)
     :ok
   end
+
+  defp files, do: Path.dirname(Application.fetch_env!(:hal_c2, :home))
 
   defp upload(bytes \\ @png) do
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
@@ -182,7 +188,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "media URLs serve only media files" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     File.write!(Path.join(dir, "clip.mp4"), "video")
     File.write!(Path.join(dir, "notes.txt"), "text")
 
@@ -206,7 +212,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "media URLs serve audio files" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
 
     for {name, type} <- [
           {"theme.mp3", "audio/mpeg"},
@@ -235,7 +241,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "a large local response is delivered in bounded chunks" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     chunk = Attachments.chunk_bytes()
     bytes = :crypto.strong_rand_bytes(3 * chunk + 417)
     path = Path.join(dir, "large.mp4")
@@ -254,7 +260,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "full, ranged, open-ended and malformed requests keep their bytes and headers" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     bytes = :crypto.strong_rand_bytes(200_000)
     size = byte_size(bytes)
     path = Path.join(dir, "ranges.mp4")
@@ -299,7 +305,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "a file cut short while it streams ends in an error, not a complete body" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     path = Path.join(dir, "cut.mp4")
     File.write!(path, :crypto.strong_rand_bytes(3 * Attachments.chunk_bytes()))
 
@@ -313,7 +319,7 @@ defmodule HalC2.AttachmentsTest do
   end
 
   test "a media path swapped before open fails its descriptor identity check" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     path = Path.join(dir, "swap.mp4")
     secret = Path.join(dir, "secret.txt")
     File.write!(path, "signed video")
@@ -326,8 +332,128 @@ defmodule HalC2.AttachmentsTest do
     assert {:error, 404, "The file is gone."} = Attachments.serve(token)
   end
 
+  test "a link named like media to another file is not signed" do
+    dir = files()
+    secret = Path.join(dir, "secret.txt")
+    File.write!(secret, "private target")
+    link = Path.join(dir, "looks.png")
+    File.ln_s!(secret, link)
+
+    assert {:error, %{"_tag" => "AssetPreviewTypeValidationError"}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "media-file", "threadId" => "t", "path" => link}
+             })
+  end
+
+  test "nothing in the MC's directories is signed as media or as a project's icon" do
+    home = Application.fetch_env!(:hal_c2, :home)
+    File.write!(Path.join(home, "access-token"), "master-token\n")
+    File.write!(Path.join(home, "shot.png"), @png)
+
+    assert {:error, %{"_tag" => "AssetWorkspaceResolutionError"}} =
+             Attachments.create_url(%{
+               "resource" => %{
+                 "_tag" => "media-file",
+                 "threadId" => "t",
+                 "path" => Path.join(home, "shot.png")
+               }
+             })
+
+    # Except the browser preview's captures, which the MC keeps there to show.
+    capture = Path.join(HalC2.Mcp.Preview.artifacts_dir(), "browser-screenshot-1.png")
+    File.mkdir_p!(Path.dirname(capture))
+    File.write!(capture, @png)
+
+    assert {:ok, %{"relativeUrl" => _}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "media-file", "threadId" => "t", "path" => capture}
+             })
+
+    # A saved icon path may point anywhere, so a link named like an image is
+    # judged by the token it leads to.
+    checkout = Path.join(files(), "checkout")
+    File.mkdir_p!(checkout)
+    link = Path.join(files(), "looks.png")
+    File.ln_s!(Path.join(home, "access-token"), link)
+
+    start_supervised!({HalC2.Store, path: Path.join(files(), "projects.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+    :ok = HalC2.Shell.subscribe(self())
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "p1",
+        "workspaceRoot" => checkout
+      })
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 1_000
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => "p1",
+        "faviconPath" => link
+      })
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {_, %{"faviconPath" => ^link}}}]}}, 1_000
+
+    assert {:error, %{"_tag" => "AssetPreviewTypeValidationError"}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "project-favicon", "cwd" => checkout}
+             })
+
+    # A real image there is served, from where it resolves.
+    File.rm!(link)
+    File.write!(link, @png)
+
+    assert {:ok, %{"relativeUrl" => _}} =
+             Attachments.create_url(%{
+               "resource" => %{"_tag" => "project-favicon", "cwd" => checkout}
+             })
+  end
+
+  test "a workspace file swapped after signing is not served" do
+    dir = files()
+    # A checkout beside the MC's home, as projects on a real machine are.
+    root = Path.expand("../checkout-outside", dir)
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf(root) end)
+    path = Path.join(root, "notes.txt")
+    File.write!(path, "signed notes")
+    secret = Path.join(dir, "secret.txt")
+    File.write!(secret, "private target")
+
+    {:ok, %{"relativeUrl" => url}} =
+      Attachments.create_url(%{
+        "resource" => %{
+          "_tag" => "draft-workspace-file",
+          "cwd" => root,
+          "path" => "notes.txt"
+        }
+      })
+
+    File.rm!(path)
+    File.ln_s!(secret, path)
+
+    assert {:error, 404, "The file is gone."} = Attachments.serve(asset_token(url))
+  end
+
+  test "an HTML media file is served sandboxed, never sniffed into place" do
+    dir = files()
+    path = Path.join(dir, "page.html")
+    File.write!(path, "<script>alert(1)</script>")
+
+    assert {:ok, 200, headers, stream} = Attachments.serve(asset_token(media_url(path)))
+    assert {"x-content-type-options", "nosniff"} in headers
+    assert {"content-security-policy", csp} = List.keyfind(headers, "content-security-policy", 0)
+    assert csp =~ "sandbox"
+    assert {:ok, "<script>alert(1)</script>", _chunks} = collect_stream(stream)
+  end
+
   test "a media path swapped after open still serves only the signed inode" do
-    dir = Application.fetch_env!(:hal_c2, :home)
+    dir = files()
     path = Path.join(dir, "open.mp4")
     secret = Path.join(dir, "secret.txt")
     bytes = :crypto.strong_rand_bytes(Attachments.chunk_bytes() + 31)

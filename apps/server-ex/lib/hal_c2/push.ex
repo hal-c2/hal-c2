@@ -87,12 +87,26 @@ defmodule HalC2.Push do
 
   defp check_endpoint(endpoint) do
     case URI.parse(endpoint) do
-      %URI{scheme: scheme, host: host}
-      when scheme in ["http", "https"] and host not in [nil, ""] ->
-        :ok
+      %URI{scheme: "https", host: host} when is_binary(host) and host != "" ->
+        if public_host?(host), do: :ok, else: {:error, "endpoint must be a public https URL"}
 
       _ ->
-        {:error, "endpoint must be an http or https URL"}
+        {:error, "endpoint must be a public https URL"}
+    end
+  end
+
+  # The literal host; `WebPush.post/3` checks what it resolves to as it sends.
+  defp public_host?(host) do
+    host = host |> String.downcase() |> String.trim_trailing(".")
+
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, address} ->
+        WebPush.public_address?(address)
+
+      {:error, _} ->
+        Regex.match?(~r/^[a-z0-9.-]+$/, host) and
+          host != "metadata.google.internal" and
+          host != "localhost" and not String.ends_with?(host, ".localhost")
     end
   end
 
@@ -183,16 +197,20 @@ defmodule HalC2.Push do
     {:ok, %{state | seen: seen}}
   end
 
-  # Registrations of sessions revoked while the MC was down are deleted, not kept.
+  # Registrations of sessions revoked while the MC was down, and ones saved
+  # before the endpoint rules (an http or private host), are deleted, not kept.
   defp load do
     if Process.whereis(HalC2.Store) do
-      {valid, revoked} =
+      {valid, dropped} =
         HalC2.Store.metas(HalC2.Store.path(), @prefix)
-        |> Enum.map(fn {@prefix <> session, json} -> {session, json} end)
-        |> Enum.split_with(fn {session, _} -> valid_session?(session) end)
+        |> Enum.map(fn {@prefix <> session, json} -> {session, JSON.decode!(json)} end)
+        |> Enum.split_with(fn {session, registration} ->
+          valid_session?(session) and is_binary(registration["endpoint"]) and
+            check_endpoint(registration["endpoint"]) == :ok
+        end)
 
-      for {session, _} <- revoked, do: unpersist(session)
-      Map.new(valid, fn {session, json} -> {session, JSON.decode!(json)} end)
+      for {session, _} <- dropped, do: unpersist(session)
+      Map.new(valid)
     else
       %{}
     end

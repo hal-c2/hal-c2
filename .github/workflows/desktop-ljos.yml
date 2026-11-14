@@ -218,9 +218,10 @@ jobs:
       # dbus-daemon: the notification tests start a session bus of their own.
       # mesa-vulkan-drivers: a software Vulkan, for the tests that render.
       # fonts-dejavu-core: the runner's text needs a font to lay out.
+      # fonts-liberation: the theme test's fixed-pitch and proportional pair.
       - name: Install test packages
         run: |
-          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core
+          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
 
       - uses: Swatinem/rust-cache@v2
         with:

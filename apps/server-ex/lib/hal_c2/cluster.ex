@@ -305,14 +305,14 @@ defmodule HalC2.Cluster do
   def detail(_reason), do: %{}
 
   @doc """
-  Merges member tables: for each id, the latest `admittedAt` and `removedAt`, and the
-  fingerprint, label and addresses of the entry updated last. Only this machine speaks
-  for itself: an entry for `own_id` in `incoming` changes nothing in its own, but one
-  that says something else and was updated no earlier (an admission stamped by a
-  member whose clock runs ahead) has its own entry stamped after it, or that copy
-  would outrank every change this machine makes until its clock catches up. One that
-  says the same and was updated later lends its own entry that time, so the next
-  change (`stamp/1`) is stamped after the copy too.
+  Merges member tables: for each id, the latest removal and the latest admission from
+  entries that carry that removal, plus the fingerprint, label and addresses of the
+  entry updated last. Only this machine speaks for itself: an entry for `own_id` in
+  `incoming` changes nothing in its own, but one that says something else and was
+  updated no earlier (an admission stamped by a member whose clock runs ahead) has its
+  own entry stamped after it, or that copy would outrank every change this machine
+  makes until its clock catches up. One that says the same and was updated later lends
+  its own entry that time, so the next change (`stamp/1`) is stamped after the copy too.
   """
   def merge(local, incoming, own_id) do
     Enum.reduce(incoming, local, fn
@@ -348,9 +348,19 @@ defmodule HalC2.Cluster do
         do: theirs,
         else: ours
 
+    removed = max_time(ours["removedAt"], theirs["removedAt"])
+
+    # An admission from before the newest removal was seen cannot undo it. A fresh local
+    # admission carries that removal (`put_admission/2`), so a deliberate rejoin does.
+    admitted =
+      [ours, theirs]
+      |> Enum.filter(&(removal_time(&1["removedAt"]) == removal_time(removed)))
+      |> Enum.map(& &1["admittedAt"])
+      |> Enum.max()
+
     Map.merge(newer, %{
-      "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
-      "removedAt" => max_time(ours["removedAt"], theirs["removedAt"]),
+      "admittedAt" => admitted,
+      "removedAt" => removed,
       "offAt" => max_time(ours["offAt"], theirs["offAt"])
     })
   end
@@ -360,6 +370,9 @@ defmodule HalC2.Cluster do
   defp max_time(nil, b), do: b
   defp max_time(a, nil), do: a
   defp max_time(a, b), do: max(a, b)
+
+  defp removal_time(nil), do: 0
+  defp removal_time(time), do: time
 
   defp sanitize(%{"fingerprint" => fp, "admittedAt" => admitted, "updatedAt" => updated} = entry)
        when is_binary(fp) and is_integer(admitted) and is_integer(updated) do
@@ -726,7 +739,9 @@ defmodule HalC2.Cluster do
       "addresses" => entry["addresses"],
       "version" => entry["version"],
       "admittedAt" => now,
-      "removedAt" => nil,
+      # This authorized admission has seen the removal it answers. Carrying the tombstone
+      # lets the other members tell it from a partitioned copy that has not.
+      "removedAt" => get_in(state.members, [id, "removedAt"]),
       "updatedAt" => now
     }
 

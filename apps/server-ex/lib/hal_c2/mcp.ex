@@ -335,13 +335,36 @@ defmodule HalC2.Mcp do
   end
 
   @doc """
-  Ends one MCP session (an `initialize` answer's `mcp-session-id`), as a
-  `DELETE /mcp` or a closed MCP-over-ACP connection does. A session this MC
-  no longer has is not an error.
+  Ends one MCP session (an `initialize` answer's `mcp-session-id`) for the
+  credential `authorization` carries, as a `DELETE /mcp` does. Only the
+  credential that opened a session may end it; a session this MC no longer
+  has is not an error.
   """
-  def end_session(session_id) do
-    if :ets.whereis(@sessions) != :undefined, do: :ets.delete(@sessions, session_id)
-    :ok
+  def end_session(authorization, session_id) do
+    with {:ok, token} <- mcp_bearer(authorization),
+         [{_, caller, last_alive}] <- :ets.lookup(@table, token),
+         :ok <- alive(token, caller, last_alive) do
+      if :ets.whereis(@sessions) != :undefined do
+        case :ets.lookup(@sessions, session_id) do
+          [{_, %{thread_id: thread_id, instance: instance}}]
+          when thread_id == caller.thread_id and instance == caller.instance ->
+            :ets.delete(@sessions, session_id)
+            :ok
+
+          [] ->
+            :ok
+
+          _other ->
+            :error
+        end
+      else
+        :ok
+      end
+    else
+      _ -> :error
+    end
+  rescue
+    ArgumentError -> :error
   end
 
   @doc "Whether `session_id` is a live MCP session of this MC."

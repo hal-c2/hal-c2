@@ -67,7 +67,6 @@ Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/secrets.
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/settings.ex | tmp
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/usage_limit_sources.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/usage_limit_sources.ex | tmp
-Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/web.ex | path
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/acp/antigravity.ex | dir
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/portable_sessions.ex | file
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/portable_sessions.ex | path
@@ -177,7 +176,6 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/upgrad
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/upgrade/source.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/upgrade/source.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/usage_limit_sources.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/web.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/antigravity.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/antigravity.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/antigravity/client_files.ex | Elixir.Path
@@ -248,8 +246,6 @@ Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/claude/ski
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/claude/skills.ex | path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster/command.ex | Elixir.HalC2.RuntimeRecord
-Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster/command.ex | Elixir.HalC2.Web
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/cluster/distribution.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/desktop_update.ex | install_path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/devices.ex | file
@@ -480,8 +476,6 @@ Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/upgrade/
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/upgrade/source.ex | target
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/upgrade/source.ex | target
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/usage_limit_sources.ex | tmp
-Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/web.ex | path
-Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/web.ex | path
 Traversal.FileModule: Directory Traversal in `File.write` | lib/hal_c2/acp/antigravity.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.write` | lib/hal_c2/acp/antigravity.ex | account_path
 Traversal.FileModule: Directory Traversal in `File.write` | lib/hal_c2/acp/antigravity/client_files.ex | path

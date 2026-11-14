@@ -59,6 +59,9 @@ pub struct Thread {
     pub interaction_mode: String,
     pub runtime_mode: String,
     pub model_selection: Map<String, Value>,
+    /// Counts the changes to the thread's model, access and mode; None from
+    /// an MC that keeps no count.
+    pub selection_revision: Option<i64>,
     pub settled_override: Nullable,
     pub settled_at: Nullable,
     pub unsettled_at: Nullable,
@@ -184,6 +187,7 @@ pub fn thread_from_row(environment_id: &str, row: &Map<String, Value>) -> Thread
             == Some("subagent"),
         interaction_mode: string_field(row, "interactionMode").unwrap_or_else(|| "default".into()),
         runtime_mode: text(row, "runtimeMode"),
+        selection_revision: row.get("selectionRevision").and_then(Value::as_i64),
         model_selection: object(row, "modelSelection").cloned().unwrap_or_default(),
         settled_override: string_field(row, "settledOverride"),
         settled_at: string_field(row, "settledAt"),

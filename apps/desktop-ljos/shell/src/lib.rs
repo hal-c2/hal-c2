@@ -11,6 +11,7 @@ pub mod commands;
 pub mod composer_model;
 pub mod controller;
 pub mod controllers;
+pub mod desktop_host;
 pub mod desktop_update;
 pub mod device;
 pub mod device_screen;
@@ -53,7 +54,7 @@ pub mod thread_view;
 pub mod time_zone;
 pub mod window_mc;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ljos::prelude::{Engine, Version};
@@ -115,6 +116,11 @@ pub struct Launch {
     pub config_dir: Option<PathBuf>,
     /// The MC's origin, for what depends on where it is (local folders).
     pub mc_origin: Option<String>,
+    /// Without an origin: the desktop host names the MC later ([`attach`]),
+    /// as desktop-qt's BackendProcess does. Until then the shell store
+    /// waits over the cache and the controllers stay inactive, so nothing
+    /// shows the shell disconnected while the MC starts.
+    pub hosted: bool,
     /// Local folders may be imported from a remote MC too.
     pub allow_local_folder_import: bool,
     /// The third-party license manifest the Open source licenses page reads.
@@ -138,24 +144,24 @@ pub struct Launch {
     pub state_dir: Option<PathBuf>,
 }
 
-/// What [`open`] needs of the launch: where it keeps the session it is
-/// given, and, for a shell that started without an MC, where the client
-/// cache is and whether local folders stay importable.
+/// What [`open`] needs of the launch, for a shell that started without an
+/// MC: where the client cache is and whether local folders stay importable.
 #[derive(Default)]
 struct Kept {
-    data_dir: std::cell::RefCell<Option<PathBuf>>,
     cache_dir: std::cell::RefCell<Option<PathBuf>>,
     allow_local_folder_import: std::cell::Cell<bool>,
 }
 
-/// Connects to the MC `session` names, as NativeShell::open does: its rows
-/// (what the cache kept of it) show while the socket opens, and the session
-/// is kept for the next start. The shell's drafts, rows and route stay as
-/// they are. A shell that started without an MC (nothing kept, no `--pair`)
-/// gets its shell store here, over the cache, as one started with an MC
-/// does; its controllers are active already and follow the MC's rows as
-/// they come. An error says why the connection could not be opened; nothing
-/// has changed then.
+/// Connects to the MC `session` names, as NativeShell::open does: the MC
+/// the desktop host started or paired with (BackendProcess::ready), or one
+/// paired in the app. Its rows (what the cache kept of it) show while the
+/// socket opens. The shell's drafts, rows and route stay as they are. A
+/// shell that started without an MC gets its shell store here, over the
+/// cache, as one started with an MC does; its controllers are active
+/// already and follow the MC's rows as they come. An error says why the
+/// connection could not be opened; nothing has changed then. Nothing is
+/// kept for the next start: the host names its MC again, and in-app
+/// pairings are kept by the saved environments.
 ///
 /// A controller may call it from its own callback (an in-app pairing): the
 /// store's listeners hear of the change once no controller is running.
@@ -185,10 +191,6 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     }
     let origin = session.origin.clone();
     bridge.defer(engine, move |engine| store::open(engine, &origin));
-    if let Some(dir) = kept.data_dir.borrow().as_deref() {
-        // Not being able to keep it only loses the next start's reconnect.
-        let _ = session::save(dir, session);
-    }
     Ok(())
 }
 
@@ -225,7 +227,6 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         launch.mc_origin.is_none() || launch.allow_local_folder_import,
     );
     let kept = engine.extension::<Kept>();
-    *kept.data_dir.borrow_mut() = launch.data_dir.clone();
     *kept.cache_dir.borrow_mut() = launch.cache_dir.clone();
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);
@@ -272,26 +273,72 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         browser::set_profile(engine, data, cache);
     }
     browser::start(engine);
-    match &launch.mc_origin {
-        Some(origin) => {
-            // NativeShell: what the cache kept of this MC shows while the
-            // socket opens; the controllers activate on its first snapshot.
-            let cache = launch
-                .cache_dir
-                .as_deref()
-                .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
-            store::install(engine, &mc, cache);
-            store::on_changed(engine, update);
-            start_saved_environments(engine);
+    conceal_on_hold(engine);
+    if launch.mc_origin.is_some() || launch.hosted {
+        // NativeShell: what the cache kept of this MC shows while the
+        // socket opens; the controllers activate on its first snapshot. A
+        // hosted shell's MC is opened once the host names it ([`attach`]).
+        let cache = launch
+            .cache_dir
+            .as_deref()
+            .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
+        store::install(engine, &mc, cache);
+        store::on_changed(engine, update);
+        start_saved_environments(engine);
+        if let Some(origin) = &launch.mc_origin {
             store::open(engine, origin);
         }
+    } else {
         // No MC to wait for: what the shell shows is all there is.
-        None => {
-            engine.extension::<Active>().0.set(true);
-            controller::activate(engine);
-            run_when_active(engine);
-        }
+        engine.extension::<Active>().0.set(true);
+        controller::activate(engine);
+        run_when_active(engine);
     }
+}
+
+/// main.cpp: a finished quit hold hides the window while the key is let
+/// go (QuitController's `concealRequested`).
+fn conceal_on_hold(engine: &Engine) {
+    controller::with::<controllers::quit::QuitController, _>(engine, |quit, _| {
+        quit.on_conceal(|engine| {
+            if let Some(window) = runtime::window(engine) {
+                let _ = engine.invoke_by_name(window, "hide", &[]);
+            }
+        })
+    });
+}
+
+/// The folders a launch names (`hal-c2-ljos ~/code/api`), as absolute
+/// paths, and the rest of what it passed, which is the desktop host's
+/// (main.cpp's positional arguments).
+pub fn launch_folders(arguments: &[String]) -> (Vec<String>, Vec<String>) {
+    let (folders, rest): (Vec<&String>, Vec<&String>) =
+        arguments.iter().partition(|a| Path::new(a).is_dir());
+    let folders = folders
+        .into_iter()
+        .map(|f| {
+            std::path::absolute(f)
+                .unwrap_or_else(|_| PathBuf::from(f))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    (folders, rest.into_iter().cloned().collect())
+}
+
+/// What the window does with the folders a launch named: adds each as a
+/// project, or finds it, and starts a thread there; then comes to the
+/// front (main.cpp's `launch`).
+pub fn open_folders(engine: &Engine, folders: &[String]) {
+    let bridge = bridge::Bridge::of(engine);
+    for folder in folders {
+        bridge.dispatch(
+            engine,
+            "project.launch",
+            serde_json::json!({"path": folder}),
+        );
+    }
+    bridge.window_command(engine, "raise");
 }
 
 /// Whether the controllers are active, once the store first synchronized,
@@ -347,4 +394,25 @@ pub fn when_active(engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
 /// first snapshot is in.
 pub fn active(engine: &Engine) -> bool {
     engine.extension::<Active>().0.get()
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::launch_folders;
+
+    #[test]
+    fn a_launch_names_folders_as_absolute_paths_and_passes_the_rest_on() {
+        let here = std::env::current_dir().unwrap();
+        let (folders, rest) = launch_folders(&[
+            "src".into(),
+            "--mc-port=1".into(),
+            "no-such-folder".into(),
+            here.to_string_lossy().into_owned(),
+        ]);
+        assert_eq!(
+            folders,
+            [here.join("src"), here.clone()].map(|p| p.to_string_lossy().into_owned())
+        );
+        assert_eq!(rest, ["--mc-port=1", "no-such-folder"]);
+    }
 }

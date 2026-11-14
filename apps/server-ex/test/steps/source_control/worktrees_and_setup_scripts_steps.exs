@@ -1341,6 +1341,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
     |> put_setup(title, "pwd > '#{log}'; echo \"setup done $((6*7))\"", false)
     |> World.create_thread("Work", title)
+    |> agent_running()
     |> Map.put(:setup_log, log)
   end
 
@@ -1353,6 +1354,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
     context
     |> World.create_thread("Work", title)
+    |> agent_running()
     |> Map.put(:setup_log, log)
   end
 
@@ -1422,8 +1424,15 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     {:ok, %{"worktreePath" => path, "continuation" => continuation}} = context.handoff
     assert %{"status" => "scheduled", "delivery" => "queue_after_active"} = continuation
 
+    # The continuation waits for the turn that handed off to end, as the agent's does.
+    context =
+      World.dispatch_message(context, "Work", "say handed off", %{
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.running}
+      })
+
+    assert {:ok, _} = context.reply
     id = World.thread_id(context, "Work")
-    await_run(id, "completed")
+    await_run(id, "completed", 2)
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
 
     assert Enum.any?(
@@ -1437,7 +1446,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "the thread already works in a worktree", context do
-    in_worktree(context, "feature/tax")
+    context |> in_worktree("feature/tax") |> agent_running()
   end
 
   step "the thread works in the worktree on {string}", %{args: [branch]} = context do
@@ -2211,6 +2220,9 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  # The handoff is the agent's own call, made from a turn it is running.
+  defp agent_running(context), do: World.running_turn(context, "Work")
+
   defp handoff(context, args),
     do: Map.put(context, :handoff, tool(context, "hal_c2_worktree_handoff", args))
 
@@ -2265,24 +2277,25 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   # The thread's newest run once it has `status`.
-  defp await_run(id, status) do
+  # The `count`th run of thread `id` with `status`, once there is one.
+  defp await_run(id, status, count \\ 1) do
     :ok = HalC2.Streams.subscribe(id, self(), nil)
-    follow_run(id, status)
+    follow_run(id, status, count)
   end
 
-  defp follow_run(id, status) do
+  defp follow_run(id, status, count) do
     runs = HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "run")
 
-    case Enum.find(runs, &(&1["status"] == status)) do
-      nil ->
+    case Enum.filter(runs, &(&1["status"] == status)) do
+      found when length(found) >= count ->
+        Enum.at(found, count - 1)
+
+      _ ->
         receive do
-          {:hal_c2_stream, ^id, _} -> follow_run(id, status)
+          {:hal_c2_stream, ^id, _} -> follow_run(id, status, count)
         after
           15_000 -> flunk("no #{status} run: #{inspect(runs)}")
         end
-
-      run ->
-        run
     end
   end
 
