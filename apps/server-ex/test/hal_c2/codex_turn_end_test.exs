@@ -142,6 +142,27 @@ defmodule HalC2.CodexTurnEndTest do
     World.await_runs(context, @thread, ["failed", "completed"])
   end
 
+  # Regression (CodexTurnEndPropTest): the next turn forgot the subagents earlier
+  # turns had ended, so a late report of one in it started it again and showed it
+  # ended the new way.
+  test "a late report of a subagent an earlier turn ended changes nothing",
+       %{context: context} do
+    report_subagent(context, %{"status" => "interrupted"})
+    {pid, _} = report_turn_end(context, "completed")
+    :ok = GenServer.call(pid, :settle)
+
+    context = World.post_message(context, @thread, "wait for more")
+    World.await_running(context, @thread)
+    {pid, _} = World.codex_runtime(context, @thread)
+    :ok = GenServer.call(pid, :settle)
+
+    report_subagent(context, %{"status" => "shutdown"})
+    :ok = GenServer.call(pid, :settle)
+
+    assert [%{"status" => "interrupted"}] =
+             context |> World.state(@thread) |> StreamState.list("subagent")
+  end
+
   # --- Codex's side --------------------------------------------------------------
 
   # Codex reports its turn over; the run reads as it ended and the subagent
@@ -181,7 +202,10 @@ defmodule HalC2.CodexTurnEndTest do
     })
   end
 
-  defp finish_subagent(context) do
+  defp finish_subagent(context),
+    do: report_subagent(context, %{"status" => "completed", "message" => "three modules"})
+
+  defp report_subagent(context, agent_state) do
     {_, runtime} = World.codex_runtime(context, @thread)
 
     World.codex_notify(context, @thread, "item/completed", %{
@@ -194,7 +218,7 @@ defmodule HalC2.CodexTurnEndTest do
         "senderThreadId" => runtime.native_thread_id,
         "receiverThreadIds" => [@child],
         "status" => "completed",
-        "agentsStates" => %{@child => %{"status" => "completed", "message" => "three modules"}}
+        "agentsStates" => %{@child => agent_state}
       }
     })
   end
