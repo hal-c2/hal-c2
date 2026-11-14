@@ -450,4 +450,6 @@ fn a_saved_environments_cached_mc_survives_the_shells_first_snapshot() {
         store.have_for(&Client::Link("studio".into())),
         json!({"mc-s": ["s1", 2]})
     );
+    // Unclaimed but linked: what is addressed to it goes to studio's link.
+    assert_eq!(store.link_of("mc-s").as_deref(), Some("studio"));
 }

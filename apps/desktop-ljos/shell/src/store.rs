@@ -451,12 +451,15 @@ impl ShellStore {
         self.links.get(environment_id).cloned()
     }
 
-    /// The saved environment whose link listed `mc`; none for the shell's
-    /// own client's.
+    /// The saved environment whose link listed `mc`, or, for one no client
+    /// has listed yet, the link of its environment ([`Self::answers_for`]);
+    /// none for the shell's own client's.
     pub fn link_of(&self, mc: &str) -> Option<String> {
-        match self.mcs.get(mc).and_then(|m| m.link.as_ref()) {
+        let mc = self.mcs.get(mc)?;
+        match &mc.link {
             Some(Client::Link(link)) => Some(link.clone()),
-            _ => None,
+            Some(Client::Own) => None,
+            None => self.links.get(&mc.environment_id).cloned(),
         }
     }
 
@@ -974,6 +977,7 @@ pub fn install(engine: &Engine, mc: &Rc<dyn Mc>, cache: Option<Rc<LocalCache>>) 
         frame
     });
     let weak = Rc::downgrade(&store);
+    let weak_mc = Rc::downgrade(mc);
     let id = mc.subscribe(
         json!({"type": "shell"}),
         Box::new(move |engine, frame| {
@@ -982,6 +986,13 @@ pub fn install(engine: &Engine, mc: &Rc<dyn Mc>, cache: Option<Rc<LocalCache>>) 
             };
             let changed = store.borrow_mut().apply(frame);
             settle(engine, Changes::changed(changed));
+            // What its snapshot lists is the shell's own again: what was
+            // held on a link for it comes back ([`Mc::reroute`]).
+            if frame.get("t").and_then(Value::as_str) == Some("shell")
+                && let Some(own) = weak_mc.upgrade()
+            {
+                own.reroute();
+            }
         }),
         Some(resume),
     );

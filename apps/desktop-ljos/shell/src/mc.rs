@@ -359,7 +359,15 @@ struct Forwarded {
     shape: Json,
     on_frame: Rc<RefCell<OnFrame>>,
     resume: Option<Rc<RefCell<Resume>>>,
-    held: Held,
+    held: Holder,
+}
+
+/// Who serves a forwarded subscription now: a link, or, once the route
+/// named none, this client itself under an id of its own.
+#[derive(Clone)]
+enum Holder {
+    Link(Held),
+    Own(SubId),
 }
 
 impl Forwarded {
@@ -375,6 +383,20 @@ impl Forwarded {
             Box::new(move |engine, frame| (on_frame.borrow_mut())(engine, frame)),
             resume,
         )
+    }
+
+    /// Subscribes on `client`, the shell's own, with the shared callbacks.
+    fn subscribe_own(&self, client: &McClient) -> SubId {
+        let on_frame = self.on_frame.clone();
+        let frame =
+            move |frame: &Frame| with_delivering(|engine| (on_frame.borrow_mut())(engine, frame));
+        let shape = self.shape.clone();
+        SubId(match self.resume.clone() {
+            Some(resume) => {
+                client.subscribe_resuming(shape, frame, move || (resume.borrow_mut())())
+            }
+            None => client.subscribe(shape, frame),
+        })
     }
 }
 
@@ -444,7 +466,7 @@ impl Connection {
         route(environment, mc)
     }
 
-    fn forwarded(&self, id: SubId) -> Option<Held> {
+    fn forwarded(&self, id: SubId) -> Option<Holder> {
         self.forwarded.borrow().get(&id.0).map(|f| f.held.clone())
     }
 
@@ -621,9 +643,9 @@ impl Mc for Connection {
                 shape: shape.clone(),
                 on_frame: Rc::new(RefCell::new(on_frame)),
                 resume: resume.map(|r| Rc::new(RefCell::new(r))),
-                held: (link.clone(), SubId(0)),
+                held: Holder::Own(SubId(0)),
             };
-            forwarded.held.1 = forwarded.subscribe_on(&link);
+            forwarded.held = Holder::Link((link.clone(), forwarded.subscribe_on(&link)));
             let id = self.next_forwarded.get();
             self.next_forwarded.set(id + 1);
             self.forwarded.borrow_mut().insert(id, forwarded);
@@ -639,21 +661,24 @@ impl Mc for Connection {
     fn unsubscribe(&self, id: SubId) {
         let forwarded = self.forwarded.borrow_mut().remove(&id.0);
         match forwarded.map(|f| f.held) {
-            Some((link, theirs)) => link.unsubscribe(theirs),
+            Some(Holder::Link((link, theirs))) => link.unsubscribe(theirs),
+            Some(Holder::Own(own)) => self.client.unsubscribe(own.0),
             None => self.client.unsubscribe(id.0),
         }
     }
 
     fn more(&self, id: SubId, items: u32) {
         match self.forwarded(id) {
-            Some((link, theirs)) => link.more(theirs, items),
+            Some(Holder::Link((link, theirs))) => link.more(theirs, items),
+            Some(Holder::Own(own)) => self.client.more(own.0, items),
             None => self.client.more(id.0, items),
         }
     }
 
     fn ack(&self, id: SubId, sequence: i64) {
         match self.forwarded(id) {
-            Some((link, theirs)) => link.ack(theirs, sequence),
+            Some(Holder::Link((link, theirs))) => link.ack(theirs, sequence),
+            Some(Holder::Own(own)) => self.client.ack(own.0, sequence),
             None => self.client.ack(id.0, sequence),
         }
     }
@@ -740,27 +765,39 @@ impl Mc for Connection {
 
     fn reroute(&self) {
         // Decided first: subscribing on a link runs no code of this one's,
-        // but the route reads the store and the saved environments.
-        let moves: Vec<(u64, Rc<dyn Mc>)> = self
+        // but the route reads the store and the saved environments. No
+        // route means this client serves it (desktop-qt's McClient::routed).
+        let moves: Vec<(u64, Option<Rc<dyn Mc>>)> = self
             .forwarded
             .borrow()
             .iter()
             .filter_map(|(id, f)| {
-                let now = self.routed(&f.environment, &f.mc)?;
-                (!Rc::ptr_eq(&now, &f.held.0)).then_some((*id, now))
+                let now = self.routed(&f.environment, &f.mc);
+                let moved = match (&now, &f.held) {
+                    (Some(now), Holder::Link((old, _))) => !Rc::ptr_eq(now, old),
+                    (Some(_), Holder::Own(_)) | (None, Holder::Link(_)) => true,
+                    (None, Holder::Own(_)) => false,
+                };
+                moved.then_some((*id, now))
             })
             .collect();
-        for (id, link) in moves {
+        for (id, target) in moves {
             let Some(old) = self.forwarded.borrow().get(&id).map(|f| f.held.clone()) else {
                 continue;
             };
-            old.0.unsubscribe(old.1);
-            let theirs = match self.forwarded.borrow().get(&id) {
-                Some(f) => f.subscribe_on(&link),
+            match old {
+                Holder::Link((link, theirs)) => link.unsubscribe(theirs),
+                Holder::Own(own) => self.client.unsubscribe(own.0),
+            }
+            let held = match self.forwarded.borrow().get(&id) {
+                Some(f) => match target {
+                    Some(link) => Holder::Link((link.clone(), f.subscribe_on(&link))),
+                    None => Holder::Own(f.subscribe_own(&self.client)),
+                },
                 None => continue,
             };
             if let Some(f) = self.forwarded.borrow_mut().get_mut(&id) {
-                f.held = (link, theirs);
+                f.held = held;
             }
         }
     }
@@ -912,5 +949,31 @@ mod reroute_tests {
         assert!(old.more.borrow().is_empty());
         own.unsubscribe(id);
         assert!(new.live.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_held_subscription_comes_back_when_no_link_serves_it() {
+        let own = Connection::spawn(|| {});
+        let link = Rc::new(Recorder::default());
+        let serving: Rc<RefCell<Option<Rc<dyn Mc>>>> = Rc::new(RefCell::new(Some(link.clone())));
+        let route = serving.clone();
+        own.set_route(Rc::new(move |_, _| route.borrow().clone()));
+        let shape = json!({"type": "thread", "environmentId": "studio", "threadId": "t9"});
+        let id = own.subscribe(shape, Box::new(|_, _| {}), None);
+        assert_eq!(*link.live.borrow(), [1]);
+        // The shell's own client serves it now: it leaves the link.
+        *serving.borrow_mut() = None;
+        own.reroute();
+        assert!(link.live.borrow().is_empty());
+        own.more(id, 10);
+        assert!(link.more.borrow().is_empty());
+        // And goes back to a link that serves it again, under the same id.
+        *serving.borrow_mut() = Some(link.clone());
+        own.reroute();
+        assert_eq!(*link.live.borrow(), [2]);
+        own.more(id, 10);
+        assert_eq!(*link.more.borrow(), [2]);
+        own.unsubscribe(id);
+        assert!(link.live.borrow().is_empty());
     }
 }
