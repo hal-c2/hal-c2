@@ -57,6 +57,20 @@ absolute paths outside a project. This lets clients display artifacts that an
 agent writes in a temporary directory. Relative paths and writes still follow
 the [workspace path rules](../../apps/server-ex/lib/hal_c2/workspace.ex).
 
+The MC's own directories are the exception: they hold the credentials every
+scope is checked against (the access token, `secrets/`, the cluster key, the
+databases), so no client file or asset RPC reads, lists, searches or writes
+inside them at any scope, and the access token itself only authenticates from
+this machine. A request a proxy forwarded is not from this machine even when it
+arrives over loopback: Tailscale Serve's HTTPS proxy, which is how HAL-C2 publishes
+an MC to the tailnet, adds forwarding headers, and those rule the token out. The
+listener cannot see past a forward that adds none: a raw TCP forward to the MC's port
+(`tailscale serve --tcp`, `ssh -L`, socat) makes whoever reaches it local, the way a
+shell on the machine is, so publish the MC with `tailscale serve --https` or `pair
+--tailscale`, never by forwarding its port. Thread worktrees under the data directory, and the files of a
+project registered inside an MC directory, stay reachable; a project that
+contains an MC directory (one at the home directory, say) does not reach into it.
+
 Signed asset URLs are bearer credentials. A URL for media on the host grants
 access to one canonical file and its device/inode identity, not its containing directory.
 [Asset access](../../apps/server-ex/lib/hal_c2/attachments.ex) rechecks the opened

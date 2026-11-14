@@ -140,7 +140,8 @@ defmodule HalC2.ClusterPropTest do
 
   def next_state(state, _result, {:call, _, :remove, [id]}) do
     if id != state.own and (member?(state, id) or off?(state, id)),
-      do: drop(update_in(state.members[id], &%{&1 | member: false, off: false}), id),
+      do:
+        drop(update_in(state.members[id], &%{&1 | member: false, off: false, removed: true}), id),
       else: state
   end
 
@@ -153,7 +154,7 @@ defmodule HalC2.ClusterPropTest do
         update_in(state.members[id], &%{&1 | member: true, off: false})
 
       not on and member?(state, id) ->
-        drop(update_in(state.members[id], &%{&1 | member: false, off: true}), id)
+        drop(update_in(state.members[id], &%{&1 | member: false, off: true, removed: true}), id)
 
       true ->
         state
@@ -166,12 +167,42 @@ defmodule HalC2.ClusterPropTest do
         state
 
       {id, {:admitted, f}}, state ->
-        put_member(state, id, f.fp, f.label, f.addresses, true)
+        # This gossiped admission carries no removal, so it cannot undo one the MC has.
+        current = state.members[id] || %{}
+
+        put_member(
+          state,
+          id,
+          f.fp,
+          f.label,
+          f.addresses,
+          current[:member] != false,
+          current[:off] == true
+        )
 
       {id, {:removed, f}}, state ->
-        drop(put_member(state, id, f.fp, f.label, f.addresses, false), id)
+        state |> put_member(id, f.fp, f.label, f.addresses, false) |> tombstone(id) |> drop(id)
 
-      # Older than what this machine knows, and what is not an entry, change nothing.
+      {id, {:stale_removed, f}}, state ->
+        # A removal record is a tombstone however old its stamps: an admission
+        # that carries no removal no longer counts, so the member is out (its
+        # newer fields stay). One older than a removal the entry already carries
+        # (a switch-off, or a rejoin after a removal) settles nothing. A machine
+        # only the tombstone names is recorded as no member, as merge keeps the
+        # entry itself.
+        cond do
+          match?(%{removed: true}, state.members[id]) ->
+            state
+
+          Map.has_key?(state.members, id) ->
+            drop(update_in(state.members[id], &%{&1 | member: false, removed: true}), id)
+
+          true ->
+            state |> put_member(id, f.fp, f.label, f.addresses, false) |> tombstone(id)
+        end
+
+      # Older admissions than what this machine knows, and what is not an
+      # entry, change nothing.
       _, state ->
         state
     end)
@@ -188,7 +219,7 @@ defmodule HalC2.ClusterPropTest do
     id != state.own and id != "Bad_id" and fp in @fingerprints
   end
 
-  defp put_member(state, id, fp, label, addresses, member) do
+  defp put_member(state, id, fp, label, addresses, member, off \\ false) do
     entry = %{
       fp: fp,
       label: if(is_binary(label), do: label),
@@ -198,11 +229,15 @@ defmodule HalC2.ClusterPropTest do
           else: []
         ),
       member: member,
-      off: false
+      off: off,
+      # Whether the entry carries a removal (`removedAt`): once it does, it always does.
+      removed: match?(%{removed: true}, state.members[id])
     }
 
     put_in(state.members[id], entry)
   end
+
+  defp tombstone(state, id), do: put_in(state.members[id].removed, true)
 
   defp drop(state, id), do: update_in(state.connected, &MapSet.delete(&1, id))
   defp member?(state, id), do: match?(%{member: true}, state.members[id])
@@ -337,7 +372,8 @@ defmodule HalC2.ClusterPropTest do
          label: entry["label"],
          addresses: entry["addresses"],
          member: Cluster.member?(entry),
-         off: Cluster.off?(entry)
+         off: Cluster.off?(entry),
+         removed: entry["removedAt"] != nil
        }}
     end
   end

@@ -28,6 +28,7 @@ defmodule HalC2.PullRequests do
   @viewer_ttl 600_000
   @viewers {__MODULE__, :viewers}
   @ssh_hosts {__MODULE__, :ssh_hosts}
+  @github_hosts {__MODULE__, :github_hosts}
 
   @requirements %{
     missing:
@@ -1260,6 +1261,7 @@ defmodule HalC2.PullRequests do
     if input["filesViewedOnly"] != true do
       if input["reference"] == nil, do: :persistent_term.erase(@viewers)
       if input["reference"] == nil, do: :persistent_term.erase(@ssh_hosts)
+      if input["reference"] == nil, do: :persistent_term.erase(@github_hosts)
       forget(input["reference"])
       # A reader asking for fresh host state wants the thread links it feeds to follow.
       if input["reference"], do: HalC2.PullRequests.Sync.request(input["reference"])
@@ -1682,7 +1684,7 @@ defmodule HalC2.PullRequests do
       host == "codeberg.org" or "forgejo" in labels or "gitea" in labels ->
         "forgejo"
 
-      host == "github.com" or "github" in labels ->
+      host == "github.com" or ("github" in labels and github_enterprise?(host)) ->
         "github"
 
       host == "gitlab.com" or "gitlab" in labels ->
@@ -1697,6 +1699,47 @@ defmodule HalC2.PullRequests do
       true ->
         "unknown"
     end
+  end
+
+  # `gh auth login --hostname` writes an entry for an Enterprise host. Only those
+  # explicitly configured hosts may receive gh's enterprise credentials; a hostname
+  # merely containing "github" is not a trust boundary.
+  # The path read is fixed: `gh`'s own hosts file under its config directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp github_enterprise?(host) do
+    path = Path.join(HalC2.GitHub.config_dir(), "hosts.yml")
+
+    stamp =
+      case File.stat(path, time: :posix) do
+        {:ok, stat} -> {stat.mtime, stat.size}
+        _ -> :missing
+      end
+
+    key = {path, stamp}
+
+    hosts =
+      case :persistent_term.get(@github_hosts, nil) do
+        {^key, hosts} ->
+          hosts
+
+        _ ->
+          hosts =
+            case File.read(path) do
+              {:ok, text} ->
+                ~r/^([a-z0-9][a-z0-9.-]*):\s*$/im
+                |> Regex.scan(text, capture: :all_but_first)
+                |> List.flatten()
+                |> MapSet.new(&String.downcase/1)
+
+              _ ->
+                MapSet.new()
+            end
+
+          :persistent_term.put(@github_hosts, {key, hosts})
+          hosts
+      end
+
+    MapSet.member?(hosts, host)
   end
 
   # The project that serves a reference: its own when the repository is its own,

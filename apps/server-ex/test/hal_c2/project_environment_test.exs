@@ -75,6 +75,16 @@ defmodule HalC2.ProjectEnvironmentTest do
                {[{"A", "1"}], []}
     end
 
+    test "a symlink out of the checkout is not followed", %{dir: dir} do
+      outside = Path.join(dir, "outside.env")
+      File.write!(outside, "LEAKED=1\n")
+      root = checkout(dir, %{})
+      File.ln_s!(outside, Path.join(root, ".env"))
+
+      assert {[], [warning]} = ProjectEnvironment.load(%{"projectEnvironment" => "dotenv"}, root)
+      assert warning =~ "resolves outside the checkout"
+    end
+
     test "a missing file is a warning, not an error", %{dir: dir} do
       root = checkout(dir, %{})
       assert {[], [warning]} = ProjectEnvironment.load(%{"projectEnvironment" => "dotenv"}, root)
@@ -158,6 +168,42 @@ defmodule HalC2.ProjectEnvironmentTest do
 
       assert ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root) ==
                {[{"PATH", "/envrc/bin:/mise/bin:" <> System.get_env("PATH")}], []}
+    end
+
+    # direnv is a program the MC starts: what mise loaded reaches it only as far as it
+    # could reach a provider launch, never a loader or git-program control.
+    test "direnv runs without the blocked variables mise loaded", %{dir: dir} do
+      fake(
+        dir,
+        "mise",
+        ~s({"NODE_OPTIONS":"-r /x","BASH_ENV":"/x","GIT_CONFIG_KEY_0":"k","A":"1"})
+      )
+
+      path = Path.join(dir, "seen-direnv")
+
+      File.write!(path, """
+      #!/bin/sh
+      printf '{"SEEN":"%s|%s|%s|%s"}' "${NODE_OPTIONS-unset}" "${BASH_ENV-unset}" \\
+        "${GIT_CONFIG_KEY_0-unset}" "$A"
+      """)
+
+      File.chmod!(path, 0o755)
+      commands = Application.get_env(:hal_c2, :project_environment_commands, %{})
+
+      Application.put_env(
+        :hal_c2,
+        :project_environment_commands,
+        Map.put(commands, "direnv", path)
+      )
+
+      root = checkout(dir, %{"mise.toml" => "", ".envrc" => ""})
+
+      {vars, []} = ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root)
+
+      # direnv still inherits the MC's own environment (a CI runner sets git config
+      # there); only what mise loaded is filtered.
+      own = Enum.map(~w(NODE_OPTIONS BASH_ENV GIT_CONFIG_KEY_0), &(System.get_env(&1) || "unset"))
+      assert List.keyfind(vars, "SEEN", 0) == {"SEEN", Enum.join(own ++ ["1"], "|")}
     end
 
     test "mise and direnv share one time limit", %{dir: dir} do
@@ -274,6 +320,21 @@ defmodule HalC2.ProjectEnvironmentTest do
 
       assert ProjectEnvironment.merge(launch, project, ["META_API_KEY"]) ==
                [{"SOME_URL", "https://example.test"} | launch]
+    end
+
+    test "loader and credential-endpoint variables never come from the project" do
+      project = [
+        {"NODE_OPTIONS", "--require=./pwn.js"},
+        {"LD_PRELOAD", "/tmp/evil.so"},
+        {"LD_AUDIT", "/tmp/evil.so"},
+        {"GIT_CONFIG_KEY_0", "core.fsmonitor=/tmp/evil"},
+        {"GIT_SSH_COMMAND", "evil"},
+        {"ANTHROPIC_BASE_URL", "https://attacker.example"},
+        {"HTTPS_PROXY", "http://attacker.example:8080"},
+        {"KEEP", "yes"}
+      ]
+
+      assert ProjectEnvironment.merge([], project) == [{"KEEP", "yes"}]
     end
 
     test "names the launch command unsets stay unset" do

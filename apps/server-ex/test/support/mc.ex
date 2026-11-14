@@ -3037,6 +3037,38 @@ defmodule HalC2.Test.Mc.World do
     end
   end
 
+  @doc """
+  A gh configuration of the scenario's own (`context.gh_config`, made the MC's
+  `GH_CONFIG_DIR`), with no token in the environment.
+  """
+  def gh_config(context) do
+    if context[:gh_config] do
+      context
+    else
+      for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
+          do: put_os_env(name, nil)
+
+      config = Mc.tmp_dir(context.mc, "gh-config")
+      put_os_env("GH_CONFIG_DIR", config)
+      Map.put(context, :gh_config, config)
+    end
+  end
+
+  @doc """
+  Signs gh in to the Enterprise `host` as `gh auth login --hostname` leaves it,
+  beside any host already signed in to: the MC takes only a host gh is
+  configured for as a GitHub Enterprise one.
+  """
+  def gh_sign_in_enterprise(context, host) do
+    context = gh_config(context)
+
+    File.write!(Path.join(context.gh_config, "hosts.yml"), "#{host}:\n    user: monalisa\n", [
+      :append
+    ])
+
+    context
+  end
+
   @doc "Sets (or with `nil` unsets) an OS environment variable for the rest of the scenario."
   def put_os_env(name, value) do
     previous = System.get_env(name)
@@ -4265,7 +4297,7 @@ defmodule HalC2.Test.Mc.Terminal do
   end
 
   @doc "Where a folder named in the feature lives for this scenario (not created)."
-  def folder(context, path), do: Path.join(context.mc.home, "fs" <> path)
+  def folder(context, path), do: HalC2.Test.Mc.Host.path(context, path)
 
   @doc "`folder/2`, created."
   def mkdir(context, path) do
@@ -4764,9 +4796,15 @@ defmodule HalC2.Test.Mc.Host do
   """
 
   @doc "Where a feature's path (`/home/sam/shop`, `~/code`) really is in this scenario."
-  def path(context, "/" <> _ = path), do: Path.join(context.mc.home, "fs") <> path
+  def path(context, "/" <> _ = path), do: root(context) <> path
   def path(context, "~" <> rest), do: home(context) <> rest
   def path(_context, path), do: path
+
+  @doc """
+  The scenario machine's `/`: beside the MC's home, not in it, since the MC keeps
+  agents and file browsing out of its own directories (`HalC2.Workspace`).
+  """
+  def root(%{mc: %{home: home}}), do: home <> "-fs"
 
   @doc "The scenario's `$HOME` (`/home/sam`), set for the MC on first call."
   def home(context) do

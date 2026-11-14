@@ -15,7 +15,10 @@ defmodule Mix.Tasks.HalC2.Auth do
   script to capture, `--json` a JSON document). Pairing links are minted with
   `mix hal_c2.pair`.
 
-  Works with the MC running or stopped: it reads and writes the MC's store directly.
+  Works with the MC running or stopped: it reads and writes the MC's store directly,
+  except that a revoke goes through the running MC (over its HTTP port with its access
+  token), which closes the revoked session's sockets at once and tells the clients
+  showing Connections. With no MC answering, it revokes in the store.
   Bearer tokens and pairing tokens of what already exists are never printed, as the
   store keeps only their hashes.
   """
@@ -38,13 +41,21 @@ defmodule Mix.Tasks.HalC2.Auth do
         issue(store, subject, opts)
 
       ["session", "revoke", id] ->
-        revoke(HalC2.Auth.revoke_session(store, id), id, "session")
+        revoked =
+          through_mc("/api/auth/clients/revoke", %{"sessionId" => id}, "revoked") ||
+            HalC2.Auth.revoke_session(store, id)
+
+        revoke(revoked, id, "session")
 
       ["pairing", "list"] ->
         list_pairing(store)
 
       ["pairing", "revoke", id] ->
-        revoke(HalC2.Auth.revoke_pairing_link(store, id), id, "pairing")
+        revoked =
+          through_mc("/api/auth/pairing-links/revoke", %{"id" => id}, "revoked") ||
+            HalC2.Auth.revoke_pairing_link(store, id)
+
+        revoke(revoked, id, "pairing")
 
       _ ->
         usage()
@@ -122,6 +133,26 @@ defmodule Mix.Tasks.HalC2.Auth do
       true ->
         Mix.shell().info("Session #{session.id} for #{subject}, expires #{session.expires_at}")
         Mix.shell().info(session.token)
+    end
+  end
+
+  # `key` of the running MC's answer to `POST path`, or nil when no MC of this home
+  # answers (none has run, it is stopped, or another program holds the port), for the
+  # caller to do the work in the store instead. The token goes only to a listener that
+  # proved it holds it (`HalC2.Web.local_mc/2`); an MC this tool does not reach still
+  # drops a session revoked in the store within its next session recheck. An MC that
+  # answers `false` found nothing to revoke; the store then says the same.
+  defp through_mc(path, body, key) do
+    with {:ok, base, token} <- HalC2.Web.local_mc(),
+         request =
+           {~c"#{base}#{path}", [{~c"authorization", ~c"Bearer #{token}"}], ~c"application/json",
+            JSON.encode!(body)},
+         {:ok, {{_, 200, _}, _, reply}} <-
+           :httpc.request(:post, request, [timeout: 10_000], body_format: :binary),
+         {:ok, %{^key => true}} <- JSON.decode(reply) do
+      true
+    else
+      _ -> nil
     end
   end
 

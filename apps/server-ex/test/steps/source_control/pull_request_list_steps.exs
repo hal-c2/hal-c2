@@ -901,25 +901,24 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   # Signs `login` in to github.com the way `gh auth login` and `gh auth switch` leave
   # it, in a gh configuration of the scenario's own, with no token in the environment.
+  # Other hosts already signed in to stay as they are.
   defp sign_in_as(context, login) do
-    context =
-      if context[:gh_config] do
-        context
-      else
-        for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
-            do: World.put_os_env(name, nil)
+    context = World.gh_config(context)
+    path = Path.join(context.gh_config, "hosts.yml")
 
-        config = Mc.tmp_dir(context.mc, "gh-config")
-        World.put_os_env("GH_CONFIG_DIR", config)
-        Map.put(context, :gh_config, config)
+    others =
+      case File.read(path) do
+        {:ok, text} -> String.replace(text, ~r/^github\.com:\n(?:[ \t]+.*\n)*/m, "")
+        {:error, _} -> ""
       end
 
-    File.write!(Path.join(context.gh_config, "hosts.yml"), """
+    File.write!(path, """
     github.com:
         users:
             monalisa: {}
             hubot: {}
         user: #{login}
+    #{others}\
     """)
 
     context
@@ -1373,7 +1372,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context = World.create_project(context, "shop enterprise")
     root = World.project(context, "shop enterprise").root
     World.git!(root, ["remote", "add", "origin", "git@github.example.com:#{repository}.git"])
-    context
+
+    World.gh_sign_in_enterprise(context, "github.example.com")
   end
 
   step "the pull requests of both are listed under their own host", context do

@@ -58,4 +58,32 @@ defmodule HalC2.EditorsTest do
     assert file_manager(Path.join(dir, "project/../Tool.app"), socket) ==
              ["-R", Path.join(dir, "Tool.app")]
   end
+
+  test "a target that looks like a flag reaches the editor as an absolute path",
+       %{tmp_dir: dir, launches: socket} do
+    # A fake `code` on PATH (beside the fake `open`) reporting its arguments.
+    {:ok, port} = :inet.port(socket)
+    script = Path.join([dir, "bin", "code"])
+
+    File.write!(script, """
+    #!/usr/bin/env bash
+    exec 3<>/dev/tcp/127.0.0.1/#{port}
+    printf '%s\\x1f' "$@" >&3
+    printf '\\n' >&3
+    """)
+
+    File.chmod!(script, 0o755)
+
+    assert {:ok, nil} =
+             HalC2.Editors.open(%{"cwd" => "--inspect=9229", "editor" => "vscode"})
+
+    {:ok, conn} = :gen_tcp.accept(socket, 5_000)
+    {:ok, line} = :gen_tcp.recv(conn, 0, 5_000)
+    :gen_tcp.close(conn)
+    args = line |> String.trim_trailing("\n") |> String.split("\x1f", trim: true)
+
+    assert [target] = args
+    assert Path.type(target) == :absolute
+    assert String.ends_with?(target, "--inspect=9229")
+  end
 end

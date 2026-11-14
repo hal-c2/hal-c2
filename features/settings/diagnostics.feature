@@ -68,6 +68,7 @@ Feature: Diagnostics
       | a process the MC did not start    | That process is not one this MC started. |
       | the MC itself                     | The MC itself cannot be signalled from here. |
       | a process that exited and whose id was reused | That process has already exited. |
+      | a process the MC started with SIGTERM         | Only SIGINT and SIGKILL can be sent from here. |
 
   @mc
   Scenario: The MC says it does not record traces

@@ -294,6 +294,33 @@ defmodule HalC2.McpTest do
     assert {:ok, %{"pullRequests" => []}} = tool.("list_thread_pull_requests", %{})
   end
 
+  test "a plan-mode caller cannot hand off to a worktree", %{work: work} do
+    {_caller, tool} = caller("wait for it", %{"interactionMode" => "plan"})
+
+    assert {:error, text} =
+             tool.("hal_c2_worktree_handoff", %{"branch" => "feature/denied"})
+
+    assert text =~ "capability_denied"
+    assert {:error, _} = HalC2.Git.ok(work, ~w(show-ref --verify refs/heads/feature/denied))
+  end
+
+  test "a plan-mode caller cannot update a full-access thread" do
+    target = launch("hello")
+    await_statuses(target, ["completed"])
+    await_row(target)
+    {_caller, tool} = caller("wait for it", %{"interactionMode" => "plan"})
+
+    assert {:error, text} =
+             tool.("hal_c2_thread_update", %{
+               "threadId" => target,
+               "action" => "rename",
+               "title" => "Nope"
+             })
+
+    assert text =~ "interaction_mode_escalation_denied"
+    assert current(target) |> StreamState.get("thread") |> get_in([target, "title"]) == "Caller"
+  end
+
   # Organize reaches threads of any project, so `no_escalation` is the only
   # guard left: a narrower caller must not archive another project's
   # broader thread.
@@ -363,6 +390,16 @@ defmodule HalC2.McpTest do
 
     assert {:error, text} = tool.("hal_c2_thread_launch", %{"title" => "Nope"})
     assert text =~ "parent_not_active"
+
+    assert {:error, handoff} =
+             tool.("hal_c2_worktree_handoff", %{"branch" => "feature/idle"})
+
+    assert handoff =~ "parent_not_active"
+
+    assert {:error, update} =
+             tool.("hal_c2_thread_update", %{"action" => "rename", "title" => "Nope"})
+
+    assert update =~ "parent_not_active"
   end
 
   # Two delegate_task calls with one request key, the second let through while
