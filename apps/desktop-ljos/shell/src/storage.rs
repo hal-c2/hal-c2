@@ -1,9 +1,8 @@
 //! Where the shell keeps its files: desktop-qt's StoragePaths, resolved as
-//! packages/shared/src/xdgDirs.ts resolves them, with every directory one
-//! `desktop-ljos` level down so this client and desktop-qt never share state
-//! (a cache or a pairing one wrote is not the other's to read). What the user
+//! packages/shared/src/xdgDirs.ts resolves them, the same directories and
+//! file names, so the two desktops are one app on a home. What the user
 //! writes to change how the app looks and behaves (theme, shell, QML modules,
-//! plugins, preferences) is the config home's `shell`, shared with desktop-qt.
+//! plugins, preferences) is the config home's `shell`.
 //!
 //!   1. `--home-dir` is one root for everything (`<root>/config`, data, state,
 //!      cache);
@@ -17,11 +16,14 @@
 //! [`Profile::Development`] is the same XDG layout in directories named
 //! `hal-c2-dev`, and does not read `HAL_C2_HOME`; `--home-dir` still gives it
 //! a root.
+//!
+//! An earlier shell kept its files one `desktop-ljos` level down;
+//! [`carry_over`] moves them up once.
 
 use std::path::{Component, Path, PathBuf};
 
-/// The level under each HAL-C2 directory that is this client's own.
-pub const CLIENT_DIR: &str = "desktop-ljos";
+/// The level under each HAL-C2 directory an earlier shell kept its files in.
+pub const OLD_CLIENT_DIR: &str = "desktop-ljos";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StoragePaths {
@@ -140,17 +142,116 @@ fn under(root: &Path) -> StoragePaths {
     )
 }
 
-/// The HAL-C2 config, data, state and cache directories, each with this
-/// client's level, and the config's shared `shell`.
+/// The HAL-C2 config, data, state and cache directories, and the config's
+/// `shell`.
 fn nested(root: Option<PathBuf>, [config, data, state, cache]: [PathBuf; 4]) -> StoragePaths {
     StoragePaths {
         root,
         shell: config.join("shell"),
-        config: config.join(CLIENT_DIR),
-        data: data.join(CLIENT_DIR),
-        state: state.join(CLIENT_DIR),
-        cache: cache.join(CLIENT_DIR),
+        config,
+        data,
+        state,
+        cache,
     }
+}
+
+/// Moves what an earlier shell kept one [`OLD_CLIENT_DIR`] level down into
+/// the directory of its kind, as the settings' carry-over does for device
+/// preferences: what desktop-qt (or anything else) already keeps there wins,
+/// and only what it lacks moves. A folder both have is merged entry by entry.
+/// What could not move stays where it was, and the old level goes once it is
+/// empty. Run at every start; with nothing at the old level it reads one
+/// missing directory per kind.
+pub fn carry_over(paths: &StoragePaths) {
+    for kind in [&paths.config, &paths.data, &paths.state, &paths.cache] {
+        let old = kind.join(OLD_CLIENT_DIR);
+        if std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir()) {
+            merge_into(&old, kind, &|a, b| std::fs::rename(a, b));
+        }
+    }
+}
+
+/// SQLite's files beside a database, which belong to it and move with it.
+const SQLITE_SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+fn sidecar_base(name: &str) -> Option<&str> {
+    SQLITE_SIDECARS
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .filter(|base| !base.is_empty())
+}
+
+fn taken(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
+
+fn merge_into(from: &Path, to: &Path, rename: Rename) {
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return;
+    };
+    let names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    let _ = std::fs::create_dir_all(to);
+    for name in names.iter().filter(|n| sidecar_base(n).is_none()) {
+        let (source, target) = (from.join(name), to.join(name));
+        let foreign_sidecar = SQLITE_SIDECARS
+            .iter()
+            .any(|suffix| taken(&to.join(format!("{name}{suffix}"))));
+        if !taken(&target) && !foreign_sidecar {
+            let set: Vec<String> = std::iter::once(name.clone())
+                .chain(
+                    SQLITE_SIDECARS
+                        .iter()
+                        .map(|suffix| format!("{name}{suffix}"))
+                        .filter(|sidecar| names.contains(sidecar)),
+                )
+                .collect();
+            move_together(from, to, &set, rename);
+        } else if is_dir(&source) && is_dir(&target) {
+            merge_into(&source, &target, rename);
+        }
+    }
+    // A sidecar whose database is gone from both levels has nothing to
+    // part from.
+    for name in names.iter().filter(|n| sidecar_base(n).is_some()) {
+        let base = sidecar_base(name).unwrap_or_default();
+        let target = to.join(name);
+        let orphan = !names.iter().any(|n| n == base) && !taken(&to.join(base));
+        if orphan && !taken(&target) {
+            let _ = rename(&from.join(name), &target);
+        }
+    }
+    // Only an emptied directory goes.
+    let _ = std::fs::remove_dir(from);
+}
+
+/// Moves a database with its sidecars, or, when one fails to move, puts back
+/// what did: a database never lands without the journal holding its
+/// committed pages.
+fn move_together(from: &Path, to: &Path, set: &[String], rename: Rename) {
+    for (moved, name) in set.iter().enumerate() {
+        if rename(&from.join(name), &to.join(name)).is_err() {
+            for back in &set[..moved] {
+                if let Err(error) = rename(&to.join(back), &from.join(back)) {
+                    eprintln!(
+                        "hal-c2: {} moved to {} without the rest of its database, \
+                         and could not go back: {error}",
+                        from.join(back).display(),
+                        to.display()
+                    );
+                }
+            }
+            return;
+        }
+    }
+}
+
+fn is_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
 fn is_absolute(path: &str, platform: Platform) -> bool {
@@ -238,13 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn defaults_to_the_xdg_layout_one_level_down() {
+    fn defaults_to_the_xdg_layout() {
         let paths = on_unix(&[], None);
         assert_eq!(paths.root, None);
-        assert_eq!(s(&paths.config), "/home/me/.config/hal-c2/desktop-ljos");
-        assert_eq!(s(&paths.data), "/home/me/.local/share/hal-c2/desktop-ljos");
-        assert_eq!(s(&paths.state), "/home/me/.local/state/hal-c2/desktop-ljos");
-        assert_eq!(s(&paths.cache), "/home/me/.cache/hal-c2/desktop-ljos");
+        assert_eq!(s(&paths.config), "/home/me/.config/hal-c2");
+        assert_eq!(s(&paths.data), "/home/me/.local/share/hal-c2");
+        assert_eq!(s(&paths.state), "/home/me/.local/state/hal-c2");
+        assert_eq!(s(&paths.cache), "/home/me/.cache/hal-c2");
         assert_eq!(s(&paths.shell), "/home/me/.config/hal-c2/shell");
     }
 
@@ -258,9 +359,9 @@ mod tests {
             ],
             None,
         );
-        assert_eq!(s(&paths.config), "/xdg/config/hal-c2/desktop-ljos");
-        assert_eq!(s(&paths.cache), "/xdg/cache/hal-c2/desktop-ljos");
-        assert_eq!(s(&paths.state), "/home/me/.local/state/hal-c2/desktop-ljos");
+        assert_eq!(s(&paths.config), "/xdg/config/hal-c2");
+        assert_eq!(s(&paths.cache), "/xdg/cache/hal-c2");
+        assert_eq!(s(&paths.state), "/home/me/.local/state/hal-c2");
     }
 
     #[test]
@@ -273,11 +374,11 @@ mod tests {
             None,
         );
         assert_eq!(paths.root.as_deref(), Some(Path::new("/srv/hal-c2")));
-        assert_eq!(s(&paths.data), "/srv/hal-c2/data/desktop-ljos");
+        assert_eq!(s(&paths.data), "/srv/hal-c2/data");
         for old in ["/home/me/.hal-c2", "/home/me/.t3/", "relative"] {
             let paths = on_unix(&[("HAL_C2_HOME", old)], None);
             assert_eq!(paths.root, None, "{old}");
-            assert_eq!(s(&paths.config), "/home/me/.config/hal-c2/desktop-ljos");
+            assert_eq!(s(&paths.config), "/home/me/.config/hal-c2");
         }
     }
 
@@ -285,7 +386,7 @@ mod tests {
     fn home_dir_outranks_hal_c2_home_in_either_profile() {
         let paths = on_unix(&[("HAL_C2_HOME", "/srv/hal-c2")], Some("/scratch/sandbox"));
         assert_eq!(paths.root.as_deref(), Some(Path::new("/scratch/sandbox")));
-        assert_eq!(s(&paths.cache), "/scratch/sandbox/cache/desktop-ljos");
+        assert_eq!(s(&paths.cache), "/scratch/sandbox/cache");
         assert_eq!(s(&paths.shell), "/scratch/sandbox/config/shell");
         let dev = on(
             &[],
@@ -294,7 +395,7 @@ mod tests {
             Platform::Unix,
             Profile::Development,
         );
-        assert_eq!(s(&dev.data), "/scratch/sandbox/data/desktop-ljos");
+        assert_eq!(s(&dev.data), "/scratch/sandbox/data");
     }
 
     #[test]
@@ -310,9 +411,9 @@ mod tests {
             Profile::Development,
         );
         assert_eq!(paths.root, None);
-        assert_eq!(s(&paths.config), "/home/me/.config/hal-c2-dev/desktop-ljos");
+        assert_eq!(s(&paths.config), "/home/me/.config/hal-c2-dev");
         assert_eq!(s(&paths.shell), "/home/me/.config/hal-c2-dev/shell");
-        assert_eq!(s(&paths.data), "/xdg/data/hal-c2-dev/desktop-ljos");
+        assert_eq!(s(&paths.data), "/xdg/data/hal-c2-dev");
     }
 
     #[test]
@@ -331,17 +432,14 @@ mod tests {
         );
         assert_eq!(
             s(&paths.config),
-            "C:/Users/me/AppData/Roaming/hal-c2/config/desktop-ljos"
+            "C:/Users/me/AppData/Roaming/hal-c2/config"
         );
-        assert_eq!(s(&paths.data), "D:/xdg/data/hal-c2/desktop-ljos");
+        assert_eq!(s(&paths.data), "D:/xdg/data/hal-c2");
         assert_eq!(
             s(&paths.shell),
             "C:/Users/me/AppData/Roaming/hal-c2/config/shell"
         );
-        assert_eq!(
-            s(&paths.cache),
-            "C:/Users/me/AppData/Local/hal-c2/cache/desktop-ljos"
-        );
+        assert_eq!(s(&paths.cache), "C:/Users/me/AppData/Local/hal-c2/cache");
         let old = on(
             &[("HAL_C2_HOME", "c:/USERS/me/.HAL-C2")],
             None,
@@ -350,5 +448,180 @@ mod tests {
             Profile::Installed,
         );
         assert_eq!(old.root, None);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hal-c2-storage-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn read(path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    #[test]
+    fn an_earlier_shells_files_move_up_without_overwriting_desktop_qts() {
+        let root = scratch("carry-over");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = |kind: &Path, name: &str| kind.join(OLD_CLIENT_DIR).join(name);
+        // The earlier shell's files.
+        write(&old(&paths.data, "shell-drafts.json"), "ljos drafts");
+        write(&old(&paths.data, "pairing.json"), "ljos pairing");
+        write(&old(&paths.state, "shell-windows.json"), "ljos windows");
+        write(
+            &old(&paths.state, "shell-windows/w2/shell-panel.json"),
+            "ljos w2",
+        );
+        write(
+            &old(&paths.state, "shell-windows/w3/shell-panel.json"),
+            "ljos w3",
+        );
+        write(&old(&paths.cache, "client-cache.sqlite"), "ljos db");
+        write(&old(&paths.cache, "client-cache.sqlite-wal"), "ljos wal");
+        write(&old(&paths.cache, "mc-plugins/a/plugin.js"), "ljos plugin");
+        // What desktop-qt already wrote.
+        write(&paths.state.join("shell-windows.json"), "qt windows");
+        write(
+            &paths.state.join("shell-windows/w2/shell-panel.json"),
+            "qt w2",
+        );
+        write(&paths.cache.join("client-cache.sqlite"), "qt db");
+
+        carry_over(&paths);
+
+        // Moved where nothing was.
+        assert_eq!(
+            read(&paths.data.join("shell-drafts.json")).as_deref(),
+            Some("ljos drafts")
+        );
+        assert_eq!(
+            read(&paths.data.join("pairing.json")).as_deref(),
+            Some("ljos pairing")
+        );
+        assert_eq!(
+            read(&paths.state.join("shell-windows/w3/shell-panel.json")).as_deref(),
+            Some("ljos w3")
+        );
+        assert_eq!(
+            read(&paths.cache.join("mc-plugins/a/plugin.js")).as_deref(),
+            Some("ljos plugin")
+        );
+        // desktop-qt's own are kept, and the earlier shell's stay put.
+        assert_eq!(
+            read(&paths.state.join("shell-windows.json")).as_deref(),
+            Some("qt windows")
+        );
+        assert_eq!(
+            read(&paths.state.join("shell-windows/w2/shell-panel.json")).as_deref(),
+            Some("qt w2")
+        );
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite")).as_deref(),
+            Some("qt db")
+        );
+        assert_eq!(
+            read(&old(&paths.state, "shell-windows.json")).as_deref(),
+            Some("ljos windows")
+        );
+        // A database's journal never lands beside another database.
+        assert!(!paths.cache.join("client-cache.sqlite-wal").exists());
+        assert_eq!(
+            read(&old(&paths.cache, "client-cache.sqlite-wal")).as_deref(),
+            Some("ljos wal")
+        );
+        // An emptied old level is gone; one with leftovers stays.
+        assert!(!paths.data.join(OLD_CLIENT_DIR).exists());
+        assert!(paths.state.join(OLD_CLIENT_DIR).exists());
+
+        // A second start changes nothing.
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite")).as_deref(),
+            Some("qt db")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_database_moves_with_its_journal() {
+        let root = scratch("carry-over-db");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        write(&old.join("client-cache.sqlite-shm"), "shm");
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite")).as_deref(),
+            Some("db")
+        );
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-shm")).as_deref(),
+            Some("shm")
+        );
+        assert!(!old.exists());
+
+        // One whose place holds another's journal stays, with its own.
+        let root2 = scratch("carry-over-db-foreign");
+        let paths = on_unix(&[], Some(root2.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-shm"), "shm");
+        write(&paths.cache.join("client-cache.sqlite-wal"), "qt wal");
+        carry_over(&paths);
+        assert!(!paths.cache.join("client-cache.sqlite").exists());
+        assert!(!paths.cache.join("client-cache.sqlite-shm").exists());
+        assert_eq!(
+            read(&old.join("client-cache.sqlite")).as_deref(),
+            Some("db")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn a_database_stays_put_when_its_journal_cannot_move() {
+        let root = scratch("carry-over-db-partial");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        write(&old.join("client-cache.sqlite-shm"), "shm");
+        let stuck_wal = |a: &Path, b: &Path| {
+            if a.ends_with("client-cache.sqlite-wal") {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::rename(a, b)
+            }
+        };
+        merge_into(&old, &paths.cache, &stuck_wal);
+        for name in [
+            "client-cache.sqlite",
+            "client-cache.sqlite-wal",
+            "client-cache.sqlite-shm",
+        ] {
+            assert!(!paths.cache.join(name).exists(), "{name} moved alone");
+            assert!(old.join(name).exists(), "{name} left the old level");
+        }
+
+        // The next start, with the journal free to move, takes the set.
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert!(!old.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

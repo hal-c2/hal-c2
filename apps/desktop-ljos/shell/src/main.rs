@@ -27,9 +27,9 @@
 //!
 //! What the shell keeps (the client cache, its drafts) is under
 //! `--home-dir`, or the XDG directories (`hal-c2-dev` ones with `--dev`),
-//! one `desktop-ljos` level down (src/storage.rs). A shell built from
-//! source (no HAL_C2_RELEASE when it was built) or started with `--dev`
-//! is Dev: its own icon and app id (`hal-c2-dev`, unless `--app-id`).
+//! desktop-qt's (src/storage.rs). A shell built from source (no
+//! HAL_C2_RELEASE when it was built) or started with `--dev` is Dev: its
+//! own icon and app id (`hal-c2-dev`, unless `--app-id`).
 //!
 //! `--action` dispatches a shell action, its JSON payload after a `=` or a
 //! space (`settings.open`, `theme.mode={"mode":"dark"}`), and `--key`
@@ -380,6 +380,8 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         Profile::Installed
     };
     let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
+    // What an earlier shell kept a level down moves up before anything reads.
+    hal_c2_shell::storage::carry_over(&paths);
     // The user's theme, plugins, preferences and shell sit in the config
     // home's `shell`, desktop-qt's too, unless `--config-dir` names another.
     // Made up front so their watchers are live from the start (main.cpp).
