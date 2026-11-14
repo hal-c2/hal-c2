@@ -901,15 +901,24 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   # Signs `login` in to github.com the way `gh auth login` and `gh auth switch` leave
   # it, in a gh configuration of the scenario's own, with no token in the environment.
+  # Other hosts already signed in to stay as they are.
   defp sign_in_as(context, login) do
     context = World.gh_config(context)
+    path = Path.join(context.gh_config, "hosts.yml")
 
-    File.write!(Path.join(context.gh_config, "hosts.yml"), """
+    others =
+      case File.read(path) do
+        {:ok, text} -> String.replace(text, ~r/^github\.com:\n(?:[ \t]+.*\n)*/m, "")
+        {:error, _} -> ""
+      end
+
+    File.write!(path, """
     github.com:
         users:
             monalisa: {}
             hubot: {}
         user: #{login}
+    #{others}\
     """)
 
     context
