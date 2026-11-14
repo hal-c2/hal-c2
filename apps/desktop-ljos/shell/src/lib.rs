@@ -38,6 +38,8 @@ pub mod qr;
 pub mod runtime;
 pub mod saved_environments;
 pub mod scripted_run;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod secret_service;
 pub mod session;
 pub mod settings_page;
 pub mod sidebar_model;
@@ -185,10 +187,22 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
             .as_deref()
             .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
         store::install(engine, &mc, cache);
+        start_saved_environments(engine);
     }
     let origin = session.origin.clone();
     bridge.defer(engine, move |engine| store::open(engine, &origin));
     Ok(())
+}
+
+/// NativeShell::setStoreDirs: the environments paired beside the shell's MC
+/// connect once the store is there, before that MC's first snapshot, so
+/// it lists what each link serves and that snapshot takes none of their
+/// cached MCs for its own.
+fn start_saved_environments(engine: &Engine) {
+    controller::with::<controllers::saved_environments::SavedEnvironments, _>(
+        engine,
+        |c, engine| c.start(engine),
+    );
 }
 
 /// Whether the shell follows an MC: it started with one, or was
@@ -255,6 +269,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("preferences.json")),
     );
+    if let (Some(data), Some(cache)) = (&launch.data_dir, &launch.cache_dir) {
+        browser::set_profile(engine, data, cache);
+    }
     browser::start(engine);
     conceal_on_hold(engine);
     if launch.mc_origin.is_some() || launch.hosted {
@@ -267,6 +284,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
         store::install(engine, &mc, cache);
         store::on_changed(engine, update);
+        start_saved_environments(engine);
         if let Some(origin) = &launch.mc_origin {
             store::open(engine, origin);
         }

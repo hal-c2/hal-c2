@@ -26,28 +26,81 @@ pub const FILE: &str = "saved-environments.json";
 const VERSION: i64 = 1;
 
 /// Where the client keeps the credentials of the environments it saved, out
-/// of its own files: the system's secure storage.
+/// of its own files: the system's secure storage. Calls may block (an unlock
+/// dialog), as desktop-qt's do.
 pub trait SecretStore {
     /// Keeps `secret` under `key`; why not when the store refuses.
     fn write(&self, key: &str, secret: &str) -> Result<(), String>;
     /// None when the store has none under `key`, or cannot be read.
     fn read(&self, key: &str) -> Option<String>;
     fn remove(&self, key: &str);
+    /// The user asked for a credential (Retry): a store whose unlock they
+    /// refused may ask them again. Reads otherwise do not ask twice.
+    fn ask(&self) {}
 }
 
-/// This system's store. Ljós has no secure storage the shell can reach yet
-/// (hal-c2/ljos-ui#380 names the gap), so every write is refused: a credential
-/// is never written to disk in the clear.
+/// This system's store, holding what desktop-qt holds where desktop-qt
+/// holds it, so a user switching clients stays signed in: the Secret
+/// Service on Linux ([`crate::secret_service`]), the login Keychain on
+/// macOS, the Credential Manager on Windows. A desktop with none refuses
+/// every write: a credential is never written to disk in the clear.
 pub fn system_store() -> Rc<dyn SecretStore> {
-    Rc::new(UnavailableSecretStore)
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        match crate::secret_service::SecretService::session() {
+            Some(store) => Rc::new(store),
+            None => Rc::new(UnavailableSecretStore(Some(
+                "No keyring answers on this desktop (the Secret Service: GNOME Keyring, KWallet or KeePassXC).",
+            ))),
+        }
+    }
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        Rc::new(SystemSecretStore(ljos_secrets::SecretStore::system()))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Rc::new(UnavailableSecretStore(None))
+    }
 }
 
-/// Refuses to keep anything: a system without secure storage.
-pub struct UnavailableSecretStore;
+/// desktop-qt's service name: the Keychain's service. On Windows desktop-qt's
+/// targets are `HAL-C2:<id>`, `ljos_secrets`' `<id>.HAL-C2`.
+///
+/// TODO(hal-c2/ljos-ui#457): name Windows' targets as
+/// desktop-qt does once `ljos_secrets` lets a caller.
+#[cfg(any(target_os = "macos", windows))]
+const SERVICE: &str = "HAL-C2";
+
+/// `ljos_secrets`' store under desktop-qt's service name.
+#[cfg(any(target_os = "macos", windows))]
+struct SystemSecretStore(ljos_secrets::SecretStore);
+
+#[cfg(any(target_os = "macos", windows))]
+impl SecretStore for SystemSecretStore {
+    fn write(&self, key: &str, secret: &str) -> Result<(), String> {
+        self.0
+            .write(SERVICE, key, secret.as_bytes())
+            .map_err(|e| e.to_string())
+    }
+    fn read(&self, key: &str) -> Option<String> {
+        let secret = self.0.read(SERVICE, key).ok()??;
+        secret.as_str().map(str::to_owned)
+    }
+    fn remove(&self, key: &str) {
+        let _ = self.0.remove(SERVICE, key);
+    }
+}
+
+/// Refuses to keep anything: a system without secure storage, and why.
+pub struct UnavailableSecretStore(pub Option<&'static str>);
 
 impl SecretStore for UnavailableSecretStore {
     fn write(&self, _: &str, _: &str) -> Result<(), String> {
-        Err("This system has no secure storage for credentials.".into())
+        Err(self
+            .0
+            .unwrap_or("This system has no secure storage for credentials.")
+            .into())
     }
     fn read(&self, _: &str) -> Option<String> {
         None

@@ -358,3 +358,98 @@ fn a_machine_that_left_while_away_is_not_kept_when_its_mc_answers_first() {
     assert_eq!(kept(&mut store), Changes::default());
     assert!(keys(&store).is_empty());
 }
+
+/// Studio's link lists `mc-s`, serving studio with t9.
+fn studio_snapshot() -> Frame {
+    frame(json!({
+        "t": "shell",
+        "mcs": [{"mc": "mc-s", "environment": env("studio"), "online": true, "epoch": "s1", "rev": 2}],
+        "rows": [["mc-s", "t9", "thread", thread("t9")]],
+    }))
+}
+
+#[test]
+fn a_link_lists_its_environment_beside_the_shells() {
+    let mut store = ShellStore::default();
+    let studio = Client::Link("studio".into());
+    assert!(store.add_link("studio"));
+    assert!(!store.add_link("studio"));
+    // Linked but not heard: the link serves it.
+    assert_eq!(store.link_serving("studio").as_deref(), Some("studio"));
+    assert!(store.apply(&snapshot()));
+    assert!(store.apply_from(&studio_snapshot(), &studio));
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    assert_eq!(store.link_of("mc-s").as_deref(), Some("studio"));
+    assert_eq!(store.link_of("mc-a"), None);
+    assert_eq!(store.link_serving("env-a"), None);
+    assert_eq!(store.have(), json!({"mc-a": ["e1", 4]}));
+    assert_eq!(store.have_for(&studio), json!({"mc-s": ["s1", 2]}));
+    // The shell's own snapshot does not speak for studio's MC, nor studio's
+    // for the shell's.
+    assert!(store.apply(&snapshot()));
+    assert!(store.apply_from(
+        &frame(json!({"t": "shell", "mcs": [], "rows": []})),
+        &studio
+    ));
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2"]);
+    assert_eq!(store.snapshots(), 2);
+}
+
+#[test]
+fn a_links_error_is_not_the_shells_problem() {
+    let mut store = ShellStore::default();
+    let studio = Client::Link("studio".into());
+    store.add_link("studio");
+    assert!(store.apply(&snapshot()));
+    let error = frame(json!({"t": "error", "message": "studio is down"}));
+    assert!(!store.apply_from(&error, &studio));
+    assert!(store.problem().is_empty());
+}
+
+#[test]
+fn removing_a_link_forgets_its_mcs_only_when_told() {
+    let mut store = ShellStore::default();
+    let studio = Client::Link("studio".into());
+    store.add_link("studio");
+    store.apply(&snapshot());
+    store.apply_from(&studio_snapshot(), &studio);
+    // Closed for now: its rows stay, listed by no client.
+    assert!(!store.remove_link("studio", false));
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    assert_eq!(store.link_of("mc-s"), None);
+    // Linked again and removed for good: they go.
+    store.add_link("studio");
+    assert!(store.remove_link("studio", true));
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2"]);
+    assert!(store.links().is_empty());
+}
+
+/// A saved environment's cached MC outlives the shell's first snapshot when
+/// the environment is linked (or, blocked, reserved) before it, as the shell
+/// does at start: that snapshot does not speak for it.
+#[test]
+fn a_saved_environments_cached_mc_survives_the_shells_first_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.add_link("studio");
+        store.apply(&snapshot());
+        store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
+    }
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    kept(&mut store);
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    // Offline or blocked: linked, but its link says nothing yet.
+    store.add_link("studio");
+    store.apply(&snapshot());
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    assert_eq!(store.have(), json!({"mc-a": ["e1", 4]}));
+    assert_eq!(
+        store.have_for(&Client::Link("studio".into())),
+        json!({"mc-s": ["s1", 2]})
+    );
+    // Unclaimed but linked: what is addressed to it goes to studio's link.
+    assert_eq!(store.link_of("mc-s").as_deref(), Some("studio"));
+}

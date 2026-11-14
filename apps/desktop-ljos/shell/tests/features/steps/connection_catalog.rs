@@ -3,16 +3,19 @@
 //! after desktop-qt's ConnectionCatalogSteps: records and credentials that
 //! have gone, a damaged record file, and a keyring that refuses.
 //!
-//! The saved environment is "studio"; the World's keyring is a
-//! MemorySecretStore (World::secrets). desktop-ljos holds no connection of
-//! its own to a saved environment yet (hal-c2/hal-c2#1542), so the steps
-//! that need one say so.
+//! The saved environment is "studio", served by a FakeMc of its own
+//! (World::other_mc); the World's keyring is a MemorySecretStore
+//! (World::secrets).
 
+use std::io::Write;
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use hal_c2_mc::Phase;
 use hal_c2_mc::pairing::{Outcome as Paid, Pairing};
 use hal_c2_shell::controllers::saved_environments::SavedEnvironments;
+use hal_c2_shell::saved_environments::SavedEnvironment;
 use serde_json::{Map, Value, json};
 
 use crate::harness::{Outcome, Q, Steps, show, text};
@@ -21,9 +24,86 @@ use crate::{expect, fail};
 
 pub const STUDIO: &str = "studio";
 const STUDIO_SESSION: &str = "studio-session";
-/// Where "studio" says it is: nothing answers there.
-const STUDIO_ORIGIN: &str = "http://127.0.0.1:9";
 const DAMAGED: &str = r#"{"version": 1, "environments": [{"id": "studio", "label": "Stu"#;
+
+/// The other environment's MC, "Studio".
+fn studio(world: &mut World) -> &mut crate::fake_mc::FakeMc {
+    world.other_mc("mc-studio", |mc| {
+        mc.environment_id = STUDIO.into();
+        mc.label = "Studio".into();
+    })
+}
+
+fn studio_origin(world: &mut World) -> String {
+    studio(world).origin()
+}
+
+/// Answers a raw request with `body`, as JSON.
+fn respond(mut stream: TcpStream, status: u16, body: &Value) {
+    let body = body.to_string();
+    let head = format!(
+        "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        if status < 300 { "OK" } else { "Refused" },
+        body.len()
+    );
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(body.as_bytes());
+}
+
+/// What studio's own connection says of itself.
+fn studio_phase(world: &World) -> Option<Phase> {
+    world
+        .with::<SavedEnvironments, _>(|c, _| c.link(STUDIO).map(|l| l.status().phase))
+        .ok()
+        .flatten()
+}
+
+fn wait_for_state(world: &mut World, id: &str, state: &str) -> Outcome {
+    world.wait_for_with(
+        |w| state_of(w, id) == state,
+        |w| format!("{id} to be {state}; saved environments are {}", describe(w)),
+    )
+}
+
+/// Saved as pairing saves it, and connected.
+fn save_studio(world: &mut World) -> Outcome {
+    let origin = studio_origin(world);
+    let saved = world.with::<SavedEnvironments, _>(|c, engine| {
+        c.save(
+            engine,
+            SavedEnvironment {
+                id: STUDIO.into(),
+                label: "Studio".into(),
+                origin,
+                expires_at: String::new(),
+            },
+            STUDIO_SESSION,
+        )
+    })?;
+    if let Err(refused) = saved {
+        fail!("studio could not be saved: {refused}");
+    }
+    world.pump()?;
+    wait_for_state(world, STUDIO, "connected")?;
+    world.wait_for_with(
+        |w| {
+            w.with::<SavedEnvironments, _>(|_, engine| {
+                hal_c2_shell::store::with(engine, |s| s.link_serving(STUDIO).is_some())
+            })
+            .unwrap_or(false)
+        },
+        |w| {
+            format!(
+                "the shell to hear Studio; saved environments are {}",
+                describe(w)
+            )
+        },
+    )
+}
+
+/// The shell's connections before the scenario reconnected it.
+#[derive(Default)]
+struct Before(usize);
 
 fn record_file(world: &World) -> PathBuf {
     world
@@ -118,9 +198,10 @@ fn pair_studio(world: &mut World) -> Outcome {
             }
         }));
     })?;
+    let origin = studio_origin(world);
     world.dispatch(
         "savedEnvironments.pair",
-        json!({"link": format!("{STUDIO_ORIGIN}/pair#token=studio-pairing")}),
+        json!({"link": format!("{origin}/pair#token=studio-pairing")}),
     )?;
     world.wait_for_with(
         |w| w.state("savedEnvironments")["pairing"] == json!(false),
@@ -130,10 +211,69 @@ fn pair_studio(world: &mut World) -> Outcome {
 
 pub fn register(steps: &mut Steps) {
     // Only the environment with the bad credential stops.
-    steps.step("two paired environments", |_, _, _| {
-        fail!(
-            "desktop-ljos holds no connection of its own to a saved environment (hal-c2/hal-c2#1542)"
-        )
+    steps.step("two paired environments", |world, _, _| {
+        world.wait_for("the first environment to be connected", |w| {
+            w.client().is_ready()
+        })?;
+        save_studio(world)
+    });
+    steps.step("one of them revoked this client", |world, _, _| {
+        // Studio turns its session away, the socket and its ticket alike (router.ex).
+        let refuse = |_: &mut crate::fake_mc::FakeMc, stream: TcpStream, _: &str| {
+            let refusal =
+                json!({"_tag": "EnvironmentAuthInvalidError", "reason": "invalid_credential"});
+            respond(stream, 401, &refusal);
+            Ok(())
+        };
+        let mc = studio(world);
+        mc.on_raw(&format!("/ws?token={STUDIO_SESSION}"), refuse);
+        mc.on_raw("/api/auth/websocket-ticket", refuse);
+        Ok(())
+    });
+    steps.step("the client connects to both", |world, _, _| {
+        let before = world.mc.connections.len();
+        world.part::<Before>().0 = before;
+        world.client().reconnect();
+        let link = world.with::<SavedEnvironments, _>(|c, _| c.link(STUDIO))?;
+        let Some(link) = link else {
+            fail!(
+                "studio has no connection; saved environments are {}",
+                describe(world)
+            );
+        };
+        link.reconnect();
+        world.pump()?;
+        wait_for_state(world, STUDIO, "refused")?;
+        world.wait_for("the first environment to connect again", |w| {
+            let before = w.peek_part::<Before>().map_or(0, |b| b.0);
+            w.client().is_ready() && w.mc.connections.len() > before
+        })
+    });
+    steps.step("the other environment stays connected", |world, _, _| {
+        // What the shell says of it follows its connection.
+        world.wait_for_with(
+            |w| w.state("connection")["phase"] == json!("connected"),
+            |w| {
+                format!(
+                    "the shell to say the first environment is connected; it says {}",
+                    show(&w.state("connection"))
+                )
+            },
+        )?;
+        let first = world.client().status();
+        expect!(
+            world.client().is_ready() && first.phase == Phase::Ready,
+            "the first environment is {:?} ({})",
+            first.phase,
+            first.failure_message
+        );
+        // Studio stopped on its own: it waits for the user to pair again.
+        expect!(
+            state_of(world, STUDIO) == "refused" && studio_phase(world) == Some(Phase::Refused),
+            "saved environments are {}",
+            describe(world)
+        );
+        Ok(())
     });
 
     // A saved environment whose record or credential has gone.
@@ -151,9 +291,10 @@ pub fn register(steps: &mut Steps) {
                 write_records(world, json!([{"id": id, "label": "Studio"}]))
             } else {
                 world.secrets.secrets.borrow_mut().remove(&id);
+                let origin = studio_origin(world);
                 write_records(
                     world,
-                    json!([{"id": id, "label": "Studio", "origin": STUDIO_ORIGIN}]),
+                    json!([{"id": id, "label": "Studio", "origin": origin}]),
                 )
             }
         },
@@ -226,9 +367,7 @@ pub fn register(steps: &mut Steps) {
                 "saved environments are {}",
                 describe(world)
             );
-            fail!(
-                "studio is saved but not connected: desktop-ljos holds no connection of its own to a saved environment (hal-c2/hal-c2#1542)"
-            )
+            wait_for_state(world, STUDIO, "connected")
         },
     );
 
