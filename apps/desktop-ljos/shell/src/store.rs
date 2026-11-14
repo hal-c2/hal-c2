@@ -1026,12 +1026,28 @@ pub fn add_link(engine: &Engine, environment_id: &str, link: Rc<dyn Mc>) {
             };
             let changed = store.borrow_mut().apply_from(frame, &client);
             settle(engine, Changes::changed(changed));
+            // What the link serves is known now: what was held on the link
+            // it replaced (one addressed to a cluster MC) moves to it.
+            if frame.get("t").and_then(Value::as_str) == Some("shell")
+                && let Some(own) = crate::controller::mc(engine)
+            {
+                own.reroute();
+            }
         }),
         Some(resume),
     );
     slot.links
         .borrow_mut()
         .insert(environment_id.to_owned(), (link, id));
+}
+
+/// Holds what the cache kept of the saved environment `environment_id` as
+/// its link's while it has no link (it is blocked), so the shell's own
+/// snapshot does not take it: until [`remove_link`] or [`add_link`].
+pub fn reserve_link(engine: &Engine, environment_id: &str) {
+    if let Some(store) = get(engine) {
+        store.borrow_mut().add_link(environment_id);
+    }
 }
 
 /// Ends the link to `environment_id`: its MCs go when the environment is

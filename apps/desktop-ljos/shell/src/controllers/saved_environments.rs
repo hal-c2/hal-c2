@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, SubsecRound, Utc};
 use hal_c2_mc::Phase;
 use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
 use ljos::prelude::Engine;
@@ -179,7 +179,8 @@ impl SavedEnvironments {
     /// Reads the records again, in the store set last, and connects to each.
     pub fn start(&mut self, engine: &Engine) {
         self.started = true;
-        let ids: Vec<String> = self.links.borrow().keys().cloned().collect();
+        let mut ids: Vec<String> = self.links.borrow().keys().cloned().collect();
+        ids.extend(self.blocked.keys().cloned());
         for id in ids {
             self.disconnect(engine, &id, false);
         }
@@ -259,6 +260,7 @@ impl SavedEnvironments {
         if !connection.blocked.is_empty() {
             // Nothing to connect with: no retry can mend that.
             self.blocked.insert(id.to_owned(), connection.blocked);
+            store::reserve_link(engine, id);
             return;
         }
         self.blocked.remove(id);
@@ -289,16 +291,21 @@ impl SavedEnvironments {
         if let Err(error) = link.open_expecting(&environment.origin, &connection.credential, id) {
             self.blocked.insert(id.to_owned(), error);
             self.disconnect(engine, id, false);
+            store::reserve_link(engine, id);
+            return;
         }
+        // What the shell held on the link this one replaces moves to it.
+        self.mc.reroute();
     }
 
     /// Ends the connection to `id`; with `forget`, what it listed goes too.
     fn disconnect(&mut self, engine: &Engine, id: &str, forget: bool) {
-        let Some(link) = self.links.borrow_mut().remove(id) else {
-            return;
-        };
+        let link = self.links.borrow_mut().remove(id);
+        // A blocked one has no link, but the store holds its place.
         store::remove_link(engine, id, forget);
-        link.mc.close();
+        if let Some(link) = link {
+            link.mc.close();
+        }
     }
 
     /// A status from the link `generation` of `id`: a renewed credential is
@@ -312,8 +319,11 @@ impl SavedEnvironments {
         }
         if let (Some(catalog), Some(expires_at)) = (&mut self.catalog, link.mc.credential_expiry())
         {
+            // Kept to the millisecond, so compared at it: a finer renewal
+            // would otherwise be saved again on every status.
+            let expires_at = expires_at.trunc_subsecs(3);
             let saved = catalog.find(id).map(|e| expiry(&e.expires_at));
-            if saved.is_some_and(|saved| saved != Some(expires_at)) {
+            if saved.is_some_and(|saved| saved.map(|s| s.trunc_subsecs(3)) != Some(expires_at)) {
                 catalog.set_expiry(id, &expires_at.to_rfc3339_opts(SecondsFormat::Millis, true));
             }
         }

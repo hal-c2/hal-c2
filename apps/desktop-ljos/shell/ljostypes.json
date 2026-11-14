@@ -1927,9 +1927,9 @@
               "readonly": true,
               "final": true,
               "required": false,
-              "constant": true,
+              "constant": false,
               "group": false,
-              "notify": null
+              "notify": "profileChanged"
             },
             {
               "name": "devToolsDock",

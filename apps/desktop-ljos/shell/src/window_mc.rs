@@ -286,6 +286,10 @@ impl Mc for WindowMc {
         self.inner.set_route(route);
     }
 
+    fn reroute(&self) {
+        self.inner.reroute();
+    }
+
     fn dispatch_command(&self, environment: &str, command: Json, reply: Reply) {
         self.inner
             .dispatch_command(environment, command, self.bind(reply));

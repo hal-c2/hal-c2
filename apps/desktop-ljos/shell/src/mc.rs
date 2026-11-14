@@ -105,11 +105,11 @@ pub enum StreamMessage {
     Binary(Vec<u8>),
 }
 
-/// Which other client serves what is addressed to an environment (and, when
-/// the shape names one, a cluster MC): none when this one does.
 /// A subscription held on another client: that client, and its id there.
 pub type Held = (Rc<dyn Mc>, SubId);
 
+/// Which other client serves what is addressed to an environment (and, when
+/// the shape names one, a cluster MC): none when this one does.
 pub type Route = Rc<dyn Fn(&str, &str) -> Option<Rc<dyn Mc>>>;
 
 /// The MC as a controller sees it: desktop-qt's `McClient` without its
@@ -191,6 +191,10 @@ pub trait Mc {
     /// Sends calls and subscriptions addressed to an environment another
     /// client serves through that client (desktop-qt's McClient::setRoute).
     fn set_route(&self, _route: Route) {}
+    /// Moves each subscription held on another client to the client that
+    /// serves its environment now, once a link was replaced: the old one
+    /// hears no more.
+    fn reroute(&self) {}
     /// `orchestration.dispatchCommand` with a fresh commandId, where
     /// `environment` is served.
     fn dispatch_command(&self, environment: &str, mut command: Json, reply: Reply) {
@@ -343,8 +347,35 @@ pub struct Connection {
     route: RefCell<Option<Route>>,
     /// Subscriptions another client serves: the id given out, and that
     /// client's own.
-    forwarded: RefCell<HashMap<u64, Held>>,
+    forwarded: RefCell<HashMap<u64, Forwarded>>,
     next_forwarded: Cell<u64>,
+}
+
+/// A subscription another client serves ([`Mc::set_route`]): what it was
+/// made with, shared so [`Mc::reroute`] can make it again on a new link.
+struct Forwarded {
+    environment: String,
+    mc: String,
+    shape: Json,
+    on_frame: Rc<RefCell<OnFrame>>,
+    resume: Option<Rc<RefCell<Resume>>>,
+    held: Held,
+}
+
+impl Forwarded {
+    /// Subscribes on `link` with the shared callbacks.
+    fn subscribe_on(&self, link: &Rc<dyn Mc>) -> SubId {
+        let on_frame = self.on_frame.clone();
+        let resume = self
+            .resume
+            .clone()
+            .map(|resume| -> Resume { Box::new(move || (resume.borrow_mut())()) });
+        link.subscribe(
+            self.shape.clone(),
+            Box::new(move |engine, frame| (on_frame.borrow_mut())(engine, frame)),
+            resume,
+        )
+    }
 }
 
 /// Where the ids of forwarded subscriptions start, above any the client
@@ -414,7 +445,7 @@ impl Connection {
     }
 
     fn forwarded(&self, id: SubId) -> Option<Held> {
-        self.forwarded.borrow().get(&id.0).cloned()
+        self.forwarded.borrow().get(&id.0).map(|f| f.held.clone())
     }
 
     pub fn client(&self) -> &McClient {
@@ -584,10 +615,18 @@ impl Mc for Connection {
         }
         .to_owned();
         if let Some(link) = self.routed(&environment, field("mc")) {
-            let theirs = link.subscribe(shape, on_frame, resume);
+            let mut forwarded = Forwarded {
+                environment,
+                mc: field("mc").to_owned(),
+                shape: shape.clone(),
+                on_frame: Rc::new(RefCell::new(on_frame)),
+                resume: resume.map(|r| Rc::new(RefCell::new(r))),
+                held: (link.clone(), SubId(0)),
+            };
+            forwarded.held.1 = forwarded.subscribe_on(&link);
             let id = self.next_forwarded.get();
             self.next_forwarded.set(id + 1);
-            self.forwarded.borrow_mut().insert(id, (link, theirs));
+            self.forwarded.borrow_mut().insert(id, forwarded);
             return SubId(id);
         }
         let frame = move |frame: &Frame| with_delivering(|engine| on_frame(engine, frame));
@@ -599,7 +638,7 @@ impl Mc for Connection {
 
     fn unsubscribe(&self, id: SubId) {
         let forwarded = self.forwarded.borrow_mut().remove(&id.0);
-        match forwarded {
+        match forwarded.map(|f| f.held) {
             Some((link, theirs)) => link.unsubscribe(theirs),
             None => self.client.unsubscribe(id.0),
         }
@@ -699,6 +738,33 @@ impl Mc for Connection {
         *self.route.borrow_mut() = Some(route);
     }
 
+    fn reroute(&self) {
+        // Decided first: subscribing on a link runs no code of this one's,
+        // but the route reads the store and the saved environments.
+        let moves: Vec<(u64, Rc<dyn Mc>)> = self
+            .forwarded
+            .borrow()
+            .iter()
+            .filter_map(|(id, f)| {
+                let now = self.routed(&f.environment, &f.mc)?;
+                (!Rc::ptr_eq(&now, &f.held.0)).then_some((*id, now))
+            })
+            .collect();
+        for (id, link) in moves {
+            let Some(old) = self.forwarded.borrow().get(&id).map(|f| f.held.clone()) else {
+                continue;
+            };
+            old.0.unsubscribe(old.1);
+            let theirs = match self.forwarded.borrow().get(&id) {
+                Some(f) => f.subscribe_on(&link),
+                None => continue,
+            };
+            if let Some(f) = self.forwarded.borrow_mut().get_mut(&id) {
+                f.held = (link, theirs);
+            }
+        }
+    }
+
     fn open_stream(
         &self,
         path: &str,
@@ -782,4 +848,69 @@ impl Mc for Disconnected {
     fn more(&self, _: SubId, _: u32) {}
 
     fn on_ready_changed(&self, _: OnReady) {}
+}
+
+#[cfg(test)]
+mod reroute_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A link that keeps what was subscribed on it.
+    #[derive(Default)]
+    struct Recorder {
+        live: RefCell<Vec<u64>>,
+        more: RefCell<Vec<u64>>,
+        next: Cell<u64>,
+    }
+
+    impl Mc for Recorder {
+        fn is_ready(&self) -> bool {
+            true
+        }
+        fn environment(&self) -> String {
+            "studio".into()
+        }
+        fn call(&self, _: &str, _: &str, _: Json, _: Reply) {}
+        fn subscribe(&self, _: Json, _: OnFrame, _: Option<Resume>) -> SubId {
+            let id = self.next.get() + 1;
+            self.next.set(id);
+            self.live.borrow_mut().push(id);
+            SubId(id)
+        }
+        fn unsubscribe(&self, id: SubId) {
+            self.live.borrow_mut().retain(|live| *live != id.0);
+        }
+        fn more(&self, id: SubId, _: u32) {
+            self.more.borrow_mut().push(id.0);
+        }
+        fn on_ready_changed(&self, _: OnReady) {}
+    }
+
+    #[test]
+    fn a_held_subscription_moves_to_the_link_that_replaced_its_own() {
+        let own = Connection::spawn(|| {});
+        let old = Rc::new(Recorder::default());
+        let serving: Rc<RefCell<Rc<dyn Mc>>> = Rc::new(RefCell::new(old.clone()));
+        let route = serving.clone();
+        own.set_route(Rc::new(move |environment, _| {
+            (environment == "studio").then(|| route.borrow().clone())
+        }));
+        let shape = json!({"type": "thread", "environmentId": "studio", "threadId": "t9"});
+        let id = own.subscribe(shape, Box::new(|_, _| {}), None);
+        assert_eq!(*old.live.borrow(), [1]);
+        // Nothing moved: the link is the same.
+        own.reroute();
+        assert_eq!(*old.live.borrow(), [1]);
+
+        let new = Rc::new(Recorder::default());
+        *serving.borrow_mut() = new.clone();
+        own.reroute();
+        assert!(old.live.borrow().is_empty());
+        assert_eq!(*new.live.borrow(), [1]);
+        own.more(id, 10);
+        assert_eq!(*new.more.borrow(), [1]);
+        assert!(old.more.borrow().is_empty());
+        own.unsubscribe(id);
+        assert!(new.live.borrow().is_empty());
+    }
 }

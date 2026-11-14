@@ -423,3 +423,31 @@ fn removing_a_link_forgets_its_mcs_only_when_told() {
     assert_eq!(keys(&store), ["env-a:t1", "env-a:t2"]);
     assert!(store.links().is_empty());
 }
+
+/// A saved environment's cached MC outlives the shell's first snapshot when
+/// the environment is linked (or, blocked, reserved) before it, as the shell
+/// does at start: that snapshot does not speak for it.
+#[test]
+fn a_saved_environments_cached_mc_survives_the_shells_first_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.add_link("studio");
+        store.apply(&snapshot());
+        store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
+    }
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    kept(&mut store);
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    // Offline or blocked: linked, but its link says nothing yet.
+    store.add_link("studio");
+    store.apply(&snapshot());
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+    assert_eq!(store.have(), json!({"mc-a": ["e1", 4]}));
+    assert_eq!(
+        store.have_for(&Client::Link("studio".into())),
+        json!({"mc-s": ["s1", 2]})
+    );
+}

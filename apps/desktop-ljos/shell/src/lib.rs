@@ -181,6 +181,7 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
             .as_deref()
             .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
         store::install(engine, &mc, cache);
+        start_saved_environments(engine);
     }
     let origin = session.origin.clone();
     bridge.defer(engine, move |engine| store::open(engine, &origin));
@@ -189,6 +190,17 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
         let _ = session::save(dir, session);
     }
     Ok(())
+}
+
+/// NativeShell::setStoreDirs: the environments paired beside the shell's MC
+/// connect once the store is there, before that MC's first snapshot, so
+/// it lists what each link serves and that snapshot takes none of their
+/// cached MCs for its own.
+fn start_saved_environments(engine: &Engine) {
+    controller::with::<controllers::saved_environments::SavedEnvironments, _>(
+        engine,
+        |c, engine| c.start(engine),
+    );
 }
 
 /// Whether the shell follows an MC: it started with one, or was
@@ -270,6 +282,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
                 .map(|dir| Rc::new(cache::LocalCache::open(Some(dir))));
             store::install(engine, &mc, cache);
             store::on_changed(engine, update);
+            start_saved_environments(engine);
             store::open(engine, origin);
         }
         // No MC to wait for: what the shell shows is all there is.
