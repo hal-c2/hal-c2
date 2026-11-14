@@ -351,12 +351,20 @@ struct AttachmentUrl {
 
 type Entities = BTreeMap<String, BTreeMap<String, Obj>>;
 
-/// Whether `now` is `was` with text appended to some of its fields, as an
-/// item's stream leaves it.
+/// The fields an item's stream appends to.
+const STREAMED: [&str; 5] = ["text", "output", "markdown", "progress", "summary"];
+
+/// Whether `now` is `was` with text appended to some of its streamed
+/// fields, as an item's stream leaves it; any other field that changed
+/// (a title that was empty) restates it, as a set does.
 fn only_appended(was: &Obj, now: &Obj) -> bool {
     was.len() == now.len()
         && now.iter().all(|(key, value)| match (was.get(key), value) {
-            (Some(Json::String(before)), Json::String(after)) => after.starts_with(before.as_str()),
+            (Some(Json::String(before)), Json::String(after))
+                if STREAMED.contains(&key.as_str()) =>
+            {
+                after.starts_with(before.as_str())
+            }
             (Some(before), after) => before == after,
             (None, _) => false,
         })

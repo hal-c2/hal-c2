@@ -1245,6 +1245,11 @@ fn a_snapshot_of_a_members_progress_does_not_redraw_its_group() {
     assert!(!redrawn(&w));
     w.snapshot(rows("a", "failed"));
     assert!(redrawn(&w));
+    // A field that does not stream, set where it was empty, is a change.
+    w.snapshot(rows("a", ""));
+    w.view.redrawn.clear();
+    w.snapshot(rows("a", "running"));
+    assert!(redrawn(&w));
 }
 
 #[test]
