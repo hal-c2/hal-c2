@@ -13,11 +13,11 @@ use super::attachments::{file_records, image_records};
 use super::kept::{self, Attachment, Excerpt, Send, Unsent};
 use super::text::{self, IMPLEMENT_PREFIX, launch_title, newest_user_message};
 use super::{
-    Composer, back, later, now_iso, setting, string, thread_of, toast, toast_error, unanswered,
-    uuid,
+    Composer, SettingMode, back, later, now_iso, setting, string, thread_of, toast, toast_error,
+    unanswered, uuid,
 };
 use crate::bridge::Bridge;
-use crate::composer_model as model;
+use crate::composer_model::{self as model, Instance};
 use crate::controller;
 use crate::controllers::drafts;
 use crate::controllers::navigation::{Navigation, Route};
@@ -331,32 +331,83 @@ impl Composer {
         let implement = plan_follow_up && trimmed.is_empty();
 
         let created_at = now_iso(engine);
-        // Only a mode the user changed is set; a thread the MC has no mode
-        // for keeps the MC's default. A saved mode the provider no longer
-        // offers is set to the mode the composer shows instead, so the turn
-        // runs as read.
-        let mut runtime_mode = self.picked_runtime_mode(engine, target);
-        let offered = self.instance_of(&self.selection(engine, target));
-        if !runtime_mode.is_empty() {
-            runtime_mode = model::shown_runtime_mode(offered, &runtime_mode);
-        } else if !thread.runtime_mode.is_empty() {
-            let shown = model::shown_runtime_mode(offered, &thread.runtime_mode);
-            if shown != thread.runtime_mode {
+        // Only what the user picked goes: with no pick the thread runs on
+        // what it holds when the turn starts, so a change made elsewhere
+        // since stands. A thread whose own provider is known not to run
+        // here needs a pick (`needs_pick`); one the catalogue cannot judge
+        // yet is the MC's to run.
+        let picks = kept::draft_of(engine, target);
+        let model_picked = picks.model_selection.is_some();
+        if !model_picked
+            && !thread.model_selection.is_empty()
+            && !self.catalogue.is_empty()
+            && !self
+                .instance_of(&thread.model_selection)
+                .is_some_and(Instance::ready)
+        {
+            toast_error(
+                engine,
+                "Choose a model to send",
+                "This thread's provider is unavailable here. Pick a model, then send again.",
+            );
+            return true;
+        }
+        let shown_selection = self.selection(engine, target);
+        let model_selection = if model_picked {
+            shown_selection.clone()
+        } else {
+            Obj::new()
+        };
+        // The modes are set as the user picks them (`set_thread_mode`), and
+        // a change on its way carries its mode. The send sets one where the
+        // composer shows another than the thread will have: a saved mode
+        // the provider no longer offers, or the mode a plan's follow-up
+        // chooses. Like the user's, these name no revision, and are this
+        // client's own changes, which the model pick stands past.
+        let shown_instance = self.instance_of(&shown_selection);
+        let held = |settings: &HashMap<String, SettingMode>, row: &str| {
+            settings
+                .get(target)
+                .map_or_else(|| row.to_owned(), |setting| setting.mode.clone())
+        };
+        let mut runtime_mode = String::new();
+        let held_runtime = held(&self.setting_mode, &thread.runtime_mode);
+        let wanted = if picks.runtime_mode.is_empty() {
+            held_runtime.clone()
+        } else {
+            picks.runtime_mode.clone()
+        };
+        if !wanted.is_empty() {
+            let shown = model::shown_runtime_mode(shown_instance, &wanted);
+            if shown != held_runtime {
                 runtime_mode = shown;
             }
         }
-        let mut interaction_mode = self.interaction_mode_of(engine, target);
-        if plan_follow_up {
-            interaction_mode = if implement { "default" } else { "plan" }.into();
-        }
-        if thread.interaction_mode.is_empty() && interaction_mode == "default" {
+        let held_interaction = held(&self.setting_interaction, &thread.interaction_mode);
+        let mut interaction_mode = if plan_follow_up {
+            if implement { "default" } else { "plan" }.to_owned()
+        } else {
+            self.interaction_mode_of(engine, target)
+        };
+        // A thread the MC has no mode for keeps the MC's default.
+        if interaction_mode == held_interaction
+            || (held_interaction.is_empty() && interaction_mode == "default")
+        {
             interaction_mode.clear();
         }
+        // The pick names the revision it was made against; `dispatch_all`
+        // moves it on past this client's own changes.
+        let base = match thread.selection_revision {
+            Some(revision) if model_picked => Some(picks.pick_base.unwrap_or(revision)),
+            _ => None,
+        };
+        let with_base = |command: &mut Obj| {
+            if let Some(base) = base {
+                command.insert("selectionBase".into(), json!(base));
+            }
+        };
         let mut commands: Vec<Obj> = Vec::new();
-        if !runtime_mode.is_empty()
-            && runtime_mode != thread.runtime_mode
-            && self.setting_mode.get(target).map(|s| s.mode.as_str()) != Some(runtime_mode.as_str())
-        {
+        if !runtime_mode.is_empty() {
             commands.push(object(json!({
                 "type": "thread.runtime-mode.set",
                 "threadId": thread.id,
@@ -364,14 +415,7 @@ impl Composer {
                 "createdAt": created_at,
             })));
         }
-        if !interaction_mode.is_empty()
-            && interaction_mode != thread.interaction_mode
-            && self
-                .setting_interaction
-                .get(target)
-                .map(|s| s.mode.as_str())
-                != Some(interaction_mode.as_str())
-        {
+        if !interaction_mode.is_empty() {
             commands.push(object(json!({
                 "type": "thread.interaction-mode.set",
                 "threadId": thread.id,
@@ -381,13 +425,28 @@ impl Composer {
         }
         // Another provider takes the thread over, handed its conversation by
         // the MC.
-        let model_selection = self.selection(engine, target);
         let instance_id = field(&model_selection, "instanceId");
         // A thread the MC has no provider for yet is not taken over from one.
         let current = field(&thread.model_selection, "instanceId");
         if !instance_id.is_empty() && !current.is_empty() && instance_id != current {
-            commands.push(object(json!({
+            let mut command = object(json!({
                 "type": "provider.switch",
+                "threadId": thread.id,
+                "modelSelection": model_selection,
+                "createdAt": created_at,
+            }));
+            with_base(&mut command);
+            commands.push(command);
+        } else if model_picked
+            && thread.selection_revision.is_none()
+            && !model::pick_matches_thread(&model_selection, &thread.model_selection)
+        {
+            // An MC that counts no revisions runs a plain send on the
+            // message's model but keeps the thread's own: the pick is saved
+            // to the thread first, so it is what the thread runs and every
+            // client shows.
+            commands.push(object(json!({
+                "type": "thread.model-selection.set",
                 "threadId": thread.id,
                 "modelSelection": model_selection,
                 "createdAt": created_at,
@@ -419,8 +478,10 @@ impl Composer {
                 "modelSelection".into(),
                 Json::Object(model_selection.clone()),
             );
+            with_base(&mut message);
         }
-        self.remember_model(engine, &model_selection);
+        // This device's memory of the model and its options, picked or not.
+        self.remember_model(engine, &shown_selection);
         if implement {
             message.insert(
                 "sourcePlanRef".into(),
@@ -436,9 +497,6 @@ impl Composer {
         }
         // Implementing from the plan's own button leaves the draft alone.
         let (attachments, excerpts) = kept::edit_draft(engine, target, |kept| {
-            if plan_follow_up {
-                kept.interaction_mode = interaction_mode.clone();
-            }
             if from_draft {
                 (
                     std::mem::take(&mut kept.attachments),
@@ -519,7 +577,7 @@ impl Composer {
             {
                 message.insert("attachments".into(), Json::Array(files));
             }
-            self.dispatch_all(ready, 0);
+            self.dispatch_all(engine, ready, 0);
             return;
         }
         let message = send.commands.last().cloned().unwrap_or_default();
@@ -540,25 +598,91 @@ impl Composer {
                     if let Some(message) = carried.commands.last_mut() {
                         message.insert("attachments".into(), stored(&result, &files));
                     }
-                    c.dispatch_all(carried, 0);
+                    c.dispatch_all(engine, carried, 0);
                 }
             }),
         );
     }
 
-    /// The send's commands, one after another.
-    fn dispatch_all(&mut self, send: Send, index: usize) {
+    /// The send's commands, one after another. A send's model pick names
+    /// the revision it was made against. It is made past this client's own
+    /// changes before it goes: the pick in the draft moved on across them
+    /// (`next_pick`), and so does the next command once one before it in
+    /// the send answers the revision right after its base. Nothing else
+    /// moves it, so a change made elsewhere meanwhile refuses it
+    /// (`selection-stale`).
+    fn dispatch_all(&mut self, engine: &Engine, mut send: Send, index: usize) {
         let Some(command) = send.commands.get(index).cloned() else {
             return;
         };
+        if let Some(sent_base) = command.get("selectionBase").and_then(Json::as_i64) {
+            // The MC takes calls side by side, so a pick sent while one of
+            // this client's own changes is on its way could reach it before
+            // or after that change: it waits for the answer, then is made
+            // past it.
+            if self.own_pending(&send.target) {
+                self.after_own
+                    .entry(send.target.clone())
+                    .or_default()
+                    .push(Box::new(move |c, e| c.dispatch_all(e, send, index)));
+                return;
+            }
+            let mut base = sent_base;
+            let picks = kept::draft_of(engine, &send.target);
+            if let (Some(pick), Some(moved)) = (&picks.model_selection, picks.pick_base)
+                && moved > base
+                && command.get("modelSelection") == Some(&Json::Object(pick.clone()))
+            {
+                base = moved;
+            }
+            let named: HashSet<i64> = self
+                .own
+                .get(&send.target)
+                .into_iter()
+                .flatten()
+                .filter_map(|change| change.borrow().revision)
+                .collect();
+            while named.contains(&(base + 1)) {
+                base += 1;
+            }
+            if base != sent_base {
+                rebase(&mut send, index, base);
+                return self.dispatch_all(engine, send, index);
+            }
+        }
+        // The send's own mode change moves the revision on like the user's,
+        // and so does its pick: a pick made next, while the row still lags,
+        // moves past it.
+        let kind = field(&command, "type");
+        let own = (kind == "thread.runtime-mode.set"
+            || kind == "thread.interaction-mode.set"
+            || command.contains_key("selectionBase"))
+        .then(|| self.own_sent(engine, &send.target));
         let environment_id = send.environment_id.clone();
         self.mc.dispatch_command(
             &environment_id,
             Json::Object(command),
-            back(&self.me, move |c, engine, result| match result {
-                Ok(_) if index + 1 < send.commands.len() => c.dispatch_all(send, index + 1),
-                Ok(_) => c.finish_send(engine, &send.target, None),
-                Err(error) => c.finish_send(engine, &send.target, Some(error)),
+            back(&self.me, move |c, engine, result| {
+                if let Some(own) = &own {
+                    c.own_answered(engine, &send.target, own, result.as_ref().ok());
+                }
+                match result {
+                    Ok(answer) if index + 1 < send.commands.len() => {
+                        let mut rest = send;
+                        let next = rest.commands[index + 1]
+                            .get("selectionBase")
+                            .and_then(Json::as_i64);
+                        if let (Some(moved), Some(next)) =
+                            (answer["selectionRevision"].as_i64(), next)
+                            && moved == next + 1
+                        {
+                            rebase(&mut rest, index + 1, moved);
+                        }
+                        c.dispatch_all(engine, rest, index + 1);
+                    }
+                    Ok(_) => c.finish_send(engine, &send.target, None),
+                    Err(error) => c.finish_send(engine, &send.target, Some(error)),
+                }
             }),
         );
     }
@@ -579,6 +703,10 @@ impl Composer {
                     self.keep_unanswered(engine, &queued.message_id, Obj::new());
                 }
                 self.publish(engine);
+                return;
+            }
+            if selection_stale(&error) {
+                self.restore_stale(engine, target, unsent, &error.detail);
                 return;
             }
             let plan_follow_up = unsent.first().is_some_and(|first| first.plan_follow_up);
@@ -660,8 +788,46 @@ impl Composer {
         if more {
             self.send_next(engine, target);
         } else {
+            // A mode change made behind the sends goes now.
+            self.settle_modes(engine);
             self.publish(engine);
         }
+    }
+
+    /// The MC took none of a send whose choice was made against a selection
+    /// the thread has since left: its prompts come back ahead of what was
+    /// typed since, and the composer shows the thread's own, for the user
+    /// to check.
+    fn restore_stale(&mut self, engine: &Engine, target: &str, unsent: Vec<Send>, detail: &Json) {
+        let mut prompts = Vec::new();
+        let mut attachments = Vec::new();
+        let mut excerpts = Vec::new();
+        for queued in unsent {
+            if !queued.prompt.is_empty() {
+                prompts.push(queued.prompt);
+            }
+            attachments.extend(queued.attachments);
+            excerpts.extend(queued.excerpts);
+            self.forget_unsent(engine, &queued.message_id);
+        }
+        self.toast_stale(engine, detail);
+        let typed = kept::draft(engine, target);
+        if !typed.is_empty() {
+            prompts.push(typed.clone());
+        }
+        let restored = prompts.join("\n\n");
+        kept::edit_draft(engine, target, |kept| {
+            attachments.append(&mut kept.attachments);
+            kept.attachments = attachments;
+            excerpts.append(&mut kept.excerpts);
+            kept.excerpts = excerpts;
+            kept.drop_picks();
+        });
+        if restored != typed {
+            self.set_text_end(engine, target, &restored);
+        }
+        kept::save(engine);
+        self.publish(engine);
     }
 
     /// Where a new thread starts. With more than one machine in the cluster
@@ -1655,4 +1821,15 @@ impl Composer {
         kept::save(engine);
         self.publish(engine);
     }
+}
+
+/// The thread's model, runtime or interaction mode changed after the choice
+/// the send carries was made: the MC took none of it.
+fn selection_stale(error: &McError) -> bool {
+    error.detail["code"] == "selection-stale"
+}
+
+/// The send's choice at `index` made against `base`.
+fn rebase(send: &mut Send, index: usize, base: i64) {
+    send.commands[index].insert("selectionBase".into(), json!(base));
 }

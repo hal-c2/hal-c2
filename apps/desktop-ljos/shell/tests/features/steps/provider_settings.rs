@@ -4617,7 +4617,7 @@ fn answered(status: &str) -> Value {
 }
 
 /// What an update's answer says of Codex on this machine.
-fn publish_providers_on(mc: &mut FakeMc, environment: &str, providers: Vec<Value>) {
+pub fn publish_providers_on(mc: &mut FakeMc, environment: &str, providers: Vec<Value>) {
     fake_config(mc).elsewhere.insert(
         environment.to_owned(),
         Map::from_iter([("providers".to_owned(), Value::Array(providers.clone()))]),

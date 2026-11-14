@@ -56,6 +56,7 @@ composer/context-references.feature: A suggestion list with nothing to offer say
 composer/context-references.feature: A suggestion list with nothing to offer says why [@zzz, no file or folder matches, No matching files or folders.]
 composer/context-references.feature: A terminal excerpt can be sent on its own
 composer/context-references.feature: A terminal excerpt is sent as a reference with its text
+composer/context-references.feature: A thread offers the skills and commands of the folder it works in
 composer/context-references.feature: A trigger character offers matching suggestions [$rev, skills matching "rev"]
 composer/context-references.feature: A trigger character offers matching suggestions [/mo, commands matching "mo"]
 composer/context-references.feature: A trigger character offers matching suggestions [@src/co, files and folders matching "src/co"]
@@ -213,6 +214,7 @@ composer/model-and-mode.feature: A model that cannot be used says why and cannot
 composer/model-and-mode.feature: A model the provider has just added is marked as new
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
 composer/model-and-mode.feature: A new thread says which permissions its first message uses
+composer/model-and-mode.feature: A pick reaches the thread on an MC that keeps no selection revision
 composer/model-and-mode.feature: A project that is not a Git repository starts its thread in its folder
 composer/model-and-mode.feature: A prompt that says ultrathink in its own words fixes the effort
 composer/model-and-mode.feature: A provider that cannot be used says why in the model picker [failed its check with "codex not found", Codex Work — Unavailable. codex not found]
@@ -224,12 +226,15 @@ composer/model-and-mode.feature: A provider's older models are shown in place fr
 composer/model-and-mode.feature: A saved model its provider no longer lists is kept and marked unavailable
 composer/model-and-mode.feature: A search that matches no model says so
 composer/model-and-mode.feature: A second instance with no draft model of its own uses its own default
+composer/model-and-mode.feature: A send picked against a selection that moved elsewhere is refused
+composer/model-and-mode.feature: A send with no pick keeps a change made on another client
 composer/model-and-mode.feature: A short name the model manifest gives wins over the worked-out one
 composer/model-and-mode.feature: A started thread always names its permissions
 composer/model-and-mode.feature: A started thread can move to another provider
 composer/model-and-mode.feature: A started thread names its machine without offering others
 composer/model-and-mode.feature: A thread saved under a model alias keeps its effort
 composer/model-and-mode.feature: A thread still preparing its worktree says "New worktree" until checkout finishes
+composer/model-and-mode.feature: A thread whose account is off keeps it rather than move to another
 composer/model-and-mode.feature: A thread whose saved permissions its provider no longer offers is shown as Supervised
 composer/model-and-mode.feature: An agent's own options do not crowd the model control
 composer/model-and-mode.feature: An effort outside the model's levels steps from the model's default
@@ -242,6 +247,7 @@ composer/model-and-mode.feature: Each model keeps the options the user last gave
 composer/model-and-mode.feature: Each option's default is marked
 composer/model-and-mode.feature: Every saved custom model is offered
 composer/model-and-mode.feature: Favourite models are listed first and can be unfavourited
+composer/model-and-mode.feature: In a cluster, each machine's answers decide only its own threads' picks
 composer/model-and-mode.feature: Models are grouped by provider
 composer/model-and-mode.feature: Models from unavailable providers cannot be chosen
 composer/model-and-mode.feature: New threads start with the default permissions
@@ -298,6 +304,7 @@ composer/model-and-mode.feature: The user steps the effort from the keyboard wit
 composer/model-and-mode.feature: The user steps the effort from the keyboard without leaving the prompt [medium, up, high]
 composer/model-and-mode.feature: The user switches the model for the next turn
 composer/model-and-mode.feature: The user takes a new thread off Auto balance
+composer/model-and-mode.feature: The user's own access change keeps their unsent pick
 composer/model-and-mode.feature: Ultrathink is typed, not picked
 composer/model-and-mode.feature: Unavailable providers stay listed with the reason
 composer/qt-scenarios.feature: A disabled model shows its reason and cannot be chosen

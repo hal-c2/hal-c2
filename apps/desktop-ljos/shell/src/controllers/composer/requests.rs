@@ -797,10 +797,12 @@ impl Composer {
                 "interactionMode": mode,
             }),
         };
+        let own = self.own_sent(engine, &target);
         self.mc.dispatch_command(
             &thread.environment_id,
             command,
             back(&self.me, move |c, engine, result| {
+                c.own_answered(engine, &target, &own, result.as_ref().ok());
                 if c.settings(kind).get(&target).map(|s| s.mode.as_str()) != Some(mode.as_str()) {
                     return;
                 }
@@ -869,10 +871,76 @@ impl Composer {
                 }
             }
         }
+        // A started thread's draft shows a mode of its own only while a
+        // change to it is on its way, or one an earlier build saved to go
+        // with the next message waits to be made: once the thread can be
+        // reached and has no sends in flight, it is made, or dropped where
+        // the thread already has it.
+        let marked: Vec<(String, String, String)> = kept::read(engine, |d| {
+            d.drafts
+                .iter()
+                .filter(|(_, k)| !k.runtime_mode.is_empty() || !k.interaction_mode.is_empty())
+                .map(|(key, k)| {
+                    (
+                        key.clone(),
+                        k.runtime_mode.clone(),
+                        k.interaction_mode.clone(),
+                    )
+                })
+                .collect()
+        });
+        let mut pending = Vec::new();
+        for (target, runtime, interaction) in marked {
+            let Some(thread) = thread_of(engine, &target) else {
+                continue;
+            };
+            if self.mode_waits(engine, &target) {
+                continue;
+            }
+            // Read once the provider is known, which says what the modes
+            // can be.
+            let selection = self.selection(engine, &target);
+            let Some(instance) = self.instance_of(&selection) else {
+                continue;
+            };
+            let plan_on = self.plan_mode_on(engine, Some(instance));
+            // A started thread's permissions pick counts only while it is
+            // on its way (`picked_runtime_mode`): one kept past a quit gives
+            // way to what the thread was given since.
+            if !runtime.is_empty() && !self.setting_mode.contains_key(&target) {
+                kept::edit_draft(engine, &target, |kept| kept.runtime_mode.clear());
+                changed = true;
+            }
+            // A plan pick waits while plan mode is off, which shows and
+            // sends the default.
+            if interaction.is_empty() || self.setting_interaction.contains_key(&target) || !plan_on
+            {
+                continue;
+            }
+            let has = &thread.interaction_mode;
+            // A thread the MC has no mode for keeps the MC's default.
+            if interaction == *has || (has.is_empty() && interaction == "default") {
+                kept::edit_draft(engine, &target, |kept| kept.interaction_mode.clear());
+                changed = true;
+            } else {
+                pending.push((target, interaction));
+            }
+        }
         if changed {
             kept::save(engine);
             self.publish(engine);
         }
+        for (target, mode) in pending {
+            self.set_thread_mode(engine, &target, ModeKind::Interaction, &mode);
+        }
+    }
+
+    /// A mode change to the thread waits while it cannot reach the MC or
+    /// sends to it are in flight.
+    fn mode_waits(&self, engine: &Engine, target: &str) -> bool {
+        !self.mc.is_ready()
+            || !store::with(engine, |s| s.thread_online(target))
+            || kept::read(engine, |d| d.queues.contains_key(target))
     }
 
     fn settings(&self, kind: ModeKind) -> &HashMap<String, SettingMode> {
@@ -987,6 +1055,7 @@ impl Composer {
                 }
             }
         }
+        self.note_pick(engine, target);
         kept::edit_draft(engine, target, |kept| {
             kept.model_selection = Some(chosen);
             kept.multiple_models = None;
@@ -1181,6 +1250,7 @@ impl Composer {
             );
         });
         chosen.insert("options".into(), Json::Array(options));
+        self.note_pick(engine, target);
         kept::edit_draft(engine, target, |kept| {
             kept.model_selection = Some(chosen);
             kept.carried = false;

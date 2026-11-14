@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -95,6 +96,12 @@ pub struct Draft {
     /// The model and mode came with a new thread from the thread it was
     /// started on, not from a pick here; the next new thread replaces them.
     pub carried: bool,
+    /// The thread's selectionRevision the model pick was made against: it
+    /// gives way to any change the thread takes after it but this client's
+    /// own (`pick_own`, `Composer::next_pick`). None from an MC that counts
+    /// no revisions, or for a pick kept by an older build.
+    pub pick_base: Option<i64>,
+    pub pick_own: Vec<OwnChange>,
     /// A new thread's prompt goes to each of these instead: one thread per
     /// model, each in its own worktree.
     pub multiple_models: Option<Vec<Obj>>,
@@ -102,7 +109,42 @@ pub struct Draft {
     pub excerpts: Vec<Excerpt>,
 }
 
+/// A change of this client's own to a thread's runtime or interaction
+/// mode: it moves the thread's selectionRevision on without replacing a
+/// model pick. `sent_at` is the revision the row had when it went (None
+/// from an MC that counts none); `revision` the one its answer named, None
+/// when it moved nothing or was refused. Settled in place, so every pick
+/// holding it sees it.
+pub type OwnChange = Rc<RefCell<Own>>;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Own {
+    pub sent_at: Option<i64>,
+    pub answered: bool,
+    pub revision: Option<i64>,
+}
+
+impl Own {
+    /// Whether the change may still move a thread now at `revision`.
+    pub fn ahead(&self, revision: i64) -> bool {
+        if self.answered {
+            return self.revision.is_some_and(|moved| moved > revision);
+        }
+        // One sent before `revision` may already be in it: the row can beat
+        // the answer, and counting it again would take another client's
+        // change for it.
+        self.sent_at.is_some_and(|at| at >= revision)
+    }
+}
+
 impl Draft {
+    /// Drops the model pick, which the thread has moved past.
+    pub fn drop_picks(&mut self) {
+        self.model_selection = None;
+        self.pick_base = None;
+        self.pick_own.clear();
+    }
+
     pub fn carries(&self) -> bool {
         !self.attachments.is_empty() || !self.excerpts.is_empty()
     }
@@ -576,6 +618,7 @@ pub fn load(engine: &Engine, path: Option<PathBuf>) {
             if let Some(selection) = entry["modelSelection"].as_object() {
                 kept.model_selection = Some(selection.clone());
             }
+            kept.pick_base = entry["selectionBase"].as_i64();
             kept.runtime_mode = entry["runtimeMode"].as_str().unwrap_or_default().to_owned();
             kept.interaction_mode = entry["interactionMode"]
                 .as_str()
@@ -685,6 +728,9 @@ pub fn saved(engine: &Engine) -> bool {
             }
             if let Some(selection) = &kept.model_selection {
                 entry.insert("modelSelection".into(), Json::Object(selection.clone()));
+                if let Some(base) = kept.pick_base {
+                    entry.insert("selectionBase".into(), json!(base));
+                }
             }
             if !kept.runtime_mode.is_empty() {
                 entry.insert("runtimeMode".into(), json!(kept.runtime_mode));

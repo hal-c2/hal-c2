@@ -92,6 +92,7 @@ pub struct Download {
 /// What an accepted command does to the MC's rows (the real MC's
 /// projection), run before it is answered.
 pub type Effect = Rc<dyn Fn(&mut FakeMc, &Value)>;
+pub type Answering = Rc<dyn Fn(&mut FakeMc, &Value, &mut Value)>;
 type Held = Box<dyn FnOnce(&mut FakeMc)>;
 
 /// Answers one HTTP request, once.
@@ -204,6 +205,9 @@ pub struct FakeMc {
     /// A refusal is for every command of a type, or (`type:threadId`) one thread's.
     pub refusals: HashMap<String, String>,
     pub effects: Vec<Effect>,
+    /// What an accepted command's answer says besides its sequence, such as
+    /// the selection revision a send's model moved the thread to.
+    pub answering: Vec<Answering>,
     /// Checkouts whose whole status a domain fakes, by folder: the `vcs`
     /// snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
     pub checkouts: HashMap<String, Checkout>,
@@ -306,6 +310,7 @@ impl FakeMc {
             calls: Vec::new(),
             refusals: HashMap::new(),
             effects: Vec::new(),
+            answering: Vec::new(),
             checkouts: HashMap::new(),
             descriptor_fields: HashMap::new(),
             capabilities: json!({
@@ -1134,9 +1139,10 @@ impl FakeMc {
         }
     }
 
-    /// A thread's row takes a mode or model change, as the MC's does
-    /// (desktop-qt's FakeMc::applyMode, without the selection revision).
-    fn apply_mode(&mut self, command: &Value) {
+    /// A thread's row takes a mode or model change, as the MC's does; one
+    /// that names a selection revision moves to the next, and the answer
+    /// names it (desktop-qt's FakeMc::applyMode).
+    fn apply_mode(&mut self, command: &Value, answer: &mut Value) {
         let field = match command.get("type").and_then(Value::as_str) {
             Some("thread.runtime-mode.set") => "runtimeMode",
             Some("thread.interaction-mode.set") => "interactionMode",
@@ -1155,8 +1161,55 @@ impl FakeMc {
             return;
         }
         row[field] = command.get(field).cloned().unwrap_or(Value::Null);
+        if let Some(revision) = row.get("selectionRevision").and_then(Value::as_i64) {
+            row["selectionRevision"] = json!(revision + 1);
+            answer["selectionRevision"] = json!(revision + 1);
+        }
         let row = row.clone();
         self.send_row(&id, &row);
+    }
+
+    /// A choice made against a revision the thread has moved on from is
+    /// refused, unless it is what the thread has now (selection.ex
+    /// `stale/2`).
+    fn stale(&self, command: &Value) -> Option<Value> {
+        let base = command.get("selectionBase").and_then(Value::as_i64)?;
+        let row = self.threads.get(
+            command
+                .get("threadId")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )?;
+        let revision = row
+            .get("selectionRevision")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if base == revision {
+            return None;
+        }
+        let runs = |selection: &Value| {
+            json!([
+                selection.get("instanceId"),
+                selection.get("model"),
+                selection.get("options")
+            ])
+        };
+        let same = ["modelSelection", "runtimeMode", "interactionMode"]
+            .into_iter()
+            .all(|field| match command.get(field) {
+                None | Some(Value::Null) => true,
+                Some(picked @ Value::Object(_)) => {
+                    runs(picked) == runs(row.get(field).unwrap_or(&Value::Null))
+                }
+                Some(picked) => Some(picked) == row.get(field),
+            });
+        (!same).then(|| {
+            json!({
+                "code": "selection-stale",
+                "selectionRevision": revision,
+                "modelSelection": row.get("modelSelection").cloned().unwrap_or(Value::Null),
+            })
+        })
     }
 
     fn dispatch_command(&mut self, rpc: &Rpc) {
@@ -1180,16 +1233,38 @@ impl FakeMc {
         };
         let refusal = self.refusals.get(&refused).cloned();
         let rpc = rpc.clone();
-        let answer = move |mc: &mut FakeMc| match &refusal {
-            Some(refusal) => mc.refuse(&rpc, refusal),
-            None => {
-                for effect in mc.effects.clone() {
-                    effect(mc, &rpc.payload);
-                }
-                mc.apply_mode(&rpc.payload);
-                let sequence = mc.commands.len();
-                mc.reply(&rpc, json!({"sequence": sequence}));
+        let answer = move |mc: &mut FakeMc| {
+            if let Some(refusal) = &refusal {
+                return mc.refuse(&rpc, refusal);
             }
+            if let Some(moved) = mc.stale(&rpc.payload) {
+                return mc.refuse_with(
+                    &rpc,
+                    "This thread moved elsewhere. Check it and send again.",
+                    moved,
+                );
+            }
+            for effect in mc.effects.clone() {
+                effect(mc, &rpc.payload);
+            }
+            let mut result = json!({"sequence": mc.commands.len()});
+            mc.apply_mode(&rpc.payload, &mut result);
+            for answering in mc.answering.clone() {
+                answering(mc, &rpc.payload, &mut result);
+            }
+            // A mode change names the version of the rows that holds it, as
+            // the MC does.
+            let kind = rpc.payload.get("type").and_then(Value::as_str);
+            if mc.versioned
+                && matches!(
+                    kind,
+                    Some("thread.runtime-mode.set" | "thread.interaction-mode.set")
+                )
+            {
+                let rev = mc.told.get(&mc.name).map_or(0, |told| told.rev);
+                result["shell"] = json!({"mc": mc.name, "epoch": mc.epoch, "rev": rev});
+            }
+            mc.reply(&rpc, result);
         };
         let held = format!("answers:{thread}");
         if self.holding("answers") || self.holding(&held) {

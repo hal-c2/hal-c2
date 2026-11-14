@@ -8,10 +8,12 @@
 use hal_c2_shell::composer_model;
 use hal_c2_shell::controllers::navigation::Navigation;
 use hal_c2_shell::controllers::settings::Settings;
+use hal_c2_shell::controllers::workspace;
 use ljos::prelude::ObjectId;
 use serde_json::{Value, json};
 
 use crate::brick::Brick;
+use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, show, text};
 use crate::steps::composer_brick::{
     composer_brick, composer_brick_shown, composer_item, composer_part, press_in_composer,
@@ -19,7 +21,7 @@ use crate::steps::composer_brick::{
 };
 use crate::steps::composer_picker::model_picker_shown_open;
 use crate::steps::fake_files::fake_files;
-use crate::steps::settings::publish_providers;
+use crate::steps::settings::{fake_config, publish_providers};
 use crate::steps::stream::THREAD;
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
@@ -32,6 +34,10 @@ use crate::{expect, fail};
 struct References {
     skills: Vec<Value>,
     commands: Vec<Value>,
+    /// The skills the provider reports in each folder, once read.
+    folder_skills: Vec<(String, Vec<Value>)>,
+    /// What the MC has read of them (`workspaceSnapshots`).
+    snapshots: Vec<Value>,
     published: bool,
     typed: String,
     offered: String,
@@ -106,31 +112,57 @@ fn quoted_in(text: &str) -> Vec<String> {
 }
 
 /// The thread's provider, with the scenario's skills and commands.
-fn publish(world: &mut World) -> Outcome {
-    let (skills, commands) = {
-        let r = refs(world);
+fn announce(mc: &mut FakeMc) {
+    let (skills, commands, snapshots) = {
+        let r = mc.part::<References>();
         r.published = true;
-        (r.skills.clone(), r.commands.clone())
+        (r.skills.clone(), r.commands.clone(), r.snapshots.clone())
     };
     publish_providers(
-        &mut world.mc,
+        mc,
         vec![json!({
             "instanceId": "codex", "driver": "codex", "displayName": "Codex",
             "enabled": true, "installed": true, "status": "ready",
             "models": [{"slug": "gpt-5", "name": "GPT-5"}],
             "slashCommands": commands, "skills": skills,
+            "workspaceSnapshots": snapshots,
         })],
     );
     // The open thread runs on it, as every thread the MC holds names a model.
-    if let Some(row) = world.mc.threads.get(THREAD)
+    if let Some(row) = mc.threads.get(THREAD)
         && row.get("modelSelection").is_none()
     {
         let mut row = row.clone();
         row["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
-        world.mc.threads.insert(THREAD.into(), row.clone());
-        world.mc.send_row(THREAD, &row);
+        mc.threads.insert(THREAD.into(), row.clone());
+        mc.send_row(THREAD, &row);
     }
+}
+
+fn publish(world: &mut World) -> Outcome {
+    announce(&mut world.mc);
     world.sync()
+}
+
+/// The MC reads a folder's skills when asked for it and announces them with
+/// the providers (`server.refreshProviders` with a `cwd`).
+fn read_folders_when_asked(mc: &mut FakeMc) {
+    mc.on_rpc("server.refreshProviders", |mc, rpc| {
+        let cwd = text(&rpc.payload["cwd"]);
+        let r = mc.part::<References>();
+        if let Some((_, skills)) = r.folder_skills.iter().find(|(folder, _)| *folder == cwd) {
+            let snapshot = json!({"cwd": cwd, "skills": skills, "slashCommands": []});
+            r.snapshots.push(snapshot);
+            announce(mc);
+        }
+        let providers = fake_config(mc)
+            .config
+            .get("providers")
+            .cloned()
+            .unwrap_or(Value::Null);
+        mc.reply(rpc, json!({"providers": providers}));
+        Ok(())
+    });
 }
 
 fn ensure_provider(world: &mut World) -> Outcome {
@@ -310,6 +342,52 @@ fn expect_interaction_mode(world: &mut World, mode: &str) -> Outcome {
 
 pub fn register(steps: &mut Steps) {
     let list = "(\"[^\"]*\"(?:(?:, | and )\"[^\"]*\")*)";
+
+    steps.step(
+        &format!("the provider reports different skills for {Q} and for {Q}"),
+        |world, c, _| {
+            for folder in [&c[0], &c[1]] {
+                let seg = folder.rsplit('/').next().unwrap_or_default();
+                let skill = json!({"name": format!("{seg}-deploy"), "enabled": true});
+                refs(world)
+                    .folder_skills
+                    .push((folder.clone(), vec![skill]));
+            }
+            read_folders_when_asked(&mut world.mc);
+            publish(world)
+        },
+    );
+    steps.step(
+        &format!("the user types {Q} in a thread working in {Q}"),
+        |world, c, _| {
+            open_turn_thread(world)?;
+            let mut row = world.mc.threads[THREAD].clone();
+            row["worktreePath"] = json!(c[1]);
+            world.mc.threads.insert(THREAD.into(), row.clone());
+            world.mc.send_row(THREAD, &row);
+            let cwd = c[1].clone();
+            world.wait_for(&format!("the thread to work in {cwd}"), |w| {
+                workspace::place(w.engine()).is_some_and(|place| place.cwd() == cwd)
+            })?;
+            type_text(world, &c[0])
+        },
+    );
+    steps.step(
+        &format!("only the skills reported for {Q} are offered"),
+        |world, c, _| {
+            let seg = c[0].rsplit('/').next().unwrap_or_default();
+            let wanted = format!("{seg}-deploy");
+            wait_for_menu(
+                world,
+                |items| {
+                    items.len() == 1
+                        && kind_of(&items[0]) == "skill"
+                        && name_of(&items[0]) == wanted
+                },
+                &format!("only \"{wanted}\" to be offered"),
+            )
+        },
+    );
 
     // The workspace and the provider.
     steps.step(
