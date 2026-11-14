@@ -548,3 +548,75 @@ fn a_window_no_shell_can_be_made_for_is_closed_and_not_saved() {
     let saved = std::fs::read_to_string(dir.path().join("state/shell-windows.json")).unwrap();
     assert!(!saved.contains("two"), "{saved}");
 }
+
+#[test]
+fn a_saved_window_no_shell_can_be_made_for_at_restore_keeps_its_saved_state() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    for sub in ["app", "config", "state"] {
+        std::fs::create_dir(dir.path().join(sub)).unwrap();
+    }
+    let state = dir.path().join("state");
+    let two = state.join("shell-windows/two");
+    std::fs::create_dir_all(&two).unwrap();
+    let route = r#"{"kind":"settings","section":"general"}"#;
+    std::fs::write(two.join("shell-route.json"), route).unwrap();
+    std::fs::write(
+        state.join("shell-windows.json"),
+        r#"{"open":["main","two"]}"#,
+    )
+    .unwrap();
+    write(&dir.path().join("app/Main.qml"), BUILT_IN);
+    let hub = Hub::with(Launch {
+        config_dir: Some(dir.path().join("config")),
+        state_dir: Some(state.clone()),
+        qml: Some(roots(&dir)),
+        ..Launch::default()
+    });
+    open(&hub, &dir, false);
+    controller::set_window_opener(&hub.engine, runtime::open_window);
+    // The shell broke after the first window started.
+    write(
+        &dir.path().join("app/Main.qml"),
+        "import QtQuick\nItem {}\n",
+    );
+    let compiled = qml::compile(&roots(&dir)).unwrap();
+    hub.engine.set_component_source(compiled.source);
+
+    controller::restore_windows(&hub.engine);
+    hub.advance(1);
+    hub.engine.process_deferred_deletes();
+
+    assert_eq!(controller::windows(&hub.engine), vec![MAIN]);
+    assert_eq!(runtime::root_of(&hub.engine, "two"), None);
+    assert_eq!(
+        std::fs::read_to_string(two.join("shell-route.json")).unwrap(),
+        route
+    );
+    let saved = std::fs::read_to_string(state.join("shell-windows.json")).unwrap();
+    assert!(saved.contains("two"), "{saved}");
+
+    // A window opened and closed since keeps it saved too.
+    controller::open_window(&hub.engine, Some("three"));
+    hub.advance(1);
+    let saved = std::fs::read_to_string(state.join("shell-windows.json")).unwrap();
+    assert!(saved.contains("two") && !saved.contains("three"), "{saved}");
+
+    // Once the shell can show it, it comes back as it was saved.
+    write(&dir.path().join("app/Main.qml"), BUILT_IN);
+    let compiled = qml::compile(&roots(&dir)).unwrap();
+    hub.engine.set_component_source(compiled.source);
+    controller::restore_windows(&hub.engine);
+    hub.advance(1);
+    assert!(runtime::root_of(&hub.engine, "two").is_some());
+    assert_eq!(controller::windows(&hub.engine), vec![MAIN, "two"]);
+    assert!(two.join("shell-route.json").exists());
+
+    // Closed once shown, it goes with its files, as any window does.
+    controller::close_window(&hub.engine, "two");
+    hub.advance(1);
+    hub.engine.process_deferred_deletes();
+    let saved = std::fs::read_to_string(state.join("shell-windows.json")).unwrap();
+    assert!(!saved.contains("two"), "{saved}");
+    assert!(!two.exists());
+}

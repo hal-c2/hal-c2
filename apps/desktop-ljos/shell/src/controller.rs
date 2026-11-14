@@ -239,6 +239,9 @@ pub struct Window {
     owner: Option<ObjectId>,
     /// The root that shows it ([`attach_root`]).
     root: Cell<Option<ObjectId>>,
+    /// Opened from `shell-windows.json` ([`restore_windows`]): closed
+    /// before it was ever shown, it keeps its files and its place there.
+    restored: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -266,6 +269,9 @@ struct Host {
     opener: RefCell<Option<Opener>>,
     /// Whether the Dock's reopening is followed ([`attach_root`]).
     reopening: Cell<bool>,
+    /// Saved windows no root could be made for at restore: still saved,
+    /// files and all, to come back once the shell can show them.
+    set_aside: RefCell<Vec<String>>,
 }
 
 impl Host {
@@ -330,7 +336,7 @@ pub fn start(engine: &Engine, mc: Rc<dyn Mc>, mut registrations: Vec<Registratio
         .into_iter()
         .next()
         .unwrap_or_else(|| MAIN.to_owned());
-    add_window(engine, &host, id, main);
+    add_window(engine, &host, id, main, false);
 }
 
 fn declare(engine: &Engine, registrations: &[Registration], bridge: Bridge) {
@@ -356,7 +362,13 @@ fn build(
 }
 
 /// A window on `bridge`, with its own controllers, offered its actions.
-fn add_window(engine: &Engine, host: &Host, id: String, bridge: Bridge) -> Rc<Window> {
+fn add_window(
+    engine: &Engine,
+    host: &Host,
+    id: String,
+    bridge: Bridge,
+    restored: bool,
+) -> Rc<Window> {
     let inner = host.mc.borrow().clone().expect("the shell is started");
     let mc = Rc::new(WindowMc::for_window(inner, bridge));
     let owner = engine.create_native(QtObject::default(), None).ok();
@@ -368,6 +380,7 @@ fn add_window(engine: &Engine, host: &Host, id: String, bridge: Bridge) -> Rc<Wi
         mc: mc.clone(),
         owner,
         root: Cell::new(None),
+        restored,
     });
     // Listed before its controllers are built, which may read its files.
     host.windows.borrow_mut().push(window.clone());
@@ -540,8 +553,10 @@ pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
         Some(id) => id.to_owned(),
         None => hal_c2_mc::new_uuid().replace('-', "")[..12].to_owned(),
     };
+    let restored = saved_windows(&host).contains(&id);
     let bridge = Bridge::new_window(engine)?;
-    let window = add_window(engine, &host, id.clone(), bridge);
+    host.set_aside.borrow_mut().retain(|kept| *kept != id);
+    let window = add_window(engine, &host, id.clone(), bridge, restored);
     bridge.set_front(engine);
     match host.stage.get() {
         Stage::Active => activate_window(engine, &host, &window),
@@ -583,6 +598,10 @@ fn close_now(engine: &Engine, id: &str) {
         }
         windows.remove(at)
     };
+    let set_aside = window.restored && window.root.get().is_none();
+    if set_aside {
+        host.set_aside.borrow_mut().push(window.id.clone());
+    }
     save_windows(&host);
     host.closing.borrow_mut().push(window.clone());
     // Its Files viewer writes what waits; the window goes once that is
@@ -636,7 +655,11 @@ fn tear_down(engine: &Engine, window: &Rc<Window>) {
     // Its root reads the bridge's objects: it goes first.
     crate::runtime::window_closed(engine, id);
     bridge.close(engine);
-    // Its route, panels and terminals; the drafts are every window's.
+    // Its route, panels and terminals; the drafts are every window's. A
+    // window set aside at restore keeps them.
+    if host.set_aside.borrow().iter().any(|kept| kept == id) {
+        return;
+    }
     if let Some(dir) = host.state_dir.borrow().as_deref() {
         if id == MAIN {
             for name in [
@@ -857,7 +880,12 @@ fn save_windows(host: &Host) {
     let Some(dir) = host.state_dir.borrow().clone() else {
         return;
     };
-    let ids: Vec<String> = host.windows.borrow().iter().map(|w| w.id.clone()).collect();
+    let mut ids: Vec<String> = host.windows.borrow().iter().map(|w| w.id.clone()).collect();
+    for kept in host.set_aside.borrow().iter() {
+        if !ids.contains(kept) {
+            ids.push(kept.clone());
+        }
+    }
     let body = serde_json::json!({ "open": ids }).to_string();
     let path = dir.join(format!("{WINDOWS_DIR}.json"));
     if let Err(e) = crate::controllers::drafts::write_atomically(&path, body.as_bytes()) {
