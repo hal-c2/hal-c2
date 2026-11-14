@@ -233,13 +233,15 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   Why the sandbox of thread `thread_id` went before its agent was done, as a
-  sentence (a time, output or token limit), or nil.
+  sentence (a time, output or token limit, or that the sandbox server could not tell),
+  or nil.
   """
   def sandbox_ended(id, thread_id) do
     with :ok <- permit(id, "threads:create"),
          true <- HalC2.OpenShell.Review.opener(thread_id) in [nil, id] || nil do
-      case HalC2.OpenShell.Review.ended(thread_id) do
+      case HalC2.OpenShell.Review.ended_settled(thread_id) do
         reason when reason in ~w(time output tokens) -> HalC2.OpenShell.Review.ended_text(reason)
+        :unsettled -> "The review's sandbox server was too busy to say whether it hit a limit."
         _ -> nil
       end
     end

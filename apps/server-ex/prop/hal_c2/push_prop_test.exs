@@ -378,7 +378,7 @@ defmodule HalC2.PushPropTest do
       Map.put(:persistent_term.get({__MODULE__, :endpoints}), session, n)
     )
 
-    "http://phone.invalid/#{session}/#{n}"
+    "https://phone.invalid/#{session}/#{n}"
   end
 
   defp key(thread), do: "#{HalC2.Environment.id()}:#{thread}"
@@ -389,7 +389,7 @@ defmodule HalC2.PushPropTest do
   # The phone's distributor: a dead endpoint answers 410; a live one takes the message,
   # which the phone decrypts and shows.
   def post(url, body, _urgency) do
-    "http://phone.invalid/" <> rest = url
+    "https://phone.invalid/" <> rest = url
     [session, _n] = String.split(rest, "/")
 
     if :ets.member(__MODULE__, {:dead, url}) do

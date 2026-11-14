@@ -133,6 +133,15 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     signal(context, pid, Enum.find(processes, &(&1["pid"] == pid))["startTimeMs"], "SIGTERM")
   end
 
+  # Its own process, but a signal outside the contract's two.
+  step "the user signals a process the MC started with SIGTERM", context do
+    {:ok, %{"processes" => processes}} = processes(context)
+    seen = Enum.find(processes, &(&1["pid"] == context.provider.pid))
+    context = signal(context, seen["pid"], seen["startTimeMs"], "SIGTERM")
+    assert Port.info(context.provider.port) != nil
+    context
+  end
+
   # The id is the provider's, but the start time is not: the process a client saw
   # is gone and another now has its id.
   step "the user signals a process that exited and whose id was reused", context do

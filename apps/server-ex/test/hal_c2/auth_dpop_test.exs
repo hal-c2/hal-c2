@@ -94,6 +94,31 @@ defmodule HalC2.AuthDpopTest do
              Mc.request(mc, :post, path, headers: headers)
   end
 
+  test "a legacy ticket needs its session's DPoP proof for RPC but not media", %{mc: mc} do
+    key = dpop_key()
+    pairing = Auth.create_pairing_token(mc.store)
+    exchange_proof = dpop_proof(key, "POST", url(mc, "/oauth/token"))
+
+    assert {200, _, %{"access_token" => access, "token_type" => "DPoP"}} =
+             exchange(mc, pairing, exchange_proof)
+
+    path = "/api/auth/websocket-ticket"
+    request_proof = dpop_proof(key, "POST", url(mc, path), access: access)
+
+    assert {200, _, %{"ticket" => ticket}} =
+             Mc.request(mc, :post, path,
+               headers: [{"authorization", "DPoP #{access}"}, {"dpop", request_proof}]
+             )
+
+    assert {:ok, _} = Auth.ticket_scopes(ticket)
+    assert Auth.take_ticket(ticket) == :error
+
+    socket_url = url(mc, "/ws?wsTicket=#{ticket}")
+    socket_proof = dpop_proof(key, "GET", url(mc, "/ws"), access: ticket)
+    assert {:ok, id} = Auth.take_ticket(ticket, {socket_proof, "GET", socket_url})
+    assert {:ok, %{id: ^id}} = Auth.session(access)
+  end
+
   test "the DPoP scheme is read in any letter case and refusals challenge for DPoP", %{mc: mc} do
     key = dpop_key()
     pairing = Auth.create_pairing_token(mc.store)

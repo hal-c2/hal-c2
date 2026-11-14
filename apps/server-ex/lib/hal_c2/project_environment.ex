@@ -119,9 +119,27 @@ defmodule HalC2.ProjectEnvironment do
     end
   end
 
+  # Names a checkout's environment may never set for a provider launch:
+  # interpreter/loader controls that would run checkout code inside the
+  # provider process itself, git's program-picking variables, and the
+  # endpoint/proxy/CA variables that would redirect credentials the launch
+  # inherited from the MC. Trusting a checkout's variables is not trusting
+  # it with any of these.
+  @blocked_project_env ~w(
+    NODE_OPTIONS LD_PRELOAD LD_AUDIT DYLD_INSERT_LIBRARIES BASH_ENV ENV ZDOTDIR
+    PYTHONSTARTUP RUBYOPT PERL5OPT
+    GIT_SSH_COMMAND GIT_EXTERNAL_DIFF GIT_PAGER GIT_DIR GIT_WORK_TREE
+    GIT_CONFIG GIT_CONFIG_COUNT
+    ANTHROPIC_BASE_URL OPENAI_BASE_URL OPENAI_API_BASE OPENAI_API_HOST
+    HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+    SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS CURL_CA_BUNDLE
+    REQUESTS_CA_BUNDLE NODE_TLS_REJECT_UNAUTHORIZED
+  )
+
   @doc """
   `launch` with the `project` variables it does not set under it: each name once,
-  the launch's value winning, and never a `HAL_C2_*` name or one in `unset`.
+  the launch's value winning, and never a `HAL_C2_*` name, a blocked name
+  (loader, git-program and provider-endpoint controls), or one in `unset`.
   """
   @spec merge(env, env, [String.t()]) :: env
   def merge(launch, project, unset \\ []) do
@@ -130,12 +148,20 @@ defmodule HalC2.ProjectEnvironment do
     kept =
       project
       |> Enum.reject(fn {name, _} ->
-        MapSet.member?(taken, name) or String.starts_with?(name, "HAL_C2_")
+        MapSet.member?(taken, name) or String.starts_with?(name, "HAL_C2_") or
+          name in @blocked_project_env or git_config_key?(name)
       end)
       |> Enum.uniq_by(&elem(&1, 0))
 
     kept ++ launch
   end
+
+  # `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` and friends inject git config,
+  # including program-picking keys, from the environment alone.
+  defp git_config_key?(name),
+    do:
+      String.starts_with?(name, "GIT_CONFIG_KEY_") or
+        String.starts_with?(name, "GIT_CONFIG_VALUE_")
 
   @doc "The names a launch command removes from its environment with `env -u NAME`."
   def unset_by([env | args]) when is_binary(env) do
@@ -200,7 +226,8 @@ defmodule HalC2.ProjectEnvironment do
               [path, "export", "json"]
         end
 
-      case run(argv, cwd, base ++ [{"DIRENV_LOG_FORMAT", ""}], deadline) do
+      # mise's variables reach direnv only as far as they could reach a launch.
+      case run(argv, cwd, merge([{"DIRENV_LOG_FORMAT", ""}], base), deadline) do
         {:ok, out} ->
           decoded("direnv", out, cwd)
 
@@ -330,6 +357,24 @@ defmodule HalC2.ProjectEnvironment do
   defp dotenv(cwd, file) do
     path = Path.expand(file, cwd)
 
+    # A name inside the checkout is the checkout's own file: a symlink there
+    # must not turn it into a read of some other file's KEY=value lines. An
+    # absolute name outside the checkout is the settings author's explicit
+    # choice and stands.
+    contained? =
+      if Path.type(file) == :absolute and
+           not HalC2.Workspace.within?(Path.expand(cwd), path),
+         do: true,
+         else: HalC2.Workspace.within?(HalC2.Workspace.real(cwd), HalC2.Workspace.real(path))
+
+    if not contained? do
+      {:error, "#{file} in #{cwd} resolves outside the checkout, so it was not loaded."}
+    else
+      read_dotenv(cwd, file, path)
+    end
+  end
+
+  defp read_dotenv(cwd, file, path) do
     case File.read(path) do
       {:ok, text} ->
         {env, bad} = parse_dotenv(text)

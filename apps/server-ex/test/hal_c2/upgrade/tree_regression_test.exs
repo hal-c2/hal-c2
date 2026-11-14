@@ -67,7 +67,9 @@ defmodule HalC2.Upgrade.TreeRegressionTest do
     archive = Mc.bundle(%{home: dir}, target, %{}, [{Tree, tree}, {Services, next}])
     :ok = Upgrade.Source.put(target, Upgrade.platform(), archive)
 
-    assert {:ok, %{"method" => "hot-upgrade"}} = Upgrade.update(%{"targetVersion" => target})
+    assert {:ok, %{"method" => "hot-upgrade"}} =
+             Upgrade.update(%{"targetVersion" => target, "allowDowngrade" => true})
+
     assert Upgrade.version() == target
     refute_received {:hal_c2_restart, _}
     assert Process.whereis(HalC2.Test.NewService)

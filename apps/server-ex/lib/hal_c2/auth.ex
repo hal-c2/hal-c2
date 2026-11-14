@@ -191,8 +191,12 @@ defmodule HalC2.Auth do
           | :error
           | {:error, :scope_not_granted}
           | {:error, :dpop, :replay}
-  def exchange(pairing_token, client \\ %{}),
+  def exchange(pairing_token, client \\ %{})
+
+  def exchange(pairing_token, client) when is_binary(pairing_token) and is_map(client),
     do: GenServer.call(__MODULE__, {:exchange, pairing_token, client})
+
+  def exchange(_pairing_token, _client), do: :error
 
   @doc """
   The session behind an access token, if valid. `proof_jkt` is the DPoP key it is
@@ -242,13 +246,20 @@ defmodule HalC2.Auth do
         {:error, "missing_credential", nil}
 
       {"bearer", token} when token != "" ->
-        if HalC2.Web.access_token?(token) do
-          {:ok, local_session()}
-        else
-          case session(token) do
-            {:ok, %{proof_jkt: nil} = session} -> {:ok, session}
-            _ -> {:error, "invalid_credential", nil}
-          end
+        # The MC's own token is a local file credential: it never authenticates
+        # from another machine (remote clients hold revocable paired sessions).
+        cond do
+          HalC2.Web.access_token?(token) and HalC2.Web.local_request?(conn) ->
+            {:ok, local_session()}
+
+          HalC2.Web.access_token?(token) ->
+            {:error, "invalid_credential", nil}
+
+          true ->
+            case session(token) do
+              {:ok, %{proof_jkt: nil} = session} -> {:ok, session}
+              _ -> {:error, "invalid_credential", nil}
+            end
         end
 
       {"dpop", token} when token != "" ->
@@ -306,9 +317,9 @@ defmodule HalC2.Auth do
   A WebSocket ticket for an access token, or for a session `request_session/1` found.
   `use` names the route it opens: `:rpc` (the client socket, `/ws`), `:media` (the
   device hub's streams and images, `ticket_scopes/1`), or nil for either, as clients
-  that predate routes buy them. A DPoP session's RPC ticket is bound to its key, so the
-  socket needs a fresh proof from it (`take_ticket/3`). Media tickets stay unbound: one
-  serves every image and stream of a panel.
+  that predate routes buy them. A DPoP session's RPC or legacy ticket is bound to its
+  key, so the socket needs a fresh proof from it (`take_ticket/3`). Media redemption
+  stays unbound: one ticket serves every image and stream of a panel.
   """
   @spec issue_ticket(String.t() | map, nil | :rpc | :media) ::
           {:ok, String.t(), integer} | :error
@@ -318,7 +329,7 @@ defmodule HalC2.Auth do
     ticket = random_token()
     # A ticket never outlives the session it opens a socket for.
     expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
-    jkt = if use == :rpc, do: session[:proof_jkt]
+    jkt = if use == :media, do: nil, else: session[:proof_jkt]
     :ets.insert(@tickets, {ticket, expires_at, id, use, jkt})
 
     # The session may have been revoked after this request read it, and the revoke may
@@ -359,9 +370,13 @@ defmodule HalC2.Auth do
 
   @doc """
   Revokes the session `id` in the store at `path`; usable from outside the MC. Its
-  next ticket or request fails; a running MC's open sockets drop on their next check.
+  next ticket or request fails, and a running MC's open sockets close.
   """
-  def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
+  def revoke_session(path, id) do
+    revoked = revoke(path, "id = ?1", [id])
+    close_sockets(nil, revoked)
+    revoked != []
+  end
 
   @doc """
   Consumes a ticket that opens the client socket; each ticket opens one socket, for its
@@ -587,8 +602,16 @@ defmodule HalC2.Auth do
 
     desktop =
       case Application.get_env(:hal_c2, :desktop_token) do
-        nil -> nil
-        token -> %{hash: hash(token), expires_at: now() + @desktop_ttl}
+        nil ->
+          Application.delete_env(:hal_c2, :desktop_token_expires_at)
+          nil
+
+        token ->
+          expires_at =
+            Application.get_env(:hal_c2, :desktop_token_expires_at) || now() + @desktop_ttl
+
+          Application.put_env(:hal_c2, :desktop_token_expires_at, expires_at)
+          %{hash: hash(token), expires_at: expires_at}
       end
 
     state = %{path: path, desktop: desktop, dev: dev}
@@ -772,21 +795,27 @@ defmodule HalC2.Auth do
   end
 
   defp create_link(input, scopes, state, kind \\ "pairing-link") do
-    ttl = input["ttlMs"] || @pairing_ttl
+    with {:ok, ttl} <- link_ttl(input["ttlMs"]) do
+      link =
+        with_db(
+          state.path,
+          &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"], kind)
+        )
 
-    link =
-      with_db(
-        state.path,
-        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"], kind)
-      )
+      listed =
+        Map.drop(link, ["credential"])
+        |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
 
-    listed =
-      Map.drop(link, ["credential"])
-      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
-
-    state = broadcast(state, [event("pairingLinkUpserted", listed)])
-    {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+      state = broadcast(state, [event("pairingLinkUpserted", listed)])
+      {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+    else
+      :error -> {:reply, {:error, :invalid_ttl}, state}
+    end
   end
+
+  defp link_ttl(nil), do: {:ok, @pairing_ttl}
+  defp link_ttl(ttl) when is_integer(ttl) and ttl >= 1_000 and ttl <= 86_400_000, do: {:ok, ttl}
+  defp link_ttl(_ttl), do: :error
 
   defp delegated_scopes(requested, creator) do
     creator = if creator == :all, do: @admin_scopes, else: creator
@@ -1104,15 +1133,20 @@ defmodule HalC2.Auth do
   # The tickets a revoked session already bought go with it: a ticket opens a socket
   # for its session, so one outliving the session would let a revoked client in.
   defp drop_tickets(ids) do
-    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id, :_, :_})
+    if :ets.whereis(@tickets) != :undefined do
+      for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id, :_, :_})
+    end
+
     ids
   end
 
   # A revoked session's open sockets close (`HalC2.Web.Socket`) rather than outlive it.
   defp close_sockets(_state, ids) do
-    for [socket, id] <- :ets.match(@live, {{:socket, :"$1"}, :"$2"}),
-        id in ids,
-        do: send(socket, {:hal_c2_session_revoked, id})
+    if :ets.whereis(@live) != :undefined do
+      for [socket, id] <- :ets.match(@live, {{:socket, :"$1"}, :"$2"}),
+          id in ids,
+          do: send(socket, {:hal_c2_session_revoked, id})
+    end
   end
 
   defp removed_clients(ids), do: for(id <- ids, do: event("clientRemoved", %{"sessionId" => id}))
