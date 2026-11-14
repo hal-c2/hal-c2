@@ -236,13 +236,18 @@ fn offers(world: &mut World, icon: &str, what: &str) -> Outcome {
 const ACT: &str = "<button style=\"position:fixed;left:0;top:0;width:100vw;height:100vh;opacity:0.5\" \
      onclick=\"window.act && window.act()\">Act</button>";
 
+/// Whether the page, or the same-origin page it left for, ran `act`.
+const ACTED: &str = "window.acted === true || (function () { try { return sessionStorage.getItem('acted') === '1'; } catch (e) { return false; } })()";
+
 /// The page runs `script` from the user's click. Chromium opens a window
 /// only from a user's gesture, and a script the view runs has none.
 pub(super) fn act(world: &mut World, script: &str) -> Outcome {
     evaluate(
         world,
         &format!(
-            "window.acted = false; window.act = function () {{ if (window.acted) return; window.acted = true; {script} }}; true"
+            "window.acted = false; try {{ sessionStorage.removeItem('acted'); }} catch (e) {{}} \
+             window.act = function () {{ if (window.acted) return; window.acted = true; \
+             try {{ sessionStorage.setItem('acted', '1'); }} catch (e) {{}} {script} }}; true"
         ),
     )?;
     // A page that has just replaced another takes no input until it has
@@ -257,7 +262,9 @@ pub(super) fn act(world: &mut World, script: &str) -> Outcome {
             .unwrap_or(0.0);
         let (x, y) = brick.at_px(world, page, 16.0, height - 16.0)?;
         world.click_at(x, y)?;
-        if evaluate(world, "window.acted")? == Json::Bool(true) {
+        // A script that leaves the page (a link that stays in the tab) is
+        // asked on the page it reached, so the session remembers it acted.
+        if evaluate(world, ACTED)? == Json::Bool(true) {
             return Ok(());
         }
     }

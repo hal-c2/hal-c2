@@ -171,7 +171,7 @@ defmodule HalC2.UpgradeReleasePropTest do
   end
 
   def postcondition(state, {:call, _, :version, []}, result),
-    do: result == "#{Process.get(:base)}#{if state.vsn > 0, do: "-#{state.vsn}"}"
+    do: result == release(state.vsn)
 
   def postcondition(_state, {:call, _, :hold, []}, result), do: result == :lingering
   def postcondition(_state, {:call, _, :let_go, []}, result), do: result == :ok
@@ -320,7 +320,7 @@ defmodule HalC2.UpgradeReleasePropTest do
   # running ones, puts it in the cache and asks the MC to update to it.
   defp install(vsn, modules, continue) do
     from = Upgrade.version()
-    target = "#{Process.get(:base)}-#{vsn}"
+    target = release(vsn)
     running = Process.get(:running)
 
     # The MC's code carries the tree sync, as `:hal_c2` does in a real release.
@@ -413,13 +413,17 @@ defmodule HalC2.UpgradeReleasePropTest do
 
   # --- a case's MC ------------------------------------------------------------------
 
+  # The case's `vsn`th release, each newer than the last: the MC refuses to move back
+  # without being asked to.
+  defp release(vsn), do: "0.#{Process.get(:minor)}.#{vsn}"
+
   defp setup do
     home = HalC2.Prop.scratch_home("upgrade-release")
-    base = "0.0.#{System.unique_integer([:positive])}"
+    Process.put(:minor, System.unique_integer([:positive]))
+    base = release(0)
     :persistent_term.erase({Upgrade, :outcome})
     :persistent_term.put({Upgrade, :version}, base)
     Process.put(:home, home)
-    Process.put(:base, base)
     Process.put(:paths, :code.get_path())
     Process.put(:versions, %{vsn: 0, shape: 0})
 

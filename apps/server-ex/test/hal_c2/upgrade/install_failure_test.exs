@@ -87,7 +87,9 @@ defmodule HalC2.Upgrade.InstallFailureTest do
     beam = HalC2.Test.Compile.beam(Shaped, @raising)
     bundle(dir, target, [{Tree, tree()}, {Shaped, beam}])
 
-    assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => target})
+    assert {:error, %{"reason" => reason}} =
+             Upgrade.update(%{"targetVersion" => target, "allowDowngrade" => true})
+
     assert_received {:marked, {:apply, {:persistent_term, :put, _}}}
     assert reason =~ "the MC restarts on #{from}"
     assert reason =~ "could not migrate"
@@ -121,7 +123,9 @@ defmodule HalC2.Upgrade.InstallFailureTest do
     beam = HalC2.Test.Compile.beam(Shaped, Shaped.next())
     bundle(dir, target, [{Tree, tree()}, {Shaped, beam}])
 
-    assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => target})
+    assert {:error, %{"reason" => reason}} =
+             Upgrade.update(%{"targetVersion" => target, "allowDowngrade" => true})
+
     assert reason =~ "#{target} installed but could not be made permanent"
     assert reason =~ "which starts #{from}"
     refute_receive {:hal_c2_restart, _}, 700

@@ -75,6 +75,13 @@ defmodule HalC2.PushTest do
   test "a registration that cannot be pushed to is refused", %{context: context, phone: phone} do
     for fields <- [
           %{"endpoint" => "ftp://example.com/up"},
+          %{"endpoint" => "http://example.com/up"},
+          %{"endpoint" => "https://localhost/up"},
+          %{"endpoint" => "https://127.0.0.1/up"},
+          %{"endpoint" => "https://10.0.0.1/up"},
+          %{"endpoint" => "https://169.254.169.254/latest/meta-data"},
+          %{"endpoint" => "https://[::1]/up"},
+          %{"endpoint" => "https://metadata.google.internal/up"},
           %{"keys" => %{"p256dh" => "AAAA", "auth" => "AAAA"}},
           %{"quietHours" => %{"start" => 2000, "end" => 0}}
         ] do
@@ -167,6 +174,19 @@ defmodule HalC2.PushTest do
     assert map_size(Push.registrations()) == 1
     stored = HalC2.Store.metas(HalC2.Store.path(), "push")
     assert [_] = Map.keys(stored)
+  end
+
+  test "a restart deletes a live session's registration saved before the endpoint rules",
+       %{context: context, phone: phone} do
+    context = register(context, phone)
+    [{session, registration}] = Map.to_list(Push.registrations())
+    stored = JSON.encode!(Map.put(registration, "endpoint", "http://push.example/up"))
+    :ok = HalC2.Store.put_meta("push:" <> session, stored)
+
+    Mc.restart(context.mc)
+
+    assert Push.registrations() == %{}
+    assert HalC2.Store.metas(HalC2.Store.path(), "push:") == %{}
   end
 
   test "unregistering stops alerts", %{context: context, phone: phone} do

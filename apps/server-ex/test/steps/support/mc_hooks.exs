@@ -17,7 +17,12 @@ defmodule HalC2.Test.McHooks do
     # is not this MC's.
     HalC2.Test.Mc.World.reset_provider_caches()
     mc = HalC2.Test.Mc.start(dir)
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      File.rm_rf(dir)
+      File.rm_rf(HalC2.Test.Mc.Host.root(%{mc: mc}))
+    end)
+
     {:ok, Map.merge(context, %{mc: mc, clients: %{}, projects: %{}, threads: %{}})}
   end
 end

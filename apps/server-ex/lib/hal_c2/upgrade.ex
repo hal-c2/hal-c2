@@ -111,19 +111,27 @@ defmodule HalC2.Upgrade do
   Updates to `version` from its bundle archive at `path` on this machine
   (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
   clustered with this one update first, taking the bundle from it before this one
-  restarts. How each went is the result's `members`.
+  restarts. How each went is the result's `members`. `allow_downgrade` is the
+  operator's consent to move back to an older version (`"allowDowngrade"`).
   """
-  def update_from(path, version) do
-    if File.regular?(path) do
-      # Before the bundle reaches the cache: the boot prune would take it, a version
-      # not yet installed being nothing it keeps.
-      :ok = await_pruned()
-      :ok = HalC2.Upgrade.Source.put(version, platform(), path)
-      input = %{"targetVersion" => version}
-      members = update_members(Node.list(), input)
-      with {:ok, result} <- hot_update(input), do: {:ok, Map.put(result, "members", members)}
-    else
-      failure("#{path} is not a bundle.")
+  def update_from(path, version, allow_downgrade \\ false) do
+    input = %{"targetVersion" => version, "allowDowngrade" => allow_downgrade == true}
+
+    cond do
+      not File.regular?(path) ->
+        failure("#{path} is not a bundle.")
+
+      # Before any member updates: a target this MC refuses reaches none of them.
+      refused = refusal(input) ->
+        refused
+
+      true ->
+        # Before the bundle reaches the cache: the boot prune would take it, a version
+        # not yet installed being nothing it keeps.
+        :ok = await_pruned()
+        :ok = HalC2.Upgrade.Source.put(version, platform(), path)
+        members = update_members(Node.list(), input)
+        with {:ok, result} <- hot_update(input), do: {:ok, Map.put(result, "members", members)}
     end
   end
 
@@ -440,13 +448,12 @@ defmodule HalC2.Upgrade do
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp run(%{"targetVersion" => target} = input, progress) do
+  # Why this MC would not update to `input`'s target, or nil.
+  defp refusal(%{"targetVersion" => target} = input) do
     from = version()
-    root = release_root()
-    id = "hot-upgrade-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
 
     cond do
-      root == nil ->
+      release_root() == nil ->
         failure("This MC runs from a checkout; update it with `mix hal_c2.upgrade`.")
 
       not exact?(target) ->
@@ -454,6 +461,25 @@ defmodule HalC2.Upgrade do
 
       target == from ->
         failure("This MC already runs #{target}.")
+
+      Version.compare(target, from) == :lt and input["allowDowngrade"] != true ->
+        failure(
+          "#{target} is older than the running #{from}; moving back needs \"allowDowngrade\"."
+        )
+
+      true ->
+        nil
+    end
+  end
+
+  defp run(%{"targetVersion" => target} = input, progress) do
+    from = version()
+    root = release_root()
+    id = "hot-upgrade-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
+
+    cond do
+      refused = refusal(input) ->
+        refused
 
       true ->
         # Before the fetch reads the target's cached bundle or installed release:

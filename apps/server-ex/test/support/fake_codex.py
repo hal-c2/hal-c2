@@ -374,6 +374,10 @@ for line in sys.stdin:
         # A delegated subagent's task follows the MC's worker preamble.
         text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})
+        # As Codex does, the turn works in the cwd it names: a thread handed off to a
+        # worktree mid-session continues there.
+        if params.get("cwd") and os.path.isdir(params["cwd"]):
+            os.chdir(params["cwd"])
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
             sys.exit(1)

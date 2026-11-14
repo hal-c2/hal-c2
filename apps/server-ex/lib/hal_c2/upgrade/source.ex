@@ -46,11 +46,24 @@ defmodule HalC2.Upgrade.Source do
     end
   end
 
+  # Version and platform become path components under the cache, and arrive
+  # over distribution: only the shapes this MC itself generates may reach
+  # the disk (an exact SemVer, an `os-arch` platform).
+  defp check_bundle_name!(version, platform) do
+    unless is_binary(version) and match?({:ok, _}, Version.parse(version)) and
+             is_binary(platform) and Regex.match?(~r/^[a-z0-9]+(-[a-z0-9]+)+$/, platform) do
+      raise ArgumentError, "invalid bundle version or platform: #{inspect({version, platform})}"
+    end
+
+    :ok
+  end
+
   @doc """
   Adds a bundle archive for `version` to this MC's cache, so it can update from
   it and hand it to peers (`mix hal_c2.upgrade`).
   """
   def put(version, platform, source_path) do
+    :ok = check_bundle_name!(version, platform)
     target = archive_path(version, platform)
     File.mkdir_p!(Path.dirname(target))
     # Copy beside the archive and rename, like `receive_part/3` and
@@ -81,6 +94,7 @@ defmodule HalC2.Upgrade.Source do
   to the cache. Pieces are small, so they never hold up the distribution link.
   """
   def receive_part(version, platform, :begin) do
+    :ok = check_bundle_name!(version, platform)
     path = archive_path(version, platform) <> ".incoming"
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, "")
@@ -88,10 +102,12 @@ defmodule HalC2.Upgrade.Source do
   end
 
   def receive_part(version, platform, {:chunk, data}) do
+    :ok = check_bundle_name!(version, platform)
     File.write!(archive_path(version, platform) <> ".incoming", data, [:append])
   end
 
   def receive_part(version, platform, {:finish, sum}) do
+    :ok = check_bundle_name!(version, platform)
     target = archive_path(version, platform)
     incoming = target <> ".incoming"
 

@@ -220,8 +220,25 @@ defmodule HalC2.SourceControl do
       "detail" => option(detail)
     }
 
+  # A repository name reaches host CLIs as a positional argument: never a
+  # shape the CLI could read as its own option.
+  defp safe_repository?(name) when is_binary(name) do
+    name != "" and String.printable?(name) and not String.starts_with?(name, "-") and
+      not String.contains?(name, ["\t", "\n"])
+  end
+
+  defp safe_repository?(_name), do: false
+
   @doc "`sourceControl.lookupRepository`: a repository's name and clone URLs."
   def lookup(%{"provider" => provider, "repository" => repository} = input) do
+    if not safe_repository?(repository) do
+      repository_error(provider, "lookupRepository", {:error, "invalid repository name"})
+    else
+      lookup_repository(provider, repository, input)
+    end
+  end
+
+  defp lookup_repository(provider, repository, input) do
     case provider do
       "github" ->
         with {:ok, out} <-
@@ -404,20 +421,19 @@ defmodule HalC2.SourceControl do
   """
   def publish(%{"cwd" => cwd, "provider" => provider, "repository" => name} = input) do
     remote_name = input["remoteName"] || "origin"
-    visibility = "--" <> (input["visibility"] || "private")
+
+    visibility =
+      "--" <>
+        if(input["visibility"] in ["private", "public", "internal"],
+          do: input["visibility"],
+          else: "private"
+        )
 
     created =
-      case provider do
-        "github" ->
-          HalC2.GitHub.asked(fn ->
-            with {:ok, out} <- gh(cwd, ["repo", "create", name, visibility]), do: {:ok, out, ""}
-          end)
-
-        "gitlab" ->
-          cmd("glab", ["repo", "create", name, visibility], cd: cwd)
-
-        other ->
-          {:error, "#{other} repositories are not supported here yet."}
+      case {safe_repository?(name), safe_repository?(remote_name), provider} do
+        {false, _, _} -> {:error, "invalid repository name"}
+        {_, false, _} -> {:error, "invalid remote name"}
+        {true, true, provider} -> create_on_host(provider, cwd, name, visibility)
       end
 
     with {:ok, _, _} <- created,
@@ -453,6 +469,18 @@ defmodule HalC2.SourceControl do
         repository_error(provider, "publishRepository", error)
     end
   end
+
+  defp create_on_host("github", cwd, name, visibility) do
+    HalC2.GitHub.asked(fn ->
+      with {:ok, out} <- gh(cwd, ["repo", "create", name, visibility]), do: {:ok, out, ""}
+    end)
+  end
+
+  defp create_on_host("gitlab", cwd, name, visibility),
+    do: cmd("glab", ["repo", "create", name, visibility], cd: cwd)
+
+  defp create_on_host(other, _cwd, _name, _visibility),
+    do: {:error, "#{other} repositories are not supported here yet."}
 
   defp repo(provider, name, url, ssh),
     do: %{"provider" => provider, "nameWithOwner" => name, "url" => url, "sshUrl" => ssh || url}
