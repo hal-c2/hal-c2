@@ -61,6 +61,7 @@ mod state;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Instant;
 
 use ljos::prelude::{Engine, ObjectId};
 use serde_json::json;
@@ -142,6 +143,8 @@ struct SettingMode {
     rev: i64,
 }
 
+type AfterOwn = Box<dyn FnOnce(&mut Composer, &Engine)>;
+
 pub struct Composer {
     bridge: Bridge,
     mc: Rc<dyn Mc>,
@@ -174,6 +177,10 @@ pub struct Composer {
     /// Whether the target held files when last published.
     held_files: bool,
     catalogue: Vec<Instance>,
+    /// How many catalogues have been announced.
+    catalogues: u64,
+    /// Each environment, instance and folder asked for (`ask_folder`).
+    folders_asked: HashMap<String, FolderAsk>,
     paths: PathSearch,
     recall: Option<Recall>,
     /// What "/usage-limits" showed, by target.
@@ -181,6 +188,11 @@ pub struct Composer {
     /// The access changes on their way to the MC, by draft target.
     setting_mode: HashMap<String, SettingMode>,
     setting_interaction: HashMap<String, SettingMode>,
+    /// This client's own mode changes to each thread that may still move
+    /// its selectionRevision, and the sends waiting for their answers
+    /// (`dispatch_all`).
+    own: HashMap<String, Vec<kept::OwnChange>>,
+    after_own: HashMap<String, Vec<AfterOwn>>,
     /// This window's "Not connected: queue not resumed" toast, while it may
     /// still show.
     not_connected_toast: String,
@@ -207,6 +219,16 @@ fn later(me: &Me<Composer>, engine: &Engine, f: impl FnOnce(&mut Composer, &Engi
 }
 
 /// An MC reply handed to the composer, deferred as [`later`].
+/// A folder's read (`ask_folder`): whether it is still out, whether the MC
+/// kept what it read, the catalogue current when it answered, and until when
+/// the answer stands.
+struct FolderAsk {
+    reading: bool,
+    kept: bool,
+    answered_at: u64,
+    stands: Instant,
+}
+
 fn back(
     me: &Me<Composer>,
     f: impl FnOnce(&mut Composer, &Engine, Result<Json, McError>) + 'static,
@@ -313,11 +335,15 @@ impl Controller for Composer {
             stash_open: false,
             held_files: false,
             catalogue: Vec::new(),
+            catalogues: 0,
+            folders_asked: HashMap::new(),
             paths: PathSearch::default(),
             recall: None,
             usage_limits: HashMap::new(),
             setting_mode: HashMap::new(),
             setting_interaction: HashMap::new(),
+            own: HashMap::new(),
+            after_own: HashMap::new(),
             not_connected_toast: String::new(),
             queue_busy: HashSet::new(),
             page_id: String::new(),
@@ -375,6 +401,7 @@ impl Controller for Composer {
             engine,
             hook(&self.me, |c, e| {
                 c.refresh_catalogue(e);
+                c.settle_modes(e);
                 c.publish(e);
             }),
         );
@@ -494,6 +521,8 @@ impl Composer {
         if !self.active {
             return;
         }
+        let target = self.target(engine);
+        self.ask_folder(engine, &target);
         let turn = self.turn_state(engine);
         // Ending an edit publishes everything already.
         let edits = kept::read(engine, |d| d.queued_edits.len());
@@ -885,34 +914,173 @@ impl Composer {
             .cloned()
             .unwrap_or_default();
         self.catalogue = model::instances(&providers);
+        self.catalogues += 1;
     }
 
-    /// A model picked in a started thread's draft that the thread now runs
-    /// is the thread's again, so a change made on another client shows
-    /// here; a pick the thread has not taken stays (upstream #20886).
+    /// A model picked in a started thread's draft gives way to what the
+    /// thread holds once the thread moves past it, so a change made on
+    /// another client shows here: with revisions, any change but this
+    /// client's own (`next_pick`); from an MC that counts none, once the
+    /// thread runs the pick (upstream #20886).
     pub(super) fn forget_taken_picks(&mut self, engine: &Engine) {
-        let picks: Vec<(String, Obj)> = kept::read(engine, |d| {
+        let revisions: HashMap<String, Option<i64>> = self
+            .own
+            .keys()
+            .map(|key| {
+                (
+                    key.clone(),
+                    thread_of(engine, key).and_then(|t| t.selection_revision),
+                )
+            })
+            .collect();
+        self.own.retain(|key, changes| {
+            let revision = revisions.get(key).copied().flatten();
+            changes.retain(|change| {
+                let change = change.borrow();
+                !(change.answered && revision.is_none_or(|at| !change.ahead(at)))
+            });
+            !changes.is_empty()
+        });
+        let picks: Vec<String> = kept::read(engine, |d| {
             d.drafts
                 .iter()
-                .filter(|(_, k)| k.multiple_models.is_none())
-                .filter_map(|(key, k)| Some((key.clone(), k.model_selection.clone()?)))
+                .filter(|(_, k)| k.model_selection.is_some() && k.multiple_models.is_none())
+                .map(|(key, _)| key.clone())
                 .collect()
         });
-        let taken: Vec<String> = picks
+        let threads: Vec<_> = picks
             .into_iter()
-            .filter(|(key, pick)| {
-                thread_of(engine, key)
-                    .is_some_and(|t| model::pick_matches_thread(pick, &t.model_selection))
-            })
-            .map(|(key, _)| key)
+            .filter_map(|key| Some((thread_of(engine, &key)?, key)))
             .collect();
-        if taken.is_empty() {
+        if threads.is_empty() {
             return;
         }
-        for key in &taken {
-            kept::edit_draft(engine, key, |k| k.model_selection = None);
+        let forgot = kept::write(engine, |d| {
+            let mut forgot = false;
+            for (thread, key) in &threads {
+                let Some(draft) = d.drafts.get_mut(key) else {
+                    continue;
+                };
+                let base = draft.pick_base;
+                if next_pick(draft, thread) {
+                    forgot |= draft.pick_base != base;
+                } else {
+                    draft.drop_picks();
+                    forgot = true;
+                }
+            }
+            forgot
+        });
+        if forgot {
+            kept::save(engine);
         }
-        kept::save(engine);
+    }
+
+    /// Each pick is made fresh against what the thread holds now, with the
+    /// own changes that may still move it on.
+    pub(super) fn note_pick(&self, engine: &Engine, target: &str) {
+        let revision = thread_of(engine, target).and_then(|t| t.selection_revision);
+        let own: Vec<kept::OwnChange> = match revision {
+            Some(at) => self
+                .own
+                .get(target)
+                .into_iter()
+                .flatten()
+                .filter(|change| change.borrow().ahead(at))
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
+        kept::edit_draft(engine, target, |draft| {
+            draft.pick_base = revision;
+            draft.pick_own = own;
+        });
+    }
+
+    /// A mode change sent from here: the pick on the target stands past it.
+    pub(super) fn own_sent(&mut self, engine: &Engine, target: &str) -> kept::OwnChange {
+        let change = kept::OwnChange::new(std::cell::RefCell::new(kept::Own::default()));
+        self.own
+            .entry(target.to_owned())
+            .or_default()
+            .push(change.clone());
+        kept::write(engine, |d| {
+            if let Some(draft) = d.drafts.get_mut(target)
+                && draft.model_selection.is_some()
+            {
+                draft.pick_own.push(change.clone());
+            }
+        });
+        change
+    }
+
+    pub(super) fn own_pending(&self, target: &str) -> bool {
+        self.own
+            .get(target)
+            .is_some_and(|changes| changes.iter().any(|change| !change.borrow().answered))
+    }
+
+    /// The MC answers with the revision a change moved the thread to. An MC
+    /// that counts revisions names one in every answer that moved the
+    /// thread, and one that counts none never counts the change, so each
+    /// thread's own MC decides.
+    pub(super) fn own_answered(
+        &mut self,
+        engine: &Engine,
+        target: &str,
+        change: &kept::OwnChange,
+        answer: Option<&Json>,
+    ) {
+        {
+            let mut change = change.borrow_mut();
+            change.answered = true;
+            if let Some(moved) = answer.and_then(|a| a["selectionRevision"].as_i64()) {
+                change.revision = Some(moved);
+            }
+        }
+        // Sends that waited for the answers go now, made past this client's
+        // own changes.
+        if !self.own_pending(target) {
+            for resume in self.after_own.remove(target).unwrap_or_default() {
+                resume(self, engine);
+            }
+        }
+        self.forget_taken_picks(engine);
+        self.publish(engine);
+    }
+
+    /// A send the MC refused for a choice made against a selection the
+    /// thread has since left (`selection-stale`): says what the thread is
+    /// on now.
+    pub(super) fn toast_stale(&self, engine: &Engine, detail: &Json) {
+        let mut now = as_object(&detail["modelSelection"]).clone();
+        if now.is_empty() {
+            now = as_object(&detail["selection"]["modelSelection"]).clone();
+        }
+        let instance_id = field(&now, "instanceId");
+        let chosen = field(&now, "model");
+        let mut model_name = chosen.to_owned();
+        let mut provider = instance_id.to_owned();
+        if let Some(instance) = model::find(&self.catalogue, instance_id) {
+            if !instance.display_name.is_empty() {
+                provider = instance.display_name.clone();
+            }
+            let name = field(&model::find_model(instance, chosen), "name").to_owned();
+            if !name.is_empty() {
+                model_name = name;
+            }
+        }
+        let place = if model_name.is_empty() || provider.is_empty() {
+            "This thread changed elsewhere.".to_owned()
+        } else {
+            format!("This thread moved to {model_name} on {provider} elsewhere.")
+        };
+        toast(
+            engine,
+            "warning",
+            "Message not sent",
+            &format!("{place} Check it and send again."),
+        );
     }
 
     /// A thread that moved to another machine has a new key: what was
@@ -1046,4 +1214,52 @@ fn publish_everywhere(engine: &Engine) {
 /// The kept attachment `id` of any draft or question's answer.
 fn find_attachment(engine: &Engine, id: &str) -> Option<Attachment> {
     kept::find_attachment(engine, id)
+}
+
+/// What becomes of a draft's model pick at its thread's row: false when it
+/// gives way. The pick moves its base only across revisions this client's
+/// own answers name. While one of its own changes is unanswered, that
+/// change may be what moved the thread, so the pick waits, unmoved, for the
+/// answer to say.
+fn next_pick(draft: &mut Draft, thread: &crate::sidebar_model::Thread) -> bool {
+    let (Some(revision), Some(base)) = (thread.selection_revision, draft.pick_base) else {
+        return draft
+            .model_selection
+            .as_ref()
+            .is_some_and(|pick| !model::pick_matches_thread(pick, &thread.model_selection));
+    };
+    if revision < base {
+        return false;
+    }
+    if revision == base {
+        return true;
+    }
+    let mut named = HashSet::new();
+    let mut pending = 0;
+    for change in &draft.pick_own {
+        let change = change.borrow();
+        if !change.answered {
+            pending += 1;
+        }
+        if let Some(moved) = change.revision {
+            named.insert(moved);
+        }
+    }
+    let unaccounted = (base + 1..=revision)
+        .filter(|at| !named.contains(at))
+        .count();
+    // Each unanswered change may yet name one revision; any more are
+    // another client's.
+    if unaccounted > pending {
+        return false;
+    }
+    if unaccounted > 0 {
+        return true;
+    }
+    draft.pick_base = Some(revision);
+    draft.pick_own.retain(|change| {
+        let change = change.borrow();
+        !(change.answered && !change.ahead(revision))
+    });
+    true
 }
