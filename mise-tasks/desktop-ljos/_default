@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-#MISE description="Open the desktop shell on Ljós, paired with the running MC (mise run mc), as mise run desktop does; --mc-origin URL --mc-token TOKEN or --pair LINK names another"
+#MISE description="Open the desktop shell on Ljós, paired with the running MC (mise run mc), as mise run desktop does; --url LINK attaches to another, --standalone starts the shell's own MC"
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
-args=("$@")
+args=()
+standalone=false
+for arg in "$@"; do
+  if [[ $arg == --standalone ]]; then standalone=true; else args+=("$arg"); fi
+done
 # Kept in the hal-c2-dev directories, as mise run desktop keeps desktop-qt's.
 [[ " $* " == *" --home-dir"* || " $* " == *" --dev "* ]] || args=(--dev "${args[@]+"${args[@]}"}")
 # Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780; HAL_C2_MC_HOME
-# for one with its own home) unless the arguments name one.
-if [[ " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
+# for one with its own home) through the desktop host's --url, unless the
+# arguments name one. --standalone has the host start the shell's own MC from
+# source, as the installed app does.
+if [[ $standalone == false && " $* " != *" --url"* && " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
   origin="http://127.0.0.1:${HAL_C2_MC_PORT:-3780}"
   if ! curl -fsS -m 2 "$origin/.well-known/hal-c2/environment" >/dev/null; then
-    echo "no MC answers at $origin. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), or pass --mc-origin/--pair." >&2
+    echo "no MC answers at $origin. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), pass --url <pairing link>, or use --standalone." >&2
     exit 1
   fi
   link="$(cd ../server-ex && mise exec -- mix hal_c2.pair "$origin" | grep -Eo '^https?://[^ ]+[?#]token=[^ ]+' | head -n 1)"
@@ -18,7 +24,7 @@ if [[ " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
     echo "mix hal_c2.pair printed no pairing link." >&2
     exit 1
   fi
-  args=(--pair "$link" "${args[@]}")
+  args=(--url "$link" "${args[@]}")
 fi
 # The window reloads the checkout's bricks and the config dir's shell.qml as they
 # are saved (shell/src/runtime.rs), so a dev run needs no rebuild for QML.

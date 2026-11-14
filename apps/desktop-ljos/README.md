@@ -36,10 +36,12 @@ mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mo
 On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
 the Dock and the app switcher name an app by its bundle.
 
-The window takes the MC's origin and a session token (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`), or
-`--pair LINK` (from `mise run mc:pair`), which keeps the session for the next start; without either it
-reconnects to the MC it paired with last, or runs disconnected. `--home-dir DIR` keeps the session and the
-client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
+As desktop-qt does, the window runs the desktop host (`../desktop-qt/host/main.ts` under `node`, or
+`--host-entry`/`--node`/`HAL_C2_NODE_BIN`), which finds or starts the MC on this machine; `--url LINK` (what
+`mise run desktop-ljos` passes, from `mise run mc:pair`; `--standalone` leaves it out) has it pair with that MC
+instead. `--mc-origin URL --mc-token TOKEN` (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect
+without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
+one. `--home-dir DIR` keeps the client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
 The window makes its shell again when a QML file changes: this checkout's (or `--qml-dir`'s, or

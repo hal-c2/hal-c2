@@ -27,6 +27,7 @@ pub mod composer_model_control;
 pub mod composer_models;
 pub mod composer_permissions;
 pub mod composer_picker;
+pub mod composer_selection_revision;
 pub mod composer_workspace;
 pub mod connection;
 pub mod connection_catalog;
@@ -203,6 +204,7 @@ pub fn register(steps: &mut Steps) {
     composer_model_control::register(steps);
     composer_models::register(steps);
     composer_permissions::register(steps);
+    composer_selection_revision::register(steps);
     composer_picker::register(steps);
     composer_workspace::register(steps);
     connection::register(steps);

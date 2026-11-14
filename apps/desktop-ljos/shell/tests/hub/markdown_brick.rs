@@ -94,7 +94,6 @@ fn system_dark(hub: &Hub, dark: bool) {
 // A link in a reply is in the theme's link colour and not underlined, in
 // either appearance, as desktop-qt draws it: a pasted address and a named one.
 #[test]
-#[ignore = "hal-c2/ljos-ui#222: the brick's text is lost when its colour changes with it"]
 fn links_take_the_themes_link_colour() {
     let hub = Hub::new();
     let (root, _window) = probe(

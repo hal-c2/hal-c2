@@ -18,15 +18,28 @@ use ljos::window::Icon;
 /// desktop-qt's window icon (`HAL_C2_APP_ICON` in its CMakeLists.txt).
 const ICON: &[u8] = include_bytes!("../../../../assets/prod/black-universal-1024.png");
 
+/// A development shell's icon, read from the checkout as desktop-qt's
+/// `HAL_C2_DEV_ICON` is, so a release does not carry it.
+pub const DEV_ICON: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../assets/dev/blueprint-universal-1024.png"
+);
+
 /// Gives the application desktop-qt's icon, as its
 /// `QGuiApplication::setWindowIcon` does: the Dock's on macOS, the title
 /// bar's and task bar's on Windows and X11, and on Wayland the one a
-/// compositor with `xdg-toplevel-icon-v1` shows. Decoded off the UI
-/// thread; until then the desktop shows the desktop entry's or the
-/// bundle's.
-pub fn give_application_icon(engine: &Engine) {
-    let decode = || {
-        let image = image::load_from_memory_with_format(ICON, image::ImageFormat::Png).ok()?;
+/// compositor with `xdg-toplevel-icon-v1` shows. `file` is another PNG
+/// (a development shell's, [`DEV_ICON`]); the release icon when it cannot
+/// be read. Decoded off the UI thread; until then the desktop shows the
+/// desktop entry's or the bundle's.
+pub fn give_application_icon(engine: &Engine, file: Option<std::path::PathBuf>) {
+    let decode = move || {
+        let bytes = file.and_then(|f| std::fs::read(f).ok());
+        let image = image::load_from_memory_with_format(
+            bytes.as_deref().unwrap_or(ICON),
+            image::ImageFormat::Png,
+        )
+        .ok()?;
         let image = image.into_rgba8();
         Icon::from_rgba(image.width(), image.height(), image.into_raw()).ok()
     };
@@ -35,6 +48,50 @@ pub fn give_application_icon(engine: &Engine) {
             Platform::of(engine).set_application_icon(Some(icon));
         }
     });
+}
+
+/// desktop-qt's `installDevDesktopEntry`: Wayland docks and bars find a
+/// window's icon through the desktop entry its app id names, not the icon
+/// the window sets. A development shell has its own id, so it gets its
+/// own entry under `data` (`$XDG_DATA_HOME`): the dev icon, hidden from
+/// launchers, started with `--dev`. Written only when it changed.
+pub fn install_dev_desktop_entry(
+    data: &std::path::Path,
+    app_id: &str,
+    icon: &std::path::Path,
+    binary: &std::path::Path,
+) -> std::io::Result<()> {
+    let icon_dir = data.join("icons/hicolor/1024x1024/apps");
+    let installed = icon_dir.join(format!("{app_id}.png"));
+    let source = std::fs::read(icon)?;
+    if std::fs::read(&installed).ok().as_deref() != Some(&source[..]) {
+        std::fs::create_dir_all(&icon_dir)?;
+        std::fs::write(&installed, &source)?;
+    }
+    let entry = dev_desktop_entry(app_id, &binary.to_string_lossy());
+    let file = data.join(format!("applications/{app_id}.desktop"));
+    if std::fs::read_to_string(&file).ok().as_deref() == Some(&entry) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(data.join("applications"))?;
+    std::fs::write(file, entry)
+}
+
+/// The entry's text. Exec quotes the binary's path and escapes what the
+/// Desktop Entry spec reserves in it, as main.cpp does.
+fn dev_desktop_entry(app_id: &str, binary: &str) -> String {
+    let mut quoted = String::new();
+    for c in binary.chars() {
+        if matches!(c, '\\' | '"' | '`' | '$') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    let exec = quoted.replace('\\', "\\\\").replace('%', "%%");
+    format!(
+        "[Desktop Entry]\nType=Application\nName=HAL-C2 (Dev)\nExec=\"{exec}\" --dev\nIcon={app_id}\n\
+         NoDisplay=true\nStartupWMClass={app_id}\n"
+    )
 }
 
 /// Makes the application's colour scheme `dark` or light when `enabled`, and
@@ -186,11 +243,49 @@ mod tests {
     fn the_application_has_desktop_qts_icon_once_it_is_decoded() {
         let engine = engine();
         let mut clock = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
-        give_application_icon(&engine);
+        give_application_icon(&engine, None);
         assert!(Platform::of(&engine).application_icon().is_none());
         clock.advance(0).unwrap();
         let icon = Platform::of(&engine).application_icon().expect("the icon");
         assert_eq!((icon.width(), icon.height()), (1024, 1024));
+    }
+
+    #[test]
+    fn a_development_shell_has_the_dev_icon() {
+        let engine = engine();
+        let mut clock = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
+        give_application_icon(&engine, Some(DEV_ICON.into()));
+        clock.advance(0).unwrap();
+        assert!(Platform::of(&engine).application_icon().is_some());
+    }
+
+    #[test]
+    fn the_dev_entry_escapes_the_binary_as_main_cpp_does() {
+        assert_eq!(
+            dev_desktop_entry("hal-c2-dev", "/home/a b/$x/100%/hal-c2-ljos"),
+            "[Desktop Entry]\nType=Application\nName=HAL-C2 (Dev)\n\
+             Exec=\"/home/a b/\\\\$x/100%%/hal-c2-ljos\" --dev\nIcon=hal-c2-dev\n\
+             NoDisplay=true\nStartupWMClass=hal-c2-dev\n"
+        );
+    }
+
+    #[test]
+    fn the_dev_entry_is_written_once() {
+        let dir = std::env::temp_dir().join(format!("hal-c2-dev-entry-{}", std::process::id()));
+        let binary = std::path::Path::new("/opt/hal-c2-ljos");
+        install_dev_desktop_entry(&dir, "hal-c2-dev", DEV_ICON.as_ref(), binary).unwrap();
+        let file = dir.join("applications/hal-c2-dev.desktop");
+        let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+        install_dev_desktop_entry(&dir, "hal-c2-dev", DEV_ICON.as_ref(), binary).unwrap();
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().modified().unwrap(),
+            written
+        );
+        assert!(
+            dir.join("icons/hicolor/1024x1024/apps/hal-c2-dev.png")
+                .is_file()
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
