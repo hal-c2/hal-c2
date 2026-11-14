@@ -9,8 +9,9 @@
 //! `listen`'s `open` is called off the UI thread and is meant to post the
 //! folders to the shell's inbox, not to touch controllers.
 //!
-//! The socket's name is its own (`hal-c2-ljos-…`), so a Qt desktop and this
-//! shell on one home do not see each other.
+//! The socket is desktop-qt's, name and protocol, so a desktop-qt and this
+//! shell on one home are one app to a later launch: whichever runs first
+//! gets the folders the other is started with.
 
 use interprocess::local_socket::{
     GenericFilePath, GenericNamespaced, ListenerOptions, Name, Stream, prelude::*,
@@ -24,15 +25,16 @@ use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Short and unique per home: socket paths are length-limited. FNV-1a over the
-/// state directory's path, 64 bits, which a name only has to tell homes apart.
-fn server_name(state_dir: &Path) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in state_dir.to_string_lossy().bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+/// Short and unique per home: socket paths are length-limited. desktop-qt's
+/// SingleInstance::serverName: sixteen hex digits of the SHA-1 of the state
+/// directory's path, with Qt's `/` separators on Windows.
+fn server_name(state_dir: &Path, windows: bool) -> String {
+    let mut path = state_dir.to_string_lossy().into_owned();
+    if windows {
+        path = path.replace('\\', "/");
     }
-    format!("hal-c2-ljos-{hash:016x}")
+    let digest = sha1_smol::Sha1::from(path.as_bytes()).digest().to_string();
+    format!("hal-c2-qt-{}", &digest[..16])
 }
 
 /// Where the shell on this home listens: the socket file's path, or the bare
@@ -41,7 +43,7 @@ fn server_name(state_dir: &Path) -> String {
 /// `$XDG_RUNTIME_DIR`; only an absolute one counts, as for the other XDG
 /// variables.
 pub fn address(state_dir: &Path, runtime_dir: Option<&str>, windows: bool) -> String {
-    let name = server_name(state_dir);
+    let name = server_name(state_dir, windows);
     if windows {
         return name;
     }
@@ -222,11 +224,18 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    /// Short enough for a socket's path, which a deep TMPDIR is not: the
+    /// user's runtime directory where there is one.
+    #[cfg(unix)]
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "hal-c2-single-instance-{}-{tag}",
-            std::process::id()
-        ));
+        // SAFETY: getuid has no preconditions.
+        let runtime = PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }));
+        let base = if runtime.is_dir() {
+            runtime
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!("hc-si-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -238,7 +247,7 @@ mod tests {
         let b = address(Path::new("/home/me/.local/state/hal-c2-dev"), None, false);
         assert_ne!(a, b);
         assert!(
-            a.starts_with("/home/me/.local/state/hal-c2/hal-c2-ljos-"),
+            a == "/home/me/.local/state/hal-c2/hal-c2-qt-7ab6eb22607487a2",
             "{a}"
         );
         assert_eq!(
@@ -251,7 +260,7 @@ mod tests {
     fn an_absolute_runtime_directory_holds_the_socket() {
         let state = Path::new("/home/me/.local/state/hal-c2");
         let a = address(state, Some(" /run/user/1000 "), false);
-        assert!(a.starts_with("/run/user/1000/hal-c2/hal-c2-ljos-"), "{a}");
+        assert!(a.starts_with("/run/user/1000/hal-c2/hal-c2-qt-"), "{a}");
         // A relative one is ignored.
         let b = address(state, Some("run"), false);
         assert!(b.starts_with("/home/me/.local/state/hal-c2/"), "{b}");
@@ -261,9 +270,15 @@ mod tests {
     fn windows_and_too_long_paths_use_the_bare_name() {
         let state = Path::new("C:/Users/me/AppData/Local/hal-c2/state");
         let name = address(state, Some("/run/user/1000"), true);
-        assert!(
-            name.starts_with("hal-c2-ljos-") && !name.contains('/'),
-            "{name}"
+        // desktop-qt's name for the same home, whichever separators it has.
+        assert_eq!(name, "hal-c2-qt-4d7e6a275df7afd9");
+        assert_eq!(
+            address(
+                Path::new(r"C:\Users\me\AppData\Local\hal-c2\state"),
+                None,
+                true
+            ),
+            name
         );
         let long = PathBuf::from(format!("/{}", "x".repeat(120)));
         let a = address(&long, None, false);
@@ -273,7 +288,7 @@ mod tests {
             std::env::temp_dir().join(name_suffix(&a)),
             "{a}"
         );
-        assert!(name_suffix(&a).starts_with("hal-c2-ljos-"), "{a}");
+        assert!(name_suffix(&a).starts_with("hal-c2-qt-"), "{a}");
     }
 
     fn name_suffix(address: &str) -> String {
