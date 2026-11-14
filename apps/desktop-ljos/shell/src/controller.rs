@@ -491,6 +491,11 @@ pub fn set_state_dir(engine: &Engine, dir: Option<PathBuf>) {
     *Host::of(engine).state_dir.borrow_mut() = dir;
 }
 
+/// Where the app keeps its state, once [`set_state_dir`] said.
+pub fn state_dir(engine: &Engine) -> Option<PathBuf> {
+    Host::of(engine).state_dir.borrow().clone()
+}
+
 /// What shows each window [`open_window`] builds. Without one the shell
 /// keeps to its first window: `window.new` is not handled, there is no
 /// "New window" command, and no saved window is restored.

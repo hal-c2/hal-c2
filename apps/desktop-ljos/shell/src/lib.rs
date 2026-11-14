@@ -100,6 +100,8 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::theme::ThemesObject>(MODULE, v);
     engine.register_singleton::<controllers::onboarding::OnboardingObject>(MODULE, v);
     engine.register_singleton::<controllers::palette::PaletteObject>(MODULE, v);
+    engine
+        .register_singleton::<controllers::preview_automation::PreviewAutomationObject>(MODULE, v);
     thread_view::register(engine);
     bridge::Bridge::of(engine);
 }
