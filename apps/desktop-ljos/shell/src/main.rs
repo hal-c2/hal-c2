@@ -1,22 +1,35 @@
 //! `hal-c2-ljos`: the HAL-C2 desktop shell on Ljós.
 //!
-//!   hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK]
-//!               [--home-dir DIR] [--dev] [--config-dir DIR]
-//!               [--qml-dir DIR] [--allow-local-folder-import]
+//!   hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]
+//!               [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]
+//!               [--qml-dir DIR] [--host-entry FILE] [--node PATH]
+//!               [--allow-local-folder-import]
 //!               [--action NAME[=JSON]]... [--key CHORD]...
 //!               [--render PNG [--size WxH] [--settle MS]]
-//!               [--screenshot PNG [--size WxH]]
+//!               [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...
 //!   hal-c2-ljos --check [--qml-dir DIR]
 //!
-//! The MC is the one host/main.ts would hand desktop-qt: its origin and
-//! token, also read from HAL_C2_MC_ORIGIN and HAL_C2_MC_TOKEN. `--pair`
-//! spends a pairing link (`mix hal_c2.pair`) on a session and keeps it, so a
-//! later start without an MC named reconnects to it. With none of these the
-//! shell runs disconnected.
+//! As desktop-qt's main.cpp, the shell runs the desktop host
+//! (`apps/desktop-qt/host/main.ts`, `--host-entry`, under `--node`, else
+//! HAL_C2_NODE_BIN, else `node`), which finds or starts the MC on this
+//! machine and names it once it answers (src/desktop_host.rs). `--url`
+//! has the host pair with the MC a pairing link names instead. What the
+//! command line passes that is not a folder goes to the host.
 //!
-//! What the shell keeps (the session, the client cache) is under
+//! `--mc-origin` and `--mc-token` (HAL_C2_MC_ORIGIN, HAL_C2_MC_TOKEN)
+//! connect to an MC without a host, and `--pair` spends a pairing link on
+//! a session here; both are this shell's own, for tests and renders.
+//!
+//! A folder named while the app already runs on this home goes to that
+//! window, which adds it as a project (or finds it) and starts a thread
+//! there, and this launch ends (src/single_instance.rs). The app's own
+//! folders open once the MC's first snapshot is in.
+//!
+//! What the shell keeps (the client cache, its drafts) is under
 //! `--home-dir`, or the XDG directories (`hal-c2-dev` ones with `--dev`),
-//! one `desktop-ljos` level down (src/storage.rs).
+//! one `desktop-ljos` level down (src/storage.rs). A shell built from
+//! source (no HAL_C2_RELEASE when it was built) or started with `--dev`
+//! is Dev: its own icon and app id (`hal-c2-dev`, unless `--app-id`).
 //!
 //! `--action` dispatches a shell action, its JSON payload after a `=` or a
 //! space (`settings.open`, `theme.mode={"mode":"dark"}`), and `--key`
@@ -40,7 +53,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use hal_c2_mc::pairing;
@@ -48,15 +61,17 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::alerts::AlertController;
 use hal_c2_shell::controllers::connection_health::ConnectionHealth;
+use hal_c2_shell::controllers::desktop_update;
 use hal_c2_shell::controllers::onboarding::Onboarding;
+use hal_c2_shell::desktop_host::DesktopHost;
 use hal_c2_shell::mc::{Connection, Disconnected, Mc};
 #[cfg(all(unix, not(target_os = "macos")))]
 use hal_c2_shell::notifications::NativeNotifications;
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
-use hal_c2_shell::session::{self, Session};
+use hal_c2_shell::session::Session;
 use hal_c2_shell::storage::{Profile, StoragePaths};
-use hal_c2_shell::{Launch, store};
+use hal_c2_shell::{Launch, desktop_host, single_instance, store};
 use ljos::CoalesceKey;
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
@@ -66,6 +81,11 @@ const ROOT: &str = qml::DEFAULT_SHELL;
 /// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
 /// names it.
 const APP_ID: &str = "hal-c2";
+/// A development shell's (main.cpp).
+const DEV_APP_ID: &str = "hal-c2-dev";
+/// A packaged build sets HAL_C2_RELEASE as it builds, as CMake's Release
+/// configuration is desktop-qt's; any other build is a development shell.
+const RELEASE: bool = option_env!("HAL_C2_RELEASE").is_some();
 /// How long a render waits for the MC's first snapshot before it shows what
 /// the cache kept.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,25 +102,32 @@ struct Options {
     size: (u32, u32),
     settle_ms: u64,
     home_dir: Option<PathBuf>,
+    /// `--dev`: the development profile's files.
     dev: bool,
     pair: Option<String>,
+    /// `--url`: the pairing link the host attaches to.
+    url: Option<String>,
+    app_id: Option<String>,
+    host: desktop_host::Options,
+    /// `--licenses`, which the manifest beside the host does not replace.
+    licenses_given: bool,
+    /// The folders the launch names, as absolute paths.
+    folders: Vec<String>,
+    /// Where later launches reach this one (the home's state directory).
+    state_dir: PathBuf,
 }
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: hal-c2-ljos [--mc-origin URL --mc-token TOKEN | --pair LINK] [--home-dir DIR] [--dev]\n\
-         \x20                  [--config-dir DIR] [--qml-dir DIR] [--licenses MANIFEST]\n\
+        "usage: hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]\n\
+         \x20                  [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]\n\
+         \x20                  [--qml-dir DIR] [--host-entry FILE] [--node PATH] [--licenses MANIFEST]\n\
          \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
-         \x20                  [--screenshot PNG [--size WxH]]\n\
+         \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]"
     );
     ExitCode::from(2)
-}
-
-/// The staged license manifest, in `licenses/` beside the QML directory.
-fn licenses_beside(qml_dir: &std::path::Path) -> std::path::PathBuf {
-    qml_dir.join("../licenses/third-party-licenses.json")
 }
 
 fn parse() -> Result<Options, String> {
@@ -113,8 +140,6 @@ fn parse() -> Result<Options, String> {
             mc_origin: std::env::var("HAL_C2_MC_ORIGIN")
                 .ok()
                 .filter(|s| !s.is_empty()),
-            // `vp run licenses` stages it in apps/desktop-qt/licenses.
-            licenses_manifest: Some(licenses_beside(&roots.bricks)),
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
@@ -128,9 +153,31 @@ fn parse() -> Result<Options, String> {
         home_dir: None,
         dev: false,
         pair: None,
+        url: None,
+        app_id: None,
+        host: desktop_host::Options::default(),
+        licenses_given: false,
+        folders: Vec::new(),
+        state_dir: PathBuf::new(),
     };
+    let executable_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    let mut host_entry = None;
+    let mut node = None;
+    let mut positional = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
+        // Not an option: a folder to open, or the host's.
+        if arg == "--" {
+            positional.extend(args.by_ref());
+            break;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            positional.push(arg);
+            continue;
+        }
         let (name, inline) = match arg.split_once('=') {
             Some((n, v)) if n.starts_with("--") => (n.to_owned(), Some(v.to_owned())),
             _ => (arg.clone(), None),
@@ -142,17 +189,21 @@ fn parse() -> Result<Options, String> {
                 .ok_or_else(|| format!("{name} needs a value"))
         };
         match name.as_str() {
+            "--url" => o.url = Some(value()?),
+            "--app-id" => o.app_id = Some(value()?).filter(|id| !id.trim().is_empty()),
+            "--host-entry" => host_entry = Some(PathBuf::from(value()?)),
+            "--node" => node = Some(PathBuf::from(value()?)),
             "--mc-origin" => o.launch.mc_origin = Some(value()?),
             "--mc-token" => o.mc_token = value()?,
             "--pair" => o.pair = Some(value()?),
             "--home-dir" => o.home_dir = Some(value()?.into()),
             "--dev" => o.dev = true,
             "--config-dir" => o.launch.config_dir = Some(value()?.into()),
-            "--qml-dir" => {
-                o.roots = Roots::one(value()?.into());
-                o.launch.licenses_manifest = Some(licenses_beside(&o.roots.bricks));
+            "--qml-dir" => o.roots = Roots::one(value()?.into()),
+            "--licenses" => {
+                o.launch.licenses_manifest = Some(value()?.into());
+                o.licenses_given = true;
             }
-            "--licenses" => o.launch.licenses_manifest = Some(value()?.into()),
             "--allow-local-folder-import" => o.launch.allow_local_folder_import = true,
             "--action" => {
                 let (step, note) = Step::action(&value()?);
@@ -187,6 +238,26 @@ fn parse() -> Result<Options, String> {
             _ => return Err(format!("unknown option {arg}")),
         }
     }
+    if o.url.is_some() && (o.pair.is_some() || o.launch.mc_origin.is_some()) {
+        return Err(
+            "--url has the host attach to an MC; --pair and --mc-origin name one without it".into(),
+        );
+    }
+    o.host.entry =
+        host_entry.unwrap_or_else(|| desktop_host::default_entry(&executable_dir, RELEASE));
+    o.host.node = node.unwrap_or_else(|| {
+        let from_env = std::env::var("HAL_C2_NODE_BIN").ok();
+        desktop_host::default_node(&executable_dir, RELEASE, from_env.as_deref())
+    });
+    // Staged beside the host (scripts/stage-runtime.mjs), or `vp run
+    // licenses`'s apps/desktop-qt/licenses/ in a checkout.
+    if !o.licenses_given {
+        o.launch.licenses_manifest = Some(desktop_host::licenses_beside(&o.host.entry));
+    }
+    // The folders are the shell's own; the rest is the host's (connect_to).
+    let (folders, rest) = hal_c2_shell::launch_folders(&positional);
+    o.folders = folders;
+    o.host.arguments = rest;
     if o.render.is_some() && o.screenshot.is_some() {
         return Err("--render and --screenshot are two ways to take a picture; use one".into());
     }
@@ -215,6 +286,12 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // A folder named while the app already runs on this home goes to that
+    // window, and this launch ends here: no second MC starts.
+    if !options.folders.is_empty() && single_instance::forward(&options.state_dir, &options.folders)
+    {
+        return ExitCode::SUCCESS;
+    }
     // Pages draw in the panel's browser tabs where CEF can run.
     match ljos_webengine::unavailable() {
         None => hal_c2_shell::browser::set_supported(true),
@@ -227,7 +304,7 @@ fn main() -> ExitCode {
         App::new("HAL-C2")
             // The Wayland app id and X11 class by which docks find the
             // entry's icon and compositor rules find the window.
-            .desktop_file_name(APP_ID)
+            .desktop_file_name(app_id(&options))
             .quit_on_last_window_closed(false)
             .register(hal_c2_shell::register)
             .qml_dirs(dirs, ROOT)
@@ -291,11 +368,12 @@ fn check(roots: &Roots) -> ExitCode {
 }
 
 /// Which MC the shell connects to and where it keeps what it was sent: the
-/// one named, else the one `--pair` pairs with, else the one paired last.
+/// one named, else the one `--pair` pairs with, else the one the desktop
+/// host names (main.cpp's BackendProcess).
 fn connect_to(options: &mut Options) -> Result<(), String> {
-    // A shell on the development profile is Dev (StageController), so it
-    // is never mistaken for the installed app.
-    hal_c2_shell::controllers::stage::set_app_stage(if options.dev { "Dev" } else { "" });
+    // A shell built from source, or one on the development profile, is
+    // Dev (StageController), so it is never mistaken for the installed app.
+    hal_c2_shell::controllers::stage::set_app_stage(if dev(options) { "Dev" } else { "" });
     let profile = if options.dev {
         Profile::Development
     } else {
@@ -316,23 +394,44 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
     options.launch.qml = Some(options.roots.clone());
     options.launch.config_dir = Some(config_dir);
     if let Some(link) = &options.pair {
-        let kept = pair(link, &paths.data)?;
-        options.launch.mc_origin = Some(kept.origin);
-        options.mc_token = kept.token;
-    } else if options.launch.mc_origin.is_none()
-        && let Some(kept) = session::load(&paths.data)
-    {
+        let kept = pair(link)?;
         options.launch.mc_origin = Some(kept.origin);
         options.mc_token = kept.token;
     }
+    // main.cpp's host arguments: the link to attach to, the development
+    // profile (the host starts no MC release for one without a root), the
+    // root, and the rest of the command line.
+    let passed = std::mem::take(&mut options.host.arguments);
+    options.host.arguments = desktop_host::arguments(
+        options.url.as_deref(),
+        options.dev,
+        paths.root.as_deref(),
+        &passed,
+    );
+    options.launch.hosted = options.launch.mc_origin.is_none();
+    options.state_dir = paths.state.clone();
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
     options.launch.state_dir = Some(paths.state);
     Ok(())
 }
 
-/// Spends `link` on a session with its MC and keeps it in `data_dir`.
-fn pair(link: &str, data_dir: &Path) -> Result<Session, String> {
+/// A shell built from source or started with `--dev` (main.cpp).
+fn dev(options: &Options) -> bool {
+    !RELEASE || options.dev
+}
+
+/// The app id: `--app-id`, else a development shell's, else the release's.
+fn app_id(options: &Options) -> &str {
+    match &options.app_id {
+        Some(id) => id.trim(),
+        None if dev(options) => DEV_APP_ID,
+        None => APP_ID,
+    }
+}
+
+/// Spends `link` on a session with its MC.
+fn pair(link: &str) -> Result<Session, String> {
     let parsed = pairing::read_invitation(link)
         .and_then(|i| pairing::read_link(&i.link))
         .or_else(|| pairing::read_link(link))
@@ -371,7 +470,6 @@ fn pair(link: &str, data_dir: &Path) -> Result<Session, String> {
         label: said("label"),
         environment_id: said("environmentId"),
     };
-    session::save(data_dir, &kept).map_err(|e| format!("{}: {e}", data_dir.display()))?;
     eprintln!("hal-c2-ljos: paired with {} at {}", kept.label, kept.origin);
     Ok(kept)
 }
@@ -478,6 +576,9 @@ fn render_to(
     picture.install(&engine);
     report_warnings(&engine);
     let mut launch = options.launch.clone();
+    // TODO(#1572): a picture is of the MC named, not one the
+    // desktop host finds; without one it is the shell with none.
+    launch.hosted = false;
     let connection = match (&launch.mc_origin, &capture.failure) {
         (Some(origin), None) => {
             let (woken, wakes) = mpsc::channel();
@@ -601,6 +702,14 @@ enum Message {
     /// A system notification for this thread was clicked.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     Activated(String),
+    /// What the desktop host said: the MC it found or started, or why it
+    /// has none.
+    Host(desktop_host::Event),
+    /// The folders a later launch handed over (src/single_instance.rs).
+    Folders(Vec<String>),
+    /// The updater's quit, queued as main.cpp's is: not inside the call
+    /// that asked for it.
+    Quit,
 }
 
 /// The window, until it closes.
@@ -618,10 +727,25 @@ fn run(app: App, options: Options) -> Result<(), String> {
     std::thread::spawn(hal_c2_shell::this_machine::id);
     // Untagged, as Qt Quick's windows are, so the shell's colours look on a
     // wide-gamut display as desktop-qt's do (LJOS_COLOR_SPACE overrides).
+    // main.cpp: a launch from source gets its own desktop entry, so its
+    // windows have the dev icon in docks and switchers.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if dev(&options) && options.app_id.is_none() {
+        install_dev_desktop_entry();
+    }
+    // The host outlives the window: it is stopped once the app has quit
+    // (main.cpp's aboutToQuit).
+    let hosted: Rc<std::cell::RefCell<Option<Arc<DesktopHost>>>> = Rc::default();
+    let host_slot = hosted.clone();
+    // A software EGL draws with the CPU painter on its own (ljos_shell's
+    // software.rs, LJOS_PAINTER overrides), main.cpp's Software API.
+    // TODO(hal-c2/ljos-ui#458): with no display at all main.cpp runs on
+    // Qt's offscreen platform; ljos::App has no headless run to choose.
     let config = ShellConfig::new("HAL-C2")
         .with_size(options.size.0 as f32, options.size.1 as f32)
         .with_color_space(ColorSpace::Untagged);
-    app.shell_config(config)
+    let result = app
+        .shell_config(config)
         .on_message(|_: &Engine, _: Message| {})
         .run_with(move |setup| {
             let handle = setup.handle();
@@ -631,6 +755,9 @@ fn run(app: App, options: Options) -> Result<(), String> {
             setup.name_messages(|message| match message {
                 Message::Wake => "Wake",
                 Message::Activated(_) => "Activated",
+                Message::Host(_) => "Host",
+                Message::Folders(_) => "Folders",
+                Message::Quit => "Quit",
             });
             // One wake-up however much waits: the events themselves queue
             // beside the inbox (see mc.rs, folders/watch.rs).
@@ -677,6 +804,14 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 connection.open(origin, &options.mc_token)?;
             }
             let mc: Rc<dyn Mc> = connection.clone();
+            // Later launches on this home hand their folders to this window.
+            let folders_handle = handle.clone();
+            let listener = single_instance::listen(&options.state_dir, move |folders| {
+                let _ = folders_handle.send_blocking(Message::Folders(folders));
+            });
+            if listener.is_none() {
+                eprintln!("[shell] later launches cannot reach this window");
+            }
             setup.on_message(move |engine: &Engine, message| match message {
                 Message::Wake => {
                     connection.deliver(engine);
@@ -696,9 +831,54 @@ fn run(app: App, options: Options) -> Result<(), String> {
                         alerts.open_thread(engine, &key)
                     });
                 }
+                Message::Host(event) => hosted_said(engine, event),
+                Message::Folders(folders) => {
+                    // Kept for as long as messages come: the socket closes
+                    // with it.
+                    let _ = &listener;
+                    hal_c2_shell::open_folders(engine, &folders);
+                }
+                Message::Quit => engine.request_quit(),
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
-            hal_c2_shell::platform_window::give_application_icon(&engine);
+            if options.url.is_some() {
+                // main.cpp: an MC a link names may be another machine's, so
+                // this one's folders are imported only when told.
+                Bridge::of(&engine).set_local_folder_import_enabled(
+                    &engine,
+                    options.launch.allow_local_folder_import,
+                );
+            }
+            let icon = PathBuf::from(hal_c2_shell::platform_window::DEV_ICON);
+            hal_c2_shell::platform_window::give_application_icon(
+                &engine,
+                (dev(&options) && icon.is_file()).then_some(icon),
+            );
+            if options.launch.hosted {
+                let said = handle.clone();
+                let host = Arc::new(DesktopHost::new(options.host.clone(), move |event| {
+                    let _ = said.send_blocking(Message::Host(event));
+                }));
+                // The updater stops the MC to replace it, starts it again
+                // when it could not, and quits to restart (main.cpp).
+                let (stopping, starting, quitting) = (host.clone(), host.clone(), handle.clone());
+                desktop_update::update_platform(|platform| {
+                    platform.stop_mc = Some(Rc::new(move || stopping.stop()));
+                    platform.start_mc = Some(Rc::new(move || starting.start()));
+                    platform.quit = Some(Rc::new(move || {
+                        let _ = quitting.send(Message::Quit);
+                    }));
+                });
+                host.start();
+                *host_slot.borrow_mut() = Some(host);
+            }
+            // The app's own folders, once the MC's first snapshot is in.
+            let folders = options.folders.clone();
+            if !folders.is_empty() {
+                hal_c2_shell::when_active(&engine, move |engine| {
+                    hal_c2_shell::open_folders(engine, &folders)
+                });
+            }
             // TODO(#569): desktop-qt's ShellWindows shows another window
             // for `window.new` and the "New window" command, and reopens the
             // saved ones, here:
@@ -755,5 +935,52 @@ fn run(app: App, options: Options) -> Result<(), String> {
             // files change.
             hal_c2_shell::runtime::open(&engine, true).map_err(Into::into)
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    if let Some(host) = hosted.borrow_mut().take() {
+        host.stop();
+    }
+    result
+}
+
+/// BackendProcess's signals as NativeShell takes them: the MC the host
+/// named is opened, and why there is none shows in ShellErrorOverlay.
+fn hosted_said(engine: &Engine, event: desktop_host::Event) {
+    let failure = match event {
+        desktop_host::Event::Ready { origin, token } => {
+            let session = Session {
+                origin,
+                token,
+                label: String::new(),
+                environment_id: String::new(),
+            };
+            hal_c2_shell::open(engine, &session).err()
+        }
+        desktop_host::Event::Failed(message) => Some(message),
+    };
+    if let Some(message) = failure {
+        eprintln!("[shell] {message}");
+        Bridge::of(engine).publish(engine, "backendError", message.into());
+    }
+}
+
+/// main.cpp's installDevDesktopEntry: `hal-c2-dev.desktop` and its icon in
+/// the user's data home, naming this binary.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn install_dev_desktop_entry() {
+    let icon = Path::new(hal_c2_shell::platform_window::DEV_ICON);
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|d| d.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let (Some(data), Ok(binary)) = (data, std::env::current_exe()) else {
+        return;
+    };
+    if !icon.is_file() {
+        return;
+    }
+    if let Err(e) =
+        hal_c2_shell::platform_window::install_dev_desktop_entry(&data, DEV_APP_ID, icon, &binary)
+    {
+        eprintln!("hal-c2-ljos: the dev desktop entry: {e}");
+    }
 }

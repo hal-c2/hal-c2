@@ -44,7 +44,7 @@ fn folder(world: &World, name: &str) -> Outcome<String> {
 
 /// What the running window does with the folders a later launch handed it:
 /// the socket's thread gave them over a channel, and this runs them on the
-/// engine's.
+/// engine's, as main.rs does.
 fn take_arrivals(world: &mut World) -> Outcome {
     let mut folders = Vec::new();
     let state = world.part::<Launches>();
@@ -53,10 +53,13 @@ fn take_arrivals(world: &mut World) -> Outcome {
             folders.extend(batch);
         }
     }
-    for path in folders {
-        world.dispatch("project.launch", json!({"path": path}))?;
+    if folders.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    // As main.rs runs them.
+    let engine = world.engine().clone();
+    hal_c2_shell::open_folders(&engine, &folders);
+    world.pump()
 }
 
 /// The app as main.cpp runs it: connected, and listening for later launches.
