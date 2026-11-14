@@ -797,6 +797,9 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "a client of the first asks it to reconnect the third", context do
     %{a: a, c: c} = context.machines
+    # Back to five minutes: with no grace the attempt the reconnect starts, which
+    # cannot reach the stopped third, would make it offline again at once.
+    :ok = :peer.call(a.peer, Application, :delete_env, [:hal_c2, :cluster_give_up_after])
     Map.put(context, :reconnect, client_call(a, :admin, "cluster.reconnect", %{"id" => c.id}))
   end
 

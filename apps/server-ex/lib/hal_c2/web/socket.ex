@@ -47,7 +47,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 11
+  @state_version 12
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -101,6 +101,7 @@ defmodule HalC2.Web.Socket do
     # A socket opened with a ticket belongs to that client's session.
     session = opts[:session]
     if session, do: HalC2.Auth.connected(session, opts[:client] || %{})
+    if session, do: schedule_recheck()
     trace = opts[:trace]
     if trace, do: Logger.metadata(trace_id: trace)
 
@@ -171,7 +172,10 @@ defmodule HalC2.Web.Socket do
         {:ok, unsubscribe(state, id)}
 
       {:ok, {:rpc, id, environment, method, payload}} ->
-        {:ok, rpc(state, id, environment, method, payload)}
+        case rpc(state, id, environment, method, payload) do
+          {:stop, _, _, _} = stop -> stop
+          state -> {:ok, state}
+        end
 
       {:error, reason} ->
         {:push, Protocol.encode(%{"t" => "error", "reason" => reason}), state}
@@ -332,6 +336,18 @@ defmodule HalC2.Web.Socket do
   def handle_info({:hal_c2_session_revoked, session}, %{session: session} = state),
     do: {:stop, :normal, {4401, "session revoked"}, state}
 
+  # A socket that only listens to its subscriptions makes no calls to recheck on.
+  def handle_info(:recheck_session, state) do
+    case revalidate_session(state) do
+      {:ok, state} ->
+        schedule_recheck()
+        {:ok, state}
+
+      :revoked ->
+        {:stop, :normal, {4401, "session revoked"}, state}
+    end
+  end
+
   def handle_info({:rpc_reply, id, reply}, state) do
     frame =
       case reply do
@@ -473,8 +489,47 @@ defmodule HalC2.Web.Socket do
   defp rpc(state, id, environment, method, payload),
     do: scoped_rpc(state, id, environment, method, payload)
 
-  defp scoped_rpc(state, id, environment, method, payload),
-    do: check_scopes(state, id, environment, method, payload, local_scopes(method, payload))
+  defp scoped_rpc(state, id, environment, method, payload) do
+    case revalidate_session(state) do
+      {:ok, state} ->
+        check_scopes(state, id, environment, method, payload, local_scopes(method, payload))
+
+      :revoked ->
+        {:stop, :normal, {4401, "session revoked"}, state}
+    end
+  end
+
+  # A session can be revoked outside this process (the auth CLI writes the
+  # store directly), where no close message can reach the socket: re-read
+  # its scopes from the store at most every few seconds, on a call and on a
+  # timer, so a deleted or expired session loses its socket, subscriptions and
+  # all, instead of never.
+  @session_recheck_ms 5_000
+
+  defp session_recheck_ms,
+    do: Application.get_env(:hal_c2, :session_recheck_ms, @session_recheck_ms)
+
+  defp schedule_recheck,
+    do: Process.send_after(self(), :recheck_session, max(session_recheck_ms(), 100))
+
+  defp revalidate_session(%{session: nil} = state), do: {:ok, state}
+
+  defp revalidate_session(state) do
+    now = System.monotonic_time(:millisecond)
+    checked = Map.get(state, :session_checked_at)
+
+    if checked && now - checked < session_recheck_ms() do
+      {:ok, state}
+    else
+      case HalC2.Auth.session_scopes(state.session) do
+        {:ok, scopes} ->
+          {:ok, state |> Map.put(:scopes, scopes) |> Map.put(:session_checked_at, now)}
+
+        :error ->
+          :revoked
+      end
+    end
+  end
 
   # Whether a relative write's root is a project belongs to the environment's MC, which
   # checks it again with the caller's scopes (`HalC2.Rpc.handle_with_scopes/3`); a write
@@ -1267,6 +1322,13 @@ defmodule HalC2.Web.Socket do
       |> Map.merge(%{following: %{}, trace: nil, opened_at: System.monotonic_time(:millisecond)})
       |> Map.put(:v, 11)
       |> migrate()
+
+  # Version 12: a socket with a session rechecks it on a timer, started here for one
+  # opened before, which no recheck reaches otherwise.
+  defp migrate(%{v: 11} = state) do
+    if state.session, do: schedule_recheck()
+    state |> Map.put(:v, 12) |> migrate()
+  end
 
   defp migrate(%{v: 9} = state),
     do: state |> Map.merge(%{terminal_windows: %{}, v: 10}) |> migrate()
