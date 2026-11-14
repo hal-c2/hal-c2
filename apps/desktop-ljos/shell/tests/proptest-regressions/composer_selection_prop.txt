@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 6b50c1a4de4b3fbd3f7f6b85bf2b72ef48449aaf20f6a6eb06a74575a28b7868 # shrinks to ops = [Hold, Elsewhere(0, 0), PickAccess(0, false), Elsewhere(1, 0), PickModel(0), PickAccess(1, false), Submit(false)]
+cc 7524a89a95b1fcabd2e99eebb92a92cafc3433165d6fdba508cf1dc25454d97a # shrinks to rest = [PickModel(1)]
+cc f6bc59212de7223860295d710a968dc43236bc64839f6f92942fb64a420686e2 # shrinks to ops = [Hold, PickAccess(0, false), PickModel(2), Submit(false), PickModel(0), PickInteraction(1, false)]

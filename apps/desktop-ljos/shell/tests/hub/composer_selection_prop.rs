@@ -566,12 +566,11 @@ proptest! {
     }
 }
 
-/// A model picked while this client's own access change, sent before a
-/// change from elsewhere, is still unanswered: the send waits for it and
-/// goes past both of this client's changes, not refused for them.
-#[test]
-fn a_pick_made_while_an_earlier_own_change_is_unanswered_goes_past_it() {
-    let ops = vec![
+/// #1581's case, shrunk by the property: a model picked while this
+/// client's own access change, sent before a change from elsewhere, is
+/// still unanswered, then sent.
+fn unanswered_own_change() -> Vec<Op> {
+    vec![
         Op::Hold,
         Op::Elsewhere(0, 0),
         Op::PickAccess(0, false),
@@ -579,6 +578,54 @@ fn a_pick_made_while_an_earlier_own_change_is_unanswered_goes_past_it() {
         Op::PickModel(0),
         Op::PickAccess(1, false),
         Op::Submit(false),
+    ]
+}
+
+/// A model picked while this client's own access change, sent before a
+/// change from elsewhere, is still unanswered: the send waits for it and
+/// goes past both of this client's changes, not refused for them.
+#[test]
+fn a_pick_made_while_an_earlier_own_change_is_unanswered_goes_past_it() {
+    run(Kind::Named, unanswered_own_change()).unwrap();
+}
+
+/// A model picked after that send, while it waits for those answers, left
+/// the send on its own base, and the own changes the row already showed
+/// were forgotten before the send could go past them (#1588, desktop-qt's
+/// tst_ComposerSelectionProp).
+#[test]
+fn a_pick_made_while_a_send_waits_for_own_answers_leaves_the_send_current() {
+    let mut ops = unanswered_own_change();
+    ops.push(Op::PickModel(1));
+    run(Kind::Named, ops).unwrap();
+}
+
+/// A send held behind this client's own access change, then a new pick and
+/// an interaction change made while it waits: the access change answers
+/// after its row shows, and the send still goes past both changes.
+#[test]
+fn a_held_send_goes_past_an_own_change_its_row_already_showed() {
+    let ops = vec![
+        Op::Hold,
+        Op::PickAccess(0, false),
+        Op::PickModel(2),
+        Op::Submit(false),
+        Op::PickModel(0),
+        Op::PickInteraction(1, false),
     ];
     run(Kind::Named, ops).unwrap();
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
+
+    /// Runs on from #1581's case, rarely generated whole.
+    #[test]
+    fn a_send_carries_what_the_composer_showed_past_an_unanswered_own_change(
+        rest in proptest::collection::vec(op(), 0..20)
+    ) {
+        let mut ops = unanswered_own_change();
+        ops.extend(rest);
+        run(Kind::Named, ops)?;
+    }
 }

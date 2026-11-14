@@ -933,7 +933,13 @@ impl Composer {
                 )
             })
             .collect();
+        // A send waiting for this client's own answers is made past every
+        // one of them when it goes, those the row already shows included.
+        let waiting = &self.after_own;
         self.own.retain(|key, changes| {
+            if waiting.get(key).is_some_and(|sends| !sends.is_empty()) {
+                return true;
+            }
             let revision = revisions.get(key).copied().flatten();
             changes.retain(|change| {
                 let change = change.borrow();
