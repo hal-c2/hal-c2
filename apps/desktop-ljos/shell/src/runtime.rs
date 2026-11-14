@@ -199,8 +199,8 @@ pub fn root_of(engine: &Engine, id: &str) -> Option<ObjectId> {
 /// The opener of [`controller::set_window_opener`]: a root of the shell
 /// shown now for `window`, in a platform window of its own (desktop-qt's
 /// ShellWindows::add, an engine per window there). A window no shell can
-/// be made for is closed again, so that it is not left open, unclosable,
-/// and saved to come back the same way.
+/// be made for is closed again, so that it is not left open and unclosable;
+/// a restored one keeps what it saved, a new one is not saved.
 pub fn open_window(engine: &Engine, window: &controller::Window) {
     let state = RuntimeState::of(engine);
     let made = make_shell(engine, &state, window.bridge);
@@ -210,7 +210,7 @@ pub fn open_window(engine: &Engine, window: &controller::Window) {
             "hal_c2.shell",
             format!("window {}: {}", window.id, made.error),
         );
-        controller::close_window(engine, &window.id);
+        controller::set_aside_window(engine, &window.id);
         return;
     };
     controller::attach_root(engine, &window.id, root);

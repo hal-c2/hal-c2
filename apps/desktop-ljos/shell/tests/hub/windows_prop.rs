@@ -5,7 +5,9 @@
 //! everywhere, the open set is what is saved, a closed window's timers and
 //! subscriptions go with it, and closing the last one quits instead. A
 //! restart reopens the saved set in its order, the first saved as the
-//! first window, each where its route was.
+//! first window, each where its route was. A restored window no root could
+//! be made for is set aside: closed, but still saved with its route, to come
+//! back as it was.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -32,6 +34,8 @@ enum Op {
     /// `window.new` from the open window at `pick`.
     New(usize),
     Close(usize),
+    /// `set_aside_window`, as when no root could be made for it.
+    SetAside(usize),
     Navigate(usize, &'static str),
     Width(usize, bool),
     /// `backendError` published from a window.
@@ -50,6 +54,7 @@ fn op() -> impl Strategy<Value = Op> {
         3 => proptest::sample::select(&NAMES[..]).prop_map(Op::Open),
         2 => pick.prop_map(Op::New),
         4 => pick.prop_map(Op::Close),
+        2 => pick.prop_map(Op::SetAside),
         2 => (pick, proptest::sample::select(&SECTIONS[..])).prop_map(|(i, s)| Op::Navigate(i, s)),
         2 => (pick, any::<bool>()).prop_map(|(i, narrow)| Op::Width(i, narrow)),
         1 => (pick, 0u8..3).prop_map(|(i, v)| Op::Share(i, v)),
@@ -71,6 +76,9 @@ struct Open {
     ticks: Rc<Cell<u32>>,
     /// How many times the model says its timer ran.
     expected_ticks: u32,
+    /// Opened from the saved set ([`controller::restore_windows`] or by
+    /// the id of one set aside).
+    restored: bool,
 }
 
 /// A call's: its index among the MC's calls, the window it was made from,
@@ -91,6 +99,8 @@ struct World {
     /// Closed windows: their bridge and their timer, gone for good.
     closed: Vec<(Bridge, ObjectId)>,
     shared: Json,
+    /// Windows set aside: still saved, with their route.
+    aside: Vec<(String, Option<&'static str>)>,
     quit: bool,
     asked: Vec<Asked>,
     /// The subscriptions with one window open, and each other one's.
@@ -120,6 +130,7 @@ impl World {
             open: Vec::new(),
             closed: Vec::new(),
             shared: Json::Null,
+            aside: Vec::new(),
             quit: false,
             asked: Vec::new(),
             base_subscriptions,
@@ -154,6 +165,7 @@ impl World {
             timer,
             ticks,
             expected_ticks: 0,
+            restored: false,
         }
     }
 
@@ -185,7 +197,11 @@ impl World {
                     assert_eq!(controller::windows(engine).len(), before);
                 } else if controller::valid_window_id(name) {
                     assert_eq!(id, name);
-                    let record = self.opened(name);
+                    let mut record = self.opened(name);
+                    if let Some(at) = self.aside.iter().position(|(id, _)| id == name) {
+                        record.restored = true;
+                        record.section = self.aside.remove(at).1;
+                    }
                     self.open.push(record);
                 } else {
                     self.adopt_new();
@@ -203,6 +219,20 @@ impl World {
                     self.quit = !cfg!(target_os = "macos");
                 } else {
                     let gone = self.open.remove(at);
+                    self.closed.push((gone.bridge, gone.timer));
+                }
+                engine.process_deferred_deletes();
+            }
+            Op::SetAside(i) => {
+                let at = self.pick(i);
+                controller::set_aside_window(engine, &self.open[at].id.clone());
+                if self.open.len() == 1 {
+                    self.quit = !cfg!(target_os = "macos");
+                } else {
+                    let gone = self.open.remove(at);
+                    if gone.restored {
+                        self.aside.push((gone.id.clone(), gone.section));
+                    }
                     self.closed.push((gone.bridge, gone.timer));
                 }
                 engine.process_deferred_deletes();
@@ -280,6 +310,7 @@ impl World {
             .open
             .iter()
             .map(|o| (o.id.clone(), o.section))
+            .chain(std::mem::take(&mut self.aside))
             .collect();
         // One shell at a time: the first goes before the next reads.
         self.hub = None;
@@ -298,8 +329,10 @@ impl World {
         self.quit = false;
         self.open = sections
             .into_iter()
-            .map(|(id, section)| Open {
+            .enumerate()
+            .map(|(at, (id, section))| Open {
                 section,
+                restored: at > 0,
                 ..self.opened(&id)
             })
             .collect();
@@ -313,7 +346,12 @@ impl World {
             &std::fs::read_to_string(self.dir.join("shell-windows.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(saved, json!({"open": ids}));
+        let kept: Vec<String> = ids
+            .iter()
+            .cloned()
+            .chain(self.aside.iter().map(|(id, _)| id.clone()))
+            .collect();
+        assert_eq!(saved, json!({"open": kept}));
         assert_eq!(engine.quit_requested(), self.quit);
         for open in &self.open {
             let published = |key: &str| open.bridge.published(engine, key).unwrap_or(Json::Null);

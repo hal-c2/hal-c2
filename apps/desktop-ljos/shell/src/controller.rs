@@ -239,8 +239,8 @@ pub struct Window {
     owner: Option<ObjectId>,
     /// The root that shows it ([`attach_root`]).
     root: Cell<Option<ObjectId>>,
-    /// Opened from `shell-windows.json` ([`restore_windows`]): closed
-    /// before it was ever shown, it keeps its files and its place there.
+    /// Opened from `shell-windows.json` ([`restore_windows`]): set aside
+    /// ([`set_aside_window`]), it keeps its files and its place there.
     restored: bool,
 }
 
@@ -544,6 +544,14 @@ pub fn valid_window_id(id: &str) -> bool {
 /// not started.
 pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
     let host = Host::of(engine);
+    // The id of a window set aside opens it as it was saved.
+    let restored = id.is_some_and(|id| host.set_aside.borrow().iter().any(|kept| kept == id));
+    open_saved(engine, id, restored)
+}
+
+/// [`open_window`], `restored` if `id` is a saved window's.
+fn open_saved(engine: &Engine, id: Option<&str>, restored: bool) -> Option<String> {
+    let host = Host::of(engine);
     host.mc.borrow().as_ref()?;
     if let Some(open) = id.and_then(|id| host.window(id)) {
         open.bridge.window_command(engine, "raise");
@@ -553,7 +561,6 @@ pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
         Some(id) => id.to_owned(),
         None => hal_c2_mc::new_uuid().replace('-', "")[..12].to_owned(),
     };
-    let restored = saved_windows(&host).contains(&id);
     let bridge = Bridge::new_window(engine)?;
     host.set_aside.borrow_mut().retain(|kept| *kept != id);
     let window = add_window(engine, &host, id.clone(), bridge, restored);
@@ -580,6 +587,21 @@ pub fn close_window(engine: &Engine, id: &str) {
     Bridge::of(engine).defer(engine, move |engine| close_now(engine, &id));
 }
 
+/// Closes window `id`, which no root could be made for. One restored from
+/// `shell-windows.json` stays saved there with its files, to come back once
+/// the shell can show it; a new one goes as [`close_window`] has it.
+pub fn set_aside_window(engine: &Engine, id: &str) {
+    let host = Host::of(engine);
+    // The last window is not closed but quits ([`close_window`]).
+    if host.windows.borrow().len() > 1
+        && host.window(id).is_some_and(|w| w.restored)
+        && !host.set_aside.borrow().iter().any(|kept| kept == id)
+    {
+        host.set_aside.borrow_mut().push(id.to_owned());
+    }
+    close_window(engine, id);
+}
+
 fn close_now(engine: &Engine, id: &str) {
     let host = Host::of(engine);
     let window = {
@@ -598,10 +620,6 @@ fn close_now(engine: &Engine, id: &str) {
         }
         windows.remove(at)
     };
-    let set_aside = window.restored && window.root.get().is_none();
-    if set_aside {
-        host.set_aside.borrow_mut().push(window.id.clone());
-    }
     save_windows(&host);
     host.closing.borrow_mut().push(window.clone());
     // Its Files viewer writes what waits; the window goes once that is
@@ -782,7 +800,7 @@ pub fn restore_windows(engine: &Engine) {
     }
     for id in saved_windows(&host) {
         if host.window(&id).is_none() {
-            open_window(engine, Some(&id));
+            open_saved(engine, Some(&id), true);
         }
     }
 }
