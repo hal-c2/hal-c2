@@ -236,7 +236,14 @@ fn move_together(from: &Path, to: &Path, set: &[String], rename: Rename) {
     for (moved, name) in set.iter().enumerate() {
         if rename(&from.join(name), &to.join(name)).is_err() {
             for back in &set[..moved] {
-                let _ = rename(&to.join(back), &from.join(back));
+                if let Err(error) = rename(&to.join(back), &from.join(back)) {
+                    eprintln!(
+                        "hal-c2: {} moved to {} without the rest of its database, \
+                         and could not go back: {error}",
+                        from.join(back).display(),
+                        to.display()
+                    );
+                }
             }
             return;
         }
