@@ -843,6 +843,88 @@ private slots:
     QVERIFY(!shell.offersRestore());
   }
 
+  // A pick made while one of this client's own access changes was unanswered
+  // left that change out of its own: its answer was taken for another
+  // client's, the pick was dropped, and the send went out on the old revision
+  // and was refused as stale (#1581, desktop-ljos's composer selection prop).
+  // A pick made after the send, while it waits for those answers, left the
+  // send on its own base, and the own changes the rows already showed were
+  // forgotten before the send could go past them (tst_ComposerSelectionProp).
+  void aPickMadeWhileAnEarlierOwnChangeIsUnansweredGoesPastIt_data() {
+    QTest::addColumn<bool>("pickAgain");
+    QTest::newRow("send") << false;
+    QTest::newRow("pick again after the send") << true;
+  }
+  void aPickMadeWhileAnEarlierOwnChangeIsUnansweredGoesPastIt() {
+    QFETCH(bool, pickAgain);
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto codex = [](const QString& slug) {
+      return QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}};
+    };
+    QJsonObject start = shell.mc.threads.value(QStringLiteral("t1"));
+    start.insert(QStringLiteral("modelSelection"), codex(QStringLiteral("gpt-a")));
+    start.insert(QStringLiteral("runtimeMode"), QStringLiteral("full-access"));
+    start.insert(QStringLiteral("selectionRevision"), 1);
+    shell.mc.threads.insert(QStringLiteral("t1"), start);
+    // Refuses a stale send, and takes a send's model into the thread.
+    shell.mc.appliesModes = true;
+    shell.mc.answering.append([&shell](const QJsonObject& command, QJsonObject& answer) {
+      if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch") || !command.contains(QLatin1String("modelSelection"))) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      if (row.value(QLatin1String("modelSelection")) == command.value(QLatin1String("modelSelection"))) return;
+      const int next = row.value(QLatin1String("selectionRevision")).toInt() + 1;
+      row.insert(QStringLiteral("modelSelection"), command.value(QLatin1String("modelSelection")));
+      row.insert(QStringLiteral("selectionRevision"), next);
+      answer.insert(QStringLiteral("selectionRevision"), next);
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    // Another client changes the thread.
+    const auto elsewhere = [&shell](const QString& field, const QJsonValue& value) {
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(field, value);
+      row.insert(QStringLiteral("selectionRevision"), row.value(QLatin1String("selectionRevision")).toInt() + 1);
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    };
+    const auto seen = [&shell] { return shell.native->store()->thread(shell.key)->selectionRevision; };
+    const auto access = [&shell](const QString& mode) {
+      shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    };
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QTRY_VERIFY(seen() == 1);
+
+    elsewhere(QStringLiteral("modelSelection"), codex(QStringLiteral("gpt-b")));
+    QTRY_VERIFY(seen() == 2);
+    shell.mc.hold(QStringLiteral("answers"));
+    access(QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.mc.commands.size(), 1);
+    elsewhere(QStringLiteral("runtimeMode"), QStringLiteral("auto-accept-edits"));
+    QTRY_VERIFY(seen() == 3);
+    shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                           QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-a")}});
+    QTRY_COMPARE(shell.composer()->currentSelection().value(QLatin1String("model")).toString(), QStringLiteral("gpt-a"));
+    access(QStringLiteral("full-access"));
+    QTRY_COMPARE(shell.mc.commands.size(), 2);
+    shell.type(QStringLiteral("go"));
+    shell.submit(QStringLiteral("go"));
+    if (pickAgain) {
+      shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                             QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-b")}});
+      QTRY_COMPARE(shell.composer()->currentSelection().value(QLatin1String("model")).toString(), QStringLiteral("gpt-b"));
+    }
+    // Our two access changes answer 4 and 5; the send waits for them and goes past them.
+    shell.mc.answerHeld();
+
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-a")));
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("selectionBase")).toInt(), 5);
+    QTRY_COMPARE(shell.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-a")));
+    QVERIFY(!shell.offersRestore());
+  }
+
   // The model and mode a new thread carried into the project's draft counted
   // as the user's own, so a new thread from another thread reopened the draft
   // still showing the first thread's.

@@ -1996,6 +1996,12 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 void ComposerController::forgetTakenPicks() {
   bool forgot = false;
   for (auto it = m_own.begin(); it != m_own.end();) {
+    // A send waiting for this client's answers is made past them once they
+    // are in (`dispatchAll`), so it needs them all, the ones the row shows too.
+    if (m_afterOwn.contains(it.key())) {
+      ++it;
+      continue;
+    }
     const auto thread = m_store->thread(it.key());
     const std::optional<qint64> revision = thread ? thread->selectionRevision : std::nullopt;
     it->removeIf([&](const std::shared_ptr<OwnChange>& change) {
@@ -2020,9 +2026,12 @@ void ComposerController::forgetTakenPicks() {
 
 bool ComposerController::ownAhead(const OwnChange& change, qint64 revision) {
   if (change.answered) return change.revision && *change.revision > revision;
-  // One sent before `revision` may already be in it: the row can beat the
-  // answer, and counting it again would take another client's change for it.
-  return change.sentAt && *change.sentAt >= revision;
+  // Until it answers it may be any revision past the one it went at, even one
+  // the row already shows: a pick made meanwhile waits for the answer rather
+  // than take the revision it names for another client's (#1581). It never
+  // takes another client's change for its own: `nextPick` drops the pick once
+  // more revisions are unaccounted for than its changes still pending.
+  return true;
 }
 
 // The pick moves its base only across revisions this client's own answers
@@ -2067,9 +2076,7 @@ void ComposerController::notePick(const QString& target) {
 }
 
 std::shared_ptr<ComposerController::OwnChange> ComposerController::ownSent(const QString& target) {
-  const auto thread = m_store->thread(target);
   auto change = std::make_shared<OwnChange>();
-  change->sentAt = thread ? thread->selectionRevision : std::nullopt;
   m_own[target].append(change);
   if (auto draft = m_drafts.find(target); draft != m_drafts.end() && draft->modelSelection) draft->pickOwn.append(change);
   return change;

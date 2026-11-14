@@ -316,11 +316,9 @@ private:
   };
   // A change of this client's own to a thread's runtime or interaction mode:
   // it moves the thread's selectionRevision on without replacing a model
-  // pick. `sentAt` is the revision the row had when it went (none from an MC
-  // that counts none); `revision` the one its answer named, none when it moved
-  // nothing or was refused. Settled in place, so every pick holding it sees it.
+  // pick. `revision` is the one its answer named, none when it moved nothing
+  // or was refused. Settled in place, so every pick holding it sees it.
   struct OwnChange {
-    std::optional<qint64> sentAt;
     bool answered = false;
     std::optional<qint64> revision;
   };
