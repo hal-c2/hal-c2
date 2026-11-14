@@ -166,7 +166,7 @@ pub fn carry_over(paths: &StoragePaths) {
     for kind in [&paths.config, &paths.data, &paths.state, &paths.cache] {
         let old = kind.join(OLD_CLIENT_DIR);
         if std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir()) {
-            merge_into(&old, kind);
+            merge_into(&old, kind, &|a, b| std::fs::rename(a, b));
         }
     }
 }
@@ -185,7 +185,9 @@ fn taken(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
-fn merge_into(from: &Path, to: &Path) {
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
+
+fn merge_into(from: &Path, to: &Path, rename: Rename) {
     let Ok(entries) = std::fs::read_dir(from) else {
         return;
     };
@@ -194,32 +196,51 @@ fn merge_into(from: &Path, to: &Path) {
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     let _ = std::fs::create_dir_all(to);
-    // A database first, its sidecars after: a sidecar only goes where its
-    // own database went, never beside another one's.
-    let mut moved: Vec<&str> = Vec::new();
     for name in names.iter().filter(|n| sidecar_base(n).is_none()) {
         let (source, target) = (from.join(name), to.join(name));
         let foreign_sidecar = SQLITE_SIDECARS
             .iter()
             .any(|suffix| taken(&to.join(format!("{name}{suffix}"))));
         if !taken(&target) && !foreign_sidecar {
-            if std::fs::rename(&source, &target).is_ok() {
-                moved.push(name);
-            }
+            let set: Vec<String> = std::iter::once(name.clone())
+                .chain(
+                    SQLITE_SIDECARS
+                        .iter()
+                        .map(|suffix| format!("{name}{suffix}"))
+                        .filter(|sidecar| names.contains(sidecar)),
+                )
+                .collect();
+            move_together(from, to, &set, rename);
         } else if is_dir(&source) && is_dir(&target) {
-            merge_into(&source, &target);
+            merge_into(&source, &target, rename);
         }
     }
+    // A sidecar whose database is gone from both levels has nothing to
+    // part from.
     for name in names.iter().filter(|n| sidecar_base(n).is_some()) {
         let base = sidecar_base(name).unwrap_or_default();
         let target = to.join(name);
         let orphan = !names.iter().any(|n| n == base) && !taken(&to.join(base));
-        if !taken(&target) && (moved.contains(&base) || orphan) {
-            let _ = std::fs::rename(from.join(name), target);
+        if orphan && !taken(&target) {
+            let _ = rename(&from.join(name), &target);
         }
     }
     // Only an emptied directory goes.
     let _ = std::fs::remove_dir(from);
+}
+
+/// Moves a database with its sidecars, or, when one fails to move, puts back
+/// what did: a database never lands without the journal holding its
+/// committed pages.
+fn move_together(from: &Path, to: &Path, set: &[String], rename: Rename) {
+    for (moved, name) in set.iter().enumerate() {
+        if rename(&from.join(name), &to.join(name)).is_err() {
+            for back in &set[..moved] {
+                let _ = rename(&to.join(back), &from.join(back));
+            }
+            return;
+        }
+    }
 }
 
 fn is_dir(path: &Path) -> bool {
@@ -560,5 +581,40 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn a_database_stays_put_when_its_journal_cannot_move() {
+        let root = scratch("carry-over-db-partial");
+        let paths = on_unix(&[], Some(root.to_str().unwrap()));
+        let old = paths.cache.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        write(&old.join("client-cache.sqlite-shm"), "shm");
+        let stuck_wal = |a: &Path, b: &Path| {
+            if a.ends_with("client-cache.sqlite-wal") {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::rename(a, b)
+            }
+        };
+        merge_into(&old, &paths.cache, &stuck_wal);
+        for name in [
+            "client-cache.sqlite",
+            "client-cache.sqlite-wal",
+            "client-cache.sqlite-shm",
+        ] {
+            assert!(!paths.cache.join(name).exists(), "{name} moved alone");
+            assert!(old.join(name).exists(), "{name} left the old level");
+        }
+
+        // The next start, with the journal free to move, takes the set.
+        carry_over(&paths);
+        assert_eq!(
+            read(&paths.cache.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert!(!old.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
