@@ -1996,9 +1996,11 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 void ComposerController::forgetTakenPicks() {
   bool forgot = false;
   for (auto it = m_own.begin(); it != m_own.end();) {
-    // A send waiting for this client's answers is made past them once they
-    // are in (`dispatchAll`), so it needs them all, the ones the row shows too.
-    if (m_afterOwn.contains(it.key())) {
+    // A send on its way is made past this client's answers when it goes
+    // (`dispatchAll`), after its images are stored and the sends ahead of it
+    // and the answers it waits for are in, so it needs them all, the ones the
+    // row shows too.
+    if (m_queues.contains(it.key())) {
       ++it;
       continue;
     }

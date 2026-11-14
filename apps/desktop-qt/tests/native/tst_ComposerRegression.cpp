@@ -1,6 +1,8 @@
 // What tests/prop/tst_ComposerProp.cpp and tst_ComposerPureProp.cpp found in
 // the composer.
 
+#include <QBuffer>
+#include <QImage>
 #include <QtTest>
 
 #include "ComposerController.h"
@@ -922,6 +924,68 @@ private slots:
     QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-a")));
     QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("selectionBase")).toInt(), 5);
     QTRY_COMPARE(shell.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-a")));
+    QVERIFY(!shell.offersRestore());
+  }
+
+  // A send whose image was still being stored forgot the own changes answered
+  // meanwhile once the row showed them, so with another model picked since it
+  // went out on its old base and was refused as stale (CodeRabbit on #1590).
+  void aSendStoringItsImageGoesPastOwnChangesAnsweredMeanwhile() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto codex = [](const QString& slug) {
+      return QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}};
+    };
+    QJsonObject start = shell.mc.threads.value(QStringLiteral("t1"));
+    start.insert(QStringLiteral("modelSelection"), codex(QStringLiteral("gpt-a")));
+    start.insert(QStringLiteral("runtimeMode"), QStringLiteral("full-access"));
+    start.insert(QStringLiteral("selectionRevision"), 1);
+    shell.mc.threads.insert(QStringLiteral("t1"), start);
+    shell.mc.appliesModes = true;
+    QList<FakeMc::Rpc> storing;
+    shell.mc.onRpc(QStringLiteral("assets.persistChatAttachments"), [&storing](const FakeMc::Rpc& rpc) { storing.append(rpc); });
+    const auto seen = [&shell] { return shell.native->store()->thread(shell.key)->selectionRevision; };
+    const auto pick = [&shell](const QString& model) {
+      shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                             QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), model}});
+      QTRY_COMPARE(shell.composer()->currentSelection().value(QLatin1String("model")).toString(), model);
+    };
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QTRY_VERIFY(seen() == 1);
+
+    pick(QStringLiteral("gpt-b"));
+    QImage picture(8, 8, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    picture.save(&buffer, "PNG");
+    shell.bridge->dispatch(QStringLiteral("composer.attach"),
+                           QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{
+                                                                     {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                                     {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                                     {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
+                                                                 }}}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 1);
+    shell.type(QStringLiteral("go"));
+    shell.submit(QStringLiteral("go"));
+    QTRY_COMPARE(storing.size(), 1);
+    // Our access change moves the thread to 2, and the row shows it, while the image is stored.
+    shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
+    QTRY_VERIFY(seen() == 2);
+    pick(QStringLiteral("gpt-a"));
+    shell.mc.reply(storing.constFirst(),
+                   QJsonObject{{QStringLiteral("attachments"),
+                                QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                                                       {QStringLiteral("id"), QStringLiteral("image-1")},
+                                                       {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                       {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                       {QStringLiteral("sizeBytes"), double(png.size())}}}}});
+
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-b")));
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("selectionBase")).toInt(), 2);
     QVERIFY(!shell.offersRestore());
   }
 
