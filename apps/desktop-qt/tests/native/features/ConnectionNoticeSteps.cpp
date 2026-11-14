@@ -592,6 +592,8 @@ namespace computerNotices {
 
 QQuickWindow* window(World& world) { return ::window(world); }
 
+QQuickWindow* window(World& world, const QByteArray& shell) { return ::window(world, shell); }
+
 QList<QQuickItem*> shownNamed(QQuickWindow* window, const QString& name) { return ::shownNamed(window, name); }
 
 void lookAt(World& world, const QString& name) { lookAtComputer(world, name); }

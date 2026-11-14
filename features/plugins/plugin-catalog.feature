@@ -65,10 +65,16 @@ Feature: Plugin catalog
     When the user opens the plugin list for the second environment
     Then only that environment's MC plugins are listed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The plugin list has a section for each environment's MC plugins
     Given two environments with different MC plugins
     When the user opens the plugin list
+    Then each environment's MC plugins are listed under that environment
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A member's MC plugins are listed once the cluster learns it
+    Given the MC refuses another environment's plugins as an unknown environment
+    When the cluster learns that environment
     Then each environment's MC plugins are listed under that environment
 
   @backlog @desktop @mobile @tui

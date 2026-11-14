@@ -1,0 +1,141 @@
+[package]
+name = "hal_c2_shell"
+description = "The HAL-C2 desktop shell on Ljós: the native HalC2.Shell module and its controllers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+default-run = "hal-c2-ljos"
+
+[[bin]]
+name = "hal-c2-ljos"
+path = "src/main.rs"
+
+# What CEF starts the browser pages' other processes (renderer, GPU,
+# utility) from, found beside hal-c2-ljos (and beside a test's `deps/`).
+[[bin]]
+name = "ljos-webengine-helper"
+path = "src/webengine_helper.rs"
+
+# desktop-qt's Gherkin scenarios (features/) against this shell; see
+# tests/features/main.rs. Opt-in, as Ljós's own: `cargo test` skips it,
+# `mise run features:desktop-ljos` runs it with `--test features`.
+[[test]]
+name = "features"
+path = "tests/features/main.rs"
+harness = false
+test = false
+
+[features]
+# Ljós's inspector, served when LJOS_MCP names its capabilities (README,
+# "Inspect").
+mcp = ["ljos/mcp"]
+
+[dependencies]
+# dev-qml: the shell compiles its QML at start-up, for reloads and --qml-dir;
+# what build.rs compiled ahead of time runs for the files it was made from.
+# render: `--render`. media: the Device tab's screen is decoded with Ljós's
+# stream decoder (src/device/decoder.rs). collation: names sort by the
+# locale's alphabet (sidebar_model::locale_compare, `localeCompare`). woff:
+# the terminal's bundled symbol font (TerminalSplits' FontLoader) is WOFF2.
+# The browser tabs' QtWebEngine is ljos_webengine below, which
+# browser::register registers.
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff"] }
+# QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
+# device::register.
+ljos_quick3d.workspace = true
+# The browser tabs (QtWebEngine: BrowserPanel): pages Chromium draws
+# off-screen through CEF. The cef crate fetches CEF's distribution once into
+# CEF_PATH (README, "Browser pages") and copies its runtime beside the
+# binaries; on macOS CEF loads from the app's bundle instead.
+ljos_webengine = { workspace = true, features = ["cef"] }
+cef = { version = "=156.3.0", default-features = false }
+hal_c2_mc.workspace = true
+# The kept session (src/session.rs).
+serde.workspace = true
+serde_json.workspace = true
+# The MC origin, as hal_c2_mc takes it.
+url = "2"
+# Project and provider helpers: names, monograms, instance ids and the QR code of a pairing link.
+qrcodegen = "1"
+# One running shell per home (src/single_instance.rs): a local socket.
+interprocess = "2"
+unicode-general-category = "1"
+unicode-normalization = "0.1"
+# The client cache (src/cache.rs), as desktop-qt's LocalCache over QtSql's SQLite.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# The sidebar's times (src/sidebar_model.rs): ISO dates and local wall clocks.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+iana-time-zone = "0.1"
+# The plugins' files the MC sends (controllers/mc_plugin.rs).
+base64 = "0.23"
+# The SnapShot shortcut's portal id (snap_shot/portal.rs), as desktop-qt's
+# QCryptographicHash.
+sha2 = "0.10"
+# The update feed and its downloads (controllers/desktop_update.rs), the
+# MC client's HTTP stack.
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
+# The local folder browser (src/folders): watching folders and moving files to the trash.
+notify = "8"
+trash = "5"
+# The composer's Markdown markers (src/highlighter.rs), as desktop-qt's QRegularExpression.
+fancy-regex = "0.19"
+# Code coloured by its language (src/code_highlighter.rs): the crate
+# desktop-qt links.
+hal-c2-syntax = { path = "../../../native/syntax" }
+# The Terminal item's screen (see terminal/mod.rs): libghostty-vt, through
+# Ljós Hof's session. Pinned to a commit of hal-c2/ljos-hof main.
+hof_vt = { git = "https://github.com/hal-c2/ljos-hof", rev = "b9e94eab2402cad81747eac1e1c8d5585ec072e7" }
+# The thread view (thread_view/): desktop-qt's QRegularExpression patterns
+# and QTextDocument's markdown as text.
+regex = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+# The Device tab's screen (src/device): serve-sim's JPEG seed is decoded as
+# Ljós's Image does.
+zune-jpeg = "0.5"
+
+# The composer's attachment thumbnails (controllers/composer/attachments.rs),
+# as desktop-qt's QImage: the pictures a prompt carries are PNG or JPEG.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# System notifications (src/notifications.rs). Already built for Ljós's
+# accessibility; notify-rust's one-handle-per-notification wait cannot hear
+# a click on an older notification, nor close them all.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+# The window's title bar (src/macos_window.rs), as Ljós's host reaches
+# AppKit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSButton",
+    "NSControl",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+
+# build.rs: the QML's bindings and handlers compiled to Rust.
+[build-dependencies]
+ljos = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+# `testing`: a window without a platform, on a virtual clock, to show items
+# in and hand them input.
+ljos = { workspace = true, features = ["testing"] }
+# The state machine properties (tests/hub, the store and cache properties).
+proptest = "1.11"
+# The fake notification service's signal bodies (tests/notifications.rs).
+serde.workspace = true
+tempfile = "3"
+# The features runner's fake MC (tests/features/fake_mc.rs): a protocol 3
+# server on loopback, as hal_c2_mc's own tests fake one.
+tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

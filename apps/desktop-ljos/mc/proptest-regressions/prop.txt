@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 936f00a5e4dc31cf83fcb232007de4dd5d93a17d31f07a815f44d47dba0123e5 # shrinks to actions = [Subscribe { resume: false }, Open, PumpCommand, Descriptor(Ours), Hello]
+cc 461886d159d66196ffc03cec0c4964d6eed727cb452c7c921e3547e097250886 # shrinks to actions = [Subscribe { resume: false }, Advance, Advance, PumpEvent, PumpEvent, PumpCommand, Frame(0), Open, End(0)]
+cc 367d222f6d1c348ad162916f495fad5a5b02588c320086246806f86af371f0e7 # shrinks to actions = [Advance, PumpEvent, Subscribe { resume: false }, Advance, PumpEvent, PumpCommand, Resync(0), More(0)]
+cc 83dc8d5813e8dd4b01df24fc9fc02379966a1c48c0728e411ee3a2dbf728ced3 # shrinks to actions = [Advance, Advance, Settle, Subscribe { resume: false }, Reconnect, PumpCommand, Unsubscribe(0), PumpCommand, Advance, Advance, Open]
+cc d1df9ea330e5a9bbf3f7abbacfb8d21c9ad6f8d81c0a51972bd0c55afd38a36f # shrinks to actions = [Advance, Advance, Subscribe { resume: false }, Settle, End(0), Drop, Tick, Advance, Advance]
+cc 088c5b8b192b1f2ec332ecb85be040d6261b66d214316923ac80de11347752ef # shrinks to actions = [Open, Reconnect, PumpCommand, PumpCommand, Subscribe { resume: true }, Advance, Advance, Settle, Resync(0), More(0)]

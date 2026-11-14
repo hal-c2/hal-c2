@@ -347,6 +347,14 @@ Feature: Editing the draft
     Then the draft reads "new idea"
 
   @desktop
+  Scenario: The prompt wraps at the composer's width after the composer is resized
+    Given the user typed a prompt into the composer
+    When the composer gets narrower
+    Then the prompt wraps at the composer's width
+    When the composer gets wider
+    Then the prompt wraps at the composer's width
+
+  @desktop
   Scenario: Up and Down only recall from the first and last line as shown
     Given the user recalled a prompt long enough to wrap onto three lines
     And the caret is on the last line

@@ -1,0 +1,822 @@
+//! `connectionHealth`, desktop-qt's ConnectionHealthController: how the
+//! shell's one connection to its MC is doing, said in plain words. The client
+//! owns the retries (its phases); this turns them into what every window
+//! shows (the ConnectionNotice brick's icon, the first row of Connections
+//! settings). One per process. The client's own reason for a drop
+//! ("timeout", "HTTP 502", a socket error) goes to its log, not here.
+//!
+//! Publishes `connection`:
+//!   {phase: connecting | connected | reconnecting | offline | refused |
+//!           blocked | problem,
+//!    state,           the icon: connecting | ready | retrying | offline |
+//!                     needsPairing | blocked
+//!    status,          a word or two: "Connected", "Reconnecting", ...
+//!    title, detail,   a sentence each for the tooltip and the panel; empty
+//!                     while connected
+//!    settling,        a reconnect younger than the grace (set_grace), which
+//!                     no surface shows yet: most are over before it ends.
+//!                     Never before the first connection ([`Grace`])
+//!    traceId,         the failed attempt's trace id, or ""
+//!    canRetry, needsPairing, pairing, pairingError,
+//!    versionWarning:  null | {key, environmentId, clientVersion, serverVersion, text}}
+//! `connected` is not said before the MC's shell snapshot lands on this
+//! connection: the socket alone shows nothing. `problem` is a socket that is
+//! fine while the MC turned the shell subscription down, which is not a
+//! reconnect.
+//!
+//! Actions: `connection.retry`, `connection.copyTraceId`, `connection.pair
+//! {pairingUrl}` (a fresh link for the same MC replaces the session the MC
+//! refused; rows, drafts and the route stay), and
+//! `connection.dismissVersionWarning` (kept on this device per pair of
+//! versions).
+//!
+//! The app coming to the foreground (`Application.active`) wakes the client:
+//! a waiting retry runs now, and a connection that looks healthy is checked.
+//! A change in the system's reachability (`ljos::system`, Qt's
+//! QNetworkInformation) says again whether the client is online.
+
+use std::cell::Cell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use ljos::prelude::{Engine, ObjectId, Value};
+use serde_json::json;
+
+use crate::bridge::Bridge;
+use crate::commands::Commands;
+use crate::controller::{self, Controller, Init, Me, Window};
+use crate::controllers::settings::Settings;
+use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
+use crate::json::Json;
+use crate::mc::{Mc, Phase, Status};
+use crate::session::Session;
+use crate::store;
+use crate::this_machine;
+use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
+
+const KEY: &str = "connection";
+const DISMISSALS: &str = "versionMismatchDismissals";
+/// How long a reconnect stays `settling` unless a test says.
+const GRACE_MS: i32 = 1500;
+
+/// Whether a connection coming back up is still held back from the user
+/// (`settling`), desktop-qt's ConnectionGrace. Told each state the
+/// connection's icon shows (`see`), and when the grace ran out (`expire`);
+/// the owner runs the grace's timer for as long as it is `settling()`.
+///
+/// Only a reconnect is held back: a connection that was never up says it is
+/// connecting at once. What needs the user (no network, pairing, an update,
+/// an MC that will not send its data) spends the grace until the next
+/// connection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Grace {
+    /// Never up, or a problem or the grace's end since it last was.
+    #[default]
+    Shown,
+    Up,
+    Settling,
+}
+
+impl Grace {
+    /// `state` is the icon's: ready | connecting | retrying | offline |
+    /// needsPairing | blocked.
+    pub fn see(self, state: &str) -> Grace {
+        match state {
+            "ready" => Grace::Up,
+            "connecting" | "retrying" if self == Grace::Up => Grace::Settling,
+            "connecting" | "retrying" => self,
+            _ => Grace::Shown,
+        }
+    }
+
+    pub fn expire(self) -> Grace {
+        if self == Grace::Settling {
+            Grace::Shown
+        } else {
+            self
+        }
+    }
+
+    pub fn settling(self) -> bool {
+        self == Grace::Settling
+    }
+}
+
+/// Why a connection went, in words: the client's own reason is for its log.
+fn cause(reason: &str, label: &str) -> String {
+    if reason == "timeout" {
+        "It stopped answering.".to_owned()
+    } else if reason == "check" {
+        format!("{label} did not respond to a connection health check.")
+    } else if reason.starts_with("HTTP ") {
+        "It answered with an error.".to_owned()
+    } else {
+        "The connection was lost.".to_owned()
+    }
+}
+
+/// Spends a pairing link's token on a session; blocking, so it runs off the
+/// UI thread.
+pub type Exchange = Arc<dyn Fn(&Link, &Client) -> Pairing + Send + Sync>;
+
+/// What says whether this device has a network: `disconnected` is the
+/// system's word for it, and `interface_up` whether an interface besides
+/// loopback is up with an address, which overrules it (Android says
+/// disconnected when any one network is lost).
+#[derive(Clone)]
+pub struct Network {
+    pub disconnected: Rc<dyn Fn(&Engine) -> bool>,
+    pub interface_up: Rc<dyn Fn(&Engine) -> bool>,
+}
+
+impl Default for Network {
+    /// The system's reachability (Unknown, which is not disconnected, when
+    /// it cannot tell) and this machine's interfaces.
+    fn default() -> Network {
+        Network {
+            disconnected: Rc::new(|engine| {
+                ljos::system::network_status(engine).reachability
+                    == ljos::system::Reachability::Disconnected
+            }),
+            interface_up: Rc::new(|_| interface_up()),
+        }
+    }
+}
+
+/// Whether an interface besides loopback is up and running with an address
+/// that is neither loopback nor link-local, as desktop-qt's hasNetwork asks
+/// QNetworkInterface.
+#[cfg(unix)]
+fn interface_up() -> bool {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs fills `list` with a list freed below.
+    if unsafe { libc::getifaddrs(&mut list) } != 0 {
+        return false;
+    }
+    let mut up = false;
+    let mut next = list;
+    while !next.is_null() && !up {
+        // SAFETY: each entry of the list lives until freeifaddrs.
+        let entry = unsafe { &*next };
+        next = entry.ifa_next;
+        let flags = entry.ifa_flags as libc::c_int;
+        if flags & libc::IFF_UP == 0
+            || flags & libc::IFF_RUNNING == 0
+            || flags & libc::IFF_LOOPBACK != 0
+            || entry.ifa_addr.is_null()
+        {
+            continue;
+        }
+        // SAFETY: the family says which sockaddr `ifa_addr` points at.
+        up = match i32::from(unsafe { (*entry.ifa_addr).sa_family }) {
+            libc::AF_INET => {
+                let addr = unsafe { &*entry.ifa_addr.cast::<libc::sockaddr_in>() };
+                let ip = Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+                !ip.is_loopback() && !ip.is_link_local()
+            }
+            libc::AF_INET6 => {
+                let addr = unsafe { &*entry.ifa_addr.cast::<libc::sockaddr_in6>() };
+                let ip = Ipv6Addr::from(addr.sin6_addr.s6_addr);
+                !ip.is_loopback() && !ip.is_unicast_link_local()
+            }
+            _ => false,
+        };
+    }
+    // SAFETY: `list` came from getifaddrs.
+    unsafe { libc::freeifaddrs(list) };
+    up
+}
+
+#[cfg(not(unix))]
+fn interface_up() -> bool {
+    false
+}
+
+struct Version {
+    core: [i64; 3],
+    prerelease: Vec<String>,
+}
+
+/// major.minor.patch with an optional `-prerelease`; short forms pad with zeros.
+fn parse(text: &str) -> Option<Version> {
+    let text = text.trim();
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let text = text.split('+').next().unwrap_or_default();
+    let (core, prerelease) = match text.split_once('-') {
+        Some((core, prerelease)) => (core, prerelease),
+        None => (text, ""),
+    };
+    let mut numbers = Vec::new();
+    for part in core.split('.').filter(|p| !p.is_empty()) {
+        let number: i64 = part.trim().parse().ok().filter(|n| *n >= 0)?;
+        numbers.push(number);
+    }
+    if numbers.is_empty() || numbers.len() > 3 {
+        return None;
+    }
+    numbers.resize(3, 0);
+    Some(Version {
+        core: [numbers[0], numbers[1], numbers[2]],
+        prerelease: prerelease
+            .split('.')
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    })
+}
+
+/// Negative when `left` is the older.
+fn compare(left: &Version, right: &Version, with_prerelease: bool) -> i32 {
+    for (a, b) in left.core.iter().zip(&right.core) {
+        if a != b {
+            return if a < b { -1 } else { 1 };
+        }
+    }
+    if !with_prerelease {
+        return 0;
+    }
+    // A release is newer than its prereleases.
+    if left.prerelease.is_empty() != right.prerelease.is_empty() {
+        return if left.prerelease.is_empty() { 1 } else { -1 };
+    }
+    for (a, b) in left.prerelease.iter().zip(&right.prerelease) {
+        match (a.parse::<i64>(), b.parse::<i64>()) {
+            (Ok(x), Ok(y)) => {
+                if x != y {
+                    return if x < y { -1 } else { 1 };
+                }
+            }
+            _ => {
+                if a != b {
+                    return if a < b { -1 } else { 1 };
+                }
+            }
+        }
+    }
+    if left.prerelease.len() != right.prerelease.len() {
+        return if left.prerelease.len() < right.prerelease.len() {
+            -1
+        } else {
+            1
+        };
+    }
+    0
+}
+
+/// Whether a server on `server` is behind a client on `client`: two
+/// nightlies compare whole, anything else by its core major.minor.patch, so
+/// a release and a nightly of one core do not differ.
+pub fn server_behind(client: &str, server: &str) -> bool {
+    if client.trim().is_empty() || server.trim().is_empty() {
+        return false;
+    }
+    let (Some(ours), Some(theirs)) = (parse(client), parse(server)) else {
+        // Versions that are not semver differ when their text does.
+        return client.trim() != server.trim();
+    };
+    let nightly = |v: &Version| v.prerelease.first().is_some_and(|p| p == "nightly");
+    compare(&theirs, &ours, nightly(&ours) && nightly(&theirs)) < 0
+}
+
+pub struct ConnectionHealth {
+    bridge: Bridge,
+    me: Me<ConnectionHealth>,
+    mc: Rc<dyn Mc>,
+    active: bool,
+    client_version: String,
+    network: Network,
+    pairing_client: Client,
+    exchange: Exchange,
+    /// The store's snapshot count when the socket last became ready: the
+    /// connection is described once it grows.
+    snapshots_at_ready: u64,
+    /// Whether the client's phase was Ready when last seen.
+    ready: bool,
+    pairing: bool,
+    pairing_error: String,
+    /// Whether a reconnect is held back, and the timer that runs while it is.
+    grace: Cell<Grace>,
+    grace_ms: Cell<i32>,
+    grace_timer: Cell<Option<ObjectId>>,
+}
+
+impl Controller for ConnectionHealth {
+    fn new(init: Init<'_, Self>) -> Self {
+        let engine = init.engine;
+        let me = init.me.clone();
+        // Counted as the phase turns Ready, before update() reads it: the
+        // hello says Ready before readiness changes, and a drop says not
+        // ready while the phase still reads Ready, so readiness is no moment
+        // to look.
+        init.mc.on_status(Box::new(move |engine, status| {
+            me.run(engine, |c, engine| c.status_changed(engine, status));
+        }));
+        let me = init.me.clone();
+        store::on_changed(engine, move |engine| {
+            me.run(engine, |c, engine| c.update(engine));
+        });
+        // The app comes to the foreground: a waiting retry runs now.
+        if let Ok(app) = engine.singleton::<ljos::prelude::Application>() {
+            let me = init.me.clone();
+            let _ = engine.connect_by_name(app, "activeChanged", move |engine, _| {
+                if matches!(engine.read_by_name(app, "active"), Value::Bool(true)) {
+                    me.run(engine, |c, _| c.wake());
+                }
+            });
+        }
+        let me = init.me.clone();
+        let _ = ljos::system::on_network_change(engine, move |engine, _| {
+            me.run(engine, |c, engine| c.network_changed(engine));
+        });
+        // The MC the client is opened at may be on this machine where the
+        // last one was not, or the other way round.
+        let mut health = ConnectionHealth {
+            bridge: init.bridge,
+            me: init.me,
+            mc: init.mc,
+            active: false,
+            client_version: env!("CARGO_PKG_VERSION").to_owned(),
+            network: Network::default(),
+            pairing_client: Client {
+                label: "HAL-C2 desktop".into(),
+                device_type: "desktop".into(),
+                os: String::new(),
+            },
+            exchange: Arc::new(pairing::exchange),
+            snapshots_at_ready: 0,
+            ready: false,
+            pairing: false,
+            pairing_error: String::new(),
+            grace: Cell::new(Grace::Shown),
+            grace_ms: Cell::new(GRACE_MS),
+            grace_timer: Cell::new(None),
+        };
+        health.network_changed(engine);
+        health.update(engine);
+        health
+    }
+
+    fn activate(&mut self, engine: &Engine) {
+        if !self.active {
+            self.active = true;
+            let me = self.me.clone();
+            Settings::of(engine).on_device_changed(move |engine| {
+                me.run(engine, |c, engine| c.update(engine));
+            });
+        }
+        self.update(engine);
+    }
+
+    fn attach(&mut self, engine: &Engine, _window: &Window) {
+        let mc = self.mc.clone();
+        Commands::of(engine).add(
+            engine,
+            "connection.retry",
+            "Reconnect to the environment",
+            move |_| mc.retry_now(),
+        );
+    }
+
+    fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
+        if !action.starts_with("connection.") {
+            return false;
+        }
+        match action {
+            "connection.retry" => {
+                // A subscription the MC turned down is asked for again on a
+                // new socket.
+                if self.mc.is_ready() {
+                    self.mc.reconnect();
+                } else {
+                    self.mc.retry_now();
+                }
+            }
+            "connection.copyTraceId" => self.copy_trace_id(engine),
+            "connection.pair" => {
+                let url = payload
+                    .get("pairingUrl")
+                    .and_then(Json::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                self.pair(engine, &url);
+            }
+            "connection.dismissVersionWarning" => {
+                let warning = self.version_warning(engine);
+                if let Some(key) = warning.get("key").and_then(Json::as_str) {
+                    let mut keys = self.dismissed(engine);
+                    keys.push(key.to_owned());
+                    Settings::of(engine).write_device(engine, DISMISSALS, json!(keys));
+                    self.update(engine);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
+impl ConnectionHealth {
+    /// This app's version (the crate's by default).
+    pub fn client_version(&self) -> String {
+        self.client_version.clone()
+    }
+
+    pub fn set_client_version(&mut self, engine: &Engine, version: &str) {
+        self.client_version = version.to_owned();
+        self.update(engine);
+    }
+
+    /// How long a reconnect stays `settling` (1500 ms unless a test says).
+    pub fn set_grace(&mut self, ms: i32) {
+        self.grace_ms.set(ms);
+    }
+
+    /// What `connection.pair` says this client is; the desktop unless told.
+    pub fn set_pairing_client(&mut self, client: Client) {
+        self.pairing_client = client;
+    }
+
+    /// What says whether this device has a network (see [`Network`]).
+    pub fn set_network(&mut self, network: Network) {
+        self.network = network;
+    }
+
+    /// What spends a pairing link (the MC's HTTP, unless a test says).
+    pub fn set_exchange(&mut self, exchange: Exchange) {
+        self.exchange = exchange;
+    }
+
+    /// The app came to the foreground: a waiting retry runs now, and a
+    /// connection that looks healthy is checked.
+    pub fn wake(&mut self) {
+        self.mc.wake();
+    }
+
+    /// The network changed, or the MC the client is opened at: says again
+    /// whether the client is online, and wakes it when it is. A remote MC is
+    /// not retried while this device has no network, and is tried at once
+    /// when it returns. The MC on this machine needs none.
+    pub fn network_changed(&mut self, engine: &Engine) {
+        let local = self
+            .mc
+            .origin()
+            .is_some_and(|origin| this_machine::loopback_host(&this_machine::origin_host(&origin)));
+        let online =
+            local || !(self.network.disconnected)(engine) || (self.network.interface_up)(engine);
+        self.mc.set_online(online);
+        if online {
+            self.mc.wake();
+        }
+    }
+
+    /// The client's status changed: counts the snapshots as the phase turns
+    /// Ready, then says it.
+    fn status_changed(&mut self, engine: &Engine, status: &Status) {
+        let ready = status.phase == Phase::Ready;
+        if ready && !self.ready {
+            self.snapshots_at_ready = store::with(engine, |s| s.snapshots());
+        }
+        self.ready = ready;
+        self.update(engine);
+    }
+
+    fn copy_trace_id(&self, engine: &Engine) {
+        let trace_id = self.mc.status().failure_trace_id;
+        if trace_id.is_empty() {
+            return;
+        }
+        let copied = self.bridge.copy_to_clipboard(engine, &trace_id);
+        controller::with::<Toasts, _>(engine, |toasts, engine| {
+            if copied {
+                toasts.show(
+                    engine,
+                    "success",
+                    "Trace ID copied",
+                    &trace_id,
+                    None,
+                    DEFAULT_TIMEOUT_MS,
+                );
+            } else {
+                toasts.error(engine, "Could not copy trace ID", &trace_id);
+            }
+        });
+    }
+
+    /// Spends a pairing link's single-use token on a new session with the MC
+    /// the link names, as the desktop host does when it attaches, and
+    /// connects with it. Everything the shell holds stays as it is.
+    fn pair(&mut self, engine: &Engine, pairing_url: &str) {
+        if self.pairing {
+            return;
+        }
+        let Some(link) = pairing::read_link(pairing_url) else {
+            self.pairing_error = "Enter a pairing link from the environment.".into();
+            self.update(engine);
+            return;
+        };
+        self.pairing = true;
+        self.pairing_error.clear();
+        self.update(engine);
+        let exchange = self.exchange.clone();
+        let client = self.pairing_client.clone();
+        let me = self.me.clone();
+        let spawned = ljos::task::spawn(
+            engine,
+            move || exchange(&link, &client),
+            move |engine, result| {
+                me.run(engine, |c, engine| c.paired(engine, result.ok()));
+            },
+        );
+        if spawned.is_err() {
+            self.pairing = false;
+            self.pairing_error = "Could not start pairing. Try again.".into();
+            self.update(engine);
+        }
+    }
+
+    fn paired(&mut self, engine: &Engine, result: Option<Pairing>) {
+        self.pairing = false;
+        let text = |p: &Pairing, key: &str| {
+            p.descriptor
+                .get(key)
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        match result {
+            Some(paired) if paired.outcome == Outcome::Paired => {
+                let session = Session {
+                    origin: paired.origin.clone(),
+                    token: paired.token.clone(),
+                    label: text(&paired, "label"),
+                    environment_id: text(&paired, "environmentId"),
+                };
+                match crate::open(engine, &session) {
+                    Ok(()) => self.network_changed(engine),
+                    Err(_) => {
+                        self.pairing_error =
+                            "The pairing link is invalid or expired. Ask for a fresh one.".into();
+                    }
+                }
+            }
+            _ => {
+                self.pairing_error =
+                    "The pairing link is invalid or expired. Ask for a fresh one.".into();
+            }
+        }
+        self.update(engine);
+    }
+
+    /// The name of the environment behind this connection.
+    fn label(&self, status: &Status, engine: &Engine) -> String {
+        let label = store::with(engine, |s| {
+            s.environment(&s.environment_of(&status.mc))
+                .get("label")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        });
+        let label = if label.is_empty() {
+            descriptor_text(status, "label")
+        } else {
+            label
+        };
+        if label.is_empty() {
+            "the environment".into()
+        } else {
+            label
+        }
+    }
+
+    fn dismissed(&self, engine: &Engine) -> Vec<String> {
+        Settings::of(engine)
+            .device_value(DISMISSALS)
+            .and_then(|v| {
+                v.as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(str::to_owned))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Null, or the warning of a server older than this app that the user
+    /// has not dismissed.
+    fn version_warning(&self, engine: &Engine) -> Json {
+        let status = self.mc.status();
+        let server = store::with(engine, |s| {
+            s.environment(&s.environment_of(&status.mc))
+                .get("serverVersion")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        });
+        let server = if server.is_empty() {
+            descriptor_text(&status, "serverVersion")
+        } else {
+            server
+        };
+        if !server_behind(&self.client_version, &server) {
+            return Json::Null;
+        }
+        let (client, server) = (self.client_version.trim(), server.trim());
+        let key = format!("{}:{client}:{server}", status.environment);
+        if self.dismissed(engine).contains(&key) {
+            return Json::Null;
+        }
+        let served = store::with(engine, |s| s.environment_of(&status.mc));
+        json!({
+            "key": key,
+            "environmentId": if served.is_empty() { status.environment.clone() } else { served },
+            "clientVersion": client,
+            "serverVersion": server,
+            "text": format!(
+                "Version mismatch: {} runs HAL-C2 {server}, older than this app ({client}). Update it to stay in sync.",
+                self.label(&status, engine)
+            ),
+        })
+    }
+
+    /// Starts the grace's timer while a reconnect is settling, and stops it
+    /// once it is not.
+    fn run_grace(&self, engine: &Engine, settling: bool) {
+        if !settling {
+            if let Some(timer) = self.grace_timer.take() {
+                controller::stop_timer(engine, timer);
+            }
+            return;
+        }
+        if self.grace_timer.get().is_some() {
+            return;
+        }
+        let native = ljos::prelude::Timer {
+            interval: self.grace_ms.get(),
+            repeat: false,
+            running: true,
+            ..ljos::prelude::Timer::default()
+        };
+        let Ok(timer) = engine.create_native(native, None) else {
+            return;
+        };
+        self.grace_timer.set(Some(timer));
+        let me = self.me.clone();
+        let fired = engine.connect_by_name(timer, "triggered", move |engine, _| {
+            me.run(engine, |c, engine| {
+                if let Some(timer) = c.grace_timer.take() {
+                    controller::stop_timer(engine, timer);
+                }
+                c.grace.set(c.grace.get().expire());
+                c.update(engine);
+            });
+        });
+        if fired.is_err() || engine.complete(timer).is_err() {
+            self.grace_timer.set(None);
+            controller::stop_timer(engine, timer);
+        }
+    }
+
+    fn update(&self, engine: &Engine) {
+        let status = self.mc.status();
+        let reason = status.failure.clone();
+        // What the MC's answer means, when it said: it reads better than the cause.
+        let message = status.failure_message.clone();
+        let label = || self.label(&status, engine);
+        let problem = store::with(engine, |s| s.problem().to_owned());
+        let snapshots = store::with(engine, |s| s.snapshots());
+        let (mut title, mut detail) = (String::new(), String::new());
+        let (name, state, words, can_retry);
+        match status.phase {
+            Phase::Closed | Phase::Connecting | Phase::Retrying => {
+                // A first attempt that has not failed is connecting; anything
+                // after a failure is a reconnect.
+                if reason.is_empty() {
+                    name = "connecting";
+                    state = "connecting";
+                    words = "Connecting";
+                    title = format!("Connecting to {}", label());
+                    can_retry = false;
+                } else {
+                    name = "reconnecting";
+                    state = "retrying";
+                    words = "Reconnecting";
+                    title = format!("Reconnecting to {}", label());
+                    let why = if message.is_empty() {
+                        cause(&reason, &label())
+                    } else {
+                        message.clone()
+                    };
+                    detail = format!("{why} HAL-C2 keeps trying.");
+                    can_retry = status.phase == Phase::Retrying;
+                }
+            }
+            Phase::Ready => {
+                can_retry = !problem.is_empty();
+                if !problem.is_empty() {
+                    name = "problem";
+                    state = "blocked";
+                    words = "Can't load data";
+                    title = "Could not load projects and threads".to_owned();
+                    detail = format!(
+                        "{} is connected but did not send them. Try again, or restart it.",
+                        label()
+                    );
+                } else if snapshots > self.snapshots_at_ready {
+                    name = "connected";
+                    state = "ready";
+                    words = "Connected";
+                } else {
+                    // The socket is open; the environment has not described
+                    // itself yet.
+                    name = if reason.is_empty() {
+                        "connecting"
+                    } else {
+                        "reconnecting"
+                    };
+                    state = "connecting";
+                    words = "Connecting";
+                    title = format!("Connecting to {}", label());
+                }
+            }
+            Phase::Offline => {
+                name = "offline";
+                state = "offline";
+                words = "Offline";
+                title = "This device is offline".to_owned();
+                detail = "HAL-C2 connects again when the network is back.".to_owned();
+                can_retry = false;
+            }
+            Phase::Refused => {
+                name = "refused";
+                state = "needsPairing";
+                words = "Needs pairing";
+                title = format!("{} no longer accepts this device", label());
+                detail = "Pair again with a fresh pairing link from the environment.".to_owned();
+                if !message.is_empty() {
+                    detail = format!("{message} {detail}");
+                }
+                can_retry = true;
+            }
+            Phase::Blocked => {
+                name = "blocked";
+                state = "blocked";
+                // Turned away for good by what the environment answered.
+                words = if status.blocked_protocol.is_none() {
+                    "Can't connect"
+                } else {
+                    "Update needed"
+                };
+                if status.blocked_protocol.is_none() {
+                    title = format!("Can't connect to {}", label());
+                    detail = message.clone();
+                } else if status
+                    .blocked_protocol
+                    .is_some_and(|p| p > hal_c2_mc::PROTOCOL)
+                {
+                    title = format!("This app is too old for {}", label());
+                    detail = "Update HAL-C2 on this device to connect.".to_owned();
+                } else {
+                    title = format!("{} runs an older HAL-C2", label());
+                    detail = "Update HAL-C2 on that environment to connect.".to_owned();
+                }
+                can_retry = true;
+            }
+        }
+        let connected = name == "connected";
+        // A reconnect is not shown before the grace runs out: most are over
+        // by then. What needs the user is shown at once, and so is a first
+        // connection.
+        self.grace.set(self.grace.get().see(state));
+        let settling = self.grace.get().settling();
+        self.run_grace(engine, settling);
+        self.bridge.publish(
+            engine,
+            KEY,
+            json!({
+                "phase": name,
+                "state": state,
+                "status": words,
+                "title": title,
+                "detail": detail,
+                "settling": settling,
+                "traceId": if connected { "" } else { status.failure_trace_id.as_str() },
+                "canRetry": can_retry,
+                "needsPairing": status.phase == Phase::Refused,
+                "pairing": self.pairing,
+                "pairingError": self.pairing_error,
+                "versionWarning": if connected { self.version_warning(engine) } else { Json::Null },
+            }),
+        );
+    }
+}
+
+fn descriptor_text(status: &Status, key: &str) -> String {
+    status
+        .descriptor
+        .get(key)
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}

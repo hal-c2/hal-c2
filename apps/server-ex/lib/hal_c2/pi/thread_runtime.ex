@@ -153,7 +153,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   def respond(thread_id, request_id, response) do
     case lookup(thread_id) do
       nil -> {:error, "No pending Pi extension request #{request_id}"}
-      pid -> GenServer.call(pid, {:respond, request_id, response})
+      pid -> HalC2.RuntimeRespond.call(pid, request_id, response)
     end
   end
 

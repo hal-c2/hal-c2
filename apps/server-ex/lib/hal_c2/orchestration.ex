@@ -1553,6 +1553,10 @@ defmodule HalC2.Orchestration do
       )
 
     with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
+  catch
+    # The bundled runtimes answer their own timeout as held (`HalC2.RuntimeRespond`);
+    # one that reaches here is a nested call's, or a plugin runtime's.
+    :exit, {:timeout, _} -> {:error, "its runtime did not answer in time"}
   end
 
   defp respond_now(thread_id, request_id, response) do

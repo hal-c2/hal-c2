@@ -901,346 +901,353 @@ Item {
                 }
 
                 // How the view lays out, groups, sorts and filters the plan; wraps when narrow.
-                Flow {
+                // Made once there is a view, so what is in it is made shown: Ljós
+                // keeps the children of a Flow made hidden hidden when its own
+                // visible turns true (hal-c2/ljos-ui#237).
+                Loader {
                     Layout.fillWidth: true
-                    visible: page.working !== null
-                    spacing: 6
+                    active: page.working !== null
+                    visible: active
 
-                    ShellComboBox {
-                        readonly property var values: page.layouts
+                    sourceComponent: Flow {
+                        spacing: 6
 
-                        objectName: "plannerLayout"
-                        outline: true
-                        implicitWidth: 120
-                        model: [qsTr("Gantt"), qsTr("Board"), qsTr("List")]
-                        currentIndex: values.indexOf(page.working?.layout ?? "gantt")
-                        Accessible.name: qsTr("Layout")
-                        onActivated: index => page.edit({ layout: values[index] })
-                    }
+                        ShellComboBox {
+                            readonly property var values: page.layouts
 
-                    ShellComboBox {
-                        readonly property var values: page.groupings
+                            objectName: "plannerLayout"
+                            outline: true
+                            implicitWidth: 120
+                            model: [qsTr("Gantt"), qsTr("Board"), qsTr("List")]
+                            currentIndex: values.indexOf(page.working?.layout ?? "gantt")
+                            Accessible.name: qsTr("Layout")
+                            onActivated: index => page.edit({ layout: values[index] })
+                        }
 
-                        objectName: "plannerGroupBy"
-                        outline: true
-                        implicitWidth: 150
-                        model: [qsTr("No grouping"), qsTr("By status"), qsTr("By project"), qsTr("By label"), qsTr("By owner"), qsTr("By parent"), qsTr("By milestone")]
-                        currentIndex: values.indexOf(page.working?.groupBy ?? "none")
-                        Accessible.name: qsTr("Group by")
-                        onActivated: index => page.edit({ groupBy: values[index] })
-                    }
+                        ShellComboBox {
+                            readonly property var values: page.groupings
 
-                    ShellComboBox {
-                        readonly property var values: page.sortings
+                            objectName: "plannerGroupBy"
+                            outline: true
+                            implicitWidth: 150
+                            model: [qsTr("No grouping"), qsTr("By status"), qsTr("By project"), qsTr("By label"), qsTr("By owner"), qsTr("By parent"), qsTr("By milestone")]
+                            currentIndex: values.indexOf(page.working?.groupBy ?? "none")
+                            Accessible.name: qsTr("Group by")
+                            onActivated: index => page.edit({ groupBy: values[index] })
+                        }
 
-                        objectName: "plannerSortBy"
-                        outline: true
-                        implicitWidth: 140
-                        model: [qsTr("Manual order"), qsTr("By start"), qsTr("By due date"), qsTr("By title"), qsTr("By status"), qsTr("By progress")]
-                        currentIndex: values.indexOf(page.working?.sortBy ?? "manual")
-                        Accessible.name: qsTr("Sort by")
-                        onActivated: index => page.edit({ sortBy: values[index] })
-                    }
+                        ShellComboBox {
+                            readonly property var values: page.sortings
 
-                    Row {
-                        visible: page.working?.layout === "gantt"
-                        spacing: 0
+                            objectName: "plannerSortBy"
+                            outline: true
+                            implicitWidth: 140
+                            model: [qsTr("Manual order"), qsTr("By start"), qsTr("By due date"), qsTr("By title"), qsTr("By status"), qsTr("By progress")]
+                            currentIndex: values.indexOf(page.working?.sortBy ?? "manual")
+                            Accessible.name: qsTr("Sort by")
+                            onActivated: index => page.edit({ sortBy: values[index] })
+                        }
 
-                        Repeater {
-                            model: [
-                                { value: "day", label: qsTr("Days") },
-                                { value: "week", label: qsTr("Weeks") },
-                                { value: "month", label: qsTr("Months") },
-                                { value: "quarter", label: qsTr("Quarters") }
-                            ]
+                        Row {
+                            visible: page.working?.layout === "gantt"
+                            spacing: 0
 
-                            delegate: ShellButton {
-                                required property var modelData
+                            Repeater {
+                                model: [
+                                    { value: "day", label: qsTr("Days") },
+                                    { value: "week", label: qsTr("Weeks") },
+                                    { value: "month", label: qsTr("Months") },
+                                    { value: "quarter", label: qsTr("Quarters") }
+                                ]
 
-                                objectName: "plannerZoom:" + modelData.value
-                                subtle: page.working?.zoom !== modelData.value
-                                text: modelData.label
-                                onClicked: page.edit({ zoom: modelData.value })
+                                delegate: ShellButton {
+                                    required property var modelData
+
+                                    objectName: "plannerZoom:" + modelData.value
+                                    subtle: page.working?.zoom !== modelData.value
+                                    text: modelData.label
+                                    onClicked: page.edit({ zoom: modelData.value })
+                                }
                             }
                         }
-                    }
 
-                    ShellButton {
-                        objectName: "plannerFields"
-                        subtle: true
-                        chevron: true
-                        text: qsTr("Show")
-                        onClicked: fieldsMenu.open()
+                        ShellButton {
+                            objectName: "plannerFields"
+                            subtle: true
+                            chevron: true
+                            text: qsTr("Show")
+                            onClicked: fieldsMenu.open()
 
-                        ShellMenu {
-                            id: fieldsMenu
+                            ShellMenu {
+                                id: fieldsMenu
 
-                            y: parent.height + 4
+                                y: parent.height + 4
 
-                            Instantiator {
-                                model: page.allFields
+                                Instantiator {
+                                    model: page.allFields
 
-                                delegate: ShellMenuItem {
-                                    required property string modelData
+                                    delegate: ShellMenuItem {
+                                        required property string modelData
 
-                                    objectName: "plannerField:" + modelData
-                                    text: page.fieldLabel(modelData)
+                                        objectName: "plannerField:" + modelData
+                                        text: page.fieldLabel(modelData)
+                                        checkable: true
+                                        checked: (page.working?.fields ?? []).includes(modelData)
+                                        current: checked
+                                        onTriggered: page.edit({ fields: page.allFields.filter(field => field === modelData ? !(page.working.fields.includes(field)) : page.working.fields.includes(field)) })
+                                    }
+
+                                    onObjectAdded: (index, object) => fieldsMenu.insertItem(index, object)
+                                    onObjectRemoved: (index, object) => fieldsMenu.removeItem(object)
+                                }
+
+                                ShellMenuSeparator {}
+
+                                ShellMenuItem {
+                                    objectName: "plannerShowDependencies"
+                                    text: qsTr("Dependencies")
                                     checkable: true
-                                    checked: (page.working?.fields ?? []).includes(modelData)
+                                    checked: page.working?.showDependencies === true
                                     current: checked
-                                    onTriggered: page.edit({ fields: page.allFields.filter(field => field === modelData ? !(page.working.fields.includes(field)) : page.working.fields.includes(field)) })
+                                    onTriggered: page.edit({ showDependencies: !page.working.showDependencies })
                                 }
 
-                                onObjectAdded: (index, object) => fieldsMenu.insertItem(index, object)
-                                onObjectRemoved: (index, object) => fieldsMenu.removeItem(object)
-                            }
-
-                            ShellMenuSeparator {}
-
-                            ShellMenuItem {
-                                objectName: "plannerShowDependencies"
-                                text: qsTr("Dependencies")
-                                checkable: true
-                                checked: page.working?.showDependencies === true
-                                current: checked
-                                onTriggered: page.edit({ showDependencies: !page.working.showDependencies })
-                            }
-
-                            ShellMenuItem {
-                                objectName: "plannerShowBaseline"
-                                text: qsTr("Baseline")
-                                checkable: true
-                                checked: page.working?.showBaseline === true
-                                current: checked
-                                onTriggered: page.edit({ showBaseline: !page.working.showBaseline })
+                                ShellMenuItem {
+                                    objectName: "plannerShowBaseline"
+                                    text: qsTr("Baseline")
+                                    checkable: true
+                                    checked: page.working?.showBaseline === true
+                                    current: checked
+                                    onTriggered: page.edit({ showBaseline: !page.working.showBaseline })
+                                }
                             }
                         }
-                    }
 
-                    ShellButton {
-                        readonly property var filter: page.working?.filter ?? null
-                        readonly property int count: filter ? filter.statuses.length + filter.labels.length + filter.projects.length + filter.owners.length + (filter.hideDone ? 1 : 0) : 0
+                        ShellButton {
+                            readonly property var filter: page.working?.filter ?? null
+                            readonly property int count: filter ? filter.statuses.length + filter.labels.length + filter.projects.length + filter.owners.length + (filter.hideDone ? 1 : 0) : 0
 
-                        objectName: "plannerFilters"
-                        subtle: count === 0
-                        chevron: true
-                        text: count > 0 ? qsTr("Filters (%1)").arg(count) : qsTr("Filters")
-                        onClicked: filtersMenu.open()
-
-                        ShellMenu {
-                            id: filtersMenu
-
-                            y: parent.height + 4
-
-                            ShellMenuItem {
-                                objectName: "plannerHideDone"
-                                text: qsTr("Hide done")
-                                checkable: true
-                                checked: page.working?.filter.hideDone === true
-                                current: checked
-                                onTriggered: page.editFilter({ hideDone: !page.working.filter.hideDone })
-                            }
+                            objectName: "plannerFilters"
+                            subtle: count === 0
+                            chevron: true
+                            text: count > 0 ? qsTr("Filters (%1)").arg(count) : qsTr("Filters")
+                            onClicked: filtersMenu.open()
 
                             ShellMenu {
-                                id: statusMenu
+                                id: filtersMenu
 
-                                title: qsTr("Status")
+                                y: parent.height + 4
 
-                                Instantiator {
-                                    model: page.statuses
-
-                                    delegate: ShellMenuItem {
-                                        required property string modelData
-
-                                        objectName: "plannerFilterStatus:" + modelData
-                                        text: page.statusLabel(modelData)
-                                        checkable: true
-                                        checked: (page.working?.filter.statuses ?? []).includes(modelData)
-                                        current: checked
-                                        onTriggered: page.editFilter({ statuses: page.toggled(page.working.filter.statuses, modelData) })
-                                    }
-
-                                    onObjectAdded: (index, object) => statusMenu.insertItem(index, object)
-                                    onObjectRemoved: (index, object) => statusMenu.removeItem(object)
+                                ShellMenuItem {
+                                    objectName: "plannerHideDone"
+                                    text: qsTr("Hide done")
+                                    checkable: true
+                                    checked: page.working?.filter.hideDone === true
+                                    current: checked
+                                    onTriggered: page.editFilter({ hideDone: !page.working.filter.hideDone })
                                 }
-                            }
 
-                            ShellMenu {
-                                id: ownerMenu
+                                ShellMenu {
+                                    id: statusMenu
 
-                                title: qsTr("Owner")
+                                    title: qsTr("Status")
 
-                                Instantiator {
-                                    model: Array.from(new Set(page.items.map(item => item.owner).filter(owner => owner))).sort()
+                                    Instantiator {
+                                        model: page.statuses
 
-                                    delegate: ShellMenuItem {
-                                        required property string modelData
+                                        delegate: ShellMenuItem {
+                                            required property string modelData
 
-                                        text: modelData
-                                        checkable: true
-                                        checked: (page.working?.filter.owners ?? []).includes(modelData)
-                                        current: checked
-                                        onTriggered: page.editFilter({ owners: page.toggled(page.working.filter.owners, modelData) })
+                                            objectName: "plannerFilterStatus:" + modelData
+                                            text: page.statusLabel(modelData)
+                                            checkable: true
+                                            checked: (page.working?.filter.statuses ?? []).includes(modelData)
+                                            current: checked
+                                            onTriggered: page.editFilter({ statuses: page.toggled(page.working.filter.statuses, modelData) })
+                                        }
+
+                                        onObjectAdded: (index, object) => statusMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => statusMenu.removeItem(object)
                                     }
-
-                                    onObjectAdded: (index, object) => ownerMenu.insertItem(index, object)
-                                    onObjectRemoved: (index, object) => ownerMenu.removeItem(object)
                                 }
-                            }
 
-                            ShellMenu {
-                                id: labelMenu
+                                ShellMenu {
+                                    id: ownerMenu
 
-                                title: qsTr("Label")
+                                    title: qsTr("Owner")
 
-                                Instantiator {
-                                    model: Array.from(new Set([].concat(...page.items.map(item => item.labels ?? [])))).sort()
+                                    Instantiator {
+                                        model: Array.from(new Set(page.items.map(item => item.owner).filter(owner => owner))).sort()
 
-                                    delegate: ShellMenuItem {
-                                        required property string modelData
+                                        delegate: ShellMenuItem {
+                                            required property string modelData
 
-                                        text: modelData
-                                        checkable: true
-                                        checked: (page.working?.filter.labels ?? []).includes(modelData)
-                                        current: checked
-                                        onTriggered: page.editFilter({ labels: page.toggled(page.working.filter.labels, modelData) })
+                                            text: modelData
+                                            checkable: true
+                                            checked: (page.working?.filter.owners ?? []).includes(modelData)
+                                            current: checked
+                                            onTriggered: page.editFilter({ owners: page.toggled(page.working.filter.owners, modelData) })
+                                        }
+
+                                        onObjectAdded: (index, object) => ownerMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => ownerMenu.removeItem(object)
                                     }
-
-                                    onObjectAdded: (index, object) => labelMenu.insertItem(index, object)
-                                    onObjectRemoved: (index, object) => labelMenu.removeItem(object)
                                 }
-                            }
 
-                            ShellMenu {
-                                id: projectMenu
+                                ShellMenu {
+                                    id: labelMenu
 
-                                title: qsTr("Project")
+                                    title: qsTr("Label")
 
-                                Instantiator {
-                                    model: page.projects
+                                    Instantiator {
+                                        model: Array.from(new Set([].concat(...page.items.map(item => item.labels ?? [])))).sort()
 
-                                    delegate: ShellMenuItem {
-                                        required property var modelData
+                                        delegate: ShellMenuItem {
+                                            required property string modelData
 
-                                        text: modelData.title
-                                        checkable: true
-                                        checked: (page.working?.filter.projects ?? []).includes(modelData.id)
-                                        current: checked
-                                        onTriggered: page.editFilter({ projects: page.toggled(page.working.filter.projects, modelData.id) })
+                                            text: modelData
+                                            checkable: true
+                                            checked: (page.working?.filter.labels ?? []).includes(modelData)
+                                            current: checked
+                                            onTriggered: page.editFilter({ labels: page.toggled(page.working.filter.labels, modelData) })
+                                        }
+
+                                        onObjectAdded: (index, object) => labelMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => labelMenu.removeItem(object)
                                     }
-
-                                    onObjectAdded: (index, object) => projectMenu.insertItem(index, object)
-                                    onObjectRemoved: (index, object) => projectMenu.removeItem(object)
                                 }
-                            }
 
-                            ShellMenuSeparator {}
+                                ShellMenu {
+                                    id: projectMenu
 
-                            ShellMenuItem {
-                                text: qsTr("Clear filters")
-                                onTriggered: page.editFilter({ statuses: [], labels: [], projects: [], owners: [], hideDone: false })
+                                    title: qsTr("Project")
+
+                                    Instantiator {
+                                        model: page.projects
+
+                                        delegate: ShellMenuItem {
+                                            required property var modelData
+
+                                            text: modelData.title
+                                            checkable: true
+                                            checked: (page.working?.filter.projects ?? []).includes(modelData.id)
+                                            current: checked
+                                            onTriggered: page.editFilter({ projects: page.toggled(page.working.filter.projects, modelData.id) })
+                                        }
+
+                                        onObjectAdded: (index, object) => projectMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => projectMenu.removeItem(object)
+                                    }
+                                }
+
+                                ShellMenuSeparator {}
+
+                                ShellMenuItem {
+                                    text: qsTr("Clear filters")
+                                    onTriggered: page.editFilter({ statuses: [], labels: [], projects: [], owners: [], hideDone: false })
+                                }
                             }
                         }
-                    }
 
-                    ShellTextField {
-                        id: filterField
+                        ShellTextField {
+                            id: filterField
 
-                        readonly property string current: page.working?.filter.text ?? ""
+                            readonly property string current: page.working?.filter.text ?? ""
 
-                        objectName: "plannerFilter"
-                        width: 180
-                        placeholderText: qsTr("Filter")
-                        Accessible.name: qsTr("Filter tasks")
-                        onCurrentChanged: if (text !== current)
-                            text = current
-                        onTextChanged: if (page.working !== null && text !== current)
-                            page.editFilter({ text: text })
-                    }
+                            objectName: "plannerFilter"
+                            width: 180
+                            placeholderText: qsTr("Filter")
+                            Accessible.name: qsTr("Filter tasks")
+                            onCurrentChanged: if (text !== current)
+                                text = current
+                            onTextChanged: if (page.working !== null && text !== current)
+                                page.editFilter({ text: text })
+                        }
 
-                    Chip {
-                        objectName: "plannerViewChanged"
-                        visible: page.changed
-                        text: qsTr("Changed")
-                        tone: page.warningColor
-                    }
+                        Chip {
+                            objectName: "plannerViewChanged"
+                            visible: page.changed
+                            text: qsTr("Changed")
+                            tone: page.warningColor
+                        }
 
-                    ShellButton {
-                        objectName: "plannerViewSave"
-                        visible: page.changed
-                        primary: true
-                        enabled: page.busy === 0
-                        text: qsTr("Save")
-                        onClicked: page.saveView()
-                    }
+                        ShellButton {
+                            objectName: "plannerViewSave"
+                            visible: page.changed
+                            primary: true
+                            enabled: page.busy === 0
+                            text: qsTr("Save")
+                            onClicked: page.saveView()
+                        }
 
-                    ShellButton {
-                        objectName: "plannerViewSaveAs"
-                        visible: page.changed
-                        subtle: true
-                        text: qsTr("Save as new")
-                        onClicked: namer.ask("copy", page.working.name)
-                    }
+                        ShellButton {
+                            objectName: "plannerViewSaveAs"
+                            visible: page.changed
+                            subtle: true
+                            text: qsTr("Save as new")
+                            onClicked: namer.ask("copy", page.working.name)
+                        }
 
-                    ShellButton {
-                        objectName: "plannerViewRevert"
-                        visible: page.changed
-                        subtle: true
-                        text: qsTr("Revert")
-                        onClicked: page.revert()
-                    }
+                        ShellButton {
+                            objectName: "plannerViewRevert"
+                            visible: page.changed
+                            subtle: true
+                            text: qsTr("Revert")
+                            onClicked: page.revert()
+                        }
 
-                    ShellButton {
-                        objectName: "plannerViewMenu"
-                        subtle: true
-                        iconName: "ellipsis"
-                        toolTip: qsTr("View and baseline")
-                        Accessible.name: qsTr("View and baseline")
-                        onClicked: viewMenu.open()
+                        ShellButton {
+                            objectName: "plannerViewMenu"
+                            subtle: true
+                            iconName: "ellipsis"
+                            toolTip: qsTr("View and baseline")
+                            Accessible.name: qsTr("View and baseline")
+                            onClicked: viewMenu.open()
 
-                        ShellMenu {
-                            id: viewMenu
+                            ShellMenu {
+                                id: viewMenu
 
-                            y: parent.height + 4
-                            x: parent.width - width
+                                y: parent.height + 4
+                                x: parent.width - width
 
-                            ShellMenuItem {
-                                objectName: "plannerViewRename"
-                                text: qsTr("Rename view…")
-                                onTriggered: namer.ask("rename", page.working.name)
-                            }
-
-                            ShellMenuItem {
-                                objectName: "plannerViewDuplicate"
-                                text: qsTr("Save as new view…")
-                                onTriggered: namer.ask("copy", page.working.name)
-                            }
-
-                            ShellMenuItem {
-                                objectName: "plannerViewRemove"
-                                text: qsTr("Remove view")
-                                destructive: true
-                                enabled: page.views.filter(view => view.environment === page.environment).length > 1
-                                onTriggered: {
-                                    page.ask("removeView", { id: page.working.id }, page.environment);
-                                    page.viewKey = "";
+                                ShellMenuItem {
+                                    objectName: "plannerViewRename"
+                                    text: qsTr("Rename view…")
+                                    onTriggered: namer.ask("rename", page.working.name)
                                 }
-                            }
 
-                            ShellMenuSeparator {}
+                                ShellMenuItem {
+                                    objectName: "plannerViewDuplicate"
+                                    text: qsTr("Save as new view…")
+                                    onTriggered: namer.ask("copy", page.working.name)
+                                }
 
-                            ShellMenuItem {
-                                objectName: "plannerSetBaseline"
-                                text: qsTr("Save baseline")
-                                detail: qsTr("today's dates, to compare against")
-                                onTriggered: page.ask("setBaseline", {}, page.environment)
-                            }
+                                ShellMenuItem {
+                                    objectName: "plannerViewRemove"
+                                    text: qsTr("Remove view")
+                                    destructive: true
+                                    enabled: page.views.filter(view => view.environment === page.environment).length > 1
+                                    onTriggered: {
+                                        page.ask("removeView", { id: page.working.id }, page.environment);
+                                        page.viewKey = "";
+                                    }
+                                }
 
-                            ShellMenuItem {
-                                objectName: "plannerClearBaseline"
-                                text: qsTr("Clear baseline")
-                                enabled: page.items.some(item => item.baseline)
-                                onTriggered: page.ask("clearBaseline", {}, page.environment)
+                                ShellMenuSeparator {}
+
+                                ShellMenuItem {
+                                    objectName: "plannerSetBaseline"
+                                    text: qsTr("Save baseline")
+                                    detail: qsTr("today's dates, to compare against")
+                                    onTriggered: page.ask("setBaseline", {}, page.environment)
+                                }
+
+                                ShellMenuItem {
+                                    objectName: "plannerClearBaseline"
+                                    text: qsTr("Clear baseline")
+                                    enabled: page.items.some(item => item.baseline)
+                                    onTriggered: page.ask("clearBaseline", {}, page.environment)
+                                }
                             }
                         }
                     }

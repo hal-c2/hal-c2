@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 
 class McClient;
@@ -107,7 +108,7 @@ private:
   void publish();
   // Brings a setting of the settings page showing into view (route.target).
   void reveal(const QString& target);
-  void save() const;
+  void save();
   // The open thread's row went away: home, unless the sidebar is already
   // moving the window on (park()).
   void leaveVanishedThread();
@@ -125,7 +126,8 @@ private:
   Route m_route;
   QList<Route> m_backStack;
   QList<Route> m_forwardStack;
-  QString m_storePath;
+  // shell-route.json, written off the GUI thread.
+  CoalescingWriter m_storeFile;
   bool m_active = false;
   bool m_previewing = false;
   // The setting the last search result opened, until the route moves on.

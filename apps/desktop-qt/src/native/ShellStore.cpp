@@ -427,6 +427,7 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
   entry.environment = environment;
+  ++m_roster;
   unsaved(mc);
 }
 
@@ -499,6 +500,7 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
                    frame.value(QLatin1String("environment")).toObject());
   } else if (type == QLatin1String("shell.mc")) {
     const QString mc = frame.value(QLatin1String("mc")).toString();
+    ++m_roster;
     // A machine removed from the cluster takes its rows with it; an offline one keeps them.
     if (frame.value(QLatin1String("removed")).toBool()) {
       removeMc(mc);

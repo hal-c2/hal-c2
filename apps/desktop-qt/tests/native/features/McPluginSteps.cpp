@@ -3,6 +3,8 @@
 // with a page, thread looks, a sidebar section and a settings page of its own,
 // and the real DefaultShell window that draws them.
 
+#include <array>
+
 #include <QBuffer>
 #include <QDir>
 #include <QFile>
@@ -11,6 +13,7 @@
 #include <QPointer>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSet>
 
 #include "CommandPaletteController.h"
 #include "Harness.h"
@@ -44,6 +47,11 @@ struct FakeMcPlugins {
   QPointer<QQuickItem> page;
   // What `plugins.compile` finds, by plugin; a check passes when none is set.
   QHash<QString, QJsonObject> checks;
+  // Environments whose `plugins` shape is refused as an unknown environment,
+  // as the MC refuses a member the cluster does not know yet.
+  QSet<QString> unknown;
+  // How many `plugins` shapes were refused.
+  int refused = 0;
 };
 
 QString environmentOf(const FakeMc& mc, const QString& environment) {
@@ -121,6 +129,12 @@ const FakeMc::Extension extension([](FakeMc& mc) {
 
   mc.onShape(QStringLiteral("plugins"), [&mc](int id, const QJsonObject& shape) {
     const QString environment = environmentOf(mc, shape.value(QLatin1String("environment")).toString());
+    if (FakeMcPlugins& fake = mc.part<FakeMcPlugins>(); fake.unknown.contains(environment)) {
+      ++fake.refused;
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown environment")}});
+      mc.forget(id);
+      return;
+    }
     QJsonArray plugins;
     for (const QJsonObject& entry : mc.part<FakeMcPlugins>().plugins.value(environment)) plugins.append(entry);
     mc.send({{QStringLiteral("t"), QStringLiteral("plugins")}, {QStringLiteral("id"), id}, {QStringLiteral("plugins"), plugins}});
@@ -249,6 +263,17 @@ QJsonObject codeReview() {
                                                                   {QStringLiteral("rowMark"), QStringLiteral("threads/ReviewMark.qml")},
                                                                   {QStringLiteral("header"), QStringLiteral("threads/ReviewHeader.qml")}})}}})},
   };
+}
+
+// The environment a second MC serves, in the scenarios with two.
+const QString kOtherEnvironment = QStringLiteral("second");
+
+// A plugin only the second environment's MC runs.
+QJsonObject otherPlugin() {
+  QJsonObject entry = codeReview();
+  entry.insert(QStringLiteral("id"), QStringLiteral("notes"));
+  entry.insert(QStringLiteral("name"), QStringLiteral("Notes"));
+  return entry;
 }
 
 FakeMcPlugins& fake(World& world) { return world.mc.part<FakeMcPlugins>(); }
@@ -956,6 +981,46 @@ const Steps steps([] {
     world.waitFor([&] { return (environment = findNamed(list, QStringLiteral("mcPlugins:") + world.mc.environmentId)) != nullptr; },
                   QStringLiteral("the environment in the plugin list"));
     clickItem(world, findNamed(environment, QStringLiteral("mcPluginsRescan")));
+  });
+  // A section per environment.
+  step(QStringLiteral("two environments with different MC plugins"), [](World& world, const Captures&, const Table&) {
+    fake(world).plugins[world.mc.environmentId] = {codeReview()};
+    pluginShell(world);
+    waitStatus(world, kCodeReview, QStringLiteral("running"));
+    runFakePluginOn(world, kOtherEnvironment, otherPlugin());
+  });
+  // A member the MC does not know yet, as right after it restarts.
+  step(QStringLiteral("the MC refuses another environment's plugins as an unknown environment"), [](World& world, const Captures&, const Table&) {
+    fake(world).plugins[world.mc.environmentId] = {codeReview()};
+    fake(world).plugins[kOtherEnvironment] = {otherPlugin()};
+    fake(world).unknown.insert(kOtherEnvironment);
+    pluginShell(world);
+    waitStatus(world, kCodeReview, QStringLiteral("running"));
+    world.mc.join(kOtherEnvironment);
+    world.waitFor([&] { return fake(world).refused > 0; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the cluster learns that environment"), [](World& world, const Captures&, const Table&) {
+    fake(world).unknown.remove(kOtherEnvironment);
+    // The shell announces the member again once it knows it.
+    world.mc.join(kOtherEnvironment);
+  });
+  step(QStringLiteral("each environment's MC plugins are listed under that environment"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    const QString other = otherPlugin().value(QLatin1String("id")).toString();
+    const QList<std::array<QString, 3>> sections{{world.mc.environmentId, kCodeReview, other}, {kOtherEnvironment, other, kCodeReview}};
+    for (const auto& each : sections) {
+      const QString& environment = each[0];
+      const QString& shown = each[1];
+      const QString& absent = each[2];
+      const QString section = QStringLiteral("mcPlugins:") + environment;
+      const auto card = [&](const QString& id) { return QStringLiteral("mcPlugin:%1/%2").arg(environment, id); };
+      QQuickItem* under = nullptr;
+      world.waitFor([&] {
+        under = findNamed(list, section);
+        return under && under->isVisible() && findNamed(under, card(shown)) != nullptr;
+      }, [&] { return QStringLiteral("%1 under %2; %3").arg(card(shown), section, describe(world)); });
+      expect(findNamed(under, card(absent)) == nullptr, QStringLiteral("%1 also lists %2").arg(section, absent));
+    }
   });
   step(QStringLiteral("%1 is listed as disabled").arg(q), [](World& world, const Captures& c, const Table&) {
     waitStatus(world, c[0], QStringLiteral("disabled"));

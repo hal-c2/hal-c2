@@ -179,7 +179,14 @@ Rectangle {
     // what it was asking is refused.
     property string asking: ""
     onVisibleChanged: showQuestions()
-    Component.onCompleted: showQuestions()
+    Component.onCompleted: {
+        // TODO(ljos#438): bound again once the panel is made, as Ljós
+        // runs the page's bindings before the view and the panel's initial
+        // source are there, and not again when they come.
+        page.previews = Qt.binding(() => root.source);
+        page.view = webView;
+        showQuestions();
+    }
 
     function showQuestions() {
         const shown = root.visible ? page.tabId : "";
@@ -683,14 +690,6 @@ Rectangle {
                     onTitleChanged: if (!loading)
                         root.report("loaded", 0, "")
                     onJavaScriptConsoleMessage: (level, message, lineNumber, sourceID) => page.consoleMessage(level, message, lineNumber, sourceID)
-                    onPermissionRequested: permission => root.permissionAsked(permission)
-                    // A page never captures the screen or a window.
-                    onDesktopMediaRequested: request => request.cancel()
-                    // A link to another app (slack:, mailto:) is the user's to open.
-                    onNavigationRequested: request => {
-                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
-                            request.reject();
-                    }
                     onNewWindowRequested: request => {
                         // A sign-in popup is a real window, so it can answer
                         // the page; a link to a new window stays in the tab.
@@ -714,6 +713,14 @@ Rectangle {
                         }
                         // A blank window that is not a popup has nothing to
                         // show in the tab: left unopened, it is refused.
+                    }
+                    onPermissionRequested: permission => root.permissionAsked(permission)
+                    // A page never captures the screen or a window.
+                    onDesktopMediaRequested: request => request.cancel()
+                    // A link to another app (slack:, mailto:) is the user's to open.
+                    onNavigationRequested: request => {
+                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
+                            request.reject();
                     }
                     Component.onCompleted: {
                         webView.zoomFactor = page.zoom;
@@ -1073,12 +1080,13 @@ Rectangle {
                 profile: webView.profile
                 // Left unopened, the request is refused.
                 onNewWindowRequested: request => {}
+                onWindowCloseRequested: popup.close()
+
                 onPermissionRequested: permission => root.permissionAsked(permission)
                 onNavigationRequested: request => {
                     if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
                         request.reject();
                 }
-                onWindowCloseRequested: popup.close()
             }
 
             onClosing: popup.destroy()
