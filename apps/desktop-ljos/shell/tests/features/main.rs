@@ -236,11 +236,41 @@ fn write_ratchet(path: &Path, held: &BTreeSet<String>) -> std::io::Result<()> {
     std::fs::write(path, text)
 }
 
+/// A fresh directory in `/run/user/<uid>`, else in the temporary directory,
+/// set as XDG_RUNTIME_DIR. Before any other thread starts.
+#[cfg(unix)]
+fn own_runtime_dir() -> Option<tempfile::TempDir> {
+    // SAFETY: getuid has no preconditions.
+    let user = PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }));
+    let base = if user.is_dir() {
+        user
+    } else {
+        std::env::temp_dir()
+    };
+    let dir = tempfile::Builder::new()
+        .prefix("hc-f-")
+        .tempdir_in(base)
+        .ok()?;
+    // SAFETY: nothing else runs yet.
+    unsafe { std::env::set_var("XDG_RUNTIME_DIR", dir.path()) };
+    Some(dir)
+}
+
+#[cfg(not(unix))]
+fn own_runtime_dir() -> Option<()> {
+    None
+}
+
 fn main() -> ExitCode {
     // Snooze presets and wake labels are wall-clock times: pin them to UTC,
     // as tst_Features.cpp does. Before any other thread starts.
     // SAFETY: nothing else runs yet.
     unsafe { std::env::set_var("TZ", "UTC") };
+    // A runtime directory of the run's own, never the host's (systemd-run
+    // sets none): the app's control socket goes there, and its path must be
+    // short, which the scenarios' scratch homes are not. Each scenario's
+    // home names its own socket in it. Removed when the run ends.
+    let _runtime = own_runtime_dir();
     // Chromium draws off screen here, and on the desktop's display it would
     // share the user's clipboard with the pages the scenarios copy from and
     // read: Ozone's headless platform keeps a clipboard of its own.

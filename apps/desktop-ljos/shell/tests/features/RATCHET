@@ -886,7 +886,11 @@ mc/platform/openshell.feature: Settings says how to install OpenShell where it c
 mc/platform/openshell.feature: Settings says review sandboxes can run once the MC has a gateway
 mc/platform/openshell.feature: Settings says when the MC could not answer, and can ask again
 mc/platform/openshell.feature: Settings shows whether review sandboxes can run, and what to fix
+mc/platform/storage-layout.feature: The desktop app a developer builds uses the development profile
+mc/platform/storage-layout.feature: The desktop app on Windows keeps its named pipe
 mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
+mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is not set, ~/.local/state/hal-c2]
+mc/platform/storage-layout.feature: The desktop app's home directory outranks the worktree and HAL_C2_HOME
 mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
 mc/platform/websocket-protocol.feature: A client skips an event type it does not know
 navigation/appearance.feature: A development build is identified as Dev [Artwork, the app shows "DEV" by the wordmark]

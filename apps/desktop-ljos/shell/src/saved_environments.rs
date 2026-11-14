@@ -2,7 +2,7 @@
 //! starts with: desktop-qt's EnvironmentCatalog and SecretStore.
 //!
 //! The records sit in one file, `saved-environments.json` in the client's
-//! data directory (the `desktop-ljos` level, never desktop-qt's): each one's
+//! data directory, desktop-qt's file: each one's
 //! id, label, origin and when its credential expires, in desktop-qt's shape.
 //! The credentials never do: they go to a [`SecretStore`] under the
 //! environment's id. A record is saved only once its credential is kept, so a
