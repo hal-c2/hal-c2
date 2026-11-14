@@ -691,6 +691,23 @@ private slots:
     QCOMPARE(shown(), QStringLiteral("approval-required"));
   }
 
+  // An access pick shows at once, while the MC has yet to answer it: the
+  // composer published before the pick was on its way and showed the old one.
+  void anAccessPickShowsWhileItsAnswerIsOnItsWay() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    shell.mc.hold(QStringLiteral("answers"));
+    shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.mc.commands.size(), 1);
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+  }
+
   // An access change the MC took settles when the row shows another client's
   // change that came right after it: the composer shows what the thread has.
   void anAccessChangeOverwrittenElsewhereSettles() {

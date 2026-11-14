@@ -508,8 +508,9 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!known || mode == runtimeModeOf(target)) return true;
     m_drafts[target].runtimeMode = mode;
     save();
-    publish();
+    // Shown once it is on its way: an existing thread's pick counts only then (pickedRuntimeMode).
     setThreadMode(target, ModeKind::Runtime, mode);
+    publish();
     return true;
   }
   if (action == QLatin1String("composer.interactionMode.set")) {
