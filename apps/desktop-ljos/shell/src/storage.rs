@@ -220,17 +220,34 @@ fn taken(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
+/// Whether something is at path, or why that cannot be told.
+fn present(path: &Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
 
 fn merge_into(from: &Path, to: &Path, rename: Rename) -> Vec<String> {
     let mut stranded = finish_carrying(from, to, rename);
-    let Ok(entries) = std::fs::read_dir(from) else {
-        return stranded;
+    // A level not seen whole moves nothing: a database could leave its
+    // journal behind.
+    let names = std::fs::read_dir(from).and_then(|entries| {
+        entries
+            .map(|entry| entry.map(|e| e.file_name().into_string().ok()))
+            .filter_map(Result::transpose)
+            .collect::<std::io::Result<Vec<String>>>()
+    });
+    let names = match names {
+        Ok(names) => names,
+        Err(error) => {
+            stranded.push(format!("could not look in {}: {error}", from.display()));
+            return stranded;
+        }
     };
-    let names: Vec<String> = entries
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
     let _ = std::fs::create_dir_all(to);
     for name in names.iter().filter(|n| sidecar_base(n).is_none()) {
         let (source, target) = (from.join(name), to.join(name));
@@ -364,27 +381,51 @@ fn finish_carrying(from: &Path, to: &Path, rename: Rename) -> Vec<String> {
         if !is_record {
             continue;
         }
-        if let Err(error) = std::fs::read(entry.path()) {
-            stranded.push(format!(
-                "could not read {}: {error}",
-                entry.path().display()
-            ));
+        let text = match std::fs::read(entry.path()) {
+            Ok(text) => text,
+            Err(error) => {
+                stranded.push(format!(
+                    "could not read {}: {error}",
+                    entry.path().display()
+                ));
+                continue;
+            }
+        };
+        // Cut off in its header: move_together writes the record whole
+        // before it moves anything, so the set is whole where it was.
+        if CARRYING_HEADER.as_bytes().starts_with(&text) {
+            let _ = std::fs::remove_file(entry.path());
             continue;
         }
         let Some(set) = carrying_set(&entry.path()) else {
             continue;
         };
-        let behind: Vec<&String> = set.iter().filter(|n| taken(&from.join(n))).collect();
-        let moved = set
+        // Where each part is, at the old level and here; a part that cannot
+        // be looked at keeps the record.
+        let parts = set
             .iter()
-            .any(|n| taken(&to.join(n)) && !taken(&from.join(n)));
+            .map(|n| Ok((n, present(&from.join(n))?, present(&to.join(n))?)))
+            .collect::<std::io::Result<Vec<_>>>();
+        let parts = match parts {
+            Ok(parts) => parts,
+            Err(error) => {
+                stranded.push(format!(
+                    "could not tell where {} in {} is: {error}",
+                    set[0],
+                    to.display()
+                ));
+                continue;
+            }
+        };
+        let behind: Vec<&String> = parts.iter().filter(|p| p.1).map(|p| p.0).collect();
+        let moved = parts.iter().any(|p| p.2 && !p.1);
         // Nothing of the set moved: it is whole where it was, and the
         // ordinary merge moves it (move_together) or leaves it.
         if !moved {
             let _ = std::fs::remove_file(entry.path());
             continue;
         }
-        if behind.iter().any(|n| taken(&to.join(n))) {
+        if parts.iter().any(|p| p.1 && p.2) {
             stranded.push(format!(
                 "{} in {} is split from the rest of it in {}, and something else took its place",
                 set[0],
@@ -986,6 +1027,76 @@ mod tests {
         if !listable {
             assert_eq!(stranded.len(), 1, "{stranded:?}");
             assert!(stranded[0].contains("could not look in"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_record_cut_off_in_its_header_lets_the_set_move_whole() {
+        let root = scratch("carry-over-cut-header");
+        let to = root.join("cache");
+        let old = to.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        let marker = carrying_marker(&to, "client-cache.sqlite");
+        write(&marker, &CARRYING_HEADER[..10]);
+        assert!(merge_into(&old, &to, &|a, b| std::fs::rename(a, b)).is_empty());
+        assert_eq!(read(&to.join("client-cache.sqlite")).as_deref(), Some("db"));
+        assert_eq!(
+            read(&to.join("client-cache.sqlite-wal")).as_deref(),
+            Some("wal")
+        );
+        assert!(!marker.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_old_level_that_cannot_be_listed_moves_nothing_and_blocks_the_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("carry-over-old-unlistable");
+        let to = root.join("cache");
+        let old = to.join(OLD_CLIENT_DIR);
+        write(&old.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o300)).unwrap();
+        let listable = std::fs::read_dir(&old).is_ok();
+        let stranded = merge_into(&old, &to, &|a, b| std::fs::rename(a, b));
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if !listable {
+            assert_eq!(stranded.len(), 1, "{stranded:?}");
+            assert!(stranded[0].contains("could not look in"));
+            assert_eq!(
+                read(&old.join("client-cache.sqlite")).as_deref(),
+                Some("db")
+            );
+            assert_eq!(read(&to.join("client-cache.sqlite")), None);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_set_cut_short_whose_old_level_cannot_be_searched_keeps_its_record() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("carry-over-old-unsearchable");
+        let to = root.join("cache");
+        let old = to.join(OLD_CLIENT_DIR);
+        write(&to.join("client-cache.sqlite"), "db");
+        write(&old.join("client-cache.sqlite-wal"), "wal");
+        let marker = carrying_marker(&to, "client-cache.sqlite");
+        write(
+            &marker,
+            &format!("{CARRYING_HEADER}client-cache.sqlite\nclient-cache.sqlite-wal\n"),
+        );
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let searchable = std::fs::symlink_metadata(old.join("client-cache.sqlite-wal")).is_ok();
+        let stranded = finish_carrying(&old, &to, &|a, b| std::fs::rename(a, b));
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if !searchable {
+            assert_eq!(stranded.len(), 1, "{stranded:?}");
+            assert!(stranded[0].contains("could not tell where"));
+            assert!(marker.exists());
         }
         let _ = std::fs::remove_dir_all(&root);
     }
