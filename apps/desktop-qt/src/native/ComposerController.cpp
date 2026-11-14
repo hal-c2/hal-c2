@@ -1999,8 +1999,8 @@ void ComposerController::forgetTakenPicks() {
     // A send on its way is made past this client's answers when it goes
     // (`dispatchAll`), after its images are stored and the sends ahead of it
     // and the answers it waits for are in, so it needs them all, the ones the
-    // row shows too.
-    if (m_queues.contains(it.key())) {
+    // row shows too. So does one the outbox sends again (`waitAgain`).
+    if (m_queues.contains(it.key()) || outboxWaits(it.key())) {
       ++it;
       continue;
     }
@@ -4315,7 +4315,10 @@ void ComposerController::settleModes() {
 
 bool ComposerController::modeWaits(const QString& target) const {
   if (!m_client->isReady() || !m_store->synchronized() || m_store->snapshots() < m_outboxSince || !m_store->threadOnline(target)) return true;
-  if (m_queues.contains(target)) return true;
+  return m_queues.contains(target) || outboxWaits(target);
+}
+
+bool ComposerController::outboxWaits(const QString& target) const {
   return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; });
 }
 

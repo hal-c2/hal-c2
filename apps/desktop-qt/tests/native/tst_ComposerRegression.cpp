@@ -1006,6 +1006,76 @@ private slots:
     QVERIFY(!shell.offersRestore());
   }
 
+  // On the phone, a send whose images the dropped connection failed waits in
+  // the outbox and goes again once it is back: it still goes past an own
+  // change answered while it was on its way, though the row shows it.
+  void anOutboxSendGoesPastOwnChangesAnsweredBeforeTheDrop() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto codex = [](const QString& slug) {
+      return QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}};
+    };
+    QJsonObject start = shell.mc.threads.value(QStringLiteral("t1"));
+    start.insert(QStringLiteral("modelSelection"), codex(QStringLiteral("gpt-a")));
+    start.insert(QStringLiteral("runtimeMode"), QStringLiteral("full-access"));
+    start.insert(QStringLiteral("selectionRevision"), 1);
+    shell.mc.threads.insert(QStringLiteral("t1"), start);
+    shell.mc.appliesModes = true;
+    shell.composer()->setWaitsOffline(true);
+    shell.composer()->setOutboxRetryDelays({0});
+    QList<FakeMc::Rpc> storing;
+    shell.mc.onRpc(QStringLiteral("assets.persistChatAttachments"), [&storing](const FakeMc::Rpc& rpc) { storing.append(rpc); });
+    const auto seen = [&shell] { return shell.native->store()->thread(shell.key)->selectionRevision; };
+    const auto pick = [&shell](const QString& model) {
+      shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                             QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), model}});
+      QTRY_COMPARE(shell.composer()->currentSelection().value(QLatin1String("model")).toString(), model);
+    };
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QTRY_VERIFY(seen() == 1);
+
+    // Our access change is on its way when the send goes, so the send waits behind it.
+    shell.mc.hold(QStringLiteral("answers"));
+    shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
+    QTRY_COMPARE(shell.mc.commands.size(), 1);
+    pick(QStringLiteral("gpt-b"));
+    QImage picture(8, 8, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    picture.save(&buffer, "PNG");
+    shell.bridge->dispatch(QStringLiteral("composer.attach"),
+                           QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{
+                                                                     {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                                     {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                                     {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
+                                                                 }}}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 1);
+    shell.type(QStringLiteral("go"));
+    shell.submit(QStringLiteral("go"));
+    QTRY_COMPARE(storing.size(), 1);
+    shell.mc.answerHeld();
+    QTRY_VERIFY(seen() == 2);
+    pick(QStringLiteral("gpt-a"));
+    // The drop fails the storing; the send goes again once the MC is back.
+    shell.mc.drop();
+    QTRY_COMPARE(storing.size(), 2);
+    shell.mc.reply(storing.constLast(),
+                   QJsonObject{{QStringLiteral("attachments"),
+                                QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                                                       {QStringLiteral("id"), QStringLiteral("image-1")},
+                                                       {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                       {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                       {QStringLiteral("sizeBytes"), double(png.size())}}}}});
+
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("modelSelection")).toObject(), codex(QStringLiteral("gpt-b")));
+    QCOMPARE(shell.mc.commands.constLast().value(QLatin1String("selectionBase")).toInt(), 2);
+    QVERIFY(!shell.offersRestore());
+  }
+
   // The model and mode a new thread carried into the project's draft counted
   // as the user's own, so a new thread from another thread reopened the draft
   // still showing the first thread's.

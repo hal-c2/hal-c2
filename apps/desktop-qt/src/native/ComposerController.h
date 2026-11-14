@@ -643,6 +643,8 @@ private:
   // not sent the thread list since the connection came back, or the thread's
   // outbox still has messages to send, which go in the modes they carry.
   bool modeWaits(const QString& target) const;
+  // A send of the target's waits in the outbox to go again.
+  bool outboxWaits(const QString& target) const;
   // Whether any window's composer is setting the thread's mode.
   bool settingAnywhere(ModeKind kind, const QString& target) const;
   QString runtimeModeOf(const QString& target) const;
