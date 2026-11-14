@@ -116,7 +116,9 @@ fn snapshot(hub: &Hub, thread: &str, plans: &[(&str, i64)], offset: i64, floor: 
 }
 
 fn active(hub: &Hub) -> String {
-    let obj = hub.engine.singleton::<ThreadsObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThreadsObject>(&hub.engine)
+        .unwrap();
     hub.engine
         .to_js_string(&hub.engine.read_by_name(obj, "activeThread"))
         .to_string()
@@ -299,7 +301,9 @@ fn retry_follows_an_unreachable_thread_again() {
     snapshot(&hub, "t1", &[("a", 1)], 3, None);
     let first = stream(&hub, "t1").unwrap();
     hub.mc.frame_to(&hub.engine, first, json!({"t": "end"}));
-    let obj = hub.engine.singleton::<ThreadsObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThreadsObject>(&hub.engine)
+        .unwrap();
     hub.engine
         .invoke_by_name(obj, "reload", &[hub.engine.eval_js("'env-1:t1'").unwrap()])
         .unwrap();

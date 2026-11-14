@@ -185,7 +185,11 @@ impl Hub {
     /// a window is given them: the application's key filters see them first.
     pub fn window(&self) -> Window {
         let source = common::compile(&[("Window", "import QtQuick\nItem {}")], &[]);
-        let root = ljos::create_root(&self.engine, source, "Window").expect("the window");
+        let root = Bridge::main(&self.engine)
+            .in_scope(&self.engine, || {
+                ljos::create_root(&self.engine, source, "Window")
+            })
+            .expect("the window");
         self.test_window.borrow_mut().show(root).expect("a root");
         Window(self.test_window.clone())
     }
@@ -193,7 +197,11 @@ impl Hub {
     /// The hub's window showing `root` of `source` (QML compiled in the
     /// test, as `common::compile` or with the checkout's bricks).
     pub fn show(&self, source: ljos::MapSource, root: &str) -> (ljos::prelude::ObjectId, Window) {
-        let root = ljos::create_root(&self.engine, source, root).expect("the root");
+        let root = Bridge::main(&self.engine)
+            .in_scope(&self.engine, || {
+                ljos::create_root(&self.engine, source, root)
+            })
+            .expect("the root");
         self.test_window.borrow_mut().show(root).expect("a root");
         (root, Window(self.test_window.clone()))
     }

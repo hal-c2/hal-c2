@@ -50,8 +50,8 @@ fn files(engine: &Engine) -> Option<ObjectId> {
 /// The panel's previews, if it has them.
 fn previews(engine: &Engine) -> Option<ObjectId> {
     use ljos::prelude::Value;
-    let panel = engine
-        .singleton::<crate::controllers::panel::PanelObject>()
+    let panel = crate::bridge::Bridge::of(engine)
+        .singleton::<crate::controllers::panel::PanelObject>(engine)
         .ok()?;
     match engine.read_by_name(panel, "previews") {
         Value::Object(previews) => Some(previews),

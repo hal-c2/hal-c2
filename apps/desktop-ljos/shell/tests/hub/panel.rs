@@ -532,7 +532,9 @@ fn the_pull_request_commands_follow_the_environment() {
 #[test]
 fn the_tab_models_are_the_panel_singletons() {
     let hub = hub(&["t1"]);
-    let obj = hub.engine.singleton::<PanelObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<PanelObject>(&hub.engine)
+        .unwrap();
     let diff = hub.engine.read_by_name(obj, "diff");
     assert!(matches!(diff, ljos::prelude::Value::Object(_)));
     let previews = hub.engine.read_by_name(obj, "previews");
@@ -551,7 +553,9 @@ fn the_tab_models_are_the_panel_singletons() {
 
 /// The Panel singleton's model `name`.
 fn model(hub: &Hub, name: &str) -> ObjectId {
-    let obj = hub.engine.singleton::<PanelObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<PanelObject>(&hub.engine)
+        .unwrap();
     match hub.engine.read_by_name(obj, name) {
         ljos::prelude::Value::Object(model) => model,
         other => panic!("the panel's {name} is {other:?}"),
@@ -768,7 +772,9 @@ fn the_projects_open_pull_requests_are_read_once_unless_asked_again() {
 
 /// Whether the panel's Agents tab is told it shows.
 fn agents_shown(hub: &Hub) -> bool {
-    let obj = hub.engine.singleton::<PanelObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<PanelObject>(&hub.engine)
+        .unwrap();
     let ljos::prelude::Value::Object(agents) = hub.engine.read_by_name(obj, "agents") else {
         panic!("the panel has no Agents tab");
     };

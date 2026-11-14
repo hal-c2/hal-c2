@@ -231,7 +231,7 @@ fn obj(value: &Json, field: &str) -> Entity {
 /// `Spaces` in QML: what the Space bricks bind.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Spaces", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct SpacesObject {
     #[qml(constant, readonly)]
     spaces: Value,

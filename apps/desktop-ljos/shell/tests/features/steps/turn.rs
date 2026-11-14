@@ -470,7 +470,10 @@ fn tells(world: &World, told: &str) -> bool {
     let searching =
         controller::with::<Palette, _>(world.engine(), |p, _| p.is_open() && !p.searching())
             .unwrap_or(false);
-    if searching && let Ok(palette) = world.engine().singleton::<PaletteObject>() {
+    if searching
+        && let Ok(palette) = hal_c2_shell::bridge::Bridge::main(world.engine())
+            .singleton::<PaletteObject>(world.engine())
+    {
         for name in ["emptyText", "status"] {
             let said = world.engine().read_by_name(palette, name);
             if text(&hal_c2_shell::json::from_value(world.engine(), &said)) == told {

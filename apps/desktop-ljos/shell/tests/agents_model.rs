@@ -80,8 +80,8 @@ fn fixture() -> Fixture {
     );
     // A window for its clock, before Main starts its timers on it.
     let window = RefCell::new(ljos::testing::TestWindow::new(&engine, 100.0, 100.0));
-    let root = engine
-        .create_from_url("Main", None, Vec::new())
+    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+        .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
         .expect("Main is made");
     let now = Rc::new(Cell::new(at("2026-09-23T10:00:00Z")));
     let clock_now = now.clone();

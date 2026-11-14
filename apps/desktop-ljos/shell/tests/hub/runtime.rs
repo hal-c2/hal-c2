@@ -433,3 +433,118 @@ fn copy_dir(from: &Path, to: &Path) {
         }
     }
 }
+
+/// A built-in shell whose root says which `Shell` it reads.
+const READS_SHELL: &str = "import QtQuick\nimport HalC2.Shell\nWindow { objectName: \"built-in\"; property var shell: Shell }\n";
+
+/// [`hub`] with [`READS_SHELL`] open, and `window.new` showing roots as the
+/// app's opener does.
+fn opening() -> (Hub, TempDir) {
+    let (hub, dir) = hub();
+    write(&dir.path().join("app/Main.qml"), READS_SHELL);
+    open(&hub, &dir, false);
+    hal_c2_shell::controller::set_window_opener(&hub.engine, runtime::open_window);
+    (hub, dir)
+}
+
+/// The `Shell` root `root` reads.
+fn shell_of(hub: &Hub, root: ObjectId) -> ObjectId {
+    match hub.engine.read_by_name(root, "shell") {
+        Value::Object(obj) => obj,
+        other => panic!("shell: {other:?}"),
+    }
+}
+
+fn bridge_of(hub: &Hub, id: &str) -> ObjectId {
+    hal_c2_shell::controller::window_bridge(&hub.engine, id)
+        .expect("the window is open")
+        .object()
+}
+
+#[test]
+fn a_reload_makes_each_open_windows_root_again_reading_its_own_shell() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let (hub, _dir) = opening();
+    let engine = &hub.engine;
+    controller::open_window(engine, Some("two")).expect("the shell is started");
+    let (main, two) = (
+        runtime::root_of(engine, MAIN).expect("the first root"),
+        runtime::root_of(engine, "two").expect("the opener made a root"),
+    );
+    assert_ne!(main, two);
+    assert_eq!(shell_of(&hub, main), bridge_of(&hub, MAIN));
+    assert_eq!(shell_of(&hub, two), bridge_of(&hub, "two"));
+
+    runtime::reload(engine);
+    assert_eq!(generation(&hub), 2);
+    let (main2, two2) = (
+        runtime::root_of(engine, MAIN).unwrap(),
+        runtime::root_of(engine, "two").unwrap(),
+    );
+    assert!(main2 != main && two2 != two && main2 != two2);
+    assert_eq!(shell_of(&hub, main2), bridge_of(&hub, MAIN));
+    assert_eq!(shell_of(&hub, two2), bridge_of(&hub, "two"));
+    hub.advance(1);
+    assert!(!engine.is_alive(main) && !engine.is_alive(two));
+
+    // Closing a window other than the host's view lets its root go.
+    controller::close_window(engine, "two");
+    hub.advance(1);
+    engine.process_deferred_deletes();
+    assert_eq!(runtime::root_of(engine, "two"), None);
+    assert!(!engine.is_alive(two2));
+    assert!(engine.is_alive(main2));
+}
+
+#[test]
+fn closing_the_hosts_view_only_hides_it() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let (hub, _dir) = opening();
+    let engine = &hub.engine;
+    let main = runtime::window(engine).unwrap();
+    controller::open_window(engine, Some("two")).unwrap();
+
+    controller::close_window(engine, MAIN);
+    hub.advance(1);
+    engine.process_deferred_deletes();
+
+    assert_eq!(controller::windows(engine), vec!["two"]);
+    assert_eq!(runtime::root_of(engine, MAIN), None);
+    assert!(engine.is_alive(main), "the host's view stays, hidden");
+    assert!(runtime::root_of(engine, "two").is_some());
+}
+
+#[test]
+fn a_window_no_shell_can_be_made_for_is_closed_and_not_saved() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    for sub in ["app", "config", "state"] {
+        std::fs::create_dir(dir.path().join(sub)).unwrap();
+    }
+    write(&dir.path().join("app/Main.qml"), BUILT_IN);
+    let hub = Hub::with(Launch {
+        config_dir: Some(dir.path().join("config")),
+        state_dir: Some(dir.path().join("state")),
+        qml: Some(roots(&dir)),
+        ..Launch::default()
+    });
+    open(&hub, &dir, false);
+    controller::set_window_opener(&hub.engine, runtime::open_window);
+    // The shell's root is no longer a Window, for windows made from now.
+    write(
+        &dir.path().join("app/Main.qml"),
+        "import QtQuick\nItem {}\n",
+    );
+    let compiled = qml::compile(&roots(&dir)).unwrap();
+    hub.engine.set_component_source(compiled.source);
+
+    controller::open_window(&hub.engine, Some("two"));
+    hub.advance(1);
+    hub.engine.process_deferred_deletes();
+
+    assert_eq!(controller::windows(&hub.engine), vec![MAIN]);
+    assert_eq!(runtime::root_of(&hub.engine, "two"), None);
+    assert!(!hub.engine.quit_requested());
+    let saved = std::fs::read_to_string(dir.path().join("state/shell-windows.json")).unwrap();
+    assert!(!saved.contains("two"), "{saved}");
+}
