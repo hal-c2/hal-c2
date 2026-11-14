@@ -3037,6 +3037,38 @@ defmodule HalC2.Test.Mc.World do
     end
   end
 
+  @doc """
+  A gh configuration of the scenario's own (`context.gh_config`, made the MC's
+  `GH_CONFIG_DIR`), with no token in the environment.
+  """
+  def gh_config(context) do
+    if context[:gh_config] do
+      context
+    else
+      for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
+          do: put_os_env(name, nil)
+
+      config = Mc.tmp_dir(context.mc, "gh-config")
+      put_os_env("GH_CONFIG_DIR", config)
+      Map.put(context, :gh_config, config)
+    end
+  end
+
+  @doc """
+  Signs gh in to the Enterprise `host` as `gh auth login --hostname` leaves it,
+  beside any host already signed in to: the MC takes only a host gh is
+  configured for as a GitHub Enterprise one.
+  """
+  def gh_sign_in_enterprise(context, host) do
+    context = gh_config(context)
+
+    File.write!(Path.join(context.gh_config, "hosts.yml"), "#{host}:\n    user: monalisa\n", [
+      :append
+    ])
+
+    context
+  end
+
   @doc "Sets (or with `nil` unsets) an OS environment variable for the rest of the scenario."
   def put_os_env(name, value) do
     previous = System.get_env(name)
