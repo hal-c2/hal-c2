@@ -278,19 +278,21 @@ fn main() -> ExitCode {
     if options.check {
         return check(&options.roots);
     }
+    connect_to(&mut options);
+    // A folder named while the app already runs on this home goes to that
+    // window, and this launch ends here: no second MC starts, and a
+    // `--pair` link is left unspent (main.cpp pairs later, in the host).
+    if !options.folders.is_empty() && single_instance::forward(&options.state_dir, &options.folders)
+    {
+        return ExitCode::SUCCESS;
+    }
     // A failed start still gets its picture when one was asked for.
-    let failure = connect_to(&mut options).err();
+    let failure = attach(&mut options).err();
     if let Some(e) = &failure {
         eprintln!("hal-c2-ljos: {e}");
         if options.screenshot.is_none() {
             return ExitCode::FAILURE;
         }
-    }
-    // A folder named while the app already runs on this home goes to that
-    // window, and this launch ends here: no second MC starts.
-    if !options.folders.is_empty() && single_instance::forward(&options.state_dir, &options.folders)
-    {
-        return ExitCode::SUCCESS;
     }
     // Pages draw in the panel's browser tabs where CEF can run.
     match ljos_webengine::unavailable() {
@@ -370,7 +372,7 @@ fn check(roots: &Roots) -> ExitCode {
 /// Which MC the shell connects to and where it keeps what it was sent: the
 /// one named, else the one `--pair` pairs with, else the one the desktop
 /// host names (main.cpp's BackendProcess).
-fn connect_to(options: &mut Options) -> Result<(), String> {
+fn connect_to(options: &mut Options) {
     // A shell built from source, or one on the development profile, is
     // Dev (StageController), so it is never mistaken for the installed app.
     hal_c2_shell::controllers::stage::set_app_stage(if dev(options) { "Dev" } else { "" });
@@ -393,11 +395,6 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
     options.roots = options.roots.clone().with_user(config_dir.clone());
     options.launch.qml = Some(options.roots.clone());
     options.launch.config_dir = Some(config_dir);
-    if let Some(link) = &options.pair {
-        let kept = pair(link)?;
-        options.launch.mc_origin = Some(kept.origin);
-        options.mc_token = kept.token;
-    }
     // main.cpp's host arguments: the link to attach to, the development
     // profile (the host starts no MC release for one without a root), the
     // root, and the rest of the command line.
@@ -408,11 +405,21 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         paths.root.as_deref(),
         &passed,
     );
-    options.launch.hosted = options.launch.mc_origin.is_none();
     options.state_dir = paths.state.clone();
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
     options.launch.state_dir = Some(paths.state);
+}
+
+/// Spends a `--pair` link on the MC it names; without one, or without
+/// `--mc-origin`, the desktop host starts the MC (`hosted`).
+fn attach(options: &mut Options) -> Result<(), String> {
+    if let Some(link) = &options.pair {
+        let kept = pair(link)?;
+        options.launch.mc_origin = Some(kept.origin);
+        options.mc_token = kept.token;
+    }
+    options.launch.hosted = options.launch.mc_origin.is_none();
     Ok(())
 }
 
