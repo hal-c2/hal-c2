@@ -217,6 +217,28 @@ fn run(steps: &Steps, scenario: &Scenario) -> Verdict {
     }
 }
 
+/// Whether the held `id` (`<file>: <name>`, with ` #n` for a repeated name)
+/// is one `globs` select, or names a file features/ no longer has.
+fn wanted_by(id: &str, globs: &[String], features: &Path) -> bool {
+    let Some((file, name)) = id.split_once(": ") else {
+        return true;
+    };
+    if !features.join(file).is_file() {
+        return true;
+    }
+    let name = match name.rsplit_once(" #") {
+        Some((base, n)) if n.parse::<usize>().is_ok() => base,
+        _ => name,
+    };
+    globs.iter().any(|glob| {
+        let (file_glob, name_glob) = match glob.split_once(':') {
+            Some((f, n)) => (f, Some(n)),
+            None => (glob.as_str(), None),
+        };
+        gherkin::wildcard(file_glob, file) && name_glob.is_none_or(|n| gherkin::wildcard(n, name))
+    })
+}
+
 fn read_ratchet(path: &Path) -> BTreeSet<String> {
     std::fs::read_to_string(path)
         .unwrap_or_default()
@@ -405,13 +427,20 @@ fn main() -> ExitCode {
     }
 
     // What the ratchet holds and this run did not pass. A held scenario the
-    // run did not pick is missing only when the run was for all of them (the
-    // backlog is not what RATCHET holds).
+    // run did not pick is missing when the run was for all of them, or when
+    // its globs name it (a shard's, so a renamed or retagged scenario fails
+    // the shard it was in), or when its file is gone. The backlog is not what
+    // RATCHET holds.
     let ran: BTreeSet<&String> = ids.iter().collect();
     let whole = default_scope && !args.backlog;
     let regressed: Vec<&String> = held
         .iter()
-        .filter(|id| !passing.contains(*id) && (whole || ran.contains(id)))
+        .filter(|id| {
+            !passing.contains(*id)
+                && (whole
+                    || ran.contains(id)
+                    || (!args.backlog && wanted_by(id, &globs, &features)))
+        })
         .collect();
     if !regressed.is_empty() {
         println!(

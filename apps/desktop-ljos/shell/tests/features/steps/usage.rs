@@ -211,7 +211,11 @@ fn extend(mc: &mut FakeMc) {
         Ok(())
     });
     mc.on_rpc("server.refreshProviders", |mc, rpc| {
-        mc.part::<FakeUsage>().limit_checks += 1;
+        // A folder's read (the composer's skills) leaves quota alone, as
+        // the MC's does.
+        if rpc.payload.get("cwd").is_none() {
+            mc.part::<FakeUsage>().limit_checks += 1;
+        }
         // Each environment re-reads its own providers.
         let config = fake_config(mc);
         let own = config

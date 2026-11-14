@@ -46,6 +46,9 @@ pub struct Instance {
     /// ServerProviderUsageLimits, when the provider reports them.
     pub usage_limits: Obj,
     pub skills: Vec<Json>,
+    /// What the MC read in each folder asked for (`server.refreshProviders`):
+    /// `[{cwd, skills, slashCommands}]`.
+    pub workspace_snapshots: Vec<Json>,
 }
 
 impl Instance {
@@ -208,6 +211,44 @@ pub fn no_provider_stand_in(list: &[Instance]) -> &'static str {
     }
 }
 
+fn snapshot_for<'a>(instance: &'a Instance, cwd: &str) -> Option<&'a Json> {
+    if cwd.is_empty() {
+        return None;
+    }
+    instance
+        .workspace_snapshots
+        .iter()
+        .find(|snapshot| snapshot["cwd"].as_str() == Some(cwd))
+}
+
+/// `first`'s entries, then those of `then` whose name `first` has not used.
+fn by_name(first: &[Json], then: &[Json]) -> Vec<Json> {
+    let mut seen = HashSet::new();
+    first
+        .iter()
+        .chain(then)
+        .filter(|entry| seen.insert(entry["name"].as_str().unwrap_or_default().to_owned()))
+        .cloned()
+        .collect()
+}
+
+/// `instance` with the skills and commands the MC read in `cwd` ahead of
+/// its own.
+pub fn in_folder(instance: &Instance, cwd: &str) -> Instance {
+    let mut seen = instance.clone();
+    if let Some(snapshot) = snapshot_for(instance, cwd) {
+        let list = |key: &str| snapshot[key].as_array().cloned().unwrap_or_default();
+        seen.skills = by_name(&list("skills"), &instance.skills);
+        seen.slash_commands = by_name(&list("slashCommands"), &instance.slash_commands);
+    }
+    seen
+}
+
+/// Whether the MC holds what it read in `cwd` for `instance`.
+pub fn has_read(instance: &Instance, cwd: &str) -> bool {
+    snapshot_for(instance, cwd).is_some()
+}
+
 pub fn instances(providers: &[Json]) -> Vec<Instance> {
     static HEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("^#[0-9a-fA-F]{6}$").unwrap());
     let mut list = Vec::new();
@@ -247,6 +288,7 @@ pub fn instances(providers: &[Json]) -> Vec<Instance> {
             slash_commands: array(provider, "slashCommands"),
             usage_limits: object(provider, "usageLimits").clone(),
             skills: array(provider, "skills"),
+            workspace_snapshots: array(provider, "workspaceSnapshots"),
             instance_id,
             driver,
         });

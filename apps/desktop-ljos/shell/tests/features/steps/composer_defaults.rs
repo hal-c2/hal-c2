@@ -201,9 +201,22 @@ pub fn register(steps: &mut Steps) {
                 "composer.submit",
                 json!({"text": "use it", "intent": "foreground"}),
             )?;
+            // A pick of the model the thread already runs is no pick: the
+            // message names none, and the thread's own runs.
             let sent = last_message(world)?;
+            let runs = match sent.get("modelSelection") {
+                Some(selection) if selection.as_object().is_some_and(|s| !s.is_empty()) => {
+                    selection.clone()
+                }
+                _ => world
+                    .mc
+                    .threads
+                    .get(THREAD)
+                    .map(|row| row["modelSelection"].clone())
+                    .unwrap_or(Value::Null),
+            };
             expect!(
-                sent["modelSelection"]["model"] == json!(c[0]),
+                runs["model"] == json!(c[0]),
                 "the turn did not run on {}",
                 c[0]
             );
