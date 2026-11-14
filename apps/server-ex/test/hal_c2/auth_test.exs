@@ -8,8 +8,9 @@ defmodule HalC2.AuthTest do
 
   @moduletag :tmp_dir
 
+  # The MC's home sits beside the test's files: what is inside it no client may write.
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, dir)
+    Application.put_env(:hal_c2, :home, Path.join(dir, "mc"))
     Application.put_env(:hal_c2, :port, 0)
     :persistent_term.erase({HalC2.Web, :token})
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
@@ -152,6 +153,133 @@ defmodule HalC2.AuthTest do
     HalC2.Auth.connected(id)
     HalC2.Auth.clients()
     assert_received {:hal_c2_session_revoked, ^id}
+  end
+
+  test "revoking a session through the store API closes its live socket", %{path: path} do
+    {:ok, access, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+    {:ok, %{id: id}} = HalC2.Auth.session(access)
+    connect_socket(id)
+
+    assert HalC2.Auth.revoke_session(path, id)
+    assert_receive {:socket, {:hal_c2_session_revoked, ^id}}
+  end
+
+  # The CLI revokes from another VM, where no close message can reach the
+  # socket: deleting the row directly stands in for it here.
+  test "a session deleted from the store loses its socket on its next call",
+       %{port: port, path: path} do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    {:ok, db} = Sqlite3.open(path)
+    :ok = Sqlite3.execute(db, "DELETE FROM auth_sessions WHERE id = '#{id}'")
+    Sqlite3.close(db)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "rpc",
+        "id" => 91_001,
+        "environment" => HalC2.Environment.id(),
+        "method" => "server.getConfig",
+        "payload" => %{}
+      })
+
+    assert_receive {:tcp, ^socket, _} = message, 5_000
+    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+  end
+
+  # Subscriptions keep flowing to a socket that makes no calls: its session recheck
+  # closes it, which is how a revoke the CLI made in the store reaches a running MC.
+  test "a session deleted from the store loses its subscribed socket",
+       %{port: port, path: path} do
+    Application.put_env(:hal_c2, :session_recheck_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :session_recheck_ms) end)
+
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    {:ok, _} = HalC2.Streams.commit("store-revoke-th", :thread, [{"note", "n1", %{}}])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "store-revoke-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    {:ok, db} = Sqlite3.open(path)
+    :ok = Sqlite3.execute(db, "DELETE FROM auth_sessions WHERE id = '#{id}'")
+    Sqlite3.close(db)
+    {:ok, _} = HalC2.Streams.commit("store-revoke-th", :thread, [{"note", "n2", %{}}])
+
+    assert closed_with(client, socket) == {:close, 4401, "session revoked"}
+  end
+
+  # The CLI revokes through the running MC: a subscribed socket closes at once, without
+  # waiting for its next session recheck.
+  test "a session revoked from the CLI closes its subscribed socket at once", %{port: port} do
+    _ = HalC2.Web.token()
+    {client, id} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+    {:ok, _} = HalC2.Streams.commit("cli-revoke-th", :thread, [{"note", "n1", %{}}])
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "cli-revoke-th"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    socket = Mint.HTTP.get_socket(client.conn)
+
+    Mix.shell(Mix.Shell.Process)
+    on_exit(fn -> Mix.shell(Mix.Shell.IO) end)
+    Mix.Tasks.HalC2.Auth.run(["session", "revoke", id])
+    assert_received {:mix_shell, :info, [message]}
+    assert message == "#{id}: the session was revoked"
+
+    assert_receive {:tcp, ^socket, _} = message, 1_000
+    {:ok, _conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    assert {:ok, _, [{:close, 4401, "session revoked"}]} = Mint.WebSocket.decode(client.ws, data)
+  end
+
+  test "a nested subject token is an invalid grant and leaves Auth running", %{
+    port: port,
+    path: path
+  } do
+    assert :error = HalC2.Auth.exchange(%{"x" => "y"})
+
+    body =
+      URI.encode_query(%{
+        "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
+      }) <> "&subject_token%5Bx%5D=y"
+
+    assert {400, %{"error" => "invalid_grant"}} =
+             post_form("http://127.0.0.1:#{port}/oauth/token", body)
+
+    assert {:ok, _, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(path))
+  end
+
+  test "pairing link TTLs are integers from one second to one day", %{port: port} do
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    {:ok, %{"credential" => credential}} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => admin_scopes})
+
+    {:ok, access, _, _} = HalC2.Auth.exchange(credential)
+
+    for ttl <- [1_000, 86_400_000] do
+      assert {:ok, %{"expiresAt" => _}} = HalC2.Auth.create_pairing_link(%{"ttlMs" => ttl})
+    end
+
+    existing = HalC2.Auth.pairing_links()
+
+    for ttl <- [0, 999, 86_400_001, 1.5, "1000", true, %{"seconds" => 1}] do
+      assert {:error, :invalid_ttl} = HalC2.Auth.create_pairing_link(%{"ttlMs" => ttl})
+    end
+
+    assert HalC2.Auth.pairing_links() == existing
+
+    assert {400, %{"_tag" => "EnvironmentRequestInvalidError"}} =
+             request(:post, "http://127.0.0.1:#{port}/api/auth/pairing-token", access, %{
+               "ttlMs" => "forever"
+             })
+
+    assert {:ok, _} = HalC2.Auth.create_pairing_link(%{})
   end
 
   # A ticket request reads its session, then inserts the ticket; a revoke between the
@@ -648,7 +776,7 @@ defmodule HalC2.AuthTest do
   end
 
   defp post_form(url, form) do
-    body = URI.encode_query(form)
+    body = if is_binary(form), do: form, else: URI.encode_query(form)
 
     {:ok, {{_, status, _}, _, resp}} =
       :httpc.request(:post, {url, [], ~c"application/x-www-form-urlencoded", body}, [], [])
@@ -666,5 +794,23 @@ defmodule HalC2.AuthTest do
 
     {:ok, {{_, status, _}, _, resp}} = :httpc.request(method, req, [], [])
     {status, JSON.decode!(to_string(resp))}
+  end
+
+  # The close frame the socket ends with, past any subscription data sent before it.
+  defp closed_with(client, socket) do
+    assert_receive {:tcp, ^socket, _} = message, 5_000
+    {:ok, conn, responses} = Mint.WebSocket.stream(client.conn, message)
+
+    {ws, frames} =
+      for {:data, _, data} <- responses, reduce: {client.ws, []} do
+        {ws, seen} ->
+          {:ok, ws, frames} = Mint.WebSocket.decode(ws, data)
+          {ws, seen ++ frames}
+      end
+
+    case Enum.find(frames, &match?({:close, _, _}, &1)) do
+      nil -> closed_with(%{client | conn: conn, ws: ws}, socket)
+      close -> close
+    end
   end
 end

@@ -112,7 +112,8 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_git_action, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_preview_automation, _, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_slack, _, _, _}" => @other,
-      "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => @other
+      "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => @other,
+      "HalC2.Web.Socket handle_info :recheck_session" => @other
     },
     environment: %{
       "deliver" => "the runtime moves a message along its lane into a mailbox",

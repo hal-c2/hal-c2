@@ -48,6 +48,9 @@ defmodule HalC2.Projects do
       relative?(root) ->
         {:error, relative_error(root)}
 
+      HalC2.Workspace.mc_own_dir?(root) ->
+        {:error, "#{root} is inside the MC's own directories"}
+
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
 
@@ -396,11 +399,16 @@ defmodule HalC2.Projects do
       case File.ls(parent) do
         {:ok, names} ->
           entries =
-            for name <- Enum.sort(names),
-                String.starts_with?(String.downcase(name), String.downcase(prefix)),
-                show_hidden or not String.starts_with?(name, "."),
-                File.dir?(Path.join(parent, name)),
-                do: %{"name" => name, "fullPath" => Path.join(parent, name)}
+            if HalC2.Workspace.mc_protected?(parent) do
+              []
+            else
+              for name <- Enum.sort(names),
+                  String.starts_with?(String.downcase(name), String.downcase(prefix)),
+                  show_hidden or not String.starts_with?(name, "."),
+                  File.dir?(Path.join(parent, name)),
+                  not HalC2.Workspace.mc_protected?(Path.join(parent, name)),
+                  do: %{"name" => name, "fullPath" => Path.join(parent, name)}
+            end
 
           {:ok, %{"parentPath" => parent, "entries" => entries}}
 
@@ -464,9 +472,17 @@ defmodule HalC2.Projects do
 
   defp relative_root(%{"workspaceRoot" => root}) when is_binary(root) do
     cond do
-      root == "" -> {:refused, "a workspace folder is required"}
-      relative?(root) -> {:refused, relative_error(root)}
-      true -> nil
+      root == "" ->
+        {:refused, "a workspace folder is required"}
+
+      relative?(root) ->
+        {:refused, relative_error(root)}
+
+      HalC2.Workspace.mc_own_dir?(root) ->
+        {:refused, "#{root} is inside the MC's own directories"}
+
+      true ->
+        nil
     end
   end
 

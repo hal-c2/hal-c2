@@ -134,11 +134,49 @@ defmodule HalC2.PullRequestsTest do
                }
              ])
 
-    assert %{kind: "github", host: "github.example.com", repository: "acme/widgets"} =
-             PullRequests.parse_remote("git@github.example.com:acme/widgets.git")
+    assert %{kind: "github", host: "github.com", repository: "acme/widgets"} =
+             PullRequests.parse_remote("git@github.com:acme/widgets.git")
 
     assert %{kind: "gitlab", repository: "group/sub/app"} =
              PullRequests.parse_remote("https://gitlab.com/group/sub/app")
+  end
+
+  test "GitHub Enterprise hosts need an explicit gh host entry", %{dir: dir} do
+    config = Path.join(dir, "gh-config")
+    File.mkdir_p!(config)
+    previous = System.get_env("GH_CONFIG_DIR")
+    System.put_env("GH_CONFIG_DIR", config)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("GH_CONFIG_DIR", previous),
+        else: System.delete_env("GH_CONFIG_DIR")
+    end)
+
+    assert %{kind: "unknown"} =
+             PullRequests.parse_remote("git@github.example.com:acme/widgets.git")
+
+    assert %{kind: "unknown"} =
+             PullRequests.parse_remote("git@github.attacker.example:acme/widgets.git")
+
+    File.write!(Path.join(config, "hosts.yml"), "github.example.com:\n    user: octo\n")
+
+    assert %{kind: "github"} =
+             PullRequests.parse_remote("git@github.example.com:acme/widgets.git")
+
+    assert %{kind: "unknown"} =
+             PullRequests.parse_remote("git@github.attacker.example:acme/widgets.git")
+
+    project!(dir, "attacker", "git@github.attacker.example:acme/widgets.git")
+
+    assert {:error, %{"_tag" => "PullRequestUnavailableError", "provider" => "unknown"}} =
+             PullRequests.detail(%{
+               "projectId" => "attacker",
+               "repository" => "acme/widgets",
+               "number" => 1
+             })
+
+    assert File.read!(Path.join(dir, "gh.log")) == ""
   end
 
   test "a listing reads each repository, newest first, and carries on from a cursor", %{dir: dir} do

@@ -342,4 +342,26 @@ defmodule HalC2.SubprocessDurableTest do
 
     assert said == "config is not trusted"
   end
+
+  test "a spawned program does not inherit the MC's own environment values" do
+    System.put_env("HAL_C2_TEST_SECRET", "mc-secret")
+    System.put_env("RELEASE_TEST_SECRET", "release-secret")
+    on_exit(fn -> System.delete_env("HAL_C2_TEST_SECRET") end)
+    on_exit(fn -> System.delete_env("RELEASE_TEST_SECRET") end)
+
+    program = [
+      "sh",
+      "-c",
+      ~s(printf '%s|%s|%s|%s\n' "$HAL_C2_TEST_SECRET" "$RELEASE_TEST_SECRET" "$HAL_C2_GIVEN" "$KEEP_ME"; exit 0)
+    ]
+
+    {:ok, sub} =
+      Subprocess.start(program,
+        durable: "t1",
+        env: [{"HAL_C2_GIVEN", "given"}, {"KEEP_ME", "kept"}]
+      )
+
+    assert {["||given|kept"], _offset} = lines(sub, 1)
+    Subprocess.stop(sub)
+  end
 end

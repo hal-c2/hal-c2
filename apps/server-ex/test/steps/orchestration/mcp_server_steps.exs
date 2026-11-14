@@ -1363,8 +1363,8 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   end
 
   step "a session the MC no longer has is not an error", context do
-    assert :ok = HalC2.Mcp.end_session(context.mcp_session_id)
-    assert :ok = HalC2.Mcp.end_session("a-session-that-never-was")
+    assert :ok = HalC2.Mcp.end_session(credential(context, "caller"), context.mcp_session_id)
+    assert :ok = HalC2.Mcp.end_session(credential(context, "caller"), "a-session-that-never-was")
     context
   end
 
@@ -1933,7 +1933,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     end
 
     delete = fn _endpoint, headers ->
-      HalC2.Mcp.end_session(headers["mcp-session-id"])
+      HalC2.Mcp.end_session(headers["authorization"], headers["mcp-session-id"])
       {:ok, 200}
     end
 

@@ -88,6 +88,26 @@ defmodule HalC2.AuthLifetimeTest do
     assert {:ok, _, _, _} = Auth.exchange(pairing)
   end
 
+  test "restarting Auth does not extend the desktop bootstrap expiry" do
+    :ok = stop_supervised(Auth)
+    :ok = HalC2.Desktop.apply_bootstrap(%{"desktopBootstrapToken" => "desk-token"})
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :desktop_token)
+      Application.delete_env(:hal_c2, :desktop_token_expires_at)
+    end)
+
+    start_supervised!(Auth)
+    expires_at = :sys.get_state(Auth).desktop.expires_at
+    advance(:timer.hours(23))
+    :ok = stop_supervised(Auth)
+    start_supervised!(Auth)
+
+    assert :sys.get_state(Auth).desktop.expires_at == expires_at
+    advance(:timer.hours(2))
+    assert Auth.exchange("desk-token") == :error
+  end
+
   test "a crash of the server keeps tickets, accepted proofs, open sockets and watchers",
        %{path: path} do
     {access, %{id: id}} = session(path)

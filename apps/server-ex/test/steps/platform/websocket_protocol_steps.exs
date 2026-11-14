@@ -1173,7 +1173,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the MC loads a new version in place", context do
     if System.get_env("RELEASE_ROOT") == nil, do: Mc.release(context.mc)
     Mc.ensure(HalC2.Upgrade)
-    target = "#{HalC2.Upgrade.version()}-hot#{System.unique_integer([:positive])}"
+    # Newer than the running version: an older one needs "allowDowngrade".
+    %Version{major: major, minor: minor, patch: patch} = Version.parse!(HalC2.Upgrade.version())
+    target = "#{major}.#{minor}.#{patch + 1}-hot#{System.unique_integer([:positive])}"
     # Only loaded modules are replaced in place.
     Code.ensure_loaded!(HalC2.Streams.Server)
     modules = [Mc.variant(HalC2.Web.Socket), Mc.variant(HalC2.Streams.Server)]

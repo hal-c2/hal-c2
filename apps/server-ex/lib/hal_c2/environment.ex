@@ -285,7 +285,10 @@ defmodule HalC2.Environment do
           "otlpLogsEnabled" => false
         }
         |> then(
-          &if(url = HalC2.Traces.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)
+          &if(url = HalC2.Traces.otlp_url(),
+            do: Map.put(&1, "otlpTracesUrl", HalC2.Traces.redacted_url(url)),
+            else: &1
+          )
         ),
       "settings" => HalC2.Settings.settings()
     }
