@@ -380,15 +380,20 @@ fn slash_plan_switches_the_mode_without_sending() {
         "planModeEnabled",
         json!(true),
     );
+    // The pick sets the thread's mode at once, as desktop-qt's does; the
+    // message that follows carries no second change.
     send(&hub, "/plan");
-    assert!(commands(&hub).is_empty());
     assert_eq!(draft(&hub, "t1"), "");
-    send(&hub, "think first");
     let sent = commands(&hub);
+    assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0]["type"], "thread.interaction-mode.set");
     assert_eq!(sent[0]["interactionMode"], "plan");
     hub.mc.answer(&hub.engine, DISPATCH, Ok(json!({})));
-    assert_eq!(commands(&hub)[1]["text"], "think first");
+    send(&hub, "think first");
+    let sent = commands(&hub);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[1]["type"], "message.dispatch");
+    assert_eq!(sent[1]["text"], "think first");
 }
 
 #[test]
@@ -451,5 +456,7 @@ fn a_thread_the_mc_has_no_provider_for_is_not_switched_by_the_first_send() {
     let sent = commands(&hub);
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0]["type"], "message.dispatch");
-    assert_eq!(sent[0]["modelSelection"]["instanceId"], "codex");
+    // With no pick the message names no model: the MC runs the thread on
+    // its own, as desktop-qt's aThreadWithNoProviderIsNotSwitchedOnItsFirstSend.
+    assert!(sent[0].get("modelSelection").is_none(), "{sent:?}");
 }
