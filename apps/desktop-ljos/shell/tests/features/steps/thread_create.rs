@@ -13,7 +13,7 @@ use hal_c2_shell::controllers::palette::Palette;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::sidebar as sidebar_ctl;
 use hal_c2_shell::controllers::workspace::{self, Checkout};
-use ljos::item::{KeyEvent, Modifiers, MouseButtons, key};
+use ljos::item::{Modifiers, MouseButtons};
 use serde_json::{Value, json};
 
 use super::add_project::{is_open as palette_open, prop as palette_prop};
@@ -574,11 +574,8 @@ pub fn register(steps: &mut Steps) {
                 world.click_at_with(x, y, MouseButtons::LEFT, Modifiers::empty())?;
                 return world.sync();
             }
-            // Qt reads Shift off the click itself; the shell has only key
-            // events to go by, so Shift is pressed as a key around it.
-            world.key(&KeyEvent::press(key::SHIFT).with_modifiers(Modifiers::SHIFT))?;
+            // Shift is read off the click itself, as Qt reads it.
             world.click_at_with(x, y, MouseButtons::LEFT, Modifiers::SHIFT)?;
-            world.key(&KeyEvent::release(key::SHIFT))?;
             world.sync()
         },
     );

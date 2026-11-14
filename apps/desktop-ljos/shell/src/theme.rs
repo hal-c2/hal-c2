@@ -670,23 +670,15 @@ impl Derived {
     }
 }
 
-/// Whether the interface family is a monospace one (desktop-qt asks
-/// `QFontInfo::fixedPitch`). By its name, as Ljós has no fixed-pitch query
-/// yet (hal-c2/ljos-ui#210): the families such a face goes by.
+/// Whether the interface family is a fixed-pitch one, by its characters'
+/// widths, as desktop-qt asks `QFontInfo::fixedPitch`.
 fn is_monospace(family: &str) -> bool {
-    const NAMES: [&str; 9] = [
-        "mono",
-        "code",
-        "courier",
-        "consol",
-        "menlo",
-        "monaco",
-        "terminal",
-        "fixed",
-        "typewriter",
-    ];
-    let family = family.to_ascii_lowercase();
-    NAMES.iter().any(|name| family.contains(name))
+    !family.is_empty()
+        && ljos::font_info(&Font {
+            family: Atom::from(family),
+            ..Font::default()
+        })
+        .fixed_pitch
 }
 
 /// "8", "8px" or "0.5rem" (a 16px root).

@@ -105,7 +105,7 @@ Item {
     }
 
     function rich(html) {
-        return richHead + Md.inlineStyles(html, styleRules) + "</body></html>";
+        return richHead + html + "</body></html>";
     }
 
     // A segment's item, whose functions are the delegate's own.
@@ -344,9 +344,6 @@ Item {
         readonly property bool previewed: root.linkPreviews !== null && hoveredLink.length > 0 && root.linkPreviews.address === hoveredLink
 
         textFormat: TextEdit.RichText
-        // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
-        // Its plain text, since `text` here is the HTML document.
-        Accessible.name: getText(0, length)
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         readOnly: true
         selectByMouse: true
