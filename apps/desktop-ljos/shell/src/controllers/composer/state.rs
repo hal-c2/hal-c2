@@ -2,12 +2,14 @@
 //! composer (`composer`), the picker (`modelPicker`) and the stash
 //! (`composerStash`); and the suggestions and @ search behind them.
 
+use std::time::{Duration, Instant};
+
 use serde_json::json;
 
 use super::attachments::shown_attachments;
 use super::kept::{self, Attachment};
 use super::text::{self, approval_title, default_approval_options, items_of, review_label};
-use super::{Composer, PathSearch, back, later, setting, thread_of};
+use super::{Composer, FolderAsk, PathSearch, back, later, setting, thread_of};
 use crate::composer_model::{self as model, Instance, Suggestion, Trigger};
 use crate::controllers::drafts;
 use crate::controllers::keybindings::Keymap;
@@ -524,10 +526,23 @@ impl Composer {
         } else {
             "Ask anything, @tag files/folders, $use skills, or / for commands"
         };
+        // A started thread whose own provider cannot run here sends nothing
+        // until the user picks one: the composer never swaps it for another.
+        // One the catalogue cannot judge yet (none listed, or none named) is
+        // the MC's to run.
+        let needs_pick = !is_draft
+            && kept.model_selection.is_none()
+            && thread
+                .as_ref()
+                .is_some_and(|t| !t.model_selection.is_empty())
+            && !self.catalogue.is_empty()
+            && !instance.is_some_and(Instance::ready);
         let disabled_reason = if offline {
             json!("Not connected")
         } else if no_provider {
             json!("No provider available")
+        } else if needs_pick {
+            json!("Choose a model to send")
         } else {
             Json::Null
         };
@@ -613,7 +628,7 @@ impl Composer {
             "citations": citations,
             "placeholder": placeholder,
             "editorDisabled": approvals > 0 || choice_only,
-            "canSend": !(busy || offline || no_provider) && (has_content || show_plan_follow_up),
+            "canSend": !(busy || offline || no_provider || needs_pick) && (has_content || show_plan_follow_up),
             "sendDisabledReason": disabled_reason,
             "isRunning": is_running,
             "followUpBehavior": follow_up,
@@ -746,8 +761,8 @@ impl Composer {
     ) -> Option<Trigger> {
         let trigger = model::trigger(text, cursor)?;
         if trigger.kind == "skill" {
-            let selection = self.selection(engine, target);
-            if !model::opens_skill_menu(self.instance_of(&selection), &trigger.query) {
+            let folder = self.commands_of(engine, target);
+            if !model::opens_skill_menu(folder.as_ref(), &trigger.query) {
                 return None;
             }
         }
@@ -766,8 +781,8 @@ impl Composer {
         let Some(trigger) = trigger else {
             return Vec::new();
         };
-        let selection = self.selection(engine, target);
-        let instance = self.instance_of(&selection);
+        let folder = self.commands_of(engine, target);
+        let instance = folder.as_ref();
         match trigger.kind.as_str() {
             "slash-command" => model::slash_items(
                 instance,
@@ -784,6 +799,87 @@ impl Composer {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The draft's instance with the skills and commands of the folder it
+    /// works in, once the MC has read them (`ask_folder`).
+    pub(super) fn commands_of(&self, engine: &Engine, target: &str) -> Option<Instance> {
+        let selection = self.selection(engine, target);
+        let instance = self.instance_of(&selection)?;
+        Some(model::in_folder(
+            instance,
+            &self.search_place(engine, target).1,
+        ))
+    }
+
+    /// Most providers' skills and many commands are a folder's own (Claude's
+    /// and Codex's entries carry none): the MC reads them when a composer
+    /// asks for its folder and announces them with the providers, as
+    /// `workspaceSnapshots`. Asked once the composer has an instance and a
+    /// folder, one read at a time; again after five minutes so a skill added
+    /// to the project since shows up; half a minute after a read that
+    /// failed; and at once when a catalogue announced since the MC kept the
+    /// folder no longer has it (the MC restarted).
+    pub(super) fn ask_folder(&mut self, engine: &Engine, target: &str) {
+        if target.is_empty() || !self.mc.is_ready() {
+            return;
+        }
+        let selection = self.selection(engine, target);
+        let Some(instance) = self.instance_of(&selection).filter(|i| i.enabled) else {
+            return;
+        };
+        let (environment, cwd) = self.search_place(engine, target);
+        if cwd.is_empty() || !store::with(engine, |s| s.environment_online(&environment)) {
+            return;
+        }
+        let instance_id = instance.instance_id.clone();
+        let key = format!("{environment}\n{instance_id}\n{cwd}");
+        if let Some(asked) = self.folders_asked.get(&key) {
+            if asked.reading {
+                return;
+            }
+            let lost = asked.kept
+                && self.catalogues > asked.answered_at
+                && !model::has_read(instance, &cwd);
+            if Instant::now() < asked.stands && !lost {
+                return;
+            }
+        }
+        self.folders_asked.insert(
+            key.clone(),
+            FolderAsk {
+                reading: true,
+                kept: false,
+                answered_at: 0,
+                stands: Instant::now(),
+            },
+        );
+        self.mc.call(
+            &environment,
+            "server.refreshProviders",
+            json!({"instanceId": instance_id, "cwd": cwd}),
+            back(&self.me, move |c, _engine, result| {
+                let kept = result.as_ref().is_ok_and(|answer| {
+                    let answered = model::instances(
+                        answer["providers"]
+                            .as_array()
+                            .map(Vec::as_slice)
+                            .unwrap_or_default(),
+                    );
+                    model::find(&answered, &instance_id).is_some_and(|i| model::has_read(i, &cwd))
+                });
+                let wait = if result.is_err() { 30 } else { 300 };
+                c.folders_asked.insert(
+                    key,
+                    FolderAsk {
+                        reading: false,
+                        kept,
+                        answered_at: c.catalogues,
+                        stands: Instant::now() + Duration::from_secs(wait),
+                    },
+                );
+            }),
+        );
     }
 
     /// Where `target`'s @ words are searched: the route's own checkout, or
