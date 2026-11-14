@@ -28,7 +28,7 @@
 //! them in NativeShell::common for every window), so the sidebar and the
 //! composer read them without waiting on it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -113,9 +113,6 @@ struct Kept {
     /// The thread or draft a window last showed: what a new thread carries
     /// from when none is shown (the phone starts threads from home).
     last_shown: RefCell<String>,
-    /// Shift is down, as the last key event had it: what Qt's
-    /// keyboardModifiers() says, which Ljós does not offer (hal-c2/ljos-ui#297).
-    shift_held: Cell<bool>,
 }
 
 fn kept(engine: &Engine) -> Rc<Kept> {
@@ -553,15 +550,6 @@ impl Controller for DraftController {
         }
         reconcile(engine);
         add_commands(engine);
-        ljos::keys::add_key_filter(engine, |engine, _, ev| {
-            let held = if ev.key == ljos::keys::key::SHIFT {
-                ev.kind == ljos::keys::KeyKind::Press
-            } else {
-                ev.modifiers.contains(ljos::keys::Modifiers::SHIFT)
-            };
-            kept(engine).shift_held.set(held);
-            false
-        });
         let me = self.me.clone();
         let present_and_land = move |engine: &Engine| {
             let me = me.clone();
@@ -606,7 +594,8 @@ impl Controller for DraftController {
                 let requested = text("projectKey");
                 // The thread list's button asks, unless Shift is held.
                 let ask = payload.get("ask").and_then(Json::as_bool).unwrap_or(false)
-                    && !kept(engine).shift_held.get();
+                    && !ljos::keys::keyboard_modifiers(engine)
+                        .contains(ljos::keys::Modifiers::SHIFT);
                 Bridge::of(engine).defer(engine, move |engine| {
                     start_new_asking(engine, &requested, ask)
                 });
