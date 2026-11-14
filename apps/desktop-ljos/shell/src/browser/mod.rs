@@ -727,6 +727,20 @@ impl BrowserPage {
         );
     }
 
+    /// The page's picture as a PNG, {mimeType: "image/png", data (base64),
+    /// width, height}: None when the view could not take one.
+    pub fn grab_png(
+        engine: &Engine,
+        obj: ObjectId,
+        done: impl FnOnce(&Engine, Option<Json>) + 'static,
+    ) {
+        Self::grab(engine, obj, move |engine, image| {
+            let png =
+                ljos::item::grabbed_image(engine, &image).and_then(|picture| png_of(&picture));
+            done(engine, png);
+        });
+    }
+
     /// A keybinding for the showing page: preview.refresh, preview.focusUrl,
     /// preview.zoomIn, preview.zoomOut or preview.resetZoom.
     pub fn command(engine: &Engine, obj: ObjectId, command: &str) {
@@ -792,7 +806,7 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &PageInner, notes: &[PageNote]) {
                     .and_then(|()| engine.set_internal(obj, BrowserPage::EXISTS, exists))
                     // The brick loads where the tab is when tabIdChanged
                     // fires, but the page hears of its tab a tick later
-                    // (keep_tab_id, keep_previews), and TODO(ljos#381) of
+                    // (keep_tab_id, keep_previews), and TODO(ljos#438) of
                     // its view once the brick is made: a view that has
                     // shown nothing yet loads it now.
                     .and_then(|()| {
@@ -996,4 +1010,34 @@ impl BrowserPage {
             BrowserPage::emit_logged(cx, Atom::new(level), message, Atom::new(&at)),
         );
     }
+}
+
+/// A grabbed picture (premultiplied) as a PNG, as `BrowserPage::grab_png`
+/// hands it on.
+fn png_of(picture: &ljos::item::ImageHandle) -> Option<Json> {
+    let (width, height) = (picture.width(), picture.height());
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let [r, g, b, a] = picture.pixel(x, y);
+            let straight = |c: u8| {
+                if a == 0 {
+                    0
+                } else {
+                    ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8
+                }
+            };
+            rgba.extend_from_slice(&[straight(r), straight(g), straight(b), a]);
+        }
+    }
+    let image = image::RgbaImage::from_raw(width, height, rgba)?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    use base64::Engine as _;
+    Some(json!({
+        "mimeType": "image/png",
+        "data": base64::engine::general_purpose::STANDARD.encode(png.into_inner()),
+        "width": width,
+        "height": height,
+    }))
 }

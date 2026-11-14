@@ -379,17 +379,13 @@ fn register_loads(steps: &mut Steps) {
             show_tab(world, "/")?;
             let code = captures[0].as_str();
             match code {
-                // TODO(ljos#387): neither reaches the panel as a failed load
-                // yet; the engine shows its own error page instead.
-                // TODO(ljos#395): either load stalls the engine past the
-                // runner's watchdog. Once it does not, ERR_CONNECTION_REFUSED
-                // stops the dev server and asks again
-                // (`dev_server(world)?.stop()`, then
-                // `run(world, "preview.refresh")`), and ERR_TOO_MANY_REDIRECTS
-                // goes to a path that redirects to itself
-                // (`dev_server(world)?.redirect("/loop", "/loop")`).
-                "ERR_CONNECTION_REFUSED" | "ERR_TOO_MANY_REDIRECTS" => {
-                    fail!("the engine stalls on {code} (ljos#395)");
+                "ERR_CONNECTION_REFUSED" => {
+                    dev_server(world)?.stop();
+                    run(world, "preview.refresh")?;
+                }
+                "ERR_TOO_MANY_REDIRECTS" => {
+                    dev_server(world)?.redirect("/loop", "/loop");
+                    evaluate(world, "location.href = '/loop'; true")?;
                 }
                 _ => {
                     // What the network does not do on the loopback, as the
@@ -446,8 +442,10 @@ fn register_loads(steps: &mut Steps) {
             server.page("/next", "Next", "");
             server.page("/slow", "Slow", "");
             // The page leaves for a page that is slow to answer, then changes
-            // its mind while that page is still on its way.
-            server.hold();
+            // its mind while that page is still on its way. Only the slow
+            // page waits: a held /next would keep the page loading, which
+            // the shell's clock waits out until its stall check fails.
+            server.hold_path("/slow");
             evaluate(
                 world,
                 "location.href = '/slow'; setTimeout(function () { location.href = '/next'; }, 0); true",
@@ -480,13 +478,10 @@ fn register_loads(steps: &mut Steps) {
         },
     );
     steps.step("a browser tab whose page failed to load", |world, _, _| {
-        // TODO(ljos#387, ljos#395): the refused load never reaches the
-        // panel yet, and stalls the engine past the runner's watchdog. Once
-        // it does not, the dev server stops and the tab asks again
-        // (`dev_server(world)?.stop()`, `run(world, "preview.refresh")`,
-        // then `wait_to_fail(world)`).
         show_tab(world, "/")?;
-        fail!("the engine stalls on ERR_CONNECTION_REFUSED (ljos#395)")
+        dev_server(world)?.stop();
+        run(world, "preview.refresh")?;
+        wait_to_fail(world)
     });
     steps.step("the load is reported as having stopped", |world, _, _| {
         let brick = panel(world)?;

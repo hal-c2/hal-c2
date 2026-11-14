@@ -15,6 +15,7 @@ use crate::steps::composer_brick::{
     composer_brick, composer_item, editor, settle_composer, type_in_composer,
 };
 use crate::steps::settings::publish_providers;
+use crate::steps::stream::THREAD;
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
 
@@ -35,6 +36,12 @@ fn open_thread_with_skill(world: &mut World) -> Outcome {
         })],
     );
     open_turn_thread(world)?;
+    // A started thread offers the skills of what it runs on: Claude here.
+    let mut row = world.mc.threads.get(THREAD).cloned().unwrap_or(json!({}));
+    row["modelSelection"] = json!({"instanceId": "claudeAgent", "model": "sonnet"});
+    world.mc.threads.insert(THREAD.into(), row.clone());
+    world.mc.send_row(THREAD, &row);
+    world.sync()?;
     composer_brick(world)?;
     Ok(())
 }

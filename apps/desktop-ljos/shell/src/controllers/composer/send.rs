@@ -364,7 +364,14 @@ impl Composer {
                 "createdAt": created_at,
             })));
         }
-        if !interaction_mode.is_empty() && interaction_mode != thread.interaction_mode {
+        if !interaction_mode.is_empty()
+            && interaction_mode != thread.interaction_mode
+            && self
+                .setting_interaction
+                .get(target)
+                .map(|s| s.mode.as_str())
+                != Some(interaction_mode.as_str())
+        {
             commands.push(object(json!({
                 "type": "thread.interaction-mode.set",
                 "threadId": thread.id,

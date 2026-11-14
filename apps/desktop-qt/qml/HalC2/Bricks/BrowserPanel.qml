@@ -180,7 +180,7 @@ Rectangle {
     property string asking: ""
     onVisibleChanged: showQuestions()
     Component.onCompleted: {
-        // TODO(ljos#381): bound again once the panel is made, as Ljós
+        // TODO(ljos#438): bound again once the panel is made, as Ljós
         // runs the page's bindings before the view and the panel's initial
         // source are there, and not again when they come.
         page.previews = Qt.binding(() => root.source);

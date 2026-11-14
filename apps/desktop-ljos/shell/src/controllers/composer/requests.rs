@@ -2,6 +2,7 @@
 //! picker's model and options, the modes, the stash, the thread's pending
 //! requests and its queue.
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use ljos::prelude::Engine;
@@ -15,8 +16,8 @@ use super::text::{
     stale_request,
 };
 use super::{
-    Composer, Recall, SettingMode, back, find_attachment, now_iso, publish_everywhere, string,
-    thread_of, toast, toast_error, uuid,
+    Composer, ModeKind, Recall, SettingMode, back, find_attachment, now_iso, publish_everywhere,
+    string, thread_of, toast, toast_error, uuid,
 };
 use crate::composer_model as model;
 use crate::controller;
@@ -198,7 +199,7 @@ impl Composer {
                 kept::edit_draft(engine, &target, |kept| kept.runtime_mode = picked);
                 kept::save(engine);
                 self.publish(engine);
-                self.set_thread_runtime_mode(engine, &target, &mode);
+                self.set_thread_mode(engine, &target, ModeKind::Runtime, &mode);
             }
             "composer.interactionMode.set" => {
                 if !target.is_empty() {
@@ -758,21 +759,25 @@ impl Composer {
         true
     }
 
-    /// An existing thread takes a new access mode at once, as the TUI's
-    /// does: a turn waiting on approvals blocks the composer, so the next
-    /// send may never come, and the provider can apply it to the running
-    /// turn. The draft shows it meanwhile, and goes once the MC holds it; a
-    /// refused change goes too, so the picker shows the mode the thread
-    /// really has. A pick back to the thread's mode still goes while another
-    /// is on its way, which would otherwise land after it.
-    fn set_thread_runtime_mode(&mut self, engine: &Engine, target: &str, mode: &str) {
+    /// An existing thread takes a new mode at once, as the TUI's does: a
+    /// turn waiting on approvals blocks the composer, so the next send may
+    /// never come, and the provider can apply it to the running turn. The
+    /// draft shows it meanwhile, and goes once the MC holds it; a refused
+    /// change goes too, so the picker shows the mode the thread really has.
+    /// A pick back to the thread's mode still goes while another is on its
+    /// way, which would otherwise land after it.
+    fn set_thread_mode(&mut self, engine: &Engine, target: &str, kind: ModeKind, mode: &str) {
         let Some(thread) = thread_of(engine, target) else {
             return;
         };
-        if thread.runtime_mode == mode && !self.setting_mode.contains_key(target) {
+        let held = match kind {
+            ModeKind::Runtime => &thread.runtime_mode,
+            ModeKind::Interaction => &thread.interaction_mode,
+        };
+        if held == mode && !self.settings(kind).contains_key(target) {
             return;
         }
-        self.setting_mode.insert(
+        self.settings_mut(kind).insert(
             target.to_owned(),
             SettingMode {
                 mode: mode.to_owned(),
@@ -780,41 +785,49 @@ impl Composer {
             },
         );
         let (target, mode) = (target.to_owned(), mode.to_owned());
-        self.mc.dispatch_command(
-            &thread.environment_id,
-            json!({
+        let command = match kind {
+            ModeKind::Runtime => json!({
                 "type": "thread.runtime-mode.set",
                 "threadId": thread.id,
                 "runtimeMode": mode,
             }),
+            ModeKind::Interaction => json!({
+                "type": "thread.interaction-mode.set",
+                "threadId": thread.id,
+                "interactionMode": mode,
+            }),
+        };
+        self.mc.dispatch_command(
+            &thread.environment_id,
+            command,
             back(&self.me, move |c, engine, result| {
-                if c.setting_mode.get(&target).map(|s| s.mode.as_str()) != Some(mode.as_str()) {
+                if c.settings(kind).get(&target).map(|s| s.mode.as_str()) != Some(mode.as_str()) {
                     return;
                 }
                 match result {
                     Ok(answer) => {
                         let shell = &answer["shell"];
-                        if let Some(setting) = c.setting_mode.get_mut(&target) {
+                        if let Some(setting) = c.settings_mut(kind).get_mut(&target) {
                             setting.accepted = true;
                             setting.mc = shell["mc"].as_str().unwrap_or_default().to_owned();
                             setting.epoch = shell["epoch"].as_str().unwrap_or_default().to_owned();
                             setting.rev = shell["rev"].as_f64().unwrap_or(0.0) as i64;
                         }
-                        c.settle_runtime_modes(engine);
+                        c.settle_modes(engine);
                     }
                     Err(error) => {
-                        c.setting_mode.remove(&target);
-                        toast_error(
-                            engine,
-                            "Failed to change the thread's access.",
-                            &error.message,
-                        );
+                        c.settings_mut(kind).remove(&target);
+                        let message = match kind {
+                            ModeKind::Runtime => "Failed to change the thread's access.",
+                            ModeKind::Interaction => "Failed to change the thread's mode.",
+                        };
+                        toast_error(engine, message, &error.message);
                         if kept::read(engine, |d| {
                             d.drafts
                                 .get(&target)
-                                .is_some_and(|kept| kept.runtime_mode == mode)
+                                .is_some_and(|kept| *kind.of(kept) == mode)
                         }) {
-                            kept::edit_draft(engine, &target, |kept| kept.runtime_mode.clear());
+                            kept::edit_draft(engine, &target, |kept| kind.of_mut(kept).clear());
                             kept::save(engine);
                             c.publish(engine);
                         }
@@ -824,39 +837,55 @@ impl Composer {
         );
     }
 
-    /// Drops the drafts of access changes the threads' rows now hold,
+    /// Drops the drafts of mode changes the threads' rows now hold,
     /// whatever mode they show: the row and the MC's answer travel apart,
     /// and another device's change can land with ours or after it.
-    pub(super) fn settle_runtime_modes(&mut self, engine: &Engine) {
-        let mut settled = Vec::new();
-        for (target, setting) in &self.setting_mode {
-            // From an MC that names no version, the row is as good as it gets.
-            let landed = setting.accepted
-                && (setting.epoch.is_empty()
-                    || store::with(engine, |s| {
-                        s.reached(&setting.mc, &setting.epoch, setting.rev)
-                    }));
-            if thread_of(engine, target).is_none() || landed {
-                settled.push(target.clone());
-            }
-        }
+    pub(super) fn settle_modes(&mut self, engine: &Engine) {
         let mut changed = false;
-        for target in settled {
-            let Some(setting) = self.setting_mode.remove(&target) else {
-                continue;
-            };
-            if kept::read(engine, |d| {
-                d.drafts
-                    .get(&target)
-                    .is_some_and(|kept| kept.runtime_mode == setting.mode)
-            }) {
-                kept::edit_draft(engine, &target, |kept| kept.runtime_mode.clear());
-                changed = true;
+        for kind in [ModeKind::Runtime, ModeKind::Interaction] {
+            let mut settled = Vec::new();
+            for (target, setting) in self.settings(kind) {
+                // From an MC that names no version, the row is as good as it gets.
+                let landed = setting.accepted
+                    && (setting.epoch.is_empty()
+                        || store::with(engine, |s| {
+                            s.reached(&setting.mc, &setting.epoch, setting.rev)
+                        }));
+                if thread_of(engine, target).is_none() || landed {
+                    settled.push(target.clone());
+                }
+            }
+            for target in settled {
+                let Some(setting) = self.settings_mut(kind).remove(&target) else {
+                    continue;
+                };
+                if kept::read(engine, |d| {
+                    d.drafts
+                        .get(&target)
+                        .is_some_and(|kept| *kind.of(kept) == setting.mode)
+                }) {
+                    kept::edit_draft(engine, &target, |kept| kind.of_mut(kept).clear());
+                    changed = true;
+                }
             }
         }
         if changed {
             kept::save(engine);
             self.publish(engine);
+        }
+    }
+
+    fn settings(&self, kind: ModeKind) -> &HashMap<String, SettingMode> {
+        match kind {
+            ModeKind::Runtime => &self.setting_mode,
+            ModeKind::Interaction => &self.setting_interaction,
+        }
+    }
+
+    fn settings_mut(&mut self, kind: ModeKind) -> &mut HashMap<String, SettingMode> {
+        match kind {
+            ModeKind::Runtime => &mut self.setting_mode,
+            ModeKind::Interaction => &mut self.setting_interaction,
         }
     }
 
@@ -876,6 +905,7 @@ impl Composer {
         });
         kept::save(engine);
         self.publish(engine);
+        self.set_thread_mode(engine, target, ModeKind::Interaction, mode);
     }
 
     /// A new thread starts from the model last sent with.

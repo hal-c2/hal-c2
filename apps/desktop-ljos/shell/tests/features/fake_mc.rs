@@ -1134,6 +1134,31 @@ impl FakeMc {
         }
     }
 
+    /// A thread's row takes a mode or model change, as the MC's does
+    /// (desktop-qt's FakeMc::applyMode, without the selection revision).
+    fn apply_mode(&mut self, command: &Value) {
+        let field = match command.get("type").and_then(Value::as_str) {
+            Some("thread.runtime-mode.set") => "runtimeMode",
+            Some("thread.interaction-mode.set") => "interactionMode",
+            Some("thread.model-selection.set") => "modelSelection",
+            _ => return,
+        };
+        let id = command
+            .get("threadId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let Some(row) = self.threads.get_mut(&id) else {
+            return;
+        };
+        if row.get(field) == command.get(field) {
+            return;
+        }
+        row[field] = command.get(field).cloned().unwrap_or(Value::Null);
+        let row = row.clone();
+        self.send_row(&id, &row);
+    }
+
     fn dispatch_command(&mut self, rpc: &Rpc) {
         self.commands.push(rpc.payload.clone());
         self.command_environments.push(rpc.environment.clone());
@@ -1161,6 +1186,7 @@ impl FakeMc {
                 for effect in mc.effects.clone() {
                     effect(mc, &rpc.payload);
                 }
+                mc.apply_mode(&rpc.payload);
                 let sequence = mc.commands.len();
                 mc.reply(&rpc, json!({"sequence": sequence}));
             }

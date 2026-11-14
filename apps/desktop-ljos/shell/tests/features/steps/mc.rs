@@ -57,6 +57,10 @@ fn set_field(row: &mut Value, name: &str, value: &str) {
     if name == "pendingBackgroundTasks" {
         let count = value.parse::<usize>().unwrap_or(0);
         row[name] = Value::Array((0..count).map(|task| json!({"id": task})).collect());
+    } else if name == "model" {
+        // "instance/model", the thread's modelSelection.
+        let (instance, model) = value.split_once('/').unwrap_or((value, ""));
+        row["modelSelection"] = json!({"instanceId": instance, "model": model});
     } else {
         row[name] = json!(value);
     }

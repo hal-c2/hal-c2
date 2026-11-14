@@ -164,8 +164,6 @@ fn expect_no_question(world: &mut World) -> Outcome {
     Ok(())
 }
 
-// TODO(ljos#407): Chromium refuses the read, and geolocation, without
-// asking the view, so the scenarios that read the clipboard fail.
 /// Copies text from the page, then reads the clipboard back. The copy needs
 /// no asking; the read does.
 const READ_CLIPBOARD: &str = "navigator.clipboard.writeText('copied text').then(function () {\

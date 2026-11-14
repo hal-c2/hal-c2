@@ -20,6 +20,7 @@ use crate::steps::composer_brick::{
 use crate::steps::composer_picker::model_picker_shown_open;
 use crate::steps::fake_files::fake_files;
 use crate::steps::settings::publish_providers;
+use crate::steps::stream::THREAD;
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
 use crate::{expect, fail};
@@ -120,6 +121,15 @@ fn publish(world: &mut World) -> Outcome {
             "slashCommands": commands, "skills": skills,
         })],
     );
+    // The open thread runs on it, as every thread the MC holds names a model.
+    if let Some(row) = world.mc.threads.get(THREAD)
+        && row.get("modelSelection").is_none()
+    {
+        let mut row = row.clone();
+        row["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
+        world.mc.threads.insert(THREAD.into(), row.clone());
+        world.mc.send_row(THREAD, &row);
+    }
     world.sync()
 }
 

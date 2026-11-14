@@ -4,6 +4,9 @@
 //! loopback dev server, as desktop-qt's BrowserSteps.cpp and
 //! BrowserDeviceToolbarSteps.cpp. features/preview/surfaces.feature.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use hal_c2_shell::browser::{self, BrowserPage};
 use hal_c2_shell::controllers::panel::RightPanel;
 use ljos::item::{MouseButtons, PointerEvent};
@@ -584,9 +587,9 @@ fn register_devices(steps: &mut Steps) {
                 },
                 |w| format!("every frame to load {url}; {}", state(w, brick)),
             )?;
-            // TODO(ljos#399): desktop-qt also grabs each frame to see the page
-            // drawn; Rust cannot read a grab's pixels yet, so the painted list
-            // stands in.
+            // TODO(hal-c2#1565): desktop-qt also grabs each frame to see the
+            // page drawn; the runner cannot grab a device frame, so the painted
+            // list stands in.
             wait_for_engine(
                 world,
                 |w| {
@@ -632,11 +635,34 @@ fn register_devices(steps: &mut Steps) {
             Ok(())
         },
     );
-    // TODO(ljos#399): desktop-qt reads the corner pixel of a grab of each
-    // page; Rust cannot read a grab's pixels yet.
+    steps.step("the page is drawn on white", |world, _, _| {
+        // desktop-qt reads the corner pixel of a grab of the page.
+        let page = super::browser::page(world)?;
+        let corner: Rc<RefCell<Option<Option<[u8; 4]>>>> = Rc::default();
+        let into = corner.clone();
+        BrowserPage::grab(world.engine(), page, move |engine, image| {
+            *into.borrow_mut() =
+                Some(ljos::item::grabbed_image(engine, &image).map(|p| p.pixel(0, 0)));
+        });
+        wait_for_engine(
+            world,
+            |_| corner.borrow().is_some(),
+            |_| "the page's picture".to_owned(),
+        )?;
+        let Some(Some(pixel)) = *corner.borrow() else {
+            fail!("the view took no picture of the page");
+        };
+        expect!(
+            pixel == [255, 255, 255, 255],
+            "the page is drawn on {pixel:?}"
+        );
+        Ok(())
+    });
+    // TODO(hal-c2#1565): desktop-qt grabs each device frame's view; the
+    // runner can only ask the brick for the tab's own page.
     steps.step(
-        "(?:the page is|every device in the view draws the page) (?:drawn )?on white",
-        |_, _, _| fail!("the page's colour cannot be read yet (ljos#399)"),
+        "every device in the view draws the page on white",
+        |_, _, _| fail!("a device frame's picture cannot be taken yet"),
     );
     steps.step("the user navigates to another page", |world, _, _| {
         dev_server(world)?.page("/other", "Other", "");

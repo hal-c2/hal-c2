@@ -95,9 +95,7 @@ impl AutomationPage for ViewPage {
         });
     }
     fn grab(&self, engine: &Engine, done: GrabDone) {
-        // TODO(ljos#399): the brick's grabToImage hands on `result.image`,
-        // which Rust cannot read the pixels of; a PNG of them once it can.
-        BrowserPage::grab(engine, self.page, move |e, _| done(e, None));
+        BrowserPage::grab_png(engine, self.page, done);
     }
     fn url(&self) -> String {
         self.at.clone()

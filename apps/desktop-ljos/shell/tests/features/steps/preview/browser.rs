@@ -32,6 +32,8 @@ struct Served {
     redirects: HashMap<String, String>,
     unfinished: HashMap<String, Vec<u8>>,
     holding: bool,
+    /// One path held while the others are answered, when set.
+    holding_path: Option<String>,
     held: Vec<(TcpStream, String)>,
     requests: usize,
     /// The path of each request, in order.
@@ -138,10 +140,16 @@ impl DevServer {
         self.lock().holding = true;
     }
 
+    /// Requests for `path` alone wait for release().
+    pub fn hold_path(&self, path: &str) {
+        self.lock().holding_path = Some(path.to_owned());
+    }
+
     pub fn release(&self) {
         let held = {
             let mut served = self.lock();
             served.holding = false;
+            served.holding_path = None;
             std::mem::take(&mut served.held)
         };
         for (stream, path) in held {
@@ -184,7 +192,7 @@ fn serve(mut stream: TcpStream, served: &Mutex<Served>) {
         let mut state = served.lock().unwrap_or_else(|e| e.into_inner());
         state.requests += 1;
         state.paths.push(path.clone());
-        if state.holding {
+        if state.holding || state.holding_path.as_deref() == Some(path.as_str()) {
             state.held.push((stream, path));
             return;
         }

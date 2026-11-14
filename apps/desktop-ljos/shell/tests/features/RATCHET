@@ -1528,6 +1528,8 @@ plugins/ui-plugins.feature: The desktop shell exposes the same slots as the TUI 
 plugins/ui-plugins.feature: The same plugin file works on every surface
 preview/automation.feature: A dev-server port wins over an address given with it
 preview/automation.feature: A queued browser action whose caller gave up is not started
+preview/automation.feature: A snapshot never shows what a password field holds
+preview/automation.feature: A snapshot of a page that changes while it is read fails instead of leaking
 preview/automation.feature: An agent opens a dev server's port in one step
 preview/devices.feature: A Device tab in the background streams nothing
 preview/devices.feature: A choice in the tools is applied by the device [the Android Emulator "Pixel 9", Orientation, Landscape left]
@@ -1707,6 +1709,7 @@ preview/surfaces.feature: A custom size outside what the preview can render is n
 preview/surfaces.feature: A custom size outside what the preview can render is not applied [800, 239]
 preview/surfaces.feature: A device size is shown whole, centred in the tab
 preview/surfaces.feature: A device-sized page that is bigger than the tab is shown scaled down
+preview/surfaces.feature: A failed load stays shown until a new load starts
 preview/surfaces.feature: A link that targets a new window stays in the tab
 preview/surfaces.feature: A load the page itself cancelled is not shown as a failure
 preview/surfaces.feature: A new browser tab offers local servers and recent pages
@@ -1725,6 +1728,7 @@ preview/surfaces.feature: A page may ask for some things and not others [to show
 preview/surfaces.feature: A page taken off is timed by its own MC's clock, not another MC's
 preview/surfaces.feature: A page that fills its space cannot be resized from its edges
 preview/surfaces.feature: A page that opens a blank window keeps its own page
+preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [blob]
 preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [data]
 preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [file]
 preview/surfaces.feature: A page's link to a local or inline scheme is never handed to the system [javascript]
@@ -1748,9 +1752,11 @@ preview/surfaces.feature: An address that is not a web page is refused in place
 preview/surfaces.feature: An address that is not a web page says what to type instead [http://]
 preview/surfaces.feature: An address that is not a web page says what to type instead [mailto:alice@example.com]
 preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_CERT_AUTHORITY_INVALID, Certificate authority is not trusted]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_CONNECTION_REFUSED, Connection refused]
 preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_CONNECTION_TIMED_OUT, Connection timed out]
 preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_INTERNET_DISCONNECTED, No internet connection]
 preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_NAME_NOT_RESOLVED, DNS address could not be found]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_TOO_MANY_REDIRECTS, Too many redirects]
 preview/surfaces.feature: Back and forward are offered only where the tab can go [follows an earlier page, available, unavailable]
 preview/surfaces.feature: Back and forward are offered only where the tab can go [is the first page, reached by going back, unavailable, available]
 preview/surfaces.feature: Back and forward are offered only where the tab can go [is the only one it has shown, unavailable, unavailable]

@@ -107,7 +107,30 @@ struct Recall {
     recalled: String,
 }
 
-/// An access change sent to the MC: once `accepted`, the version of the
+/// Which of a thread's modes a pick sets.
+#[derive(Clone, Copy)]
+enum ModeKind {
+    Runtime,
+    Interaction,
+}
+
+impl ModeKind {
+    fn of(self, draft: &kept::Draft) -> &String {
+        match self {
+            ModeKind::Runtime => &draft.runtime_mode,
+            ModeKind::Interaction => &draft.interaction_mode,
+        }
+    }
+
+    fn of_mut(self, draft: &mut kept::Draft) -> &mut String {
+        match self {
+            ModeKind::Runtime => &mut draft.runtime_mode,
+            ModeKind::Interaction => &mut draft.interaction_mode,
+        }
+    }
+}
+
+/// A mode change sent to the MC: once `accepted`, the version of the
 /// rows (`mc`, `epoch`, `rev`) that holds it; no epoch from an MC that names
 /// none.
 #[derive(Default)]
@@ -157,6 +180,7 @@ pub struct Composer {
     usage_limits: HashMap<String, Json>,
     /// The access changes on their way to the MC, by draft target.
     setting_mode: HashMap<String, SettingMode>,
+    setting_interaction: HashMap<String, SettingMode>,
     /// This window's "Not connected: queue not resumed" toast, while it may
     /// still show.
     not_connected_toast: String,
@@ -293,6 +317,7 @@ impl Controller for Composer {
             recall: None,
             usage_limits: HashMap::new(),
             setting_mode: HashMap::new(),
+            setting_interaction: HashMap::new(),
             not_connected_toast: String::new(),
             queue_busy: HashSet::new(),
             page_id: String::new(),
@@ -331,7 +356,7 @@ impl Controller for Composer {
                 c.carry_drafts(e);
                 c.forget_taken_picks(e);
                 c.reconcile_unsent(e);
-                c.settle_runtime_modes(e);
+                c.settle_modes(e);
                 c.refresh_path_search(e);
                 c.publish(e);
             }),
@@ -633,12 +658,23 @@ impl Composer {
             next
         };
         let instance_id = field(&chosen, "instanceId").to_owned();
+        let is_thread = thread_of(engine, target).is_some();
+        // A started thread shows what it holds, unavailable as it may be:
+        // what a send with no pick runs on is the thread's, never one made
+        // up here.
         if instance_id.is_empty() {
-            return first_ready();
+            return if is_thread { chosen } else { first_ready() };
+        }
+        let instance = self.instance_of(&chosen);
+        // A model saved under an alias is the built-in model it names, its
+        // options kept; a custom model of that name is not it.
+        if let Some(instance) = instance {
+            let slug = model::fallback_model_slug(instance, field(&chosen, "model"));
+            if !slug.is_empty() {
+                chosen.insert("model".into(), json!(slug));
+            }
         }
         let chosen_model = field(&chosen, "model").to_owned();
-        let is_thread = thread_of(engine, target).is_some();
-        let instance = self.instance_of(&chosen);
         if let Some(instance) = instance
             && instance.ready()
         {
@@ -655,7 +691,10 @@ impl Composer {
             }
             return chosen;
         }
-        // The chosen account cannot run a turn: another account of the same
+        if is_thread {
+            return chosen;
+        }
+        // A draft's account cannot run a turn: another account of the same
         // driver that lists the model takes over, with the options last
         // given to the model there, or the ones picked for it here when it
         // has none of its own.
@@ -677,12 +716,8 @@ impl Composer {
                 return chosen;
             }
         }
-        // A thread keeps its own provider and model, unavailable as they may
-        // be; a draft starts on the first provider that can run instead, and
+        // A draft starts on the first provider that can run instead, and
         // keeps its own while none can (the providers have not arrived).
-        if is_thread {
-            return chosen;
-        }
         let ready = first_ready();
         if ready.is_empty() { chosen } else { ready }
     }
