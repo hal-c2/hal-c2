@@ -794,10 +794,11 @@ impl Composer {
         }
     }
 
-    /// The MC took none of a send whose choice was made against a selection
-    /// the thread has since left: its prompts come back ahead of what was
-    /// typed since, and the composer shows the thread's own, for the user
-    /// to check.
+    /// The MC refused the message of a send whose choice was made against a
+    /// selection the thread has since left (mode changes sent ahead of it in
+    /// the same send may already have gone through): its prompts come back
+    /// ahead of what was typed since, and the composer shows the thread's
+    /// own, for the user to check.
     fn restore_stale(&mut self, engine: &Engine, target: &str, unsent: Vec<Send>, detail: &Json) {
         let mut prompts = Vec::new();
         let mut attachments = Vec::new();
