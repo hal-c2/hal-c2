@@ -310,6 +310,10 @@ Item {
                     id: terminalView
 
                     Layout.fillWidth: true
+                    // The drawer's own height, bound: Qt's layout keeps the
+                    // Loader at the drawer's last height when the drawer
+                    // closes, a blank band under the thread.
+                    Layout.preferredHeight: (item as Item)?.implicitHeight ?? 0
                     active: Terminals.supported
                     source: active ? "TerminalDrawer.qml" : ""
                 }

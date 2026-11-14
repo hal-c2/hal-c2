@@ -1,0 +1,260 @@
+//! The real SidebarThreadRow brick, headless: hovering a row swaps its
+//! status for its actions without moving its lines.
+
+use hal_c2_shell::qml::Roots;
+use ljos::prelude::{ObjectId, Value};
+
+use crate::{Hub, Window};
+
+const PROBE: &str = r#"
+import QtQuick
+import HalC2.Bricks
+
+Item {
+    width: 300
+    height: 120
+    property alias row: row
+    property bool slim: false
+
+    SidebarThreadRow {
+        id: row
+        width: 280
+        height: implicitHeight
+        active: false
+        slim: parent.slim
+        projectName: "project"
+        section: "active"
+        item: ({
+            threadId: "t1",
+            title: "A thread title",
+            branch: "main",
+            canSnooze: true,
+            canSettle: true,
+            jumpLabel: "1",
+            updatedAt: "2026-01-01T00:00:00Z",
+            wokeAt: null
+        })
+    }
+}
+"#;
+
+/// The checkout's bricks and the probe, compiled as the app compiles them.
+fn probe(hub: &Hub) -> (ObjectId, Window) {
+    let dir = tempfile::tempdir().expect("a directory for the probe");
+    std::fs::write(dir.path().join("RowProbe.qml"), PROBE).expect("the probe");
+    let mut dirs = Roots::checkout().dirs().expect("the roots are there");
+    dirs.push(dir.path().to_path_buf());
+    let snapshot = ljos::engine();
+    hal_c2_shell::register(&snapshot);
+    let paths: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+    let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).expect("the bricks compile");
+    hub.show(compiled.source, "RowProbe")
+}
+
+/// The first object under `obj` whose objectName is `name`.
+fn named(hub: &Hub, obj: ObjectId, name: &str) -> Option<ObjectId> {
+    let e = &hub.engine;
+    e.children(obj).into_iter().find_map(|c| {
+        if e.to_js_string(&e.read_by_name(c, "objectName")) == name {
+            Some(c)
+        } else {
+            named(hub, c, name)
+        }
+    })
+}
+
+/// Where `obj` is in the probe, and how tall: (y, height).
+fn placed(hub: &Hub, root: ObjectId, obj: ObjectId) -> (f64, f64) {
+    let at = hub
+        .engine
+        .invoke_by_name(
+            obj,
+            "mapToItem",
+            &[Value::Object(root), Value::Real(0.0), Value::Real(0.0)],
+        )
+        .expect("mapToItem");
+    let y = match at {
+        Value::Point(p) => p.y,
+        other => panic!("a point: {other:?}"),
+    };
+    (y, hub.engine.read_by_name(obj, "height").to_number())
+}
+
+fn shows(hub: &Hub, obj: ObjectId) -> bool {
+    hub.engine.read_by_name(obj, "visible").to_boolean()
+}
+
+fn row_of(hub: &Hub, root: ObjectId) -> ObjectId {
+    match hub.engine.read_by_name(root, "row") {
+        Value::Object(o) => o,
+        other => panic!("the row: {other:?}"),
+    }
+}
+
+/// The pointer over the row, or below it.
+fn hover(hub: &Hub, window: &Window, over: bool) {
+    window.hover(50.0, if over { 18.0 } else { 95.0 });
+    hub.advance(0);
+}
+
+/// Hovering a card row shows its snooze and settle buttons in its status
+/// slot, where its age was: the project mark, title and "project · branch"
+/// line stay where they were, the mark centred on the title's line.
+#[test]
+fn a_card_row_keeps_its_lines_when_hover_shows_its_actions() {
+    let hub = Hub::new();
+    let (root, window) = probe(&hub);
+    hub.advance(0);
+    let row = row_of(&hub, root);
+    let mark = named(&hub, row, "projectMark").expect("the card's project mark");
+    let title = named(&hub, row, "cardTitle").expect("the card's title");
+    let detail = named(&hub, row, "rowDetail").expect("the card's project and branch");
+    let snooze = named(&hub, row, "snoozeAction").expect("the card's snooze button");
+    assert!(shows(&hub, detail), "a card has its second line");
+    let lines = || [mark, title, detail].map(|l| placed(&hub, root, l));
+
+    let resting = lines();
+    hover(&hub, &window, true);
+    assert!(shows(&hub, snooze), "hover shows the actions");
+    let hovered = lines();
+    hover(&hub, &window, false);
+    assert!(!shows(&hub, snooze));
+
+    let middle = |(y, height): (f64, f64)| y + height / 2.0;
+    assert!(
+        (middle(resting[0]) - middle(resting[1])).abs() <= 1.0,
+        "the mark is centred on the title's line: {resting:?}"
+    );
+    assert_eq!(hovered, resting, "hover moves the card's lines");
+    assert_eq!(lines(), resting);
+}
+
+/// A slim row's title stays put as its actions come and go.
+#[test]
+fn a_slim_row_keeps_its_title_when_hover_shows_its_actions() {
+    let hub = Hub::new();
+    let (root, window) = probe(&hub);
+    hub.engine
+        .write_by_name(root, "slim", Value::Bool(true))
+        .expect("slim");
+    hub.advance(0);
+    let row = row_of(&hub, root);
+    let mark = named(&hub, row, "projectMark").expect("the slim project mark");
+    let line = hub.engine.owner(mark).expect("the slim line");
+    let title = hub.engine.children(line)[1];
+    let snooze = named(&hub, line, "snoozeAction").expect("the slim snooze button");
+
+    let resting = placed(&hub, root, title);
+    hover(&hub, &window, true);
+    assert!(shows(&hub, snooze), "hover shows the actions");
+    assert_eq!(placed(&hub, root, title), resting);
+}
+
+/// A layout in a layout keeps the `Layout.preferredHeight` it is given
+/// though its children are shorter, and so does what follows it: the
+/// numbers are Qt's (qml6 6.11.2).
+#[test]
+fn a_nested_layout_keeps_its_preferred_height_over_shorter_children() {
+    let hub = Hub::new();
+    let source = crate::common::compile(&[("Nested", NESTED)], &[]);
+    let (root, _window) = hub.show(source, "Nested");
+    let mut seen = Vec::new();
+    for tall in [false, true, false] {
+        hub.engine
+            .write_by_name(root, "tall", Value::Bool(tall))
+            .expect("tall");
+        hub.advance(0);
+        let n = |p: &str| hub.engine.read_by_name(root, p).to_number();
+        seen.push([n("headerY"), n("headerHeight"), n("secondY"), n("thirdY")]);
+    }
+    assert_eq!(seen, vec![[2.0, 22.0, 26.0, 46.0]; 3]);
+}
+
+const NESTED: &str = r#"
+import QtQuick
+import QtQuick.Layouts
+
+Item {
+    id: root
+    width: 200
+    height: 62
+    property bool tall: false
+    readonly property real headerY: header.y
+    readonly property real headerHeight: header.height
+    readonly property real secondY: second.y
+    readonly property real thirdY: third.y
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        RowLayout {
+            id: header
+            Layout.fillWidth: true
+            Layout.preferredHeight: 22
+            Rectangle { implicitWidth: 16; implicitHeight: 16 }
+            Rectangle { visible: root.tall; implicitWidth: 22; implicitHeight: 22 }
+        }
+        Rectangle { id: second; Layout.fillWidth: true; implicitHeight: 18 }
+        Rectangle { id: third; Layout.fillWidth: true; implicitHeight: 15 }
+    }
+}
+"#;
+
+const REUSED: &str = r#"
+import QtQuick
+import HalC2.Bricks
+
+Item {
+    width: 300
+    height: 120
+    property bool divided: false
+    property var rowData: divided ? ({ kind: "divider" })
+                                  : ({ kind: "thread", item: { threadId: "t1", title: "A thread title" } })
+    readonly property var thread: rowData.item ?? ({})
+
+    Loader {
+        width: 280
+        active: rowData.kind === "thread"
+        sourceComponent: SidebarThreadRow {
+            active: false
+            projectName: "project"
+            section: "active"
+            item: thread
+        }
+    }
+}
+"#;
+
+/// A pooled sidebar delegate turns from a thread into a divider in one
+/// write, and its row's bindings update before its Loader lets it go. Fed
+/// through `thread` as Sidebar.qml's delegate does, the row reads nothing
+/// of the item the divider does not have.
+#[test]
+fn a_row_whose_entry_turns_into_a_divider_goes_quietly() {
+    let hub = Hub::new();
+    let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let sink = said.clone();
+    hub.engine
+        .set_log_handler(move |entry| sink.borrow_mut().push(entry.message.clone()));
+    let dir = tempfile::tempdir().expect("a directory for the probe");
+    std::fs::write(dir.path().join("ReusedRowProbe.qml"), REUSED).expect("the probe");
+    let mut dirs = Roots::checkout().dirs().expect("the roots are there");
+    dirs.push(dir.path().to_path_buf());
+    let snapshot = ljos::engine();
+    hal_c2_shell::register(&snapshot);
+    let paths: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+    let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).expect("the bricks compile");
+    let (root, _window) = hub.show(compiled.source, "ReusedRowProbe");
+    hub.advance(0);
+    hub.engine
+        .write_by_name(root, "divided", Value::Bool(true))
+        .expect("the entry changes");
+    hub.advance(0);
+    let said = said.borrow();
+    let undefined: Vec<&String> = said.iter().filter(|m| m.contains("of undefined")).collect();
+    assert!(
+        undefined.is_empty(),
+        "the row read the divider's item: {undefined:?}"
+    );
+}

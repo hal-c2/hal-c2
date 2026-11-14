@@ -96,6 +96,9 @@ private:
   };
 
   void follow();
+  // The MC refused the `plugins` shape asked as `ask`: it did not know the
+  // environment then.
+  void refused(const QString& environment, int ask);
   void fetch(const QString& environment, const QJsonObject& entry);
   QString cachePath(const QString& environment, const QString& id, const QString& revision, bool runs, const QString& path) const;
   void publish();
@@ -111,7 +114,17 @@ private:
   ShellStore* m_store;
   bool m_active = false;
   QString m_cacheDir;
-  QHash<QString, int> m_subscriptions;     // environment → `plugins` shape
+  // An environment's `plugins` shape, and the store's roster when it was asked.
+  struct Followed {
+    int subscription = 0;
+    quint64 roster = 0;
+    int ask = 0;
+  };
+  QHash<QString, Followed> m_subscriptions;  // environment → its `plugins` shape
+  // Environment → the roster its refused shape was asked at; asked again once
+  // the roster moves (the cluster has news of its members), not before.
+  QHash<QString, quint64> m_refused;
+  int m_nextAsk = 1;
   QHash<QString, QJsonArray> m_plugins;    // environment → PluginEntry[]
   QHash<QString, QSet<QString>> m_running;  // environment → ids of the plugins running on it
   QSet<QString> m_checking;                // "<environment>/<id>" of the compile checks under way

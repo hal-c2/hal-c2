@@ -17,6 +17,7 @@
 #include <functional>
 #include <optional>
 
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 
 class McClient;
@@ -439,8 +440,8 @@ private:
   QStringList m_parkedOrder;
   void park(const QString& threadKey, const QString& cwd);
   void dropParked(const QString& threadKey);
-  QString m_storePath;
-  QByteArray m_saved;
+  // shell-terminals.json, written off the GUI thread.
+  CoalescingWriter m_storeFile;
   // Threads in the order their drawers were last used, oldest first.
   QStringList m_recent;
   Facts m_told;

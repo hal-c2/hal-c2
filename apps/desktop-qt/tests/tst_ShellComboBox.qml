@@ -165,6 +165,19 @@ TestCase {
         }
     }
 
+    // Settings' selects are objects named by `textRole`: their rows carry
+    // those names too (desktop-ljos drew them blank).
+    function test_rowsOfObjectsAreNamedByTheTextRole() {
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20,
+            model: [{ value: "locale", label: "System default" }, { value: "24-hour", label: "24-hour" }],
+            textRole: "label",
+            currentIndex: 1
+        });
+        openCombo(combo);
+        compare(rows(combo).map(row => row.Accessible.name), ["System default", "24-hour"]);
+    }
+
     // A list longer than the popup's 320 ends on a whole row, not a sliced
     // one, with a bar at the right edge saying there is more (the diff's
     // turn picker stopped mid-"Turn 11").

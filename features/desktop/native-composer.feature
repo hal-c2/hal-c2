@@ -267,17 +267,23 @@ Feature: The desktop shell sends a thread's turns to its MC
     @desktop
     Scenario: /plan and /default switch the mode without sending
       Given plan mode is turned on
+      And the MC updates the thread "t1" with:
+        | model | codex/gpt-5 |
       And the composer shows "env-a:t1"
       When the user sends "/plan"
       Then the composer is in "plan" mode
       And the composer's text for "env-a:t1" is ""
-      And the MC receives no commands
+      And the MC receives these commands in order:
+        | type                        |
+        | thread.interaction-mode.set |
       When the user sends "/default"
       Then the composer is in "default" mode
       When the user sends "Build it"
       Then the MC receives these commands in order:
-        | type             |
-        | message.dispatch |
+        | type                        |
+        | thread.interaction-mode.set |
+        | thread.interaction-mode.set |
+        | message.dispatch            |
 
     @desktop
     Scenario: Without plan mode /plan is sent to the agent

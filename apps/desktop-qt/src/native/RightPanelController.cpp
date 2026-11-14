@@ -8,7 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QUrl>
 
 #include <algorithm>
@@ -1194,11 +1193,12 @@ QVariantMap RightPanelController::threadDetails() const {
 // the thread shown latest last.
 
 void RightPanelController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_storeFile.setPath(path);
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
-  m_saved = file.readAll();
-  const QJsonObject stored = QJsonDocument::fromJson(m_saved).object();
+  const QByteArray saved = file.readAll();
+  m_storeFile.setWritten(saved);
+  const QJsonObject stored = QJsonDocument::fromJson(saved).object();
   m_width = std::max(stored.value(QLatin1String("width")).toInt(defaultWidth), minimumWidth);
   for (const QJsonValue& value : stored.value(QLatin1String("threads")).toArray()) {
     const QJsonObject thread = value.toObject();
@@ -1238,7 +1238,7 @@ void RightPanelController::setStorePath(const QString& path) {
 }
 
 void RightPanelController::save() {
-  if (m_storePath.isEmpty()) return;
+  if (m_storeFile.path().isEmpty()) return;
   QJsonArray threads;
   for (qsizetype at = m_recent.size() - 1; at >= 0 && threads.size() < kStoredThreads; --at) {
     const QString& threadKey = m_recent.at(at);
@@ -1269,10 +1269,5 @@ void RightPanelController::save() {
   }
   const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})
                               .toJson(QJsonDocument::Compact);
-  if (json == m_saved) return;
-  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
-  QSaveFile file(m_storePath);
-  if (!file.open(QIODevice::WriteOnly)) return;
-  file.write(json);
-  if (file.commit()) m_saved = json;
+  m_storeFile.write(json);
 }

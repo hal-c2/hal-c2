@@ -7,7 +7,6 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
 
 #include "DraftController.h"
 #include "KeybindingController.h"
@@ -77,7 +76,7 @@ NavigationController::NavigationController(ShellBridge* bridge, McClient*, Shell
 }
 
 void NavigationController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_storeFile.setPath(path);
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   const auto restored = Route::fromVariant(QJsonDocument::fromJson(file.readAll()).object().toVariantMap());
@@ -422,11 +421,7 @@ void NavigationController::reveal(const QString& target) {
   publish();
 }
 
-void NavigationController::save() const {
-  if (m_storePath.isEmpty()) return;
-  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
-  QSaveFile file(m_storePath);
-  if (!file.open(QIODevice::WriteOnly)) return;
-  file.write(QJsonDocument(QJsonObject::fromVariantMap(m_route.toVariant())).toJson(QJsonDocument::Compact));
-  file.commit();
+void NavigationController::save() {
+  if (m_storeFile.path().isEmpty()) return;
+  m_storeFile.write(QJsonDocument(QJsonObject::fromVariantMap(m_route.toVariant())).toJson(QJsonDocument::Compact));
 }

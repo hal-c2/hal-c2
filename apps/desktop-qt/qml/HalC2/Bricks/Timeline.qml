@@ -919,10 +919,12 @@ Item {
                         spacing: Theme.space.xs
                         // A hairline between turns: over each message that
                         // starts one (not a steer into the running turn), unless
-                        // a system divider already sits over it.
+                        // a system divider already sits over it. The first
+                        // row loaded has one too when earlier turns are still
+                        // to come, so loading them leaves it where it is.
                         Item {
                             objectName: "turnDivider"
-                            visible: row.index > 0 && !row.afterMarker && ((row.intent ?? "").length === 0 || row.intent === "turn_start" || row.intent === "queued_turn")
+                            visible: (row.index > 0 || root.model?.hasEarlier === true) && !row.afterMarker && ((row.intent ?? "").length === 0 || row.intent === "turn_start" || row.intent === "queued_turn")
                             width: parent.width
                             height: Theme.space.lg
                             Rectangle {

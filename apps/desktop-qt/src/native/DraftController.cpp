@@ -3,12 +3,10 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
 #include <QUuid>
 
 #include <algorithm>
@@ -45,7 +43,7 @@ DraftController::DraftController(ShellBridge* bridge, McClient*, ShellStore* sto
 }
 
 void DraftController::setStorePath(const QString& path) {
-  m_kept.path = path;
+  m_kept.file.setPath(path);
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   m_drafts.clear();
@@ -261,7 +259,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     id = newId();
     m_drafts.append({id, environmentId, projectId, newId(), sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
     // A draft that would not survive a restart is not started.
-    if (!save()) {
+    if (!save(true)) {
       m_drafts.removeLast();
       return {};
     }
@@ -431,8 +429,8 @@ void DraftController::changedEverywhere() {
   for (DraftController* drafts : everyWindow()) emit drafts->changed();
 }
 
-bool DraftController::save() const {
-  if (m_kept.path.isEmpty()) return true;
+bool DraftController::save(bool now) const {
+  if (m_kept.file.path().isEmpty()) return true;
   QJsonArray entries;
   for (const Draft& draft : m_drafts) {
     QJsonObject entry{
@@ -445,9 +443,8 @@ bool DraftController::save() const {
     if (!draft.text.isEmpty()) entry.insert(QStringLiteral("text"), draft.text);
     entries.append(entry);
   }
-  QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
-  QSaveFile file(m_kept.path);
-  if (!file.open(QIODevice::WriteOnly)) return false;
-  file.write(QJsonDocument(entries).toJson(QJsonDocument::Compact));
-  return file.commit();
+  const QByteArray bytes = QJsonDocument(entries).toJson(QJsonDocument::Compact);
+  if (now) return m_kept.file.writeNow(bytes);
+  m_kept.file.write(bytes);
+  return true;
 }

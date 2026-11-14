@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTest>
 
 #include <algorithm>
@@ -381,6 +383,13 @@ const Steps steps([] {
     changeThemeAndTimeFormat(world);
     // A folder where the preferences file is: what the shell holds stays, and nothing more can be saved.
     const QString path = settings(world)->devicePath();
+    // The change lands once saves pause, off the GUI thread.
+    world.waitFor(
+        [&] {
+          QFile file(path);
+          return file.open(QIODevice::ReadOnly) && QJsonDocument::fromJson(file.readAll()).object() == settings(world)->deviceSettings();
+        },
+        QStringLiteral("the theme to be saved on this device"));
     expect(QFile::remove(path) && QDir().mkpath(path), QStringLiteral("cannot block %1").arg(path));
     expect(changed(world), describeChoices(world));
   });

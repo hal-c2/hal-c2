@@ -3198,7 +3198,13 @@ defmodule HalC2.CodeReviewTest do
     {:module, _} = :erpc.call(node, :code, :load_binary, [HalC2.Plugins.Host, ~c"laptop", stub()])
 
     on_exit(fn ->
-      if Process.alive?(pid), do: :peer.stop(pid)
+      # Linked to the test's process, the peer may be shutting down already.
+      try do
+        :peer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
+
       unless alive?, do: Node.stop()
     end)
 

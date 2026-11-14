@@ -59,6 +59,14 @@ Feature: Adding a project from the command palette
     Then GitLab is marked "Setup Required"
     And choosing it opens the source control settings
 
+  @desktop @backlog-desktop
+  Scenario: The environment's repository sources are listed after searching for it
+    Given the machine "ai-beast" is connected
+    And GitLab is not connected
+    When the user types "beast" while adding a project and chooses "ai-beast"
+    Then the palette's search is empty
+    And GitLab is marked "Setup Required"
+
   @desktop
   Scenario: Browsing starts in the home folder
     When the user adds a project from a local folder

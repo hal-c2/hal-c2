@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#MISE description="Open the desktop shell on Ljós, paired with the running MC (mise run mc), as mise run desktop does; --url LINK attaches to another, --standalone starts the shell's own MC"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+args=()
+standalone=false
+for arg in "$@"; do
+  if [[ $arg == --standalone ]]; then standalone=true; else args+=("$arg"); fi
+done
+# Kept in the hal-c2-dev directories, as mise run desktop keeps desktop-qt's.
+[[ " $* " == *" --home-dir"* || " $* " == *" --dev "* ]] || args=(--dev "${args[@]+"${args[@]}"}")
+# Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780; HAL_C2_MC_HOME
+# for one with its own home) through the desktop host's --url, unless the
+# arguments name one. --standalone has the host start the shell's own MC from
+# source, as the installed app does.
+if [[ $standalone == false && " $* " != *" --url"* && " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
+  origin="http://127.0.0.1:${HAL_C2_MC_PORT:-3780}"
+  if ! curl -fsS -m 2 "$origin/.well-known/hal-c2/environment" >/dev/null; then
+    echo "no MC answers at $origin. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), pass --url <pairing link>, or use --standalone." >&2
+    exit 1
+  fi
+  link="$(cd ../server-ex && mise exec -- mix hal_c2.pair "$origin" | grep -Eo '^https?://[^ ]+[?#]token=[^ ]+' | head -n 1)"
+  if [[ -z $link ]]; then
+    echo "mix hal_c2.pair printed no pairing link." >&2
+    exit 1
+  fi
+  args=(--url "$link" "${args[@]}")
+fi
+# The window reloads the checkout's bricks and the config dir's shell.qml as they
+# are saved (shell/src/runtime.rs), so a dev run needs no rebuild for QML.
+features=()
+profile=release
+# LJOS_MCP (desktop-ljos:inspect) serves Ljós's inspector; its token file goes to
+# target/ljos below this directory (or LJOS_MCP_DIR), where desktop-ljos:observe
+# and desktop-ljos:attach look. It builds with symbols (Cargo.toml's inspect
+# profile) so a stack taken from a stuck UI thread (eu-stack -p PID) reads.
+[[ -z ${LJOS_MCP:-} ]] || { features=(--features mcp); profile=inspect; }
+# macOS names an app in the Dock and the app switcher by its bundle: the build
+# runs from one made beside it (shell/macos/Info.plist), with desktop-qt's icon.
+if [[ $(uname -s) == Darwin ]]; then
+  mise exec -- cargo build --profile "$profile" -q -p hal_c2_shell "${features[@]+"${features[@]}"}"
+  out="${CARGO_TARGET_DIR:-target}/$profile"
+  app="$out/HAL-C2.app/Contents"
+  icon=../../assets/prod/black-universal-1024.png
+  mkdir -p "$app/MacOS" "$app/Resources"
+  cp shell/macos/Info.plist "$app/Info.plist"
+  if [[ ! "$app/Resources/AppIcon.icns" -nt $icon ]]; then
+    set="$(mktemp -d)/AppIcon.iconset"
+    mkdir "$set"
+    for size in 16 32 128 256 512; do
+      sips -z $size $size "$icon" --out "$set/icon_${size}x${size}.png" >/dev/null
+      sips -z $((size * 2)) $((size * 2)) "$icon" --out "$set/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$set" -o "$app/Resources/AppIcon.icns"
+    rm -r "$(dirname "$set")"
+  fi
+  # Linked, so the bundle runs the binary just built.
+  ln -f "$out/hal-c2-ljos" "$app/MacOS/hal-c2-ljos"
+  exec "$app/MacOS/hal-c2-ljos" "${args[@]}"
+fi
+exec mise exec -- cargo run --profile "$profile" -q -p hal_c2_shell "${features[@]+"${features[@]}"}" -- "${args[@]}"
