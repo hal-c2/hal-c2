@@ -266,8 +266,8 @@ defmodule HalC2.PlannerPropTest do
 
   setup_all do
     vars =
-      ~w(PATH FAKE_GH_RULES FAKE_GH_LOG FAKE_CODEX_GATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0
-         GIT_CONFIG_VALUE_0)
+      ~w(PATH GH_CONFIG_DIR FAKE_GH_RULES FAKE_GH_LOG FAKE_CODEX_GATE GIT_CONFIG_COUNT
+         GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
 
@@ -287,6 +287,18 @@ defmodule HalC2.PlannerPropTest do
     File.ln_s!(Path.join(@support, "fake_gh.py"), Path.join(bin, "gh"))
     System.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
     Application.put_env(:hal_c2, :gh_command, "gh")
+
+    # gh signed in to `@enterprise` as well as github.com: only the hosts in gh's own
+    # configuration are read as GitHub Enterprise.
+    config = Path.join(bin, "config")
+    File.mkdir_p!(config)
+
+    File.write!(
+      Path.join(config, "hosts.yml"),
+      "github.com:\n  git_protocol: https\n#{@enterprise}:\n  git_protocol: https\n"
+    )
+
+    System.put_env("GH_CONFIG_DIR", config)
 
     Application.put_env(:hal_c2, :codex_command, [
       "python3",

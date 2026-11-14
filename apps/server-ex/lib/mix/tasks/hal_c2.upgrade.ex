@@ -128,15 +128,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp local do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:inets)
-    base = HalC2.Web.base_url()
 
-    token =
-      case File.read(HalC2.Web.token_path()) do
-        {:ok, token} ->
-          String.trim(token)
-
-        {:error, _} ->
-          Mix.raise("No MC has run from #{HalC2.Paths.data_dir()}; start one with `mise run mc`")
+    # The token goes only to a listener that proves it holds it.
+    {base, token} =
+      case HalC2.Web.local_mc() do
+        {:ok, base, token} -> {base, token}
+        {:error, message} -> Mix.raise(message)
       end
 
     # This checkout's build, so an MC started from another checkout moves to it.
@@ -286,8 +283,16 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp local_release(path, home) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    with {:ok, base, token} <- installed_record(home) do
-      body = JSON.encode!(%{"bundle" => path, "version" => manifest(path)["version"]})
+    with {:ok, record_base, token} <- installed_record(home),
+         {:ok, base} <- proved(record_base, token, path, home) do
+      # The operator chose this checkout's build: moving back to it, from a
+      # worktree behind the installed one, is the explicit choice the gate asks for.
+      body =
+        JSON.encode!(%{
+          "bundle" => path,
+          "version" => manifest(path)["version"],
+          "allowDowngrade" => true
+        })
 
       request =
         {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{String.trim(token)}"}],
@@ -320,6 +325,52 @@ defmodule Mix.Tasks.HalC2.Upgrade do
       {:error, reason} -> Mix.raise(reason)
     end
   end
+
+  # The installed MC at `record_base`, over loopback once it proves it holds `token`,
+  # so the token never goes to another program holding its port. One bound to a single
+  # non-loopback address is not reached this way (`HalC2.Web.loopback_host/1`). One
+  # from before the proof is pointed at the single-file MC built beside `bundle`
+  # (`mix hal_c2.bundle`), not the one it was installed from: run, it unpacks this
+  # release into the MC's home, and `install` rewrites the service to run it.
+  @doc false
+  def proved(record_base, token, bundle, home) do
+    %URI{host: host, port: port} = URI.parse(record_base)
+
+    case HalC2.Web.loopback_host(host) do
+      nil ->
+        {:error, "The installed MC listens on #{host} only; a local tool reaches it on loopback"}
+
+      loopback ->
+        base = "http://#{loopback}:#{port}"
+
+        case HalC2.Web.prove(base, token) do
+          :ok ->
+            {:ok, base}
+
+          :predates ->
+            # The single file installs into the home its environment names, as the MC does.
+            env =
+              case home do
+                {:root, root} -> "HAL_C2_HOME=#{shell_quote(root)} "
+                {:mc, dir} -> "HAL_C2_MC_HOME=#{shell_quote(dir)} "
+                _ -> ""
+              end
+
+            single = shell_quote(String.replace_suffix(bundle, ".tar.gz", ""))
+
+            {:error,
+             "The installed MC at #{base} predates the proof local tools ask for before " <>
+               "sending its token, so it cannot be upgraded in place this once. Install " <>
+               "this build as its service instead: `#{env}#{single} install`"}
+
+          :error ->
+            {:error, "No installed MC answers at #{base} with the token under its home"}
+        end
+    end
+  end
+
+  # `path` as one shell word, so a printed command still runs when copied.
+  defp shell_quote(path), do: "'" <> String.replace(path, "'", ~S('\'')) <> "'"
 
   defp loaded(mc, changed, restart) do
     Mix.shell().info("#{mc}: upgraded #{length(changed)} modules in place")
@@ -361,7 +412,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     send_bundle(first, version, manifest["platform"], path)
 
     for mc <- mcs do
-      input = [%{"targetVersion" => version}]
+      # The operator named this exact bundle on the command line: rolling back
+      # to it is the explicit choice the RPC gate asks for.
+      input = [%{"targetVersion" => version, "allowDowngrade" => true}]
       {mc, :erpc.call(mc, HalC2.Upgrade, :update, input, :infinity)}
     end
   end

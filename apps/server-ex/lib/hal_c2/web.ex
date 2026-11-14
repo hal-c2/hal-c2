@@ -9,12 +9,17 @@ defmodule HalC2.Web do
     # The token file exists from boot, so local tools can read it before any client connects.
     _ = token()
 
+    # `::` takes IPv4 too, as `0.0.0.0` would, even where IPv6 sockets default to
+    # IPv6 only: clients and local tools then reach it at 127.0.0.1 everywhere, and no
+    # other program can take that port there (`loopback_host/1`).
+    transport = if host == "::", do: [transport_options: [ipv6_v6only: false]], else: []
+
     [
       plug: HalC2.Web.Entry,
       ip: ip,
       port: port,
       startup_log: false,
-      thousand_island_options: [supervisor_options: [name: HalC2.Web.Listener]]
+      thousand_island_options: [supervisor_options: [name: HalC2.Web.Listener]] ++ transport
     ]
     |> Bandit.child_spec()
     # A fixed id, so the listener can be stopped and started by name.
@@ -127,6 +132,29 @@ defmodule HalC2.Web do
     end
   end
 
+  @doc """
+  Whether `ip` is this machine (127.0.0.0/8 or ::1): the only place the MC's
+  access token, a file any local process of the user can read, may authenticate
+  from. Remote clients pair into revocable sessions instead.
+  """
+  def loopback_ip?({127, _, _, _}), do: true
+  def loopback_ip?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  # A dual-stack listener (`host: "::"`) reports IPv4 loopback in mapped form.
+  def loopback_ip?({0, 0, 0, 0, 0, 0xFFFF, g, _}) when div(g, 256) == 127, do: true
+  def loopback_ip?(_ip), do: false
+
+  # Headers a reverse proxy adds; Tailscale Serve (`HalC2.TailscaleServe`) sends the
+  # forwarded ones, and the tailnet identity for a user's device.
+  @proxy_headers ~w(forwarded x-forwarded-for x-forwarded-host x-real-ip tailscale-user-login)
+
+  @doc """
+  Whether `conn` came from this machine and not through a proxy on it: Tailscale
+  Serve connects from loopback on behalf of the tailnet, so a forwarded request is
+  remote. Where the MC's access token may authenticate.
+  """
+  def local_request?(%{remote_ip: ip, req_headers: headers}),
+    do: loopback_ip?(ip) and not Enum.any?(headers, fn {key, _} -> key in @proxy_headers end)
+
   @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do
@@ -153,11 +181,8 @@ defmodule HalC2.Web do
 
             {:error, :enoent} ->
               token = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
-              File.mkdir_p!(Path.dirname(path))
-              # Owner-only before the secret is written.
-              File.write!(path, "")
-              File.chmod!(path, 0o600)
-              File.write!(path, token)
+              HalC2.Paths.mkdir_private!(Path.dirname(path))
+              :ok = HalC2.Paths.write_replace(path, token, 0o600)
               token
           end
 
@@ -167,6 +192,123 @@ defmodule HalC2.Web do
       token ->
         token
     end
+  end
+
+  @doc """
+  The loopback URL and access token of this home's MC, for a local tool to call it
+  with: `{:ok, url, token}` once the listener there has proved it holds the token
+  without being sent it (`prove/2`). `{:error, message}` when nothing there can
+  (no MC runs, or another program holds the port), or when the MC listens where a local
+  tool does not reach it (`loopback_host/1`): on a loopback port it leaves free, a
+  squatter could relay the challenge to it. `listener` is the `{host, port}` the MC
+  binds, the running one's by default (`running_listener/0`), so the tool reaches it
+  whatever host and port the tool itself is configured with.
+  """
+  # sobelow_skip ["Traversal.FileModule"]
+  # Reads only this home's token file, or a test's.
+  def local_mc(listener \\ running_listener(), path \\ token_path()) do
+    {host, port} = listener
+
+    case loopback_host(host) do
+      nil ->
+        {:error,
+         "The MC of #{HalC2.Paths.data_dir()} listens on #{host} only; " <>
+           "local tools reach it at 127.0.0.1"}
+
+      loopback ->
+        base = "http://#{loopback}:#{port}"
+
+        with {:ok, token} <- File.read(path),
+             token = String.trim(token),
+             :ok <- prove(base, token) do
+          {:ok, base, token}
+        else
+          :predates ->
+            {:error,
+             "The MC at #{base} predates the proof local tools ask for before sending its " <>
+               "token; restart it once on this build (`mise run mc`)"}
+
+          _ ->
+            {:error, "No MC of #{HalC2.Paths.data_dir()} answers at #{base}; is it running?"}
+        end
+    end
+  end
+
+  @doc """
+  The `{host, port}` this home's running MC binds, as its runtime record names them
+  (an MC started with `--host` or `--port`), else the configured ones. The host is nil
+  for the default, loopback.
+  """
+  # sobelow_skip ["Traversal.FileModule"]
+  # Reads only this home's runtime record.
+  def running_listener do
+    with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
+         {:ok, %{"port" => port} = record} when is_integer(port) <- JSON.decode(json) do
+      {record["host"], port}
+    else
+      _ -> {Application.get_env(:hal_c2, :host), port()}
+    end
+  end
+
+  @doc """
+  `:ok` when the listener at `base` proves it holds `token` by answering a fresh
+  challenge with `proof/3` for the very address and port dialled, so the token can be
+  sent there. A program at `base` that relays the challenge to, or redirects it to, an
+  MC elsewhere gets that MC's proof for its own address, which does not match. The MC
+  answers only from loopback, so it cannot be relayed through a LAN address either.
+  `:predates` when the listener has no proof route (404), as an MC built before it
+  answers: it gets no token this way until restarted on a build that has the route.
+  `:error` otherwise.
+  """
+  def prove(base, token) do
+    %URI{host: host, port: port} = URI.parse(base)
+    challenge = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
+    request = {~c"#{base}/.well-known/hal-c2/proof?challenge=#{challenge}", []}
+
+    with {:ok, address} <- :inet.parse_address(String.to_charlist(host)),
+         {:ok, _} <- Application.ensure_all_started(:inets),
+         {:ok, {{_, 200, _}, _, reply}} <-
+           :httpc.request(:get, request, [timeout: 5_000, autoredirect: false],
+             body_format: :binary
+           ),
+         {:ok, %{"proof" => proof}} when is_binary(proof) <- JSON.decode(reply),
+         true <- Plug.Crypto.secure_compare(proof, proof(token, challenge, {address, port})) do
+      :ok
+    else
+      {:ok, {{_, 404, _}, _, _}} -> :predates
+      _ -> :error
+    end
+  end
+
+  @doc """
+  Where a local tool reaches an MC bound to `host`: that host when it is an IPv4
+  loopback address, `127.0.0.1` when it is a wildcard (which listens there too, `::`
+  included, see `child_spec/1`) or unset, nil otherwise. The MC holds the address
+  returned, so while it runs no other program listens there on its port. Nil for `::1`
+  as well: the tools' HTTP client (httpc) dials IPv4 only.
+  """
+  def loopback_host(host) when host in [nil, "0.0.0.0", "::", "localhost"], do: "127.0.0.1"
+
+  def loopback_host(host) when is_binary(host) do
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> host
+      _ -> nil
+    end
+  end
+
+  @doc """
+  What `prove/2` expects the listener to answer to `challenge` on a connection
+  to `{address, port}`, the listener's own end of it.
+  """
+  def proof(token, challenge, {address, port}) do
+    address =
+      with {0, 0, 0, 0, 0, 0xFFFF, g, h} <- address,
+           do: :inet.ipv4_mapped_ipv6_address({0, 0, 0, 0, 0, 0xFFFF, g, h})
+
+    endpoint = "#{:inet.ntoa(address)} #{port}"
+
+    :crypto.mac(:hmac, :sha256, token, "hal-c2 local proof\n#{endpoint}\n" <> challenge)
+    |> Base.url_encode64(padding: false)
   end
 
   @doc "Where `token/0` keeps the access token, for local tools that read it."

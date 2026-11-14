@@ -25,10 +25,14 @@ defmodule HalC2.Git do
     # A bare repository among a project's files is not opened as the repository of the
     # folder it sits in, as its config and hooks would then run (a repository that is
     # meant is named: `GIT_DIR`). Reads never take the index lock a user's git needs.
+    # A checkout's own `core.fsmonitor` names a program `git status` would run:
+    # repository configuration never picks a program for the MC to execute.
     argv = [
       Application.get_env(:hal_c2, :git_command, "git"),
       "-c",
-      "safe.bareRepository=explicit" | args
+      "safe.bareRepository=explicit",
+      "-c",
+      "core.fsmonitor=false" | args
     ]
 
     opts =

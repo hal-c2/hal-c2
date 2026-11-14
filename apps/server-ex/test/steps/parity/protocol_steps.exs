@@ -565,7 +565,8 @@ defmodule HalC2.Steps.Parity.Shapes do
   }
 
   @gone :"gone@127.0.0.1"
-  @target "0.0.0-parity"
+  # Newer than any MC: an older version needs "allowDowngrade".
+  @target "999.0.0-parity"
 
   @doc "The frame types a shape's first frames can be."
   def frame_types("stream"), do: ["snapshot"]

@@ -78,7 +78,7 @@ defmodule HalC2.Subprocess do
         HalC2.Subprocess.Sandboxed.start(argv, sandbox, self())
 
       durable && Durable.enabled?() ->
-        start_durable(durable, cmd, opts)
+        start_durable(durable, cmd, with_scrubbed_env(opts))
 
       true ->
         start_owned(cmd, opts)
@@ -137,8 +137,28 @@ defmodule HalC2.Subprocess do
     end
   end
 
+  # Environment prefixes of the MC itself (its dev credential, release and
+  # boot machinery): a spawned program never inherits their values. A caller
+  # that passes one of the names itself (an MCP endpoint for its bridge)
+  # still has its say.
+  @scrubbed_env_prefixes ~w(HAL_C2_ RELEASE_ ERL_)
+
+  defp with_scrubbed_env(opts) do
+    caller = Enum.to_list(opts[:env] || [])
+    given = MapSet.new(Enum.map(caller, fn {name, _value} -> to_string(name) end))
+
+    blanked =
+      for {name, _value} <- System.get_env(),
+          String.starts_with?(name, @scrubbed_env_prefixes),
+          not MapSet.member?(given, name),
+          do: {name, ""}
+
+    Keyword.put(opts, :env, caller ++ blanked)
+  end
+
   defp start_owned(cmd, opts) do
     cmd = if is_function(cmd, 1), do: cmd.(nil) |> spawn_command(), else: spawn_command(cmd)
+    opts = with_scrubbed_env(opts)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     {tail?, opts} = Keyword.pop(opts, :stderr_tail, false)
     stderr = if prefix || tail?, do: :consume, else: :disable

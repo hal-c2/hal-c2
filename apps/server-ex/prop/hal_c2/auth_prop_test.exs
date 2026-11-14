@@ -394,13 +394,13 @@ defmodule HalC2.AuthPropTest do
 
   def next_state(state, _r, {:call, _, :advance, [ms]}), do: %{state | clock: state.clock + ms}
 
-  # A DPoP session's RPC ticket is bound to the session's key.
+  # A DPoP session's RPC or legacy ticket is bound for socket redemption; media is not.
   def next_state(state, _r, {:call, _, :issue_ticket, [t, via, h, use]}) do
     if via == :token and not valid?(state, h) do
       state
     else
       expires = min(state.clock + @ticket_ttl, state.sessions[h].expires)
-      issued(state, t, h, expires, use, if(use == :rpc, do: state.sessions[h].key))
+      issued(state, t, h, expires, use, if(use == :media, do: nil, else: state.sessions[h].key))
     end
   end
 

@@ -2038,10 +2038,10 @@ defmodule HalC2.Steps.Providers.Cursor do
     ctx = ops(context)
     legacy = Path.join([HalC2.Test.Mc.Host.home(ctx), ".cursor", "sdk", "auth.json"])
 
-    # The scenario's scratch home only: this file stands in for the developer's
+    # The scenario machine only: this file stands in for the developer's
     # real Cursor SDK login, which a test must never write or delete.
-    unless String.starts_with?(legacy, ctx.mc.home <> "/") do
-      raise "refusing to write a fake Cursor login outside the scenario home: #{legacy}"
+    unless String.starts_with?(legacy, HalC2.Test.Mc.Host.root(ctx) <> "/") do
+      raise "refusing to write a fake Cursor login outside the scenario machine: #{legacy}"
     end
 
     File.mkdir_p!(Path.dirname(legacy))

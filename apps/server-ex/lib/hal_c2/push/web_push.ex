@@ -70,27 +70,118 @@ defmodule HalC2.Push.WebPush do
 
   @doc """
   POSTs an encrypted `body` to `endpoint`. Returns `:delivered` (200, 201, 202), `:gone`
-  (404, 410: the endpoint is no more) or `{:retry, reason}` (429, 5xx, transport).
+  (404, 410: the endpoint is no more; or its host resolves to an address that is not
+  public) or `{:retry, reason}` (429, 5xx, DNS, transport).
+
+  The host is resolved once, every address it has must be public, and the request goes
+  to the address checked (named by `hostname` for SNI, certificate and `Host`), so DNS
+  that answers differently at connect time cannot point it at this machine or its LAN.
+  Redirects are not followed. `resolve` stands in for that lookup in tests.
   """
-  def post(endpoint, body, urgency) do
+  def post(endpoint, body, urgency, resolve \\ &resolve/1) do
+    %URI{scheme: scheme, host: host, port: port, path: path, query: query} =
+      URI.parse(endpoint)
+
     headers = [
-      {~c"content-encoding", ~c"aes128gcm"},
-      {~c"ttl", ~c"600"},
-      {~c"urgency", String.to_charlist(urgency)}
+      {"content-encoding", "aes128gcm"},
+      {"content-type", "application/octet-stream"},
+      {"ttl", "600"},
+      {"urgency", urgency}
     ]
 
-    request = {String.to_charlist(endpoint), headers, ~c"application/octet-stream", body}
+    case resolve.(host) do
+      {:ok, address} ->
+        target = if(query, do: "#{path || "/"}?#{query}", else: path || "/")
+        # Registrations are https (`HalC2.Push`); a test's phone serves http.
+        scheme = if(scheme == "http", do: :http, else: :https)
+        request(scheme, address, host, port, target, headers, body)
 
-    case :httpc.request(:post, request, http_options(endpoint), body_format: :binary) do
-      {:ok, {{_, status, _}, _, _}} when status in [200, 201, 202] -> :delivered
-      {:ok, {{_, status, _}, _, _}} when status in [404, 410] -> :gone
-      {:ok, {{_, status, _}, _, _}} -> {:retry, status}
-      {:error, reason} -> {:retry, reason}
+      :private ->
+        :gone
+
+      {:error, reason} ->
+        {:retry, reason}
     end
   end
 
-  defp http_options("https:" <> _),
-    do: [timeout: 10_000, connect_timeout: 5_000, ssl: :httpc.ssl_verify_host_options(true)]
+  defp request(scheme, address, host, port, target, headers, body) do
+    with {:ok, conn} <-
+           Mint.HTTP.connect(scheme, address, port,
+             hostname: host,
+             mode: :passive,
+             protocols: [:http1],
+             transport_opts: [timeout: 5_000]
+           ),
+         {:ok, conn, ref} <- Mint.HTTP.request(conn, "POST", target, headers, body) do
+      status = await_status(conn, ref, System.monotonic_time(:millisecond) + 10_000)
+      Mint.HTTP.close(conn)
 
-  defp http_options(_), do: [timeout: 10_000, connect_timeout: 5_000]
+      case status do
+        status when status in [200, 201, 202] -> :delivered
+        status when status in [404, 410] -> :gone
+        status when is_integer(status) -> {:retry, status}
+        {:error, reason} -> {:retry, reason}
+      end
+    else
+      {:error, reason} -> {:retry, reason}
+      {:error, _conn, reason} -> {:retry, reason}
+    end
+  end
+
+  # The final status: an informational 1xx keeps the request open for the real one.
+  defp await_status(conn, ref, deadline) do
+    case Mint.HTTP.recv(conn, 0, max(deadline - System.monotonic_time(:millisecond), 0)) do
+      {:ok, conn, responses} ->
+        case Enum.find_value(responses, fn
+               {:status, ^ref, status} when status >= 200 -> status
+               _ -> nil
+             end) do
+          nil -> await_status(conn, ref, deadline)
+          status -> status
+        end
+
+      {:error, _conn, reason, _responses} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  The address a request to `host` goes to: `{:ok, address}`, its first IPv4 address,
+  else its first IPv6 one, when all of them are public; `:private` when one is not.
+  """
+  def resolve(host) do
+    host = String.to_charlist(host)
+
+    addresses =
+      for family <- [:inet, :inet6],
+          {:ok, found} <- [:inet.getaddrs(host, family)],
+          address <- found,
+          do: address
+
+    cond do
+      addresses == [] -> {:error, :nxdomain}
+      Enum.all?(addresses, &public_address?/1) -> {:ok, hd(addresses)}
+      true -> :private
+    end
+  end
+
+  @doc """
+  Whether `address` is on the public internet: not this machine, a private or CGNAT
+  (Tailscale) range, link-local, benchmarking, multicast or reserved space, as itself
+  or as an IPv4-mapped IPv6 address.
+  """
+  def public_address?({a, b, _, _}) do
+    not (a in [0, 10, 127] or a >= 224 or {a, b} == {169, 254} or
+           (a == 172 and b in 16..31) or {a, b} == {192, 168} or
+           (a == 100 and b in 64..127) or {a, b} in [{198, 18}, {198, 19}])
+  end
+
+  def public_address?({0, 0, 0, 0, 0, 0xFFFF, g, h}) do
+    public_address?({div(g, 256), rem(g, 256), div(h, 256), rem(h, 256)})
+  end
+
+  def public_address?({a, b, c, d, e, f, _, _}) do
+    not ({a, b, c, d, e, f} == {0, 0, 0, 0, 0, 0} or a in 0xFC00..0xFDFF or
+           a in 0xFE80..0xFEBF or a in 0xFF00..0xFFFF)
+  end
 end

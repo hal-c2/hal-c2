@@ -333,6 +333,14 @@ defmodule HalC2.OpenShellReviewPropTest do
   defp result_ok(state, {:call, _, :reap_unlisted, [method]}, result),
     do: reap_ok(state, method, result)
 
+  # The settled read already says how the count ended the review, if it did.
+  defp result_ok(state, {:call, _, :spent, _} = call, result) do
+    case model(state, call).threads[elem(call, 3) |> hd()] do
+      {:ended, reason} -> result == reason
+      _ -> result == nil
+    end
+  end
+
   defp result_ok(_state, _call, result), do: result == :ok
 
   defp theirs(t), do: "The sandbox of thread #{t} is another plugin's."
@@ -362,7 +370,10 @@ defmodule HalC2.OpenShellReviewPropTest do
   def spent(t, key, n) do
     ending(t, fn ->
       :ok = Review.spent(t, key, n)
-      settle()
+      # What a plugin reads as the turn the count came from ends: the count's verdict.
+      settled = Review.ended_settled(t)
+      flush()
+      settled
     end)
   end
 
