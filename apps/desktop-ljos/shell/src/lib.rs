@@ -142,40 +142,28 @@ pub struct Launch {
     pub state_dir: Option<PathBuf>,
 }
 
-/// What [`open`] needs of the launch: where it keeps the session it is
-/// given, and, for a shell that started without an MC, where the client
-/// cache is and whether local folders stay importable.
+/// What [`open`] needs of the launch, for a shell that started without an
+/// MC: where the client cache is and whether local folders stay importable.
 #[derive(Default)]
 struct Kept {
-    data_dir: std::cell::RefCell<Option<PathBuf>>,
     cache_dir: std::cell::RefCell<Option<PathBuf>>,
     allow_local_folder_import: std::cell::Cell<bool>,
 }
 
-/// Connects to the MC `session` names, as NativeShell::open does: its rows
-/// (what the cache kept of it) show while the socket opens, and the session
-/// is kept for the next start. The shell's drafts, rows and route stay as
-/// they are. A shell that started without an MC (nothing kept, no `--pair`)
-/// gets its shell store here, over the cache, as one started with an MC
-/// does; its controllers are active already and follow the MC's rows as
-/// they come. An error says why the connection could not be opened; nothing
-/// has changed then.
+/// Connects to the MC `session` names, as NativeShell::open does: the MC
+/// the desktop host started or paired with (BackendProcess::ready), or one
+/// paired in the app. Its rows (what the cache kept of it) show while the
+/// socket opens. The shell's drafts, rows and route stay as they are. A
+/// shell that started without an MC gets its shell store here, over the
+/// cache, as one started with an MC does; its controllers are active
+/// already and follow the MC's rows as they come. An error says why the
+/// connection could not be opened; nothing has changed then. Nothing is
+/// kept for the next start: the host names its MC again, and in-app
+/// pairings are kept by the saved environments.
 ///
 /// A controller may call it from its own callback (an in-app pairing): the
 /// store's listeners hear of the change once no controller is running.
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
-    attach(engine, session)?;
-    if let Some(dir) = engine.extension::<Kept>().data_dir.borrow().as_deref() {
-        // Not being able to keep it only loses the next start's reconnect.
-        let _ = session::save(dir, session);
-    }
-    Ok(())
-}
-
-/// [`open`] without keeping the session: the MC the desktop host started
-/// or paired with, which it names again on the next start
-/// (NativeShell::open from BackendProcess::ready).
-pub fn attach(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
     mc.open(&session.origin, &session.token)?;
     // NativeShell::opened: the MC on this machine needs no network, one on
@@ -225,7 +213,6 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
         launch.mc_origin.is_none() || launch.allow_local_folder_import,
     );
     let kept = engine.extension::<Kept>();
-    *kept.data_dir.borrow_mut() = launch.data_dir.clone();
     *kept.cache_dir.borrow_mut() = launch.cache_dir.clone();
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);

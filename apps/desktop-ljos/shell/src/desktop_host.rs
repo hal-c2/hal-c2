@@ -135,6 +135,9 @@ pub struct DesktopHost {
 struct State {
     said: Said,
     child: Option<Child>,
+    /// Which `start` the running host is; a stopped one's reader thread
+    /// hears nothing more of the next.
+    run: u64,
 }
 
 impl DesktopHost {
@@ -168,7 +171,15 @@ impl DesktopHost {
         };
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        self.state.lock().unwrap().child = Some(child);
+        let run = {
+            // A host started again (the updater's, after a failed install)
+            // is a new one: its `ready` attaches and its exit is reported.
+            let mut state = self.state.lock().unwrap();
+            state.said = Said::default();
+            state.child = Some(child);
+            state.run += 1;
+            state.run
+        };
         if let Some(stderr) = stderr {
             std::thread::spawn(move || log_lines(stderr));
         }
@@ -186,15 +197,26 @@ impl DesktopHost {
                 if read == Line::Log {
                     eprintln!("[host] {line}");
                 }
-                let event = state.lock().unwrap().said.hear(read);
+                let event = {
+                    let mut state = state.lock().unwrap();
+                    if state.run != run {
+                        return;
+                    }
+                    state.said.hear(read)
+                };
                 if let Some(event) = event {
                     events(event);
                 }
             }
             // Its stdout closed: it is going. One `stop` took is stop's.
-            let Some(mut child) = state.lock().unwrap().child.take() else {
-                return;
+            let child = {
+                let mut state = state.lock().unwrap();
+                if state.run != run {
+                    return;
+                }
+                state.child.take()
             };
+            let Some(mut child) = child else { return };
             let status = child.wait();
             let event = match status {
                 Ok(status) => {
@@ -321,6 +343,20 @@ pub fn licenses_beside(entry: &Path) -> PathBuf {
         .join("../licenses/third-party-licenses.json")
 }
 
+/// The `--url` link as main.cpp hands it on,
+/// `QUrl::fromUserInput(link).toString(QUrl::FullyEncoded)`: trimmed,
+/// `http://` added when it names no scheme (a `host:port` is a host and a
+/// port, not a scheme), and percent-encoded. A link that is no URL either
+/// way is passed as it is, for the host to say so.
+pub fn attach_link(link: &str) -> String {
+    let link = link.trim();
+    let prepended = url::Url::parse(&format!("http://{link}"));
+    match url::Url::parse(link) {
+        Ok(url) if prepended.as_ref().map_or(true, |p| p.port().is_none()) => url.into(),
+        _ => prepended.map_or_else(|_| link.to_owned(), Into::into),
+    }
+}
+
 /// main.cpp's host arguments: `--attach=<link>` for `--url`, `--dev` for
 /// a development shell, `--base-dir=<root>` for `--home-dir`, then what
 /// the command line passed that is not a folder.
@@ -332,7 +368,7 @@ pub fn arguments(
 ) -> Vec<String> {
     let mut arguments = Vec::new();
     if let Some(link) = attach {
-        arguments.push(format!("--attach={link}"));
+        arguments.push(format!("--attach={}", attach_link(link)));
     }
     if dev {
         arguments.push("--dev".into());
@@ -436,6 +472,24 @@ mod tests {
     }
 
     #[test]
+    fn the_link_is_normalized_as_qurl_from_user_input() {
+        assert_eq!(
+            attach_link(" http://h:3773/pair#token=x "),
+            "http://h:3773/pair#token=x"
+        );
+        assert_eq!(
+            attach_link("192.168.1.4:3773/pair#token=x"),
+            "http://192.168.1.4:3773/pair#token=x"
+        );
+        assert_eq!(attach_link("localhost:3773"), "http://localhost:3773/");
+        assert_eq!(attach_link("h.ts.net/pair"), "http://h.ts.net/pair");
+        assert_eq!(
+            attach_link("http://h/a b#token=x y"),
+            "http://h/a%20b#token=x%20y"
+        );
+    }
+
+    #[test]
     fn node_comes_from_the_environment_first() {
         let dir = Path::new("/opt/hal-c2/bin");
         assert_eq!(
@@ -504,6 +558,39 @@ mod tests {
             },
         );
         host.start();
+        host.stop();
+        assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_host_started_again_is_heard_again() {
+        let (sent, heard) = std::sync::mpsc::channel();
+        let host = DesktopHost::new(
+            Options {
+                node: "sh".into(),
+                entry: "-c".into(),
+                arguments: vec![
+                    r#"echo '{"type":"ready","mc":{"origin":"http://h","token":"t"}}'; cat >/dev/null"#
+                        .into(),
+                ],
+            },
+            move |event| {
+                let _ = sent.send(event);
+            },
+        );
+        let ready = Event::Ready {
+            origin: "http://h".into(),
+            token: "t".into(),
+        };
+        host.start();
+        assert_eq!(
+            heard.recv_timeout(Duration::from_secs(5)),
+            Ok(ready.clone())
+        );
+        host.stop();
+        // The updater's restart after a failed install.
+        host.start();
+        assert_eq!(heard.recv_timeout(Duration::from_secs(5)), Ok(ready));
         host.stop();
         assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
     }

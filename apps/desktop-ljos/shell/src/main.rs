@@ -953,7 +953,7 @@ fn hosted_said(engine: &Engine, event: desktop_host::Event) {
                 label: String::new(),
                 environment_id: String::new(),
             };
-            hal_c2_shell::attach(engine, &session).err()
+            hal_c2_shell::open(engine, &session).err()
         }
         desktop_host::Event::Failed(message) => Some(message),
     };
