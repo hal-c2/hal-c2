@@ -195,20 +195,24 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The cef crate's build script copies libcef.so and its resources beside
-      # the binary, and the restored target leaves them out: a build that is
+      # the binaries (target/<profile>, which cargo test also puts on the
+      # library path), and a restored target leaves them out: a build that is
       # fresh does not run the script again. Put them back from CEF_PATH, or
       # rerun the script when CEF itself was not restored.
-      - name: CEF beside the binary
+      - &cef-beside
+        name: CEF beside the binaries
         run: |
-          [[ -f target/release/libcef.so ]] && exit 0
           dist=$(dirname "$(ls "$CEF_PATH"/*/*/archive.json 2>/dev/null | head -1)")
-          if [[ -f $dist/libcef.so ]]; then
-            mkdir -p target/release
-            find "$dist" -maxdepth 1 -type f -exec cp -t target/release {} +
-            cp -r "$dist/locales" target/release/
-          else
-            cargo clean --release -p cef-dll-sys
-          fi
+          for profile in debug release; do
+            dir=target/$profile
+            [[ -d $dir/deps && ! -f $dir/libcef.so ]] || continue
+            if [[ -f $dist/libcef.so ]]; then
+              find "$dist" -maxdepth 1 -type f -exec cp -t "$dir" {} +
+              cp -r "$dist/locales" "$dir/"
+            else
+              cargo clean --profile "${profile/debug/dev}" -p cef-dll-sys
+            fi
+          done
 
       # Compiles desktop-qt's bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
@@ -243,6 +247,8 @@ jobs:
           workspaces: apps/desktop-ljos
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - *cef-beside
 
       # The features suite is opt-in in Cargo.toml (`test = false`), so this
       # runs everything else. All of it, so one run shows every failure.
@@ -296,6 +302,8 @@ jobs:
           workspaces: apps/desktop-ljos
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - *cef-beside
 
       # Each scenario runs a shell of its own against a fake MC on loopback;
       # none needs the real MC.
