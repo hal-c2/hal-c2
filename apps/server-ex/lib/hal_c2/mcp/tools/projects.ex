@@ -108,10 +108,11 @@ defmodule HalC2.Mcp.Tools.Projects do
     end
   end
 
-  def run("hal_c2_worktree_handoff", %{"branch" => branch} = args, %{row: me}) do
+  def run("hal_c2_worktree_handoff", %{"branch" => branch} = args, %{row: me} = caller) do
     thread = thread(me["id"]) || me
 
-    with :ok <- unbound(thread),
+    with :ok <- mutation(caller),
+         :ok <- unbound(thread),
          %{} = project <- project_row(me["projectId"]) || project_not_found(me),
          root = project["workspaceRoot"],
          :ok <-

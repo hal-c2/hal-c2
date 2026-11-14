@@ -321,7 +321,6 @@ impl Terminal {
             let padding = e.read(me, Self::PADDING.index).to_number();
             e.untrack(|| relayout(e, me, (w, h), &style, padding));
         })?;
-        e.effect_in(me, move |e| follow_loader(e, me))?;
         // The colours and the history follow their properties.
         e.effect_in(me, move |e| {
             let theme = theme(e, me);
@@ -892,35 +891,6 @@ impl TextInputClient for Ime {
     /// keys as they were typed.
     fn hints(&self, _: &Engine, _: ObjectId) -> i32 {
         0x2 | 0x40 | 0x200
-    }
-}
-
-/// Takes the size of the Loader that loaded the terminal when the Loader
-/// has a size of its own, as Qt's Loader gives it. Ljós's Loader does not
-/// when that size comes from a `Binding on width` (TerminalSplits' cells),
-/// and the terminal stayed 0x0 (hal-c2/ljos-ui#236). A Loader that follows
-/// its item has the item's size as its implicit size, so nothing is
-/// written then.
-fn follow_loader(e: &Engine, me: ObjectId) {
-    let Some(parent) = e.read(me, Item::PARENT.index).as_object() else {
-        return;
-    };
-    let is_loader = e
-        .lookup_type("QtQuick", "Loader")
-        .is_some_and(|loader| e.inherits(parent, &loader));
-    if !is_loader || e.read_by_name(parent, "item").as_object() != Some(me) {
-        return;
-    }
-    let axes = [
-        (Item::WIDTH.index, Item::IMPLICIT_WIDTH.index),
-        (Item::HEIGHT.index, Item::IMPLICIT_HEIGHT.index),
-    ];
-    for (size, implicit) in axes {
-        let own = e.read(parent, size).to_number();
-        let follows = own == e.read(parent, implicit).to_number();
-        if !follows && e.untrack(|| e.read(me, size).to_number()) != own {
-            let _ = e.write_internal(me, size, own.into(), item::WriteKind::Imperative);
-        }
     }
 }
 

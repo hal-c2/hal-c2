@@ -194,7 +194,11 @@ defmodule HalC2.Steps.Settings.General do
 
   # "shop" has an origin one commit ahead of its local main, not yet fetched.
   step "an agent creates a worktree for a thread without choosing a base", context do
-    context = ship_checkout(context)
+    # The handoff is the agent's own call, so its thread has a turn running.
+    context = context |> shop() |> World.launch_titled(@thread, "shop", "wait for it")
+    World.await_runs(context, @thread, ["running"])
+    context = Map.put(context, :thread, @thread)
+
     root = World.project(context, "shop").root
     origin = Mc.tmp_dir(context.mc, "origin")
     World.git!(origin, ["clone", "-q", "--bare", root, "."])

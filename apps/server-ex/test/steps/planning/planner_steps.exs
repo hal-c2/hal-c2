@@ -1349,7 +1349,7 @@ defmodule HalC2.Steps.Planning.Planner do
       ["remote", "add", "origin", "https://#{host}/#{repository}.git"]
     )
 
-    context
+    if host == "github.com", do: context, else: World.gh_sign_in_enterprise(context, host)
   end
 
   step "{string} is linked to \#{int} of {string} at {string}",

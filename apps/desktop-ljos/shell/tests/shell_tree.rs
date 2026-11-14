@@ -79,7 +79,7 @@ fn the_desktop_shell_loads_from_the_checkout() {
     let differ: Vec<String> = engine
         .take_warnings()
         .into_iter()
-        .filter(|w| w.contains("compiled code") && !same_value(w) && !gone_context(w))
+        .filter(|w| w.contains("compiled code") && !same_value(w))
         .collect();
     assert!(differ.is_empty(), "{stats:?}\n{}", differ.join("\n"));
 }
@@ -91,13 +91,6 @@ fn the_desktop_shell_loads_from_the_checkout() {
 fn the_type_dump_file_is_current() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("ljostypes.json");
     ljos::types::check_file(&file, hal_c2_shell::register).unwrap_or_else(|e| panic!("{e}"));
-}
-
-/// Whether a cross-check warning is hal-c2/ljos-ui#209: the dynamic tiers
-/// throw before reading anything, on a popup binding naming its control's
-/// id, where the compiled value is right.
-fn gone_context(warning: &str) -> bool {
-    warning.contains("; dynamic threw;") && warning.ends_with("and dynamic read 0 nodes")
 }
 
 /// Whether a cross-check warning gives the same value for both sides: one

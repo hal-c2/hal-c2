@@ -1203,6 +1203,25 @@ fn theme_store(hub: &Hub, name: &str) -> String {
         .to_string()
 }
 
+// ThemeStore::applyType: an interface font is monospace by its characters'
+// widths (QFontInfo::fixedPitch), not by its name.
+#[test]
+fn a_fixed_pitch_interface_font_is_monospace() {
+    let (hub, dir) = hub();
+    // The app's fonts, not the bundled one the hub otherwise draws with.
+    ljos::testing::set_text_engine(ljos::item::TextEngine::with_system_fonts());
+    let (wake, woken) = mpsc::channel();
+    hal_c2_shell::theme::set_wake(&hub.engine, move || {
+        let _ = wake.send(());
+    });
+    let file = dir.path().join("theme.json");
+    for (family, monospace) in [("Liberation Mono", "true"), ("Liberation Sans", "false")] {
+        std::fs::write(&file, json!({"fonts": {"ui": family}}).to_string()).unwrap();
+        delivered(&hub, &woken, |hub| theme_store(hub, "fontUi") == family);
+        assert_eq!(theme_store(&hub, "monospace"), monospace, "{family}");
+    }
+}
+
 #[test]
 fn the_shell_theme_file_is_followed_as_it_changes() {
     let (hub, dir) = hub();

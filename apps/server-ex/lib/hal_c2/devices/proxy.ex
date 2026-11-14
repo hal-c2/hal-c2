@@ -198,8 +198,12 @@ defmodule HalC2.Devices.Proxy do
         {%{"wsTicket" => ticket}, _} when is_binary(ticket) ->
           HalC2.Auth.ticket_scopes(ticket)
 
+        # The MC's own token, from this machine only, as everywhere else.
         {%{"token" => token}, _} when is_binary(token) ->
-          if Plug.Crypto.secure_compare(token, HalC2.Web.token()), do: {:ok, :all}, else: :error
+          if HalC2.Web.local_request?(conn) and
+               Plug.Crypto.secure_compare(token, HalC2.Web.token()),
+             do: {:ok, :all},
+             else: :error
 
         {_, [_authorization]} ->
           with {:ok, session} <- HalC2.Auth.request_session(conn), do: {:ok, session.scopes}
