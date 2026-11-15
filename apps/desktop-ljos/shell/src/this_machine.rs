@@ -37,6 +37,16 @@ pub fn set_id_for_testing(id: Option<String>) {
     PINNED.with(|p| *p.borrow_mut() = id);
 }
 
+/// This machine's name, as the system gives it; None when it gives none.
+pub fn host_name() -> Option<String> {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .map(|h| h.trim().to_owned())
+        .filter(|h| !h.is_empty())
+}
+
 /// As the MC hashes it (apps/server-ex lib/hal_c2/environment/machine.ex).
 fn hash(raw: &[u8]) -> String {
     if raw.is_empty() {
@@ -52,7 +62,7 @@ fn hash(raw: &[u8]) -> String {
 /// exists (one that cannot be opened ends the search), its first 32 bytes.
 /// Qt does not read /etc/machine-id, which D-Bus's usually links to.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn raw_id() -> Option<Vec<u8>> {
+pub(crate) fn raw_id() -> Option<Vec<u8>> {
     use std::io::Read;
     for path in [
         "/var/lib/dbus/machine-id",
@@ -72,7 +82,7 @@ fn raw_id() -> Option<Vec<u8>> {
 
 /// IOPlatformUUID, as Qt reads it.
 #[cfg(target_os = "macos")]
-fn raw_id() -> Option<Vec<u8>> {
+pub(crate) fn raw_id() -> Option<Vec<u8>> {
     let out = std::process::Command::new("ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()
@@ -85,7 +95,7 @@ fn raw_id() -> Option<Vec<u8>> {
 
 /// The registry's MachineGuid in its 64-bit view, as Qt reads it.
 #[cfg(windows)]
-fn raw_id() -> Option<Vec<u8>> {
+pub(crate) fn raw_id() -> Option<Vec<u8>> {
     let out = std::process::Command::new("reg")
         .args([
             "query",
@@ -103,7 +113,7 @@ fn raw_id() -> Option<Vec<u8>> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn raw_id() -> Option<Vec<u8>> {
+pub(crate) fn raw_id() -> Option<Vec<u8>> {
     None
 }
 

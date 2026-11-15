@@ -33,6 +33,7 @@ pub mod palette;
 pub mod panel;
 pub mod plan;
 pub mod plugin;
+pub mod preview_automation;
 pub mod project_actions;
 pub mod project_clone;
 pub mod project_settings;
@@ -166,6 +167,11 @@ pub fn registrations() -> Vec<Registration> {
         Registration::new::<panel::RightPanel>("panel", &["panel"], Scope::Window),
         Registration::new::<plan::Plan>("plan", &[], Scope::Window),
         Registration::new::<plugin::Plugin>("plugins", &["plugins"], Scope::Shared),
+        Registration::new::<preview_automation::PreviewAutomation>(
+            "previewAutomation",
+            &[],
+            Scope::Shared,
+        ),
         Registration::new::<project_actions::ProjectActions>(
             "projectActions",
             &["projectActions"],

@@ -307,7 +307,26 @@ impl Pages {
     }
 }
 
+/// What runs whenever a page comes, goes or shows another tab.
+type PagesListener = Rc<dyn Fn(&Engine)>;
+
+#[derive(Default)]
+struct PagesListeners(RefCell<Vec<PagesListener>>);
+
+/// Runs `f` whenever a page comes, goes or shows another tab.
+pub fn on_pages_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
+    engine
+        .extension::<PagesListeners>()
+        .0
+        .borrow_mut()
+        .push(Rc::new(f));
+}
+
 fn pages_changed(engine: &Engine) {
+    let listeners = engine.extension::<PagesListeners>().0.borrow().clone();
+    for f in listeners {
+        f(engine);
+    }
     if let Some(browser) = browser(engine) {
         warn(
             engine,
@@ -610,6 +629,10 @@ impl BrowserPage {
         }
         let tab = snapshot(engine, &inner);
         BrowserPage::update(engine, obj, |core| core.follow(tab));
+        // A page's previews say whose thread its tab is.
+        if !inner.enrolled.borrow().is_empty() {
+            pages_changed(engine);
+        }
     }
 
     /// Shows MC tab `tab`.
@@ -759,6 +782,23 @@ impl BrowserPage {
             Value::Object(view) => Some(view),
             _ => None,
         }
+    }
+
+    /// The ThreadPreviews the page follows.
+    pub fn previews(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+        inner_of(engine, obj)?
+            .previews
+            .get()
+            .filter(|p| engine.is_alive(*p))
+    }
+
+    /// How far the page is zoomed in, 1 at none.
+    pub fn zoom(engine: &Engine, obj: ObjectId) -> f64 {
+        engine
+            .with::<BrowserPage, _>(obj, |p| p.zoom)
+            .ok()
+            .filter(|z| *z > 0.0)
+            .unwrap_or(1.0)
     }
 
     /// Whether the page has DevTools open.

@@ -1,18 +1,16 @@
 //! Agents driving this desktop's browser (features/preview/automation.feature),
 //! as desktop-qt's PreviewAutomationSteps.cpp: the MC's broker is faked, and
-//! a held page stands for the tab, its scripts answered when a step says so.
+//! the app's own host answers it. A real tab is driven by the page the app
+//! attached for it; a held page stands for a tab whose scripts are answered
+//! when a step says so.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use hal_c2_shell::browser::BrowserPage;
-use hal_c2_shell::controller;
-use hal_c2_shell::preview_automation::{
-    AutomationPage, GrabDone, PreviewAutomationHost, ScriptDone,
-};
-use ljos::ObjectId;
-use ljos::prelude::{Engine, Value};
+use hal_c2_shell::controllers::preview_automation;
+use hal_c2_shell::preview_automation::{AutomationPage, PreviewAutomationHost, ScriptDone};
+use ljos::prelude::Engine;
 use serde_json::{Value as Json, json};
 
 use super::fake;
@@ -46,74 +44,26 @@ impl AutomationPage for HeldPage {
             .borrow_mut()
             .push((script.to_owned(), Some(done)));
     }
-    fn url(&self) -> String {
+    fn url(&self, _: &Engine) -> String {
         self.at.borrow().clone()
     }
-    fn title(&self) -> String {
+    fn title(&self, _: &Engine) -> String {
         String::new()
     }
-    fn loading(&self) -> bool {
+    fn loading(&self, _: &Engine) -> bool {
         false
     }
-    fn load(&self, url: &str) {
+    fn load(&self, _: &Engine, url: &str) {
         self.loads.borrow_mut().push(url.to_owned());
         *self.at.borrow_mut() = url.to_owned();
     }
-    fn dev_tools_open(&self) -> bool {
+    fn dev_tools_open(&self, _: &Engine) -> bool {
         false
     }
-    fn on_screen(&self) -> bool {
+    fn on_screen(&self, _: &Engine) -> bool {
         true
     }
-    fn viewport(&self) -> (i32, i32) {
-        (1280, 800)
-    }
-}
-
-/// A browser tab's real page, driven as the desktop's would be.
-struct ViewPage {
-    page: ObjectId,
-    at: String,
-}
-
-fn script_text(value: Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.to_string()),
-        _ => None,
-    }
-}
-
-impl AutomationPage for ViewPage {
-    fn run_script(&self, engine: &Engine, script: &str, done: ScriptDone) {
-        BrowserPage::evaluate(engine, self.page, script, 0, move |e, v| {
-            done(e, script_text(v))
-        });
-    }
-    fn run_isolated(&self, engine: &Engine, script: &str, done: ScriptDone) {
-        BrowserPage::evaluate(engine, self.page, script, 1, move |e, v| {
-            done(e, script_text(v))
-        });
-    }
-    fn grab(&self, engine: &Engine, done: GrabDone) {
-        BrowserPage::grab_png(engine, self.page, done);
-    }
-    fn url(&self) -> String {
-        self.at.clone()
-    }
-    fn title(&self) -> String {
-        String::new()
-    }
-    fn loading(&self) -> bool {
-        false
-    }
-    fn load(&self, _: &str) {}
-    fn dev_tools_open(&self) -> bool {
-        false
-    }
-    fn on_screen(&self) -> bool {
-        true
-    }
-    fn viewport(&self) -> (i32, i32) {
+    fn viewport(&self, _: &Engine) -> (i32, i32) {
         (1280, 800)
     }
 }
@@ -137,11 +87,13 @@ fn drive_tab(world: &mut World, path: &str, title: &str, body: &str) -> Outcome 
     super::browser::dev_server(world)?.page(path, title, body);
     super::browser::show_tab(world, path)?;
     super::browser::wait_for_title(world, title)?;
-    let page = super::browser::page(world)?;
     let tab = super::browser::browsing(world).tab_id.clone();
-    let at = super::browser::server_url(world, path)?;
+    // The app attaches the tab's page to its host on its own.
     let host = host(world)?;
-    host.attach(world.engine(), THREAD, &tab, Rc::new(ViewPage { page, at }));
+    let attached = tab.clone();
+    world.wait_for("the app to give its host the tab's page", move |_| {
+        host.has_page(&attached)
+    })?;
     world.part::<Automation>().driven = tab;
     Ok(())
 }
@@ -167,8 +119,14 @@ fn extension(mc: &mut FakeMc) {
         mc.reply(rpc, Json::Null);
         Ok(())
     });
+    // A host says whether its window has the focus once it is connected.
+    mc.on_rpc("previewAutomation.focusHost", |mc, rpc| {
+        mc.reply(rpc, Json::Null);
+        Ok(())
+    });
 }
 
+/// The app's host, once the MC connected it.
 fn host(world: &mut World) -> Outcome<PreviewAutomationHost> {
     if let Some(host) = &world.part::<Automation>().host {
         return Ok(host.clone());
@@ -176,15 +134,18 @@ fn host(world: &mut World) -> Outcome<PreviewAutomationHost> {
     if world.shell_subscriptions() == 0 {
         world.connect()?;
     }
-    let Some(mc) = controller::mc(world.engine()) else {
-        fail!("the shell has no MC");
+    // The app's controllers, the host's among them, start on the MC's
+    // first snapshot.
+    world.wait_for("the app to start its browser host", |w| {
+        preview_automation::host(w.engine()).is_some()
+    })?;
+    let Some(host) = preview_automation::host(world.engine()) else {
+        fail!("the app has no browser host");
     };
-    let host = PreviewAutomationHost::new(mc, "desktop-test");
-    host.set_mcs(&[(world.mc.name.clone(), world.mc.environment_id.clone())]);
     world.part::<Automation>().host = Some(host.clone());
     let name = world.mc.name.clone();
     let waiting = host.clone();
-    world.wait_for("the MC to connect the browser host", move |_| {
+    world.wait_for("the MC to connect the app's browser host", move |_| {
         !waiting.connection_id(&name).is_empty()
     })?;
     Ok(host)
