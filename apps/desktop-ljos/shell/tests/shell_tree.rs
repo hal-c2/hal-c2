@@ -65,8 +65,8 @@ fn the_desktop_shell_loads_from_the_checkout() {
         "usage.open",
         serde_json::Value::Null,
     );
-    let root = engine
-        .create_from_url("Main", None, Vec::new())
+    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+        .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
         .expect("Main is made");
     mc.deliver(&engine);
     let png = picture.png(&engine, root).expect("a picture");

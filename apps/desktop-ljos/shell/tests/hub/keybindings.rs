@@ -193,7 +193,9 @@ fn route_thread(hub: &Hub) -> String {
 }
 
 fn object(hub: &Hub) -> ljos::prelude::ObjectId {
-    hub.engine.singleton::<KeybindingsObject>().unwrap()
+    hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<KeybindingsObject>(&hub.engine)
+        .unwrap()
 }
 
 #[test]
@@ -1064,4 +1066,43 @@ fn the_window_presses_through_the_singleton() {
         common_read(&hub, "commands"),
         Value::Object(Commands::of(&hub.engine).object().unwrap())
     );
+}
+
+#[test]
+fn a_key_pressed_in_a_window_runs_in_that_window_not_the_one_in_front() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let (hub, _keymap) = hub();
+    let engine = &hub.engine;
+    controller::open_window(engine, Some("two")).expect("the shell is started");
+    let log = Log::default();
+    for id in [MAIN, "two"] {
+        let seen = log.clone();
+        controller::in_window(engine, id, || {
+            Commands::of(engine).add(engine, "sidebar.toggle", "Toggle", move |_| {
+                seen.borrow_mut().push(id.to_owned());
+            });
+        });
+    }
+    // "two", opened last, is in front; the key is pressed in the first.
+    let main = Bridge::main(engine)
+        .singleton::<KeybindingsObject>(engine)
+        .unwrap();
+    let two = controller::window_bridge(engine, "two")
+        .unwrap()
+        .singleton::<KeybindingsObject>(engine)
+        .unwrap();
+    assert_ne!(main, two);
+    let focus = || json!({"terminal": false, "composer": false, "editable": false}).to_value();
+    let press = |obj| {
+        call(
+            engine,
+            obj,
+            "press",
+            &[Value::String(Atom::from("Ctrl+B")), focus()],
+        )
+    };
+    assert_eq!(press(main), Value::Bool(true));
+    assert_eq!(*log.borrow(), [MAIN]);
+    assert_eq!(press(two), Value::Bool(true));
+    assert_eq!(*log.borrow(), [MAIN, "two"]);
 }

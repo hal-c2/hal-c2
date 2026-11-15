@@ -2575,7 +2575,7 @@ fn target(engine: &Engine) -> Target {
 /// `PaletteModel` in QML: the palette's state and the rows its list shows.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "PaletteModel", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct PaletteObject {
     #[qml(notify, readonly)]
     open: bool,

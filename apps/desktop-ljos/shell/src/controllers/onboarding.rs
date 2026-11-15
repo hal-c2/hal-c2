@@ -79,7 +79,7 @@ const DEFAULT_SELECTION_MIN_THREADS: i64 = 3;
 /// `Onboarding` in QML: the setup terminal's session, or null.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Onboarding", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct OnboardingObject {
     #[qml(notify, readonly)]
     terminal: Value,

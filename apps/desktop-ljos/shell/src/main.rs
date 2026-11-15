@@ -27,9 +27,9 @@
 //!
 //! What the shell keeps (the client cache, its drafts) is under
 //! `--home-dir`, or the XDG directories (`hal-c2-dev` ones with `--dev`),
-//! one `desktop-ljos` level down (src/storage.rs). A shell built from
-//! source (no HAL_C2_RELEASE when it was built) or started with `--dev`
-//! is Dev: its own icon and app id (`hal-c2-dev`, unless `--app-id`).
+//! desktop-qt's (src/storage.rs). A shell built from source (no
+//! HAL_C2_RELEASE when it was built) or started with `--dev` is Dev: its
+//! own icon and app id (`hal-c2-dev`, unless `--app-id`).
 //!
 //! `--action` dispatches a shell action, its JSON payload after a `=` or a
 //! space (`settings.open`, `theme.mode={"mode":"dark"}`), and `--key`
@@ -278,11 +278,31 @@ fn main() -> ExitCode {
     if options.check {
         return check(&options.roots);
     }
-    connect_to(&mut options);
+    if let Err(stranded) = connect_to(&mut options) {
+        for what in stranded {
+            eprintln!("hal-c2-ljos: {what}");
+        }
+        eprintln!(
+            "hal-c2-ljos: not starting, so nothing opens a database without its journal; \
+             move the files named together, or delete them all"
+        );
+        return ExitCode::FAILURE;
+    }
     // A folder named while the app already runs on this home goes to that
     // window, and this launch ends here: no second MC starts, and a
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
-    if !options.folders.is_empty() && single_instance::forward(&options.state_dir, &options.folders)
+    // A launch asked for a picture draws its own window instead, of the MC
+    // as it is: it adds no projects and starts no threads.
+    let picture = options.screenshot.is_some() || options.render.is_some();
+    if picture && !options.folders.is_empty() {
+        eprintln!(
+            "hal-c2-ljos: a picture opens no folders, so not {}",
+            options.folders.join(", ")
+        );
+    }
+    if !picture
+        && !options.folders.is_empty()
+        && single_instance::forward(&options.state_dir, &options.folders)
     {
         return ExitCode::SUCCESS;
     }
@@ -372,7 +392,7 @@ fn check(roots: &Roots) -> ExitCode {
 /// Which MC the shell connects to and where it keeps what it was sent: the
 /// one named, else the one `--pair` pairs with, else the one the desktop
 /// host names (main.cpp's BackendProcess).
-fn connect_to(options: &mut Options) {
+fn connect_to(options: &mut Options) -> Result<(), Vec<String>> {
     // A shell built from source, or one on the development profile, is
     // Dev (StageController), so it is never mistaken for the installed app.
     hal_c2_shell::controllers::stage::set_app_stage(if dev(options) { "Dev" } else { "" });
@@ -382,6 +402,11 @@ fn connect_to(options: &mut Options) {
         Profile::Installed
     };
     let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
+    // What an earlier shell kept a level down moves up before anything reads.
+    let stranded = hal_c2_shell::storage::carry_over(&paths);
+    if !stranded.is_empty() {
+        return Err(stranded);
+    }
     // The user's theme, plugins, preferences and shell sit in the config
     // home's `shell`, desktop-qt's too, unless `--config-dir` names another.
     // Made up front so their watchers are live from the start (main.cpp).
@@ -409,6 +434,7 @@ fn connect_to(options: &mut Options) {
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
     options.launch.state_dir = Some(paths.state);
+    Ok(())
 }
 
 /// Spends a `--pair` link on the MC it names; without one, or without
@@ -880,15 +906,9 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::open_folders(engine, &folders)
                 });
             }
-            // TODO(#569): desktop-qt's ShellWindows shows another window
-            // for `window.new` and the "New window" command, and reopens the
-            // saved ones, here:
-            // controller::set_window_opener with a native window around a
-            // new root, then controller::restore_windows. The controllers
-            // keep a set per window already (controller::open_window), but
-            // a window's `Shell` must be the bridge they publish on, which
-            // waits on window-scoped singletons (see Bridge::singleton), so
-            // the desktop keeps to one.
+            // desktop-qt's ShellWindows: `window.new`, the "New window"
+            // command and the saved windows each show a root of their own.
+            controller::set_window_opener(&engine, hal_c2_shell::runtime::open_window);
             // An in-app pairing names this desktop as `--pair` does.
             controller::with::<ConnectionHealth, _>(&engine, |health, _| {
                 health.set_pairing_client(pairing_client())
@@ -934,7 +954,13 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::theme::set_application_font(&engine);
             // The user's shell or the built-in one, made again as their
             // files change.
-            hal_c2_shell::runtime::open(&engine, true).map_err(Into::into)
+            let root = hal_c2_shell::runtime::open(&engine, true);
+            // The others saved open reopen once the first shows
+            // (NativeShell::restoreWindows after windows.start()).
+            if root.is_ok() {
+                controller::restore_windows(&engine);
+            }
+            root.map_err(Into::into)
         })
         .map_err(|e| e.to_string());
     if let Some(host) = hosted.borrow_mut().take() {

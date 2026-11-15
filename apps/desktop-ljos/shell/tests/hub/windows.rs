@@ -308,7 +308,9 @@ fn closing_the_main_root_quits_but_on_macos_where_reopening_shows_it() {
         )],
         &[],
     );
-    let root = ljos::create_root(engine, source, "Probe").expect("the root");
+    let root = Bridge::main(engine)
+        .in_scope(engine, || ljos::create_root(engine, source, "Probe"))
+        .expect("the root");
     controller::attach_root(engine, MAIN, root);
 
     // What the user's close button does: `closing`, then hidden.
@@ -462,4 +464,41 @@ fn each_window_holds_its_own_activity_lease() {
         .map(|(_, window)| window.to_owned())
         .collect();
     assert_eq!(windows, [MAIN, "two"].map(str::to_owned).into());
+}
+
+#[test]
+fn each_window_root_reads_its_own_shell_and_window_singletons() {
+    let (hub, _) = opening(Launch::default());
+    open(&hub, "two");
+    let engine = &hub.engine;
+    let probe = "import QtQuick\nimport HalC2.Shell\nItem {\n    property var shell: Shell\n    property var panel: Panel\n    readonly property string route: Shell.state.route ? Shell.state.route.kind + (Shell.state.route.section ?? \"\") : \"\"\n}";
+    let root_of = |id: &str| {
+        let source = crate::common::compile(&[("Probe", probe)], &[]);
+        bridge(&hub, id)
+            .in_scope(engine, || ljos::create_root(engine, source, "Probe"))
+            .expect("the root")
+    };
+    let (main, two) = (root_of(MAIN), root_of("two"));
+    let object = |root, name| match engine.read_by_name(root, name) {
+        ljos::prelude::Value::Object(obj) => obj,
+        other => panic!("{name}: {other:?}"),
+    };
+    assert_eq!(object(main, "shell"), bridge(&hub, MAIN).object());
+    assert_eq!(object(two, "shell"), bridge(&hub, "two").object());
+    assert_ne!(object(main, "panel"), object(two, "panel"));
+
+    dispatch(
+        &hub,
+        "two",
+        "settings.navigate",
+        json!({"to": "/settings/archived"}),
+    );
+    let route = |root| {
+        engine
+            .read_by_name(root, "route")
+            .to_js_string()
+            .to_string()
+    };
+    assert_eq!(route(main), "home");
+    assert!(route(two).starts_with("settings"), "{}", route(two));
 }

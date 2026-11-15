@@ -65,8 +65,8 @@ fn shell(hub: &Hub, threads: &[(&str, &str)]) {
 }
 
 pub(crate) fn object(hub: &Hub) -> ObjectId {
-    hub.engine
-        .singleton::<PaletteObject>()
+    hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<PaletteObject>(&hub.engine)
         .expect("PaletteModel")
 }
 

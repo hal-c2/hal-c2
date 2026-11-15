@@ -132,8 +132,8 @@ fn tab_with(real_decoder: bool) -> Tab {
     } else {
         script_decoders(&engine)
     };
-    let root = engine
-        .create_from_url("Main", None, Vec::new())
+    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+        .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
         .expect("Main is made");
     let devices = ThreadDevices::create(&engine, Some(root), mc.clone()).expect("the devices");
     engine
