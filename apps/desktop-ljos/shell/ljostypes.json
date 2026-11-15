@@ -14990,6 +14990,153 @@
           ]
         },
         {
+          "name": "RenderStats",
+          "since": "6.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "fps",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fpsChanged"
+            },
+            {
+              "name": "frameTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "frameTimeChanged"
+            },
+            {
+              "name": "maxFrameTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "maxFrameTimeChanged"
+            },
+            {
+              "name": "renderTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderTimeChanged"
+            },
+            {
+              "name": "syncTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "syncTimeChanged"
+            },
+            {
+              "name": "renderPrepareTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderPrepareTimeChanged"
+            },
+            {
+              "name": "lastCompletedGpuTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "lastCompletedGpuTimeChanged"
+            },
+            {
+              "name": "drawCallCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "drawCallCountChanged"
+            },
+            {
+              "name": "drawVertexCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "drawVertexCountChanged"
+            },
+            {
+              "name": "renderPassCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderPassCountChanged"
+            },
+            {
+              "name": "pipelineCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pipelineCountChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
           "name": "PickResult",
           "since": "6.0",
           "base": "QtObject",
@@ -18055,30 +18202,9 @@
               "constant": false,
               "group": false,
               "notify": "gpuPostTimeChanged"
-            }
-          ],
-          "signals": [],
-          "methods": [
+            },
             {
-              "name": "refresh",
-              "parameters": [],
-              "returnType": "void"
-            }
-          ]
-        },
-        {
-          "name": "RenderStats",
-          "since": "6.0",
-          "base": "QtObject",
-          "baseModule": "QtQml",
-          "singleton": false,
-          "enums": [],
-          "creatable": false,
-          "defaultProperty": null,
-          "attached": null,
-          "properties": [
-            {
-              "name": "fps",
+              "name": "drawCallCount",
               "type": "int",
               "kind": "value",
               "list": false,
@@ -18087,10 +18213,10 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "fpsChanged"
+              "notify": "drawCallCountChanged"
             },
             {
-              "name": "frameTime",
+              "name": "drawVertexCount",
               "type": "real",
               "kind": "value",
               "list": false,
@@ -18099,10 +18225,58 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "frameTimeChanged"
+              "notify": "drawVertexCountChanged"
             },
             {
-              "name": "maxFrameTime",
+              "name": "renderPassCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderPassCountChanged"
+            },
+            {
+              "name": "pipelineSwitches",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pipelineSwitchesChanged"
+            },
+            {
+              "name": "bindGroupSets",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "bindGroupSetsChanged"
+            },
+            {
+              "name": "bufferWrites",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "bufferWritesChanged"
+            },
+            {
+              "name": "bufferWriteBytes",
               "type": "real",
               "kind": "value",
               "list": false,
@@ -18111,10 +18285,22 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "maxFrameTimeChanged"
+              "notify": "bufferWriteBytesChanged"
             },
             {
-              "name": "renderTime",
+              "name": "textureUploads",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "textureUploadsChanged"
+            },
+            {
+              "name": "textureUploadBytes",
               "type": "real",
               "kind": "value",
               "list": false,
@@ -18123,7 +18309,55 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "renderTimeChanged"
+              "notify": "textureUploadBytesChanged"
+            },
+            {
+              "name": "pipelinesCreated",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pipelinesCreatedChanged"
+            },
+            {
+              "name": "modelsDrawn",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modelsDrawnChanged"
+            },
+            {
+              "name": "modelsCulled",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modelsCulledChanged"
+            },
+            {
+              "name": "objectsRead",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "objectsReadChanged"
             },
             {
               "name": "syncTime",
@@ -18136,10 +18370,64 @@
               "constant": false,
               "group": false,
               "notify": "syncTimeChanged"
+            },
+            {
+              "name": "renderPrepareTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderPrepareTimeChanged"
+            },
+            {
+              "name": "encodeTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "encodeTimeChanged"
+            },
+            {
+              "name": "submitTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "submitTimeChanged"
+            },
+            {
+              "name": "renderTime",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderTimeChanged"
             }
           ],
           "signals": [],
-          "methods": []
+          "methods": [
+            {
+              "name": "refresh",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
         },
         {
           "name": "LookAtNode",
@@ -19994,7 +20282,7 @@
           "singleton": false,
           "enums": [],
           "creatable": true,
-          "defaultProperty": null,
+          "defaultProperty": "delegate",
           "attached": null,
           "properties": [
             {
@@ -21438,7 +21726,7 @@
           "baseModule": "QtQuick3D",
           "singleton": false,
           "enums": [],
-          "creatable": true,
+          "creatable": false,
           "defaultProperty": null,
           "attached": null,
           "properties": [
