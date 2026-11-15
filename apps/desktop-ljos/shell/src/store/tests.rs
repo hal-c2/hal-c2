@@ -453,3 +453,79 @@ fn a_saved_environments_cached_mc_survives_the_shells_first_snapshot() {
     // Unclaimed but linked: what is addressed to it goes to studio's link.
     assert_eq!(store.link_of("mc-s").as_deref(), Some("studio"));
 }
+
+/// The same when the shell's first snapshot lands before the cache's read:
+/// the read holds the linked environment's MC, and the cache keeps it.
+#[test]
+fn a_saved_environments_cached_mc_survives_a_snapshot_that_lands_before_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.add_link("studio");
+        store.apply(&snapshot());
+        store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
+    }
+    for _ in 0..2 {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.add_link("studio");
+        store.apply(&snapshot());
+        assert!(kept(&mut store).changed);
+        assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "studio:t9"]);
+        assert_eq!(store.link_of("mc-s").as_deref(), Some("studio"));
+    }
+}
+
+/// A link that keeps which subscriptions are live on it.
+#[derive(Default)]
+struct Recorder {
+    live: RefCell<Vec<u64>>,
+    next: Cell<u64>,
+}
+
+impl Mc for Recorder {
+    fn is_ready(&self) -> bool {
+        true
+    }
+    fn environment(&self) -> String {
+        "studio".into()
+    }
+    fn call(&self, _: &str, _: &str, _: crate::json::Json, _: crate::mc::Reply) {}
+    fn subscribe(
+        &self,
+        _: crate::json::Json,
+        _: crate::mc::OnFrame,
+        _: Option<crate::mc::Resume>,
+    ) -> SubId {
+        let id = self.next.get() + 1;
+        self.next.set(id);
+        self.live.borrow_mut().push(id);
+        SubId(id)
+    }
+    fn unsubscribe(&self, id: SubId) {
+        self.live.borrow_mut().retain(|live| *live != id.0);
+    }
+    fn more(&self, _: SubId, _: u32) {}
+    fn on_ready_changed(&self, _: crate::mc::OnReady) {}
+}
+
+#[test]
+fn a_store_opened_at_another_mc_subscribes_each_link_again() {
+    let engine = ljos::App::new("test")
+        .register(crate::register)
+        .build_engine();
+    let own: Rc<dyn Mc> = Rc::new(Recorder::default());
+    install(&engine, &own, None);
+    open(&engine, "ws://a");
+    let link = Rc::new(Recorder::default());
+    add_link(&engine, "studio", link.clone());
+    assert_eq!(*link.live.borrow(), [1]);
+    // The same MC again: the link's subscription stands.
+    open(&engine, "ws://a");
+    assert_eq!(*link.live.borrow(), [1]);
+    // Another: the rows went, so the link asks for its snapshot anew.
+    open(&engine, "ws://b");
+    assert_eq!(*link.live.borrow(), [2]);
+    assert!(with(&engine, |s| s.links().contains("studio")));
+}

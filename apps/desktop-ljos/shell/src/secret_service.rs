@@ -4,9 +4,8 @@
 //! with the attributes `application` = `HAL-C2` and `environment` = the id,
 //! labelled `HAL-C2 environment <id>`, sent in the `plain` transport.
 //!
-//! TODO(hal-c2/ljos-ui#457): `ljos_secrets` names its items
-//! `service`/`username`, which desktop-qt's are not; once a caller can name
-//! them, this goes and `ljos_secrets::SecretService` takes its place.
+//! TODO(#1596): `ljos_secrets` can name its items as desktop-qt does now
+//! (`ItemNames`); this goes and its Secret Service takes its place.
 //!
 //! Calls block, as desktop-qt's do: an unlock dialog waits for the user.
 
@@ -81,13 +80,20 @@ impl SecretService {
         let Ok(bus) = self.bus() else {
             return false;
         };
-        DBusProxy::new(&bus)
-            .and_then(|proxy| {
-                proxy
-                    .name_has_owner(BUS_NAME.try_into()?)
-                    .map_err(Into::into)
-            })
-            .unwrap_or(false)
+        // A keyring that is installed but not yet running starts on the
+        // first call to its name, so one the bus can activate answers too.
+        let Ok(proxy) = DBusProxy::new(&bus) else {
+            return false;
+        };
+        let running = BUS_NAME
+            .try_into()
+            .ok()
+            .and_then(|name| proxy.name_has_owner(name).ok())
+            .unwrap_or(false);
+        running
+            || proxy
+                .list_activatable_names()
+                .is_ok_and(|names| names.iter().any(|n| n.as_str() == BUS_NAME))
     }
 }
 
@@ -178,7 +184,7 @@ impl Session {
     }
 
     /// Shows the prompt at `path`, if any, and waits for the user to answer
-    /// it or the service to go. Callers check what it did.
+    /// it: an error when they dismiss it or the service goes first.
     fn prompt(&self, path: &OwnedObjectPath) -> Result<(), String> {
         if path.as_str() == NONE || path.as_str().is_empty() {
             return Ok(());
@@ -208,13 +214,19 @@ impl Session {
         call(&self.bus, path.as_str(), PROMPT, "Prompt", &("",))?;
         for message in messages {
             let message = message.map_err(|e| e.to_string())?;
-            if completed.matches(&message).unwrap_or(false)
-                || gone.matches(&message).unwrap_or(false)
-            {
-                return Ok(());
+            if completed.matches(&message).unwrap_or(false) {
+                let (dismissed, _): (bool, OwnedValue) = reply(&message)?;
+                return if dismissed {
+                    Err("The keyring's prompt was dismissed.".into())
+                } else {
+                    Ok(())
+                };
+            }
+            if gone.matches(&message).unwrap_or(false) {
+                return Err("The system's keyring went away.".into());
             }
         }
-        Ok(())
+        Err("The system's keyring went away.".into())
     }
 }
 
@@ -240,18 +252,22 @@ impl SecretStore for SecretService {
             secret.as_bytes(),
             "text/plain",
         );
-        let (_, prompt): (OwnedObjectPath, OwnedObjectPath) = reply(&call(
+        let (item, prompt): (OwnedObjectPath, OwnedObjectPath) = reply(&call(
             &session.bus,
             collection.as_str(),
             COLLECTION,
             "CreateItem",
             &(properties, wire, true),
         )?)?;
-        session.prompt(&prompt)?;
-        if session.search(key).is_empty() {
-            return Err("The system's keyring did not keep the credential.".into());
+        // The item is made at once, or once its prompt completes undismissed;
+        // an earlier item for the key is no proof this one was kept.
+        if prompt.as_str() == NONE || prompt.as_str().is_empty() {
+            if item.as_str() == NONE || item.as_str().is_empty() {
+                return Err("The system's keyring did not keep the credential.".into());
+            }
+            return Ok(());
         }
-        Ok(())
+        session.prompt(&prompt)
     }
 
     fn read(&self, key: &str) -> Option<String> {

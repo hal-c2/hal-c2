@@ -221,10 +221,13 @@ impl BrowserObject {
 /// on the machine (desktop-qt's main.cpp). What a page may ask for is
 /// `Browser.permissions`' to answer, never the engine's to remember.
 ///
-/// TODO(hal-c2/ljos-ui#456): Ljós keeps a profile only under
-/// its own root (`$XDG_DATA_HOME/<app>/ljos-webengine`), ignores
-/// `cachePath`, and has no `persistentPermissionsPolicy`; until it does,
-/// the pages keep their data under that root, named `hal-c2`.
+/// Ljós keeps a profile only under its engine's root, which main.rs points at
+/// the home's [`engine_root`] before the engine starts, so two homes never
+/// share a page's cookies.
+///
+/// TODO(hal-c2/ljos-ui#456): Ljós ignores `cachePath` and has no
+/// `persistentPermissionsPolicy`; until it does, the cache sits with the
+/// data under that root.
 pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std::path::Path) {
     let Some(browser) = browser(engine) else {
         return;
@@ -232,7 +235,10 @@ pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std:
     let profile = ljos_webengine::WebEngineProfile {
         storage_name: "hal-c2".to_owned(),
         off_the_record: false,
-        persistent_storage_path: data_dir.join("browser").to_string_lossy().into_owned(),
+        persistent_storage_path: engine_root(data_dir)
+            .join("hal-c2")
+            .to_string_lossy()
+            .into_owned(),
         cache_path: cache_dir.join("browser").to_string_lossy().into_owned(),
         ..Default::default()
     };
@@ -243,6 +249,13 @@ pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std:
         ),
         Err(e) => warn(engine, Err(e)),
     }
+}
+
+/// Where Ljós's browser engine keeps a home's pages (`LJOS_WEBENGINE_ROOT`):
+/// a directory of the home's data, apart from desktop-qt's `browser`, which
+/// another Chromium writes.
+pub fn engine_root(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("ljos-webengine")
 }
 
 /// The profile [`set_profile`] gave the pages, if any.

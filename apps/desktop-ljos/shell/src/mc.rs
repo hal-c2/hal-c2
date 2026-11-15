@@ -636,16 +636,24 @@ impl Mc for Connection {
             named => named,
         }
         .to_owned();
-        if let Some(link) = self.routed(&environment, field("mc")) {
+        let mc = field("mc").to_owned();
+        // One that names its environment or MC is kept even while this
+        // client serves it, so [`Mc::reroute`] can move it to a link that
+        // comes to serve it later.
+        if !environment.is_empty() || !mc.is_empty() {
+            let link = self.routed(&environment, &mc);
             let mut forwarded = Forwarded {
                 environment,
-                mc: field("mc").to_owned(),
-                shape: shape.clone(),
+                mc,
+                shape,
                 on_frame: Rc::new(RefCell::new(on_frame)),
                 resume: resume.map(|r| Rc::new(RefCell::new(r))),
                 held: Holder::Own(SubId(0)),
             };
-            forwarded.held = Holder::Link((link.clone(), forwarded.subscribe_on(&link)));
+            forwarded.held = match link {
+                Some(link) => Holder::Link((link.clone(), forwarded.subscribe_on(&link))),
+                None => Holder::Own(forwarded.subscribe_own(&self.client)),
+            };
             let id = self.next_forwarded.get();
             self.next_forwarded.set(id + 1);
             self.forwarded.borrow_mut().insert(id, forwarded);
@@ -973,6 +981,25 @@ mod reroute_tests {
         assert_eq!(*link.live.borrow(), [2]);
         own.more(id, 10);
         assert_eq!(*link.more.borrow(), [2]);
+        own.unsubscribe(id);
+        assert!(link.live.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_subscription_this_client_served_first_moves_to_a_link_that_comes_to_serve_it() {
+        let own = Connection::spawn(|| {});
+        let serving: Rc<RefCell<Option<Rc<dyn Mc>>>> = Rc::new(RefCell::new(None));
+        let route = serving.clone();
+        own.set_route(Rc::new(move |_, _| route.borrow().clone()));
+        let shape = json!({"type": "thread", "environmentId": "studio", "threadId": "t9"});
+        let id = own.subscribe(shape, Box::new(|_, _| {}), None);
+        // The link comes up after: the subscription moves, under the same id.
+        let link = Rc::new(Recorder::default());
+        *serving.borrow_mut() = Some(link.clone());
+        own.reroute();
+        assert_eq!(*link.live.borrow(), [1]);
+        own.more(id, 10);
+        assert_eq!(*link.more.borrow(), [1]);
         own.unsubscribe(id);
         assert!(link.live.borrow().is_empty());
     }

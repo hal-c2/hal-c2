@@ -33,9 +33,10 @@ fn writing_back_the_layout_the_device_has_saves_nothing() {
     assert_ne!(Settings::of(&engine).device_error(), "");
 }
 
-/// The pages keep their storage in the HAL-C2 home's own `browser`
-/// directories (desktop-qt's NativeShell browser profile), not the engine's
-/// default profile.
+/// The pages keep their storage in the HAL-C2 home's own directories
+/// (desktop-qt's NativeShell browser profile), not the engine's default
+/// profile: under the home's engine root, where Ljós honours it, and so apart
+/// for two homes.
 #[test]
 fn the_pages_profile_lives_in_the_home() {
     let (engine, _root) = shell(MAIN, Rc::new(Disconnected::default()));
@@ -58,8 +59,15 @@ fn the_pages_profile_lives_in_the_home() {
         (
             "hal-c2".to_owned(),
             false,
-            data.join("browser").to_string_lossy().into_owned(),
+            data.join("ljos-webengine")
+                .join("hal-c2")
+                .to_string_lossy()
+                .into_owned(),
             cache.join("browser").to_string_lossy().into_owned(),
         )
     );
+    let root = hal_c2_shell::browser::engine_root(&data);
+    assert!(std::path::Path::new(&storage.2).starts_with(&root));
+    let other = home.path().join("other");
+    assert_ne!(hal_c2_shell::browser::engine_root(&other), root);
 }

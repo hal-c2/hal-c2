@@ -56,7 +56,9 @@ pub fn system_store() -> Rc<dyn SecretStore> {
     }
     #[cfg(any(target_os = "macos", windows))]
     {
-        Rc::new(SystemSecretStore(ljos_secrets::SecretStore::system()))
+        Rc::new(SystemSecretStore(ljos_secrets::SecretStore::system_named(
+            DesktopQtNames,
+        )))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -64,13 +66,27 @@ pub fn system_store() -> Rc<dyn SecretStore> {
     }
 }
 
-/// desktop-qt's service name: the Keychain's service. On Windows desktop-qt's
-/// targets are `HAL-C2:<id>`, `ljos_secrets`' `<id>.HAL-C2`.
-///
-/// TODO(hal-c2/ljos-ui#457): name Windows' targets as
-/// desktop-qt does once `ljos_secrets` lets a caller.
+/// desktop-qt's service name: the Keychain's service, and the start of
+/// Windows' targets.
 #[cfg(any(target_os = "macos", windows))]
 const SERVICE: &str = "HAL-C2";
+
+/// The names desktop-qt gives its items: the Keychain's are the defaults
+/// (service, and the id as the account); a Windows credential is the generic
+/// `HAL-C2:<id>`, with no user name.
+#[cfg(any(target_os = "macos", windows))]
+#[derive(Debug)]
+struct DesktopQtNames;
+
+#[cfg(any(target_os = "macos", windows))]
+impl ljos_secrets::ItemNames for DesktopQtNames {
+    fn credential_target(&self, service: &str, key: &str) -> String {
+        format!("{service}:{key}")
+    }
+    fn credential_user_name(&self, _: &str, _: &str) -> Option<String> {
+        None
+    }
+}
 
 /// `ljos_secrets`' store under desktop-qt's service name.
 #[cfg(any(target_os = "macos", windows))]

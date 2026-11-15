@@ -234,14 +234,28 @@ impl ShellStore {
         }
         if self.synchronized {
             // Its MC's rows stand, and it never said a machine that left
-            // while the shell was away is gone: only this read shows it.
-            for mc in &kept.mcs {
-                if !self.mcs.contains_key(&mc.mc) {
+            // while the shell was away is gone: only this read shows it. A
+            // linked (or reserved) saved environment's MC is not its to drop:
+            // it is held, as when the cache answers first.
+            let mut changed = false;
+            for mc in kept.mcs {
+                if self.mcs.contains_key(&mc.mc) {
+                    continue;
+                }
+                if self
+                    .links
+                    .contains(&text(mc.environment.get("environmentId")))
+                {
+                    let name = mc.mc.clone();
+                    self.keep(mc);
+                    self.unsaved.remove(&name);
+                    changed = true;
+                } else {
                     self.unsaved(&mc.mc);
                 }
             }
             self.flush();
-            return Changes::default();
+            return Changes::changed(changed);
         }
         if !self.mcs.is_empty() {
             return Changes::default();
@@ -265,21 +279,26 @@ impl ShellStore {
         self.synchronized = false;
         self.previewing = false;
         for mc in kept.mcs {
-            self.set_environment(&mc.mc, mc.environment);
-            let entry = self.mcs.entry(mc.mc).or_default();
-            entry.epoch = mc.epoch;
-            entry.rev = mc.rev;
-            for row in mc.rows {
-                if let Some(rows) = entry.rows(&row.kind) {
-                    rows.insert(row.id, row.fields);
-                }
-            }
+            self.keep(mc);
             self.previewing = true;
         }
         // Read, not changed: nothing of it is owed to the cache.
         self.unsaved.clear();
         self.flush_due = false;
         held || self.previewing
+    }
+
+    /// Holds `mc` as the cache kept it.
+    fn keep(&mut self, mc: cache::ShellMc) {
+        self.set_environment(&mc.mc, mc.environment);
+        let entry = self.mcs.entry(mc.mc).or_default();
+        entry.epoch = mc.epoch;
+        entry.rev = mc.rev;
+        for row in mc.rows {
+            if let Some(rows) = entry.rows(&row.kind) {
+                rows.insert(row.id, row.fields);
+            }
+        }
     }
 
     /// Whether the rows hold `mc`'s version (`epoch`, `rev`): true too for
@@ -1137,11 +1156,21 @@ pub fn on_origin_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
         }));
 }
 
-/// [`ShellStore::open`] on the engine's store.
+/// [`ShellStore::open`] on the engine's store. Opened at another MC, the
+/// rows held go, the saved environments' too: each link subscribes again, so
+/// its next snapshot lists its MCs anew rather than changes to rows gone.
 pub fn open(engine: &Engine, origin: &str) {
     if let Some(store) = get(engine) {
         let changes = store.borrow_mut().open(origin);
+        let origin_changed = changes.origin_changed;
         settle(engine, changes);
+        if origin_changed {
+            let links = std::mem::take(&mut *engine.extension::<Slot>().links.borrow_mut());
+            for (environment_id, (link, id)) in links {
+                link.unsubscribe(id);
+                add_link(engine, &environment_id, link);
+            }
+        }
     }
 }
 
