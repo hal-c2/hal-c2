@@ -13,9 +13,10 @@ publish = false
 # Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d", default-features = false }
-ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d" }
-ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "c2443e1593f56acfbf97d9f7f7fde921f3984f5d" }
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "83ae9b142cc4c35d243dfc2050e47018d5e34757", default-features = false }
+ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "83ae9b142cc4c35d243dfc2050e47018d5e34757" }
+ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "83ae9b142cc4c35d243dfc2050e47018d5e34757" }
+ljos_secrets = { git = "https://github.com/hal-c2/ljos-ui", rev = "83ae9b142cc4c35d243dfc2050e47018d5e34757" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

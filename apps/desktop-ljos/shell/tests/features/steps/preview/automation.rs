@@ -282,10 +282,29 @@ pub fn register(steps: &mut Steps) {
         let started = std::time::Instant::now();
         let id = ask(world, "snapshot", json!({}), 30_000, &tab)?;
         // A busy page is read three times, each with three tries at its
-        // picture: longer than one wait, within the request's own 30 s.
-        while let Err(waiting) = answer(world, &id) {
+        // picture: longer than one wait, within the request's own 30 s. The
+        // deadline is wall time checked every pass: a wait charges a slow pass
+        // only a slice of its time, so one busy enough would outlast the
+        // runner's hang limit before a plain wait gave up.
+        let key = id.clone();
+        while answered(world, &id).is_none() {
             if started.elapsed().as_secs() >= 30 {
-                return Err(waiting);
+                fail!("no answer to {id} within 30 s");
+            }
+            let key = key.clone();
+            // Only a wait running out goes round again; a pump's own
+            // failure is the step's.
+            if let Err(e) = world.wait_for_with(
+                move |w| {
+                    started.elapsed().as_secs() >= 30
+                        || w.mc
+                            .peek::<Answers>()
+                            .is_some_and(|a| a.0.contains_key(&key))
+                },
+                |_| "an answer to the snapshot".to_owned(),
+            ) && !e.0.starts_with("timed out waiting for ")
+            {
+                return Err(e);
             }
         }
         world.part::<Automation>().took_ms = started.elapsed().as_millis();

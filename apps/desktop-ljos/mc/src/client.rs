@@ -86,6 +86,19 @@ struct State {
     renew_within: Option<chrono::TimeDelta>,
     /// Who waits on the renewal in flight; empty while none is.
     renewing: Vec<Renewed>,
+    /// The timings set on it, for [`McClient::copy_timings_to`].
+    timings: Timings,
+}
+
+/// The timings set on a client; none set keeps the driver's own.
+#[derive(Clone, Default)]
+struct Timings {
+    retry_delays: Option<Vec<Duration>>,
+    ping_interval: Option<Duration>,
+    pong_timeout: Option<Duration>,
+    setup_timeout: Option<Duration>,
+    probe_timeout: Option<Duration>,
+    steady_after: Option<Duration>,
 }
 
 struct Subscription {
@@ -664,27 +677,64 @@ impl McClient {
     }
 
     pub fn set_retry_delays(&self, delays: Vec<Duration>) {
+        self.state().timings.retry_delays = Some(delays.clone());
         self.inner.handle.set_retry_delays(delays);
     }
 
     pub fn set_ping_interval(&self, interval: Duration) {
+        self.state().timings.ping_interval = Some(interval);
         self.inner.handle.set_ping_interval(interval);
     }
 
     /// How long a ping may go unanswered before the connection counts as dead.
     pub fn set_pong_timeout(&self, timeout: Duration) {
+        self.state().timings.pong_timeout = Some(timeout);
         self.inner.handle.set_pong_timeout(timeout);
     }
 
     pub fn set_setup_timeout(&self, timeout: Duration) {
+        self.state().timings.setup_timeout = Some(timeout);
         self.inner.handle.set_setup_timeout(timeout);
     }
 
     pub fn set_probe_timeout(&self, timeout: Duration) {
+        self.state().timings.probe_timeout = Some(timeout);
         self.inner.handle.set_probe_timeout(timeout);
     }
 
     pub fn set_steady_after(&self, after: Duration) {
+        self.state().timings.steady_after = Some(after);
         self.inner.handle.set_steady_after(after);
+    }
+
+    /// Gives `other` the timings set on this client, and when to renew its
+    /// credential: a saved environment's client keeps the shell's
+    /// (desktop-qt's SavedEnvironmentsController::connectTo).
+    pub fn copy_timings_to(&self, other: &McClient) {
+        let (timings, renew_within) = {
+            let state = self.state();
+            (state.timings.clone(), state.renew_within)
+        };
+        if let Some(delays) = timings.retry_delays {
+            other.set_retry_delays(delays);
+        }
+        if let Some(interval) = timings.ping_interval {
+            other.set_ping_interval(interval);
+        }
+        if let Some(timeout) = timings.pong_timeout {
+            other.set_pong_timeout(timeout);
+        }
+        if let Some(timeout) = timings.setup_timeout {
+            other.set_setup_timeout(timeout);
+        }
+        if let Some(timeout) = timings.probe_timeout {
+            other.set_probe_timeout(timeout);
+        }
+        if let Some(after) = timings.steady_after {
+            other.set_steady_after(after);
+        }
+        if let Some(within) = renew_within {
+            other.set_renew_within(within);
+        }
     }
 }

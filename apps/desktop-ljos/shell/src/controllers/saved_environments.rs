@@ -4,28 +4,32 @@
 //! [`EnvironmentCatalog`](crate::saved_environments::EnvironmentCatalog)'s,
 //! in the launch's data directory.
 //!
-//! desktop-ljos does not yet hold a connection of its own to each of them
-//! (desktop-qt's ShellStore::addLink and McClient::setRoute,
-//! hal-c2/hal-c2#1542): a saved environment whose record and credential are
-//! whole is listed `closed`; one missing either is `blocked` with what is
-//! missing, which no retry mends.
+//! Each saved environment has a connection of its own (a link, from
+//! [`Mc::spawn_link`]): the store lists what it serves beside the shell's own
+//! ([`store::add_link`]), and the shell's calls and subscriptions for it go
+//! through it ([`Mc::set_route`]). One whose record or credential is missing
+//! is `blocked` with what is missing, which no retry mends.
 //!
 //! Publishes `savedEnvironments`:
-//!   {environments: [{id, label, origin, state: closed | blocked, message}],
+//!   {environments: [{id, label, origin, state: connected | connecting |
+//!    reconnecting | offline | refused | blocked | closed, message}],
 //!    pairing: a link is being spent, error: why the last pairing failed ("" if
 //!    it did not), damaged: where a damaged record file was set aside ("" if
 //!    none)}
 //! Actions: `savedEnvironments.pair {link}` pairs with the MC a pairing link
 //! names and saves it (nothing is listed when its credential cannot be kept);
-//! `savedEnvironments.remove {id}`, the way back out: its record and
-//! credential go; `savedEnvironments.retry {id}` reads it again now.
+//! `savedEnvironments.remove {id}`, the way back out: its connection, record
+//! and credential go; `savedEnvironments.retry {id}` tries its connection
+//! again now, or reads its credential again (asking the keyring anew).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use chrono::{DateTime, SecondsFormat, SubsecRound, Utc};
+use hal_c2_mc::Phase;
 use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
 use ljos::prelude::Engine;
 use serde_json::json;
@@ -33,9 +37,11 @@ use serde_json::json;
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init, Me};
 use crate::json::Json;
+use crate::mc::Mc;
 use crate::saved_environments::{
     EnvironmentCatalog, FILE, SavedEnvironment, SecretStore, system_store,
 };
+use crate::store;
 
 /// What every start reads: where the records are and the store their
 /// credentials are in (the system's unless a test says).
@@ -58,9 +64,25 @@ pub fn set_secret_store(engine: &Engine, store: Rc<dyn SecretStore>) {
 
 type Exchange = Arc<dyn Fn(&Link, &Client) -> Pairing + Send + Sync>;
 
+/// A saved environment's connection, and which one it is: a status from a
+/// link since replaced is not its successor's.
+#[derive(Clone)]
+struct Linked {
+    mc: Rc<dyn Mc>,
+    generation: u64,
+}
+
+type Links = Rc<RefCell<HashMap<String, Linked>>>;
+
 pub struct SavedEnvironments {
     bridge: Bridge,
     me: Me<SavedEnvironments>,
+    /// The shell's own connection: links are spawned from it and it routes
+    /// to them.
+    mc: Rc<dyn Mc>,
+    links: Links,
+    generation: Cell<u64>,
+    secrets: Option<Rc<dyn SecretStore>>,
     started: bool,
     catalog: Option<EnvironmentCatalog>,
     /// Why each one it could not connect to is blocked.
@@ -74,9 +96,34 @@ pub struct SavedEnvironments {
 
 impl Controller for SavedEnvironments {
     fn new(init: Init<'_, Self>) -> Self {
+        let links: Links = Rc::default();
+        // What the shell asks of a saved environment goes to its connection.
+        let weak = init.engine.downgrade();
+        let routes = links.clone();
+        init.mc.set_route(Rc::new(move |environment, mc| {
+            let engine = weak.upgrade()?;
+            let served = store::get(&engine).and_then(|s| {
+                let s = s.try_borrow().ok()?;
+                if mc.is_empty() {
+                    s.link_serving(environment)
+                } else {
+                    s.link_of(mc)
+                }
+            });
+            if !mc.is_empty() && served.is_none() {
+                return None;
+            }
+            let id = served.unwrap_or_else(|| environment.to_owned());
+            let links = routes.try_borrow().ok()?;
+            links.get(&id).map(|l| l.mc.clone())
+        }));
         SavedEnvironments {
             bridge: init.bridge,
             me: init.me,
+            mc: init.mc,
+            links,
+            generation: Cell::new(0),
+            secrets: None,
             started: false,
             catalog: None,
             blocked: HashMap::new(),
@@ -110,7 +157,16 @@ impl Controller for SavedEnvironments {
             "savedEnvironments.pair" => self.pair(engine, &text("link")),
             "savedEnvironments.remove" => self.remove(engine, &text("id")),
             "savedEnvironments.retry" => {
-                self.connect_to(&text("id"));
+                let id = text("id");
+                let link = self.link(&id);
+                if let Some(link) = link {
+                    link.retry_now();
+                } else {
+                    if let Some(secrets) = &self.secrets {
+                        secrets.ask();
+                    }
+                    self.connect_to(engine, &id);
+                }
                 self.publish(engine);
             }
             _ => return false,
@@ -123,10 +179,16 @@ impl SavedEnvironments {
     /// Reads the records again, in the store set last, and connects to each.
     pub fn start(&mut self, engine: &Engine) {
         self.started = true;
+        let mut ids: Vec<String> = self.links.borrow().keys().cloned().collect();
+        ids.extend(self.blocked.keys().cloned());
+        for id in ids {
+            self.disconnect(engine, &id, false);
+        }
         self.blocked.clear();
         let place = engine.extension::<Where>();
         let dir = place.data_dir.borrow().clone();
         let secrets = place.secrets.borrow().clone().unwrap_or_else(system_store);
+        self.secrets = Some(secrets.clone());
         self.catalog = dir.map(|dir| EnvironmentCatalog::open(&dir.join(FILE), secrets));
         if let Some(catalog) = &self.catalog {
             if !catalog.damaged().is_empty() {
@@ -141,10 +203,15 @@ impl SavedEnvironments {
                 .map(|e| e.id.clone())
                 .collect();
             for id in ids {
-                self.connect_to(&id);
+                self.connect_to(engine, &id);
             }
         }
         self.publish(engine);
+    }
+
+    /// The connection to `id`, while it has one.
+    pub fn link(&self, id: &str) -> Option<Rc<dyn Mc>> {
+        self.links.borrow().get(id).map(|l| l.mc.clone())
     }
 
     pub fn catalog(&self) -> Option<&EnvironmentCatalog> {
@@ -173,7 +240,7 @@ impl SavedEnvironments {
             return Err("Saved environments are not available yet.".into());
         };
         catalog.save(environment, credential)?;
-        self.connect_to(&id);
+        self.connect_to(engine, &id);
         self.publish(engine);
         Ok(())
     }
@@ -183,17 +250,84 @@ impl SavedEnvironments {
         self.exchange = exchange;
     }
 
-    fn connect_to(&mut self, id: &str) {
+    /// Connects to `id` anew, or says why it cannot.
+    fn connect_to(&mut self, engine: &Engine, id: &str) {
         let Some(catalog) = &self.catalog else {
             return;
         };
         let connection = catalog.connect(id);
-        if connection.blocked.is_empty() {
-            self.blocked.remove(id);
-        } else {
+        self.disconnect(engine, id, false);
+        if !connection.blocked.is_empty() {
             // Nothing to connect with: no retry can mend that.
             self.blocked.insert(id.to_owned(), connection.blocked);
+            store::reserve_link(engine, id);
+            return;
         }
+        self.blocked.remove(id);
+        // Its timings are the shell's own (tests shorten them there).
+        let Some(link) = self.mc.spawn_link() else {
+            return;
+        };
+        let generation = self.generation.get() + 1;
+        self.generation.set(generation);
+        link.set_credential_expiry(expiry(&connection.environment.expires_at));
+        let me = self.me.clone();
+        let owner = id.to_owned();
+        link.on_status(Box::new(move |engine, _| {
+            let owner = owner.clone();
+            me.run_after(engine, move |c, engine| {
+                c.status_changed(engine, &owner, generation)
+            });
+        }));
+        self.links.borrow_mut().insert(
+            id.to_owned(),
+            Linked {
+                mc: link.clone(),
+                generation,
+            },
+        );
+        store::add_link(engine, id, link.clone());
+        let environment = &connection.environment;
+        if let Err(error) = link.open_expecting(&environment.origin, &connection.credential, id) {
+            self.blocked.insert(id.to_owned(), error);
+            self.disconnect(engine, id, false);
+            store::reserve_link(engine, id);
+            return;
+        }
+        // What the shell held on the link this one replaces moves to it.
+        self.mc.reroute();
+    }
+
+    /// Ends the connection to `id`; with `forget`, what it listed goes too.
+    fn disconnect(&mut self, engine: &Engine, id: &str, forget: bool) {
+        let link = self.links.borrow_mut().remove(id);
+        // A blocked one has no link, but the store holds its place.
+        store::remove_link(engine, id, forget);
+        if let Some(link) = link {
+            link.mc.close();
+        }
+    }
+
+    /// A status from the link `generation` of `id`: a renewed credential is
+    /// kept, and the state shown again.
+    fn status_changed(&mut self, engine: &Engine, id: &str, generation: u64) {
+        let Some(link) = self.links.borrow().get(id).cloned() else {
+            return;
+        };
+        if link.generation != generation {
+            return;
+        }
+        if let (Some(catalog), Some(expires_at)) = (&mut self.catalog, link.mc.credential_expiry())
+        {
+            // Kept to the millisecond, so compared at it: a finer renewal
+            // would otherwise be saved again on every status.
+            let expires_at = expires_at.trunc_subsecs(3);
+            let saved = catalog.find(id).map(|e| expiry(&e.expires_at));
+            if saved.is_some_and(|saved| saved.map(|s| s.trunc_subsecs(3)) != Some(expires_at)) {
+                catalog.set_expiry(id, &expires_at.to_rfc3339_opts(SecondsFormat::Millis, true));
+            }
+        }
+        self.publish(engine);
     }
 
     fn pair(&mut self, engine: &Engine, link: &str) {
@@ -237,13 +371,13 @@ impl SavedEnvironments {
         if result.outcome != Outcome::Paired {
             return self.finish(engine, explain(&result));
         }
-        let error = self.add(&result).err().unwrap_or_default();
+        let error = self.add(engine, &result).err().unwrap_or_default();
         self.finish(engine, error);
     }
 
     /// Saves the environment a pairing paid for, in the place of any with its
     /// id; why it could not be saved.
-    fn add(&mut self, result: &Pairing) -> Result<(), String> {
+    fn add(&mut self, engine: &Engine, result: &Pairing) -> Result<(), String> {
         let Some(catalog) = &mut self.catalog else {
             return Err("Saved environments are not available yet.".into());
         };
@@ -272,7 +406,7 @@ impl SavedEnvironments {
             },
             &result.token,
         )?;
-        self.connect_to(&id);
+        self.connect_to(engine, &id);
         Ok(())
     }
 
@@ -283,6 +417,7 @@ impl SavedEnvironments {
     }
 
     fn remove(&mut self, engine: &Engine, id: &str) {
+        self.disconnect(engine, id, true);
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {
             catalog.forget(id);
@@ -296,13 +431,24 @@ impl SavedEnvironments {
             .iter()
             .flat_map(|c| c.environments())
             .map(|environment| {
-                let blocked = self.blocked.get(&environment.id);
+                let (state, message) = match self.blocked.get(&environment.id) {
+                    Some(blocked) => ("blocked", blocked.clone()),
+                    None => match self.link(&environment.id) {
+                        Some(link) => {
+                            let status = link.status();
+                            let ready = status.phase == Phase::Ready;
+                            let message = if ready { String::new() } else { status.failure_message };
+                            (state(status.phase), message)
+                        }
+                        None => ("closed", String::new()),
+                    },
+                };
                 json!({
                     "id": environment.id,
                     "label": if environment.label.is_empty() { &environment.id } else { &environment.label },
                     "origin": environment.origin,
-                    "state": if blocked.is_some() { "blocked" } else { "closed" },
-                    "message": blocked.cloned().unwrap_or_default(),
+                    "state": state,
+                    "message": message,
                 })
             })
             .collect();
@@ -322,6 +468,35 @@ impl SavedEnvironments {
             }),
         );
     }
+}
+
+impl Drop for SavedEnvironments {
+    fn drop(&mut self) {
+        self.mc.set_route(Rc::new(|_, _| None));
+        for (_, link) in self.links.borrow_mut().drain() {
+            link.mc.close();
+        }
+    }
+}
+
+/// What a saved environment's connection shows as its state.
+fn state(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Ready => "connected",
+        Phase::Connecting => "connecting",
+        Phase::Retrying => "reconnecting",
+        Phase::Offline => "offline",
+        Phase::Refused => "refused",
+        Phase::Blocked => "blocked",
+        Phase::Closed => "closed",
+    }
+}
+
+/// A saved credential's expiry; None when it has none (or it is unreadable).
+fn expiry(expires_at: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(expires_at)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 /// pairing::explain: what the user is told of a pairing that did not pay.
