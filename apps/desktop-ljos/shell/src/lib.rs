@@ -175,6 +175,11 @@ pub struct Launch {
     /// other than the first keeps its own under `shell-windows/<id>`);
     /// none keeps nothing.
     pub state_dir: Option<PathBuf>,
+    /// The pages' browser profile, by its storage name; none names it for
+    /// the home ([`browser::storage_name`] of `data_dir`). A process that
+    /// starts many homes (the features runner) shares one: the engine keeps
+    /// every profile it has opened until it exits.
+    pub browser_storage: Option<String>,
 }
 
 /// What [`open`] needs of the launch, for a shell that started without an
@@ -303,7 +308,11 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .map(|dir| dir.join("preferences.json")),
     );
     if let (Some(data), Some(cache)) = (&launch.data_dir, &launch.cache_dir) {
-        browser::set_profile(engine, data, cache);
+        let name = launch
+            .browser_storage
+            .clone()
+            .unwrap_or_else(|| browser::storage_name(data));
+        browser::set_profile(engine, &name, data, cache);
     }
     browser::start(engine);
     conceal_on_hold(engine);

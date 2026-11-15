@@ -152,6 +152,10 @@ pub struct ShellStore {
     mcs: BTreeMap<String, McRows>,
     /// The saved environments linked to ([`ShellStore::add_link`]).
     links: BTreeSet<String>,
+    /// The links whose snapshot has come since the store last held another
+    /// MC's rows: what they list stands, as the shell's own does once
+    /// `synchronized`.
+    answered: BTreeSet<String>,
     cache: Option<Rc<LocalCache>>,
     origin: String,
     unsaved: BTreeMap<String, Unsaved>,
@@ -232,43 +236,48 @@ impl ShellStore {
         if asked != self.asked {
             return Changes::default();
         }
-        if self.synchronized {
-            // Its MC's rows stand, and it never said a machine that left
-            // while the shell was away is gone: only this read shows it. A
-            // linked (or reserved) saved environment's MC is not its to drop:
-            // it is held, as when the cache answers first.
-            let mut changed = false;
-            for mc in kept.mcs {
-                if self.mcs.contains_key(&mc.mc) {
-                    continue;
-                }
-                if self
-                    .links
-                    .contains(&text(mc.environment.get("environmentId")))
-                {
-                    let name = mc.mc.clone();
-                    self.keep(mc);
-                    self.unsaved.remove(&name);
-                    changed = true;
-                } else {
-                    self.unsaved(&mc.mc);
-                }
-            }
-            self.flush();
-            return Changes::changed(changed);
-        }
-        if !self.mcs.is_empty() {
-            return Changes::default();
-        }
         let origin = if self.origin.is_empty() {
             kept.origin.clone()
         } else {
             self.origin.clone()
         };
-        if origin.is_empty() {
-            return Changes::default();
+        if !self.synchronized && self.mcs.is_empty() {
+            if origin.is_empty() {
+                return Changes::default();
+            }
+            return Changes::changed(self.hold(kept, origin));
         }
-        Changes::changed(self.hold(kept, origin))
+        // A client answered first. What it listed stands, and a kept MC it
+        // did not list left while the shell was away: only this read shows
+        // that, so it goes from the cache too. A kept MC of a client yet to
+        // answer (the shell's own, or a link) is held until that client does.
+        if self.origin.is_empty() {
+            self.origin = origin;
+        }
+        let mut changed = false;
+        for mc in kept.mcs {
+            if self.mcs.contains_key(&mc.mc) {
+                continue;
+            }
+            let environment_id = text(mc.environment.get("environmentId"));
+            let own = !self.links.contains(&environment_id);
+            let answered = if own {
+                self.synchronized
+            } else {
+                self.answered.contains(&environment_id)
+            };
+            if answered {
+                self.unsaved(&mc.mc);
+                continue;
+            }
+            self.previewing |= own;
+            let name = mc.mc.clone();
+            self.keep(mc);
+            self.unsaved.remove(&name);
+            changed = true;
+        }
+        self.flush();
+        Changes::changed(changed)
     }
 
     /// Takes the rows the cache kept for `origin` in place of the ones held.
@@ -276,6 +285,7 @@ impl ShellStore {
         self.origin = origin;
         let held = !self.mcs.is_empty();
         self.mcs.clear();
+        self.answered.clear();
         self.synchronized = false;
         self.previewing = false;
         for mc in kept.mcs {
@@ -418,6 +428,7 @@ impl ShellStore {
         self.unsaved.clear();
         self.origin.clear();
         self.mcs.clear();
+        self.answered.clear();
         self.problem.clear();
         self.previewing = false;
         self.synchronized = true;
@@ -436,6 +447,7 @@ impl ShellStore {
         if !self.links.remove(environment_id) {
             return false;
         }
+        self.answered.remove(environment_id);
         let link = Client::Link(environment_id.to_owned());
         let names: Vec<String> = self
             .mcs
@@ -566,6 +578,9 @@ impl ShellStore {
                     self.put_row(&text(at(0)), &text(at(1)), &text(at(2)), object(at(3)));
                 }
                 self.forget_threads(&replaced);
+                if let Client::Link(environment_id) = client {
+                    self.answered.insert(environment_id.clone());
+                }
                 // The shell's own MC is the one whose word makes the rows live.
                 if *client == Client::Own {
                     self.synchronized = true;
@@ -1156,15 +1171,18 @@ pub fn on_origin_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
         }));
 }
 
-/// [`ShellStore::open`] on the engine's store. Opened at another MC, the
-/// rows held go, the saved environments' too: each link subscribes again, so
-/// its next snapshot lists its MCs anew rather than changes to rows gone.
+/// [`ShellStore::open`] on the engine's store. When that lets go of rows
+/// held (opened at another MC, or first opened after a link answered), the
+/// saved environments' go too: each link subscribes again, so its next
+/// snapshot lists its MCs anew rather than changes to rows gone.
 pub fn open(engine: &Engine, origin: &str) {
     if let Some(store) = get(engine) {
         let changes = store.borrow_mut().open(origin);
-        let origin_changed = changes.origin_changed;
+        // Held rows went (another MC's, or a link's that answered before the
+        // shell knew its own origin): each link lists its MCs anew.
+        let dropped = changes.origin_changed || changes.changed;
         settle(engine, changes);
-        if origin_changed {
+        if dropped {
             let links = std::mem::take(&mut *engine.extension::<Slot>().links.borrow_mut());
             for (environment_id, (link, id)) in links {
                 link.unsubscribe(id);

@@ -292,7 +292,9 @@ pub fn register(steps: &mut Steps) {
                 fail!("no answer to {id} within 30 s");
             }
             let key = key.clone();
-            let _ = world.wait_for_with(
+            // Only a wait running out goes round again; a pump's own
+            // failure is the step's.
+            if let Err(e) = world.wait_for_with(
                 move |w| {
                     started.elapsed().as_secs() >= 30
                         || w.mc
@@ -300,7 +302,10 @@ pub fn register(steps: &mut Steps) {
                             .is_some_and(|a| a.0.contains_key(&key))
                 },
                 |_| "an answer to the snapshot".to_owned(),
-            );
+            ) && !e.0.starts_with("timed out waiting for ")
+            {
+                return Err(e);
+            }
         }
         world.part::<Automation>().took_ms = started.elapsed().as_millis();
         Ok(())

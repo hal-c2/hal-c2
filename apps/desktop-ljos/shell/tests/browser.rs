@@ -33,16 +33,16 @@ fn writing_back_the_layout_the_device_has_saves_nothing() {
     assert_ne!(Settings::of(&engine).device_error(), "");
 }
 
-/// The pages keep their storage in the HAL-C2 home's own directories
-/// (desktop-qt's NativeShell browser profile), not the engine's default
-/// profile: under the home's engine root, where Ljós honours it, and so apart
-/// for two homes.
+/// The pages keep their storage apart for each HAL-C2 home (desktop-qt's
+/// NativeShell browser profile), not in the engine's default profile: Ljós
+/// keys a profile, and the directory it keeps under its root, by its name.
 #[test]
 fn the_pages_profile_lives_in_the_home() {
     let (engine, _root) = shell(MAIN, Rc::new(Disconnected::default()));
     let home = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a home");
     let (data, cache) = (home.path().join("data"), home.path().join("cache"));
-    hal_c2_shell::browser::set_profile(&engine, &data, &cache);
+    let name = hal_c2_shell::browser::storage_name(&data);
+    hal_c2_shell::browser::set_profile(&engine, &name, &data, &cache);
     let profile = hal_c2_shell::browser::profile(&engine).expect("a profile");
     let storage = engine
         .with::<ljos_webengine::WebEngineProfile, _>(profile, |p| {
@@ -57,17 +57,14 @@ fn the_pages_profile_lives_in_the_home() {
     assert_eq!(
         storage,
         (
-            "hal-c2".to_owned(),
+            name.clone(),
             false,
-            data.join("ljos-webengine")
-                .join("hal-c2")
-                .to_string_lossy()
-                .into_owned(),
+            data.join("ljos-webengine").to_string_lossy().into_owned(),
             cache.join("browser").to_string_lossy().into_owned(),
         )
     );
-    let root = hal_c2_shell::browser::engine_root(&data);
-    assert!(std::path::Path::new(&storage.2).starts_with(&root));
-    let other = home.path().join("other");
-    assert_ne!(hal_c2_shell::browser::engine_root(&other), root);
+    assert!(name.starts_with("hal-c2-"));
+    assert_eq!(hal_c2_shell::browser::storage_name(&data), name);
+    let other = home.path().join("other").join("data");
+    assert_ne!(hal_c2_shell::browser::storage_name(&other), name);
 }

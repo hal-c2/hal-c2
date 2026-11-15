@@ -339,6 +339,9 @@ impl World {
             cache_dir: Some(home.join("cache")),
             data_dir: Some(home.join("data")),
             state_dir: Some(home.join("state")),
+            // One profile for every scenario's home, as each would be its
+            // own process's: the engine keeps all it opens until exit.
+            browser_storage: Some("hal-c2-features".into()),
             ..Launch::default()
         };
         hal_c2_shell::controllers::saved_environments::set_secret_store(

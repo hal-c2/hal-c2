@@ -221,22 +221,30 @@ impl BrowserObject {
 /// on the machine (desktop-qt's main.cpp). What a page may ask for is
 /// `Browser.permissions`' to answer, never the engine's to remember.
 ///
-/// Ljós keeps a profile only under its engine's root, which main.rs points at
-/// the home's [`engine_root`] before the engine starts, so two homes never
-/// share a page's cookies.
+/// Ljós keys a profile by its storage name and keeps it under the engine's
+/// one root, which every home on the machine shares; [`storage_name`] names
+/// the home, so two homes never share a page's cookies. Pointing the root at
+/// the home instead (`LJOS_WEBENGINE_ROOT`) would reach every process the
+/// shell starts, an agent's own Ljós app among them.
 ///
-/// TODO(hal-c2/ljos-ui#456): Ljós ignores `cachePath` and has no
-/// `persistentPermissionsPolicy`; until it does, the cache sits with the
-/// data under that root.
-pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std::path::Path) {
+/// TODO(hal-c2/ljos-ui#456): Ljós keeps a profile only under its root,
+/// ignores `cachePath`, and has no `persistentPermissionsPolicy`; until it
+/// does, the pages keep data and cache under that root.
+pub fn set_profile(
+    engine: &Engine,
+    storage_name: &str,
+    data_dir: &std::path::Path,
+    cache_dir: &std::path::Path,
+) {
     let Some(browser) = browser(engine) else {
         return;
     };
     let profile = ljos_webengine::WebEngineProfile {
-        storage_name: "hal-c2".to_owned(),
+        storage_name: storage_name.to_owned(),
         off_the_record: false,
-        persistent_storage_path: engine_root(data_dir)
-            .join("hal-c2")
+        // Apart from desktop-qt's `browser`, which another Chromium writes.
+        persistent_storage_path: data_dir
+            .join("ljos-webengine")
             .to_string_lossy()
             .into_owned(),
         cache_path: cache_dir.join("browser").to_string_lossy().into_owned(),
@@ -251,11 +259,18 @@ pub fn set_profile(engine: &Engine, data_dir: &std::path::Path, cache_dir: &std:
     }
 }
 
-/// Where Ljós's browser engine keeps a home's pages (`LJOS_WEBENGINE_ROOT`):
-/// a directory of the home's data, apart from desktop-qt's `browser`, which
-/// another Chromium writes.
-pub fn engine_root(data_dir: &std::path::Path) -> std::path::PathBuf {
-    data_dir.join("ljos-webengine")
+/// The name of the pages' profile for the home whose data is `data_dir`:
+/// `hal-c2-` and a hash of the directory (FNV-1a, which no toolchain
+/// changes), the same every run.
+pub fn storage_name(data_dir: &std::path::Path) -> String {
+    let hash = data_dir
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    format!("hal-c2-{hash:016x}")
 }
 
 /// The profile [`set_profile`] gave the pages, if any.

@@ -288,20 +288,6 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    // The browser engine keeps its pages under the home's data, so two homes
-    // never share a page's cookies; one named outright wins.
-    if std::env::var_os("LJOS_WEBENGINE_ROOT").is_none()
-        && let Some(data) = &options.launch.data_dir
-    {
-        // SAFETY: nothing but this thread runs yet, so nothing reads the
-        // environment while it changes.
-        unsafe {
-            std::env::set_var(
-                "LJOS_WEBENGINE_ROOT",
-                hal_c2_shell::browser::engine_root(data),
-            )
-        };
-    }
     // A folder named while the app already runs on this home goes to that
     // window, and this launch ends here: no second MC starts, and a
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
