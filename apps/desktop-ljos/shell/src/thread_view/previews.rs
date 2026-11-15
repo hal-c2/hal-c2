@@ -494,6 +494,15 @@ impl Previews {
         }
     }
 
+    /// The environment and thread shown.
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    pub fn thread(&self) -> &str {
+        &self.thread
+    }
+
     /// Loads and follows while shown; forgets nothing when hidden.
     pub fn set_active(&mut self, active: bool) {
         if active == self.active {

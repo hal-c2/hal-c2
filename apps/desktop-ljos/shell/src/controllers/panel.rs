@@ -1434,6 +1434,11 @@ impl RightPanel {
         }
     }
 
+    /// The thread's ThreadPreviews, while the panel shows a thread.
+    pub fn previews(&self) -> Option<ObjectId> {
+        self.previews
+    }
+
     pub fn show_tab(&mut self, engine: &Engine, id: &str) {
         if !self.on_thread || id.is_empty() {
             return;
