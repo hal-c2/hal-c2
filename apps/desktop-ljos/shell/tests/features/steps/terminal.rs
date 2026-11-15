@@ -1575,9 +1575,8 @@ pub fn register(steps: &mut Steps) {
         focus(world).thread = thread_id.clone();
         world.wait_for("the thread's terminal drawer", drawer_available)?;
         let requested = focus(world).requested.clone();
-        let object = world
-            .engine()
-            .singleton::<TerminalsObject>()
+        let object = hal_c2_shell::bridge::Bridge::main(world.engine())
+            .singleton::<TerminalsObject>(world.engine())
             .map_err(|e| Failure(format!("the terminals cannot be reached: {e:?}")))?;
         world
             .engine()

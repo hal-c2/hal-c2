@@ -862,9 +862,9 @@ impl World {
         // makes of its directory (PluginRegistry's "plugin") is a key's too.
         shell.engine.set_component_source(source);
         install_text_compiler(&shell.engine);
-        let item = shell
-            .engine
-            .create_from_url(root, None, Vec::new())
+        let engine = &shell.engine;
+        let item = hal_c2_shell::bridge::Bridge::main(engine)
+            .in_scope(engine, || engine.create_from_url(root, None, Vec::new()))
             .map_err(|e| Failure(format!("{root} cannot be made: {e:?}")))?;
         shell
             .window

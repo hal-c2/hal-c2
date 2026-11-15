@@ -2484,7 +2484,7 @@ impl RightPanel {
 /// ```
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Panel", uncreatable)]
-#[ljos::prelude::qml_singleton]
+#[ljos::prelude::qml_singleton(scope = "window")]
 pub struct PanelObject {
     /// The Diff tab's ThreadDiff.
     #[qml(notify, readonly)]

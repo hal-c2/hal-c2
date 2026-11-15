@@ -1172,7 +1172,7 @@ impl Tabs {
 /// `Terminals` in QML.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Terminals", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct TerminalsObject {
     #[qml(notify, readonly)]
     supported: bool,
