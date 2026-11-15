@@ -580,6 +580,29 @@ fn a_links_mc_it_no_longer_lists_is_not_restored_from_the_cache() {
     assert_eq!(keys(&store), ["env-a:t1", "env-a:t2"]);
 }
 
+/// The link alone answered, without its MC, before the cache: the shell's
+/// own kept rows preview, and the link's MC stays gone.
+#[test]
+fn a_links_empty_snapshot_before_the_cache_keeps_its_mc_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.add_link("studio");
+        store.apply(&snapshot());
+        store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
+    }
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    store.add_link("studio");
+    let empty = frame(json!({"t": "shell", "mcs": [], "rows": []}));
+    store.apply_from(&empty, &Client::Link("studio".into()));
+    assert!(kept(&mut store).changed);
+    assert!(store.previewing() && !store.synchronized());
+    assert_eq!(keys(&store), ["env-a:t1", "env-a:t2"]);
+    assert_eq!(store.link_of("mc-s"), None);
+}
+
 #[test]
 fn a_link_that_answered_before_the_first_open_subscribes_again() {
     let engine = ljos::App::new("test")

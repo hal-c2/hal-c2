@@ -241,7 +241,8 @@ impl ShellStore {
         } else {
             self.origin.clone()
         };
-        if !self.synchronized && self.mcs.is_empty() {
+        // No client has answered: the cache's rows are all there is.
+        if !self.synchronized && self.mcs.is_empty() && self.answered.is_empty() {
             if origin.is_empty() {
                 return Changes::default();
             }
