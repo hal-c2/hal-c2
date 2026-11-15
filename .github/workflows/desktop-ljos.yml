@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - main
-      - port-desktop-qt-to-ljos
     paths: &paths
       - "apps/desktop-ljos/**"
       # What the shell loads or embeds at build and test time: the bricks, the
@@ -34,7 +33,7 @@ permissions:
 
 concurrency:
   group: desktop-ljos-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   # Debug info in every test binary fills a hosted runner's disk (the shell
@@ -195,6 +194,26 @@ jobs:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The cef crate's build script copies libcef.so and its resources beside
+      # the binaries (target/<profile>, which cargo test also puts on the
+      # library path), and a restored target leaves them out: a build that is
+      # fresh does not run the script again. Put them back from CEF_PATH, or
+      # rerun the script when CEF itself was not restored.
+      - &cef-beside
+        name: CEF beside the binaries
+        run: |
+          dist=$(dirname "$(ls "$CEF_PATH"/*/*/archive.json 2>/dev/null | head -1)")
+          for profile in debug release; do
+            dir=target/$profile
+            [[ -d $dir/deps && ! -f $dir/libcef.so ]] || continue
+            if [[ -f $dist/libcef.so ]]; then
+              find "$dist" -maxdepth 1 -type f -exec cp -t "$dir" {} +
+              cp -r "$dist/locales" "$dir/"
+            else
+              cargo clean --profile "${profile/debug/dev}" -p cef-dll-sys
+            fi
+          done
+
       # Compiles desktop-qt's bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
       - run: cargo run --release -q -p hal_c2_shell -- --check
@@ -229,6 +248,8 @@ jobs:
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - *cef-beside
+
       # The features suite is opt-in in Cargo.toml (`test = false`), so this
       # runs everything else. All of it, so one run shows every failure.
       - run: cargo test --no-fail-fast
@@ -238,10 +259,15 @@ jobs:
 
   features:
     name: Features (${{ matrix.shard.name }})
+    # Two shards at a time, after the bricks compile, and none left running
+    # once one fails: the shards are the workflow's longest jobs and would
+    # otherwise hold every runner the repository has.
+    needs: [check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
-      fail-fast: false
+      fail-fast: true
+      max-parallel: 2
       matrix:
         # desktop-qt's scenarios, by domain (features/), about 400 to 550
         # scenarios a shard. Each shard runs its globs and fails when a
@@ -276,6 +302,8 @@ jobs:
           workspaces: apps/desktop-ljos
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - *cef-beside
 
       # Each scenario runs a shell of its own against a fake MC on loopback;
       # none needs the real MC.

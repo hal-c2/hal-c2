@@ -248,3 +248,37 @@ fn the_open_text_file_is_copied_whole_or_said_to_be_its_start() {
     open("logo.png");
     assert_eq!(copy_offered(&hub), (false, false));
 }
+
+#[test]
+fn a_window_still_writing_as_it_closes_keeps_its_id_until_it_goes() {
+    use hal_c2_shell::controller::{self, MAIN};
+    let (hub, files, _dir) = files_tab();
+    let engine = &hub.engine;
+    controller::set_window_opener(engine, |_, _| {});
+    controller::open_window(engine, Some("two")).expect("the shell is started");
+    hub.mc
+        .answer(engine, "projects.listEntries", Ok(json!({"entries": []})));
+    engine
+        .invoke_by_name(files, "openFile", &[Value::from("a.txt"), Value::from(0)])
+        .unwrap();
+    read(&hub, "a.txt", "");
+    engine
+        .write_by_name(files, "editing", Value::Bool(true))
+        .unwrap();
+    engine
+        .invoke_by_name(files, "edit", &[Value::from("x")])
+        .unwrap();
+
+    controller::close_window(engine, MAIN);
+    hub.advance(1);
+    assert_eq!(controller::closing_windows(engine), [MAIN]);
+    // Opened again by its id meanwhile, it is a new window under a new one.
+    let id = controller::open_window(engine, Some(MAIN)).unwrap();
+    assert_ne!(id, MAIN);
+    assert_eq!(controller::windows(engine), ["two", id.as_str()]);
+
+    hub.mc.answer(engine, "projects.writeFile", Ok(json!({})));
+    hub.advance(1);
+    assert!(controller::closing_windows(engine).is_empty());
+    assert_eq!(controller::windows(engine), ["two", id.as_str()]);
+}

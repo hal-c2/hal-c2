@@ -317,11 +317,9 @@ private:
   };
   // A change of this client's own to a thread's runtime or interaction mode:
   // it moves the thread's selectionRevision on without replacing a model
-  // pick. `sentAt` is the revision the row had when it went (none from an MC
-  // that counts none); `revision` the one its answer named, none when it moved
-  // nothing or was refused. Settled in place, so every pick holding it sees it.
+  // pick. `revision` is the one its answer named, none when it moved nothing
+  // or was refused. Settled in place, so every pick holding it sees it.
   struct OwnChange {
-    std::optional<qint64> sentAt;
     bool answered = false;
     std::optional<qint64> revision;
   };
@@ -645,6 +643,8 @@ private:
   // not sent the thread list since the connection came back, or the thread's
   // outbox still has messages to send, which go in the modes they carry.
   bool modeWaits(const QString& target) const;
+  // A send of the target's waits in the outbox to go again.
+  bool outboxWaits(const QString& target) const;
   // Whether any window's composer is setting the thread's mode.
   bool settingAnywhere(ModeKind kind, const QString& target) const;
   QString runtimeModeOf(const QString& target) const;

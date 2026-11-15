@@ -931,7 +931,7 @@ fn sign_attachment(mc: &Rc<dyn Mc>, model: ObjectId, key: &str, id: &str) {
 /// ```
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Threads", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct ThreadsObject {
     /// "environmentId:threadId", or "".
     #[qml(notify, readonly)]

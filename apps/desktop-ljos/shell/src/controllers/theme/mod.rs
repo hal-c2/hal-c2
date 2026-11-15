@@ -321,7 +321,7 @@ impl Mode {
 /// `Themes` in QML: desktop-qt's ThemeController as the bricks read it.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Themes", uncreatable)]
-#[qml_singleton]
+#[qml_singleton(scope = "window")]
 pub struct ThemesObject {
     /// system, light or dark.
     #[qml(notify, readonly)]

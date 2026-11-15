@@ -26,10 +26,10 @@
 //!
 //! What every window shares and Ljós keeps once per engine stays engine
 //! wide: the hooks of the shared controllers (settings, ...) wake every
-//! window's closures, each as its own window. QML still finds the first
-//! window's singletons (see [`Bridge::singleton`]), so the app shows one
-//! window; the others are built and run headless until the shell's
-//! singletons are window-scoped (TODO(#569), [`set_window_opener`]).
+//! window's closures, each as its own window. Each window's root reads its
+//! own bridge as `Shell`, and its own of every other singleton that is one
+//! for each window ([`Bridge::in_scope`]), as desktop-qt's engine per window
+//! does.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -237,6 +237,11 @@ pub struct Window {
     mc: Rc<WindowMc>,
     /// What its controllers' timers belong to, gone with it.
     owner: Option<ObjectId>,
+    /// The root that shows it ([`attach_root`]).
+    root: Cell<Option<ObjectId>>,
+    /// Opened from `shell-windows.json` ([`restore_windows`]): set aside
+    /// ([`set_aside_window`]), it keeps its files and its place there.
+    restored: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -262,6 +267,12 @@ struct Host {
     stage: Cell<Stage>,
     state_dir: RefCell<Option<PathBuf>>,
     opener: RefCell<Option<Opener>>,
+    /// Whether the Dock's reopening is followed ([`attach_root`]).
+    reopening: Cell<bool>,
+    /// Saved windows no root could be made for at restore: still saved,
+    /// files and all, to come back once the shell can show them
+    /// ([`reopen_set_aside`]).
+    set_aside: RefCell<Vec<String>>,
 }
 
 impl Host {
@@ -326,7 +337,7 @@ pub fn start(engine: &Engine, mc: Rc<dyn Mc>, mut registrations: Vec<Registratio
         .into_iter()
         .next()
         .unwrap_or_else(|| MAIN.to_owned());
-    add_window(engine, &host, id, main);
+    add_window(engine, &host, id, main, false);
 }
 
 fn declare(engine: &Engine, registrations: &[Registration], bridge: Bridge) {
@@ -352,7 +363,13 @@ fn build(
 }
 
 /// A window on `bridge`, with its own controllers, offered its actions.
-fn add_window(engine: &Engine, host: &Host, id: String, bridge: Bridge) -> Rc<Window> {
+fn add_window(
+    engine: &Engine,
+    host: &Host,
+    id: String,
+    bridge: Bridge,
+    restored: bool,
+) -> Rc<Window> {
     let inner = host.mc.borrow().clone().expect("the shell is started");
     let mc = Rc::new(WindowMc::for_window(inner, bridge));
     let owner = engine.create_native(QtObject::default(), None).ok();
@@ -363,6 +380,8 @@ fn add_window(engine: &Engine, host: &Host, id: String, bridge: Bridge) -> Rc<Wi
         handlers: RefCell::default(),
         mc: mc.clone(),
         owner,
+        root: Cell::new(None),
+        restored,
     });
     // Listed before its controllers are built, which may read its files.
     host.windows.borrow_mut().push(window.clone());
@@ -520,23 +539,35 @@ pub fn valid_window_id(id: &str) -> bool {
 }
 
 /// Opens window `id` (raised if it is open already), or a new one under a
-/// fresh id when `id` is none or not a valid one. Its controllers come up
-/// as far as the others are (previewing or active), the open windows are
-/// saved, and the opener shows it. The window's id, unless the shell has
-/// not started.
+/// fresh id when `id` is none, not a valid one, or a closing window's. Its
+/// controllers come up as far as the others are (previewing or active), the
+/// open windows are saved, and the opener shows it. The window's id, unless
+/// the shell has not started.
 pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
+    let host = Host::of(engine);
+    // The id of a window set aside opens it as it was saved.
+    let restored = id.is_some_and(|id| host.set_aside.borrow().iter().any(|kept| kept == id));
+    open_saved(engine, id, restored)
+}
+
+/// [`open_window`], `restored` if `id` is a saved window's.
+fn open_saved(engine: &Engine, id: Option<&str>, restored: bool) -> Option<String> {
     let host = Host::of(engine);
     host.mc.borrow().as_ref()?;
     if let Some(open) = id.and_then(|id| host.window(id)) {
         open.bridge.window_command(engine, "raise");
         return Some(open.id.clone());
     }
-    let id = match id.filter(|id| valid_window_id(id)) {
+    // A window still closing keeps its id until it goes: its root and its
+    // files are found by it.
+    let closing = |id: &str| host.closing.borrow().iter().any(|w| w.id == id);
+    let id = match id.filter(|id| valid_window_id(id) && !closing(id)) {
         Some(id) => id.to_owned(),
         None => hal_c2_mc::new_uuid().replace('-', "")[..12].to_owned(),
     };
     let bridge = Bridge::new_window(engine)?;
-    let window = add_window(engine, &host, id.clone(), bridge);
+    host.set_aside.borrow_mut().retain(|kept| *kept != id);
+    let window = add_window(engine, &host, id.clone(), bridge, restored);
     bridge.set_front(engine);
     match host.stage.get() {
         Stage::Active => activate_window(engine, &host, &window),
@@ -558,6 +589,22 @@ pub fn open_window(engine: &Engine, id: Option<&str>) -> Option<String> {
 pub fn close_window(engine: &Engine, id: &str) {
     let id = id.to_owned();
     Bridge::of(engine).defer(engine, move |engine| close_now(engine, &id));
+}
+
+/// Closes window `id`, which no root could be made for. One restored from
+/// `shell-windows.json` stays saved there with its files, to come back at
+/// the next generation that shows the shell ([`reopen_set_aside`]) or the
+/// next launch; a new one goes as [`close_window`] has it.
+pub fn set_aside_window(engine: &Engine, id: &str) {
+    let host = Host::of(engine);
+    // The last window is not closed but quits ([`close_window`]).
+    if host.windows.borrow().len() > 1
+        && host.window(id).is_some_and(|w| w.restored)
+        && !host.set_aside.borrow().iter().any(|kept| kept == id)
+    {
+        host.set_aside.borrow_mut().push(id.to_owned());
+    }
+    close_window(engine, id);
 }
 
 fn close_now(engine: &Engine, id: &str) {
@@ -628,8 +675,14 @@ fn tear_down(engine: &Engine, window: &Rc<Window>) {
     if let Some(owner) = window.owner {
         engine.destroy(owner);
     }
+    // Its root reads the bridge's objects: it goes first.
+    crate::runtime::window_closed(engine, id);
     bridge.close(engine);
-    // Its route, panels and terminals; the drafts are every window's.
+    // Its route, panels and terminals; the drafts are every window's. A
+    // window set aside at restore keeps them.
+    if host.set_aside.borrow().iter().any(|kept| kept == id) {
+        return;
+    }
     if let Some(dir) = host.state_dir.borrow().as_deref() {
         if id == MAIN {
             for name in [
@@ -705,34 +758,41 @@ pub fn finish_writes(engine: &Engine, wait: Duration, then: impl FnOnce(&Engine)
 }
 
 /// Makes `root` what window `id` shows: closing it closes the window
-/// ([`close_window`]), and the main one's shows again when its user opens
-/// the app with no window shown, as a click on its Dock icon does on macOS
-/// (desktop-qt's ShellRuntime::closed and ShellWindows::reopen). The app
-/// keeps running with its last window closed
+/// ([`close_window`]), and the first open window's shows again when its
+/// user opens the app with no window shown, as a click on its Dock icon
+/// does on macOS (desktop-qt's ShellRuntime::closed and
+/// ShellWindows::reopen). The app keeps running with its last window closed
 /// (`App::quit_on_last_window_closed(false)`): [`close_window`] says when it
 /// ends.
 pub fn attach_root(engine: &Engine, id: &str, root: ObjectId) {
+    let host = Host::of(engine);
+    if let Some(window) = host.window(id) {
+        window.root.set(Some(root));
+    }
     let closing = id.to_owned();
     let _ = engine.connect_by_name(root, "closing", move |engine, _| {
         close_window(engine, &closing)
     });
-    if id != MAIN {
+    if host.reopening.replace(true) {
         return;
     }
     let Ok(app) = engine.singleton::<Application>() else {
         return;
     };
-    let _ = engine.signal_index(app, "reopened").and_then(|reopened| {
-        engine.connect_to(app, reopened, root, move |engine, args| {
-            // A reloaded shell's old root lasts until the next frame
-            // ([`crate::runtime`]): only the generation shown comes back.
-            let shown = crate::runtime::window(engine).is_none_or(|w| w == root);
-            if shown && matches!(args.first(), Some(Value::Bool(false))) {
-                for show in ["show", "raise", "requestActivate"] {
-                    let _ = engine.invoke_by_name(root, show, &[]);
-                }
+    let _ = engine.connect_by_name(app, "reopened", |engine, args| {
+        if !matches!(args.first(), Some(Value::Bool(false))) {
+            return;
+        }
+        let root = Host::of(engine)
+            .windows
+            .borrow()
+            .first()
+            .and_then(|w| w.root.get());
+        if let Some(root) = root.filter(|&r| engine.is_alive(r)) {
+            for show in ["show", "raise", "requestActivate"] {
+                let _ = engine.invoke_by_name(root, show, &[]);
             }
-        })
+        }
     });
 }
 
@@ -745,7 +805,24 @@ pub fn restore_windows(engine: &Engine) {
     }
     for id in saved_windows(&host) {
         if host.window(&id).is_none() {
-            open_window(engine, Some(&id));
+            open_saved(engine, Some(&id), true);
+        }
+    }
+}
+
+/// Opens the windows set aside ([`set_aside_window`]) again, as they were
+/// saved: after a generation that showed the shell. One still closing
+/// waits for the next.
+pub fn reopen_set_aside(engine: &Engine) {
+    let host = Host::of(engine);
+    if !can_open(engine) {
+        return;
+    }
+    let kept = host.set_aside.borrow().clone();
+    for id in kept {
+        let closing = host.closing.borrow().iter().any(|w| w.id == id);
+        if !closing && host.window(&id).is_none() {
+            open_saved(engine, Some(&id), true);
         }
     }
 }
@@ -843,7 +920,12 @@ fn save_windows(host: &Host) {
     let Some(dir) = host.state_dir.borrow().clone() else {
         return;
     };
-    let ids: Vec<String> = host.windows.borrow().iter().map(|w| w.id.clone()).collect();
+    let mut ids: Vec<String> = host.windows.borrow().iter().map(|w| w.id.clone()).collect();
+    for kept in host.set_aside.borrow().iter() {
+        if !ids.contains(kept) {
+            ids.push(kept.clone());
+        }
+    }
     let body = serde_json::json!({ "open": ids }).to_string();
     let path = dir.join(format!("{WINDOWS_DIR}.json"));
     if let Err(e) = crate::controllers::drafts::write_atomically(&path, body.as_bytes()) {

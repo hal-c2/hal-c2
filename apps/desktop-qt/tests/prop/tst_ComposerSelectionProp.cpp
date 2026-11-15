@@ -482,13 +482,40 @@ struct Reconnect : Command {
   void show(std::ostream& os) const override { os << "Reconnect"; }
 };
 
-void check(Mc kind) {
+// The case desktop-ljos's composer selection prop shrank to (#1581): a pick
+// made while an earlier own access change is unanswered, then sent. Rarely
+// generated whole, so a run can start from it.
+rc::state::Commands<Command> unansweredOwnChange() {
+  const auto elsewhere = [](const QString& field) {
+    auto command = std::make_shared<Elsewhere>();
+    command->field = field;
+    return command;
+  };
+  const auto access = [](const QString& mode) {
+    auto command = std::make_shared<PickAccess>();
+    command->mode = mode;
+    command->ackFirst = false;
+    return command;
+  };
+  auto model = std::make_shared<PickModel>();
+  model->index = 0;
+  auto submit = std::make_shared<Submit>();
+  submit->ackFirst = false;
+  return {std::make_shared<Hold>(), elsewhere(QStringLiteral("model")), access(kOwnAccess.at(0)), elsewhere(QStringLiteral("access")),
+          model, access(kOwnAccess.at(1)), submit};
+}
+
+void check(Mc kind, rc::state::Commands<Command> commands = {}) {
   Sut sut(kind);
   Model model;
   model.mc = kind;
-  const auto commands = *rc::gen::scale(
+  for (const auto& command : commands) command->apply(model);
+  const auto rest = *rc::gen::scale(
       0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<PickModel, PickModel, PickInteraction, PickAccess, PickAccess, Elsewhere,
                                                                               Elsewhere, Submit, Submit, Submit, Hold, AnswerHeld, Lag, CatchUp, Reconnect>()));
+  commands.insert(commands.end(), rest.begin(), rest.end());
+  model = Model{};
+  model.mc = kind;
   rc::state::runAll(commands, model, sut);
   // Whatever was held goes, and still holds.
   if (sut.mc.holding(QStringLiteral("answers"))) {
@@ -509,6 +536,10 @@ private slots:
   void namedRevisions() {
     QVERIFY(rc::check("the send carries what the composer showed, and no model the user did not pick against the current revision",
                       [] { check(Mc::Named); }));
+  }
+  void namedRevisionsPastAnUnansweredOwnChange() {
+    QVERIFY(rc::check("a pick made while an earlier own change is unanswered goes past it",
+                      [] { check(Mc::Named, unansweredOwnChange()); }));
   }
   void noRevisions() {
     QVERIFY(rc::check("the send carries what the composer showed, to an MC without revisions", [] { check(Mc::Old); }));

@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use hal_c2_shell::single_instance;
 use hal_c2_shell::storage::{Platform, Profile, StoragePaths, resolve};
 
-use crate::expect;
 use crate::harness::{Q, Steps};
 use crate::world::World;
+use crate::{expect, fail};
 
 const HOME: &str = "/home/me";
 
@@ -96,6 +96,21 @@ fn sha1_hex(data: &[u8]) -> String {
         }
     }
     h.iter().map(|word| format!("{word:08x}")).collect()
+}
+
+/// A directory of this scenario's own, short enough for a socket's path:
+/// in `/run/user/<uid>`, which a user session always has, else the
+/// temporary directory when that is short enough. Gone when dropped.
+fn short_scratch() -> Option<tempfile::TempDir> {
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    [
+        PathBuf::from(format!("/run/user/{uid}")),
+        std::env::temp_dir(),
+    ]
+    .into_iter()
+    .filter(|base| display(base).len() < 40)
+    .find_map(|base| tempfile::Builder::new().prefix("hc-").tempdir_in(base).ok())
 }
 
 pub fn register(steps: &mut Steps) {
@@ -230,7 +245,6 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step(&format!("its control socket is in {Q}"), |world, c, _| {
-        let home = world.home_dir().to_path_buf();
         let state = layout(world);
         let started = state.started.first().cloned().unwrap_or_default();
         let runtime = state.env.get("XDG_RUNTIME_DIR").cloned();
@@ -241,11 +255,16 @@ pub fn register(steps: &mut Steps) {
             .unwrap_or_default();
         expect!(parent == expand(&c[0]), "the socket is {address}");
         // And an app that listens there is found by a later launch. The
-        // same rule, in a directory this test may write.
-        let scratch = home.join("hc-instance");
-        let state_dir = scratch.join("state");
+        // same rule, in a directory of this scenario's own: a socket path
+        // holds about a hundred bytes, deeper than this run's scratch home
+        // may be, so it is made in the user's runtime directory, never the
+        // host's XDG_RUNTIME_DIR, which systemd-run does not set.
+        let Some(scratch) = short_scratch() else {
+            fail!("no directory short enough for a socket");
+        };
+        let state_dir = scratch.path().join("state");
         let via_runtime = runtime.is_some();
-        let real_runtime = scratch.join("run");
+        let real_runtime = scratch.path().join("run");
         let listening = single_instance::address(
             &state_dir,
             via_runtime.then(|| display(&real_runtime)).as_deref(),
@@ -256,13 +275,6 @@ pub fn register(steps: &mut Steps) {
         } else {
             state_dir.clone()
         };
-        // A socket path is limited to about a hundred bytes; where this
-        // run's scratch home is deeper than that the rule falls back to
-        // the temporary directory (single_instance::address), and there
-        // is no short directory this test may write to.
-        if display(&wanted).len() + "/hal-c2-ljos-".len() + 16 >= 100 {
-            return Ok(());
-        }
         expect!(
             Path::new(&listening).parent() == Some(wanted.as_path()),
             "the socket would be {listening}"

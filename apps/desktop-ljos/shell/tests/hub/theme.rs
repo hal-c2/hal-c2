@@ -1073,12 +1073,16 @@ fn an_exported_theme_imports_back() {
 
 /// What the `Themes` singleton says of `name`, as JSON.
 fn shown(hub: &Hub, name: &str) -> Json {
-    let obj = hub.engine.singleton::<ThemesObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThemesObject>(&hub.engine)
+        .unwrap();
     from_value(&hub.engine, &hub.engine.read_by_name(obj, name))
 }
 
 fn call(hub: &Hub, method: &str, args: &[Value]) -> Json {
-    let obj = hub.engine.singleton::<ThemesObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThemesObject>(&hub.engine)
+        .unwrap();
     let value = hub.engine.invoke_by_name(obj, method, args).unwrap();
     from_value(&hub.engine, &value)
 }
@@ -1109,7 +1113,9 @@ fn the_themes_singleton_shows_and_changes_the_choice() {
     assert!(current);
     assert_eq!(call(&hub, "draft", &[Value::from("")])["label"], "Grove");
     // The editor opened from QML drafts the theme drawn.
-    let obj = hub.engine.singleton::<ThemesObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThemesObject>(&hub.engine)
+        .unwrap();
     hub.engine
         .write_by_name(obj, "editorOpen", Value::Bool(true))
         .unwrap();
@@ -1131,7 +1137,9 @@ fn the_themes_singleton_shows_and_changes_the_choice() {
 #[test]
 fn the_themes_singleton_hides_the_editor_and_duplicates_the_standard_look() {
     let (hub, _dir) = hub();
-    let obj = hub.engine.singleton::<ThemesObject>().unwrap();
+    let obj = hal_c2_shell::bridge::Bridge::main(&hub.engine)
+        .singleton::<ThemesObject>(&hub.engine)
+        .unwrap();
     // Whether the editor said it was closed by the time inspecting stopped:
     // the focus-restore on a pick must tell a close from a pick.
     let open_when_inspecting_stopped = Rc::new(Cell::new(None));

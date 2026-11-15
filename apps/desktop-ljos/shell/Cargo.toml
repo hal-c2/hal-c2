@@ -73,6 +73,8 @@ base64 = "0.23"
 # The SnapShot shortcut's portal id (snap_shot/portal.rs), as desktop-qt's
 # QCryptographicHash.
 sha2 = "0.10"
+# The single-instance socket's name, desktop-qt's SHA-1 of the state directory.
+sha1_smol = "1"
 # The update feed and its downloads (controllers/desktop_update.rs), the
 # MC client's HTTP stack.
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }

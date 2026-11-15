@@ -376,8 +376,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       Map.merge(state, %{
         # Subagents an earlier turn left running carry on in their own threads:
         # their reports still land, and a later finish can still wake this one.
-        subagents:
-          Map.filter(Map.get(state, :subagents, %{}), fn {_thread, entry} -> not entry.done end),
+        # Ended ones stay too, so a late report of one does not start it again.
+        subagents: Map.get(state, :subagents, %{}),
         file_changes: %{},
         sharing_limit: false,
         final_first: nil,
@@ -470,7 +470,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The turn's subagents stop with it, each on its own native thread.
     for {thread, entry} <- Map.get(state, :subagents, %{}),
-        entry[:turn_id] != nil do
+        not entry.done and entry[:turn_id] != nil do
       Connection.call(state.conn, "turn/interrupt", %{
         "threadId" => thread,
         "turnId" => entry.turn_id
