@@ -355,15 +355,17 @@ type Entities = BTreeMap<String, BTreeMap<String, Obj>>;
 const STREAMED: [&str; 5] = ["text", "output", "markdown", "progress", "summary"];
 
 /// Whether `now` is `was` with text appended to some of its streamed
-/// fields, as an item's stream leaves it; any other field that changed
-/// (a title that was empty) restates it, as a set does.
+/// fields, as an item's stream leaves it (the first append makes the
+/// field); any other field that changed (a title that was empty) restates
+/// it, as a set does.
 fn only_appended(was: &Obj, now: &Obj) -> bool {
-    was.len() == now.len()
+    was.keys().all(|key| now.contains_key(key))
         && now.iter().all(|(key, value)| match (was.get(key), value) {
-            (Some(Json::String(before)), Json::String(after))
+            (None | Some(Json::String(_)), Json::String(after))
                 if STREAMED.contains(&key.as_str()) =>
             {
-                after.starts_with(before.as_str())
+                let before = was.get(key).and_then(Json::as_str).unwrap_or_default();
+                after.starts_with(before)
             }
             (Some(before), after) => before == after,
             (None, _) => false,

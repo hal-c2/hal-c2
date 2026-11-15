@@ -20,6 +20,8 @@ use proptest::prelude::*;
 use serde_json::json;
 
 const TABS: [&str; 2] = ["tab-a", "tab-b"];
+/// How finely time passes, and so how late an answer may seem to come.
+const STEP_MS: u64 = 25;
 
 #[derive(Clone, Debug)]
 enum Act {
@@ -133,6 +135,8 @@ struct Sut {
     asked: Rc<RefCell<Vec<usize>>>,
     /// When each request was sent, in ms of the run, and its time limit.
     sent: Vec<(u64, i64)>,
+    /// When each request's first answer came, to the step it came in.
+    answered_at: Vec<Option<u64>>,
     now_ms: u64,
     _host: PreviewAutomationHost,
 }
@@ -181,6 +185,7 @@ impl Sut {
             seen,
             asked,
             sent: Vec::new(),
+            answered_at: Vec::new(),
             now_ms: 0,
             _host: host,
         }
@@ -192,6 +197,7 @@ impl Sut {
                 let n = self.asked.borrow().len();
                 self.asked.borrow_mut().push(tab);
                 self.sent.push((self.now_ms, timeout));
+                self.answered_at.push(None);
                 let request = json!({
                     "requestId": format!("request-{n}"), "threadId": "thread-1",
                     "tabId": TABS[tab], "tabIdExplicit": true, "operation": "evaluate",
@@ -217,12 +223,28 @@ impl Sut {
                 }
             }
             Act::Wait(ms) => {
-                self.now_ms += ms;
-                self.window.advance(ms).unwrap();
+                // In steps, so each answer's time is known to within one.
+                let mut left = ms;
+                while left > 0 {
+                    let step = left.min(STEP_MS);
+                    self.now_ms += step;
+                    self.window.advance(step).unwrap();
+                    self.note_answers();
+                    left -= step;
+                }
             }
         }
         // What the host queued for now.
         self.window.advance(0).unwrap();
+        self.note_answers();
+    }
+
+    fn note_answers(&mut self) {
+        for (n, at) in self.answered_at.iter_mut().enumerate() {
+            if at.is_none() && answered(&self.mc, n) > 0 {
+                *at = Some(self.now_ms);
+            }
+        }
     }
 
     fn check(&self) -> Result<(), TestCaseError> {
@@ -231,10 +253,10 @@ impl Sut {
         for (n, (sent, timeout)) in self.sent.iter().enumerate() {
             let times = answered(&self.mc, n);
             prop_assert!(times <= 1, "request {n} was answered {times} times");
-            let waited = (self.now_ms - sent) as i64;
+            let waited = (self.answered_at[n].unwrap_or(self.now_ms) - sent) as i64;
             prop_assert!(
-                times == 1 || waited < *timeout,
-                "request {n} is unanswered after {waited}ms of its {timeout}ms"
+                waited < *timeout,
+                "request {n} was answered or still waits after {waited}ms of its {timeout}ms"
             );
         }
         Ok(())

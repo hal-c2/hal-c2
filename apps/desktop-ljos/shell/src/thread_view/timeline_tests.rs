@@ -1250,6 +1250,20 @@ fn a_snapshot_of_a_members_progress_does_not_redraw_its_group() {
     w.view.redrawn.clear();
     w.snapshot(rows("a", "running"));
     assert!(redrawn(&w));
+    // The first append to a streamed field makes the field.
+    let mut first = rows("a", "running");
+    first[3] = row(
+        "turn-item",
+        item(
+            "suba-3",
+            "subagent",
+            3,
+            json!({"subagentId": "agent-1", "progress": "b"}),
+        ),
+    );
+    w.view.redrawn.clear();
+    w.snapshot(first);
+    assert!(!redrawn(&w));
 }
 
 #[test]
