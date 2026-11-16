@@ -631,8 +631,18 @@ fn titles(store: &ShellStore) -> Vec<String> {
 #[test]
 fn the_thread_list_is_built_once_per_change_of_the_rows() {
     let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.apply(&snapshot());
+    }
+    // The rows the cache kept are held once it answers.
     let mut store = cached(dir.path());
     store.open(ORIGIN);
+    assert!(titles(&store).is_empty());
+    kept(&mut store);
+    assert_eq!(titles(&store), ["t1", "t2"]);
+
     store.apply(&snapshot());
     // Between changes every reader shares one list.
     assert!(Rc::ptr_eq(&store.threads(), &store.threads()));
@@ -654,30 +664,22 @@ fn the_thread_list_is_built_once_per_change_of_the_rows() {
     store.apply(&snapshot());
     assert_eq!(titles(&store), ["t1", "t2"]);
 
-    // Cleared, nothing is listed.
-    store.clear(|_| {});
-    kept(&mut store);
-    assert!(titles(&store).is_empty());
-
-    // Another MC's rows go when the store is opened there.
-    store.open(ORIGIN);
-    store.apply(&snapshot());
-    assert_eq!(titles(&store), ["t1", "t2"]);
-    store.open("http://10.0.0.2:3773");
-    assert!(titles(&store).is_empty());
-    drop(store);
-
-    // The rows the cache kept are held once it answers.
-    let mut store = cached(dir.path());
-    store.open(ORIGIN);
-    assert!(titles(&store).is_empty());
-    kept(&mut store);
-    assert_eq!(titles(&store), ["t1", "t2"]);
-
     // A link that is forgotten takes its MC's threads.
     store.add_link("studio");
     store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
     let listed = store.threads().len();
     assert!(store.remove_link("studio", true));
     assert!(store.threads().len() < listed);
+
+    // Another MC's rows go when the store is opened there.
+    store.open("http://10.0.0.2:3773");
+    assert!(titles(&store).is_empty());
+    store.open(ORIGIN);
+    store.apply(&snapshot());
+    assert_eq!(titles(&store), ["t1", "t2"]);
+
+    // Cleared, nothing is listed.
+    store.clear(|_| {});
+    kept(&mut store);
+    assert!(titles(&store).is_empty());
 }
