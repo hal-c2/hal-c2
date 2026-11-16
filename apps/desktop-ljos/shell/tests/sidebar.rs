@@ -9,6 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
+use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Mc, McError, OnFrame, OnReady, Reply, Resume, SubId};
@@ -366,10 +367,11 @@ fn rows_are_selected_one_by_one_and_by_range() {
     assert!(selected(&engine).is_empty());
 }
 
-/// A project added while the list is scoped is followed by its own key
-/// when the sidebar has not grouped it yet; the scope is its group.
+/// Only a project new to the list is followed by its own key
+/// (`follow_in_sidebar` before the sidebar grouped it); a listed project's
+/// own key names no group, and the scope clears as desktop-qt's does.
 #[test]
-fn a_scope_by_a_project_s_own_key_is_its_group() {
+fn a_scope_by_a_listed_project_s_own_key_clears() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, _mc) = started(dir.path(), &["t1"], false);
     let project = sidebar(&engine)["projects"][0].clone();
@@ -379,8 +381,49 @@ fn a_scope_by_a_project_s_own_key_is_its_group() {
         "{project}"
     );
 
-    dispatch(&engine, "sidebar.scope", json!({"projectKey": own}));
+    dispatch(&engine, "sidebar.scope", json!({"projectKey": group}));
     assert_eq!(sidebar(&engine)["scopeProjectKey"], group);
+    dispatch(&engine, "sidebar.scope", json!({"projectKey": own}));
+    assert_eq!(sidebar(&engine)["scopeProjectKey"], Json::Null);
+}
+
+/// A change of grouping clears the scope either way, as desktop-qt's does:
+/// the group it named is gone, and the project's new group is not followed.
+#[test]
+fn a_change_of_grouping_clears_the_scope_either_way() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, mc) = start(dir.path());
+    let mut frame = cluster(&["t1"], false);
+    frame["rows"][0][3]["repositoryIdentity"] =
+        json!({"canonicalKey": "github.com/hal-c2/ljos", "rootPath": "/w/ljos"});
+    mc.send(&engine, frame);
+    let settings = Settings::of(&engine);
+    settings.set_device_path(&engine, Some(dir.path().join("preferences.json")));
+    let group = |engine: &Engine| sidebar(engine)["projects"][0]["key"].clone();
+    let scope = |engine: &Engine| sidebar(engine)["scopeProjectKey"].clone();
+    let grouping = |mode: &str| {
+        settings.write_device(&engine, "sidebarProjectGroupingMode", json!(mode));
+    };
+
+    grouping("separate");
+    let separate = group(&engine);
+    grouping("repository");
+    let repository = group(&engine);
+    assert_eq!(
+        (separate.as_str(), repository.as_str()),
+        (Some("env-a:/w/ljos"), Some("github.com/hal-c2/ljos"))
+    );
+
+    for (from, to, key) in [
+        ("separate", "repository", &separate),
+        ("repository", "separate", &repository),
+    ] {
+        grouping(from);
+        dispatch(&engine, "sidebar.scope", json!({"projectKey": key}));
+        assert_eq!(&scope(&engine), key, "scoped under {from}");
+        grouping(to);
+        assert_eq!(scope(&engine), Json::Null, "{from} to {to}");
+    }
 }
 
 #[test]
