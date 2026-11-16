@@ -665,6 +665,26 @@ fn the_page_states_the_project_and_environment_being_edited() {
 }
 
 #[test]
+fn a_refresh_that_moves_nothing_is_not_a_change_of_the_scope() {
+    let hub = Hub::new();
+    let cluster = cluster(&hub);
+    hub.dispatch("settings.open", json!({}));
+    let heard = Rc::new(Cell::new(0));
+    SettingsScope::of(&hub.engine).on_changed({
+        let heard = heard.clone();
+        move |_| heard.set(heard.get() + 1)
+    });
+    // A store change elsewhere (a thread renamed, a run ended).
+    SettingsScope::of(&hub.engine).refresh(&hub.engine);
+    assert_eq!(heard.get(), 0);
+    // One that takes an environment away is news.
+    cluster.build_box_online.set(false);
+    SettingsScope::of(&hub.engine).refresh(&hub.engine);
+    assert_eq!(heard.get(), 1);
+    assert_eq!(SettingsScope::of(&hub.engine).targets(), ["env-1"]);
+}
+
+#[test]
 fn changing_one_axis_of_the_scope_keeps_the_other() {
     let hub = Hub::new();
     cluster(&hub);

@@ -210,7 +210,7 @@ fn sections_follow_capabilities_and_hide_what_is_not_listed() {
         ),
         thread_from_row("other", &row("scoped-out")),
     ];
-    let ids = |list: &[Thread]| list.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+    let ids = |list: &[&Thread]| list.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
     let scope: HashSet<String> = ["e:p1".to_owned()].into();
     let sections = partition(&threads, Some(&scope), &|_| all(), now());
     assert_eq!(ids(&sections.snoozed), ["snoozed"]);
@@ -910,4 +910,144 @@ fn iso_round_trips_through_milliseconds() {
     );
     assert_eq!(parse_iso(Some("")), None);
     assert_eq!(parse_iso(Some("yesterday")), None);
+}
+
+// The Working section's tracker against desktop-qt's rules as first ported
+// (`Reference`): every thread observed keeps a state, so the tracker that
+// keeps only the working ones must answer the same for any order of
+// observations.
+mod working_tracker {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Default)]
+    struct Reference {
+        states: HashMap<String, (bool, Option<i64>, Option<String>)>,
+        returns: HashMap<String, i64>,
+    }
+
+    impl Reference {
+        fn observe(&mut self, threads: &[Thread], now_ms: i64) {
+            let mut present = HashSet::new();
+            for thread in threads {
+                let key = thread.key();
+                present.insert(key.clone());
+                let previous = self.states.get(&key).cloned();
+                let was_working = previous.as_ref().is_some_and(|p| p.0);
+                let actual = working(thread);
+                let placement = (actual || was_working).then(|| {
+                    [
+                        &thread.archived_at,
+                        &thread.pinned_at,
+                        &thread.settled_override,
+                        &thread.settled_at,
+                        &thread.snoozed_at,
+                        &thread.snoozed_until,
+                        &thread.active_order_key,
+                    ]
+                    .iter()
+                    .map(|field| field.as_ref().map_or("-".to_owned(), |v| format!("={v}")))
+                    .collect::<Vec<_>>()
+                    .join("\u{1f}")
+                });
+                let actionable = thread.has_pending_approvals
+                    || thread.has_pending_user_input
+                    || thread
+                        .latest_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == "failed");
+                let moved = previous.as_ref().is_some_and(|p| p.2 != placement);
+                let excluded = thread.archived_at.is_some()
+                    || thread.pinned_at.is_some()
+                    || effective_snoozed(thread, now_ms);
+                let deadline =
+                    (!actual && was_working && !actionable && !moved && !excluded).then(|| {
+                        previous
+                            .as_ref()
+                            .and_then(|p| p.1)
+                            .unwrap_or(now_ms + WORKING_EXIT_GRACE_MS)
+                    });
+                let still_working = actual || deadline.is_some_and(|d| d > now_ms);
+                if was_working && !still_working {
+                    self.returns.insert(key.clone(), now_ms);
+                }
+                let deadline = still_working.then_some(deadline).flatten();
+                self.states
+                    .insert(key, (still_working, deadline, placement));
+            }
+            self.states.retain(|key, _| present.contains(key));
+            self.returns.retain(|key, _| present.contains(key));
+        }
+
+        fn is_working(&self, thread: &Thread) -> bool {
+            self.states
+                .get(&thread.key())
+                .map_or_else(|| working(thread), |s| s.0)
+        }
+    }
+
+    /// Of four threads, the ones in a list and how each is: busy, asking,
+    /// failed, pinned, and its place among the active ones.
+    fn threads() -> impl Strategy<Value = Vec<Thread>> {
+        prop::collection::vec(
+            (
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                prop::option::of(prop::sample::select(vec!["a", "b"])),
+            ),
+            4,
+        )
+        .prop_flat_map(|shapes| (Just(shapes), prop::collection::vec(any::<bool>(), 4)))
+        .prop_map(|(shapes, listed)| {
+            shapes
+                .into_iter()
+                .zip(listed)
+                .enumerate()
+                .filter(|(_, (_, listed))| *listed)
+                .map(|(i, ((busy, asking, failed, pinned, order), _))| Thread {
+                    environment_id: "e".into(),
+                    id: format!("t{i}"),
+                    created_at: AT.into(),
+                    pending_background_tasks: usize::from(busy),
+                    has_pending_approvals: asking,
+                    latest_run: failed.then(|| RunSummary {
+                        status: "failed".into(),
+                        ..Default::default()
+                    }),
+                    pinned_at: pinned.then(|| AT.to_owned()),
+                    active_order_key: order.map(str::to_owned),
+                    ..Default::default()
+                })
+                .collect()
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn the_tracker_answers_as_one_that_keeps_every_thread(
+            steps in prop::collection::vec((threads(), 0..3000i64), 1..24),
+        ) {
+            let mut tracker = WorkingTracker::default();
+            let mut reference = Reference::default();
+            let mut now = now();
+            for (threads, wait) in steps {
+                now += wait;
+                tracker.observe(&threads, now);
+                reference.observe(&threads, now);
+                for thread in &threads {
+                    prop_assert_eq!(tracker.is_working(thread), reference.is_working(thread));
+                    prop_assert_eq!(
+                        tracker.returned(thread),
+                        reference.returns.get(&thread.key()).copied()
+                    );
+                }
+                prop_assert_eq!(
+                    tracker.next_deadline(),
+                    reference.states.values().filter_map(|s| s.1).min()
+                );
+            }
+        }
+    }
 }

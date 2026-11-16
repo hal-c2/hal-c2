@@ -507,8 +507,7 @@ impl Sidebar {
         // And the MC's settings, which say whether Settled lists plugin threads.
         Settings::of(engine).on_settings_changed(later(self.me.clone()));
         let refresh = later(self.me.clone());
-        self.bridge
-            .watch(engine, "route", move |engine, _| refresh(engine));
+        navigation::on_route_changed(engine, self.bridge, move |engine, _| refresh(engine));
         let keymap = Keymap::of(engine);
         keymap.set_threads(Rc::new(|engine: &Engine| {
             is_active(engine).then(|| ordered_keys(engine))
@@ -700,7 +699,7 @@ impl Sidebar {
             .retain(|k| view.ordered_keys.contains(k));
         let state = view.state.clone();
         *shared.view.borrow_mut() = view;
-        self.bridge.publish(engine, "sidebar", state);
+        self.bridge.publish_shared(engine, "sidebar", state);
         if let Some(timer) = self.working_grace.take() {
             engine.cancel_call(timer);
         }

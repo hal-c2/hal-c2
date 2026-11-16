@@ -74,14 +74,18 @@ fn text<'a>(row: &'a Row, object: &str, field: &str) -> &'a str {
 /// The thread a fork came from: where it was forked (`forkedFrom`), else its
 /// lineage's parent.
 fn parent_id(row: &Row) -> String {
+    parent_of(row).to_owned()
+}
+
+fn parent_of(row: &Row) -> &str {
     if text(row, "lineage", "relationshipToParent") != "fork" {
-        return String::new();
+        return "";
     }
     let forked_from = text(row, "forkedFrom", "threadId");
     if forked_from.is_empty() {
-        text(row, "lineage", "parentThreadId").to_owned()
+        text(row, "lineage", "parentThreadId")
     } else {
-        forked_from.to_owned()
+        forked_from
     }
 }
 
@@ -184,7 +188,10 @@ fn state(store: &ShellStore, key: &str) -> Json {
     }
     let mut forks = Vec::new();
     for other in store.threads().iter() {
-        if other.archived_at.is_some() || parent_id(row_of(store, &other.key())) != thread.id {
+        let forked_here = store
+            .thread_row_on(&other.environment_id, &other.id)
+            .is_some_and(|row| parent_of(row) == thread.id);
+        if other.archived_at.is_some() || !forked_here {
             continue;
         }
         if running(other) {
@@ -362,7 +369,7 @@ impl Controller for ThreadLineage {
         }
         self.active = true;
         let me = self.me.clone();
-        self.bridge.watch(engine, "route", move |e, _| {
+        navigation::on_route_changed(engine, self.bridge, move |e, _| {
             later(e, &me, |c, e| c.publish(e))
         });
         let me = self.me.clone();

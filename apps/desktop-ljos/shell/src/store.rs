@@ -24,7 +24,7 @@
 //! ```
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -90,6 +90,16 @@ struct Unsaved {
 
 fn removed(row: &Row) -> bool {
     row.is_empty() || row.get("deletedAt").is_some_and(|v| !v.is_null())
+}
+
+/// Whether a thread row is half of a move (`moving`, or the `movedTo`
+/// record it leaves): whether it lives depends on another MC's row.
+fn in_move(row: &Row) -> bool {
+    row.get("movedTo").is_some_and(Value::is_object)
+        || row
+            .get("moving")
+            .and_then(Value::as_object)
+            .is_some_and(|moving| !moving.is_empty())
 }
 
 fn thread_key(environment_id: &str, thread_id: &str) -> String {
@@ -174,7 +184,18 @@ pub struct ShellStore {
     kept: Rc<RefCell<Option<(u64, cache::Shell)>>>,
     /// [`ShellStore::threads`], built once per change of the rows
     /// (desktop-qt's m_threads): every caller shares it.
-    threads: RefCell<Option<Rc<[sidebar::Thread]>>>,
+    threads: RefCell<Option<ThreadList>>,
+}
+
+/// [`ShellStore::threads`] as built, and where each row went, so a change of
+/// one row changes its thread alone.
+#[derive(Default)]
+struct ThreadList {
+    list: Rc<[sidebar::Thread]>,
+    /// Each listed row's place in `list`, by MC and then id.
+    at: HashMap<String, HashMap<String, usize>>,
+    /// The ids of rows in a move ([`in_move`]), on any MC.
+    moving: HashSet<String>,
 }
 
 impl ShellStore {
@@ -546,8 +567,8 @@ impl ShellStore {
         if kind == "error" && *client != Client::Own {
             return false;
         }
-        // Whatever the frame changes, threads() is built again from the rows.
-        self.rows_changed();
+        // What the frame changes of the rows changes threads(): see put_row,
+        // reset_rows, set_environment and remove_mc.
         if let Some(mc) = frame.get("mc").and_then(Value::as_str)
             && !mc.is_empty()
             && frame.get("removed").and_then(Value::as_bool) != Some(true)
@@ -682,7 +703,11 @@ impl ShellStore {
     }
 
     fn put_row(&mut self, mc: &str, id: &str, kind: &str, fields: Row) {
-        self.rows_changed();
+        // Projects are not in threads(); a thread row is changed in place
+        // when it can be.
+        if kind == "thread" && !self.patch_thread(mc, id, &fields) {
+            self.rows_changed();
+        }
         let entry = self.mcs.entry(mc.to_owned()).or_default();
         let environment_id = entry.environment_id.clone();
         let Some(kept) = entry.rows(kind) else {
@@ -804,24 +829,72 @@ impl ShellStore {
     pub fn threads(&self) -> Rc<[sidebar::Thread]> {
         self.threads
             .borrow_mut()
-            .get_or_insert_with(|| self.build_threads().into())
+            .get_or_insert_with(|| self.build_threads())
+            .list
             .clone()
     }
 
-    fn build_threads(&self) -> Vec<sidebar::Thread> {
-        let mut result = Vec::new();
-        for mc in self.mcs.values() {
+    /// [`ShellStore::threads`] built afresh from the rows, as it is after
+    /// any change: what the kept list must equal.
+    #[doc(hidden)]
+    pub fn threads_rebuilt(&self) -> Vec<sidebar::Thread> {
+        self.build_threads().list.to_vec()
+    }
+
+    fn build_threads(&self) -> ThreadList {
+        let mut list = Vec::new();
+        let mut at: HashMap<String, HashMap<String, usize>> = HashMap::new();
+        let mut moving = HashSet::new();
+        for (name, mc) in &self.mcs {
+            for (id, row) in &mc.threads {
+                if in_move(row) {
+                    moving.insert(id.clone());
+                }
+            }
             // An MC whose environment is not known yet has no key for its threads.
             if mc.environment_id.is_empty() {
                 continue;
             }
-            for row in mc.threads.values() {
+            let places = at.entry(name.clone()).or_default();
+            for (id, row) in &mc.threads {
                 if self.lives(row) {
-                    result.push(sidebar::thread_from_row(&mc.environment_id, row));
+                    places.insert(id.clone(), list.len());
+                    list.push(sidebar::thread_from_row(&mc.environment_id, row));
                 }
             }
         }
-        result
+        ThreadList {
+            list: list.into(),
+            at,
+            moving,
+        }
+    }
+
+    /// Changes thread `id` of `mc` to its new `fields` in the built list,
+    /// when no other thread of the list can change with it: the row was
+    /// listed and stays so, and no row of its id is in a move. Whether the
+    /// list is right without building it again.
+    fn patch_thread(&self, mc: &str, id: &str, fields: &Row) -> bool {
+        let mut built = self.threads.borrow_mut();
+        let Some(built) = built.as_mut() else {
+            // Nothing built, nothing to change.
+            return true;
+        };
+        if removed(fields) || in_move(fields) || built.moving.contains(id) {
+            return false;
+        }
+        let Some(&place) = built.at.get(mc).and_then(|ids| ids.get(id)) else {
+            return false;
+        };
+        let Some(environment_id) = self.mcs.get(mc).map(|m| &m.environment_id) else {
+            return false;
+        };
+        // A caller still holding the list keeps it as it was.
+        let Some(list) = Rc::get_mut(&mut built.list) else {
+            return false;
+        };
+        list[place] = sidebar::thread_from_row(environment_id, fields);
+        true
     }
 
     /// Every project of the cluster, by creation.
@@ -867,6 +940,11 @@ impl ShellStore {
     /// the forwarding record of a move.
     pub fn thread_row(&self, key: &str) -> Option<&Row> {
         let (environment_id, id) = split_key(key)?;
+        self.thread_row_on(environment_id, id)
+    }
+
+    /// [`ShellStore::thread_row`] of `id` on `environment_id`.
+    pub fn thread_row_on(&self, environment_id: &str, id: &str) -> Option<&Row> {
         self.serving(environment_id)?.1.threads.get(id)
     }
 

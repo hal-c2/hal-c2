@@ -314,12 +314,79 @@ pub(crate) fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// `value` as QML is given it, made from `was`, what QML was given for
+/// `kept`, with each part `value` has unchanged from `kept` taken from
+/// `was` rather than converted again. A row that moved up or down by one
+/// in a list is still found. `None` when `value` is `kept`.
+fn shown_from(value: &Json, kept: &Json, was: &Value) -> Option<Value> {
+    match (value, kept, was) {
+        (Json::Array(items), Json::Array(kept), Value::List(was)) if kept.len() == was.len() => {
+            let mut changed = items.len() != kept.len();
+            let mut at = 0;
+            let list = items
+                .iter()
+                .map(|item| {
+                    for skip in 0..2 {
+                        if kept.get(at + skip) == Some(item) {
+                            changed |= skip > 0;
+                            at += skip + 1;
+                            return was[at - 1].clone();
+                        }
+                    }
+                    changed = true;
+                    match (kept.get(at), was.get(at)) {
+                        (Some(kept), Some(was)) if same_shape(item, kept) => {
+                            at += 1;
+                            shown_from(item, kept, was).unwrap_or_else(|| was.clone())
+                        }
+                        _ => item.to_value(),
+                    }
+                })
+                .collect();
+            changed.then(|| Value::list(list))
+        }
+        (Json::Object(fields), Json::Object(kept), Value::Map(was))
+            if fields.len() == kept.len()
+                && was.len() == kept.len()
+                && fields.keys().zip(kept.keys()).all(|(a, b)| a == b) =>
+        {
+            let mut changed = false;
+            let map = Value::map(fields.iter().zip(kept.values().zip(was.iter())).map(
+                |((key, field), (kept, (_, was)))| {
+                    let shown = match shown_from(field, kept, was) {
+                        Some(shown) => {
+                            changed = true;
+                            shown
+                        }
+                        None => was.clone(),
+                    };
+                    (key.as_str(), shown)
+                },
+            ));
+            changed.then_some(map)
+        }
+        _ => (value != kept).then(|| value.to_value()),
+    }
+}
+
+/// Whether `a` and `b` may be one entry changed: objects with the same
+/// `id` and `key`, either of which may be absent from both.
+fn same_shape(a: &Json, b: &Json) -> bool {
+    matches!((a, b), (Json::Object(_), Json::Object(_)))
+        && a.get("id") == b.get("id")
+        && a.get("key") == b.get("key")
+}
+
 /// One bridge's own: its state, and what was added to it.
 #[derive(Default)]
 struct Own {
     map: RefCell<Option<PropertyMap>>,
     /// What each key last had, to skip a republish of the same value.
-    published: RefCell<HashMap<String, Json>>,
+    /// Shared with whoever published it, so a large value is not copied.
+    published: RefCell<HashMap<String, Rc<Json>>>,
+    /// What QML was given for each key: its unchanged parts are given
+    /// again ([`shown_from`]), so a large value is converted once.
+    shown: RefCell<HashMap<String, Value>>,
     interceptors: RefCell<Vec<Interceptor>>,
     watchers: RefCell<Vec<(String, Watcher)>>,
     /// [`Bridge::extension`]'s.
@@ -440,7 +507,7 @@ impl Bridge {
         for key in keys {
             bridge.declare_key(engine, &key);
         }
-        let shared: Vec<(String, Json)> = {
+        let shared: Vec<(String, Rc<Json>)> = {
             let keys = state.shared_keys.borrow();
             source
                 .own(engine)
@@ -645,6 +712,12 @@ impl Bridge {
     /// republish would re-run every binding on the key for nothing. A shared
     /// key is set on every window's bridge.
     pub fn publish(self, engine: &Engine, key: &str, value: Json) {
+        self.publish_shared(engine, key, Rc::new(value));
+    }
+
+    /// [`Bridge::publish`] for a value its publisher keeps too, such as the
+    /// sidebar's thousands of rows: shared rather than copied.
+    pub fn publish_shared(self, engine: &Engine, key: &str, value: Rc<Json>) {
         let state = BridgeState::of(engine);
         Bridge::main(engine);
         if state.shared_keys.borrow().contains(key) {
@@ -659,14 +732,27 @@ impl Bridge {
         }
     }
 
-    fn publish_own(self, engine: &Engine, own: &Own, key: &str, value: Json) {
-        if own.published.borrow().get(key) == Some(&value) {
-            return;
-        }
-        let shown = value.to_value();
+    fn publish_own(self, engine: &Engine, own: &Own, key: &str, value: Rc<Json>) {
+        // An unchanged republish would re-evaluate every binding on the key
+        // for nothing. Telling one apart walks the value once, as giving QML
+        // its changed parts does.
+        let shown = {
+            let published = own.published.borrow();
+            let shown = own.shown.borrow();
+            match (published.get(key), shown.get(key)) {
+                (Some(kept), _) if Rc::ptr_eq(kept, &value) => return,
+                (Some(kept), Some(was)) => match shown_from(&value, kept, was) {
+                    Some(shown) => shown,
+                    None => return,
+                },
+                (Some(kept), None) if **kept == *value => return,
+                _ => value.to_value(),
+            }
+        };
         let Some(map) = own.map.borrow().clone() else {
             return;
         };
+        own.shown.borrow_mut().insert(key.to_owned(), shown.clone());
         map.insert(engine, key, shown.clone());
         own.published
             .borrow_mut()
@@ -689,7 +775,11 @@ impl Bridge {
 
     /// What `key` was last published as.
     pub fn published(self, engine: &Engine, key: &str) -> Option<Json> {
-        self.own(engine)?.published.borrow().get(key).cloned()
+        self.own(engine)?
+            .published
+            .borrow()
+            .get(key)
+            .map(|value| Json::clone(value))
     }
 
     /// Calls `f` with each value published under `key`, before QML hears of
@@ -985,6 +1075,95 @@ impl Drop for Reset<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn row(id: u8, title: &str) -> Json {
+        json!({ "id": id.to_string(), "title": title, "tags": [title] })
+    }
+
+    fn rows(rows: &[(u8, &str)]) -> Json {
+        json!({ "active": rows.iter().map(|(id, t)| row(*id, t)).collect::<Vec<_>>(), "mode": "list" })
+    }
+
+    fn list_of<'a>(shown: &'a Value, key: &str) -> &'a [Value] {
+        shown.get(key).and_then(Value::as_list).unwrap()
+    }
+
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    // A row's title changing and another moving to the top convert those
+    // two again, and give QML the rest as it had them.
+    #[test]
+    fn a_republish_converts_only_what_changed() {
+        let kept = rows(&[(1, "a"), (2, "b"), (3, "c"), (4, "d")]);
+        let was = kept.to_value();
+        let value = rows(&[(4, "d"), (1, "a"), (2, "B"), (3, "c")]);
+        let shown = shown_from(&value, &kept, &was).unwrap();
+        assert_eq!(format!("{shown:?}"), format!("{:?}", value.to_value()));
+        let (now, before) = (list_of(&shown, "active"), list_of(&was, "active"));
+        assert!(same(&now[1], &before[0]));
+        assert!(!same(&now[2], &before[1]));
+        assert!(same(&now[3], &before[2]));
+    }
+
+    fn json_value() -> impl Strategy<Value = Json> {
+        let leaf = prop_oneof![
+            Just(Json::Null),
+            any::<bool>().prop_map(Json::from),
+            (0..4i64).prop_map(Json::from),
+            "[ab]{0,2}".prop_map(Json::from),
+        ];
+        leaf.prop_recursive(3, 24, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..5).prop_map(Json::Array),
+                prop::collection::btree_map("(id|key|x|y)", inner, 0..4)
+                    .prop_map(|m| Json::Object(m.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        // Whatever was published before, QML is given what converting
+        // the new value afresh would give it.
+        #[test]
+        fn a_republish_shows_the_new_value(kept in json_value(), value in json_value()) {
+            let shown = shown_from(&value, &kept, &kept.to_value());
+            prop_assert_eq!(shown.is_none(), value == kept);
+            let shown = shown.unwrap_or_else(|| kept.to_value());
+            prop_assert_eq!(format!("{shown:?}"), format!("{:?}", value.to_value()));
+        }
+
+        // The same of a list some rows of which were taken out, put in or
+        // changed: what the sidebar's are between two publishes.
+        #[test]
+        fn a_republished_list_shows_the_new_list(
+            kept in prop::collection::vec(json_value(), 0..8),
+            edits in prop::collection::vec((0..3u8, any::<prop::sample::Index>(), json_value()), 0..4),
+        ) {
+            let mut items = kept.clone();
+            for (op, at, new) in edits {
+                let at = if items.is_empty() { 0 } else { at.index(items.len()) };
+                match op {
+                    0 if !items.is_empty() => { items.remove(at); }
+                    1 => items.insert(at, new),
+                    _ if !items.is_empty() => items[at] = new,
+                    _ => {}
+                }
+            }
+            let (kept, value) = (Json::Array(kept), Json::Array(items));
+            let shown = shown_from(&value, &kept, &kept.to_value());
+            prop_assert_eq!(shown.is_none(), value == kept);
+            let shown = shown.unwrap_or_else(|| kept.to_value());
+            prop_assert_eq!(format!("{shown:?}"), format!("{:?}", value.to_value()));
+        }
+    }
 
     #[test]
     fn a_file_url_is_its_decoded_path() {
