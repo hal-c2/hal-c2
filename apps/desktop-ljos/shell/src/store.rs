@@ -172,6 +172,9 @@ pub struct ShellStore {
     asked: u64,
     /// What the cache answered the latest read with, until [`ShellStore::take_kept`].
     kept: Rc<RefCell<Option<(u64, cache::Shell)>>>,
+    /// [`ShellStore::threads`], built once per change of the rows
+    /// (desktop-qt's m_threads): every caller shares it.
+    threads: RefCell<Option<Rc<[sidebar::Thread]>>>,
 }
 
 impl ShellStore {
@@ -283,6 +286,7 @@ impl ShellStore {
 
     /// Takes the rows the cache kept for `origin` in place of the ones held.
     fn hold(&mut self, kept: cache::Shell, origin: String) -> bool {
+        self.rows_changed();
         self.origin = origin;
         let held = !self.mcs.is_empty();
         self.mcs.clear();
@@ -301,6 +305,7 @@ impl ShellStore {
 
     /// Holds `mc` as the cache kept it.
     fn keep(&mut self, mc: cache::ShellMc) {
+        self.rows_changed();
         self.set_environment(&mc.mc, mc.environment);
         let entry = self.mcs.entry(mc.mc).or_default();
         entry.epoch = mc.epoch;
@@ -371,6 +376,11 @@ impl ShellStore {
         self.flush_due
     }
 
+    /// The rows changed: [`ShellStore::threads`] is built anew.
+    fn rows_changed(&mut self) {
+        *self.threads.get_mut() = None;
+    }
+
     fn unsaved(&mut self, mc: &str) -> &mut Unsaved {
         self.flush_due = true;
         self.unsaved.entry(mc.to_owned()).or_default()
@@ -422,6 +432,7 @@ impl ShellStore {
 
     /// [`ShellStore::clear`] without the cache.
     fn forget(&mut self) {
+        self.rows_changed();
         // A read of kept rows in flight is for what is gone.
         self.asked += 1;
         // Nothing of it is owed to the cache any more.
@@ -535,6 +546,8 @@ impl ShellStore {
         if kind == "error" && *client != Client::Own {
             return false;
         }
+        // Whatever the frame changes, threads() is built again from the rows.
+        self.rows_changed();
         if let Some(mc) = frame.get("mc").and_then(Value::as_str)
             && !mc.is_empty()
             && frame.get("removed").and_then(Value::as_bool) != Some(true)
@@ -640,6 +653,7 @@ impl ShellStore {
     }
 
     fn set_environment(&mut self, mc: &str, environment: Row) {
+        self.rows_changed();
         let entry = self.mcs.entry(mc.to_owned()).or_default();
         entry.environment_id = text(environment.get("environmentId"));
         entry.capabilities = object(environment.get("capabilities"));
@@ -668,6 +682,7 @@ impl ShellStore {
     }
 
     fn put_row(&mut self, mc: &str, id: &str, kind: &str, fields: Row) {
+        self.rows_changed();
         let entry = self.mcs.entry(mc.to_owned()).or_default();
         let environment_id = entry.environment_id.clone();
         let Some(kept) = entry.rows(kind) else {
@@ -705,6 +720,7 @@ impl ShellStore {
     /// Drops the MC's rows, which the frame being applied replaces; the keys
     /// of its threads go to `threads`.
     fn reset_rows(&mut self, mc: &str, threads: &mut BTreeSet<String>) {
+        self.rows_changed();
         let entry = self.mcs.entry(mc.to_owned()).or_default();
         if !entry.environment_id.is_empty() {
             for id in entry.threads.keys() {
@@ -721,6 +737,7 @@ impl ShellStore {
     }
 
     fn remove_mc(&mut self, mc: &str) {
+        self.rows_changed();
         let environment_id = self
             .mcs
             .remove(mc)
@@ -784,7 +801,14 @@ impl ShellStore {
     }
 
     /// Every live thread of the cluster.
-    pub fn threads(&self) -> Vec<sidebar::Thread> {
+    pub fn threads(&self) -> Rc<[sidebar::Thread]> {
+        self.threads
+            .borrow_mut()
+            .get_or_insert_with(|| self.build_threads().into())
+            .clone()
+    }
+
+    fn build_threads(&self) -> Vec<sidebar::Thread> {
         let mut result = Vec::new();
         for mc in self.mcs.values() {
             // An MC whose environment is not known yet has no key for its threads.

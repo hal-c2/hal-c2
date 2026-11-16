@@ -223,6 +223,16 @@ fn agrees(store: &ShellStore, machines: &[Machine]) -> Result<(), TestCaseError>
         }
     }
     prop_assert_eq!(store.threads().len(), threads);
+    // The list is cached between changes: each thread in it is its row now.
+    for thread in store.threads().iter() {
+        let row = store.thread_row(&thread.key());
+        prop_assert_eq!(
+            row.and_then(|r| r["title"].as_str()),
+            Some(thread.title.as_str()),
+            "{}",
+            thread.key()
+        );
+    }
     prop_assert_eq!(store.projects().len(), projects);
     Ok(())
 }
@@ -231,8 +241,8 @@ fn agrees(store: &ShellStore, machines: &[Machine]) -> Result<(), TestCaseError>
 fn summary(store: &ShellStore) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = store
         .threads()
-        .into_iter()
-        .map(|t| (t.key(), t.title))
+        .iter()
+        .map(|t| (t.key(), t.title.clone()))
         .chain(
             store
                 .projects()

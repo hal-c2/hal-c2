@@ -212,7 +212,7 @@ impl Composer {
         }
         if selection.is_empty() && !project.is_empty() {
             let mut latest = String::new();
-            for thread in store::with(engine, |s| s.threads()) {
+            for thread in store::with(engine, |s| s.threads()).iter() {
                 if thread.environment_id != environment
                     || thread.project_id != project
                     || thread.updated_at < latest

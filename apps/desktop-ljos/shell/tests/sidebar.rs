@@ -698,3 +698,85 @@ fn migrated_threads_are_announced_once() {
     assert_eq!(count(&engine, "Your threads were brought over"), 1);
     assert_eq!(count(&engine, "Setting not saved"), 0);
 }
+
+/// Times one store change over a large cluster: the MC renames a thread and
+/// every listener of the store runs. The rows are the `shell` snapshot's
+/// (`[mc, id, kind, fields]`, mc `mc-a`) in the JSON array at
+/// `HAL_C2_SHELL_ROWS`, else 7,700 made up. Run by hand, with `--ignored
+/// --nocapture`, to see what one MC message costs.
+#[test]
+#[ignore = "a timing, run by hand"]
+fn one_store_change_over_a_large_cluster() {
+    let rows: Vec<Json> = match std::env::var("HAL_C2_SHELL_ROWS") {
+        Ok(path) => serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap(),
+        Err(_) => {
+            let mut rows = vec![json!(["mc-a", "p1", "project",
+                {"id": "p1", "title": "Ljos", "workspaceRoot": "/w/ljos", "createdAt": AT, "updatedAt": AT}])];
+            for i in 0..7700 {
+                let id = format!("t{i}");
+                // Most are subagents' threads, a few hundred a parent each.
+                let lineage = if i % 2 == 0 {
+                    json!({"parentThreadId": null, "relationshipToParent": null, "rootThreadId": id})
+                } else {
+                    json!({"parentThreadId": format!("t{}", i - 1), "relationshipToParent": "subagent", "rootThreadId": format!("t{}", i - 1)})
+                };
+                rows.push(json!(["mc-a", id, "thread", {
+                    "id": id, "projectId": "p1", "title": format!("Thread {i}"),
+                    "createdAt": AT, "updatedAt": AT, "latestUserMessageAt": AT,
+                    "settledAt": AT, "lastVisitedAt": AT, "branch": "main",
+                    "interactionMode": "default", "runtimeMode": "full-access",
+                    "modelSelection": {"instanceId": "codex", "model": "gpt"},
+                    "latestRunId": format!("run:{i}"), "status": "completed",
+                    "lineage": lineage, "pullRequests": [], "pendingBackgroundTasks": [],
+                }]));
+            }
+            rows
+        }
+    };
+    let first = rows
+        .iter()
+        .find(|row| row[2] == "thread")
+        .map(|row| row[3].clone())
+        .expect("a thread");
+    let id = first["id"].as_str().unwrap().to_owned();
+    let threads = rows.iter().filter(|row| row[2] == "thread").count();
+
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, mc) = start(dir.path());
+    let at = std::time::Instant::now();
+    mc.send(
+        &engine,
+        json!({
+            "t": "shell",
+            "mcs": [{"mc": "mc-a", "environment": {"environmentId": "env-a", "capabilities": {}},
+                     "online": true, "epoch": "e1", "rev": 1}],
+            "rows": rows,
+        }),
+    );
+    let snapshot = at.elapsed();
+    Bridge::of(&engine).dispatch(
+        &engine,
+        "thread.open",
+        json!({"key": format!("env-a:{id}")}),
+    );
+
+    let mut times = Vec::new();
+    for rev in 2..7 {
+        let mut fields = first.clone();
+        fields["title"] = json!(format!("Renamed {rev}"));
+        let at = std::time::Instant::now();
+        mc.send(
+            &engine,
+            json!({"t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": rev, "rows": [[id, "thread", fields]]}),
+        );
+        times.push(at.elapsed());
+    }
+    assert!(titles(&engine).contains(&"Renamed 6".to_owned()));
+    times.sort();
+    eprintln!(
+        "{threads} threads: snapshot {snapshot:?}; one change: median {:?}, min {:?}, max {:?}",
+        times[times.len() / 2],
+        times[0],
+        times[times.len() - 1],
+    );
+}

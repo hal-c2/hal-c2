@@ -2321,7 +2321,7 @@ impl RightPanel {
                     "relation": relation,
                 }));
             }
-            for thread in s.threads() {
+            for thread in s.threads().iter() {
                 if thread.environment_id != environment_id || thread.archived_at.is_some() {
                     continue;
                 }
@@ -2335,7 +2335,7 @@ impl RightPanel {
                     "threadKey": thread.key(),
                     "title": thread.title,
                     "relation": if thread.subagent { "Subagent" } else { "Fork" },
-                    "status": relation_status(&thread),
+                    "status": relation_status(thread),
                 }));
             }
             let label = text(&environment, "label");

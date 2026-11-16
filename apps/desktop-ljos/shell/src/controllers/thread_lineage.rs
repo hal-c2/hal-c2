@@ -93,8 +93,12 @@ fn subagent_parent_id(row: &Row) -> String {
     text(row, "lineage", "parentThreadId").to_owned()
 }
 
-fn row_of(store: &ShellStore, key: &str) -> Row {
-    store.thread_row(key).cloned().unwrap_or_default()
+/// The thread's row, empty when the cluster has none by that key.
+fn row_of<'a>(store: &'a ShellStore, key: &str) -> &'a Row {
+    static EMPTY: std::sync::OnceLock<Row> = std::sync::OnceLock::new();
+    store
+        .thread_row(key)
+        .unwrap_or_else(|| EMPTY.get_or_init(Row::new))
 }
 
 /// Where the relative `id` of a thread on `environment_id` is now. A move
@@ -107,7 +111,7 @@ fn relative_key(store: &ShellStore, environment_id: &str, id: &str) -> String {
     }
     store
         .threads()
-        .into_iter()
+        .iter()
         .find(|other| other.id == id)
         .map_or(key, |other| other.key())
 }
@@ -144,9 +148,9 @@ fn state(store: &ShellStore, key: &str) -> Json {
         return Json::Null;
     };
     let row = row_of(store, key);
-    let parent = parent_id(&row);
+    let parent = parent_id(row);
     let shown_parent = if parent.is_empty() {
-        subagent_parent_id(&row)
+        subagent_parent_id(row)
     } else {
         parent.clone()
     };
@@ -179,14 +183,14 @@ fn state(store: &ShellStore, key: &str) -> Json {
         });
     }
     let mut forks = Vec::new();
-    for other in store.threads() {
-        if other.archived_at.is_some() || parent_id(&row_of(store, &other.key())) != thread.id {
+    for other in store.threads().iter() {
+        if other.archived_at.is_some() || parent_id(row_of(store, &other.key())) != thread.id {
             continue;
         }
-        if running(&other) {
+        if running(other) {
             running_count += 1;
         }
-        forks.push(json!({"key": other.key(), "title": subagent_title(&other.title), "running": running(&other)}));
+        forks.push(json!({"key": other.key(), "title": subagent_title(&other.title), "running": running(other)}));
     }
     if shown_parent.is_empty() && forks.is_empty() {
         return Json::Null;
@@ -233,7 +237,7 @@ impl ThreadLineage {
         let key = shown_thread(engine);
         let found = store::with(engine, |s| {
             let thread = s.thread(&key)?;
-            let parent = parent_id(&row_of(s, &key));
+            let parent = parent_id(row_of(s, &key));
             let run = thread.latest_run.as_ref()?;
             if parent.is_empty() || run.status != "completed" {
                 return None;

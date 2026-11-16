@@ -296,16 +296,24 @@ fn thread(engine: &Engine, key: &str) -> Option<Thread> {
 
 /// The store's threads; one a plugin keeps unlisted is listed once the
 /// plugin no longer runs.
-fn threads(engine: &Engine) -> Vec<Thread> {
-    let mut threads = store::with(engine, |s| s.threads());
-    for thread in &mut threads {
-        if !thread.listed
+/// The store's list is shared, and copied only when one changes
+/// (desktop-qt's SidebarController::threads).
+fn threads(engine: &Engine) -> Rc<[Thread]> {
+    let threads = store::with(engine, |s| s.threads());
+    let listed = |thread: &Thread| {
+        !thread.listed
             && !mc_plugin::keeps_unlisted(engine, &thread.environment_id, &thread.plugin_id)
-        {
+    };
+    if !threads.iter().any(listed) {
+        return threads;
+    }
+    let mut threads = threads.to_vec();
+    for thread in &mut threads {
+        if listed(thread) {
             thread.listed = true;
         }
     }
-    threads
+    threads.into()
 }
 
 fn toast_error(engine: &Engine, title: &str, reason: &str) {

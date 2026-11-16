@@ -1456,7 +1456,7 @@ impl Palette {
                 let members: HashSet<&str> = group.member_keys.iter().map(String::as_str).collect();
                 let latest = store::with(engine, |s| {
                     let mut latest: Option<(i64, String)> = None;
-                    for thread in s.threads() {
+                    for thread in s.threads().iter() {
                         if thread.archived_at.is_some() || thread.subagent {
                             continue;
                         }
@@ -1464,7 +1464,7 @@ impl Palette {
                         if !members.contains(project.as_str()) {
                             continue;
                         }
-                        let at = recency(&thread);
+                        let at = recency(thread);
                         if latest.as_ref().is_none_or(|(was, _)| at > *was) {
                             latest = Some((at, thread.key()));
                         }
@@ -1598,7 +1598,7 @@ impl Palette {
         };
         let mut threads = store::with(engine, |s| {
             let mut threads = Vec::new();
-            for thread in s.threads() {
+            for thread in s.threads().iter() {
                 if thread.subagent {
                     continue;
                 }
@@ -1638,7 +1638,7 @@ impl Palette {
                 let mut entry = Entry::new(Kind::Thread, &key, &thread.title)
                     .described(description.join(" · "))
                     .found_by(terms);
-                entry.recency = recency(&thread);
+                entry.recency = recency(thread);
                 entry.pull_requests = simplified(&pull_requests.join(" "));
                 entry.archived = thread.archived_at.is_some();
                 threads.push(entry);

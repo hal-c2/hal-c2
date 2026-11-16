@@ -621,3 +621,63 @@ fn a_link_that_answered_before_the_first_open_subscribes_again() {
     open(&engine, "ws://a");
     assert_eq!(*link.live.borrow(), [2]);
 }
+
+fn titles(store: &ShellStore) -> Vec<String> {
+    let mut titles: Vec<String> = store.threads().iter().map(|t| t.title.clone()).collect();
+    titles.sort();
+    titles
+}
+
+#[test]
+fn the_thread_list_is_built_once_per_change_of_the_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    store.apply(&snapshot());
+    // Between changes every reader shares one list.
+    assert!(Rc::ptr_eq(&store.threads(), &store.threads()));
+
+    // A frame: the renamed thread shows its new title.
+    let mut renamed = thread("t1");
+    renamed["title"] = json!("Renamed");
+    store.apply(&frame(json!({
+        "t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": 5,
+        "rows": [["t1", "thread", renamed]],
+    })));
+    assert_eq!(titles(&store), ["Renamed", "t2"]);
+
+    // The machine leaves, taking its threads.
+    store.apply(&frame(
+        json!({"t": "shell.mc", "mc": "mc-a", "removed": true}),
+    ));
+    assert!(titles(&store).is_empty());
+    store.apply(&snapshot());
+    assert_eq!(titles(&store), ["t1", "t2"]);
+
+    // Cleared, nothing is listed.
+    store.clear(|_| {});
+    kept(&mut store);
+    assert!(titles(&store).is_empty());
+
+    // Another MC's rows go when the store is opened there.
+    store.open(ORIGIN);
+    store.apply(&snapshot());
+    assert_eq!(titles(&store), ["t1", "t2"]);
+    store.open("http://10.0.0.2:3773");
+    assert!(titles(&store).is_empty());
+    drop(store);
+
+    // The rows the cache kept are held once it answers.
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    assert!(titles(&store).is_empty());
+    kept(&mut store);
+    assert_eq!(titles(&store), ["t1", "t2"]);
+
+    // A link that is forgotten takes its MC's threads.
+    store.add_link("studio");
+    store.apply_from(&studio_snapshot(), &Client::Link("studio".into()));
+    let listed = store.threads().len();
+    assert!(store.remove_link("studio", true));
+    assert!(store.threads().len() < listed);
+}
