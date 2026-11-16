@@ -8594,6 +8594,23 @@
                   2
                 ]
               ]
+            },
+            {
+              "name": "PersistentPermissionsPolicy",
+              "keys": [
+                [
+                  "AskEveryTime",
+                  0
+                ],
+                [
+                  "StoreInMemory",
+                  1
+                ],
+                [
+                  "StoreOnDisk",
+                  2
+                ]
+              ]
             }
           ],
           "creatable": true,
@@ -8707,6 +8724,18 @@
               "constant": false,
               "group": false,
               "notify": "httpCacheMaximumSizeChanged"
+            },
+            {
+              "name": "persistentPermissionsPolicy",
+              "type": "PersistentPermissionsPolicy",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "persistentPermissionsPolicyChanged"
             },
             {
               "name": "downloadPath",
