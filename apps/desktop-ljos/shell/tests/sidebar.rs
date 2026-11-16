@@ -366,6 +366,23 @@ fn rows_are_selected_one_by_one_and_by_range() {
     assert!(selected(&engine).is_empty());
 }
 
+/// A project added while the list is scoped is followed by its own key
+/// when the sidebar has not grouped it yet; the scope is its group.
+#[test]
+fn a_scope_by_a_project_s_own_key_is_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, _mc) = started(dir.path(), &["t1"], false);
+    let project = sidebar(&engine)["projects"][0].clone();
+    let (own, group) = (project["memberKeys"][0].clone(), project["key"].clone());
+    assert!(
+        own.is_string() && group.is_string() && own != group,
+        "{project}"
+    );
+
+    dispatch(&engine, "sidebar.scope", json!({"projectKey": own}));
+    assert_eq!(sidebar(&engine)["scopeProjectKey"], group);
+}
+
 #[test]
 fn settling_the_shown_thread_moves_on_once_the_mc_answers_and_undo_unsettles() {
     let dir = tempfile::tempdir().unwrap();

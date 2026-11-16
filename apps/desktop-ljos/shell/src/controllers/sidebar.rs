@@ -566,6 +566,22 @@ impl Sidebar {
         // projects it has: a cached or unreachable one cannot tell that
         // the project is gone.
         let has_group = |key: &str| groups.iter().any(|g| g.key == key);
+        // A scope set by a project's own key (`follow_in_sidebar` for a
+        // project added before this refresh grouped it) is its group's.
+        let grouped = shared.scope.borrow().as_deref().and_then(|key| {
+            (!has_group(key))
+                .then(|| {
+                    groups
+                        .iter()
+                        .find(|g| g.member_keys.iter().any(|m| m == key))
+                })
+                .flatten()
+                .map(|g| g.key.clone())
+        });
+        if let Some(key) = grouped {
+            *shared.scope.borrow_mut() = Some(key);
+            self.remember_scope(engine);
+        }
         if shared.scope.borrow().as_deref().is_some_and(has_group)
             && store::with(engine, |s| !s.previewing() && s.synchronized())
         {
