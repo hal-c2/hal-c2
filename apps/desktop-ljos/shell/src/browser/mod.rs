@@ -221,15 +221,8 @@ impl BrowserObject {
 /// on the machine (desktop-qt's main.cpp). What a page may ask for is
 /// `Browser.permissions`' to answer, never the engine's to remember.
 ///
-/// Ljós keys a profile by its storage name and keeps it under the engine's
-/// one root, which every home on the machine shares; [`storage_name`] names
-/// the home, so two homes never share a page's cookies. Pointing the root at
-/// the home instead (`LJOS_WEBENGINE_ROOT`) would reach every process the
-/// shell starts, an agent's own Ljós app among them.
-///
-/// TODO(hal-c2/ljos-ui#456): Ljós keeps a profile only under its root,
-/// ignores `cachePath`, and has no `persistentPermissionsPolicy`; until it
-/// does, the pages keep data and cache under that root.
+/// Ljós keys a profile by its storage name; [`storage_name`] names the
+/// home, so two homes never share a page's cookies.
 pub fn set_profile(
     engine: &Engine,
     storage_name: &str,
@@ -239,22 +232,32 @@ pub fn set_profile(
     let Some(browser) = browser(engine) else {
         return;
     };
-    let profile = ljos_webengine::WebEngineProfile {
-        storage_name: storage_name.to_owned(),
-        off_the_record: false,
-        // Apart from desktop-qt's `browser`, which another Chromium writes.
-        persistent_storage_path: data_dir
-            .join("ljos-webengine")
-            .to_string_lossy()
-            .into_owned(),
-        cache_path: cache_dir.join("browser").to_string_lossy().into_owned(),
-        ..Default::default()
-    };
+    let mut profile = ljos_webengine::WebEngineProfile::default();
+    profile.storage_name = storage_name.to_owned();
+    profile.off_the_record = false;
+    // Apart from desktop-qt's `browser`, which another Chromium writes.
+    profile.persistent_storage_path = data_dir
+        .join("ljos-webengine")
+        .to_string_lossy()
+        .into_owned();
+    profile.cache_path = cache_dir.join("browser").to_string_lossy().into_owned();
     match engine.create_native(profile, Some(browser)) {
-        Ok(profile) => warn(
-            engine,
-            engine.set_internal(browser, BrowserObject::PROFILE, Value::Object(profile)),
-        ),
+        Ok(profile) => {
+            // Written as QML would, so the profile keeps it as asked: 0 is
+            // AskEveryTime (ljos_webengine keeps its names to itself).
+            warn(
+                engine,
+                engine.set(
+                    profile,
+                    ljos_webengine::WebEngineProfile::PERSISTENT_PERMISSIONS_POLICY,
+                    0,
+                ),
+            );
+            warn(
+                engine,
+                engine.set_internal(browser, BrowserObject::PROFILE, Value::Object(profile)),
+            );
+        }
         Err(e) => warn(engine, Err(e)),
     }
 }
