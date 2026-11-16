@@ -35,7 +35,9 @@ fn writing_back_the_layout_the_device_has_saves_nothing() {
 
 /// The pages keep their storage apart for each HAL-C2 home (desktop-qt's
 /// NativeShell browser profile), not in the engine's default profile: Ljós
-/// keys a profile, and the directory it keeps under its root, by its name.
+/// keys a profile by its name and keeps it where its paths say. A page's
+/// permissions are `Browser.permissions`' to remember, so the profile asks
+/// every time (0).
 #[test]
 fn the_pages_profile_lives_in_the_home() {
     let (engine, _root) = shell(MAIN, Rc::new(Disconnected::default()));
@@ -51,6 +53,7 @@ fn the_pages_profile_lives_in_the_home() {
                 p.off_the_record,
                 p.persistent_storage_path.clone(),
                 p.cache_path.clone(),
+                p.persistent_permissions_policy,
             )
         })
         .expect("a WebEngineProfile");
@@ -61,6 +64,7 @@ fn the_pages_profile_lives_in_the_home() {
             false,
             data.join("ljos-webengine").to_string_lossy().into_owned(),
             cache.join("browser").to_string_lossy().into_owned(),
+            0,
         )
     );
     assert!(name.starts_with("hal-c2-"));
