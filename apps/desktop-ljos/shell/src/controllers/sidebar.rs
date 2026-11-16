@@ -542,6 +542,15 @@ impl Sidebar {
                 .collect()
         };
         let before = shape(&shared.groups.borrow());
+        // Every key the list knew before this refresh: its groups' and
+        // their projects'.
+        let known: HashSet<String> = shared
+            .groups
+            .borrow()
+            .iter()
+            .flat_map(|g| std::iter::once(&g.key).chain(&g.member_keys))
+            .cloned()
+            .collect();
         let groups = store::with(engine, |s| {
             model::group_projects(&s.projects(), &self.grouping, &own, &threads)
         });
@@ -561,15 +570,18 @@ impl Sidebar {
             }
         }
         // A scope whose project went away (removed, regrouped) shows
-        // everything again. One restored from the preferences and not
+        // everything again, as desktop-qt's does: a change of grouping
+        // clears it either way. One restored from the preferences and not
         // seen yet this run waits until every environment has said what
         // projects it has: a cached or unreachable one cannot tell that
         // the project is gone.
         let has_group = |key: &str| groups.iter().any(|g| g.key == key);
-        // A scope set by a project's own key (`follow_in_sidebar` for a
-        // project added before this refresh grouped it) is its group's.
+        // Except a project new to the list: `follow_in_sidebar` scopes to a
+        // project added before this refresh grouped it by the project's own
+        // key, and that key becomes its group's. A listed project's own key
+        // names no group and clears, as in desktop-qt.
         let grouped = shared.scope.borrow().as_deref().and_then(|key| {
-            (!has_group(key))
+            (!has_group(key) && !known.contains(key))
                 .then(|| {
                     groups
                         .iter()
