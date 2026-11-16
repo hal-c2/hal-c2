@@ -796,6 +796,13 @@ impl ShellStore {
 
     /// Whether `row` is the thread itself: not the forwarding record of a
     /// move, nor the copy its old machine still holds once the new one has it.
+    ///
+    /// It reads only `row` and the rows of the same thread id on other MCs.
+    /// `patch_thread` relies on that to change one row of the built list in
+    /// place. Reading anything else here (project rows, an MC's online state)
+    /// would leave the patched list stale; `patch_thread` would then have to
+    /// fall back to a rebuild for it. `the_kept_thread_list_is_the_rows_list`
+    /// in `tests/store_prop.rs` checks the patched list against a rebuild.
     fn lives(&self, row: &Row) -> bool {
         if row.get("movedTo").is_some_and(Value::is_object) {
             return false;
