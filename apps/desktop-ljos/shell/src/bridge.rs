@@ -752,11 +752,13 @@ impl Bridge {
         let Some(map) = own.map.borrow().clone() else {
             return;
         };
+        // Both kept before QML sees the value: a handler that republishes the
+        // key from inside `map.insert` must find them agreeing.
         own.shown.borrow_mut().insert(key.to_owned(), shown.clone());
-        map.insert(engine, key, shown.clone());
         own.published
             .borrow_mut()
             .insert(key.to_owned(), value.clone());
+        map.insert(engine, key, shown.clone());
         let watchers: Vec<Watcher> = own
             .watchers
             .borrow()
