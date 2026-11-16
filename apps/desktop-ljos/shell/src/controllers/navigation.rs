@@ -30,6 +30,7 @@
 //! What another controller reads of the route while Navigation may be
 //! running is [`shown`].
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 use ljos::prelude::Engine;
@@ -704,6 +705,21 @@ pub fn shown(engine: &Engine) -> Route {
         .published(engine, "route")
         .and_then(|route| Route::from_json(&route))
         .unwrap_or_default()
+}
+
+/// Runs `f` with the published route whenever the window's route changes,
+/// as desktop-qt's `NavigationController::changed`: not when only what is
+/// published with it does, such as the open thread's title or the tab.
+pub fn on_route_changed(engine: &Engine, bridge: Bridge, f: impl Fn(&Engine, &Json) + 'static) {
+    let last: RefCell<Option<Route>> = RefCell::new(None);
+    bridge.watch(engine, "route", move |engine, published| {
+        let route = Route::from_json(published).unwrap_or_default();
+        if last.borrow().as_ref() == Some(&route) {
+            return;
+        }
+        *last.borrow_mut() = Some(route);
+        f(engine, published);
+    });
 }
 
 /// The link [`Navigation::open_link`] opens `thread_key`

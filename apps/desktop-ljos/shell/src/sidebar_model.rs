@@ -2,8 +2,10 @@
 //! MC's thread rows in, the `sidebar` view model out. Pure: every clock is
 //! passed in.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset,
@@ -97,6 +99,22 @@ impl Thread {
 
     pub fn project_key(&self) -> String {
         format!("{}:{}", self.environment_id, self.project_id)
+    }
+
+    /// [`Thread::key`] into `key`, reusing its allocation.
+    pub fn write_key(&self, key: &mut String) {
+        key.clear();
+        key.push_str(&self.environment_id);
+        key.push(':');
+        key.push_str(&self.id);
+    }
+
+    /// [`Thread::project_key`] into `key`, reusing its allocation.
+    pub fn write_project_key(&self, key: &mut String) {
+        key.clear();
+        key.push_str(&self.environment_id);
+        key.push(':');
+        key.push_str(&self.project_id);
     }
 }
 
@@ -280,61 +298,73 @@ fn compare_identity(left: &Thread, right: &Thread) -> Ordering {
         .then_with(|| left.environment_id.cmp(&right.environment_id))
 }
 
-fn sort_pinned(threads: &mut [Thread]) {
-    threads.sort_by(|left, right| {
-        // User-arranged keys first, keyless pins newest-created below.
-        match (&left.pin_order_key, &right.pin_order_key) {
-            (Some(_), None) => return Ordering::Less,
-            (None, Some(_)) => return Ordering::Greater,
-            (Some(l), Some(r)) if l != r => return l.cmp(r),
-            (None, None) => {
-                let by = sortable(&right.created_at).cmp(&sortable(&left.created_at));
-                if by != Ordering::Equal {
-                    return by;
-                }
-            }
-            _ => {}
-        }
-        compare_identity(left, right)
-    });
+/// Orders `threads` by `before(left_ms, right_ms, left, right)`, reading
+/// each thread's `ms_of` once rather than at every comparison: desktop-qt's
+/// `sortByMs`. Stable.
+fn sort_by_ms(
+    threads: &mut [&Thread],
+    ms_of: impl Fn(&Thread) -> i64,
+    before: impl Fn(i64, i64, &Thread, &Thread) -> Ordering,
+) {
+    let mut order: Vec<(i64, &Thread)> = threads.iter().map(|t| (ms_of(t), *t)).collect();
+    order.sort_by(|(left_ms, left), (right_ms, right)| before(*left_ms, *right_ms, left, right));
+    for (slot, (_, thread)) in threads.iter_mut().zip(order) {
+        *slot = thread;
+    }
 }
 
-fn sort_active(threads: &mut [Thread]) {
-    let anchor = |t: &Thread| sortable(&t.created_at).max(sortable_ms(&t.unsettled_at));
-    threads.sort_by(|left, right| {
-        // New and reopened threads lead; arranged threads follow their keys.
-        match (&left.active_order_key, &right.active_order_key) {
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(l), Some(r)) if l != r => return l.cmp(r),
-            (None, None) => {
-                let by = anchor(right).cmp(&anchor(left));
-                if by != Ordering::Equal {
-                    return by;
-                }
+fn sort_pinned(threads: &mut [&Thread]) {
+    sort_by_ms(
+        threads,
+        |t| sortable(&t.created_at),
+        |left_ms, right_ms, left, right| {
+            // User-arranged keys first, keyless pins newest-created below.
+            match (&left.pin_order_key, &right.pin_order_key) {
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
+                (Some(l), Some(r)) if l != r => return l.cmp(r),
+                (None, None) if left_ms != right_ms => return right_ms.cmp(&left_ms),
+                _ => {}
             }
-            _ => {}
-        }
-        compare_identity(left, right)
-    });
+            compare_identity(left, right)
+        },
+    );
+}
+
+fn sort_active(threads: &mut [&Thread]) {
+    sort_by_ms(
+        threads,
+        |t| sortable(&t.created_at).max(sortable_ms(&t.unsettled_at)),
+        |left_ms, right_ms, left, right| {
+            // New and reopened threads lead; arranged threads follow their keys.
+            match (&left.active_order_key, &right.active_order_key) {
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(l), Some(r)) if l != r => return l.cmp(r),
+                (None, None) if left_ms != right_ms => return right_ms.cmp(&left_ms),
+                _ => {}
+            }
+            compare_identity(left, right)
+        },
+    );
 }
 
 /// Settled rows are history: they order by when the work ended.
-fn settled_timestamp(thread: &Thread) -> Nullable {
+fn settled_timestamp(thread: &Thread) -> Option<&str> {
     if parse(&thread.settled_at).is_some() {
-        return thread.settled_at.clone();
+        return thread.settled_at.as_deref();
     }
     let run = thread.latest_run.as_ref();
     let candidates = [
-        thread.latest_user_message_at.clone(),
-        run.and_then(|r| r.requested_at.clone()),
-        run.and_then(|r| r.started_at.clone()),
-        run.and_then(|r| r.completed_at.clone()),
+        thread.latest_user_message_at.as_deref(),
+        run.and_then(|r| r.requested_at.as_deref()),
+        run.and_then(|r| r.started_at.as_deref()),
+        run.and_then(|r| r.completed_at.as_deref()),
     ];
-    let mut latest: Option<(i64, String)> = None;
+    let mut latest: Option<(i64, &str)> = None;
     for candidate in candidates.into_iter().flatten() {
-        if let Some(at) = parse_iso(Some(&candidate))
-            && latest.as_ref().is_none_or(|(ms, _)| at > *ms)
+        if let Some(at) = parse_iso(Some(candidate))
+            && latest.is_none_or(|(ms, _)| at > ms)
         {
             latest = Some((at, candidate));
         }
@@ -342,15 +372,17 @@ fn settled_timestamp(thread: &Thread) -> Nullable {
     if let Some((_, latest)) = latest {
         return Some(latest);
     }
-    parse_iso(Some(&thread.updated_at)).map(|_| thread.updated_at.clone())
+    parse_iso(Some(&thread.updated_at)).map(|_| thread.updated_at.as_str())
 }
 
-fn sort_settled(threads: &mut [Thread]) {
-    threads.sort_by(|left, right| {
-        sortable_ms(&settled_timestamp(right))
-            .cmp(&sortable_ms(&settled_timestamp(left)))
-            .then_with(|| left.id.cmp(&right.id))
-    });
+fn sort_settled(threads: &mut [&Thread]) {
+    sort_by_ms(
+        threads,
+        |t| parse_iso(settled_timestamp(t)).unwrap_or(0),
+        |left_ms, right_ms, left, right| {
+            right_ms.cmp(&left_ms).then_with(|| left.id.cmp(&right.id))
+        },
+    );
 }
 
 fn latest_run_settled(thread: &Thread) -> bool {
@@ -413,8 +445,11 @@ pub const WORKING_EXIT_GRACE_MS: i64 = 2000;
 /// since are forgotten.
 #[derive(Clone, Debug, Default)]
 pub struct WorkingTracker {
+    /// The threads in the section; one out of it is as its row says.
     states: HashMap<String, WorkingState>,
     returns: HashMap<String, i64>,
+    /// A thread's key, looked up without making one for each thread.
+    key: RefCell<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -427,28 +462,33 @@ struct WorkingState {
 
 impl WorkingTracker {
     pub fn observe(&mut self, threads: &[Thread], now_ms: i64) {
-        let mut present = HashSet::new();
+        let mut states = HashMap::new();
+        let mut returns = HashMap::new();
+        let mut key = self.key.take();
         for thread in threads {
-            let key = thread.key();
-            present.insert(key.clone());
-            let previous = self.states.get(&key).cloned();
+            thread.write_key(&mut key);
+            if let Some((k, at)) = self.returns.remove_entry(key.as_str()) {
+                returns.insert(k, at);
+            }
+            let previous = self.states.remove(key.as_str());
             let was_working = previous.as_ref().is_some_and(|p| p.working);
             let actual = working(thread);
-            let placement = (actual || was_working).then(|| {
-                [
-                    &thread.archived_at,
-                    &thread.pinned_at,
-                    &thread.settled_override,
-                    &thread.settled_at,
-                    &thread.snoozed_at,
-                    &thread.snoozed_until,
-                    &thread.active_order_key,
-                ]
-                .iter()
-                .map(|field| field.as_ref().map_or("-".to_owned(), |v| format!("={v}")))
-                .collect::<Vec<_>>()
-                .join("\u{1f}")
-            });
+            if !actual && !was_working {
+                continue;
+            }
+            let placement = [
+                &thread.archived_at,
+                &thread.pinned_at,
+                &thread.settled_override,
+                &thread.settled_at,
+                &thread.snoozed_at,
+                &thread.snoozed_until,
+                &thread.active_order_key,
+            ]
+            .iter()
+            .map(|field| field.as_ref().map_or("-".to_owned(), |v| format!("={v}")))
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
             // Asking for something or failing is news: it is never held back.
             let actionable = thread.has_pending_approvals
                 || thread.has_pending_user_input
@@ -461,7 +501,9 @@ impl WorkingTracker {
                     .latest_run
                     .as_ref()
                     .is_some_and(|r| r.status == "failed");
-            let moved = previous.as_ref().is_some_and(|p| p.placement != placement);
+            let moved = previous
+                .as_ref()
+                .is_some_and(|p| p.placement.as_ref() != Some(&placement));
             let excluded = thread.archived_at.is_some()
                 || thread.pinned_at.is_some()
                 || thread.settled_override.as_deref() == Some("settled")
@@ -478,19 +520,23 @@ impl WorkingTracker {
             };
             let still_working = actual || deadline.is_some_and(|d| d > now_ms);
             if was_working && !still_working {
-                self.returns.insert(key.clone(), now_ms);
+                returns.insert(key.clone(), now_ms);
             }
-            self.states.insert(
-                key,
-                WorkingState {
-                    working: still_working,
-                    deadline: still_working.then_some(deadline).flatten(),
-                    placement,
-                },
-            );
+            // One that stopped is as its row says: not working.
+            if still_working {
+                states.insert(
+                    key.clone(),
+                    WorkingState {
+                        working: true,
+                        deadline,
+                        placement: Some(placement),
+                    },
+                );
+            }
         }
-        self.states.retain(|key, _| present.contains(key));
-        self.returns.retain(|key, _| present.contains(key));
+        *self.key.get_mut() = key;
+        self.states = states;
+        self.returns = returns;
     }
 
     /// Forgets everything, as when the section is turned off.
@@ -500,14 +546,24 @@ impl WorkingTracker {
     }
 
     pub fn is_working(&self, thread: &Thread) -> bool {
+        if self.states.is_empty() {
+            return working(thread);
+        }
+        let mut key = self.key.borrow_mut();
+        thread.write_key(&mut key);
         self.states
-            .get(&thread.key())
+            .get(key.as_str())
             .map_or_else(|| working(thread), |s| s.working)
     }
 
-    /// When the thread `key` last left the section, as this device saw it.
-    pub fn returned_at(&self, key: &str) -> Option<i64> {
-        self.returns.get(key).copied()
+    /// When `thread` last left the section, as this device saw it.
+    fn returned(&self, thread: &Thread) -> Option<i64> {
+        if self.returns.is_empty() {
+            return None;
+        }
+        let mut key = self.key.borrow_mut();
+        thread.write_key(&mut key);
+        self.returns.get(key.as_str()).copied()
     }
 
     /// The soonest grace that runs out, to observe again then.
@@ -519,7 +575,7 @@ impl WorkingTracker {
 /// The inbox while the Working section is on: newest return first, a return
 /// being a new thread, an un-settle, a run asked for or ended, or this
 /// device seeing the thread leave the section.
-fn sort_by_return(threads: &mut [Thread], tracker: &WorkingTracker) {
+fn sort_by_return(threads: &mut [&Thread], tracker: &WorkingTracker) {
     let returned = |thread: &Thread| {
         let mut at = sortable(&thread.created_at).max(sortable_ms(&thread.unsettled_at));
         if let Some(run) = &thread.latest_run {
@@ -527,11 +583,11 @@ fn sort_by_return(threads: &mut [Thread], tracker: &WorkingTracker) {
                 .max(sortable_ms(&run.requested_at))
                 .max(sortable_ms(&run.completed_at));
         }
-        at.max(tracker.returned_at(&thread.key()).unwrap_or(0))
+        at.max(tracker.returned(thread).unwrap_or(0))
     };
-    threads.sort_by(|left, right| {
-        returned(right)
-            .cmp(&returned(left))
+    sort_by_ms(threads, returned, |left_ms, right_ms, left, right| {
+        right_ms
+            .cmp(&left_ms)
             .then_with(|| compare_identity(left, right))
     });
 }
@@ -540,20 +596,20 @@ fn sort_by_return(threads: &mut [Thread], tracker: &WorkingTracker) {
 /// or an agent's message is not the user's, so it moves no row; an MC that
 /// does not say which messages the user typed leaves the latest run's
 /// request.
-fn sort_by_send(threads: &mut [Thread]) {
+fn sort_by_send(threads: &mut [&Thread]) {
     let sent = |thread: &Thread| {
         let at = match &thread.latest_user_authored_message_at {
-            Some(at) => at.clone(),
+            Some(at) => at.as_deref(),
             None => thread
                 .latest_run
                 .as_ref()
-                .and_then(|r| r.requested_at.clone()),
+                .and_then(|r| r.requested_at.as_deref()),
         };
-        sortable(&thread.created_at).max(sortable_ms(&at))
+        sortable(&thread.created_at).max(parse_iso(at).unwrap_or(0))
     };
-    threads.sort_by(|left, right| {
-        sent(right)
-            .cmp(&sent(left))
+    sort_by_ms(threads, sent, |left_ms, right_ms, left, right| {
+        right_ms
+            .cmp(&left_ms)
             .then_with(|| compare_identity(left, right))
     });
 }
@@ -795,23 +851,26 @@ impl Capabilities {
 
 pub type CapabilitiesFor<'a> = &'a dyn Fn(&str) -> Capabilities;
 
+/// The listed threads by section, in each section's order; they borrow the
+/// list they came from.
 #[derive(Clone, Debug, Default)]
-pub struct Partition {
-    pub pinned: Vec<Thread>,
-    pub active: Vec<Thread>,
-    pub snoozed: Vec<Thread>,
-    pub settled: Vec<Thread>,
+pub struct Partition<'a> {
+    pub pinned: Vec<&'a Thread>,
+    pub active: Vec<&'a Thread>,
+    pub snoozed: Vec<&'a Thread>,
+    pub settled: Vec<&'a Thread>,
 }
 
 /// `scoped_project_keys` holds `<environmentId>:<projectId>` keys; none
 /// means every project.
-pub fn partition(
-    threads: &[Thread],
+pub fn partition<'a>(
+    threads: &'a [Thread],
     scoped_project_keys: Option<&HashSet<String>>,
     capabilities_for: CapabilitiesFor,
     now_ms: i64,
-) -> Partition {
+) -> Partition<'a> {
     let mut result = Partition::default();
+    let mut project_key = String::new();
     for thread in threads {
         // Archived threads are hidden; subagents live in their parent's
         // Agents surface, and a plugin's unlisted threads in what the plugin
@@ -819,8 +878,11 @@ pub fn partition(
         if thread.archived_at.is_some() || thread.subagent || !thread.listed {
             continue;
         }
-        if scoped_project_keys.is_some_and(|keys| !keys.contains(&thread.project_key())) {
-            continue;
+        if let Some(keys) = scoped_project_keys {
+            thread.write_project_key(&mut project_key);
+            if !keys.contains(&project_key) {
+                continue;
+            }
         }
         // Environments without the capability never shelve a thread the user
         // could not bring back.
@@ -834,16 +896,20 @@ pub fn partition(
         } else {
             &mut result.active
         };
-        section.push(thread.clone());
+        section.push(thread);
     }
     sort_pinned(&mut result.pinned);
     sort_active(&mut result.active);
     // Soonest wake first; a tie reads the same whichever MC sent its rows first.
-    result.snoozed.sort_by(|left, right| {
-        sortable_ms(&left.snoozed_until)
-            .cmp(&sortable_ms(&right.snoozed_until))
-            .then_with(|| compare_identity(left, right))
-    });
+    sort_by_ms(
+        &mut result.snoozed,
+        |t| sortable_ms(&t.snoozed_until),
+        |left_ms, right_ms, left, right| {
+            left_ms
+                .cmp(&right_ms)
+                .then_with(|| compare_identity(left, right))
+        },
+    );
     sort_settled(&mut result.settled);
     result
 }
@@ -1490,7 +1556,8 @@ impl Input<'_> {
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
-    pub state: Value,
+    /// Shared with what it was published to.
+    pub state: Rc<Value>,
     /// Rows in the order they render (pinned, active, snoozed, settled), and
     /// which of them are parked (snoozed or settled).
     pub ordered_keys: Vec<String>,
@@ -1526,8 +1593,10 @@ pub fn build(
     }
     let mut thread_counts: HashMap<&str, i64> = HashMap::new();
     let mut thread_statuses: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut physical = String::new();
     for thread in threads.iter().filter(|t| t.archived_at.is_none()) {
-        let Some(&logical) = logical_by_physical.get(thread.project_key().as_str()) else {
+        thread.write_project_key(&mut physical);
+        let Some(&logical) = logical_by_physical.get(physical.as_str()) else {
             continue;
         };
         *thread_counts.entry(logical).or_default() += 1;
@@ -1558,11 +1627,11 @@ pub fn build(
     } else {
         input.working
     };
-    let mut working_threads: Vec<Thread> = Vec::new();
+    let mut working_threads: Vec<&Thread> = Vec::new();
     if let Some(shelf) = working_shelf {
         let mut inbox = Vec::new();
         for thread in std::mem::take(&mut sections.active) {
-            if shelf.is_working(&thread) {
+            if shelf.is_working(thread) {
                 working_threads.push(thread);
             } else {
                 inbox.push(thread);
@@ -1588,7 +1657,7 @@ pub fn build(
         .collect();
     let active_key = input.active_thread_key.clone().unwrap_or_default();
     let mut view = View::default();
-    let mut convert = |section: &[Thread], snoozed: bool, parked: bool, limit: usize| {
+    let mut convert = |section: &[&Thread], snoozed: bool, parked: bool, limit: usize| {
         let mut rows = Vec::new();
         for thread in section {
             let key = thread.key();
@@ -1614,7 +1683,7 @@ pub fn build(
                 None => format!("Active {}", ago(&thread.updated_at, now_ms)),
             };
             let time_at = if parked && !snoozed {
-                nullable(&settled_timestamp(thread))
+                settled_timestamp(thread).map_or(Value::Null, Value::from)
             } else {
                 Value::String(
                     thread
@@ -1683,17 +1752,19 @@ pub fn build(
         // environmentId, projectId, workspaceRoot, memberKeys,
         // threadCount, status, expanded, threads, more ("more", "less",
         // or null when every thread shows)}.
-        let mut by_project: HashMap<String, Vec<Thread>> = HashMap::new();
+        let mut by_project: HashMap<&str, Vec<&Thread>> = HashMap::new();
         let mut snoozed_keys: HashSet<String> = HashSet::new();
         let mut parked_keys: HashSet<String> = HashSet::new();
+        let mut physical = String::new();
         for (section, is_snoozed, is_parked) in [
             (&sections.pinned, false, false),
             (&sections.active, false, false),
             (&sections.snoozed, true, true),
             (&sections.settled, false, true),
         ] {
-            for thread in section {
-                let Some(&logical) = logical_by_physical.get(thread.project_key().as_str()) else {
+            for &thread in section {
+                thread.write_project_key(&mut physical);
+                let Some(&logical) = logical_by_physical.get(physical.as_str()) else {
                     continue;
                 };
                 if is_snoozed {
@@ -1702,10 +1773,7 @@ pub fn build(
                 if is_parked {
                     parked_keys.insert(thread.key());
                 }
-                by_project
-                    .entry(logical.to_owned())
-                    .or_default()
-                    .push(thread.clone());
+                by_project.entry(logical).or_default().push(thread);
             }
         }
         let open = active_key.clone();
@@ -1715,15 +1783,23 @@ pub fn build(
             if scoped.is_some_and(|g| g.key != group.key) {
                 continue;
             }
-            let mut listed = by_project.get(&group.key).cloned().unwrap_or_default();
+            let mut listed = by_project
+                .get(group.key.as_str())
+                .cloned()
+                .unwrap_or_default();
             // Newest first; ties go to the greater id, as the web's
-            // sortThreads.
-            listed.sort_by(|left, right| {
-                thread_sort_timestamp(right, &tree.thread_sort_order)
-                    .partial_cmp(&thread_sort_timestamp(left, &tree.thread_sort_order))
+            // sortThreads. Each thread's time is read once.
+            let mut order: Vec<(f64, &Thread)> = listed
+                .iter()
+                .map(|t| (thread_sort_timestamp(t, &tree.thread_sort_order), *t))
+                .collect();
+            order.sort_by(|(left_at, left), (right_at, right)| {
+                right_at
+                    .partial_cmp(left_at)
                     .unwrap_or(Ordering::Equal)
                     .then_with(|| right.id.cmp(&left.id))
             });
+            listed = order.into_iter().map(|(_, t)| t).collect();
             let expanded = !tree.folded.contains(&group.key);
             let all = tree.showing_all.contains(&group.key);
             let overflowing = listed.len() > limit;
@@ -1883,29 +1959,41 @@ pub fn build(
         .iter()
         .filter(|k| input.selected_keys.contains(*k))
         .collect();
-    view.state = json!({
-        "localEnvironmentId": nullable(&input.local_environment_id),
-        "localProjects": local_projects,
-        "localFolders": input.local_folders,
-        "projects": projects,
-        "scopeProjectKey": nullable(scope_project_key),
-        "pinned": pinned,
-        "active": active,
-        "working": working_rows,
-        // While the Working section is on the inbox keeps its own order:
-        // no arranging.
-        "workingShelf": working_shelf.is_some(),
-        "snoozed": snoozed,
-        "settled": settled,
-        "settledTotal": sections.settled.len(),
-        "settledPage": input.settled_page,
-        "drafts": drafts,
-        "activeThreadKey": nullable(&input.active_thread_key),
-        "activeDraftId": input.active_draft_id,
-        "mode": if input.tree.is_some() { "tree" } else { "attention" },
-        "tree": tree_rows,
-        "selectedKeys": selected,
-    });
+    // Built field by field: `json!` would copy each section's rows.
+    let mut state = Map::new();
+    let mut field = |key: &str, value: Value| {
+        state.insert(key.to_owned(), value);
+    };
+    field("localEnvironmentId", nullable(&input.local_environment_id));
+    field("localProjects", Value::Array(local_projects));
+    field("localFolders", input.local_folders.into());
+    field("projects", Value::Array(projects));
+    field("scopeProjectKey", nullable(scope_project_key));
+    field("pinned", pinned);
+    field("active", active);
+    field("working", working_rows);
+    // While the Working section is on the inbox keeps its own order: no
+    // arranging.
+    field("workingShelf", working_shelf.is_some().into());
+    field("snoozed", snoozed);
+    field("settled", settled);
+    field("settledTotal", sections.settled.len().into());
+    field("settledPage", input.settled_page.into());
+    field("drafts", Value::Array(drafts));
+    field("activeThreadKey", nullable(&input.active_thread_key));
+    field("activeDraftId", input.active_draft_id.clone());
+    field(
+        "mode",
+        if input.tree.is_some() {
+            "tree"
+        } else {
+            "attention"
+        }
+        .into(),
+    );
+    field("tree", tree_rows);
+    field("selectedKeys", json!(selected));
+    view.state = Rc::new(Value::Object(state));
     view
 }
 

@@ -552,9 +552,9 @@ fn view(store: &store::ShellStore, l: &Links) -> LinksView {
             })
             .collect();
         let search = l.query.trim().to_lowercase();
-        let mut threads: Vec<_> = store
-            .threads()
-            .into_iter()
+        let all = store.threads();
+        let mut threads: Vec<_> = all
+            .iter()
             .filter(|t| t.environment_id == shown.environment && t.archived_at.is_none())
             .filter(|t| {
                 let project = projects.get(&t.project_id).map_or("", String::as_str);

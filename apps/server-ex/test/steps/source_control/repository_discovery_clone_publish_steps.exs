@@ -7,6 +7,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Test.CloneGate
   alias HalC2.Test.FakeHttp
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -591,21 +592,22 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  # The host answers with an address whose transport (`git-remote-hal_c2_hang`) never
-  # replies, so the clone stays connecting until it is cancelled.
+  # The host answers with an address behind a gate that holds git's fetch, so the
+  # clone is in progress until it is cancelled. The held gate is the receipt that git
+  # is running: the clone's "running" phase is reported before git starts, and a git
+  # that fails at once would end the clone before the cancel arrives.
   step "a clone of {string} is in progress", %{args: [repository]} = context do
     context = World.fake_cli(context, ["gh"])
-    helper = Path.join(context.cli.bin, "git-remote-hal_c2_hang")
-    File.write!(helper, "#!/bin/sh\nexec cat > /dev/null\n")
-    File.chmod!(helper, 0o755)
-    url = "hal_c2_hang::#{repository}"
+    bare = CloneGate.repo(Mc.tmp_dir(context.mc, "repos"), %{"README.md" => "hi"})
+    url = CloneGate.transport_url(CloneGate.listen(), "cancel", bare)
+    Shared.put_env("GIT_CONFIG_COUNT", "1")
+    Shared.put_env("GIT_CONFIG_KEY_0", "protocol.ext.allow")
+    Shared.put_env("GIT_CONFIG_VALUE_0", "always")
 
     context
     |> World.cli_rules(lookup_rule(repository, %{"url" => url, "sshUrl" => url}))
     |> start_clone(%{"repository" => repository, "protocol" => "https"})
-    |> tap(
-      &await_clones(fn list -> match?(%{"phase" => "running"}, clone(list, &1.clone_id)) end)
-    )
+    |> Map.put(:gate, CloneGate.await("cancel"))
     |> Map.put(:cancel, fn context ->
       {reply, context} =
         World.call(context, "projectClone.cancel", %{"projectId" => context.clone_id})

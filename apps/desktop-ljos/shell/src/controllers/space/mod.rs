@@ -3362,7 +3362,7 @@ impl Space {
         let threads = store::with(engine, |s| s.threads());
         let mut latest: Option<(String, String)> = None;
         let mut latest_on_root = false;
-        for thread in &threads {
+        for thread in threads.iter() {
             if thread.environment_id != environment
                 || thread.project_id != project
                 || thread.archived_at.is_some()

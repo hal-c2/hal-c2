@@ -127,10 +127,12 @@ defmodule HalC2.WebTokenTest do
             {:error, _} -> "127.0.0.2 is not a loopback address on this machine"
           end)
   test "a local tool reaches the MC where it binds, not where the tool is configured" do
-    mc = start_mc("127.0.0.2")
+    # The squatter holds its port first, so the MC's port on 127.0.0.2 is
+    # one nothing else holds on 127.0.0.1.
+    {listen, mc} = squatted_mc("127.0.0.2")
     token = HalC2.Web.token()
 
-    relay = squat(fn path -> ok_json(relayed("127.0.0.2", mc, path)) end, mc)
+    relay = squat_on(listen, fn path -> ok_json(relayed("127.0.0.2", mc, path)) end)
     assert {:error, _} = HalC2.Web.local_mc({nil, mc})
     assert_receive {:request, _}
 
@@ -207,7 +209,12 @@ defmodule HalC2.WebTokenTest do
   # This home's MC on a port of its own, bound to `host`, stopped with the test. Its
   # runtime record says where, as a running MC's does.
   defp start_mc(host \\ "127.0.0.1") do
-    for {key, value} <- [port: 0, host: host] do
+    {:ok, port} = try_start_mc(host, 0)
+    port
+  end
+
+  defp try_start_mc(host, port) do
+    for {key, value} <- [port: port, host: host] do
       previous = Application.fetch_env(:hal_c2, key)
       Application.put_env(:hal_c2, key, value)
 
@@ -217,10 +224,28 @@ defmodule HalC2.WebTokenTest do
       end)
     end
 
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
-    File.mkdir_p!(Path.dirname(HalC2.RuntimeRecord.path()))
-    File.write!(HalC2.RuntimeRecord.path(), JSON.encode!(HalC2.RuntimeRecord.record()))
-    port
+    with {:ok, web} <- start_supervised(HalC2.Web) do
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
+      File.mkdir_p!(Path.dirname(HalC2.RuntimeRecord.path()))
+      File.write!(HalC2.RuntimeRecord.path(), JSON.encode!(HalC2.RuntimeRecord.record()))
+      {:ok, port}
+    end
+  end
+
+  # A port held on 127.0.0.1 and this home's MC bound to `host` on the same
+  # port. A port something else holds on `host` is given up for another.
+  defp squatted_mc(host, tries \\ 5) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+
+    case try_start_mc(host, port) do
+      {:ok, ^port} ->
+        {listen, port}
+
+      {:error, _} when tries > 1 ->
+        :gen_tcp.close(listen)
+        squatted_mc(host, tries - 1)
+    end
   end
 
   # What the MC at `host:port` answers to `path`, as a program passing it on gets it.
@@ -231,10 +256,15 @@ defmodule HalC2.WebTokenTest do
     body
   end
 
-  # A program on 127.0.0.1 (on `port`, else any) answering one request with
+  # A program on 127.0.0.1 answering one request with
   # `answer.(path)`; the test is sent the request it read.
-  defp squat(answer, port \\ 0) do
-    {:ok, listen} = :gen_tcp.listen(port, [:binary, active: false, ip: {127, 0, 0, 1}])
+  defp squat(answer) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    squat_on(listen, answer)
+  end
+
+  # `squat/1` on a port already held.
+  defp squat_on(listen, answer) do
     {:ok, port} = :inet.port(listen)
     test = self()
 

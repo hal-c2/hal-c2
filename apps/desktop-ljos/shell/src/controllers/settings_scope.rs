@@ -36,6 +36,7 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init};
+use crate::controllers::navigation;
 use crate::controllers::settings::{Map, Settings};
 use crate::controllers::sidebar;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
@@ -243,7 +244,7 @@ impl SettingsScope {
         }
         let bridge = Bridge::of(engine);
         let me = Rc::downgrade(&self.0);
-        bridge.watch(engine, "route", move |engine, route| {
+        navigation::on_route_changed(engine, bridge, move |engine, route| {
             if let Some(inner) = me.upgrade() {
                 SettingsScope(inner).follow_route(engine, route);
             }
@@ -477,10 +478,11 @@ impl SettingsScope {
             }
         }
         let resolved = self.resolve(engine);
-        let open = {
+        let (open, members_moved) = {
             let mut s = self.0.state.borrow_mut();
+            let moved = s.members != resolved.members;
             s.members = resolved.members.clone();
-            s.open
+            (s.open, moved)
         };
         let targets: Vec<String> = if open {
             resolved
@@ -495,8 +497,12 @@ impl SettingsScope {
         if let Some(documents) = self.documents(engine) {
             documents.set_targets(&targets);
         }
-        self.publish(engine);
-        self.changed(engine);
+        // Most store changes (a thread's title, a run's status) leave the
+        // scope as it was; only one that moves it is news to what reads the
+        // settings through it.
+        if self.publish(engine) || members_moved {
+            self.changed(engine);
+        }
     }
 
     // -- Reading and writing ---------------------------------------------
@@ -765,9 +771,10 @@ impl SettingsScope {
             .cloned()
     }
 
-    fn publish(&self, engine: &Engine) {
+    /// Publishes the scope; whether that changed what was published.
+    fn publish(&self, engine: &Engine) -> bool {
         if !self.0.state.borrow().active {
-            return;
+            return false;
         }
         let resolved = self.resolve(engine);
         let (project_key, environment_id) = {
@@ -803,24 +810,26 @@ impl SettingsScope {
             "Unavailable environment".to_owned()
         };
         let reason = self.disabled_reason(engine);
-        Bridge::of(engine).publish(
-            engine,
-            KEY,
-            json!({
-                "kind": resolved.kind,
-                "projectKey": project_key,
-                "environmentId": environment_id,
-                "projectLabel": project_label,
-                "environmentLabel": environment_label,
-                "connective": if environment_id.is_empty() { "across" } else { "on" },
-                "message": resolved.message,
-                "projects": projects,
-                "environments": environments,
-                "targets": self.targets(),
-                "editable": reason.is_empty(),
-                "disabledReason": reason,
-            }),
-        );
+        let bridge = Bridge::of(engine);
+        let scope = json!({
+            "kind": resolved.kind,
+            "projectKey": project_key,
+            "environmentId": environment_id,
+            "projectLabel": project_label,
+            "environmentLabel": environment_label,
+            "connective": if environment_id.is_empty() { "across" } else { "on" },
+            "message": resolved.message,
+            "projects": projects,
+            "environments": environments,
+            "targets": self.targets(),
+            "editable": reason.is_empty(),
+            "disabledReason": reason,
+        });
+        if bridge.published(engine, KEY).as_ref() == Some(&scope) {
+            return false;
+        }
+        bridge.publish(engine, KEY, scope);
+        true
     }
 }
 

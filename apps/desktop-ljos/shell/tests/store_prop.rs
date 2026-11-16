@@ -223,6 +223,16 @@ fn agrees(store: &ShellStore, machines: &[Machine]) -> Result<(), TestCaseError>
         }
     }
     prop_assert_eq!(store.threads().len(), threads);
+    // The list is cached between changes: each thread in it is its row now.
+    for thread in store.threads().iter() {
+        let row = store.thread_row(&thread.key());
+        prop_assert_eq!(
+            row.and_then(|r| r["title"].as_str()),
+            Some(thread.title.as_str()),
+            "{}",
+            thread.key()
+        );
+    }
     prop_assert_eq!(store.projects().len(), projects);
     Ok(())
 }
@@ -231,8 +241,8 @@ fn agrees(store: &ShellStore, machines: &[Machine]) -> Result<(), TestCaseError>
 fn summary(store: &ShellStore) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = store
         .threads()
-        .into_iter()
-        .map(|t| (t.key(), t.title))
+        .iter()
+        .map(|t| (t.key(), t.title.clone()))
         .chain(
             store
                 .projects()
@@ -351,5 +361,90 @@ proptest! {
             store.apply(&snapshot(&machines, &store.have()));
             agrees(&store, &machines)?;
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum RowOp {
+    /// Thread `id` on `mc`, titled `n`; `moving` toward an MC's environment,
+    /// or `moved` (the record a finished move leaves).
+    Put {
+        mc: usize,
+        id: usize,
+        n: i64,
+        moving: Option<usize>,
+        moved: bool,
+    },
+    Delete {
+        mc: usize,
+        id: usize,
+    },
+    /// A project row: no thread changes with it.
+    Project {
+        mc: usize,
+        n: i64,
+    },
+    /// Reads the list and keeps it while the next frames land.
+    Hold,
+    Release,
+}
+
+fn row_op() -> impl Strategy<Value = RowOp> {
+    let mc = 0..MCS.len();
+    let id = 0..IDS.len();
+    prop_oneof![
+        8 => (mc.clone(), id.clone(), 0i64..100, prop::option::weighted(0.2, 0..MCS.len()), prop::bool::weighted(0.15))
+            .prop_map(|(mc, id, n, moving, moved)| RowOp::Put { mc, id, n, moving, moved }),
+        2 => (mc.clone(), id).prop_map(|(mc, id)| RowOp::Delete { mc, id }),
+        1 => (mc, 0i64..100).prop_map(|(mc, n)| RowOp::Project { mc, n }),
+        1 => Just(RowOp::Hold),
+        1 => Just(RowOp::Release),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
+
+    /// The thread list kept between changes, changed a row at a time where
+    /// it can be, is always the list built afresh from the rows: moves
+    /// included, whose halves live or not by each other's rows.
+    #[test]
+    fn the_kept_thread_list_is_the_rows_list(ops in prop::collection::vec(row_op(), 1..60)) {
+        let mut store = ShellStore::new(None);
+        store.apply(&frame(json!({
+            "t": "shell",
+            "mcs": (0..MCS.len()).map(|mc| json!({
+                "mc": MCS[mc], "environment": environment(mc), "online": true, "reset": true,
+            })).collect::<Vec<_>>(),
+            "rows": [],
+        })));
+        let mut held = None;
+        for op in ops {
+            let (mc, row) = match op {
+                RowOp::Put { mc, id, n, moving, moved } => {
+                    let mut fields = fields(0, id, Some(n));
+                    if let Some(to) = moving {
+                        fields["moving"] = json!({"environmentId": format!("env-{to}")});
+                    }
+                    if moved {
+                        fields["movedTo"] = json!({"environmentId": "env-elsewhere"});
+                    }
+                    (mc, json!([row_id(0, id), "thread", fields]))
+                }
+                RowOp::Delete { mc, id } => (mc, json!([row_id(0, id), "thread", fields(0, id, None)])),
+                RowOp::Project { mc, n } => (mc, json!([row_id(1, 0), "project", fields(1, 0, Some(n))])),
+                RowOp::Hold => {
+                    held = Some(store.threads());
+                    continue;
+                }
+                RowOp::Release => {
+                    held = None;
+                    continue;
+                }
+            };
+            store.apply(&frame(json!({"t": "shell.rows", "mc": MCS[mc], "rows": [row]})));
+            prop_assert_eq!(&store.threads()[..], &store.threads_rebuilt()[..]);
+        }
+        drop(held);
     }
 }

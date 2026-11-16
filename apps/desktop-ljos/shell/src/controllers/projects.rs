@@ -69,13 +69,17 @@ fn as_folder(path: &str) -> String {
 
 /// The project's thread still in play that was last written to: not
 /// archived, not a subagent's, not settled by hand.
-fn latest_thread(threads: Vec<Thread>, environment_id: &str, project_id: &str) -> Option<Thread> {
+fn latest_thread<'a>(
+    threads: &'a [Thread],
+    environment_id: &str,
+    project_id: &str,
+) -> Option<&'a Thread> {
     let at = |t: &Thread| {
         model::parse_iso(t.latest_user_message_at.as_deref())
             .or_else(|| model::parse_iso(Some(&t.updated_at)))
             .unwrap_or(0)
     };
-    let mut latest: Option<Thread> = None;
+    let mut latest: Option<&Thread> = None;
     for thread in threads {
         if thread.environment_id != environment_id
             || thread.project_id != project_id
@@ -85,7 +89,7 @@ fn latest_thread(threads: Vec<Thread>, environment_id: &str, project_id: &str) -
         {
             continue;
         }
-        if latest.as_ref().is_none_or(|l| at(&thread) > at(l)) {
+        if latest.is_none_or(|l| at(thread) > at(l)) {
             latest = Some(thread);
         }
     }
@@ -658,7 +662,7 @@ pub fn add_folder(
 fn open_project(engine: &Engine, environment_id: &str, project_id: &str) {
     follow_in_sidebar(engine, environment_id, project_id);
     let threads = store::with(engine, |s| s.threads());
-    match latest_thread(threads, environment_id, project_id) {
+    match latest_thread(&threads, environment_id, project_id) {
         Some(thread) => {
             controller::with::<Navigation, _>(engine, |n, e| {
                 n.open(e, Route::Thread(thread.key()))
@@ -762,9 +766,9 @@ mod tests {
             elsewhere,
         ];
         assert_eq!(
-            latest_thread(threads.clone(), "e", "p").map(|t| t.id),
+            latest_thread(&threads, "e", "p").map(|t| t.id.clone()),
             Some("said".into())
         );
-        assert_eq!(latest_thread(threads, "e", "none"), None);
+        assert_eq!(latest_thread(&threads, "e", "none"), None);
     }
 }

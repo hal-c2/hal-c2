@@ -13,7 +13,7 @@ use hal_c2_shell::controllers::client_activity::REPORT_MS;
 use hal_c2_shell::controllers::layout::{
     CONTENT_MIN_WIDTH, Layout, RAIL_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH,
 };
-use hal_c2_shell::controllers::navigation::{Navigation, Route};
+use hal_c2_shell::controllers::navigation::{self, Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::theme::{Mode, Themes, canonical_color};
 use hal_c2_shell::json::Json;
@@ -241,6 +241,25 @@ fn back_returns_through_the_places_visited_but_not_home() {
     dispatch(&engine, "settings.back", json!(null));
     assert_eq!(route(&engine), Route::Home);
     assert_eq!(published(&engine, "route")["canGoBack"], json!(false));
+}
+
+#[test]
+fn a_route_watcher_hears_the_route_change_but_not_a_new_title() {
+    let (engine, _) = shell(EMPTY, disconnected());
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let log = heard.clone();
+    navigation::on_route_changed(&engine, Bridge::of(&engine), move |_, route| {
+        log.borrow_mut().push(route["threadKey"].clone());
+    });
+    dispatch(&engine, "thread.open", json!({"key": "e:t1"}));
+    let mut renamed = published(&engine, "route");
+    renamed["title"] = json!("Renamed");
+    Bridge::of(&engine).publish(&engine, "route", renamed.clone());
+    renamed["tab"] = json!("elsewhere");
+    Bridge::of(&engine).publish(&engine, "route", renamed);
+    dispatch(&engine, "thread.open", json!({"key": "e:t2"}));
+    // The first publish (home) comes before the watcher; each thread once.
+    assert_eq!(*heard.borrow(), vec![json!("e:t1"), json!("e:t2")]);
 }
 
 #[test]

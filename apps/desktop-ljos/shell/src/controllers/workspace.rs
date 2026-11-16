@@ -2078,7 +2078,7 @@ impl Workspace {
         }
         store::with(engine, |s| {
             let mut latest: Option<(i64, PreviousWorktree)> = None;
-            for thread in s.threads() {
+            for thread in s.threads().iter() {
                 if thread.environment_id != here.environment_id
                     || thread.project_id != here.project_id
                     || thread.archived_at.is_some()
