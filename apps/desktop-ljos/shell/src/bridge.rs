@@ -759,6 +759,16 @@ impl Bridge {
             .borrow_mut()
             .insert(key.to_owned(), value.clone());
         map.insert(engine, key, shown.clone());
+        // A handler republished the key meanwhile: that publish told the
+        // watchers and QML of the newer value, and this one is out of date.
+        if !own
+            .published
+            .borrow()
+            .get(key)
+            .is_some_and(|kept| Rc::ptr_eq(kept, &value))
+        {
+            return;
+        }
         let watchers: Vec<Watcher> = own
             .watchers
             .borrow()
