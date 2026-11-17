@@ -31,6 +31,7 @@ pub mod provider_updates;
 // notifications stay quiet (desktop-qt's need HAL_C2_HAS_DBUS too).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod notifications;
+pub mod page_input;
 pub mod platform_window;
 pub mod preview_automation;
 pub mod qml;

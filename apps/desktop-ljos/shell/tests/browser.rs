@@ -63,7 +63,7 @@ fn the_pages_profile_lives_in_the_home() {
             name.clone(),
             false,
             data.join("ljos-webengine").to_string_lossy().into_owned(),
-            cache.join("browser").to_string_lossy().into_owned(),
+            cache.join("ljos-webengine").to_string_lossy().into_owned(),
             0,
         )
     );
