@@ -1754,6 +1754,7 @@ preview/surfaces.feature: A recent page can be taken off the new tab's list
 preview/surfaces.feature: A recent page shows its title, its address and when it was visited
 preview/surfaces.feature: A recent page without a title is listed by its address
 preview/surfaces.feature: A second size picked while one waits is turned away
+preview/surfaces.feature: A sign-in popup opens in its own window
 preview/surfaces.feature: A size the desktop cannot apply says so and is undone
 preview/surfaces.feature: A tab stays muted when its page navigates
 preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [127.0.0.1:8080, http://127.0.0.1:8080]
@@ -1802,6 +1803,7 @@ preview/surfaces.feature: The page in a browser tab can be opened in the user's 
 preview/surfaces.feature: The toolbar waits while a new size is being applied
 preview/surfaces.feature: The user adds a browser tab from the side panel
 preview/surfaces.feature: The user drags the edge of a device-sized page to resize it
+preview/surfaces.feature: The user inspects a page with DevTools
 preview/surfaces.feature: The user loads a page by typing its address
 preview/surfaces.feature: The user opens a local dev server in a browser tab beside the thread
 preview/surfaces.feature: The user picks which devices appear in the Devices view
@@ -1811,6 +1813,7 @@ preview/surfaces.feature: The user reloads a page after the dev server restarts
 preview/surfaces.feature: The user rotates the previewed device
 preview/surfaces.feature: The user sees the page at several sizes side by side
 preview/surfaces.feature: The user shows a device toolbar above a tab's page
+preview/surfaces.feature: The user types a page's source address
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, in, 110%]
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, out, 90%]
 preview/surfaces.feature: The user zooms a page through the preset steps [150%, reset, 100%]
