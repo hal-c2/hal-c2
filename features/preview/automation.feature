@@ -933,6 +933,24 @@ Feature: Agents drive the preview browser
 
   Rule: The desktop hosts the agent's browser
 
+    # A wait used to look at the page every 100 ms for as long as it ran. It looks once, then
+    # each time the page says it changed (a node, an attribute, its text, its address, a load,
+    # its size, input reaching it), and gives up at one deadline.
+    @backlog @desktop
+    Scenario: A page condition is looked at again only when the page changes
+      Given an agent waits up to 10 seconds for "#ready" on a page that does not show it
+      When 5 seconds pass and nothing on the page changes
+      Then the page was looked at once
+      When the page changes and now shows "#ready"
+      Then the wait succeeds before its deadline
+
+    @backlog @desktop
+    Scenario: A page condition that never comes times out at its deadline
+      Given an agent waits up to 2 seconds for "#ready" on a page that does not show it
+      When 2 seconds pass and nothing on the page changes
+      Then the wait fails because the condition did not match within 2000ms
+      And the page was looked at once
+
     # Proved by tst_PreviewAutomationWeb.cpp (navigatesAndSnapshots, clicksTypesAndPresses), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: The desktop offers the thread's browser to agents
