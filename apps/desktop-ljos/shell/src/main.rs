@@ -769,7 +769,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
     let config = ShellConfig::new("HAL-C2")
         .with_size(options.size.0 as f32, options.size.1 as f32)
         .with_color_space(ColorSpace::Untagged);
-    let headless = no_display(|name| std::env::var(name).ok());
+    let headless = offscreen(|name| std::env::var(name).ok());
     let app = app
         .shell_config(config)
         .on_message(|_: &Engine, _: Message| {});
@@ -958,9 +958,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
         }
         root.map_err(Into::into)
     };
-    // With no display at all main.cpp runs on Qt's offscreen platform:
-    // the shell is the agent's through its inspector, and `Window`s are
-    // items of one scene nobody sees.
+    // Asked for Qt's offscreen platform, main.cpp runs on it: the shell is
+    // the agent's through its inspector, and `Window`s are items of one
+    // scene nobody sees. With no display and no such ask, both fail to open
+    // a window and exit, rather than hold the single-instance socket and
+    // the MC with nothing on screen.
     let result = if headless {
         app.run_headless_with(setup)
     } else {
@@ -973,19 +975,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
     result
 }
 
-/// Qt's `offscreen` platform asked for by name, or, on a desktop that has
-/// one, neither a Wayland nor an X display to open a window on.
-fn no_display(env: impl Fn(&str) -> Option<String>) -> bool {
-    let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
-    if env("QT_QPA_PLATFORM").is_some_and(|p| p.trim() == "offscreen") {
-        return true;
-    }
-    cfg!(all(
-        unix,
-        not(target_os = "macos"),
-        not(target_os = "android")
-    )) && !set("WAYLAND_DISPLAY")
-        && !set("DISPLAY")
+/// Qt's `offscreen` platform asked for by name, the one way main.cpp runs
+/// with no window (useSoftwareRenderingWithoutDisplay).
+fn offscreen(env: impl Fn(&str) -> Option<String>) -> bool {
+    env("QT_QPA_PLATFORM").is_some_and(|p| p.trim() == "offscreen")
 }
 
 /// BackendProcess's signals as NativeShell takes them: the MC the host
@@ -1033,7 +1026,7 @@ fn install_dev_desktop_entry() {
 
 #[cfg(test)]
 mod tests {
-    use super::no_display;
+    use super::offscreen;
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {
@@ -1045,25 +1038,24 @@ mod tests {
 
     #[test]
     fn offscreen_by_name_runs_headless_anywhere() {
-        assert!(no_display(env(&[
+        assert!(offscreen(env(&[
             ("QT_QPA_PLATFORM", "offscreen"),
             ("WAYLAND_DISPLAY", "wayland-1"),
         ])));
     }
 
     #[test]
-    fn a_display_opens_a_window() {
-        assert!(!no_display(env(&[("WAYLAND_DISPLAY", "wayland-1")])));
-        assert!(!no_display(env(&[("DISPLAY", ":0")])));
+    fn another_platform_opens_a_window() {
+        assert!(!offscreen(env(&[("WAYLAND_DISPLAY", "wayland-1")])));
+        assert!(!offscreen(env(&[("QT_QPA_PLATFORM", "wayland")])));
     }
 
-    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+    /// main.cpp has no fallback: with no display Qt finds no platform and
+    /// the app exits, so a launch over ssh or from a unit leaves nothing
+    /// holding the single-instance socket.
     #[test]
-    fn no_display_at_all_runs_headless() {
-        assert!(no_display(env(&[])));
-        assert!(no_display(env(&[
-            ("DISPLAY", " "),
-            ("WAYLAND_DISPLAY", "")
-        ])));
+    fn no_display_is_not_asking_for_offscreen() {
+        assert!(!offscreen(env(&[])));
+        assert!(!offscreen(env(&[("DISPLAY", ""), ("WAYLAND_DISPLAY", "")])));
     }
 }
