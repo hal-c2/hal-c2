@@ -698,9 +698,13 @@ pub fn woke_at(thread: &Thread, now_ms: i64) -> Nullable {
 }
 
 pub fn wake_label(snoozed_until: &str, now_ms: i64) -> String {
-    let Some(wake) = parse_iso(Some(snoozed_until)) else {
-        return "now".into();
-    };
+    match parse_iso(Some(snoozed_until)) {
+        Some(wake) => wake_label_at(wake, now_ms),
+        None => "now".into(),
+    }
+}
+
+fn wake_label_at(wake: i64, now_ms: i64) -> String {
     let remaining = wake - now_ms;
     let ceil = |value: i64, unit: i64| (value + unit - 1) / unit;
     if remaining <= 0 {
@@ -1562,6 +1566,76 @@ pub struct View {
     /// which of them are parked (snoozed or settled).
     pub ordered_keys: Vec<String>,
     pub parked_keys: HashSet<String>,
+}
+
+/// The first moment after `now_ms` at which a row of `threads` reads
+/// otherwise with nothing else changed: its age ("5m ago") or its wake
+/// countdown turning over, its snooze running out, its run's minutes going
+/// up, a message it sent leaving its grace. When to build the rows again
+/// instead of ticking. The day a wake falls on ("tomorrow 9:00") turns at
+/// midnight, which is [`next_midnight`]'s.
+pub fn next_turn(threads: &[Thread], now_ms: i64) -> Option<i64> {
+    threads
+        .iter()
+        .filter_map(|thread| thread_turn(thread, now_ms))
+        .min()
+}
+
+fn thread_turn(thread: &Thread, now_ms: i64) -> Option<i64> {
+    let mut turns: Vec<i64> = Vec::new();
+    if let Some(at) = parse_iso(Some(&thread.updated_at)) {
+        turns.push(age_turn(at, now_ms));
+    }
+    if let Some(wake) = parse(&thread.snoozed_until).filter(|wake| *wake > now_ms) {
+        // The countdown turns at least daily, and reads "now" from the wake.
+        let until = (wake + 1).min(now_ms + DAY_MS + MINUTE_MS);
+        turns.extend(crate::schedule::next_change(now_ms, until, |t| {
+            wake_label_at(wake, t)
+        }));
+        turns.push(wake);
+    }
+    if status(thread) == "working"
+        && let Some(run) = &thread.latest_run
+        && let Some(started) = parse_iso(
+            run.started_at
+                .as_ref()
+                .or(run.requested_at.as_ref())
+                .map(String::as_str),
+        )
+    {
+        let minutes = (now_ms - started).max(0) / MINUTE_MS;
+        turns.push(started + (minutes + 1) * MINUTE_MS);
+    }
+    let runtime = thread.runtime.as_ref().map(|r| r.status.as_str());
+    if !matches!(runtime, Some("preparing" | "queued" | "starting" | "error"))
+        && let Some(message_at) = parse(&thread.latest_user_message_at)
+    {
+        // Where has_queued_turn_start's window opens and closes.
+        let edges = [
+            message_at - QUEUED_TURN_START_GRACE_MS,
+            message_at + QUEUED_TURN_START_GRACE_MS + 1,
+        ];
+        turns.extend(edges.into_iter().filter(|edge| *edge > now_ms));
+    }
+    turns.into_iter().min()
+}
+
+/// When [`ago`] for a moment `at` next reads otherwise than at `now_ms`.
+fn age_turn(at: i64, now_ms: i64) -> i64 {
+    let age = (now_ms - at).max(0);
+    let unit = match age / 1000 {
+        0..3600 => MINUTE_MS,
+        3600..86400 => HOUR_MS,
+        _ => DAY_MS,
+    };
+    at + (age / unit + 1) * unit
+}
+
+/// The next midnight after `now`, in its zone: when a wake's day
+/// ("tomorrow 9:00") reads otherwise.
+pub fn next_midnight<Tz: TimeZone>(now: &DateTime<Tz>) -> Option<i64> {
+    let tomorrow = now.date_naive().succ_opt()?;
+    local_at(&now.timezone(), tomorrow, 0).map(|at| at.timestamp_millis())
 }
 
 /// "5m ago", as the rows' own ages.

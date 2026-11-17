@@ -27,13 +27,14 @@
 //! vcs.listRefs), `enable {environmentId, id, enabled}`, `run
 //! {environmentId, id}`, `delete {environmentId, id}`, and `open
 //! {environmentId, taskId}` (a link to a task: its editor, or "Task
-//! unavailable"). Relative times move on every minute while the section
-//! shows.
+//! unavailable"). While the section shows, a relative time is shown again
+//! at the moment it reads otherwise and when the wall clock jumps; nothing
+//! ticks.
 
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
-use ljos::prelude::{Engine, ObjectId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -48,7 +49,6 @@ use crate::store;
 
 const KEY: &str = "scheduledTasks";
 const SECTION: &str = "/settings/scheduled-tasks";
-const TICK_MS: i32 = 60_000;
 
 fn at<'a>(object: &'a Json, key: &str) -> &'a str {
     settings_page::text(object, key)
@@ -95,9 +95,21 @@ pub fn schedule_label(schedule: &Json) -> String {
 
 /// "in 5m" for a coming run, "5m ago" for a past one (relativeLabel).
 pub fn relative_label(iso: &str, now_ms: i64) -> String {
-    let Some(when) = crate::sidebar_model::parse_iso(Some(iso)) else {
-        return "Not scheduled".into();
-    };
+    match crate::sidebar_model::parse_iso(Some(iso)) {
+        Some(when) => relative_label_at(when, now_ms),
+        None => "Not scheduled".into(),
+    }
+}
+
+/// When the [`relative_label`] of a run at `when` next reads otherwise
+/// than at `now_ms`: it turns over at least once a day, so a day and a
+/// minute ahead always finds it.
+pub fn relative_label_changes(when: i64, now_ms: i64) -> Option<i64> {
+    let until = now_ms + 24 * 60 * 60_000 + 60_000;
+    crate::schedule::next_change(now_ms, until, |t| relative_label_at(when, t))
+}
+
+fn relative_label_at(when: i64, now_ms: i64) -> String {
     let diff = when - now_ms;
     if diff <= 0 {
         let minutes = -diff / 60_000;
@@ -222,7 +234,9 @@ pub struct ScheduledTasks {
     editor_seq: u64,
     /// The latest branch listing asked for.
     branches_request: u64,
-    tick: Option<ObjectId>,
+    /// The next moment a shown "Next run" label reads otherwise, while the
+    /// section shows.
+    turn: Option<crate::schedule::Schedule>,
 }
 
 impl Controller for ScheduledTasks {
@@ -239,7 +253,7 @@ impl Controller for ScheduledTasks {
             link: Link::default(),
             editor_seq: 0,
             branches_request: 0,
-            tick: None,
+            turn: None,
         }
     }
 
@@ -266,6 +280,11 @@ impl Controller for ScheduledTasks {
         let me = self.me.clone();
         SettingsScope::of(engine).on_changed(move |engine| {
             me.run(engine, |c, engine| c.follow(engine));
+        });
+        // A clock that jumped, or a machine that slept, moved the labels.
+        let me = self.me.clone();
+        crate::clock::on_change(engine, move |engine| {
+            me.run(engine, |c, engine| c.publish(engine));
         });
         // A window restored on this page has its route before this activates.
         let route = self.bridge.published(engine, "route").unwrap_or(Json::Null);
@@ -402,20 +421,6 @@ impl ScheduledTasks {
                     ..Listing::default()
                 },
             );
-        }
-        // Relative times move on while the section shows.
-        match (self.open, self.tick) {
-            (true, None) => {
-                let me = self.me.clone();
-                self.tick = controller::every(engine, None, TICK_MS, move |engine| {
-                    me.run(engine, |c, engine| c.publish(engine));
-                });
-            }
-            (false, Some(timer)) => {
-                controller::stop_timer(engine, timer);
-                self.tick = None;
-            }
-            _ => {}
         }
         self.publish(engine);
     }
@@ -873,6 +878,8 @@ impl ScheduledTasks {
         };
         let heading = shown.len() > 1;
         let mut environments = Vec::new();
+        // When the first shown label moves on.
+        let mut turn: Option<i64> = None;
         for environment_id in &shown {
             let label = scope.label(engine, environment_id);
             let mut entry = json!({"id": environment_id, "label": label, "heading": heading});
@@ -898,6 +905,11 @@ impl ScheduledTasks {
                             } else if next.is_empty() {
                                 "Not scheduled".to_owned()
                             } else {
+                                if let Some(at) = crate::sidebar_model::parse_iso(Some(next))
+                                    .and_then(|when| relative_label_changes(when, now_ms))
+                                {
+                                    turn = Some(turn.map_or(at, |turn| turn.min(at)));
+                                }
                                 format!("Next run {}", relative_label(next, now_ms))
                             };
                             let status = at(&task, "lastRunStatus");
@@ -940,6 +952,7 @@ impl ScheduledTasks {
             entry["tasks"] = json!(rows);
             environments.push(entry);
         }
+        self.turn_at(engine, turn.map(|at| at - now_ms));
         let editor = self.editor_state(engine, &scope);
         self.bridge.publish(
             engine,
@@ -951,6 +964,25 @@ impl ScheduledTasks {
                 "editor": editor,
             }),
         );
+    }
+
+    /// Shows the labels again `delay_ms` from now, when the first of them
+    /// reads otherwise, instead of ticking; none when nothing shown moves.
+    /// A clock that jumps or a machine that wakes from sleep shows them
+    /// again at once, and that finds the next moment anew.
+    fn turn_at(&mut self, engine: &Engine, delay_ms: Option<i64>) {
+        crate::schedule::clear(engine, &mut self.turn);
+        let Some(delay_ms) = delay_ms else {
+            return;
+        };
+        let me = self.me.clone();
+        let delay = std::time::Duration::from_millis(delay_ms.max(0).unsigned_abs());
+        self.turn = Some(controller::after(
+            engine,
+            "scheduled task labels",
+            delay,
+            move |engine| me.run(engine, |c, engine| c.publish(engine)),
+        ));
     }
 
     fn editor_state(&self, engine: &Engine, scope: &SettingsScope) -> Json {
