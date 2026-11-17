@@ -755,7 +755,7 @@ pub fn finish_writes(engine: &Engine, wait: Duration, then: impl FnOnce(&Engine)
             }
         });
     }
-    let _ = engine.call_at(engine.now() + wait, move |engine| {
+    crate::schedule::after(engine, "write settle", None, wait, move |engine| {
         if let Some(then) = then.borrow_mut().take() {
             then(engine);
         }
@@ -982,39 +982,51 @@ pub fn mc(engine: &Engine) -> Option<Rc<dyn Mc>> {
     Host::of(engine).shared_mc.borrow().clone()
 }
 
-/// A timer for a controller: `f` every `interval_ms`, from now. Stops with
-/// `owner` (by default the acting window, as which `f` runs), or when
-/// [`stop_timer`] is given what this returns.
-pub fn every(
-    engine: &Engine,
-    owner: Option<ObjectId>,
-    interval_ms: i32,
-    f: impl Fn(&Engine) + 'static,
-) -> Option<ObjectId> {
-    use ljos::prelude::Timer;
+/// The acting window's owner (unless `owner` names one) and its bridge:
+/// what a controller's schedule goes with and runs as.
+fn acting(engine: &Engine, owner: Option<ObjectId>) -> (Option<ObjectId>, Option<Bridge>) {
     let window = Bridge::acting(engine).and_then(|b| Host::of(engine).window_of(b));
     let owner = owner.or_else(|| window.as_ref().and_then(|w| w.owner));
-    let bridge = window.map(|w| w.bridge);
-    let native = Timer {
-        interval: interval_ms,
-        repeat: true,
-        running: true,
-        ..Timer::default()
-    };
-    let timer = engine.create_native(native, owner).ok()?;
-    engine
-        .connect_by_name(timer, "triggered", move |engine, _| match bridge {
-            Some(bridge) => {
-                bridge.if_open(engine, || f(engine));
-            }
-            None => f(engine),
-        })
-        .ok()?;
-    Some(timer)
+    (owner, window.map(|w| w.bridge))
 }
 
-pub fn stop_timer(engine: &Engine, timer: ObjectId) {
-    engine.destroy(timer);
+fn as_bridge(engine: &Engine, bridge: Option<Bridge>, f: impl FnOnce(&Engine)) {
+    match bridge {
+        Some(bridge) => {
+            bridge.if_open(engine, || f(engine));
+        }
+        None => f(engine),
+    }
+}
+
+/// `f` every `period` for a controller, from now, as the acting window:
+/// it does not run while that window is closed, and goes with `owner` (by
+/// default the window's owner) or when cancelled.
+pub fn every(
+    engine: &Engine,
+    name: &'static str,
+    owner: Option<ObjectId>,
+    period: std::time::Duration,
+    f: impl Fn(&Engine) + 'static,
+) -> crate::schedule::Schedule {
+    let (owner, bridge) = acting(engine, owner);
+    crate::schedule::every(engine, name, owner, period, move |engine| {
+        as_bridge(engine, bridge, &f);
+    })
+}
+
+/// `f` once, `delay` from now, for a controller, as the acting window: as
+/// [`every`], once.
+pub fn after(
+    engine: &Engine,
+    name: &'static str,
+    delay: std::time::Duration,
+    f: impl FnOnce(&Engine) + 'static,
+) -> crate::schedule::Schedule {
+    let (owner, bridge) = acting(engine, None);
+    crate::schedule::after(engine, name, owner, delay, move |engine| {
+        as_bridge(engine, bridge, f);
+    })
 }
 
 #[cfg(test)]
