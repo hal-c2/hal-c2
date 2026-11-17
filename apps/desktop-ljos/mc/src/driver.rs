@@ -1,12 +1,14 @@
 //! The I/O thread: runs [`Core`]'s effects on a single-threaded runtime and
 //! feeds what comes back in as inputs, one at a time.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -27,16 +29,29 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// [`McHandle::open`]; everything it has to say goes to `sink`, in order, from
 /// that thread. The thread ends once every handle is dropped.
 ///
-/// The sink runs between the socket's reads: it queues the event for the
-/// owner, who hands each to [`McClient::deliver`](crate::McClient::deliver)
-/// in the same order, whenever it gets to them. It may wait while the
-/// owner's queue is full: the connection then reads nothing more, and the
-/// MC's socket waits on it, so a burst is held where it came from instead of
-/// piling up in memory. It must never wait on anything the owner does not
-/// take care of by draining. A late status only means its subscriptions are
-/// sent late, and the connection drops any meant for a socket already gone.
-pub fn spawn(sink: impl FnMut(McEvent) + Send + 'static) -> McHandle {
+/// The sink runs on a thread of its own, one event at a time: it queues the
+/// event for the owner, who hands each to
+/// [`McClient::deliver`](crate::McClient::deliver) in the same order,
+/// whenever it gets to them. It may wait while the owner's queue is full:
+/// once [`EVENTS`] more wait behind it, the connection reads nothing more
+/// from the socket, and the MC's socket waits on it, so a burst is held where
+/// it came from instead of piling up in memory. The connection itself keeps
+/// going meanwhile: it pings, and an MC that stops answering is dropped
+/// while the owner is still behind. It must never wait on anything the owner
+/// does not take care of by draining. A late status only means its
+/// subscriptions are sent late, and the connection drops any meant for a
+/// socket already gone.
+pub fn spawn(mut sink: impl FnMut(McEvent) + Send + 'static) -> McHandle {
     let (commands, receiver) = unbounded_channel();
+    let (events, mut delivered) = channel::<McEvent>(EVENTS);
+    std::thread::Builder::new()
+        .name("hal-c2-mc-events".to_owned())
+        .spawn(move || {
+            while let Some(event) = delivered.blocking_recv() {
+                sink(event);
+            }
+        })
+        .expect("the MC connection's event thread starts");
     std::thread::Builder::new()
         .name("hal-c2-mc".to_owned())
         .spawn(move || {
@@ -44,7 +59,7 @@ pub fn spawn(sink: impl FnMut(McEvent) + Send + 'static) -> McHandle {
                 .enable_all()
                 .build()
                 .expect("the MC connection's runtime starts");
-            runtime.block_on(run(receiver, Box::new(sink)));
+            runtime.block_on(run(receiver, events));
         })
         .expect("the MC connection's thread starts");
     McHandle::new(commands)
@@ -256,6 +271,10 @@ impl McHandle {
 /// the answers of the HTTP calls in flight.
 const INPUTS: usize = 256;
 
+/// How many events wait for the sink at most before the connection stops
+/// reading the socket.
+pub const EVENTS: usize = 64;
+
 /// The socket of one attempt: what to write to it, and the task to abort.
 struct Socket {
     attempt: u64,
@@ -263,17 +282,33 @@ struct Socket {
     task: JoinHandle<()>,
 }
 
-async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(McEvent) + Send>) {
+async fn run(mut commands: UnboundedReceiver<Command>, events: Sender<McEvent>) {
     // Bounded: a socket that reads faster than the connection handles what
     // it read waits, and so does the MC behind it. The owner's commands stay
     // unbounded (UnboundedSender above): the UI thread never waits on them,
     // and it sends one per thing a person or a controller asked for.
     let (inputs, mut answers) = channel::<Input>(INPUTS);
+    // Events the sink has no room for yet. While any wait, no socket input
+    // is taken, so only the owner's commands and the timers add to them.
+    let mut pending: VecDeque<McEvent> = VecDeque::new();
+    let reads = Arc::new(AtomicU64::new(0));
     let http = Http::new();
     let tls = tls();
     let mut core = Core::new(Instant::now().into_std());
     let mut socket: Option<Socket> = None;
     loop {
+        while let Some(event) = pending.pop_front() {
+            match events.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    pending.push_front(event);
+                    break;
+                }
+                // The sink is gone (it panicked): nobody hears the rest.
+                Err(TrySendError::Closed(_)) => pending.clear(),
+            }
+        }
+        let behind = !pending.is_empty();
         let deadline = core.next_deadline().map(Instant::from_std);
         let input = tokio::select! {
             command = commands.recv() => match command {
@@ -281,19 +316,21 @@ async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(M
                 // Every handle is gone: so is the owner.
                 None => break,
             },
-            Some(answer) = answers.recv() => answer,
+            Some(answer) = answers.recv(), if !behind => answer,
+            permit = events.reserve(), if behind => {
+                if let (Ok(permit), Some(event)) = (permit, pending.pop_front()) {
+                    permit.send(event);
+                }
+                continue;
+            }
             () = sleep_until(deadline) => Input::Tick,
         };
-        // The time the sink waited on a full queue, during which nothing the
-        // MC sent was read: it does not count against the MC's answer.
-        let mut held = Duration::ZERO;
+        // What the socket read and whether it waits on us to take it: the
+        // MC is not silent while either says otherwise.
+        core.heard(reads.load(Ordering::Relaxed), inputs.capacity() == 0);
         for effect in core.handle(input, Instant::now().into_std()) {
             match effect {
-                Effect::Emit(event) => {
-                    let started = std::time::Instant::now();
-                    sink(event);
-                    held += started.elapsed();
-                }
+                Effect::Emit(event) => pending.push_back(event),
                 Effect::GetDescriptor {
                     attempt,
                     url,
@@ -344,6 +381,7 @@ async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(M
                         tls.clone(),
                         outgoing,
                         inputs.clone(),
+                        reads.clone(),
                     ));
                     socket = Some(Socket { attempt, out, task });
                 }
@@ -361,7 +399,6 @@ async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(M
                 }
             }
         }
-        core.held(held);
     }
     if let Some(old) = socket.take() {
         old.task.abort();
@@ -384,8 +421,18 @@ async fn run_socket(
     tls: Arc<rustls::ClientConfig>,
     mut outgoing: UnboundedReceiver<String>,
     inputs: Sender<Input>,
+    reads: Arc<AtomicU64>,
 ) {
-    let end = socket(attempt, url, traceparent, tls, &mut outgoing, &inputs).await;
+    let end = socket(
+        attempt,
+        url,
+        traceparent,
+        tls,
+        &mut outgoing,
+        &inputs,
+        &reads,
+    )
+    .await;
     let _ = inputs.send(Input::SocketClosed { attempt, end }).await;
 }
 
@@ -396,6 +443,7 @@ async fn socket(
     tls: Arc<rustls::ClientConfig>,
     outgoing: &mut UnboundedReceiver<String>,
     inputs: &Sender<Input>,
+    reads: &AtomicU64,
 ) -> SocketEnd {
     let failed = |error: String| SocketEnd {
         error: Some(error),
@@ -430,6 +478,8 @@ async fn socket(
         tokio::select! {
             message = read.next() => match message {
                 Some(Ok(Message::Text(text))) => {
+                    // Counted as read before it waits for room: the MC said it.
+                    reads.fetch_add(1, Ordering::Relaxed);
                     let _ = inputs.send(Input::SocketText { attempt, text: text.as_str().to_owned() }).await;
                 }
                 // The MC's close code and words; the stream ends after it.

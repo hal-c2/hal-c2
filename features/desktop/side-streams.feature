@@ -28,8 +28,8 @@ Feature: What the shell's own threads hand its window is bounded
       Given the desktop shell is connected to its MC
       And the window handles at most 50 messages from each queue a frame
       When the MC sends 500 updates to the thread "t1", the last titled "Last"
-      Then the sidebar's "active" section lists "Last"
-      And the shell handled the MC's messages over more than one frame
+      Then the shell handled the MC's messages over more than one frame
+      And the sidebar's "active" section lists "Last"
       And the MC's queue never held more than it has room for
       And no message from the MC was dropped
 

@@ -25,10 +25,24 @@ use crate::{expect, fail};
 const MC: &str = "mc";
 const DEVICE_FRAMES: &str = "device-frames";
 
-/// What the MC's queue had handled when a burst began.
+/// What the MC's queue had handled when a burst began, and the title its
+/// last update gives.
 #[derive(Default)]
 struct Burst {
     frames_before: usize,
+    last: String,
+}
+
+/// Whether any of the sidebar's sections shows a thread titled `title`.
+fn sidebar_shows(world: &World, title: &str) -> bool {
+    world
+        .state("sidebar")
+        .as_object()
+        .into_iter()
+        .flat_map(|sections| sections.values())
+        .filter_map(|rows| rows.as_array())
+        .flatten()
+        .any(|row| row["title"] == title)
 }
 
 /// A device screen whose decoder is the scenario's: it decodes when told.
@@ -113,7 +127,10 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             let count: usize = c[0].parse().map_err(|_| Failure("a count".into()))?;
             let frames_before = watch(world)?.seen.get(MC).map_or(0, |w| w.frames);
-            world.part::<Burst>().frames_before = frames_before;
+            *world.part::<Burst>() = Burst {
+                frames_before,
+                last: c[2].clone(),
+            };
             for update in 1..=count {
                 let title = if update == count {
                     c[2].clone()
@@ -135,9 +152,13 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the shell handled the MC's messages over more than one frame",
         |world, _, _| {
-            // Read before the barrier: its reply comes on the same "mc"
-            // stream, and could add a frame of its own.
-            world.pump()?;
+            // Waited on without a barrier, and read before one: a barrier's
+            // reply comes on the same "mc" stream, and could add a frame of
+            // its own.
+            let last = world.part::<Burst>().last.clone();
+            world.wait_for(&format!("the sidebar to show \"{last}\""), |w| {
+                sidebar_shows(w, &last)
+            })?;
             let before = world.part::<Burst>().frames_before;
             let watched = watch(world)?.seen.get(MC).copied().unwrap_or_default();
             let frames = watched.frames - before;

@@ -248,6 +248,14 @@ pub(crate) struct Core {
     pong_by: Option<Instant>,
     setup_by: Option<Instant>,
     probe_by: Option<Instant>,
+    /// Frames the socket has read off the wire so far, and whether reading
+    /// waits on the connection to take them, as the driver last said.
+    reads: u64,
+    reads_waiting: bool,
+    /// `reads` when the pong, setup and probe deadlines were last set.
+    pong_reads: u64,
+    setup_reads: u64,
+    probe_reads: u64,
     held_at: Option<Instant>,
     last_status: Status,
     effects: Vec<Effect>,
@@ -292,6 +300,11 @@ impl Core {
             pong_by: None,
             setup_by: None,
             probe_by: None,
+            reads: 0,
+            reads_waiting: false,
+            pong_reads: 0,
+            setup_reads: 0,
+            probe_reads: 0,
             held_at: None,
             last_status: Status::default(),
             effects: Vec::new(),
@@ -314,18 +327,15 @@ impl Core {
         .min()
     }
 
-    /// The owner held the connection for `held`: its sink waited on a full
-    /// queue, so nothing the MC sent was read meanwhile. The deadlines that
-    /// wait on the MC's answer (a pong, the hello, wake's check) move on by
-    /// as much: an answer that sat unread in the socket is not one the MC
-    /// failed to give.
-    pub fn held(&mut self, held: Duration) {
-        for by in [&mut self.pong_by, &mut self.setup_by, &mut self.probe_by]
-            .into_iter()
-            .flatten()
-        {
-            *by += held;
-        }
+    /// How many frames the socket has read off the wire so far, and whether
+    /// reading waits on the connection to take what it read. A deadline that
+    /// waits on the MC's answer (a pong, the hello, wake's check) only passes
+    /// on silence: a frame read but not handled yet is something the MC
+    /// said, and one the socket cannot read because the owner is behind may
+    /// be the answer. Either gives the deadline its timeout again.
+    pub fn heard(&mut self, reads: u64, waiting: bool) {
+        self.reads = reads;
+        self.reads_waiting = waiting;
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -570,6 +580,7 @@ impl Core {
         } else if self.ready {
             self.ping();
             self.probe_by = Some(self.now + self.probe_timeout);
+            self.probe_reads = self.reads;
         }
     }
 
@@ -596,6 +607,7 @@ impl Core {
         self.send(&json!({"t": "ping"}));
         if self.pong_by.is_none() {
             self.pong_by = Some(self.now + self.pong_timeout);
+            self.pong_reads = self.reads;
         }
     }
 
@@ -631,20 +643,39 @@ impl Core {
             self.retry_at = None;
             self.connect();
         }
-        if self.pong_by.is_some_and(|at| at <= now) {
-            self.pong_by = None;
+        let (reads, waiting) = (self.reads, self.reads_waiting);
+        if silent(
+            &mut self.pong_by,
+            &mut self.pong_reads,
+            self.pong_timeout,
+            now,
+            reads,
+            waiting,
+        ) {
             self.emit(McEvent::Checked(false));
             self.drop_socket("timeout");
         }
         // A socket that opens but is never said hello to is as dead as one that drops.
-        if self.setup_by.is_some_and(|at| at <= now) {
-            self.setup_by = None;
+        if silent(
+            &mut self.setup_by,
+            &mut self.setup_reads,
+            self.setup_timeout,
+            now,
+            reads,
+            waiting,
+        ) {
             self.drop_socket("timeout");
         }
         // A foreground check that goes unanswered replaces the connection at
         // once: one that died while the app was away is the likely case.
-        if self.probe_by.is_some_and(|at| at <= now) {
-            self.probe_by = None;
+        if silent(
+            &mut self.probe_by,
+            &mut self.probe_reads,
+            self.probe_timeout,
+            now,
+            reads,
+            waiting,
+        ) {
             self.pong_by = None;
             self.emit(McEvent::Checked(false));
             self.drop_socket("check");
@@ -831,6 +862,7 @@ impl Core {
         }
         self.socket = Some(self.attempt);
         self.setup_by = Some(self.now + self.setup_timeout);
+        self.setup_reads = self.reads;
         self.effects.push(Effect::OpenSocket {
             attempt: self.attempt,
             url,
@@ -1008,6 +1040,29 @@ fn same_status(a: &Status, b: &Status) -> bool {
         && a.environment == b.environment
 }
 
+/// Whether deadline `by` passed with the MC silent since it was set
+/// (`since` reads in). Frames read since, or reads that wait on the
+/// connection, are not silence: the deadline gets `timeout` again from `now`.
+fn silent(
+    by: &mut Option<Instant>,
+    since: &mut u64,
+    timeout: Duration,
+    now: Instant,
+    reads: u64,
+    waiting: bool,
+) -> bool {
+    if !by.is_some_and(|at| at <= now) {
+        return false;
+    }
+    if reads > *since || waiting {
+        *by = Some(now + timeout);
+        *since = reads;
+        return false;
+    }
+    *by = None;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1068,7 +1123,7 @@ mod tests {
     }
 
     #[test]
-    fn a_held_owner_does_not_expire_the_pong() {
+    fn a_pong_the_socket_cannot_read_yet_does_not_expire() {
         let start = Instant::now();
         let mut core = Core::new(start);
         let attempt = ready(&mut core, start);
@@ -1079,42 +1134,58 @@ mod tests {
             "no ping"
         );
 
-        // The sink waited on a full queue for longer than the pong may take.
-        let held = DEFAULT_PONG_TIMEOUT + Duration::from_secs(5);
-        core.held(held);
-        let resumed = pinged + held;
+        // The owner is behind: what the socket read waits, so it reads no more.
+        core.heard(0, true);
+        let due = pinged + DEFAULT_PONG_TIMEOUT;
         assert!(
-            !closed(&core.handle(Input::Tick, resumed)),
-            "dropped while held"
+            !closed(&core.handle(Input::Tick, due)),
+            "dropped while the socket waited on the owner"
         );
 
         // The pong that sat in the socket arrives once the owner drains.
+        core.heard(1, false);
         let pong = json!({"t": "pong"}).to_string();
         core.handle(
             Input::SocketText {
                 attempt,
                 text: pong,
             },
-            resumed,
+            due,
         );
         assert!(!closed(
-            &core.handle(Input::Tick, resumed + DEFAULT_PONG_TIMEOUT)
+            &core.handle(Input::Tick, due + DEFAULT_PONG_TIMEOUT)
         ));
         assert_eq!(core.status().phase, Phase::Ready);
     }
 
     #[test]
-    fn a_silent_mc_still_expires_the_pong_after_a_hold() {
+    fn a_frame_read_but_not_handled_yet_answers_the_pong() {
         let start = Instant::now();
         let mut core = Core::new(start);
         ready(&mut core, start);
         let pinged = start + DEFAULT_PING_INTERVAL;
         core.handle(Input::Tick, pinged);
-        let held = Duration::from_secs(30);
-        core.held(held);
-        let due = pinged + held + DEFAULT_PONG_TIMEOUT;
+        core.heard(1, false);
+        assert!(!closed(
+            &core.handle(Input::Tick, pinged + DEFAULT_PONG_TIMEOUT)
+        ));
+    }
+
+    #[test]
+    fn a_silent_mc_expires_the_pong_once_nothing_waits_on_the_owner() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        ready(&mut core, start);
+        let pinged = start + DEFAULT_PING_INTERVAL;
+        core.handle(Input::Tick, pinged);
+        core.heard(0, true);
+        let due = pinged + DEFAULT_PONG_TIMEOUT;
+        assert!(!closed(&core.handle(Input::Tick, due)));
+
+        // Nothing waits and nothing came: the MC went quiet.
+        core.heard(0, false);
         assert!(
-            closed(&core.handle(Input::Tick, due)),
+            closed(&core.handle(Input::Tick, due + DEFAULT_PONG_TIMEOUT)),
             "a silent MC kept its socket"
         );
     }
