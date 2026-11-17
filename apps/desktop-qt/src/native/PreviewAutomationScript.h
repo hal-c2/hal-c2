@@ -23,6 +23,10 @@ QString evaluate(const QString& expression, const QString& key, int maxBytes);
 // What a pending evaluation came to: null while it is pending, else as above.
 QString settled(const QString& key);
 
+// What the page logs, after call("watch", {}), the next time its document
+// changes (PreviewAutomationPage::changed).
+inline const QString kChanged = QStringLiteral("__halc2:changed");
+
 // The parsed answer of a script, an empty object when it was not one.
 QJsonObject parse(const QVariant& result);
 

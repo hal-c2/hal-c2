@@ -458,7 +458,36 @@ const char* const kRuntime = R"JS(
       }
       return true;
     },
-    ready: function () { return { readyState: document.readyState, url: location.href }; }
+    ready: function () { return { readyState: document.readyState, url: location.href }; },
+    // Logs CHANGED (previewscript::kChanged) once, the next time the document
+    // changes: a node, an attribute or text, its readiness, or what moves
+    // layout or a control's state with no node changing (an image or
+    // stylesheet loading, a transition or animation ending, a font arriving,
+    // a field's value or checkedness). The page logs it, so it reaches the
+    // app as the page's other console messages do, and the app keeps it out
+    // of what an agent reads of the console.
+    watch: function () {
+      if (state.watching) return true;
+      var CHANGED = "__halc2:changed";
+      // In the capture phase: `load` does not bubble, but an image's or a
+      // stylesheet's is captured.
+      var WATCHED = ["readystatechange", "load", "transitionend", "transitioncancel", "animationend", "input",
+        "change", "toggle"];
+      var observer = new MutationObserver(function () { if (state.watching) state.watching(); });
+      var heard = function () { if (state.watching) state.watching(); };
+      var fonts = document.fonts;
+      state.watching = function () {
+        state.watching = null;
+        observer.disconnect();
+        WATCHED.forEach(function (type) { document.removeEventListener(type, heard, true); });
+        if (fonts) fonts.removeEventListener("loadingdone", heard);
+        console.debug(CHANGED);
+      };
+      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      WATCHED.forEach(function (type) { document.addEventListener(type, heard, true); });
+      if (fonts) fonts.addEventListener("loadingdone", heard);
+      return true;
+    }
   };
 
   try {

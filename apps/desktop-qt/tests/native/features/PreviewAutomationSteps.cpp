@@ -79,6 +79,7 @@ struct Automation {
   QPointer<PreviewAutomationPage> driver;  // a real tab's
   QString thread = kThread;
   qint64 tookMs = 0;  // how long the last answer took
+  int changes = 0;    // how often the real tab's page said its document changed
 };
 
 Automation& automation(World& world) {
@@ -121,10 +122,12 @@ PreviewAutomationHost& host(World& world) {
   return *state.host;
 }
 
-HeldPage& heldPage(World& world, const QString& tab = QStringLiteral("tab-1")) {
+// The page is at `at` before it is attached: the host reads its address then.
+HeldPage& heldPage(World& world, const QString& tab = QStringLiteral("tab-1"),
+                   const QUrl& at = QUrl(QStringLiteral("http://localhost:5173/"))) {
   Automation& state = automation(world);
   auto page = std::make_unique<HeldPage>();
-  page->at = QUrl(QStringLiteral("http://localhost:5173/"));
+  page->at = at;
   HeldPage* raw = page.get();
   state.pages.push_back(std::move(page));
   host(world).attach(world.mc.environmentId, kThread, tab, raw);
@@ -187,6 +190,14 @@ void driveTab(World& world, const QString& path) {
   host(world).attach(previews.environmentId(), previews.threadId(), webtab::tabId(world), state.driver);
 }
 
+// `script` has run in the page's isolated world, and so has everything asked
+// of that world before it.
+void runIsolated(World& world, PreviewAutomationPage* page, const QString& script) {
+  auto ran = std::make_shared<bool>(false);
+  page->runJavaScript(script, PreviewAutomationPage::IsolatedWorld, [ran](const QVariant&) { *ran = true; });
+  webtab::waitForEngine(world, [ran] { return *ran; }, [] { return QStringLiteral("the page's isolated world to run a script"); });
+}
+
 const QString kPassword = QStringLiteral("s3cret-Passw0rd");
 const QString kPin = QStringLiteral("4417-0096");
 
@@ -220,8 +231,7 @@ const Steps steps([] {
     FakePreviews& fake = world.mc.part<FakePreviews>();
     world.waitFor([&] { return !fake.opens.isEmpty(); }, QStringLiteral("the desktop to open an MC tab"));
     // The browser shows the new tab and attaches its page, as Browser does.
-    HeldPage& page = heldPage(world, QStringLiteral("tab-%1").arg(fake.tabs.size()));
-    page.at = QUrl(fake.opens.last().value(QLatin1String("url")).toString());
+    heldPage(world, QStringLiteral("tab-%1").arg(fake.tabs.size()), QUrl(fake.opens.last().value(QLatin1String("url")).toString()));
     answer(world, automation(world).last);
   };
   step(QStringLiteral("an agent opens a preview of port (\\d+) in its environment"), [openPort](World& world, const Captures& c, const Table&) {
@@ -294,6 +304,51 @@ const Steps steps([] {
   step(QStringLiteral("the tool fails saying the page was too busy to read safely"), [](World& world, const Captures&, const Table&) {
     const QJsonObject snapshot = answer(world, automation(world).last);
     expect(!snapshot.value(QLatin1String("ok")).toBool() && errorOf(snapshot).contains(QLatin1String("too busy to read safely")), describeAnswers(world));
+  });
+  // A real page in the browser.
+  step(QStringLiteral("an agent's current tab shows a page without %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    webtab::servePage(world, QStringLiteral("/later"), QStringLiteral("Later"), QStringLiteral("<p id=status>Not yet</p>"));
+    driveTab(world, QStringLiteral("/later"));
+    const QString id = c[0].mid(c[0].startsWith(QLatin1Char('#')) ? 1 : 0);
+    const QVariant shown = webtab::evaluate(world, QStringLiteral("String(document.getElementById('%1') !== null)").arg(id));
+    expect(shown.toString() == QLatin1String("false"), QStringLiteral("the page already shows %1").arg(c[0]));
+  });
+  step(QStringLiteral("the app asked the page to say when its document next changes"), [](World& world, const Captures&, const Table&) {
+    Automation& state = automation(world);
+    PreviewAutomationPage* page = state.driver;
+    QObject::connect(page, &PreviewAutomationPage::changed, page, [&state] { ++state.changes; });
+    page->watch();
+    // The watch is in place once its world has run what came after it.
+    runIsolated(world, page, QStringLiteral("true"));
+    expect(state.changes == 0, QStringLiteral("the page said it changed %1 times already").arg(state.changes));
+  });
+  step(QStringLiteral("a script on the page adds %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QString id = c[0].mid(c[0].startsWith(QLatin1Char('#')) ? 1 : 0);
+    webtab::evaluate(world, QStringLiteral("var p = document.createElement('p'); p.id = '%1'; "
+                                           "p.textContent = 'Ready'; document.body.appendChild(p); true").arg(id));
+  });
+  step(QStringLiteral("the page says it changed"), [](World& world, const Captures&, const Table&) {
+    webtab::waitForEngine(world, [&] { return automation(world).changes > 0; },
+                          [] { return QStringLiteral("the page to say its document changed"); });
+  });
+  step(QStringLiteral("the page's console does not show what the app was told"), [](World& world, const Captures&, const Table&) {
+    const QString entries = QString::fromUtf8(QJsonDocument(automation(world).driver->consoleEntries()).toJson(QJsonDocument::Compact));
+    expect(!entries.contains(QLatin1String("__halc2")), QStringLiteral("the page's console shows %1").arg(entries));
+  });
+  step(QStringLiteral("an agent waits up to (\\d+) seconds there for %1, which the page does not show yet").arg(kQuoted),
+       [](World& world, const Captures& c, const Table&) {
+         const int seconds = c[0].toInt();
+         ask(world, QStringLiteral("waitFor"), {{QStringLiteral("selector"), c[1]}, {QStringLiteral("timeoutMs"), seconds * 1000}},
+             (seconds + 30) * 1000, webtab::tabId(world));
+         world.sync();
+         // What the page was asked before this has run, and the wait waits on.
+         runIsolated(world, automation(world).driver, QStringLiteral("true"));
+         expect(!automation(world).answers.contains(automation(world).last),
+                QStringLiteral("the wait was answered before the page changed: %1").arg(describeAnswers(world)));
+       });
+  step(QStringLiteral("the agent's wait succeeds"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject waited = answer(world, automation(world).last);
+    expect(waited.value(QLatin1String("ok")).toBool(), describeAnswers(world));
   });
   step(QStringLiteral("it answers within (\\d+) seconds"), [](World& world, const Captures& c, const Table&) {
     expect(automation(world).tookMs < c[0].toLongLong() * 1000, QStringLiteral("it answered after %1ms").arg(automation(world).tookMs));

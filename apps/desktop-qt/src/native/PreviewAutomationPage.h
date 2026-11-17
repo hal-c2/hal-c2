@@ -53,8 +53,12 @@ public:
   // system, light or dark: what the page's prefers-color-scheme says.
   virtual void setColorScheme(const QString& scheme) = 0;
 
+  // Asks the page to say, once, when its document next changes (changed).
+  void watch();
+
   // The newest console messages, at most kConsoleEntries ({level, text, timestamp, source?}).
   QJsonArray consoleEntries() const;
+  // What the page logged; the line a watch logs is changed() instead.
   void addConsoleEntry(const QString& level, const QString& text, const QString& source);
   // A load that failed, as a network entry ({url, method, status, failed, errorText}).
   void addFailedLoad(const QUrl& url, const QString& error);
@@ -67,6 +71,9 @@ signals:
   void urlChanged();
   void viewportChanged();
   void devToolsChanged();
+  // The document changed since watch() was asked: a node, its readiness, or
+  // what moves layout or a control's state.
+  void changed();
   // The user's own mouse or keys inside the page; never the agent's, nor
   // events the page's scripts make.
   void humanInput();

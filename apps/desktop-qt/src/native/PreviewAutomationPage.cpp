@@ -2,6 +2,8 @@
 
 #include <QDateTime>
 
+#include "PreviewAutomationScript.h"
+
 namespace {
 
 QString now() { return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs); }
@@ -10,7 +12,15 @@ QString now() { return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithM
 
 QJsonArray PreviewAutomationPage::consoleEntries() const { return m_console; }
 
+void PreviewAutomationPage::watch() {
+  runJavaScript(previewscript::call(QStringLiteral("watch"), {}), IsolatedWorld, [](const QVariant&) {});
+}
+
 void PreviewAutomationPage::addConsoleEntry(const QString& level, const QString& text, const QString& source) {
+  if (text == previewscript::kChanged) {
+    emit changed();
+    return;
+  }
   QJsonObject entry{{QStringLiteral("level"), level}, {QStringLiteral("text"), text}, {QStringLiteral("timestamp"), now()}};
   if (!source.isEmpty()) entry.insert(QStringLiteral("source"), source);
   m_console.append(entry);
