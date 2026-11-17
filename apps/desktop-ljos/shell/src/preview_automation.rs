@@ -80,7 +80,7 @@ pub const IDLE_FADE_MS: i64 = 1500;
 pub const USER_CONTROL_MS: i64 = 750;
 const POLL_MS: i64 = 100;
 /// How long a key pressed in the page has to reach its scripts.
-const PRESS_CONFIRM_MS: i64 = 5000;
+pub(crate) const PRESS_CONFIRM_MS: i64 = 5000;
 
 /// What this host can do, as it tells each MC. No recording: the MC tells
 /// an agent this desktop does not support it.
@@ -1828,6 +1828,7 @@ impl PreviewAutomationHost {
                     let Some(page) = clicking.page_of(&r) else {
                         return;
                     };
+                    let loads = page.loads_started(engine);
                     if !page.on_screen(engine) || !page.click(engine, point.0, point.1) {
                         return by_script(engine);
                     }
@@ -1837,7 +1838,7 @@ impl PreviewAutomationHost {
                         engine,
                         &r,
                         wait_ms,
-                        seen(page, "clicked"),
+                        seen(page, "clicked", loads),
                         Box::new(move |engine| {
                             let status = done.0.tab_status(engine, &done.1);
                             done.0.succeed(engine, &done.1, status);
@@ -1923,6 +1924,7 @@ impl PreviewAutomationHost {
                 let Some(page) = host.page_of(request) else {
                     return;
                 };
+                let loads = page.loads_started(engine);
                 if !page.on_screen(engine) || !page.key(engine, key, modifiers, &text) {
                     // Off screen the page takes no keys: the page's scripts
                     // see the press, its editing does not.
@@ -1945,7 +1947,7 @@ impl PreviewAutomationHost {
                     engine,
                     request,
                     wait_ms,
-                    seen(page, "key"),
+                    seen(page, "key", loads),
                     Box::new(move |engine| {
                         let status = done.tab_status(engine, &done_request);
                         done.succeed(engine, &done_request, status);
@@ -2446,9 +2448,15 @@ fn clean_path(path: &str) -> String {
 }
 
 /// Whether the page saw what the runtime's `op` was armed for (a click, a
-/// key): its value is an object once it did.
-fn seen(page: Page, op: &'static str) -> Check {
+/// key): its value is an object once it did. A load started since the
+/// input was posted (`loads` were started before it) counts as seen: a
+/// link clicked or a form submitted with Enter replaces the document, and
+/// the runtime that was armed with it, so the new one has nothing to say.
+fn seen(page: Page, op: &'static str, loads: u64) -> Check {
     Rc::new(move |engine, done| {
+        if page.loads_started(engine) > loads {
+            return done(engine, true);
+        }
         page.run_isolated(
             engine,
             &script::call(op, &json!({})),
