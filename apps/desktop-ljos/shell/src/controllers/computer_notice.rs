@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -169,7 +169,7 @@ pub struct ComputerNotice {
     mc: std::rc::Rc<dyn Mc>,
     rules: Rules,
     seen: HashSet<String>,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
 }
 
 impl Controller for ComputerNotice {
@@ -338,13 +338,16 @@ impl ComputerNotice {
 
     fn changed(&mut self, engine: &Engine, changed: bool) {
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let now = now_ms(engine);
         if let Some(deadline) = self.rules.next_deadline(now) {
             let me = self.me.clone();
             let wait = (deadline - now).max(0) as u64;
-            self.timer = Some(engine.call_at(
+            self.timer = Some(crate::schedule::at(
+                engine,
+                "computer notice",
+                None,
                 engine.now() + Duration::from_millis(wait),
                 move |engine| {
                     me.run(engine, |c, engine| {

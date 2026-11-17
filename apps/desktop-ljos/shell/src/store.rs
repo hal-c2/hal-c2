@@ -29,7 +29,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::prelude::Engine;
-use ljos::prelude::TimerId;
 use serde_json::{Map, Value, json};
 
 use crate::cache::{self, LocalCache};
@@ -1098,7 +1097,7 @@ struct Slot {
     /// What waits for the store to be installed ([`when_installed`]).
     installed: RefCell<Vec<Waiting>>,
     /// The pending flush, desktop-qt's single-shot timer.
-    flush: Cell<Option<TimerId>>,
+    flush: Cell<Option<crate::schedule::Schedule>>,
     /// Each saved environment's link and its `shell` subscription.
     links: RefCell<BTreeMap<String, crate::mc::Held>>,
 }
@@ -1347,9 +1346,7 @@ pub fn clear(engine: &Engine, done: impl FnOnce(bool) + 'static) {
 /// Writes what waits for the cache now (on exit, before a render).
 pub fn flush(engine: &Engine) {
     let slot = engine.extension::<Slot>();
-    if let Some(id) = slot.flush.take() {
-        engine.cancel_call(id);
-    }
+    crate::schedule::clear_cell(engine, &slot.flush);
     if let Some(store) = get(engine) {
         store.borrow_mut().flush();
     }
@@ -1360,21 +1357,26 @@ pub fn flush(engine: &Engine) {
 fn settle(engine: &Engine, changes: Changes) {
     let slot = engine.extension::<Slot>();
     let due = with(engine, ShellStore::flush_due);
-    match (due, slot.flush.get()) {
+    let armed = slot.flush.take();
+    match (due, armed) {
         (true, None) => {
-            let at = engine.now() + Duration::from_millis(FLUSH_DELAY_MS);
-            slot.flush.set(Some(engine.call_at(at, |engine| {
-                engine.extension::<Slot>().flush.set(None);
-                if let Some(store) = get(engine) {
-                    store.borrow_mut().flush();
-                }
-            })));
+            let delay = Duration::from_millis(FLUSH_DELAY_MS);
+            slot.flush.set(Some(crate::schedule::after(
+                engine,
+                "store flush",
+                None,
+                delay,
+                |engine| {
+                    engine.extension::<Slot>().flush.set(None);
+                    if let Some(store) = get(engine) {
+                        store.borrow_mut().flush();
+                    }
+                },
+            )));
         }
-        (false, Some(id)) => {
-            slot.flush.set(None);
-            engine.cancel_call(id);
-        }
-        _ => {}
+        (true, armed) => slot.flush.set(armed),
+        (false, Some(armed)) => armed.cancel(engine),
+        (false, None) => {}
     }
     if !(changes.changed || changes.origin_changed) {
         return;

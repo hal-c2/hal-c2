@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -56,7 +56,7 @@ pub struct ThreadNotice {
     mc: Rc<dyn Mc>,
     me: Me<ThreadNotice>,
     active: bool,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     /// Threads whose un-settle the MC has not answered yet.
     pending: HashSet<String>,
     /// Threads whose background work is being stopped, by thread key.
@@ -210,11 +210,14 @@ impl ThreadNotice {
             true
         });
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         if next != 0 {
             let me = self.me.clone();
-            self.timer = Some(engine.call_at(
+            self.timer = Some(crate::schedule::at(
+                engine,
+                "thread notice",
+                None,
                 engine.now() + Duration::from_millis((next - now).max(0) as u64),
                 move |engine| {
                     me.run(engine, |c, e| {

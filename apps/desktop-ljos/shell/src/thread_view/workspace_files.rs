@@ -1995,8 +1995,8 @@ struct Inner {
     tree: Cell<Option<ObjectId>>,
     lines: Cell<Option<ObjectId>>,
     lists: RefCell<Lists>,
-    search_timer: Cell<Option<ObjectId>>,
-    save_timer: Cell<Option<ObjectId>>,
+    search_timer: crate::schedule::Held,
+    save_timer: crate::schedule::Held,
     /// The pause after a keystroke that saves; a test stretches it.
     save_delay: Cell<i32>,
     /// The thread's TimelineModel followed, and its connection.
@@ -2144,8 +2144,8 @@ impl WorkspaceFiles {
             tree: Cell::new(None),
             lines: Cell::new(None),
             lists: RefCell::default(),
-            search_timer: Cell::new(None),
-            save_timer: Cell::new(None),
+            search_timer: crate::schedule::Held::default(),
+            save_timer: crate::schedule::Held::default(),
             save_delay: Cell::new(SAVE_DELAY_MS),
             timeline: Cell::new(None),
             connections: RefCell::default(),
@@ -2683,6 +2683,7 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             engine,
             obj,
             &inner.search_timer,
+            "files search",
             start.then_some(SEARCH_DELAY_MS),
             |e, obj| {
                 WorkspaceFiles::update(e, obj, Files::search);
@@ -2692,6 +2693,7 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             engine,
             obj,
             &inner.save_timer,
+            "files save",
             start.then_some(inner.save_delay.get()),
             |e, obj| {
                 WorkspaceFiles::update(e, obj, Files::save_due);
@@ -2711,37 +2713,25 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
     }
 }
 
-/// Stops the timer in `slot` and, with an interval, starts a single shot
-/// of `then`. A shot that fired stays until the next restart.
+/// Calls off what `slot` holds and, with an interval, runs `then` once
+/// after it.
 fn restart(
     engine: &Engine,
     obj: ObjectId,
-    slot: &Cell<Option<ObjectId>>,
+    slot: &crate::schedule::Held,
+    name: &'static str,
     interval: Option<i32>,
     then: fn(&Engine, ObjectId),
 ) {
-    if let Some(old) = slot.take() {
-        let _ = engine.write_by_name(old, "running", Value::Bool(false));
-        engine.destroy(old);
-    }
+    slot.cancel(engine);
     let Some(interval) = interval else {
         return;
     };
-    let native = ljos::prelude::Timer {
-        interval,
-        repeat: false,
-        running: true,
-        ..ljos::prelude::Timer::default()
-    };
-    let made = engine.create_native(native, Some(obj)).and_then(|timer| {
-        engine.connect_by_name(timer, "triggered", move |engine, _| then(engine, obj))?;
-        engine.complete(timer)?;
-        Ok(timer)
+    let delay = std::time::Duration::from_millis(interval.max(0).unsigned_abs().into());
+    let shot = crate::schedule::after(engine, name, Some(obj), delay, move |engine| {
+        then(engine, obj)
     });
-    match made {
-        Ok(timer) => slot.set(Some(timer)),
-        Err(e) => warn(engine, &e),
-    }
+    slot.hold(engine, shot);
 }
 
 /// Asks the MC to list `folder` ("" the top) for the tree; the newest

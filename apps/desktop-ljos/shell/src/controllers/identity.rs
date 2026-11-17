@@ -453,8 +453,11 @@ impl Identity {
         let wait = (due - FAVICON_MARGIN_MS - now).max(0) as u64;
         let renewal = self.renewal;
         let me = self.me.clone();
-        engine.call_at(
-            engine.now() + std::time::Duration::from_millis(wait),
+        crate::schedule::after(
+            engine,
+            "favicon renewal",
+            None,
+            std::time::Duration::from_millis(wait),
             move |engine| {
                 me.run(engine, move |c, engine| {
                     if c.renewal == renewal {

@@ -662,8 +662,11 @@ impl Session {
         };
         let weak = Rc::downgrade(&self.0);
         let delay = ACK_DELAY_MS.with(Cell::get);
-        engine.call_at(
-            engine.now() + std::time::Duration::from_millis(delay),
+        crate::schedule::after(
+            engine,
+            "terminal input ack",
+            None,
+            std::time::Duration::from_millis(delay),
             move |_| {
                 let Some(inner) = weak.upgrade() else {
                     return;

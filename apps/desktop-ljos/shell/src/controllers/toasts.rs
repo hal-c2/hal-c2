@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::prelude::Engine;
-use ljos::prelude::{Time, TimerId};
+use ljos::prelude::Time;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -99,7 +99,7 @@ pub struct Toasts {
     bridge: Bridge,
     me: Me<Toasts>,
     toasts: Vec<Toast>,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     next_id: u64,
     expanded: bool,
     closed_by_user: Vec<ClosedByUser>,
@@ -516,18 +516,24 @@ impl Toasts {
 
     fn schedule(&mut self, engine: &Engine) {
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let Some(next) = self.toasts.iter().filter_map(|t| t.deadline).min() else {
             return;
         };
         let me = self.me.clone();
-        self.timer = Some(engine.call_at(next, move |engine| {
-            me.run(engine, |toasts, engine| {
-                toasts.timer = None;
-                toasts.expire(engine);
-            });
-        }));
+        self.timer = Some(crate::schedule::at(
+            engine,
+            "toast expiry",
+            None,
+            next,
+            move |engine| {
+                me.run(engine, |toasts, engine| {
+                    toasts.timer = None;
+                    toasts.expire(engine);
+                });
+            },
+        ));
     }
 
     fn publish(&mut self, engine: &Engine) {

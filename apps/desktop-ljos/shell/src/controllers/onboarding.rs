@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use ljos::prelude::{Cx, Engine, QmlObject, TimerId, Value, qml_singleton};
+use ljos::prelude::{Cx, Engine, QmlObject, Value, qml_singleton};
 use regex::Regex;
 use serde_json::{Map, json};
 
@@ -278,7 +278,7 @@ pub struct Onboarding {
     active: bool,
     previewing: bool,
     timeout_ms: u64,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     pairing_client: Client,
     exchange: Exchange,
 
@@ -548,20 +548,26 @@ impl Onboarding {
 
     fn start_timeout(&mut self, engine: &Engine) {
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let me = self.me.clone();
         let at = engine.now() + Duration::from_millis(self.timeout_ms);
-        self.timer = Some(engine.call_at(at, move |engine| {
-            me.run(engine, |c, engine| {
-                c.timer = None;
-                if c.gate != "pending" {
-                    return;
-                }
-                c.stalled = true;
-                c.publish(engine);
-            });
-        }));
+        self.timer = Some(crate::schedule::at(
+            engine,
+            "onboarding timeout",
+            None,
+            at,
+            move |engine| {
+                me.run(engine, |c, engine| {
+                    c.timer = None;
+                    if c.gate != "pending" {
+                        return;
+                    }
+                    c.stalled = true;
+                    c.publish(engine);
+                });
+            },
+        ));
     }
 
     fn store_changed(&mut self, engine: &Engine) {
@@ -618,7 +624,7 @@ impl Onboarding {
         self.gate = gate;
         self.stalled = false;
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
     }
 

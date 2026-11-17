@@ -18,7 +18,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -40,7 +40,7 @@ pub struct ThreadLineage {
     me: Me<ThreadLineage>,
     active: bool,
     /// The fork waited for, and when it is given up on.
-    waiting: Option<(String, TimerId)>,
+    waiting: Option<(String, crate::schedule::Schedule)>,
 }
 
 fn later(
@@ -315,14 +315,17 @@ impl ThreadLineage {
     /// said.
     fn open_when_listed(&mut self, engine: &Engine, key: String) {
         if let Some((_, timer)) = self.waiting.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         if store::with(engine, |s| s.thread(&key).is_some()) {
             open(engine, key);
             return;
         }
         let me = self.me.clone();
-        let timer = engine.call_at(
+        let timer = crate::schedule::at(
+            engine,
+            "thread arrival",
+            None,
             engine.now() + Duration::from_millis(ARRIVAL_TIMEOUT_MS),
             move |engine| {
                 later(engine, &me, |c, e| {
@@ -345,7 +348,7 @@ impl ThreadLineage {
             .as_ref()
             .is_some_and(|(key, _)| store::with(engine, |s| s.thread(key).is_some()));
         if arrived && let Some((key, timer)) = self.waiting.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
             open(engine, key);
         }
         self.publish(engine);

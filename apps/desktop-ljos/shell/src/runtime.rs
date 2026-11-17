@@ -30,10 +30,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
-use ljos::prelude::{
-    Atom, Cx, Engine, LogLevel, ObjectId, QmlObject, Timer, Value, qml_impl, qml_singleton,
-};
+use ljos::prelude::{Atom, Cx, Engine, LogLevel, ObjectId, QmlObject, qml_impl, qml_singleton};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::bridge::Bridge;
@@ -41,7 +40,7 @@ use crate::controller;
 use crate::qml::{self, Roots};
 
 /// How long after the last change a reload looks (ShellRuntime's debounce).
-const DEBOUNCE_MS: i32 = 120;
+const DEBOUNCE_MS: u64 = 120;
 
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Runtime", uncreatable)]
@@ -123,7 +122,10 @@ struct RuntimeState {
     view: Cell<Option<ObjectId>>,
     /// The sources as the generation shown was made of them.
     fingerprint: Cell<u64>,
-    debounce: Cell<Option<ObjectId>>,
+    /// Whether a change to the sources is followed ([`follow`]).
+    following: Cell<bool>,
+    /// The look at the sources after the last change, while one waits.
+    debounce: crate::schedule::Held,
     watcher: RefCell<Option<RecommendedWatcher>>,
     changes: Arc<Changes>,
 }
@@ -284,11 +286,29 @@ pub fn deliver(engine: &Engine) {
     if !state.changes.pending.swap(false, Ordering::SeqCst) {
         return;
     }
-    if let Some(timer) = state.debounce.get() {
-        // From the start: running again counts the interval anew.
-        let _ = engine.write_by_name(timer, "running", Value::Bool(false));
-        let _ = engine.write_by_name(timer, "running", Value::Bool(true));
+    if !state.following.get() {
+        return;
     }
+    // From the start: each change counts the interval anew.
+    let weak = Rc::downgrade(&state);
+    let look = crate::schedule::after(
+        engine,
+        "source reload debounce",
+        None,
+        Duration::from_millis(DEBOUNCE_MS),
+        move |engine| {
+            let Some(state) = weak.upgrade() else { return };
+            let due = state
+                .roots
+                .borrow()
+                .as_ref()
+                .is_some_and(|roots| fingerprint(roots) != state.fingerprint.get());
+            if due {
+                reload(engine);
+            }
+        },
+    );
+    state.debounce.hold(engine, look);
 }
 
 fn last_error(engine: &Engine) -> String {
@@ -478,33 +498,12 @@ fn retire(engine: &Engine, state: &RuntimeState, old: ObjectId, new: ObjectId, g
     }
 }
 
-/// Follows the config dir and the roots, and makes the debounce timer.
+/// Follows the config dir and the roots: a change starts the debounce.
 fn follow(engine: &Engine, state: &Rc<RuntimeState>) {
     let Some(roots) = state.roots.borrow().clone() else {
         return;
     };
-    let timer = Timer {
-        interval: DEBOUNCE_MS,
-        repeat: false,
-        running: false,
-        ..Timer::default()
-    };
-    let Ok(timer) = engine.create_native(timer, None) else {
-        return;
-    };
-    let weak = Rc::downgrade(state);
-    let _ = engine.connect_by_name(timer, "triggered", move |engine, _| {
-        let Some(state) = weak.upgrade() else { return };
-        let due = state
-            .roots
-            .borrow()
-            .as_ref()
-            .is_some_and(|roots| fingerprint(roots) != state.fingerprint.get());
-        if due {
-            reload(engine);
-        }
-    });
-    state.debounce.set(Some(timer));
+    state.following.set(true);
     let watcher = watch(&roots.watched(), &state.changes);
     let enabled = watcher.is_some();
     *state.watcher.borrow_mut() = watcher;

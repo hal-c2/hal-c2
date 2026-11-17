@@ -23,7 +23,7 @@
 //! `git.init`, `git.publish`, `git.publish.cancel`, `git.publish.submit
 //! {provider, repository, visibility, remoteName, protocol}`, `git.refresh`.
 
-use ljos::prelude::{Engine, ObjectId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -452,8 +452,9 @@ pub struct Git {
     stage: String,
     started_at: Option<ljos::prelude::Time>,
     hook_line: String,
-    /// Redraws the elapsed time while an action runs.
-    tick: Option<ObjectId>,
+    /// Redraws the elapsed time while an action runs: it reads in whole
+    /// seconds, so it changes every second, and nothing else says so.
+    tick: Option<crate::schedule::Schedule>,
     pending: Option<Pending>,
     publishing: Option<Publishing>,
 }
@@ -925,15 +926,17 @@ impl Git {
     fn start_tick(&mut self, engine: &Engine) {
         self.stop_tick(engine);
         let me = self.me.clone();
-        self.tick = controller::every(engine, None, 1000, move |engine| {
-            me.run(engine, |c, engine| c.publish(engine));
-        });
+        self.tick = Some(controller::every(
+            engine,
+            "git action elapsed",
+            None,
+            std::time::Duration::from_secs(1),
+            move |engine| me.run(engine, |c, engine| c.publish(engine)),
+        ));
     }
 
     fn stop_tick(&mut self, engine: &Engine) {
-        if let Some(tick) = self.tick.take() {
-            controller::stop_timer(engine, tick);
-        }
+        crate::schedule::clear(engine, &mut self.tick);
     }
 
     fn on_action_frame(&mut self, engine: &Engine, frame: &Frame) {

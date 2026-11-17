@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
@@ -226,9 +227,14 @@ fn closing_a_window_drops_its_controllers_and_what_they_followed() {
     let ticks = Rc::new(Cell::new(0));
     let t = ticks.clone();
     let timer = controller::in_window(engine, "two", || {
-        controller::every(engine, None, 100, move |_| t.set(t.get() + 1))
+        controller::every(
+            engine,
+            "test tick",
+            None,
+            Duration::from_millis(100),
+            move |_| t.set(t.get() + 1),
+        )
     })
-    .flatten()
     .expect("a timer");
     hub.advance(100);
     assert_eq!(ticks.get(), 1);
@@ -239,7 +245,7 @@ fn closing_a_window_drops_its_controllers_and_what_they_followed() {
     assert_eq!(controller::windows(engine), vec![MAIN]);
     assert!(!two.is_open(engine));
     assert!(controller::window_bridge(engine, "two").is_none());
-    assert!(!engine.is_alive(timer));
+    assert!(!timer.is_pending());
     hub.advance(1000);
     assert_eq!(ticks.get(), 1, "the timer went with the window");
     let left: Vec<Json> = hub.mc.subscriptions().into_iter().map(|(_, s)| s).collect();

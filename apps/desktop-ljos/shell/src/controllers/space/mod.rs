@@ -38,6 +38,7 @@ use crate::controllers::settings::Settings;
 use crate::controllers::toasts::Toasts;
 use crate::json::Json;
 use crate::mc::{Frame, Mc, SubId};
+use crate::schedule::Held;
 use crate::store;
 use crate::this_machine;
 
@@ -362,29 +363,6 @@ struct Address {
     expires_at: i64,
 }
 
-/// A one-shot timer of the controller's, restarted by stopping it first.
-struct OneShot {
-    timer: Cell<Option<ObjectId>>,
-}
-
-impl OneShot {
-    fn new() -> OneShot {
-        OneShot {
-            timer: Cell::new(None),
-        }
-    }
-
-    fn active(&self) -> bool {
-        self.timer.get().is_some()
-    }
-
-    fn stop(&self, engine: &Engine) {
-        if let Some(timer) = self.timer.take() {
-            controller::stop_timer(engine, timer);
-        }
-    }
-}
-
 const BLOCK_ROLES: [&str; 22] = [
     "id",
     "kind",
@@ -451,11 +429,11 @@ pub struct Space {
     addresses: HashMap<String, Address>,
     signing: HashSet<String>,
     now: Rc<dyn Fn() -> i64>,
-    address_refresh: OneShot,
+    address_refresh: Held,
     address_refresh_due: Cell<Option<i64>>,
-    rebuild_soon: OneShot,
-    history_refresh: OneShot,
-    viewers_retry: OneShot,
+    rebuild_soon: Held,
+    history_refresh: Held,
+    viewers_retry: Held,
     viewers_retry_ms: i64,
     spaces: Rows,
     pages: Rows,
@@ -508,30 +486,19 @@ impl Space {
     fn arm(
         &self,
         engine: &Engine,
-        timer: &OneShot,
+        timer: &Held,
         ms: i64,
         f: impl Fn(&mut Space, &Engine) + 'static,
     ) {
-        timer.stop(engine);
-        let native = ljos::prelude::Timer {
-            interval: i32::try_from(ms.clamp(0, i64::from(i32::MAX))).unwrap_or(i32::MAX),
-            repeat: false,
-            running: true,
-            ..ljos::prelude::Timer::default()
-        };
-        let Ok(id) = engine.create_native(native, None) else {
-            return;
-        };
-        timer.timer.set(Some(id));
         let me = self.me.clone();
         let f = Rc::new(f);
-        let connected = engine.connect_by_name(id, "triggered", move |engine, _| {
-            let f = f.clone();
-            me.run(engine, move |c, engine| f(c, engine));
-        });
-        if connected.is_err() || engine.complete(id).is_err() {
-            timer.stop(engine);
-        }
+        let delay = std::time::Duration::from_millis(ms.max(0).unsigned_abs());
+        timer.hold(
+            engine,
+            crate::schedule::after(engine, "space", None, delay, move |engine| {
+                me.run(engine, move |c, engine| f(c, engine));
+            }),
+        );
     }
 
     fn thread_title(&self, engine: &Engine, thread_id: &str) -> String {
@@ -1263,9 +1230,9 @@ impl Space {
                 expires_at: expires_at.max(at_least),
             },
         );
-        if !self.rebuild_soon.active() {
+        if !self.rebuild_soon.is_pending() {
             self.arm(engine, &self.rebuild_soon, REBUILD_SOON_MS, |c, engine| {
-                c.rebuild_soon.stop(engine);
+                c.rebuild_soon.cancel(engine);
                 c.rebuild(engine);
             });
         }
@@ -1274,7 +1241,7 @@ impl Space {
     pub fn image_address_failed(&mut self, engine: &Engine, image_id: &str) {
         self.signing.remove(image_id);
         let remaining = self.address_refresh_due.get().map(|due| due - now_ms());
-        if !self.address_refresh.active() || remaining.is_some_and(|r| r > ADDRESS_RETRY_MS) {
+        if !self.address_refresh.is_pending() || remaining.is_some_and(|r| r > ADDRESS_RETRY_MS) {
             self.address_refresh_due
                 .set(Some(now_ms() + ADDRESS_RETRY_MS));
             self.arm(
@@ -1282,7 +1249,7 @@ impl Space {
                 &self.address_refresh,
                 ADDRESS_RETRY_MS,
                 |c, engine| {
-                    c.address_refresh.stop(engine);
+                    c.address_refresh.cancel(engine);
                     c.rebuild(engine);
                 },
             );
@@ -1368,14 +1335,14 @@ impl Space {
             due = Some(due.map_or(address.expires_at, |d: i64| d.min(address.expires_at)));
         }
         let Some(due) = due else {
-            self.address_refresh.stop(engine);
+            self.address_refresh.cancel(engine);
             self.address_refresh_due.set(None);
             return;
         };
         let delay = (due - ADDRESS_MARGIN_MS - (self.now)()).max(0);
         self.address_refresh_due.set(Some(now_ms() + delay));
         self.arm(engine, &self.address_refresh, delay, |c, engine| {
-            c.address_refresh.stop(engine);
+            c.address_refresh.cancel(engine);
             c.rebuild(engine);
         });
     }
@@ -1453,7 +1420,7 @@ impl Space {
     // --- The rows ---------------------------------------------------------
 
     pub fn rebuild(&mut self, engine: &Engine) {
-        self.rebuild_soon.stop(engine);
+        self.rebuild_soon.cancel(engine);
         if self.reselect(engine) {
             return;
         }
@@ -1914,9 +1881,9 @@ impl Space {
         let _ = SpaceHistoryObject::emit_changed(&Cx::new(engine, obj));
         if self.history.images_arrived {
             self.history.images_arrived = false;
-            if !self.rebuild_soon.active() {
+            if !self.rebuild_soon.is_pending() {
                 self.arm(engine, &self.rebuild_soon, REBUILD_SOON_MS, |c, engine| {
-                    c.rebuild_soon.stop(engine);
+                    c.rebuild_soon.cancel(engine);
                     c.rebuild(engine);
                 });
             }
@@ -1990,7 +1957,7 @@ impl Space {
             self.unfollow();
             self.history.close();
             self.sync_history(engine, false);
-            self.history_refresh.stop(engine);
+            self.history_refresh.cancel(engine);
             self.page_shown = false;
             if !std::mem::take(&mut self.picking).is_empty() {
                 self.publish(engine);
@@ -2225,7 +2192,7 @@ impl Space {
                         c.clear_viewers(engine);
                         let ms = c.viewers_retry_ms;
                         c.arm(engine, &c.viewers_retry, ms, |c, engine| {
-                            c.viewers_retry.stop(engine);
+                            c.viewers_retry.cancel(engine);
                             if c.viewers_subscription.is_none() && !c.followed_viewers.is_empty() {
                                 c.subscribe_viewers(engine);
                             }
@@ -2267,7 +2234,7 @@ impl Space {
             return;
         }
         if !self.deck_id.is_empty() {
-            self.history_refresh.stop(engine);
+            self.history_refresh.cancel(engine);
             self.history.close();
             self.sync_history(engine, false);
         } else if self.history.page_id() != self.page_id {
@@ -2275,13 +2242,13 @@ impl Space {
             self.open_history(engine, &page);
         } else if self.shown_stream().borrow().offset() != self.history_offset {
             self.history_offset = self.shown_stream().borrow().offset();
-            if !self.history_refresh.active() {
+            if !self.history_refresh.is_pending() {
                 self.arm(
                     engine,
                     &self.history_refresh,
                     HISTORY_REFRESH_MS,
                     |c, engine| {
-                        c.history_refresh.stop(engine);
+                        c.history_refresh.cancel(engine);
                         let next = c.history.refresh();
                         c.ask_history(engine, next);
                     },
@@ -2291,7 +2258,7 @@ impl Space {
     }
 
     fn open_history(&mut self, engine: &Engine, page: &str) {
-        self.history_refresh.stop(engine);
+        self.history_refresh.cancel(engine);
         self.history_offset = self.shown_stream().borrow().offset();
         let next = self.history.open(page);
         self.sync_history(engine, false);
@@ -3562,11 +3529,11 @@ impl Controller for Space {
             addresses: HashMap::new(),
             signing: HashSet::new(),
             now: Rc::new(now_ms),
-            address_refresh: OneShot::new(),
+            address_refresh: Held::default(),
             address_refresh_due: Cell::new(None),
-            rebuild_soon: OneShot::new(),
-            history_refresh: OneShot::new(),
-            viewers_retry: OneShot::new(),
+            rebuild_soon: Held::default(),
+            history_refresh: Held::default(),
+            viewers_retry: Held::default(),
             viewers_retry_ms: VIEWERS_RETRY_MS,
             spaces: spaces.clone(),
             pages: pages.clone(),
@@ -4200,7 +4167,7 @@ impl Controller for Space {
             }
             HISTORY_COMMAND => self.open_history(engine, &page_id.clone()),
             "space.history.close" => {
-                self.history_refresh.stop(engine);
+                self.history_refresh.cancel(engine);
                 self.history.close();
                 self.sync_history(engine, false);
             }
@@ -4266,7 +4233,7 @@ impl Controller for Space {
                 });
                 self.call(engine, "page.restoreVersion", restore, |c, engine, _| {
                     c.history.stop_reading();
-                    c.history_refresh.stop(engine);
+                    c.history_refresh.cancel(engine);
                     let next = c.history.refresh();
                     c.sync_history(engine, true);
                     c.ask_history(engine, next);

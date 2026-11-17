@@ -12,7 +12,10 @@
 
 use std::cell::{Cell, RefCell};
 
-use ljos::prelude::{Engine, ObjectId, Platform, Timer, Value};
+use std::rc::Rc;
+use std::time::Duration;
+
+use ljos::prelude::{Engine, ObjectId, Platform};
 use ljos::window::NativeWindow;
 use ljos::window::raw_window_handle::RawWindowHandle;
 use objc2::rc::{Retained, Weak};
@@ -24,7 +27,8 @@ use objc2_app_kit::{NSView, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindo
 struct Shown {
     window: RefCell<Weak<NSWindow>>,
     followed: Cell<Option<ObjectId>>,
-    refit: Cell<Option<ObjectId>>,
+    /// The refit waiting for the pass that applies new flags.
+    refit: crate::schedule::Held,
 }
 
 /// Hears of each window the host opens: the shell's own, which belongs to
@@ -68,33 +72,25 @@ fn refit(engine: &Engine) {
 }
 
 /// Calls `refit` once the host has told the platform of the window's new
-/// flags (the theme's `frameless` changed): a timer's turn comes after the
-/// pass that applies them. Once per window, with one timer for all of them.
+/// flags (the theme's `frameless` changed): a call due now comes after the
+/// pass that applies them. Once per window; flags that change again before
+/// it refit once.
 fn follow_flags(engine: &Engine, window: ObjectId, refit: impl Fn(&Engine) + 'static) {
     let shown = engine.extension::<Shown>();
     if shown.followed.replace(Some(window)) == Some(window) {
         return;
     }
-    let timer = match shown.refit.get() {
-        Some(timer) => timer,
-        None => {
-            let timer = Timer {
-                interval: 0,
-                repeat: false,
-                running: false,
-                ..Timer::default()
-            };
-            let Ok(timer) = engine.create_native(timer, None) else {
-                return;
-            };
-            let _ = engine.connect_by_name(timer, "triggered", move |engine, _| refit(engine));
-            shown.refit.set(Some(timer));
-            timer
-        }
-    };
+    let refit = Rc::new(refit);
     let _ = engine.connect_by_name(window, "flagsChanged", move |engine, _| {
-        let _ = engine.write_by_name(timer, "running", Value::Bool(false));
-        let _ = engine.write_by_name(timer, "running", Value::Bool(true));
+        let refit = refit.clone();
+        let call = crate::schedule::after(
+            engine,
+            "title bar refit",
+            None,
+            Duration::ZERO,
+            move |engine| refit(engine),
+        );
+        engine.extension::<Shown>().refit.hold(engine, call);
     });
 }
 

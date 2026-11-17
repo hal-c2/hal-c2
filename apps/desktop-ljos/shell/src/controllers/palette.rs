@@ -54,7 +54,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::prelude::{Atom, Cx, Engine, ModelSignals, ObjectId, QmlListModel, QmlObject, RowKey};
-use ljos::prelude::{TimerId, Value, qml_impl, qml_singleton};
+use ljos::prelude::{Value, qml_impl, qml_singleton};
 use serde_json::json;
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
@@ -565,7 +565,7 @@ pub struct Palette {
     running: Option<String>,
     /// Searches against the MC: the debounce, the newest one's generation,
     /// and how many answers are still to come.
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     generation: u64,
     pending: usize,
     target: Target,
@@ -1980,9 +1980,7 @@ impl Palette {
     }
 
     fn stop_timer(&mut self, engine: &Engine) {
-        if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
-        }
+        crate::schedule::clear(engine, &mut self.timer);
     }
 
     /// Starts the mode's search against the MC once typing pauses.
@@ -1991,13 +1989,19 @@ impl Palette {
         self.generation += 1;
         self.pending = 0;
         self.stop_timer(engine);
-        let at = engine.now() + Duration::from_millis(SEARCH_DELAY_MS);
-        self.timer = Some(engine.call_at(at, |engine| {
-            later(engine, |c, engine| {
-                c.timer = None;
-                c.search(engine);
-            });
-        }));
+        let delay = Duration::from_millis(SEARCH_DELAY_MS);
+        self.timer = Some(crate::schedule::after(
+            engine,
+            "palette search",
+            None,
+            delay,
+            |engine| {
+                later(engine, |c, engine| {
+                    c.timer = None;
+                    c.search(engine);
+                });
+            },
+        ));
     }
 
     fn search(&mut self, engine: &Engine) {

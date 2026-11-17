@@ -6,18 +6,22 @@
 //! and its checkout's git status, as the workspace controller places the
 //! route. It says whether the application has focus, followed from Ljós's
 //! `Application.state` (focused when there is none). A lease is renewed
-//! every REPORT_MS, on every new connection, and whenever the place or the
-//! application's state changes.
+//! on every new connection, whenever the place or the application's state
+//! changes, and REPORT_MS after the last report. Nothing is renewed while
+//! there is no MC, so a window with no connection never wakes for it.
 
+use std::cell::Cell;
 use std::sync::OnceLock;
+use std::time::Duration;
 
-use ljos::prelude::{Application, ApplicationState, Engine, ObjectId, Value};
+use ljos::prelude::{Application, ApplicationState, Engine, Value};
 use serde_json::json;
 
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::{sidebar, workspace};
 use crate::json::Json;
 use crate::mc::Mc;
+use crate::schedule::{self, Schedule};
 
 pub const REPORT_MS: i32 = 25_000;
 pub const LEASE_MS: i32 = 45_000;
@@ -25,7 +29,9 @@ pub const LEASE_MS: i32 = 45_000;
 pub struct ClientActivity {
     mc: std::rc::Rc<dyn Mc>,
     me: Me<Self>,
-    renew: Option<ObjectId>,
+    /// The next renewal, while the MC is there.
+    renew: Cell<Option<Schedule>>,
+    active: bool,
 }
 
 impl Controller for ClientActivity {
@@ -33,24 +39,20 @@ impl Controller for ClientActivity {
         ClientActivity {
             mc: init.mc,
             me: init.me,
-            renew: None,
+            renew: Cell::new(None),
+            active: false,
         }
     }
 
     fn activate(&mut self, engine: &Engine) {
-        if self.renew.is_some() {
+        if std::mem::replace(&mut self.active, true) {
             return;
         }
+        // A new connection holds none of this client's leases; a lost one
+        // calls off the renewal.
         let me = self.me.clone();
-        self.renew = controller::every(engine, None, REPORT_MS, move |engine| {
+        self.mc.on_ready_changed(Box::new(move |engine, _| {
             me.run(engine, |c, engine| c.report(engine));
-        });
-        // A new connection holds none of this client's leases.
-        let me = self.me.clone();
-        self.mc.on_ready_changed(Box::new(move |engine, ready| {
-            if ready {
-                me.run(engine, |c, engine| c.report(engine));
-            }
         }));
         let me = self.me.clone();
         workspace::on_place_changed(engine, move |engine| {
@@ -68,10 +70,21 @@ impl Controller for ClientActivity {
 }
 
 impl ClientActivity {
+    /// Tells the MC, and renews REPORT_MS from now; with no MC, calls the
+    /// renewal off.
     fn report(&self, engine: &Engine) {
+        schedule::clear_cell(engine, &self.renew);
         if !self.mc.is_ready() {
             return;
         }
+        let me = self.me.clone();
+        let period = Duration::from_millis(REPORT_MS.unsigned_abs().into());
+        self.renew.set(Some(controller::after(
+            engine,
+            "client activity lease",
+            period,
+            move |engine| me.run(engine, |c, engine| c.report(engine)),
+        )));
         let mut environment = self.mc.environment();
         let mut scopes = vec![json!({ "type": "provider-status" })];
         if let Some(place) = workspace::place(engine) {

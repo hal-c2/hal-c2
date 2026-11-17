@@ -91,8 +91,10 @@ impl Clock for SystemClock {
         Utc::now().timestamp_millis()
     }
     fn after(&self, engine: &Engine, ms: i64, run: Rc<dyn Fn(&Engine)>) {
-        let at = engine.now() + Duration::from_millis(ms.max(0) as u64);
-        engine.call_at(at, move |engine| run(engine));
+        let delay = Duration::from_millis(ms.max(0) as u64);
+        crate::schedule::after(engine, "desktop update check", None, delay, move |engine| {
+            run(engine);
+        });
     }
 }
 

@@ -31,7 +31,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
-use ljos::prelude::{Application, ApplicationState, Engine, TimerId, Value};
+use ljos::prelude::{Application, ApplicationState, Engine, Value};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -138,7 +138,7 @@ pub struct SnapShot {
     /// The thread or draft the window last showed.
     last_target: String,
     /// What the backend asked to be called back about, by its token.
-    timers: HashMap<u64, TimerId>,
+    timers: HashMap<u64, crate::schedule::Schedule>,
     max_image_bytes: u64,
     published: Json,
     config_tools: Option<Tools>,
@@ -334,7 +334,7 @@ impl SnapShot {
         let events = self.backend.release();
         self.apply(engine, events);
         for (_, timer) in self.timers.drain() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         self.backend = backend;
         self.bound.clear();
@@ -1528,7 +1528,7 @@ impl SnapShot {
                 Event::After { token, ms } => self.start_timer(engine, token, ms),
                 Event::Cancel(token) => {
                     if let Some(timer) = self.timers.remove(&token) {
-                        engine.cancel_call(timer);
+                        timer.cancel(engine);
                     }
                 }
             }
@@ -1537,11 +1537,11 @@ impl SnapShot {
 
     fn start_timer(&mut self, engine: &Engine, token: u64, ms: u64) {
         if let Some(old) = self.timers.remove(&token) {
-            engine.cancel_call(old);
+            old.cancel(engine);
         }
         let me = self.me.clone();
         let at = engine.now() + Duration::from_millis(ms);
-        let timer = engine.call_at(at, move |engine| {
+        let timer = crate::schedule::at(engine, "snapshot timer", None, at, move |engine| {
             me.run(engine, move |c, engine| {
                 c.timers.remove(&token);
                 let events = c.backend.timeout(token);

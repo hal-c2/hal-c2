@@ -17,7 +17,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller::{self, MAIN, NEW_WINDOW};
 use hal_c2_shell::json::Json;
-use ljos::prelude::ObjectId;
+use hal_c2_shell::schedule::Schedule;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -75,7 +75,7 @@ struct Open {
     bridge: Bridge,
     section: Option<&'static str>,
     narrow: Option<bool>,
-    timer: ObjectId,
+    timer: Schedule,
     ticks: Rc<Cell<u32>>,
     /// How many times the model says its timer ran.
     expected_ticks: u32,
@@ -102,7 +102,7 @@ struct World {
     dir: PathBuf,
     open: Vec<Open>,
     /// Closed windows: their bridge and their timer, gone for good.
-    closed: Vec<(Bridge, ObjectId)>,
+    closed: Vec<(Bridge, Schedule)>,
     shared: Json,
     /// Windows set aside: still saved, with their route.
     aside: Vec<(String, Option<&'static str>)>,
@@ -158,9 +158,14 @@ impl World {
         let ticks = Rc::new(Cell::new(0));
         let t = ticks.clone();
         let timer = controller::in_window(engine, id, || {
-            controller::every(engine, None, TICK_MS as i32, move |_| t.set(t.get() + 1))
+            controller::every(
+                engine,
+                "test tick",
+                None,
+                std::time::Duration::from_millis(TICK_MS),
+                move |_| t.set(t.get() + 1),
+            )
         })
-        .flatten()
         .expect("a timer");
         Open {
             id: id.to_owned(),
@@ -382,11 +387,11 @@ impl World {
             }
             assert_eq!(published("backendError"), self.shared, "{}", open.id);
             assert_eq!(open.ticks.get(), open.expected_ticks, "{}", open.id);
-            assert!(engine.is_alive(open.timer));
+            assert!(open.timer.is_pending());
         }
         for (bridge, timer) in &self.closed {
             assert!(!bridge.is_open(engine));
-            assert!(!engine.is_alive(*timer), "a closed window's timer is gone");
+            assert!(!timer.is_pending(), "a closed window's timer is gone");
             if *bridge != Bridge::main(engine) {
                 assert!(
                     !engine.is_alive(bridge.object()),

@@ -5,7 +5,7 @@
 //! started. No state of its own: the warning is a toast.
 
 use chrono::{Local, TimeZone};
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::sidebar::now_ms;
@@ -145,7 +145,7 @@ pub fn started_text(started_at_ms: i64) -> String {
 pub struct SlowRequests {
     me: Me<SlowRequests>,
     requests: Waiting,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     toast: String,
     shown: bool,
 }
@@ -205,14 +205,17 @@ impl SlowRequests {
 
     fn schedule(&mut self, engine: &Engine) {
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let Some(deadline) = self.requests.next_deadline() else {
             return;
         };
         let wait = (deadline - now_ms(engine)).clamp(0, 120_000) as u64;
         let me = self.me.clone();
-        self.timer = Some(engine.call_at(
+        self.timer = Some(crate::schedule::at(
+            engine,
+            "slow request",
+            None,
             engine.now() + std::time::Duration::from_millis(wait),
             move |engine| {
                 me.run(engine, |c, engine| {

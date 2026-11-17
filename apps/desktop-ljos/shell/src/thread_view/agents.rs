@@ -34,6 +34,7 @@ use super::time::{self, Clock};
 use super::timeline::Timeline;
 use super::timeline_model::TimelineModel;
 use crate::json::Json;
+use crate::schedule::{self, Held};
 
 pub const ROLES: &[&str] = &[
     "agentId",
@@ -628,8 +629,11 @@ struct Inner {
     /// The TimelineModel followed, and its connections.
     timeline: Cell<Option<ObjectId>>,
     connections: RefCell<Vec<ConnectionId>>,
-    tick: Cell<Option<ObjectId>>,
-    day: Cell<Option<ObjectId>>,
+    /// The elapsed times' second, while a running row shows: they read
+    /// in seconds and nothing else says when they move.
+    tick: Held,
+    /// Midnight, when yesterday's end times read otherwise.
+    day: Held,
 }
 
 impl std::fmt::Debug for Inner {
@@ -676,8 +680,8 @@ impl AgentsModel {
                 rows: rows.clone(),
                 timeline: Cell::new(None),
                 connections: RefCell::default(),
-                tick: Cell::new(None),
-                day: Cell::new(None),
+                tick: Held::default(),
+                day: Held::default(),
             }),
         };
         let obj = engine.create_native(model, owner)?;
@@ -807,35 +811,6 @@ fn warn(engine: &Engine, e: &EngineError) {
     );
 }
 
-/// A timer owned by the model: `then` after `interval` ms, again and again
-/// when `repeat`.
-fn timer(
-    engine: &Engine,
-    obj: ObjectId,
-    interval: i32,
-    repeat: bool,
-    then: fn(&Engine, ObjectId),
-) -> Option<ObjectId> {
-    let native = ljos::prelude::Timer {
-        interval,
-        repeat,
-        running: true,
-        ..ljos::prelude::Timer::default()
-    };
-    let made = engine.create_native(native, Some(obj)).and_then(|timer| {
-        engine.connect_by_name(timer, "triggered", move |engine, _| then(engine, obj))?;
-        engine.complete(timer)?;
-        Ok(timer)
-    });
-    made.map_err(|e| warn(engine, &e)).ok()
-}
-
-/// Stops a timer at once (its destruction waits for the deferred deletes).
-fn stop(engine: &Engine, timer: ObjectId) {
-    let _ = engine.write_by_name(timer, "running", Value::Bool(false));
-    engine.destroy(timer);
-}
-
 fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, note: Note) {
     match note {
         Note::Count => {
@@ -851,24 +826,25 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, note: Note) {
             }
         }
         Note::Ticking(on) => {
-            if let Some(old) = inner.tick.take() {
-                stop(engine, old);
-            }
+            inner.tick.cancel(engine);
             if on {
-                inner
-                    .tick
-                    .set(timer(engine, obj, TICK_MS, true, AgentsModel::tick));
+                let period = std::time::Duration::from_millis(TICK_MS.unsigned_abs().into());
+                let tick =
+                    schedule::every(engine, "agents elapsed", Some(obj), period, move |engine| {
+                        AgentsModel::tick(engine, obj);
+                    });
+                inner.tick.hold(engine, tick);
             }
         }
         Note::Day(wait) => {
-            if let Some(old) = inner.day.take() {
-                stop(engine, old);
-            }
+            inner.day.cancel(engine);
             if let Some(wait) = wait {
-                let wait = i32::try_from(wait).unwrap_or(i32::MAX);
-                inner
-                    .day
-                    .set(timer(engine, obj, wait, false, AgentsModel::day_turned));
+                let wait = std::time::Duration::from_millis(wait.max(0).unsigned_abs());
+                let day =
+                    schedule::after(engine, "agents midnight", Some(obj), wait, move |engine| {
+                        AgentsModel::day_turned(engine, obj);
+                    });
+                inner.day.hold(engine, day);
             }
         }
     }
