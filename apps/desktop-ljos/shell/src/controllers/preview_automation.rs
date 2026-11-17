@@ -7,11 +7,9 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
-use ljos::input::{
-    self, Input, InputOrigin, InputWatch, KeyEvent, KeyKind, Modifiers, MouseButtons, PointerEvent,
-    PointerKind,
-};
+use ljos::input::{self, Input, InputWatch, KeyEvent, Modifiers, MouseButtons, PointerEvent};
 use ljos::item::kurbo;
 use ljos::prelude::{
     Application, Atom, ConnectionId, Cx, Engine, ObjectId, QmlObject, QmlValue, Value, qml_impl,
@@ -29,8 +27,8 @@ use crate::mc::Mc;
 use crate::page_input;
 use crate::platform_window;
 use crate::preview_automation::{
-    AutomationPage, GrabDone, MAX_ENTRIES, PreviewAutomationHost, Reveal, ScriptDone,
-    machine_client_id,
+    AutomationPage, GrabDone, MAX_ENTRIES, PRESS_CONFIRM_MS, PreviewAutomationHost, Reveal,
+    ScriptDone, machine_client_id,
 };
 use crate::store;
 use crate::thread_view::previews::ThreadPreviews;
@@ -347,7 +345,7 @@ impl BrowserAutomationPage {
         // reach the window (desktop-qt's eventFilter).
         let (host_, tab) = (host.clone(), self.tab.clone());
         let watch = input::watch_input(engine, view, move |engine, seen| {
-            if seen.origin != InputOrigin::User || !takes_over(seen.input) {
+            if !page_input::takes_over(seen.origin, seen.input) {
                 return;
             }
             // After the delivery the watcher runs in, as a key filter's
@@ -393,7 +391,8 @@ impl BrowserAutomationPage {
 
     /// Whether the page's view has the keyboard.
     fn has_keys(&self, engine: &Engine) -> bool {
-        matches!(self.view_read(engine, "activeFocus"), Value::Bool(true))
+        self.view(engine)
+            .is_some_and(|view| page_input::has_keys(engine, view))
     }
 
     /// Posts `events` to the view as the window system's would come.
@@ -432,17 +431,6 @@ impl BrowserAutomationPage {
             };
             done(engine, answer);
         });
-    }
-}
-
-/// Whether the user's `input` in a page takes it over from the agent: a
-/// press, a turn of the wheel, a key (desktop-qt's eventFilter). Hovering
-/// does not.
-fn takes_over(input: &Input) -> bool {
-    match input {
-        Input::Pointer(p) => p.kind == PointerKind::Press,
-        Input::Wheel(_) => true,
-        Input::Key(k) => k.kind == KeyKind::Press,
     }
 }
 
@@ -528,6 +516,11 @@ impl AutomationPage for BrowserAutomationPage {
         if !self.on_screen(engine) || !self.has_keys(engine) {
             return false;
         }
+        // desktop-qt sends its keys to the window at once, where they find
+        // the focus the check above just saw; posted ones arrive with the
+        // next frame, by when the focus may be the app's own field.
+        let confirm = Duration::from_millis(PRESS_CONFIRM_MS.max(0) as u64);
+        page_input::guard_keys(engine, view, key, confirm);
         self.post(
             engine,
             view,

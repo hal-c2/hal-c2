@@ -1,13 +1,32 @@
 //! Where a press in the window lands, for input the app gives one of its
 //! items as the user's would come (desktop-qt's BrowserAutomationPage
 //! pressTarget): the agent clicks a page only where a user's click would
-//! reach it, never the app's menu, dialog or pane over it.
+//! reach it, never the app's menu, dialog or pane over it. Its keys reach
+//! the item only while it has the keyboard, and the user's own hand in the
+//! item takes it back.
 
+use std::cell::Cell;
+use std::rc::Rc;
+use std::time::Duration;
+
+use ljos::input::{Input, InputOrigin, KeyEvent, KeyKind, PointerKind};
 use ljos::item::{self, kurbo};
+use ljos::keys::{self, KeyFilterId};
 use ljos::prelude::{Engine, ObjectId, Value};
 
-/// Types whose items stop a press as the window delivers it.
-const TAKE_PRESSES: [&str; 5] = ["MouseArea", "Flickable", "Control", "TextInput", "TextEdit"];
+/// Types whose items stop a press as the window delivers it. Beside Qt
+/// Quick's own, the native items that register for the pointer with
+/// `item::register_pointer_item`: Ljós's controls (`Control`) and the
+/// shell's `Terminal` (terminal/mod.rs). A native item the shell registers
+/// for the pointer is named here too.
+const TAKE_PRESSES: [&str; 6] = [
+    "MouseArea",
+    "Flickable",
+    "Control",
+    "TextInput",
+    "TextEdit",
+    "Terminal",
+];
 /// Handlers that make their item stop a press.
 const PRESS_HANDLERS: [&str; 5] = [
     "TapHandler",
@@ -37,6 +56,65 @@ pub fn on_page(engine: &Engine, target: ObjectId, at: kurbo::Point) -> bool {
         return false;
     }
     press_target(engine, root(engine, target), scene, target) == Some(target)
+}
+
+/// Whether `item` has the keyboard.
+pub fn has_keys(engine: &Engine, item: ObjectId) -> bool {
+    engine.is_alive(item) && matches!(engine.read_by_name(item, "activeFocus"), Value::Bool(true))
+}
+
+/// Keeps the press and release of `key` the app is about to post for `item`
+/// from whatever has the keyboard when they arrive, unless it is still
+/// `item`. Posted input arrives with the next frame, by when the keyboard
+/// may have gone elsewhere (the app's own field); it comes before the
+/// window system's in that frame, so the first press and release of `key`
+/// the window then gets are the posted ones. A key kept never reaches the
+/// item. Gone after `within`, so keys that never arrive (the window closed
+/// first) leave nothing behind.
+pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) {
+    let id: Rc<Cell<Option<KeyFilterId>>> = Rc::default();
+    let pressed: Rc<Cell<Option<bool>>> = Rc::default();
+    let filter = {
+        let (id, pressed) = (id.clone(), pressed.clone());
+        move |engine: &Engine, _root: ObjectId, event: &KeyEvent| {
+            if event.key != key {
+                return false;
+            }
+            match (event.kind, pressed.get()) {
+                (KeyKind::Press, None) => {
+                    let keep = !has_keys(engine, item);
+                    pressed.set(Some(keep));
+                    keep
+                }
+                // The release goes where its press went.
+                (KeyKind::Release, Some(keep)) => {
+                    if let Some(id) = id.take() {
+                        keys::remove_key_filter(engine, id);
+                    }
+                    keep
+                }
+                _ => false,
+            }
+        }
+    };
+    id.set(Some(keys::add_key_filter(engine, filter)));
+    engine.call_at(engine.now() + within, move |engine| {
+        if let Some(id) = id.take() {
+            keys::remove_key_filter(engine, id);
+        }
+    });
+}
+
+/// Whether input an item got takes it over from the app driving it: the
+/// user's own press, turn of the wheel or key (desktop-qt's eventFilter).
+/// Hovering does not, and nor does input posted or driven.
+pub fn takes_over(origin: InputOrigin, input: &Input) -> bool {
+    origin == InputOrigin::User
+        && match input {
+            Input::Pointer(p) => p.kind == PointerKind::Press,
+            Input::Wheel(_) => true,
+            Input::Key(k) => k.kind == KeyKind::Press,
+        }
 }
 
 /// The window's root item `item` lies in.

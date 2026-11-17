@@ -1,20 +1,26 @@
 //! An agent's click reaches a page only where a user's would: what the app
 //! puts over the page, and takes the press, keeps it (desktop-qt's
-//! BrowserAutomationPage::onPage).
+//! BrowserAutomationPage::onPage). Its keys reach the page only while the
+//! page has the keyboard, and the user's own hand takes the page back.
 
 mod common;
 
 use std::rc::Rc;
+use std::time::Duration;
 
-use common::{Scene, call, shell};
+use common::{Scene, call, shell, text};
 use hal_c2_shell::mc::Disconnected;
-use hal_c2_shell::page_input::on_page;
+use hal_c2_shell::page_input::{guard_keys, has_keys, on_page, takes_over};
+use ljos::input::{
+    Input, InputOrigin, KeyEvent, MouseButtons, PointerEvent, WheelEvent, post_input,
+};
 use ljos::item::kurbo::Point;
 use ljos::prelude::{Engine, ObjectId, Value};
 
 const MAIN: &str = r#"
 import QtQuick
 import QtQuick.Controls
+import Ghostty
 Item {
     width: 400; height: 300
     property alias page: page
@@ -35,6 +41,8 @@ Item {
         clip: true
         Button { y: 40; width: 100; height: 40 }
     }
+    // A native item that takes the pointer itself, over the bottom middle.
+    Terminal { x: 150; y: 220; width: 100; height: 60 }
     // A handler over the bottom right.
     Item {
         x: 300; y: 200; width: 100; height: 100
@@ -89,6 +97,10 @@ fn what_takes_a_press_over_the_page_keeps_it() {
         "a tap handler"
     );
     assert!(
+        !on_page(&engine, page, Point::new(200.0, 250.0)),
+        "a native item registered for the pointer"
+    );
+    assert!(
         !on_page(&engine, page, Point::new(500.0, 50.0)),
         "outside the page"
     );
@@ -130,5 +142,116 @@ fn an_open_popup_keeps_the_click_where_it_lies() {
     assert!(
         on_page(&engine, page, Point::new(200.0, 50.0)),
         "away from it"
+    );
+}
+
+const KEYS: &str = r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    property alias view: view
+    property alias field: field
+    TextInput { id: view; width: 100; height: 100 }
+    // The app's own field beside it.
+    TextInput { id: field; x: 100; width: 100; height: 100 }
+}
+"#;
+
+const KEY_A: i32 = 0x41;
+
+/// The view with the keyboard, and the app's field beside it.
+fn keys() -> (Engine, ObjectId, ObjectId, Scene) {
+    let (engine, root) = shell(KEYS, Rc::new(Disconnected::default()));
+    let mut scene = Scene::new(&engine, root, (200.0, 100.0));
+    let (view, field) = (
+        object(&engine, root, "view"),
+        object(&engine, root, "field"),
+    );
+    call(&engine, view, "forceActiveFocus", &[]);
+    scene.settle();
+    assert!(has_keys(&engine, view), "the view has the keyboard");
+    (engine, view, field, scene)
+}
+
+/// Posts a press and release of A for `view`, as the agent's would come.
+fn post_a(engine: &Engine, view: ObjectId) {
+    for key in [KeyEvent::press(KEY_A), KeyEvent::release(KEY_A)] {
+        post_input(engine, view, Input::Key(key.with_text("a"))).unwrap();
+    }
+}
+
+fn user_types_a(scene: &mut Scene) {
+    scene.window.key(&KeyEvent::press(KEY_A).with_text("a"));
+    scene.window.key(&KeyEvent::release(KEY_A).with_text("a"));
+}
+
+#[test]
+fn a_guarded_key_reaches_the_view_that_kept_the_keyboard() {
+    let (engine, view, field, mut scene) = keys();
+    guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    post_a(&engine, view);
+    scene.settle();
+    assert_eq!(text(&engine, view, "text"), "a");
+    assert_eq!(text(&engine, field, "text"), "");
+}
+
+/// The page saw its view had the keyboard, but the app's field took it
+/// before the posted keys came: they would have typed into the field.
+#[test]
+fn a_guarded_key_is_kept_from_what_took_the_keyboard_since() {
+    let (engine, view, field, mut scene) = keys();
+    guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    post_a(&engine, view);
+    call(&engine, field, "forceActiveFocus", &[]);
+    scene.settle();
+    assert_eq!(text(&engine, field, "text"), "", "the agent's key");
+    assert_eq!(text(&engine, view, "text"), "");
+    // The guard went with the agent's release: the user's own keys type.
+    user_types_a(&mut scene);
+    assert_eq!(text(&engine, field, "text"), "a", "the user's key");
+}
+
+#[test]
+fn a_guard_whose_keys_never_came_lets_the_users_through() {
+    let (engine, view, field, mut scene) = keys();
+    guard_keys(&engine, view, KEY_A, Duration::from_millis(100));
+    scene.window.advance(200).unwrap();
+    call(&engine, field, "forceActiveFocus", &[]);
+    scene.settle();
+    user_types_a(&mut scene);
+    assert_eq!(text(&engine, field, "text"), "a");
+}
+
+#[test]
+fn only_the_users_press_wheel_or_key_takes_a_page_over() {
+    let (engine, _root) = shell(KEYS, Rc::new(Disconnected::default()));
+    let t = engine.now();
+    let press = Input::Pointer(PointerEvent::press(5.0, 5.0, t));
+    let user = InputOrigin::User;
+    assert!(takes_over(user, &press), "a press");
+    assert!(
+        takes_over(
+            user,
+            &Input::Wheel(WheelEvent::notches(5.0, 5.0, 0.0, 1.0, t))
+        ),
+        "the wheel"
+    );
+    assert!(
+        takes_over(user, &Input::Key(KeyEvent::press(KEY_A))),
+        "a key"
+    );
+    let hover = Input::Pointer(PointerEvent::moved(5.0, 5.0, MouseButtons::empty(), t));
+    assert!(!takes_over(user, &hover), "hovering");
+    assert!(
+        !takes_over(user, &Input::Pointer(PointerEvent::release(5.0, 5.0, t))),
+        "a release"
+    );
+    assert!(
+        !takes_over(user, &Input::Key(KeyEvent::release(KEY_A))),
+        "a key's release"
+    );
+    assert!(
+        !takes_over(InputOrigin::Synthetic, &press),
+        "the agent's own press"
     );
 }
