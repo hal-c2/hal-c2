@@ -71,8 +71,8 @@ use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::session::Session;
 use hal_c2_shell::storage::{Profile, StoragePaths};
+use hal_c2_shell::streams::Pump;
 use hal_c2_shell::{Launch, desktop_host, single_instance, store};
-use ljos::CoalesceKey;
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
@@ -606,15 +606,18 @@ fn render_to(
     // TODO(#1572): a picture is of the MC named, not one the
     // desktop host finds; without one it is the shell with none.
     launch.hosted = false;
+    // The side streams, drained here between waits instead of by a
+    // window's frames.
+    let (woken, wakes) = mpsc::channel();
+    let mut pump = Pump::new(move || {
+        let _ = woken.send(());
+    });
+    let wired = hal_c2_shell::streams::wire(&engine, &mut pump);
     let connection = match (&launch.mc_origin, &capture.failure) {
         (Some(origin), None) => {
-            let (woken, wakes) = mpsc::channel();
-            let woken_by_cache = woken.clone();
-            let connection = Rc::new(Connection::spawn(move || {
-                let _ = woken.send(());
-            }));
+            let connection = Connection::spawn(&wired.mc);
             match connection.open(origin, &options.mc_token) {
-                Ok(()) => Some((connection, wakes, woken_by_cache)),
+                Ok(()) => Some(connection),
                 Err(e) if capture.play_after_snapshot => {
                     eprintln!("hal-c2-ljos: {e}");
                     capture = Capture::scripted(options, Some(e));
@@ -635,11 +638,9 @@ fn render_to(
         }
     };
     let root = match connection {
-        Some((connection, wakes, woken_by_cache)) => {
+        Some(connection) => {
             hal_c2_shell::start(&engine, &launch, connection.clone());
-            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
-                let _ = woken_by_cache.send(());
-            });
+            hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
             hal_c2_shell::theme::set_application_font(&engine);
             let root = hal_c2_shell::runtime::open(&engine, false)?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
@@ -676,10 +677,7 @@ fn render_to(
                     hal_c2_shell::controllers::threads::drain(&engine);
                     break;
                 }
-                engine.turn(None, || {
-                    connection.deliver(&engine);
-                    hal_c2_shell::controllers::threads::deliver(&engine);
-                });
+                pump.pump(&engine);
             }
             root
         }
@@ -724,8 +722,6 @@ fn render_to(
 
 /// What other threads tell the window's.
 enum Message {
-    /// The I/O thread has events for [`Connection::deliver`].
-    Wake,
     /// A system notification for this thread was clicked.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     Activated(String),
@@ -779,57 +775,20 @@ fn run(app: App, options: Options) -> Result<(), String> {
         report_warnings(&engine);
         // A turn that runs long says which of these it ran.
         setup.name_messages(|message| match message {
-            Message::Wake => "Wake",
             Message::Activated(_) => "Activated",
             Message::Host(_) => "Host",
             Message::Folders(_) => "Folders",
             Message::Quit => "Quit",
         });
-        // One wake-up however much waits: the events themselves queue
-        // beside the inbox (see mc.rs, folders/watch.rs).
-        let folders_handle = handle.clone();
-        hal_c2_shell::folders::set_wake(&engine, move || {
-            let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let devices_handle = handle.clone();
-        hal_c2_shell::device::set_wake(&engine, move || {
-            let _ = devices_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let plugins_handle = handle.clone();
-        hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
-            let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let transcriber_handle = handle.clone();
-        hal_c2_shell::local_transcriber::set_wake(&engine, move || {
-            let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let theme_handle = handle.clone();
-        hal_c2_shell::theme::set_wake(&engine, move || {
-            let _ = theme_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let runtime_handle = handle.clone();
-        hal_c2_shell::runtime::set_wake(&engine, move || {
-            let _ = runtime_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let update_handle = handle.clone();
-        hal_c2_shell::controllers::desktop_update::set_wake(&engine, move || {
-            let _ = update_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let settings_handle = handle.clone();
-        hal_c2_shell::controllers::settings::set_wake(&engine, move || {
-            let _ = settings_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
-        let clock_handle = handle.clone();
-        hal_c2_shell::clock::set_wake(&engine, move || {
-            let _ = clock_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
+        // What the shell's own threads hand this one: a bounded stream
+        // each, which the frames drain under their budget, the Observer
+        // lists by name, and which wakes the window on its own.
+        let wired = hal_c2_shell::streams::wire(&engine, setup);
+        hal_c2_shell::clock::set_wake(&engine, wired.clock.waker());
         // A connection even without an MC to open it at: the welcome
         // wizard or Connections settings may pair with one later
         // (hal_c2_shell::open).
-        let wake = handle.clone();
-        let connection = Rc::new(Connection::spawn(move || {
-            let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
-        }));
+        let connection = Connection::spawn(&wired.mc);
         if let Some(origin) = &options.launch.mc_origin {
             connection.open(origin, &options.mc_token)?;
         }
@@ -843,20 +802,6 @@ fn run(app: App, options: Options) -> Result<(), String> {
             eprintln!("[shell] later launches cannot reach this window");
         }
         setup.on_message(move |engine: &Engine, message| match message {
-            Message::Wake => {
-                connection.deliver(engine);
-                hal_c2_shell::folders::deliver(engine);
-                hal_c2_shell::device::deliver(engine);
-                hal_c2_shell::controllers::plugin::deliver(engine);
-                hal_c2_shell::local_transcriber::deliver(engine);
-                hal_c2_shell::theme::deliver(engine);
-                hal_c2_shell::runtime::deliver(engine);
-                hal_c2_shell::controllers::threads::deliver(engine);
-                hal_c2_shell::controllers::snap_shot::deliver(engine);
-                hal_c2_shell::controllers::desktop_update::deliver(engine);
-                hal_c2_shell::controllers::settings::deliver(engine);
-                hal_c2_shell::clock::deliver(engine);
-            }
             Message::Activated(key) => {
                 controller::with::<AlertController, _>(engine, |alerts, engine| {
                     alerts.open_thread(engine, &key)
@@ -919,17 +864,13 @@ fn run(app: App, options: Options) -> Result<(), String> {
             onboarding.set_pairing_client(pairing_client())
         });
         // The client cache answers a thread's copy on its own thread.
-        let threads_handle = handle.clone();
-        hal_c2_shell::controllers::threads::set_wake(&engine, move || {
-            let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-        });
+        hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
         // Snapshots capture through the desktop session's portals; what
         // they learn on their own threads wakes the window's.
-        let snap_shot_handle = handle.clone();
-        let snap_shot =
-            hal_c2_shell::snap_shot::system(options.launch.cache_dir.clone(), move || {
-                let _ = snap_shot_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
+        let snap_shot = hal_c2_shell::snap_shot::system(
+            options.launch.cache_dir.clone(),
+            wired.snap_shot.waker(),
+        );
         controller::with::<hal_c2_shell::controllers::snap_shot::SnapShot, _>(&engine, |c, e| {
             c.set_backend(e, snap_shot)
         });

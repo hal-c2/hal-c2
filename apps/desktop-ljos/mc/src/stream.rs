@@ -88,8 +88,10 @@ impl Stream {
 }
 
 /// Opens `request` on a thread of its own: a websocket when `socket`, else a
-/// GET. The sink runs on that thread, so it must be cheap and never block:
-/// queue the event and wake the owner.
+/// GET. The sink runs on that thread between reads: it queues the event for
+/// the owner, and may wait while the owner's queue is full, which holds the
+/// stream's socket instead of piling its data up. What the owner sends
+/// ([`Stream::send_text`]) queues without bound: the UI thread never waits.
 pub fn open(
     request: AuthorizedRequest,
     socket: bool,

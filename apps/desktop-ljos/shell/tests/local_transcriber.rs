@@ -1,14 +1,15 @@
 //! `LocalTranscriber` as trusted QML uses it: a real helper (a shell script
 //! written under the target's temp dir) speaking the line protocol, driven
 //! through `start`, `finishRecording` and `cancel`. The helper's output
-//! arrives on threads; a test waits on the waker, then delivers, and never
-//! sleeps. The state machine's orders of events are src/local_transcriber's
+//! arrives on threads; a test waits on its side stream's wake, then drains
+//! it, and never sleeps. The state machine's orders of events are src/local_transcriber's
 //! property test.
 
 #![cfg(unix)]
 
 mod common;
 
+use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -16,8 +17,9 @@ use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
 use common::{call, shell, text};
-use hal_c2_shell::local_transcriber::{Effect, Machine, deliver, set_wake};
+use hal_c2_shell::local_transcriber::{self, Effect, Machine};
 use hal_c2_shell::mc::Disconnected;
+use hal_c2_shell::streams::Pump;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{Engine, ObjectId, Value};
 
@@ -53,6 +55,7 @@ struct Fixture {
     engine: Engine,
     root: ObjectId,
     woken: mpsc::Receiver<()>,
+    streams: RefCell<Pump>,
     dir: PathBuf,
 }
 
@@ -61,9 +64,10 @@ impl Fixture {
         let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
         let (wake, woken) = mpsc::channel();
         let wake = Mutex::new(wake);
-        set_wake(&engine, move || {
+        let mut streams = Pump::new(move || {
             let _ = wake.lock().unwrap().send(());
         });
+        local_transcriber::wire(&engine, &mut streams);
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
             .join("local-transcriber")
             .join(test);
@@ -73,6 +77,7 @@ impl Fixture {
             engine,
             root,
             woken,
+            streams: RefCell::new(streams),
             dir,
         }
     }
@@ -112,7 +117,7 @@ impl Fixture {
                         self.get("error")
                     )
                 });
-            deliver(&self.engine);
+            self.streams.borrow_mut().pump(&self.engine);
         }
     }
 }

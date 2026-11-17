@@ -1,7 +1,7 @@
 //! `LocalFolderModel` as FolderExplorer uses it: a root's folders in a
 //! `TreeView`, and the guarded changes to them. The folders are real, under
 //! a temporary directory; a read is waited for by draining the platform
-//! inbox, a change made outside by the watcher's waker.
+//! inbox, a change made outside by the watcher's side stream.
 
 mod common;
 
@@ -11,8 +11,9 @@ use std::rc::Rc;
 use std::sync::mpsc;
 
 use common::{call, shell, text};
-use hal_c2_shell::folders::{deliver, set_trash, set_wake};
+use hal_c2_shell::folders::{self, set_trash};
 use hal_c2_shell::mc::Disconnected;
+use hal_c2_shell::streams::Pump;
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
 use tempfile::TempDir;
 
@@ -527,21 +528,24 @@ fn trash_needs_the_exact_path_and_keeps_the_folder_when_it_fails() {
 #[test]
 fn what_changes_outside_is_shown_once_the_watcher_says_so() {
     let f = Fixture::new();
+    let (tx, rx) = mpsc::channel();
+    let mut streams = Pump::new(move || {
+        let _ = tx.send(());
+    });
+    // After the model was made: it watches from the first folder it reads.
+    folders::wire(&f.engine, &mut streams);
     f.mkdir("a");
     f.browse();
     f.toggle(0);
     // An empty folder opens.
     assert_eq!(f.rows(), "a/-");
-    let (tx, rx) = mpsc::channel();
-    set_wake(&f.engine, move || {
-        let _ = tx.send(());
-    });
     fs::create_dir(f.path("a/made-elsewhere")).unwrap();
-    // The OS tells the waker; the Engine thread then delivers. A wake can come
-    // before the change is readable, so each one is delivered until it shows.
+    // The OS tells the stream; the Engine thread then drains it. A notice
+    // can come before the change is readable, so each one is drained until
+    // it shows.
     while f.rows() != "a/-|  made-elsewhere/+" {
         rx.recv().expect("the watcher saw the change");
-        deliver(&f.engine);
+        streams.pump(&f.engine);
         f.settle();
     }
 }
