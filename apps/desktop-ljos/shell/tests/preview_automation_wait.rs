@@ -262,6 +262,20 @@ fn the_deadline_looks_in_place_of_a_pending_relook() {
     assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
 }
 
+/// A look that answers after later backstops have passed is followed at
+/// the next backstop still to come, not by looks for the ones it missed.
+#[test]
+fn a_slow_look_skips_the_backstops_it_ran_past() {
+    let mut sut = Sut::new();
+    sut.page.answers_after.set(2 * BACKSTOP + BACKSTOP / 2);
+    sut.wait_for_ready(10_000);
+    sut.advance(3 * BACKSTOP - 1);
+    assert_eq!(sut.looks(), 1, "looked again for a backstop it ran past");
+    sut.advance(1);
+    assert_eq!(sut.looks(), 2, "looked at the next backstop");
+    assert!(sut.answer().is_none());
+}
+
 #[test]
 fn a_condition_that_never_comes_fails_at_its_deadline() {
     let mut sut = Sut::new();

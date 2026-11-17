@@ -195,7 +195,7 @@ fn run(engine: &Engine, slot: &Rc<Slot>, due: Time, fire: Fire) {
 /// Counting from `now` instead would move every later deadline by each
 /// fire's delivery delay, and an elapsed-seconds label would read a second
 /// short within a few seconds.
-fn next_due(due: Time, now: Time, period: Duration) -> Time {
+pub(crate) fn next_due(due: Time, now: Time, period: Duration) -> Time {
     let next = due + period;
     if next > now {
         return next;

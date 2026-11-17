@@ -389,6 +389,9 @@ struct Watch {
     last_look: Cell<Time>,
     /// When the look about to begin was due.
     due_look: Cell<Option<Time>>,
+    /// When the last look really began, however late: a change is looked
+    /// at no sooner than a frame after it.
+    began: Cell<Time>,
     relook: Held,
     /// The look after BACKSTOP_MS with no change heard.
     backstop: Held,
@@ -1330,6 +1333,7 @@ impl PreviewAutomationHost {
             expired: Cell::new(false),
             last_look: Cell::new(engine.now()),
             due_look: Cell::new(None),
+            began: Cell::new(engine.now()),
             relook: Held::default(),
             backstop: Held::default(),
             deadline: Held::default(),
@@ -1380,6 +1384,7 @@ impl PreviewAutomationHost {
         watch.changed.set(false);
         let due = watch.due_look.take().unwrap_or_else(|| engine.now());
         watch.last_look.set(due);
+        watch.began.set(engine.now());
         // One look at a time: a look the deadline starts takes the place
         // of a relook already armed.
         watch.relook.cancel(engine);
@@ -1406,9 +1411,12 @@ impl PreviewAutomationHost {
     }
 
     /// Looks again BACKSTOP_MS after the last look unless the page says it
-    /// changed first: what the page cannot report is still seen.
+    /// changed first: what the page cannot report is still seen. A look
+    /// that ran past later backstops is followed at the next one still to
+    /// come: those it missed are skipped, not looked at in a burst.
     fn backstop(&self, engine: &Engine, watch: &Rc<Watch>) {
-        let at = watch.last_look.get() + Duration::from_millis(BACKSTOP_MS as u64);
+        let period = Duration::from_millis(BACKSTOP_MS as u64);
+        let at = schedule::next_due(watch.last_look.get(), engine.now(), period);
         let (host, again) = (self.clone(), watch.clone());
         watch.backstop.hold(
             engine,
@@ -1428,7 +1436,7 @@ impl PreviewAutomationHost {
         if watch.relook.is_pending() {
             return;
         }
-        let at = watch.last_look.get() + Duration::from_millis(RELOOK_MS as u64);
+        let at = watch.began.get() + Duration::from_millis(RELOOK_MS as u64);
         if at <= engine.now() {
             return self.look(engine, watch);
         }
