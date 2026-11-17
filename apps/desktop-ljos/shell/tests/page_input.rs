@@ -188,11 +188,13 @@ fn user_types_a(scene: &mut Scene) {
 #[test]
 fn a_guarded_key_reaches_the_view_that_kept_the_keyboard() {
     let (engine, view, field, mut scene) = keys();
-    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    let guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
     post_a(&engine, view);
+    assert_eq!(guard.reached(), None, "not yet arrived");
     scene.settle();
     assert_eq!(text(&engine, view, "text"), "a");
     assert_eq!(text(&engine, field, "text"), "");
+    assert_eq!(guard.reached(), Some(true));
 }
 
 /// The page saw its view had the keyboard, but the app's field took it
@@ -200,12 +202,13 @@ fn a_guarded_key_reaches_the_view_that_kept_the_keyboard() {
 #[test]
 fn a_guarded_key_is_kept_from_what_took_the_keyboard_since() {
     let (engine, view, field, mut scene) = keys();
-    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    let guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
     post_a(&engine, view);
     call(&engine, field, "forceActiveFocus", &[]);
     scene.settle();
     assert_eq!(text(&engine, field, "text"), "", "the agent's key");
     assert_eq!(text(&engine, view, "text"), "");
+    assert_eq!(guard.reached(), Some(false), "kept from the view");
     // The guard went with the agent's release: the user's own keys type.
     user_types_a(&mut scene);
     assert_eq!(text(&engine, field, "text"), "a", "the user's key");
@@ -214,8 +217,9 @@ fn a_guarded_key_is_kept_from_what_took_the_keyboard_since() {
 #[test]
 fn a_guard_whose_keys_never_came_lets_the_users_through() {
     let (engine, view, field, mut scene) = keys();
-    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_millis(100));
+    let guard = guard_keys(&engine, view, KEY_A, Duration::from_millis(100));
     scene.window.advance(200).unwrap();
+    assert_eq!(guard.reached(), None, "never came");
     call(&engine, field, "forceActiveFocus", &[]);
     scene.settle();
     user_types_a(&mut scene);

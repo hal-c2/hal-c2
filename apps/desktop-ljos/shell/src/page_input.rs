@@ -72,47 +72,57 @@ pub fn has_keys(engine: &Engine, item: ObjectId) -> bool {
 /// item. Gone after `within`, so keys that never arrive (the window closed
 /// first) leave nothing behind; lifted at once when they are not posted.
 pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) -> KeyGuard {
-    let id: Rc<Cell<Option<KeyFilterId>>> = Rc::default();
-    let pressed: Rc<Cell<Option<bool>>> = Rc::default();
+    let guard = KeyGuard::default();
     let filter = {
-        let (id, pressed) = (id.clone(), pressed.clone());
+        let guard = guard.clone();
         move |engine: &Engine, _root: ObjectId, event: &KeyEvent| {
             if event.key != key {
                 return false;
             }
-            match (event.kind, pressed.get()) {
+            match (event.kind, guard.kept.get()) {
                 (KeyKind::Press, None) => {
                     let keep = !has_keys(engine, item);
-                    pressed.set(Some(keep));
+                    guard.kept.set(Some(keep));
                     keep
                 }
                 // The release goes where its press went.
                 (KeyKind::Release, Some(keep)) => {
-                    KeyGuard(id.clone()).lift(engine);
+                    guard.lift(engine);
                     keep
                 }
                 _ => false,
             }
         }
     };
-    id.set(Some(keys::add_key_filter(engine, filter)));
-    let guard = KeyGuard(id);
-    let late = KeyGuard(guard.0.clone());
+    guard.filter.set(Some(keys::add_key_filter(engine, filter)));
+    let late = guard.clone();
     engine.call_at(engine.now() + within, move |engine| late.lift(engine));
     guard
 }
 
 /// The guard [`guard_keys`] put up for keys about to be posted.
+#[derive(Clone, Default)]
 #[must_use = "lift the guard when the keys are not posted"]
-pub struct KeyGuard(Rc<Cell<Option<KeyFilterId>>>);
+pub struct KeyGuard {
+    filter: Rc<Cell<Option<KeyFilterId>>>,
+    /// Whether the press was kept from what had the keyboard, once it came.
+    kept: Rc<Cell<Option<bool>>>,
+}
 
 impl KeyGuard {
     /// Takes the guard down now, for keys that were never posted: up, it
     /// would keep the user's own next press of the key elsewhere.
     pub fn lift(&self, engine: &Engine) {
-        if let Some(id) = self.0.take() {
+        if let Some(id) = self.filter.take() {
             keys::remove_key_filter(engine, id);
         }
+    }
+
+    /// Whether the guarded press reached the item: None until it came (or
+    /// when it never did), false when it was kept from what had the
+    /// keyboard instead.
+    pub fn reached(&self) -> Option<bool> {
+        self.kept.get().map(|kept| !kept)
     }
 }
 

@@ -235,6 +235,11 @@ pub trait AutomationPage {
     fn loads_started(&self, _engine: &Engine) -> u64 {
         0
     }
+    /// When the page's `load`th load (counting from 1) started, while the
+    /// page still remembers.
+    fn load_started_at(&self, _engine: &Engine, _load: u64) -> Option<Time> {
+        None
+    }
     /// Whether a size change is outstanding (the user's pick, say).
     fn resizing(&self, _engine: &Engine) -> bool {
         false
@@ -254,6 +259,12 @@ pub trait AutomationPage {
     /// is off screen, or the keyboard is elsewhere.
     fn key(&self, _engine: &Engine, _key: i32, _modifiers: Modifiers, _text: &str) -> bool {
         false
+    }
+    /// Whether the click or key last given reached the page: None while it
+    /// has not arrived, false when it went elsewhere (a key kept from what
+    /// took the keyboard first).
+    fn input_reached(&self, _engine: &Engine) -> Option<bool> {
+        Some(true)
     }
 }
 
@@ -2459,7 +2470,8 @@ fn clean_path(path: &str) -> String {
 /// new one has nothing to say. A load later than that is not the input's
 /// (the dev server's reload, a meta refresh, a timer's redirect), and the
 /// input counts as unseen. One of those that happens to start in the same
-/// half second still counts as seen.
+/// half second still counts as seen, unless the input never reached the
+/// page.
 fn seen(engine: &Engine, page: Page, op: &'static str, loads: u64) -> Check {
     let posted = engine.now();
     // A load is judged once, when a check first finds it.
@@ -2467,14 +2479,20 @@ fn seen(engine: &Engine, page: Page, op: &'static str, loads: u64) -> Check {
     let input_loaded = Rc::new(Cell::new(false));
     Rc::new(move |engine, done| {
         let started = page.loads_started(engine);
-        if started > judged.get() {
-            judged.set(started);
-            let since = engine.now().saturating_since(posted).as_millis() as i64;
-            if since <= INPUT_LOAD_MS {
+        // Judged by when each load started, not when a check found it: a
+        // check waits on the last one's answer, which a page navigating
+        // away can be slow to give. A page that forgot the start is judged
+        // by now.
+        for load in judged.get() + 1..=started {
+            let at = page.load_started_at(engine, load).unwrap_or(engine.now());
+            if at.saturating_since(posted).as_millis() as i64 <= INPUT_LOAD_MS {
                 input_loaded.set(true);
             }
         }
-        if input_loaded.get() {
+        judged.set(judged.get().max(started));
+        // Only the input's own load: one after input that went elsewhere
+        // is the page's, whatever its timing.
+        if input_loaded.get() && page.input_reached(engine) == Some(true) {
             return done(engine, true);
         }
         page.run_isolated(

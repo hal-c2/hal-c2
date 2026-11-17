@@ -2,7 +2,7 @@
 //! answers by what the page saw: a click the page never saw is done by
 //! script, a key it never saw fails, and a load the input started is the
 //! page seeing it (the document that would say so is gone), but a load
-//! long after it is not.
+//! long after it is not, and nor is one after a key kept from the page.
 
 mod common;
 
@@ -16,7 +16,7 @@ use hal_c2_shell::mc::SubId;
 use hal_c2_shell::preview_automation::{AutomationPage, PreviewAutomationHost, ScriptDone, tag};
 use ljos::App;
 use ljos::input::Modifiers;
-use ljos::prelude::Engine;
+use ljos::prelude::{Engine, Time};
 use ljos::testing::TestWindow;
 use serde_json::{Value as Json, json};
 
@@ -40,6 +40,11 @@ struct Takes {
     /// A load starts this many ms after the input: a link, a form sent
     /// with Enter, or a reload that only happens to come after it.
     loads: Option<u64>,
+    /// The key was kept from the page: what took the keyboard first had it.
+    kept: bool,
+    /// Its runtime answers this many ms after it is asked: a page
+    /// navigating away is slow to.
+    answers_after: u64,
 }
 
 struct Page {
@@ -48,6 +53,7 @@ struct Page {
     ops: RefCell<Vec<String>>,
     given: Cell<bool>,
     loads: Rc<Cell<u64>>,
+    load_starts: Rc<RefCell<Vec<Time>>>,
 }
 
 impl Page {
@@ -57,9 +63,10 @@ impl Page {
         }
         self.given.set(true);
         if let Some(ms) = self.takes.loads {
-            let loads = self.loads.clone();
-            engine.call_at(engine.now() + Duration::from_millis(ms), move |_| {
-                loads.set(loads.get() + 1)
+            let (loads, starts) = (self.loads.clone(), self.load_starts.clone());
+            engine.call_at(engine.now() + Duration::from_millis(ms), move |engine| {
+                loads.set(loads.get() + 1);
+                starts.borrow_mut().push(engine.now());
             });
         }
         true
@@ -84,10 +91,14 @@ impl AutomationPage for Page {
             "clicked" | "key" => Json::Null,
             _ => json!({}),
         };
-        done(
-            engine,
-            Some(json!({"ok": true, "value": value}).to_string()),
-        );
+        let answer = Some(json!({"ok": true, "value": value}).to_string());
+        match self.takes.answers_after {
+            0 => done(engine, answer),
+            ms => {
+                let at = engine.now() + Duration::from_millis(ms);
+                engine.call_at(at, move |engine| done(engine, answer));
+            }
+        }
     }
     fn url(&self, _: &Engine) -> String {
         "http://localhost:5173/".into()
@@ -111,11 +122,18 @@ impl AutomationPage for Page {
     fn loads_started(&self, _: &Engine) -> u64 {
         self.loads.get()
     }
+    fn load_started_at(&self, _: &Engine, load: u64) -> Option<Time> {
+        let at = usize::try_from(load.checked_sub(1)?).ok()?;
+        self.load_starts.borrow().get(at).copied()
+    }
     fn click(&self, engine: &Engine, _: f64, _: f64) -> bool {
         self.give(engine)
     }
     fn key(&self, engine: &Engine, _: i32, _: Modifiers, _: &str) -> bool {
         self.give(engine)
+    }
+    fn input_reached(&self, _: &Engine) -> Option<bool> {
+        self.given.get().then_some(!self.takes.kept)
     }
 }
 
@@ -155,6 +173,7 @@ impl Sut {
             ops: RefCell::default(),
             given: Cell::new(false),
             loads: Rc::default(),
+            load_starts: Rc::default(),
         });
         host.attach(&engine, "thread-1", "tab-1", page.clone());
         Sut {
@@ -217,6 +236,8 @@ fn a_click_the_page_saw_is_done() {
         input: true,
         sees: true,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("click", click(), 2_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -230,6 +251,8 @@ fn a_click_the_page_never_saw_is_done_by_script() {
         input: true,
         sees: false,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("click", click(), 3_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -242,6 +265,8 @@ fn a_click_the_page_cannot_take_is_done_by_script_at_once() {
         input: false,
         sees: false,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("click", click(), 200).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -256,6 +281,8 @@ fn a_click_that_starts_a_load_is_done_once() {
         input: true,
         sees: false,
         loads: Some(100),
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("click", click(), 600).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -268,6 +295,8 @@ fn a_key_the_page_saw_is_done() {
         input: true,
         sees: true,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("press", enter(), 2_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -282,6 +311,8 @@ fn a_key_the_page_never_saw_fails() {
         input: true,
         sees: false,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("press", enter(), 8_000).expect("answered");
     assert_eq!(answer["ok"], json!(false), "{answer}");
@@ -296,6 +327,8 @@ fn a_key_that_starts_a_load_is_done() {
         input: true,
         sees: false,
         loads: Some(0),
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("press", enter(), 600).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -307,6 +340,8 @@ fn a_key_the_page_cannot_take_is_pressed_by_script() {
         input: false,
         sees: false,
         loads: None,
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("press", enter(), 200).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -321,6 +356,8 @@ fn a_load_long_after_a_click_is_not_the_click() {
         input: true,
         sees: false,
         loads: Some(800),
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("click", click(), 3_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -333,8 +370,56 @@ fn a_load_long_after_a_key_is_not_the_key() {
         input: true,
         sees: false,
         loads: Some(800),
+        kept: false,
+        answers_after: 0,
     });
     let answer = sut.ask("press", enter(), 8_000).expect("answered");
     assert_eq!(answer["ok"], json!(false), "{answer}");
     assert_eq!(answer["error"]["_tag"], json!(tag::CONDITION_TIMEOUT));
+}
+
+/// The key was kept from the page, and the page reloads on its own just
+/// after: the reload is not the key's.
+#[test]
+fn a_load_after_a_key_kept_from_the_page_is_not_the_key() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(100),
+        kept: true,
+        answers_after: 0,
+    });
+    let answer = sut.ask("press", enter(), 8_000).expect("answered");
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert_eq!(answer["error"]["_tag"], json!(tag::CONDITION_TIMEOUT));
+}
+
+/// A link whose navigation starts at once, on a page slow to answer while
+/// it navigates away: the load is the click's, though the check that finds
+/// it comes after the half second.
+#[test]
+fn a_load_a_slow_page_reports_late_is_still_the_clicks() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(50),
+        kept: false,
+        answers_after: 600,
+    });
+    let answer = sut.ask("click", click(), 3_000).expect("answered");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(!sut.asked("clickScript"), "not clicked a second time");
+}
+
+#[test]
+fn a_load_a_slow_page_reports_late_is_still_the_keys() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(50),
+        kept: false,
+        answers_after: 600,
+    });
+    let answer = sut.ask("press", enter(), 3_000).expect("answered");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
 }

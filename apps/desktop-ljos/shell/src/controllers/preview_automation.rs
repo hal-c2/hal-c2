@@ -5,15 +5,15 @@
 //! the browser brick shows of it: `activity` by tab id, and `reduceMotion`.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use ljos::input::{self, Input, InputWatch, KeyEvent, Modifiers, MouseButtons, PointerEvent};
 use ljos::item::kurbo;
 use ljos::prelude::{
-    Application, Atom, ConnectionId, Cx, Engine, ObjectId, QmlObject, QmlValue, Value, qml_impl,
-    qml_singleton,
+    Application, Atom, ConnectionId, Cx, Engine, ObjectId, QmlObject, QmlValue, Time, Value,
+    qml_impl, qml_singleton,
 };
 use serde_json::json;
 
@@ -252,7 +252,13 @@ struct Log {
     console: Vec<Json>,
     failed: Vec<Json>,
     loads: u64,
+    /// When the latest loads started, the latest last.
+    load_starts: VecDeque<Time>,
 }
+
+/// How many of the latest loads' starts a page remembers: more than start
+/// between two checks of the input that may have started one.
+const LOAD_STARTS: usize = 8;
 
 /// A browser page as the host drives it (desktop-qt's BrowserAutomationPage):
 /// the page's WebEngineView for what it shows, the page for what it is told.
@@ -265,6 +271,9 @@ pub struct BrowserAutomationPage {
     view_connections: RefCell<Vec<ConnectionId>>,
     /// What the user gives the current view.
     view_input: Cell<Option<InputWatch>>,
+    /// The guard of the key last posted, which knows where it went; none
+    /// once a click was posted since.
+    last_key: RefCell<Option<page_input::KeyGuard>>,
 }
 
 impl BrowserAutomationPage {
@@ -281,6 +290,7 @@ impl BrowserAutomationPage {
             connections: RefCell::default(),
             view_connections: RefCell::default(),
             view_input: Cell::new(None),
+            last_key: RefCell::new(None),
         });
         let weak = Rc::downgrade(&driver);
         let mut connections = Vec::new();
@@ -358,7 +368,12 @@ impl BrowserAutomationPage {
         let loading = move |engine: &Engine, _: &[Value]| {
             let Some(driver) = weak.upgrade() else { return };
             if driver.loading(engine) {
-                driver.log.borrow_mut().loads += 1;
+                let mut log = driver.log.borrow_mut();
+                log.loads += 1;
+                if log.load_starts.len() == LOAD_STARTS {
+                    log.load_starts.pop_front();
+                }
+                log.load_starts.push_back(engine.now());
             }
         };
         let (host, tab) = (host.clone(), self.tab.clone());
@@ -497,6 +512,7 @@ impl AutomationPage for BrowserAutomationPage {
         if !page_input::on_page(engine, view, at) {
             return false;
         }
+        self.last_key.replace(None);
         let now = engine.now();
         self.post(
             engine,
@@ -540,7 +556,15 @@ impl AutomationPage for BrowserAutomationPage {
         if !posted {
             guard.lift(engine);
         }
+        self.last_key.replace(posted.then_some(guard));
         posted
+    }
+
+    fn input_reached(&self, _engine: &Engine) -> Option<bool> {
+        self.last_key
+            .borrow()
+            .as_ref()
+            .map_or(Some(true), page_input::KeyGuard::reached)
     }
 
     fn viewport(&self, engine: &Engine) -> (i32, i32) {
@@ -571,6 +595,13 @@ impl AutomationPage for BrowserAutomationPage {
 
     fn loads_started(&self, _engine: &Engine) -> u64 {
         self.log.borrow().loads
+    }
+
+    fn load_started_at(&self, _engine: &Engine, load: u64) -> Option<Time> {
+        let log = self.log.borrow();
+        let first = log.loads + 1 - log.load_starts.len() as u64;
+        let at = load.checked_sub(first)?;
+        log.load_starts.get(usize::try_from(at).ok()?).copied()
     }
 
     fn resizing(&self, engine: &Engine) -> bool {
