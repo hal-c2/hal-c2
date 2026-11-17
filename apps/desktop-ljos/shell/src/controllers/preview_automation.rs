@@ -8,6 +8,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
+use ljos::input::{
+    self, Input, InputOrigin, InputWatch, KeyEvent, KeyKind, Modifiers, MouseButtons, PointerEvent,
+    PointerKind,
+};
+use ljos::item::kurbo;
 use ljos::prelude::{
     Application, Atom, ConnectionId, Cx, Engine, ObjectId, QmlObject, QmlValue, Value, qml_impl,
     qml_singleton,
@@ -21,6 +26,7 @@ use crate::controllers::panel::RightPanel;
 use crate::controllers::settings::Settings;
 use crate::json::Json;
 use crate::mc::Mc;
+use crate::page_input;
 use crate::platform_window;
 use crate::preview_automation::{
     AutomationPage, GrabDone, MAX_ENTRIES, PreviewAutomationHost, Reveal, ScriptDone,
@@ -93,17 +99,6 @@ impl Controller for PreviewAutomation {
             });
         }
         Settings::of(engine).on_settings_changed(publish_motion);
-        // The user's typing in a page interrupts the agent there, as
-        // desktop-qt's BrowserAutomationPage's key press does.
-        // TODO(hal-c2/ljos-ui#459): the user's click in a page too, once a
-        // view reports the pointer presses it is given.
-        let me = self.me.clone();
-        ljos::keys::add_key_filter(engine, move |engine, _, ev| {
-            if ev.kind == ljos::keys::KeyKind::Press {
-                me.run_after(engine, |c, engine| c.typed(engine));
-            }
-            false
-        });
         self.offer(engine);
         self.attach_pages(engine);
         self.focus(engine);
@@ -181,17 +176,6 @@ impl PreviewAutomation {
                     thread,
                 },
             );
-        }
-    }
-
-    /// A key the user pressed: the page that has the keyboard was the
-    /// user's to drive, not the agent's.
-    fn typed(&mut self, engine: &Engine) {
-        let Some(host) = &self.host else { return };
-        for d in self.driven.values() {
-            if d.driver.has_keys(engine) {
-                host.human_input(engine, &d.tab);
-            }
         }
     }
 
@@ -281,6 +265,8 @@ pub struct BrowserAutomationPage {
     /// The page's own signals, then its current view's.
     connections: RefCell<Vec<ConnectionId>>,
     view_connections: RefCell<Vec<ConnectionId>>,
+    /// What the user gives the current view.
+    view_input: Cell<Option<InputWatch>>,
 }
 
 impl BrowserAutomationPage {
@@ -296,6 +282,7 @@ impl BrowserAutomationPage {
             log: RefCell::default(),
             connections: RefCell::default(),
             view_connections: RefCell::default(),
+            view_input: Cell::new(None),
         });
         let weak = Rc::downgrade(&driver);
         let mut connections = Vec::new();
@@ -348,14 +335,27 @@ impl BrowserAutomationPage {
         driver
     }
 
-    /// Follows the page's current view: its loads and its address.
+    /// Follows the page's current view: its loads, its address, and the
+    /// user's own input in it.
     fn follow(self: &Rc<Self>, engine: &Engine, host: &PreviewAutomationHost) {
-        for id in self.view_connections.borrow_mut().drain(..) {
-            engine.disconnect(id);
-        }
+        self.let_view_go(engine);
         let Some(view) = BrowserPage::view(engine, self.page) else {
             return;
         };
+        // Only what the window system delivers is the user's: the agent's
+        // own clicks and keys are posted, and the page's scripts never
+        // reach the window (desktop-qt's eventFilter).
+        let (host_, tab) = (host.clone(), self.tab.clone());
+        let watch = input::watch_input(engine, view, move |engine, seen| {
+            if seen.origin != InputOrigin::User || !takes_over(seen.input) {
+                return;
+            }
+            // After the delivery the watcher runs in, as a key filter's
+            // work would be.
+            let (host, tab) = (host_.clone(), tab.clone());
+            engine.call_at(engine.now(), move |engine| host.human_input(engine, &tab));
+        });
+        self.view_input.set(Some(watch));
         let weak: Weak<Self> = Rc::downgrade(self);
         let loading = move |engine: &Engine, _: &[Value]| {
             let Some(driver) = weak.upgrade() else { return };
@@ -375,8 +375,15 @@ impl BrowserAutomationPage {
         for id in self.connections.borrow_mut().drain(..) {
             engine.disconnect(id);
         }
+        self.let_view_go(engine);
+    }
+
+    fn let_view_go(&self, engine: &Engine) {
         for id in self.view_connections.borrow_mut().drain(..) {
             engine.disconnect(id);
+        }
+        if let Some(watch) = self.view_input.take() {
+            input::unwatch_input(engine, watch);
         }
     }
 
@@ -387,6 +394,18 @@ impl BrowserAutomationPage {
     /// Whether the page's view has the keyboard.
     fn has_keys(&self, engine: &Engine) -> bool {
         matches!(self.view_read(engine, "activeFocus"), Value::Bool(true))
+    }
+
+    /// Posts `events` to the view as the window system's would come.
+    fn post(
+        &self,
+        engine: &Engine,
+        view: ObjectId,
+        events: impl IntoIterator<Item = Input>,
+    ) -> bool {
+        events
+            .into_iter()
+            .all(|event| input::post_input(engine, view, event).is_ok())
     }
 
     fn view_read(&self, engine: &Engine, name: &str) -> Value {
@@ -413,6 +432,17 @@ impl BrowserAutomationPage {
             };
             done(engine, answer);
         });
+    }
+}
+
+/// Whether the user's `input` in a page takes it over from the agent: a
+/// press, a turn of the wheel, a key (desktop-qt's eventFilter). Hovering
+/// does not.
+fn takes_over(input: &Input) -> bool {
+    match input {
+        Input::Pointer(p) => p.kind == PointerKind::Press,
+        Input::Wheel(_) => true,
+        Input::Key(k) => k.kind == KeyKind::Press,
     }
 }
 
@@ -464,6 +494,56 @@ impl AutomationPage for BrowserAutomationPage {
         matches!(self.view_read(engine, "visible"), Value::Bool(true))
             && self.view_number(engine, "width") > 0.0
             && self.view_number(engine, "height") > 0.0
+    }
+
+    fn click(&self, engine: &Engine, x: f64, y: f64) -> bool {
+        let Some(view) = self.view(engine).filter(|_| self.on_screen(engine)) else {
+            return false;
+        };
+        // The view draws the page's CSS pixels at its zoom, then scaled with
+        // the view (a device frame, the app's zoom): mapping takes both.
+        let zoom = BrowserPage::zoom(engine, self.page);
+        let at = kurbo::Point::new(x * zoom, y * zoom);
+        // Only the page's: a menu, a dialog or a neighbouring pane over the
+        // point is the app's, and the agent never clicks it.
+        if !page_input::on_page(engine, view, at) {
+            return false;
+        }
+        let now = engine.now();
+        self.post(
+            engine,
+            view,
+            [
+                Input::Pointer(PointerEvent::moved(at.x, at.y, MouseButtons::empty(), now)),
+                Input::Pointer(PointerEvent::press(at.x, at.y, now)),
+                Input::Pointer(PointerEvent::release(at.x, at.y, now)),
+            ],
+        )
+    }
+
+    fn key(&self, engine: &Engine, key: i32, modifiers: Modifiers, text: &str) -> bool {
+        let Some(view) = self.view(engine) else {
+            return false;
+        };
+        if !self.on_screen(engine) || !self.has_keys(engine) {
+            return false;
+        }
+        self.post(
+            engine,
+            view,
+            [
+                Input::Key(
+                    KeyEvent::press(key)
+                        .with_modifiers(modifiers)
+                        .with_text(text),
+                ),
+                Input::Key(
+                    KeyEvent::release(key)
+                        .with_modifiers(modifiers)
+                        .with_text(text),
+                ),
+            ],
+        )
     }
 
     fn viewport(&self, engine: &Engine) -> (i32, i32) {

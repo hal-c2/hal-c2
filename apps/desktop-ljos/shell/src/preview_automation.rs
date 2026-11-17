@@ -10,8 +10,8 @@
 //! drops a host that answers late. A status is answered at once. Anything
 //! else waits for the tab's previous request: one page, one action at a time.
 //! An agent keeps off a page whose developer tools are open, and the user's
-//! typing inside the page interrupts what the agent is doing there (their
-//! clicks too, once Ljós reports them: hal-c2/ljos-ui#459).
+//! own press, wheel or typing inside the page interrupts what the agent is
+//! doing there.
 //!
 //! The PreviewAutomation controller (controllers/preview_automation.rs)
 //! makes the app's host and attaches each browser tab's page.
@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
+use ljos::keys::Modifiers;
 use ljos::prelude::{Engine, Time, TimerId};
 use serde_json::{Map, json};
 
@@ -78,6 +79,8 @@ pub const ANSWER_MARGIN_MS: i64 = 300;
 pub const IDLE_FADE_MS: i64 = 1500;
 pub const USER_CONTROL_MS: i64 = 750;
 const POLL_MS: i64 = 100;
+/// How long a key pressed in the page has to reach its scripts.
+const PRESS_CONFIRM_MS: i64 = 5000;
 
 /// What this host can do, as it tells each MC. No recording: the MC tells
 /// an agent this desktop does not support it.
@@ -126,30 +129,63 @@ pub fn preset(id: &str, landscape: bool) -> Option<(i32, i32)> {
 /// Whether `name` is a key as agents write it (Playwright's): a named key,
 /// F1 to F24, or one character.
 pub fn known_key(name: &str) -> bool {
-    const NAMED: [&str; 15] = [
-        "Enter",
-        "Tab",
-        "Escape",
-        "Backspace",
-        "Delete",
-        "ArrowLeft",
-        "ArrowRight",
-        "ArrowUp",
-        "ArrowDown",
-        "Home",
-        "End",
-        "PageUp",
-        "PageDown",
-        "Space",
-        "Insert",
+    qt_key(name).is_some()
+}
+
+/// A key as agents write it, as a `Qt.Key` and the text it types
+/// (desktop-qt's qtKey).
+pub fn qt_key(name: &str) -> Option<(i32, String)> {
+    use ljos::keys::key;
+    const NAMED: [(&str, i32); 15] = [
+        ("Enter", key::RETURN),
+        ("Tab", key::TAB),
+        ("Escape", key::ESCAPE),
+        ("Backspace", key::BACKSPACE),
+        ("Delete", key::DELETE),
+        ("ArrowLeft", key::LEFT),
+        ("ArrowRight", key::RIGHT),
+        ("ArrowUp", key::UP),
+        ("ArrowDown", key::DOWN),
+        ("Home", key::HOME),
+        ("End", key::END),
+        ("PageUp", key::PAGE_UP),
+        ("PageDown", key::PAGE_DOWN),
+        ("Space", key::SPACE),
+        ("Insert", key::INSERT),
     ];
-    if NAMED.contains(&name) {
-        return true;
+    if let Some(&(_, code)) = NAMED.iter().find(|(n, _)| *n == name) {
+        let text = match code {
+            key::RETURN => "\r",
+            key::TAB => "\t",
+            key::SPACE => " ",
+            _ => "",
+        };
+        return Some((code, text.to_owned()));
     }
-    if let Some(n) = name.strip_prefix('F').filter(|n| !n.is_empty()) {
-        return n.parse::<u32>().is_ok_and(|n| (1..=24).contains(&n));
+    if name.len() >= 2
+        && let Some(n) = name.strip_prefix('F')
+    {
+        if let Ok(n) = n.parse::<i32>()
+            && (1..=24).contains(&n)
+        {
+            return Some((key::F1 + n - 1, String::new()));
+        }
+        return None;
     }
-    name.chars().count() == 1
+    let mut chars = name.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    // Beyond Latin-1 a key is its upper-case code point, as Qt's are.
+    let code = key::from_char(c).unwrap_or_else(|| {
+        let mut upper = c.to_uppercase();
+        let c = match (upper.next(), upper.next()) {
+            (Some(u), None) => u,
+            _ => c,
+        };
+        u32::from(c) as i32
+    });
+    Some((code, name.to_owned()))
 }
 
 /// What a page's script answered: its JSON string, or None when the page ran
@@ -203,6 +239,18 @@ pub trait AutomationPage {
     fn set_viewport(&self, _engine: &Engine, _size: Option<(i32, i32)>) {}
     /// system, light or dark: the page's prefers-color-scheme.
     fn set_color_scheme(&self, _engine: &Engine, _scheme: &str) {}
+    /// Clicks the page at (`x`, `y`) in CSS pixels as the user would, so the
+    /// click lands on whatever covers that point in the page. False when the
+    /// page cannot take one: it is off screen, or the app covers the point.
+    fn click(&self, _engine: &Engine, _x: f64, _y: f64) -> bool {
+        false
+    }
+    /// Presses and releases `key` (a `Qt.Key`) with `modifiers` held as the
+    /// user would, typing `text`. False when the page cannot take keys: it
+    /// is off screen, or the keyboard is elsewhere.
+    fn key(&self, _engine: &Engine, _key: i32, _modifiers: Modifiers, _text: &str) -> bool {
+        false
+    }
 }
 
 /// A tab the MC asked for that has no page yet: the browser shows it, and
@@ -1745,28 +1793,56 @@ impl PreviewAutomationHost {
             args.clone(),
             move |engine, request, target| {
                 host.set_pointer(engine, request, &target);
-                // TODO(hal-c2/ljos-ui#459): desktop-qt clicks as a user would
-                // (landing on whatever covers the element) when the page is
-                // on screen; Ljós cannot send a live view a click yet, so the
-                // click is the page script's.
+                let point = (
+                    target["x"].as_f64().unwrap_or(0.0),
+                    target["y"].as_f64().unwrap_or(0.0),
+                );
+                let by_script: Then = {
+                    let (host, request) = (host.clone(), request.clone());
+                    Box::new(move |engine| {
+                        let done = host.clone();
+                        host.runtime(
+                            engine,
+                            &request,
+                            "clickScript",
+                            args,
+                            move |engine, request, _| {
+                                let status = done.tab_status(engine, request);
+                                done.succeed(engine, request, status);
+                            },
+                        );
+                    })
+                };
+                // A real click where the page can take one, as a user's
+                // would land (on whatever covers the element, too); a
+                // script's when it cannot, or when the page never saw the
+                // real one.
                 let settle = if target["scrolled"] == json!(true) {
                     60
                 } else {
                     0
                 };
-                let by_script = host.clone();
+                let clicking = host.clone();
                 let r = request.clone();
                 host.after(engine, request, settle, move |engine| {
-                    let done = by_script.clone();
-                    by_script.runtime(
+                    let Some(page) = clicking.page_of(&r) else {
+                        return;
+                    };
+                    if !page.on_screen(engine) || !page.click(engine, point.0, point.1) {
+                        return by_script(engine);
+                    }
+                    let wait_ms = clicking.remaining_ms(engine, &r).min(1000);
+                    let done = (clicking.clone(), r.clone());
+                    clicking.poll(
                         engine,
                         &r,
-                        "clickScript",
-                        args,
-                        move |engine, request, _| {
-                            let status = done.tab_status(engine, request);
-                            done.succeed(engine, request, status);
-                        },
+                        wait_ms,
+                        seen(page, "clicked"),
+                        Box::new(move |engine| {
+                            let status = done.0.tab_status(engine, &done.1);
+                            done.0.succeed(engine, &done.1, status);
+                        }),
+                        by_script,
                     );
                 });
             },
@@ -1807,15 +1883,29 @@ impl PreviewAutomationHost {
                 .unwrap_or_default();
             (text(&input["key"]), held)
         };
-        if !known_key(&name) {
+        let Some((key, text)) = qt_key(&name) else {
             return self.fail(
                 engine,
                 request,
                 tag::INVALID_INPUT,
                 &format!("Preview automation press does not know the key {name}."),
             );
-        }
+        };
         let holds = |m: &str| held.iter().any(|h| h == m);
+        let mut modifiers = Modifiers::empty();
+        for (name, modifier) in [
+            ("Alt", Modifiers::ALT),
+            ("Control", Modifiers::CONTROL),
+            ("Meta", Modifiers::META),
+            ("Shift", Modifiers::SHIFT),
+        ] {
+            if holds(name) {
+                modifiers |= modifier;
+            }
+        }
+        // A shortcut types nothing.
+        let plain = !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META);
+        let text = if plain { text } else { String::new() };
         let args = json!({
             "key": name,
             "alt": holds("Alt"),
@@ -1823,10 +1913,6 @@ impl PreviewAutomationHost {
             "meta": holds("Meta"),
             "shift": holds("Shift"),
         });
-        // TODO(hal-c2/ljos-ui#459): desktop-qt presses the key in the view
-        // when the page is on screen, so the page's editing takes it too;
-        // Ljós cannot send a live view a key yet, so the page's scripts see
-        // the press and its editing does not, as off screen.
         let host = self.clone();
         self.runtime(
             engine,
@@ -1834,16 +1920,47 @@ impl PreviewAutomationHost {
             "armKey",
             json!({}),
             move |engine, request, _| {
-                let done = host.clone();
-                host.runtime(
+                let Some(page) = host.page_of(request) else {
+                    return;
+                };
+                if !page.on_screen(engine) || !page.key(engine, key, modifiers, &text) {
+                    // Off screen the page takes no keys: the page's scripts
+                    // see the press, its editing does not.
+                    let done = host.clone();
+                    return host.runtime(
+                        engine,
+                        request,
+                        "keyScript",
+                        args,
+                        move |engine, request, _| {
+                            let status = done.tab_status(engine, request);
+                            done.succeed(engine, request, status);
+                        },
+                    );
+                }
+                let wait_ms = host.remaining_ms(engine, request).min(PRESS_CONFIRM_MS);
+                let (done, done_request) = (host.clone(), request.clone());
+                let (late, late_request) = (host.clone(), request.clone());
+                host.poll(
                     engine,
                     request,
-                    "keyScript",
-                    args,
-                    move |engine, request, _| {
-                        let status = done.tab_status(engine, request);
-                        done.succeed(engine, request, status);
-                    },
+                    wait_ms,
+                    seen(page, "key"),
+                    Box::new(move |engine| {
+                        let status = done.tab_status(engine, &done_request);
+                        done.succeed(engine, &done_request, status);
+                    }),
+                    Box::new(move |engine| {
+                        let tab = late_request.borrow().tab_id.clone();
+                        late.fail(
+                            engine,
+                            &late_request,
+                            tag::CONDITION_TIMEOUT,
+                            &format!(
+                                "Preview condition did not match within {wait_ms}ms in tab {tab}"
+                            ),
+                        );
+                    }),
                 );
             },
         );
@@ -2326,6 +2443,23 @@ fn clean_path(path: &str) -> String {
         (false, true) => ".".to_owned(),
         (false, false) => joined,
     }
+}
+
+/// Whether the page saw what the runtime's `op` was armed for (a click, a
+/// key): its value is an object once it did.
+fn seen(page: Page, op: &'static str) -> Check {
+    Rc::new(move |engine, done| {
+        page.run_isolated(
+            engine,
+            &script::call(op, &json!({})),
+            Box::new(move |engine, result| {
+                done(
+                    engine,
+                    script::parse(result.as_deref())["value"].is_object(),
+                );
+            }),
+        );
+    })
 }
 
 fn after(engine: &Engine, ms: i64) -> Time {
