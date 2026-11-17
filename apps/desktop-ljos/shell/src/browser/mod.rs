@@ -924,9 +924,8 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &PageInner, notes: &[PageNote]) {
                     .and_then(|()| engine.set_internal(obj, BrowserPage::EXISTS, exists))
                     // The brick loads where the tab is when tabIdChanged
                     // fires, but the page hears of its tab a tick later
-                    // (keep_tab_id, keep_previews), and TODO(ljos#438) of
-                    // its view once the brick is made: a view that has
-                    // shown nothing yet loads it now.
+                    // (keep_tab_id, keep_previews): a view that has shown
+                    // nothing yet loads it now.
                     .and_then(|()| {
                         if empty {
                             BrowserPage::emit_load_requested(&cx, at)

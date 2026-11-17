@@ -171,7 +171,6 @@ fn run_in(world: &mut World, view: ObjectId, script: &str) -> Outcome {
     Ok(())
 }
 
-// TODO(ljos#389): Ljós's devToolsView never loads DevTools yet.
 fn devtools_shown(world: &mut World, right: bool) -> Outcome {
     let brick = panel(world)?;
     wait_for_engine(
@@ -233,6 +232,9 @@ fn offers(world: &mut World, icon: &str, what: &str) -> Outcome {
 
 /// A button over the whole page, as desktop-qt's BrowserPermissionSteps.cpp:
 /// the user's click on it runs `window.act`, as a page acts on a click.
+/// `WebEngineView.ViewSource`, the web action View page source triggers.
+const VIEW_SOURCE: i32 = 32;
+
 const ACT: &str = "<button style=\"position:fixed;left:0;top:0;width:100vw;height:100vh;opacity:0.5\" \
      onclick=\"window.act && window.act()\">Act</button>";
 
@@ -844,20 +846,11 @@ fn register_history(steps: &mut Steps) {
     steps.step("the user views the page's source", |world, _, _| {
         // What the page's context menu's View page source does: the engine
         // asks for a window at the page's source, which the tab shows.
-        // TODO(ljos#386): triggerWebAction(WebEngineView.ViewSource)
-        // once Ljós's WebEngineView has it; until then the request it makes.
         let brick = panel(world)?;
         let Some(shown) = view(world, brick) else {
             fail!("{}", state(world, brick));
         };
-        let source = format!("view-source:{}", read_text(world, shown, "url"));
-        let panel = browser_panel(world)?;
-        call(
-            world,
-            panel,
-            "go",
-            &[Value::from(source.as_str()), Value::Bool(false)],
-        )?;
+        call(world, shown, "triggerWebAction", &[Value::Int(VIEW_SOURCE)])?;
         Ok(())
     });
     steps.step(
@@ -867,7 +860,6 @@ fn register_history(steps: &mut Steps) {
             type_address(world, &format!("{}{}", captures[0], bare(&url)), true)
         },
     );
-    // TODO(ljos#388): Ljós's view reports the page's own url for its source yet.
     steps.step(
         "the tab shows the (other )?page's source",
         |world, captures, _| {
@@ -946,7 +938,11 @@ fn register_history(steps: &mut Steps) {
             )?;
             if evaluated(world, "document.readyState")? == "complete" {
                 let back = brick.item(world, "browserBack")?;
-                call(world, back, "clicked", &[])?;
+                // `clicked` is the button's signal, as a press emits it.
+                if let Err(e) = world.engine().emit_by_name(back, "clicked", &[]) {
+                    fail!("clicked failed: {e:?}");
+                }
+                world.pump()?;
                 return Ok(());
             }
         }
@@ -1070,7 +1066,6 @@ fn register_tools(steps: &mut Steps) {
         },
     );
     steps.step(
-        // TODO(ljos#390): Ljós's popup is a new page with no window.opener yet.
         "the popup opens as a real window that can report back to the page",
         |world, _, _| {
             let Some(window) = first_popup(world) else {

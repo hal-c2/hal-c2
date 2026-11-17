@@ -1774,6 +1774,7 @@ preview/surfaces.feature: An unreachable page explains the failure in plain word
 preview/surfaces.feature: Back and forward are offered only where the tab can go [follows an earlier page, available, unavailable]
 preview/surfaces.feature: Back and forward are offered only where the tab can go [is the first page, reached by going back, unavailable, available]
 preview/surfaces.feature: Back and forward are offered only where the tab can go [is the only one it has shown, unavailable, unavailable]
+preview/surfaces.feature: Back from a page's source goes back through the tab's history
 preview/surfaces.feature: Changing the size another way ends a drag in progress
 preview/surfaces.feature: Each tab keeps its own device size
 preview/surfaces.feature: Escape puts the page's address back in the address field
@@ -1814,6 +1815,7 @@ preview/surfaces.feature: The user rotates the previewed device
 preview/surfaces.feature: The user sees the page at several sizes side by side
 preview/surfaces.feature: The user shows a device toolbar above a tab's page
 preview/surfaces.feature: The user types a page's source address
+preview/surfaces.feature: The user views a page's source in its tab
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, in, 110%]
 preview/surfaces.feature: The user zooms a page through the preset steps [100%, out, 90%]
 preview/surfaces.feature: The user zooms a page through the preset steps [150%, reset, 100%]
