@@ -154,6 +154,12 @@ Item {
     TextInput { id: view; width: 100; height: 100 }
     // The app's own field beside it.
     TextInput { id: field; x: 100; width: 100; height: 100 }
+    // Another window's content: an item no item shows.
+    property Item other: Item {
+        width: 100; height: 100
+        property alias field: otherField
+        TextInput { id: otherField; width: 100; height: 100 }
+    }
 }
 "#;
 
@@ -271,4 +277,25 @@ fn only_the_users_press_wheel_or_key_takes_a_page_over() {
         !takes_over(InputOrigin::Synthetic, &press),
         "the agent's own press"
     );
+}
+
+/// The posted keys have not come (their window closed, say), and the user
+/// types the same key in another window: it is theirs there, and the
+/// guard does not judge it.
+#[test]
+fn a_guard_leaves_another_windows_keys_alone() {
+    let (engine, view, _field, mut scene) = keys();
+    let root = engine.visual_parent(view).expect("the view's window");
+    let other = object(&engine, root, "other");
+    let other_field = object(&engine, other, "field");
+    let mut window = Scene::new(&engine, other, (100.0, 100.0));
+    call(&engine, other_field, "forceActiveFocus", &[]);
+    window.settle();
+    let guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    user_types_a(&mut window);
+    window.settle();
+    scene.settle();
+    assert_eq!(text(&engine, other_field, "text"), "a", "the user's key");
+    assert_eq!(guard.reached(), None, "not judged");
+    guard.lift(&engine);
 }

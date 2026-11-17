@@ -71,12 +71,15 @@ pub fn has_keys(engine: &Engine, item: ObjectId) -> bool {
 /// the window then gets are the posted ones. A key kept never reaches the
 /// item. Gone after `within`, so keys that never arrive (the window closed
 /// first) leave nothing behind; lifted at once when they are not posted.
+/// Only keys given to `item`'s window are judged.
 pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) -> KeyGuard {
     let guard = KeyGuard::default();
     let filter = {
         let guard = guard.clone();
-        move |engine: &Engine, _root: ObjectId, event: &KeyEvent| {
-            if event.key != key {
+        move |engine: &Engine, window: ObjectId, event: &KeyEvent| {
+            // Another window's key is the user's there, whatever its key:
+            // the posted ones come to the item's window.
+            if event.key != key || !engine.is_alive(item) || root(engine, item) != window {
                 return false;
             }
             match (event.kind, guard.kept.get()) {

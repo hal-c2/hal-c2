@@ -423,3 +423,20 @@ fn a_load_a_slow_page_reports_late_is_still_the_keys() {
     let answer = sut.ask("press", enter(), 3_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
 }
+
+/// The page answers only after the click's wait is over, and the link's
+/// load started while it was answering: the click is done, not clicked
+/// again by script.
+#[test]
+fn a_load_a_page_reports_after_the_wait_is_still_the_clicks() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(50),
+        kept: false,
+        answers_after: 1200,
+    });
+    let answer = sut.ask("click", click(), 3_000).expect("answered");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(!sut.asked("clickScript"), "not clicked a second time");
+}

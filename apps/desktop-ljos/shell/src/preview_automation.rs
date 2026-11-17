@@ -2477,32 +2477,40 @@ fn seen(engine: &Engine, page: Page, op: &'static str, loads: u64) -> Check {
     // A load is judged once, when a check first finds it.
     let judged = Rc::new(Cell::new(loads));
     let input_loaded = Rc::new(Cell::new(false));
-    Rc::new(move |engine, done| {
-        let started = page.loads_started(engine);
-        // Judged by when each load started, not when a check found it: a
-        // check waits on the last one's answer, which a page navigating
-        // away can be slow to give. A page that forgot the start is judged
-        // by now.
-        for load in judged.get() + 1..=started {
-            let at = page.load_started_at(engine, load).unwrap_or(engine.now());
-            if at.saturating_since(posted).as_millis() as i64 <= INPUT_LOAD_MS {
-                input_loaded.set(true);
+    // Whether a load the input started has been seen, by when each load
+    // started, not when a check found it: a check waits on the last one's
+    // answer, which a page navigating away can be slow to give. A page
+    // that forgot the start is judged by now. Only the input's own load
+    // counts: one after input that went elsewhere is the page's, whatever
+    // its timing.
+    let loaded: Rc<dyn Fn(&Engine) -> bool> = Rc::new({
+        let page = page.clone();
+        move |engine| {
+            let started = page.loads_started(engine);
+            for load in judged.get() + 1..=started {
+                let at = page.load_started_at(engine, load).unwrap_or(engine.now());
+                if at.saturating_since(posted).as_millis() as i64 <= INPUT_LOAD_MS {
+                    input_loaded.set(true);
+                }
             }
+            judged.set(judged.get().max(started));
+            input_loaded.get() && page.input_reached(engine) == Some(true)
         }
-        judged.set(judged.get().max(started));
-        // Only the input's own load: one after input that went elsewhere
-        // is the page's, whatever its timing.
-        if input_loaded.get() && page.input_reached(engine) == Some(true) {
+    });
+    Rc::new(move |engine, done| {
+        if loaded(engine) {
             return done(engine, true);
         }
+        let loaded = loaded.clone();
         page.run_isolated(
             engine,
             &script::call(op, &json!({})),
             Box::new(move |engine, result| {
-                done(
-                    engine,
-                    script::parse(result.as_deref())["value"].is_object(),
-                );
+                // Asked again once the answer comes: a load the input
+                // started while the page was slow to answer is the input
+                // seen, though the wait may be over by now.
+                let saw = script::parse(result.as_deref())["value"].is_object();
+                done(engine, saw || loaded(engine));
             }),
         );
     })
