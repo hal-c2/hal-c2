@@ -23,13 +23,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
-use ljos::ljos_engine::{QmlSingleton, SingletonScope};
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{
     Atom, Cx, Engine, EngineError, ObjectId, Platform, PropertyMap, QmlObject, Value, encoded_url,
     file_url, qml_impl, qml_singleton,
 };
+use ljos::prelude::{QmlSingleton, SingletonScope};
 
 use crate::attachment_files;
 use crate::json::{self, Json};
