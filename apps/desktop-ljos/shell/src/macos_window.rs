@@ -11,7 +11,6 @@
 //! (`startSystemMove`), which AppKit allows an unmovable window.
 
 use std::cell::{Cell, RefCell};
-
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -145,6 +144,7 @@ fn fit_title_bar(window: &NSWindow) {
 mod tests {
     use std::rc::Rc;
 
+    use ljos::prelude::Value;
     use ljos::testing::TestWindow;
 
     use super::*;
