@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use ljos::prelude::Engine;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
+type Listener = Rc<dyn Fn(&Engine)>;
 
 /// What the watcher thread leaves for the Engine thread.
 #[derive(Default)]
@@ -45,7 +46,7 @@ impl Changes {
 
 #[derive(Default)]
 struct Clock {
-    listeners: RefCell<Vec<Rc<dyn Fn(&Engine)>>>,
+    listeners: RefCell<Vec<Listener>>,
     changes: Arc<Changes>,
     watching: Cell<bool>,
 }
@@ -126,10 +127,15 @@ fn watch(changes: Arc<Changes>) {
             loop {
                 let flags = libc::TFD_TIMER_ABSTIME | libc::TFD_TIMER_CANCEL_ON_SET;
                 if libc::timerfd_settime(fd, flags, &never, std::ptr::null_mut()) < 0 {
-                    eprintln!(
-                        "[clock] cannot arm the timerfd: {}",
-                        std::io::Error::last_os_error()
-                    );
+                    let error = std::io::Error::last_os_error();
+                    // The clock was set again since the read: the timer is
+                    // armed all the same (fs/timerfd.c), and this is a
+                    // change like the read's.
+                    if error.raw_os_error() == Some(libc::ECANCELED) {
+                        changes.push();
+                        continue;
+                    }
+                    eprintln!("[clock] cannot arm the timerfd: {error}");
                     break;
                 }
                 let mut expirations = 0u64;
