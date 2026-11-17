@@ -184,10 +184,19 @@ fn run(engine: &Engine, slot: &Rc<Slot>, due: Time, fire: Fire) {
     if let Some(period) = slot.period
         && !slot.done.get()
     {
-        let now = engine.now();
-        let next = due + period;
-        let next = if next <= now { now + period } else { next };
-        arm(engine, slot, next, fire);
+        arm(engine, slot, next_due(due, engine.now(), period), fire);
+    }
+}
+
+/// When a repeating schedule due at `due`, fired at `now`, fires next: a
+/// period on from its deadline when it fired on time, and a period after
+/// the late fire when it did not, so a late fire is never followed by one
+/// sooner than a period.
+fn next_due(due: Time, now: Time, period: Duration) -> Time {
+    if now > due {
+        now + period
+    } else {
+        due + period
     }
 }
 
@@ -309,5 +318,17 @@ mod tests {
         assert_eq!(minutes(at - 1), minutes(0));
         assert_ne!(minutes(at), minutes(0));
         assert_eq!(next_change(0, 10, |_| 1), None);
+    }
+
+    #[test]
+    fn a_late_fire_is_followed_a_period_later() {
+        let ms = |ms: u64| Time::ZERO + Duration::from_millis(ms);
+        let period = Duration::from_millis(100);
+        // On time: the cadence keeps to its deadlines.
+        assert_eq!(next_due(ms(100), ms(100), period), ms(200));
+        // Due at 100, delivered at 199: not again at 200, a millisecond on.
+        assert_eq!(next_due(ms(100), ms(199), period), ms(299));
+        // Delivered past the next deadline: no burst to catch up.
+        assert_eq!(next_due(ms(100), ms(350), period), ms(450));
     }
 }
