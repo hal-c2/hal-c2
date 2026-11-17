@@ -766,207 +766,226 @@ fn run(app: App, options: Options) -> Result<(), String> {
     let host_slot = hosted.clone();
     // A software EGL draws with the CPU painter on its own (ljos_shell's
     // software.rs, LJOS_PAINTER overrides), main.cpp's Software API.
-    // TODO(hal-c2/ljos-ui#458): with no display at all main.cpp runs on
-    // Qt's offscreen platform; ljos::App has no headless run to choose.
     let config = ShellConfig::new("HAL-C2")
         .with_size(options.size.0 as f32, options.size.1 as f32)
         .with_color_space(ColorSpace::Untagged);
-    let result = app
+    let headless = no_display(|name| std::env::var(name).ok());
+    let app = app
         .shell_config(config)
-        .on_message(|_: &Engine, _: Message| {})
-        .run_with(move |setup| {
-            let handle = setup.handle();
-            let engine = setup.engine().clone();
-            report_warnings(&engine);
-            // A turn that runs long says which of these it ran.
-            setup.name_messages(|message| match message {
-                Message::Wake => "Wake",
-                Message::Activated(_) => "Activated",
-                Message::Host(_) => "Host",
-                Message::Folders(_) => "Folders",
-                Message::Quit => "Quit",
-            });
-            // One wake-up however much waits: the events themselves queue
-            // beside the inbox (see mc.rs, folders/watch.rs).
-            let folders_handle = handle.clone();
-            hal_c2_shell::folders::set_wake(&engine, move || {
-                let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let devices_handle = handle.clone();
-            hal_c2_shell::device::set_wake(&engine, move || {
-                let _ = devices_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let plugins_handle = handle.clone();
-            hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
-                let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let transcriber_handle = handle.clone();
-            hal_c2_shell::local_transcriber::set_wake(&engine, move || {
-                let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let theme_handle = handle.clone();
-            hal_c2_shell::theme::set_wake(&engine, move || {
-                let _ = theme_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let runtime_handle = handle.clone();
-            hal_c2_shell::runtime::set_wake(&engine, move || {
-                let _ = runtime_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let update_handle = handle.clone();
-            hal_c2_shell::controllers::desktop_update::set_wake(&engine, move || {
-                let _ = update_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            let settings_handle = handle.clone();
-            hal_c2_shell::controllers::settings::set_wake(&engine, move || {
-                let _ = settings_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-            });
-            // A connection even without an MC to open it at: the welcome
-            // wizard or Connections settings may pair with one later
-            // (hal_c2_shell::open).
-            let wake = handle.clone();
-            let connection = Rc::new(Connection::spawn(move || {
-                let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
+        .on_message(|_: &Engine, _: Message| {});
+    let setup = move |setup: &mut ljos::Setup<'_, Message>| {
+        let handle = setup.handle();
+        let engine = setup.engine().clone();
+        report_warnings(&engine);
+        // A turn that runs long says which of these it ran.
+        setup.name_messages(|message| match message {
+            Message::Wake => "Wake",
+            Message::Activated(_) => "Activated",
+            Message::Host(_) => "Host",
+            Message::Folders(_) => "Folders",
+            Message::Quit => "Quit",
+        });
+        // One wake-up however much waits: the events themselves queue
+        // beside the inbox (see mc.rs, folders/watch.rs).
+        let folders_handle = handle.clone();
+        hal_c2_shell::folders::set_wake(&engine, move || {
+            let _ = folders_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let devices_handle = handle.clone();
+        hal_c2_shell::device::set_wake(&engine, move || {
+            let _ = devices_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let plugins_handle = handle.clone();
+        hal_c2_shell::controllers::plugin::set_wake(&engine, move || {
+            let _ = plugins_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let transcriber_handle = handle.clone();
+        hal_c2_shell::local_transcriber::set_wake(&engine, move || {
+            let _ = transcriber_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let theme_handle = handle.clone();
+        hal_c2_shell::theme::set_wake(&engine, move || {
+            let _ = theme_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let runtime_handle = handle.clone();
+        hal_c2_shell::runtime::set_wake(&engine, move || {
+            let _ = runtime_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let update_handle = handle.clone();
+        hal_c2_shell::controllers::desktop_update::set_wake(&engine, move || {
+            let _ = update_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        let settings_handle = handle.clone();
+        hal_c2_shell::controllers::settings::set_wake(&engine, move || {
+            let _ = settings_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        // A connection even without an MC to open it at: the welcome
+        // wizard or Connections settings may pair with one later
+        // (hal_c2_shell::open).
+        let wake = handle.clone();
+        let connection = Rc::new(Connection::spawn(move || {
+            let _ = wake.send_coalesced(CoalesceKey(1), Message::Wake);
+        }));
+        if let Some(origin) = &options.launch.mc_origin {
+            connection.open(origin, &options.mc_token)?;
+        }
+        let mc: Rc<dyn Mc> = connection.clone();
+        // Later launches on this home hand their folders to this window.
+        let folders_handle = handle.clone();
+        let listener = single_instance::listen(&options.state_dir, move |folders| {
+            let _ = folders_handle.send_blocking(Message::Folders(folders));
+        });
+        if listener.is_none() {
+            eprintln!("[shell] later launches cannot reach this window");
+        }
+        setup.on_message(move |engine: &Engine, message| match message {
+            Message::Wake => {
+                connection.deliver(engine);
+                hal_c2_shell::folders::deliver(engine);
+                hal_c2_shell::device::deliver(engine);
+                hal_c2_shell::controllers::plugin::deliver(engine);
+                hal_c2_shell::local_transcriber::deliver(engine);
+                hal_c2_shell::theme::deliver(engine);
+                hal_c2_shell::runtime::deliver(engine);
+                hal_c2_shell::controllers::threads::deliver(engine);
+                hal_c2_shell::controllers::snap_shot::deliver(engine);
+                hal_c2_shell::controllers::desktop_update::deliver(engine);
+                hal_c2_shell::controllers::settings::deliver(engine);
+            }
+            Message::Activated(key) => {
+                controller::with::<AlertController, _>(engine, |alerts, engine| {
+                    alerts.open_thread(engine, &key)
+                });
+            }
+            Message::Host(event) => hosted_said(engine, event),
+            Message::Folders(folders) => {
+                // Kept for as long as messages come: the socket closes
+                // with it.
+                let _ = &listener;
+                hal_c2_shell::open_folders(engine, &folders);
+            }
+            Message::Quit => engine.request_quit(),
+        });
+        hal_c2_shell::start(&engine, &options.launch, mc);
+        if options.url.is_some() {
+            // main.cpp: an MC a link names may be another machine's, so
+            // this one's folders are imported only when told.
+            Bridge::of(&engine)
+                .set_local_folder_import_enabled(&engine, options.launch.allow_local_folder_import);
+        }
+        let icon = PathBuf::from(hal_c2_shell::platform_window::DEV_ICON);
+        hal_c2_shell::platform_window::give_application_icon(
+            &engine,
+            (dev(&options) && icon.is_file()).then_some(icon),
+        );
+        if options.launch.hosted {
+            let said = handle.clone();
+            let host = Arc::new(DesktopHost::new(options.host.clone(), move |event| {
+                let _ = said.send_blocking(Message::Host(event));
             }));
-            if let Some(origin) = &options.launch.mc_origin {
-                connection.open(origin, &options.mc_token)?;
-            }
-            let mc: Rc<dyn Mc> = connection.clone();
-            // Later launches on this home hand their folders to this window.
-            let folders_handle = handle.clone();
-            let listener = single_instance::listen(&options.state_dir, move |folders| {
-                let _ = folders_handle.send_blocking(Message::Folders(folders));
-            });
-            if listener.is_none() {
-                eprintln!("[shell] later launches cannot reach this window");
-            }
-            setup.on_message(move |engine: &Engine, message| match message {
-                Message::Wake => {
-                    connection.deliver(engine);
-                    hal_c2_shell::folders::deliver(engine);
-                    hal_c2_shell::device::deliver(engine);
-                    hal_c2_shell::controllers::plugin::deliver(engine);
-                    hal_c2_shell::local_transcriber::deliver(engine);
-                    hal_c2_shell::theme::deliver(engine);
-                    hal_c2_shell::runtime::deliver(engine);
-                    hal_c2_shell::controllers::threads::deliver(engine);
-                    hal_c2_shell::controllers::snap_shot::deliver(engine);
-                    hal_c2_shell::controllers::desktop_update::deliver(engine);
-                    hal_c2_shell::controllers::settings::deliver(engine);
-                }
-                Message::Activated(key) => {
-                    controller::with::<AlertController, _>(engine, |alerts, engine| {
-                        alerts.open_thread(engine, &key)
-                    });
-                }
-                Message::Host(event) => hosted_said(engine, event),
-                Message::Folders(folders) => {
-                    // Kept for as long as messages come: the socket closes
-                    // with it.
-                    let _ = &listener;
-                    hal_c2_shell::open_folders(engine, &folders);
-                }
-                Message::Quit => engine.request_quit(),
-            });
-            hal_c2_shell::start(&engine, &options.launch, mc);
-            if options.url.is_some() {
-                // main.cpp: an MC a link names may be another machine's, so
-                // this one's folders are imported only when told.
-                Bridge::of(&engine).set_local_folder_import_enabled(
-                    &engine,
-                    options.launch.allow_local_folder_import,
-                );
-            }
-            let icon = PathBuf::from(hal_c2_shell::platform_window::DEV_ICON);
-            hal_c2_shell::platform_window::give_application_icon(
-                &engine,
-                (dev(&options) && icon.is_file()).then_some(icon),
-            );
-            if options.launch.hosted {
-                let said = handle.clone();
-                let host = Arc::new(DesktopHost::new(options.host.clone(), move |event| {
-                    let _ = said.send_blocking(Message::Host(event));
+            // The updater stops the MC to replace it, starts it again
+            // when it could not, and quits to restart (main.cpp).
+            let (stopping, starting, quitting) = (host.clone(), host.clone(), handle.clone());
+            desktop_update::update_platform(|platform| {
+                platform.stop_mc = Some(Rc::new(move || stopping.stop()));
+                platform.start_mc = Some(Rc::new(move || starting.start()));
+                platform.quit = Some(Rc::new(move || {
+                    let _ = quitting.send(Message::Quit);
                 }));
-                // The updater stops the MC to replace it, starts it again
-                // when it could not, and quits to restart (main.cpp).
-                let (stopping, starting, quitting) = (host.clone(), host.clone(), handle.clone());
-                desktop_update::update_platform(|platform| {
-                    platform.stop_mc = Some(Rc::new(move || stopping.stop()));
-                    platform.start_mc = Some(Rc::new(move || starting.start()));
-                    platform.quit = Some(Rc::new(move || {
-                        let _ = quitting.send(Message::Quit);
-                    }));
-                });
-                host.start();
-                *host_slot.borrow_mut() = Some(host);
-            }
-            // The app's own folders, once the MC's first snapshot is in.
-            let folders = options.folders.clone();
-            if !folders.is_empty() {
-                hal_c2_shell::when_active(&engine, move |engine| {
-                    hal_c2_shell::open_folders(engine, &folders)
-                });
-            }
-            // desktop-qt's ShellWindows: `window.new`, the "New window"
-            // command and the saved windows each show a root of their own.
-            controller::set_window_opener(&engine, hal_c2_shell::runtime::open_window);
-            // An in-app pairing names this desktop as `--pair` does.
-            controller::with::<ConnectionHealth, _>(&engine, |health, _| {
-                health.set_pairing_client(pairing_client())
             });
-            controller::with::<Onboarding, _>(&engine, |onboarding, _| {
-                onboarding.set_pairing_client(pairing_client())
+            host.start();
+            *host_slot.borrow_mut() = Some(host);
+        }
+        // The app's own folders, once the MC's first snapshot is in.
+        let folders = options.folders.clone();
+        if !folders.is_empty() {
+            hal_c2_shell::when_active(&engine, move |engine| {
+                hal_c2_shell::open_folders(engine, &folders)
             });
-            // The client cache answers a thread's copy on its own thread.
-            let threads_handle = handle.clone();
-            hal_c2_shell::controllers::threads::set_wake(&engine, move || {
-                let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        }
+        // desktop-qt's ShellWindows: `window.new`, the "New window"
+        // command and the saved windows each show a root of their own.
+        controller::set_window_opener(&engine, hal_c2_shell::runtime::open_window);
+        // An in-app pairing names this desktop as `--pair` does.
+        controller::with::<ConnectionHealth, _>(&engine, |health, _| {
+            health.set_pairing_client(pairing_client())
+        });
+        controller::with::<Onboarding, _>(&engine, |onboarding, _| {
+            onboarding.set_pairing_client(pairing_client())
+        });
+        // The client cache answers a thread's copy on its own thread.
+        let threads_handle = handle.clone();
+        hal_c2_shell::controllers::threads::set_wake(&engine, move || {
+            let _ = threads_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+        });
+        // Snapshots capture through the desktop session's portals; what
+        // they learn on their own threads wakes the window's.
+        let snap_shot_handle = handle.clone();
+        let snap_shot =
+            hal_c2_shell::snap_shot::system(options.launch.cache_dir.clone(), move || {
+                let _ = snap_shot_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
-            // Snapshots capture through the desktop session's portals; what
-            // they learn on their own threads wakes the window's.
-            let snap_shot_handle = handle.clone();
-            let snap_shot =
-                hal_c2_shell::snap_shot::system(options.launch.cache_dir.clone(), move || {
-                    let _ = snap_shot_handle.send_coalesced(CoalesceKey(1), Message::Wake);
-                });
-            controller::with::<hal_c2_shell::controllers::snap_shot::SnapShot, _>(
-                &engine,
-                |c, e| c.set_backend(e, snap_shot),
-            );
-            // Alerts reach the desktop's notification service; a click shows
-            // its thread.
-            #[cfg(all(unix, not(target_os = "macos")))]
-            {
-                let clicked = handle.clone();
-                // On the listener thread, which may wait for room: a click
-                // is not dropped for a full inbox.
-                let notifications = NativeNotifications::session(move |key| {
-                    let _ = clicked.send_blocking(Message::Activated(key));
-                });
-                controller::with::<AlertController, _>(&engine, |alerts, _| {
-                    alerts.set_presenter(Rc::new(notifications))
-                });
-            }
-            // ScriptedRun: once the shell shows the MC's state, each step in
-            // turn, 1.5 s apart.
-            let steps = options.steps.clone();
-            hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
-            // The saved theme's interface font, for all the root makes.
-            hal_c2_shell::theme::set_application_font(&engine);
-            // The user's shell or the built-in one, made again as their
-            // files change.
-            let root = hal_c2_shell::runtime::open(&engine, true);
-            // The others saved open reopen once the first shows
-            // (NativeShell::restoreWindows after windows.start()).
-            if root.is_ok() {
-                controller::restore_windows(&engine);
-            }
-            root.map_err(Into::into)
-        })
-        .map_err(|e| e.to_string());
+        controller::with::<hal_c2_shell::controllers::snap_shot::SnapShot, _>(&engine, |c, e| {
+            c.set_backend(e, snap_shot)
+        });
+        // Alerts reach the desktop's notification service; a click shows
+        // its thread.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let clicked = handle.clone();
+            // On the listener thread, which may wait for room: a click
+            // is not dropped for a full inbox.
+            let notifications = NativeNotifications::session(move |key| {
+                let _ = clicked.send_blocking(Message::Activated(key));
+            });
+            controller::with::<AlertController, _>(&engine, |alerts, _| {
+                alerts.set_presenter(Rc::new(notifications))
+            });
+        }
+        // ScriptedRun: once the shell shows the MC's state, each step in
+        // turn, 1.5 s apart.
+        let steps = options.steps.clone();
+        hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
+        // The saved theme's interface font, for all the root makes.
+        hal_c2_shell::theme::set_application_font(&engine);
+        // The user's shell or the built-in one, made again as their
+        // files change.
+        let root = hal_c2_shell::runtime::open(&engine, true);
+        // The others saved open reopen once the first shows
+        // (NativeShell::restoreWindows after windows.start()).
+        if root.is_ok() {
+            controller::restore_windows(&engine);
+        }
+        root.map_err(Into::into)
+    };
+    // With no display at all main.cpp runs on Qt's offscreen platform:
+    // the shell is the agent's through its inspector, and `Window`s are
+    // items of one scene nobody sees.
+    let result = if headless {
+        app.run_headless_with(setup)
+    } else {
+        app.run_with(setup)
+    }
+    .map_err(|e| e.to_string());
     if let Some(host) = hosted.borrow_mut().take() {
         host.stop();
     }
     result
+}
+
+/// Qt's `offscreen` platform asked for by name, or, on a desktop that has
+/// one, neither a Wayland nor an X display to open a window on.
+fn no_display(env: impl Fn(&str) -> Option<String>) -> bool {
+    let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
+    if env("QT_QPA_PLATFORM").is_some_and(|p| p.trim() == "offscreen") {
+        return true;
+    }
+    cfg!(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "android")
+    )) && !set("WAYLAND_DISPLAY")
+        && !set("DISPLAY")
 }
 
 /// BackendProcess's signals as NativeShell takes them: the MC the host
@@ -1009,5 +1028,42 @@ fn install_dev_desktop_entry() {
         hal_c2_shell::platform_window::install_dev_desktop_entry(&data, DEV_APP_ID, icon, &binary)
     {
         eprintln!("hal-c2-ljos: the dev desktop entry: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::no_display;
+
+    fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            vars.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    #[test]
+    fn offscreen_by_name_runs_headless_anywhere() {
+        assert!(no_display(env(&[
+            ("QT_QPA_PLATFORM", "offscreen"),
+            ("WAYLAND_DISPLAY", "wayland-1"),
+        ])));
+    }
+
+    #[test]
+    fn a_display_opens_a_window() {
+        assert!(!no_display(env(&[("WAYLAND_DISPLAY", "wayland-1")])));
+        assert!(!no_display(env(&[("DISPLAY", ":0")])));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+    #[test]
+    fn no_display_at_all_runs_headless() {
+        assert!(no_display(env(&[])));
+        assert!(no_display(env(&[
+            ("DISPLAY", " "),
+            ("WAYLAND_DISPLAY", "")
+        ])));
     }
 }
