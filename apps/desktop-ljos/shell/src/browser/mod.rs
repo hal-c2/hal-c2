@@ -235,12 +235,17 @@ pub fn set_profile(
     let mut profile = ljos_webengine::WebEngineProfile::default();
     profile.storage_name = storage_name.to_owned();
     profile.off_the_record = false;
-    // Apart from desktop-qt's `browser`, which another Chromium writes.
+    // Both apart from desktop-qt's `browser`, which another Chromium writes
+    // in the same home: one Chromium's storage or HTTP cache is not the
+    // other's to read.
     profile.persistent_storage_path = data_dir
         .join("ljos-webengine")
         .to_string_lossy()
         .into_owned();
-    profile.cache_path = cache_dir.join("browser").to_string_lossy().into_owned();
+    profile.cache_path = cache_dir
+        .join("ljos-webengine")
+        .to_string_lossy()
+        .into_owned();
     match engine.create_native(profile, Some(browser)) {
         Ok(profile) => {
             // Written as QML would, so the profile keeps it as asked: 0 is
