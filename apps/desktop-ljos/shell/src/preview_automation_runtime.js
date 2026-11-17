@@ -5,6 +5,12 @@
   "use strict";
   var MAX_ELEMENTS = 200, MAX_TEXT = 20000, MAX_NAME = 200, MAX_TREE = 300;
   var state = window.__halc2 || (window.__halc2 = {});
+  // What `watch` logs when the document changed, and the event a promise the
+  // agent's script made fires when it settles: the host's script module's
+  // CHANGED and SETTLED. Keep them the same.
+  var CHANGED = "__halc2:changed", SETTLED = "__halc2:settled";
+  // Says the change `watch` waits for came, once.
+  function poke() { if (state.watching) state.watching(); }
   function Fail(kind, reason) { this.kind = kind; this.reason = reason; }
   function norm(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); }
   function shown(el) {
@@ -294,6 +300,7 @@
       state.clicked = { trusted: e.isTrusted, hit: !el || el === e.target || el.contains(e.target) };
       document.removeEventListener("click", state.clickListener, true);
       state.clickListener = null;
+      poke();
     };
     document.addEventListener("click", state.clickListener, true);
   }
@@ -411,6 +418,7 @@
         state.key = { key: e.key, trusted: e.isTrusted };
         document.removeEventListener("keydown", state.keyListener, true);
         state.keyListener = null;
+        poke();
       };
       document.addEventListener("keydown", state.keyListener, true);
       return true;
@@ -445,7 +453,27 @@
       }
       return true;
     },
-    ready: function () { return { readyState: document.readyState, url: location.href }; }
+    ready: function () { return { readyState: document.readyState, url: location.href }; },
+    // Logs CHANGED once, the next time the document changes: a node, an
+    // attribute or text, its readiness, input the page saw, or a promise of
+    // the agent's settling. The host asks before each look at a condition,
+    // so nothing looks while nothing changes.
+    watch: function () {
+      if (state.watching) return true;
+      var observer = new MutationObserver(function () { poke(); });
+      var heard = function () { poke(); };
+      state.watching = function () {
+        state.watching = null;
+        observer.disconnect();
+        document.removeEventListener("readystatechange", heard, true);
+        document.removeEventListener(SETTLED, heard, true);
+        console.debug(CHANGED);
+      };
+      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      document.addEventListener("readystatechange", heard, true);
+      document.addEventListener(SETTLED, heard, true);
+      return true;
+    }
   };
 
   try {

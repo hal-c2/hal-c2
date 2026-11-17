@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use hal_c2_shell::controllers::preview_automation;
-use hal_c2_shell::preview_automation::{AutomationPage, PreviewAutomationHost, ScriptDone};
+use hal_c2_shell::preview_automation::{
+    AutomationPage, Changed, PreviewAutomationHost, ScriptDone,
+};
 use ljos::prelude::Engine;
 use serde_json::{Value as Json, json};
 
 use super::fake;
 use crate::fake_mc::FakeMc;
-use crate::harness::{Outcome, Steps, text};
+use crate::harness::{Outcome, Q, Steps, text};
 use crate::steps::stream::THREAD;
 use crate::world::World;
 use crate::{expect, fail};
@@ -26,6 +28,8 @@ struct HeldPage {
     at: RefCell<String>,
     scripts: RefCell<Vec<(String, Option<ScriptDone>)>>,
     loads: RefCell<Vec<String>>,
+    /// What the host asked to be told when the page changes.
+    changed: RefCell<Option<Changed>>,
 }
 
 impl HeldPage {
@@ -35,6 +39,31 @@ impl HeldPage {
             .borrow()
             .iter()
             .any(|(source, _)| source.contains(&call))
+    }
+
+    /// How many times the page ran the script `name`.
+    fn runs(&self, name: &str) -> usize {
+        let call = format!("(\"{name}\",");
+        self.scripts
+            .borrow()
+            .iter()
+            .filter(|(source, _)| source.contains(&call))
+            .count()
+    }
+
+    /// Answers the latest run of `name` still waiting with `answer`.
+    fn answer(&self, engine: &Engine, name: &str, answer: &str) -> bool {
+        let call = format!("(\"{name}\",");
+        let done = self
+            .scripts
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .filter(|(source, _)| source.contains(&call))
+            .find_map(|(_, done)| done.take());
+        let Some(done) = done else { return false };
+        done(engine, Some(answer.to_owned()));
+        true
     }
 }
 
@@ -66,6 +95,9 @@ impl AutomationPage for HeldPage {
     fn viewport(&self, _: &Engine) -> (i32, i32) {
         (1280, 800)
     }
+    fn set_on_change(&self, _: &Engine, changed: Changed) {
+        *self.changed.borrow_mut() = Some(changed);
+    }
 }
 
 #[derive(Default)]
@@ -77,6 +109,33 @@ struct Automation {
     /// The browser tab an agent drives on a real page.
     driven: String,
     took_ms: u128,
+    /// The condition an agent waits for on the held page.
+    waiting_for: String,
+}
+
+const NOT_MET: &str = r#"{"ok":true,"value":false}"#;
+const MET: &str = r#"{"ok":true,"value":true}"#;
+
+fn held(world: &mut World) -> Outcome<Rc<HeldPage>> {
+    match world.part::<Automation>().held.clone() {
+        Some(page) => Ok(page),
+        None => fail!("no held page"),
+    }
+}
+
+/// Answers the page's look at the condition, once it has looked.
+fn answer_look(world: &mut World, answer: &str) -> Outcome {
+    let page = held(world)?;
+    let waiting = page.clone();
+    world.wait_for("the page to be looked at", move |_| {
+        waiting
+            .scripts
+            .borrow()
+            .iter()
+            .any(|(source, done)| source.contains("(\"check\",") && done.is_some())
+    })?;
+    page.answer(world.engine(), "check", answer);
+    world.pump()
 }
 
 const PASSWORD: &str = "s3cret-Passw0rd";
@@ -428,6 +487,76 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+
+    // A wait for a condition: looked at once, then each time the page
+    // changes, until it is met or its deadline.
+    steps.step(
+        &format!(r"an agent waits up to (\d+) seconds for {Q} on a page that does not show it"),
+        |world, c, _| {
+            let seconds: i64 = c[0].parse().unwrap_or(0);
+            held_page(world, "tab-1", "http://localhost:5173/")?;
+            world.part::<Automation>().waiting_for = c[1].clone();
+            ask(
+                world,
+                "waitFor",
+                json!({"selector": c[1], "timeoutMs": seconds * 1000}),
+                (seconds + 30) * 1000,
+                "tab-1",
+            )?;
+            answer_look(world, NOT_MET)
+        },
+    );
+    steps.step(
+        r"(\d+) seconds pass and nothing on the page changes",
+        |world, c, _| {
+            let seconds: u64 = c[0].parse().unwrap_or(0);
+            world.advance(seconds * 1000)?;
+            world.pump()
+        },
+    );
+    steps.step("the page was looked at once", |world, _, _| {
+        let looks = held(world)?.runs("check");
+        expect!(looks == 1, "the page was looked at {looks} times");
+        Ok(())
+    });
+    steps.step(
+        &format!("the page changes and now shows {Q}"),
+        |world, c, _| {
+            let wanted = world.part::<Automation>().waiting_for.clone();
+            expect!(c[0] == wanted, "the agent waits for {wanted:?}");
+            let page = held(world)?;
+            let changed = page.changed.borrow().clone();
+            let Some(changed) = changed else {
+                fail!("the host never asked to hear of the page's changes");
+            };
+            changed(world.engine());
+            // At most a frame after the last look.
+            world.advance(16)?;
+            world.pump()?;
+            answer_look(world, MET)
+        },
+    );
+    steps.step("the wait succeeds before its deadline", |world, _, _| {
+        let last = world.part::<Automation>().last.clone();
+        let waited = answer(world, &last)?;
+        expect!(waited["ok"] == true, "the wait was answered {waited}");
+        let looks = held(world)?.runs("check");
+        expect!(looks == 2, "the page was looked at {looks} times");
+        Ok(())
+    });
+    steps.step(
+        r"the wait fails because the condition did not match within (\d+)ms",
+        |world, c, _| {
+            let last = world.part::<Automation>().last.clone();
+            let waited = answer(world, &last)?;
+            let said = format!("did not match within {}ms", &c[0]);
+            expect!(
+                waited["ok"] == false && error_of(&waited).contains(&said),
+                "the wait was answered {waited}"
+            );
+            Ok(())
+        },
+    );
 
     steps.step(
         r"an agent opens a preview of port (\d+) in its environment",

@@ -13,7 +13,9 @@ use std::time::Duration;
 use common::FakeMc;
 use hal_c2_shell::Launch;
 use hal_c2_shell::mc::SubId;
-use hal_c2_shell::preview_automation::{AutomationPage, PreviewAutomationHost, ScriptDone, tag};
+use hal_c2_shell::preview_automation::{
+    AutomationPage, Changed, PreviewAutomationHost, ScriptDone, tag,
+};
 use ljos::App;
 use ljos::input::Modifiers;
 use ljos::prelude::{Engine, Time};
@@ -54,6 +56,8 @@ struct Page {
     given: Cell<bool>,
     loads: Rc<Cell<u64>>,
     load_starts: Rc<RefCell<Vec<Time>>>,
+    /// Tells the host the page changed, as a real page's load does.
+    changed: Rc<RefCell<Option<Changed>>>,
 }
 
 impl Page {
@@ -64,9 +68,14 @@ impl Page {
         self.given.set(true);
         if let Some(ms) = self.takes.loads {
             let (loads, starts) = (self.loads.clone(), self.load_starts.clone());
+            let changed = self.changed.clone();
             engine.call_at(engine.now() + Duration::from_millis(ms), move |engine| {
                 loads.set(loads.get() + 1);
                 starts.borrow_mut().push(engine.now());
+                let changed = changed.borrow().clone();
+                if let Some(changed) = changed {
+                    changed(engine);
+                }
             });
         }
         true
@@ -132,6 +141,9 @@ impl AutomationPage for Page {
     fn key(&self, engine: &Engine, _: i32, _: Modifiers, _: &str) -> bool {
         self.give(engine)
     }
+    fn set_on_change(&self, _: &Engine, changed: Changed) {
+        *self.changed.borrow_mut() = Some(changed);
+    }
     fn input_reached(&self, _: &Engine) -> Option<bool> {
         self.given.get().then_some(!self.takes.kept)
     }
@@ -174,6 +186,7 @@ impl Sut {
             given: Cell::new(false),
             loads: Rc::default(),
             load_starts: Rc::default(),
+            changed: Rc::default(),
         });
         host.attach(&engine, "thread-1", "tab-1", page.clone());
         Sut {
