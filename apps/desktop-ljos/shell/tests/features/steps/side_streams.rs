@@ -135,11 +135,14 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the shell handled the MC's messages over more than one frame",
         |world, _, _| {
-            world.sync()?;
+            // Read before the barrier: its reply comes on the same "mc"
+            // stream, and could add a frame of its own.
+            world.pump()?;
             let before = world.part::<Burst>().frames_before;
             let watched = watch(world)?.seen.get(MC).copied().unwrap_or_default();
             let frames = watched.frames - before;
             expect!(frames > 1, "the burst was handled in {frames} frame(s)");
+            world.sync()?;
             Ok(())
         },
     );

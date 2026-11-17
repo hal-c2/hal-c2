@@ -284,9 +284,16 @@ async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(M
             Some(answer) = answers.recv() => answer,
             () = sleep_until(deadline) => Input::Tick,
         };
+        // The time the sink waited on a full queue, during which nothing the
+        // MC sent was read: it does not count against the MC's answer.
+        let mut held = Duration::ZERO;
         for effect in core.handle(input, Instant::now().into_std()) {
             match effect {
-                Effect::Emit(event) => sink(event),
+                Effect::Emit(event) => {
+                    let started = std::time::Instant::now();
+                    sink(event);
+                    held += started.elapsed();
+                }
                 Effect::GetDescriptor {
                     attempt,
                     url,
@@ -354,6 +361,7 @@ async fn run(mut commands: UnboundedReceiver<Command>, mut sink: Box<dyn FnMut(M
                 }
             }
         }
+        core.held(held);
     }
     if let Some(old) = socket.take() {
         old.task.abort();

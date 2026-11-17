@@ -314,6 +314,20 @@ impl Core {
         .min()
     }
 
+    /// The owner held the connection for `held`: its sink waited on a full
+    /// queue, so nothing the MC sent was read meanwhile. The deadlines that
+    /// wait on the MC's answer (a pong, the hello, wake's check) move on by
+    /// as much: an answer that sat unread in the socket is not one the MC
+    /// failed to give.
+    pub fn held(&mut self, held: Duration) {
+        for by in [&mut self.pong_by, &mut self.setup_by, &mut self.probe_by]
+            .into_iter()
+            .flatten()
+        {
+            *by += held;
+        }
+    }
+
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
         self.now = now;
         match input {
@@ -992,4 +1006,116 @@ fn same_status(a: &Status, b: &Status) -> bool {
         && Arc::ptr_eq(&a.descriptor, &b.descriptor)
         && a.mc == b.mc
         && a.environment == b.environment
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok(body: Value) -> HttpAnswer {
+        HttpAnswer {
+            status: Some(200),
+            body: body.to_string().into_bytes(),
+            error: None,
+        }
+    }
+
+    /// A core whose socket said hello, and the attempt it is on.
+    fn ready(core: &mut Core, now: Instant) -> u64 {
+        let origin = Url::parse("https://mc.example").unwrap();
+        let open = Command::Open {
+            origin,
+            token: "token".into(),
+            environment: String::new(),
+        };
+        let mut effects = core.handle(Input::Command(open), now);
+        let mut socket = None;
+        while socket.is_none() {
+            let mut next = Vec::new();
+            for effect in effects {
+                match effect {
+                    Effect::GetDescriptor { attempt, .. } => {
+                        let answer = ok(json!({"orchestrationProtocolVersion": PROTOCOL}));
+                        next.extend(core.handle(Input::Descriptor { attempt, answer }, now));
+                    }
+                    Effect::PostTicket { attempt, .. } => {
+                        let answer = ok(json!({"ticket": "t"}));
+                        next.extend(core.handle(Input::Ticket { attempt, answer }, now));
+                    }
+                    Effect::OpenSocket { attempt, .. } => socket = Some(attempt),
+                    _ => {}
+                }
+            }
+            assert!(
+                socket.is_some() || !next.is_empty(),
+                "the core stopped before a socket"
+            );
+            effects = next;
+        }
+        let attempt = socket.unwrap();
+        let text =
+            json!({"t": "hello", "protocol": PROTOCOL, "mc": "mc@host", "environment": "env"})
+                .to_string();
+        core.handle(Input::SocketText { attempt, text }, now);
+        assert_eq!(core.status().phase, Phase::Ready);
+        attempt
+    }
+
+    fn closed(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::CloseSocket { .. }))
+    }
+
+    #[test]
+    fn a_held_owner_does_not_expire_the_pong() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        let attempt = ready(&mut core, start);
+        let pinged = start + DEFAULT_PING_INTERVAL;
+        let effects = core.handle(Input::Tick, pinged);
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::Send { .. })),
+            "no ping"
+        );
+
+        // The sink waited on a full queue for longer than the pong may take.
+        let held = DEFAULT_PONG_TIMEOUT + Duration::from_secs(5);
+        core.held(held);
+        let resumed = pinged + held;
+        assert!(
+            !closed(&core.handle(Input::Tick, resumed)),
+            "dropped while held"
+        );
+
+        // The pong that sat in the socket arrives once the owner drains.
+        let pong = json!({"t": "pong"}).to_string();
+        core.handle(
+            Input::SocketText {
+                attempt,
+                text: pong,
+            },
+            resumed,
+        );
+        assert!(!closed(
+            &core.handle(Input::Tick, resumed + DEFAULT_PONG_TIMEOUT)
+        ));
+        assert_eq!(core.status().phase, Phase::Ready);
+    }
+
+    #[test]
+    fn a_silent_mc_still_expires_the_pong_after_a_hold() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        ready(&mut core, start);
+        let pinged = start + DEFAULT_PING_INTERVAL;
+        core.handle(Input::Tick, pinged);
+        let held = Duration::from_secs(30);
+        core.held(held);
+        let due = pinged + held + DEFAULT_PONG_TIMEOUT;
+        assert!(
+            closed(&core.handle(Input::Tick, due)),
+            "a silent MC kept its socket"
+        );
+    }
 }

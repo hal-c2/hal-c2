@@ -44,12 +44,19 @@ struct Shared {
 
 impl Shared {
     fn push(&self, model: u64, paths: Vec<PathBuf>) {
+        // Held across the sends: a send refused because the stream is full
+        // marks its model before the handler, which takes the marks after
+        // it swaps out the stream, can look. Otherwise the handler could
+        // empty the stream, find no mark, and leave nothing queued to bring
+        // it back. The stream's own lock is never held while this one is
+        // taken (the handler runs outside it), so the order cannot deadlock.
+        let mut overflowed = self
+            .overflowed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         for path in paths {
             if self.changes.send((model, path)).is_err() {
-                self.overflowed
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(model);
+                overflowed.insert(model);
             }
         }
     }
