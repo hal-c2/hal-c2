@@ -879,7 +879,7 @@ pub fn partition<'a>(
         // Archived threads are hidden; subagents live in their parent's
         // Agents surface, and a plugin's unlisted threads in what the plugin
         // shows.
-        if thread.archived_at.is_some() || thread.subagent || !thread.listed {
+        if !lists(thread) {
             continue;
         }
         if let Some(keys) = scoped_project_keys {
@@ -1574,11 +1574,23 @@ pub struct View {
 /// up, a message it sent leaving its grace. When to build the rows again
 /// instead of ticking. The day a wake falls on ("tomorrow 9:00") turns at
 /// midnight, which is [`next_midnight`]'s.
+///
+/// Only threads the sidebar lists count: an archived thread's age turning
+/// shows nowhere, and bringing it back is a change that builds the rows
+/// again by itself.
 pub fn next_turn(threads: &[Thread], now_ms: i64) -> Option<i64> {
     threads
         .iter()
+        .filter(|thread| lists(thread))
         .filter_map(|thread| thread_turn(thread, now_ms))
         .min()
+}
+
+/// Whether the sidebar has a row for `thread`: not archived, not a
+/// subagent (those live in their parent's Agents surface), and not one a
+/// plugin keeps unlisted.
+pub fn lists(thread: &Thread) -> bool {
+    thread.archived_at.is_none() && !thread.subagent && thread.listed
 }
 
 fn thread_turn(thread: &Thread, now_ms: i64) -> Option<i64> {

@@ -1051,3 +1051,32 @@ mod working_tracker {
         }
     }
 }
+
+/// A row's age turning builds the rows again; an archived thread's does
+/// not, for it has no row: a sidebar whose only fresh thread was archived
+/// does not wake each minute for it.
+#[test]
+fn only_listed_threads_say_when_the_rows_turn() {
+    let fresh = thread_from_row(
+        "env-a",
+        &with(row("fresh"), json!({"updatedAt": "2026-09-23T08:59:30Z"})),
+    );
+    let archived = thread_from_row(
+        "env-a",
+        &with(
+            row("archived"),
+            json!({"updatedAt": "2026-09-23T08:59:30Z", "archivedAt": AT}),
+        ),
+    );
+    let old = thread_from_row(
+        "env-a",
+        &with(row("old"), json!({"updatedAt": "2026-08-01T09:00:00Z"})),
+    );
+    let in_a_minute = now() + 30_000;
+    assert_eq!(next_turn(&[fresh, old.clone()], now()), Some(in_a_minute));
+    let turn = next_turn(&[archived, old], now());
+    assert!(
+        turn.is_none_or(|at| at > now() + 60 * 60 * 1000),
+        "an archived thread turns the rows at {turn:?}"
+    );
+}

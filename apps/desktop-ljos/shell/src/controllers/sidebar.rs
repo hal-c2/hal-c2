@@ -757,7 +757,7 @@ impl Sidebar {
         crate::schedule::clear(engine, &mut self.turn);
         let midnight = threads
             .iter()
-            .any(|thread| thread.snoozed_until.is_some())
+            .any(|thread| model::lists(thread) && thread.snoozed_until.is_some())
             .then(|| {
                 let at = Utc.timestamp_millis_opt(now).single().unwrap_or_default();
                 match &*shared.zone.borrow() {
