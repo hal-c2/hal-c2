@@ -1541,8 +1541,10 @@ plugins/ui-plugins.feature: The desktop shell exposes the same slots as the TUI 
 plugins/ui-plugins.feature: The same plugin file works on every surface
 preview/automation.feature: A dev-server port wins over an address given with it
 preview/automation.feature: A queued browser action whose caller gave up is not started
+preview/automation.feature: A real page says when a script changes its document
 preview/automation.feature: A snapshot never shows what a password field holds
 preview/automation.feature: A snapshot of a page that changes while it is read fails instead of leaking
+preview/automation.feature: A wait on a real page ends when a script adds what it waits for
 preview/automation.feature: An agent opens a dev server's port in one step
 preview/devices.feature: A Device tab in the background streams nothing
 preview/devices.feature: A choice in the tools is applied by the device [the Android Emulator "Pixel 9", Orientation, Landscape left]
