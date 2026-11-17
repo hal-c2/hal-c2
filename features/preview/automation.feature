@@ -935,21 +935,46 @@ Feature: Agents drive the preview browser
 
     # A wait used to look at the page every 100 ms for as long as it ran. It looks once, then
     # each time the page says it changed (a node, an attribute, its text, its address, a load,
-    # its size, input reaching it), and gives up at one deadline.
+    # its size, a transition or animation ending, input reaching it), and gives up at one
+    # deadline. What no event reports (a script setting a box's checked, say) is seen at a
+    # look every half second, only while a wait runs: a page nobody waits on is never looked at.
     @backlog @desktop
-    Scenario: A page condition is looked at again only when the page changes
+    Scenario: A page condition is looked at as soon as the page changes
       Given an agent waits up to 10 seconds for "#ready" on a page that does not show it
       When 5 seconds pass and nothing on the page changes
-      Then the page was looked at once
+      Then the page was looked at no more than twice a second
       When the page changes and now shows "#ready"
       Then the wait succeeds before its deadline
+
+    @backlog @desktop
+    Scenario: A page condition met with no change the page reports is still seen
+      Given an agent waits up to 10 seconds for "#ready" on a page that does not show it
+      When the page shows "#ready" without saying it changed
+      Then the wait succeeds within half a second
 
     @backlog @desktop
     Scenario: A page condition that never comes times out at its deadline
       Given an agent waits up to 2 seconds for "#ready" on a page that does not show it
       When 2 seconds pass and nothing on the page changes
       Then the wait fails because the condition did not match within 2000ms
-      And the page was looked at once
+      And the page was looked at no more than twice a second
+
+    # The change is heard from the browser itself: the runtime watching the document from
+    # its own world says so through the page's console, which the app reads and does not show.
+    @backlog @desktop
+    Scenario: A real page says when a script changes its document
+      Given an agent's current tab shows a page without "#ready"
+      And the app asked the page to say when its document next changes
+      When a script on the page adds "#ready"
+      Then the page says it changed
+      And the page's console does not show what the app was told
+
+    @backlog @desktop
+    Scenario: A wait on a real page ends when a script adds what it waits for
+      Given an agent's current tab shows a page without "#ready"
+      And an agent waits up to 10 seconds there for "#ready", which the page does not show yet
+      When a script on the page adds "#ready"
+      Then the agent's wait succeeds
 
     # Proved by tst_PreviewAutomationWeb.cpp (navigatesAndSnapshots, clicksTypesAndPresses), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop

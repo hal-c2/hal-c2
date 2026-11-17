@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use hal_c2_shell::controllers::preview_automation;
 use hal_c2_shell::preview_automation::{
-    AutomationPage, Changed, PreviewAutomationHost, ScriptDone,
+    AutomationPage, BACKSTOP_MS, Changed, PreviewAutomationHost, ScriptDone,
 };
 use ljos::prelude::Engine;
 use serde_json::{Value as Json, json};
@@ -111,6 +111,12 @@ struct Automation {
     took_ms: u128,
     /// The condition an agent waits for on the held page.
     waiting_for: String,
+    /// When the agent's wait on the held page started.
+    waited_from: Option<ljos::prelude::Time>,
+    /// How often the held page had been looked at when it changed.
+    looks_before_change: usize,
+    /// How often the real page said its document changed.
+    changes_heard: Rc<std::cell::Cell<u32>>,
 }
 
 const NOT_MET: &str = r#"{"ok":true,"value":false}"#;
@@ -124,6 +130,39 @@ fn held(world: &mut World) -> Outcome<Rc<HeldPage>> {
 }
 
 /// Answers the page's look at the condition, once it has looked.
+/// Answers every look the held page was asked for and has not answered.
+fn answer_looks(world: &mut World, answer: &str) -> Outcome {
+    let page = held(world)?;
+    while page.answer(world.engine(), "check", answer) {
+        world.pump()?;
+    }
+    Ok(())
+}
+
+/// The real tab's page, as the app gave it to its host.
+fn driven_page(world: &mut World) -> Outcome<Rc<dyn AutomationPage>> {
+    let tab = world.part::<Automation>().driven.clone();
+    let page = host(world)?
+        .attached()
+        .into_iter()
+        .find_map(|(id, page)| (id == tab).then_some(page));
+    match page {
+        Some(page) => Ok(page),
+        None => fail!("the host has no page for {tab}"),
+    }
+}
+
+/// `script` has run in the page's runtime world, and so has everything
+/// asked of that world before it.
+fn run_isolated(world: &mut World, page: &Rc<dyn AutomationPage>, script: &str) -> Outcome {
+    let done = Rc::new(std::cell::Cell::new(false));
+    let ran = done.clone();
+    page.run_isolated(world.engine(), script, Box::new(move |_, _| ran.set(true)));
+    world.wait_for("the page's runtime world to run a script", move |_| {
+        done.get()
+    })
+}
+
 fn answer_look(world: &mut World, answer: &str) -> Outcome {
     let page = held(world)?;
     let waiting = page.clone();
@@ -496,6 +535,7 @@ pub fn register(steps: &mut Steps) {
             let seconds: i64 = c[0].parse().unwrap_or(0);
             held_page(world, "tab-1", "http://localhost:5173/")?;
             world.part::<Automation>().waiting_for = c[1].clone();
+            world.part::<Automation>().waited_from = Some(world.engine().now());
             ask(
                 world,
                 "waitFor",
@@ -510,13 +550,56 @@ pub fn register(steps: &mut Steps) {
         r"(\d+) seconds pass and nothing on the page changes",
         |world, c, _| {
             let seconds: u64 = c[0].parse().unwrap_or(0);
-            world.advance(seconds * 1000)?;
-            world.pump()
+            // Every look the page is asked for it answers at once: the
+            // condition does not hold.
+            for _ in 0..seconds * 10 {
+                world.advance(100)?;
+                world.pump()?;
+                answer_looks(world, NOT_MET)?;
+            }
+            Ok(())
         },
     );
-    steps.step("the page was looked at once", |world, _, _| {
-        let looks = held(world)?.runs("check");
-        expect!(looks == 1, "the page was looked at {looks} times");
+    steps.step(
+        "the page was looked at no more than twice a second",
+        |world, _, _| {
+            let looks = held(world)?.runs("check") as i64;
+            let Some(from) = world.part::<Automation>().waited_from else {
+                fail!("no agent waits on the page");
+            };
+            let seconds = world.engine().now().saturating_since(from);
+            // Once at the start, and once each BACKSTOP_MS after.
+            let most = 1 + seconds.as_millis() as i64 / BACKSTOP_MS;
+            expect!(
+                looks <= most,
+                "the page was looked at {looks} times in {seconds:?}"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the page shows {Q} without saying it changed"),
+        |world, c, _| {
+            let wanted = world.part::<Automation>().waiting_for.clone();
+            expect!(c[0] == wanted, "the agent waits for {wanted:?}");
+            let looks = held(world)?.runs("check");
+            world.advance(BACKSTOP_MS as u64)?;
+            world.pump()?;
+            let page = held(world)?;
+            expect!(
+                page.runs("check") == looks + 1,
+                "the page was looked at {} times, not once more",
+                page.runs("check") - looks
+            );
+            answer_looks(world, MET)
+        },
+    );
+    steps.step("the wait succeeds within half a second", |world, _, _| {
+        let last = world.part::<Automation>().last.clone();
+        let Some(waited) = answered(world, &last) else {
+            fail!("the wait was not answered half a second on");
+        };
+        expect!(waited["ok"] == true, "the wait was answered {waited}");
         Ok(())
     });
     steps.step(
@@ -529,19 +612,118 @@ pub fn register(steps: &mut Steps) {
             let Some(changed) = changed else {
                 fail!("the host never asked to hear of the page's changes");
             };
+            world.part::<Automation>().looks_before_change = page.runs("check");
             changed(world.engine());
             // At most a frame after the last look.
             world.advance(16)?;
             world.pump()?;
-            answer_look(world, MET)
+            answer_looks(world, MET)
         },
     );
     steps.step("the wait succeeds before its deadline", |world, _, _| {
         let last = world.part::<Automation>().last.clone();
         let waited = answer(world, &last)?;
         expect!(waited["ok"] == true, "the wait was answered {waited}");
-        let looks = held(world)?.runs("check");
-        expect!(looks == 2, "the page was looked at {looks} times");
+        let before = world.part::<Automation>().looks_before_change;
+        let looks = held(world)?.runs("check") - before;
+        expect!(
+            looks == 1,
+            "the page was looked at {looks} times once it changed"
+        );
+        Ok(())
+    });
+
+    // A real page in the browser.
+    steps.step(
+        &format!("an agent's current tab shows a page without {Q}"),
+        |world, c, _| {
+            let id = c[0].trim_start_matches('#').to_owned();
+            drive_tab(world, "/later", "Later", "<p id=status>Not yet</p>")?;
+            let shown = super::browser::evaluated(
+                world,
+                &format!("String(document.getElementById('{id}') !== null)"),
+            )?;
+            expect!(shown == "false", "the page already shows {}", c[0]);
+            world.part::<Automation>().waiting_for = c[0].clone();
+            Ok(())
+        },
+    );
+    steps.step(
+        "the app asked the page to say when its document next changes",
+        |world, _, _| {
+            let page = driven_page(world)?;
+            let heard = world.part::<Automation>().changes_heard.clone();
+            page.set_on_change(world.engine(), Rc::new(move |_| heard.set(heard.get() + 1)));
+            page.watch(world.engine());
+            // The watch is in place once its world has run what came after it.
+            run_isolated(world, &page, "true")?;
+            let heard = world.part::<Automation>().changes_heard.get();
+            expect!(heard == 0, "the page said it changed {heard} times already");
+            Ok(())
+        },
+    );
+    steps.step(&format!("a script on the page adds {Q}"), |world, c, _| {
+        let id = c[0].trim_start_matches('#');
+        super::browser::evaluate(
+            world,
+            &format!(
+                "var p = document.createElement('p'); p.id = '{id}'; \
+                     p.textContent = 'Ready'; document.body.appendChild(p); true"
+            ),
+        )?;
+        Ok(())
+    });
+    steps.step("the page says it changed", |world, _, _| {
+        let heard = world.part::<Automation>().changes_heard.clone();
+        world.wait_for("the page to say its document changed", move |_| {
+            heard.get() > 0
+        })
+    });
+    steps.step(
+        "the page's console does not show what the app was told",
+        |world, _, _| {
+            let page = driven_page(world)?;
+            let entries = Json::Array(page.console_entries(world.engine())).to_string();
+            expect!(
+                !entries.contains("__halc2"),
+                "the page's console shows {entries}"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!(
+            r"an agent waits up to (\d+) seconds there for {Q}, which the page does not show yet"
+        ),
+        |world, c, _| {
+            let seconds: i64 = c[0].parse().unwrap_or(0);
+            let tab = world.part::<Automation>().driven.clone();
+            ask(
+                world,
+                "waitFor",
+                json!({"selector": c[1], "timeoutMs": seconds * 1000}),
+                (seconds + 30) * 1000,
+                &tab,
+            )?;
+            // The first look found nothing, and the wait waits on.
+            let engine = world.engine().clone();
+            world.wait_for("the wait's first look", move |_| {
+                hal_c2_shell::schedule::pending(&engine)
+                    .iter()
+                    .any(|(name, _)| *name == "preview wait backstop")
+            })?;
+            let last = world.part::<Automation>().last.clone();
+            expect!(
+                answered(world, &last).is_none(),
+                "the wait was answered before the page changed"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the agent's wait succeeds", |world, _, _| {
+        let last = world.part::<Automation>().last.clone();
+        let waited = answer(world, &last)?;
+        expect!(waited["ok"] == true, "the wait was answered {waited}");
         Ok(())
     });
     steps.step(

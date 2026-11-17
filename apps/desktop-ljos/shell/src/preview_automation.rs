@@ -83,6 +83,11 @@ pub const USER_CONTROL_MS: i64 = 750;
 /// than a frame after the last look, so a page that never stops changing
 /// is looked at once a frame rather than as fast as it answers.
 const RELOOK_MS: i64 = 16;
+/// A condition that holds with nothing the page reports changing (a script
+/// setting a box's `checked`, layout that moved by itself) is looked at
+/// again this long after the last look. Only while a wait is armed, so a
+/// page nobody waits on is never looked at.
+pub const BACKSTOP_MS: i64 = 500;
 /// How long a key pressed in the page has to reach its scripts.
 pub(crate) const PRESS_CONFIRM_MS: i64 = 5000;
 /// How soon after the agent's click or key a load must start for the input
@@ -273,8 +278,8 @@ pub trait AutomationPage {
     /// Gives the page what it calls when something a condition reads may
     /// have changed: its address, its loads, its drawn size, input reaching
     /// it, and what [`watch`](Self::watch) asks to hear of. A page that
-    /// never calls it has its conditions looked at once, and again only
-    /// when the wait runs out.
+    /// never calls it has its conditions looked at every
+    /// [`BACKSTOP_MS`] while they are waited for.
     fn set_on_change(&self, _engine: &Engine, _changed: Changed) {}
     /// Asks the page to say the next time its document changes (a node,
     /// an attribute, text, its readiness, a script's promise settling).
@@ -380,6 +385,8 @@ struct Watch {
     expired: Cell<bool>,
     last_look: Cell<Time>,
     relook: Held,
+    /// The look after BACKSTOP_MS with no change heard.
+    backstop: Held,
     deadline: Held,
 }
 
@@ -1140,6 +1147,19 @@ impl PreviewAutomationHost {
         if let Some(deadline) = deadline {
             deadline.cancel(engine);
         }
+        // A wait ended some other way (its tab went, the MC's deadline)
+        // keeps nothing armed: its looks and its own deadline go with it.
+        let watches: Vec<Rc<Watch>> = self
+            .0
+            .borrow()
+            .watches
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|w| Rc::ptr_eq(&w.request, request))
+            .collect();
+        for watch in watches {
+            self.drop_watch(engine, &watch);
+        }
         if timeline {
             let (status, error) = match &failure {
                 None => ("succeeded", String::new()),
@@ -1279,8 +1299,9 @@ impl PreviewAutomationHost {
     }
 
     /// Looks at `check` now and each time the request's page changes until
-    /// it is met (`then`), or `wait_ms` pass (`timed_out`): one deadline,
-    /// no polling.
+    /// it is met (`then`), or `wait_ms` pass (`timed_out`): one deadline.
+    /// With no change heard it looks again BACKSTOP_MS after its last
+    /// look, not a frame-rate poll, and only while the wait lasts.
     fn watch(
         &self,
         engine: &Engine,
@@ -1303,6 +1324,7 @@ impl PreviewAutomationHost {
             expired: Cell::new(false),
             last_look: Cell::new(engine.now()),
             relook: Held::default(),
+            backstop: Held::default(),
             deadline: Held::default(),
         });
         {
@@ -1341,6 +1363,7 @@ impl PreviewAutomationHost {
         watch.looking.set(true);
         watch.changed.set(false);
         watch.last_look.set(engine.now());
+        watch.backstop.cancel(engine);
         // Asked first, so a change while the look runs is heard.
         watch.page.watch(engine);
         let (host, looked) = (self.clone(), watch.clone());
@@ -1355,7 +1378,22 @@ impl PreviewAutomationHost {
                     host.end_watch(engine, &looked, met);
                 } else if looked.changed.get() {
                     host.relook(engine, &looked);
+                } else {
+                    host.backstop(engine, &looked);
                 }
+            }),
+        );
+    }
+
+    /// Looks again BACKSTOP_MS after the last look unless the page says it
+    /// changed first: what the page cannot report is still seen.
+    fn backstop(&self, engine: &Engine, watch: &Rc<Watch>) {
+        let at = watch.last_look.get() + Duration::from_millis(BACKSTOP_MS as u64);
+        let (host, again) = (self.clone(), watch.clone());
+        watch.backstop.hold(
+            engine,
+            schedule::at(engine, "preview wait backstop", None, at, move |engine| {
+                host.relook(engine, &again);
             }),
         );
     }
@@ -1396,6 +1434,7 @@ impl PreviewAutomationHost {
         watch.ends.borrow_mut().take();
         watch.deadline.cancel(engine);
         watch.relook.cancel(engine);
+        watch.backstop.cancel(engine);
         self.0
             .borrow_mut()
             .watches

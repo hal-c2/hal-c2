@@ -9,6 +9,10 @@
   // agent's script made fires when it settles: the host's script module's
   // CHANGED and SETTLED. Keep them the same.
   var CHANGED = "__halc2:changed", SETTLED = "__halc2:settled";
+  // What `watch` listens for besides mutations, in the capture phase:
+  // `load` does not bubble, but an image's or a stylesheet's is captured.
+  var WATCHED = ["readystatechange", SETTLED, "load", "transitionend", "transitioncancel",
+    "animationend", "input", "change", "toggle"];
   // Says the change `watch` waits for came, once.
   function poke() { if (state.watching) state.watching(); }
   function Fail(kind, reason) { this.kind = kind; this.reason = reason; }
@@ -455,23 +459,28 @@
     },
     ready: function () { return { readyState: document.readyState, url: location.href }; },
     // Logs CHANGED once, the next time the document changes: a node, an
-    // attribute or text, its readiness, input the page saw, or a promise of
-    // the agent's settling. The host asks before each look at a condition,
-    // so nothing looks while nothing changes.
+    // attribute or text, its readiness, a promise of the agent's settling,
+    // or what moves layout or a control's state with no node changing (an
+    // image or stylesheet loading, a transition or animation ending, a
+    // font arriving, a field's value or checkedness). The host asks before
+    // each look at a condition, so a change is looked at within a frame;
+    // what none of these tell (a script setting `checked`) the host's
+    // backstop look sees.
     watch: function () {
       if (state.watching) return true;
       var observer = new MutationObserver(function () { poke(); });
       var heard = function () { poke(); };
+      var fonts = document.fonts;
       state.watching = function () {
         state.watching = null;
         observer.disconnect();
-        document.removeEventListener("readystatechange", heard, true);
-        document.removeEventListener(SETTLED, heard, true);
+        WATCHED.forEach(function (type) { document.removeEventListener(type, heard, true); });
+        if (fonts) fonts.removeEventListener("loadingdone", heard);
         console.debug(CHANGED);
       };
       observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-      document.addEventListener("readystatechange", heard, true);
-      document.addEventListener(SETTLED, heard, true);
+      WATCHED.forEach(function (type) { document.addEventListener(type, heard, true); });
+      if (fonts) fonts.addEventListener("loadingdone", heard);
       return true;
     }
   };

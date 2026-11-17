@@ -1,6 +1,7 @@
 //! An agent's wait for a condition on a page looks at the page once, then
-//! only when the page says it changed, at most once a frame, and gives up
-//! at one deadline: nothing looks at an unchanged page on a period.
+//! when the page says it changed, at most once a frame, and else every
+//! BACKSTOP_MS for what a page cannot report, and gives up at one
+//! deadline. Nothing is armed once the wait ends, however it ends.
 
 mod common;
 
@@ -12,7 +13,7 @@ use common::FakeMc;
 use hal_c2_shell::Launch;
 use hal_c2_shell::mc::SubId;
 use hal_c2_shell::preview_automation::{
-    AutomationPage, Changed, PreviewAutomationHost, ScriptDone, tag,
+    AutomationPage, BACKSTOP_MS, Changed, PreviewAutomationHost, ScriptDone, tag,
 };
 use ljos::App;
 use ljos::prelude::Engine;
@@ -85,7 +86,7 @@ struct Sut {
     mc: Rc<FakeMc>,
     subscription: SubId,
     page: Rc<Page>,
-    _host: PreviewAutomationHost,
+    host: PreviewAutomationHost,
 }
 
 impl Sut {
@@ -118,7 +119,7 @@ impl Sut {
             mc,
             subscription,
             page,
-            _host: host,
+            host,
         }
     }
 
@@ -165,19 +166,43 @@ impl Sut {
     }
 }
 
+const BACKSTOP: u64 = BACKSTOP_MS as u64;
+
 #[test]
-fn an_unchanged_page_is_looked_at_once_and_again_when_it_changes() {
+fn an_unchanged_page_is_looked_at_only_at_the_backstop() {
     let mut sut = Sut::new();
     sut.wait_for_ready(10_000);
     sut.advance(5_000);
-    assert_eq!(sut.looks(), 1, "looked at an unchanged page again");
+    assert_eq!(sut.looks() as u64, 1 + 5_000 / BACKSTOP);
     assert!(sut.answer().is_none());
+}
 
+#[test]
+fn a_change_is_looked_at_within_a_frame() {
+    let mut sut = Sut::new();
+    sut.wait_for_ready(10_000);
+    sut.advance(BACKSTOP / 2);
+    let looks = sut.looks();
     sut.page.change(&sut.engine, true);
-    sut.advance(16);
     let answer = sut.answer().expect("answered once the page changed");
     assert_eq!(answer["ok"], json!(true), "{answer}");
-    assert_eq!(sut.looks(), 2);
+    assert_eq!(sut.looks(), looks + 1);
+    assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
+}
+
+/// A condition that holds with no change the page reports (a script set a
+/// box's `checked`; layout moved by itself) is still seen, at the backstop.
+#[test]
+fn a_condition_met_with_no_change_heard_is_seen_at_the_backstop() {
+    let mut sut = Sut::new();
+    sut.wait_for_ready(10_000);
+    sut.advance(100);
+    sut.page.shows.set(true);
+    sut.advance(BACKSTOP - 101);
+    assert!(sut.answer().is_none(), "looked before the backstop");
+    sut.advance(1);
+    let answer = sut.answer().expect("answered at the backstop");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
     assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
 }
 
@@ -195,7 +220,11 @@ fn a_condition_that_never_comes_fails_at_its_deadline() {
         error.contains(tag::CONDITION_TIMEOUT) && error.contains("did not match within 2000ms"),
         "{answer}"
     );
-    assert_eq!(sut.looks(), 1, "looked at an unchanged page again");
+    assert!(
+        sut.looks() as u64 <= 1 + 2_000 / BACKSTOP,
+        "looked at an unchanged page {} times",
+        sut.looks()
+    );
     assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
 }
 
@@ -203,14 +232,15 @@ fn a_condition_that_never_comes_fails_at_its_deadline() {
 fn changes_in_a_burst_are_looked_at_once_a_frame() {
     let mut sut = Sut::new();
     sut.wait_for_ready(10_000);
-    sut.advance(1_000);
+    sut.advance(BACKSTOP / 2);
+    let looks = sut.looks();
     for _ in 0..10 {
         sut.page.change(&sut.engine, false);
     }
     sut.advance(100);
     // The first change is looked at at once; the rest wait out the frame
     // and are one look.
-    assert_eq!(sut.looks(), 3);
+    assert_eq!(sut.looks(), looks + 2);
     assert!(sut.answer().is_none());
 }
 
@@ -235,5 +265,26 @@ fn a_change_after_the_wait_ended_looks_at_nothing() {
     let looks = sut.looks();
     sut.page.change(&sut.engine, true);
     sut.advance(100);
+    assert_eq!(sut.looks(), looks);
+}
+
+/// A tab that goes while a wait runs ends the wait, and with it its looks
+/// and its deadline: nothing holds the page until the deadline would have
+/// come.
+#[test]
+fn a_wait_whose_tab_goes_keeps_nothing_armed() {
+    let mut sut = Sut::new();
+    sut.wait_for_ready(10_000);
+    sut.advance(100);
+    sut.host.detach(&sut.engine, "tab-1");
+    let answer = sut.answer().expect("answered when the tab went");
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert!(
+        answer["error"].to_string().contains(tag::TAB_UNAVAILABLE),
+        "{answer}"
+    );
+    assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
+    let looks = sut.looks();
+    sut.advance(10_000);
     assert_eq!(sut.looks(), looks);
 }
