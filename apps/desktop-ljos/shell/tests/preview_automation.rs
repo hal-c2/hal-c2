@@ -48,11 +48,6 @@ fn a_page_whose_previews_come_after_its_tab_is_driven() {
     engine
         .write_by_name(root, "previews", Value::Object(previews))
         .unwrap();
-    // TODO(hal-c2/ljos-ui#438): the pinned Ljós runs the page's binding
-    // only when it is read; drop this read once the pin is past c9d718aad.
-    for (_, page) in hal_c2_shell::browser::pages(&engine) {
-        engine.read_by_name(page, "previews");
-    }
     scene.settle();
     assert!(
         host.has_page("tab-1"),
