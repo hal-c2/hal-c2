@@ -629,18 +629,18 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the wait succeeds at its deadline", |world, _, _| {
+        // The host answered when the look did; the answer still has to
+        // cross the MC's socket. A wait that timed out answers not ok.
         let last = world.part::<Automation>().last.clone();
-        let Some(waited) = answered(world, &last) else {
-            fail!("the wait was not answered at its deadline");
-        };
+        let waited = answer(world, &last)?;
         expect!(waited["ok"] == true, "the wait was answered {waited}");
         Ok(())
     });
     steps.step("the wait succeeds within half a second", |world, _, _| {
+        // The host answered when the look did; the answer still has to
+        // cross the MC's socket. A wait that timed out answers not ok.
         let last = world.part::<Automation>().last.clone();
-        let Some(waited) = answered(world, &last) else {
-            fail!("the wait was not answered half a second on");
-        };
+        let waited = answer(world, &last)?;
         expect!(waited["ok"] == true, "the wait was answered {waited}");
         Ok(())
     });
