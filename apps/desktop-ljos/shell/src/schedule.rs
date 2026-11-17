@@ -120,8 +120,10 @@ pub fn at(
 }
 
 /// `f` every `period`, the first `period` from now, until cancelled or
-/// its owner goes. A fire the app was too busy for is not made up: the
-/// next comes a period after the late one, never a burst.
+/// its owner goes. Fires keep to their deadlines a period apart, so text
+/// that counts periods ("3s") stays true however late each is delivered;
+/// a deadline the app was too busy for is skipped, never made up in a
+/// burst.
 pub fn every(
     engine: &Engine,
     name: &'static str,
@@ -188,16 +190,19 @@ fn run(engine: &Engine, slot: &Rc<Slot>, due: Time, fire: Fire) {
     }
 }
 
-/// When a repeating schedule due at `due`, fired at `now`, fires next: a
-/// period on from its deadline when it fired on time, and a period after
-/// the late fire when it did not, so a late fire is never followed by one
-/// sooner than a period.
+/// When a repeating schedule due at `due`, fired at `now`, fires next: its
+/// first deadline after `now` a whole number of periods on from `due`.
+/// Counting from `now` instead would move every later deadline by each
+/// fire's delivery delay, and an elapsed-seconds label would read a second
+/// short within a few seconds.
 fn next_due(due: Time, now: Time, period: Duration) -> Time {
-    if now > due {
-        now + period
-    } else {
-        due + period
+    let next = due + period;
+    if next > now {
+        return next;
     }
+    let behind = now.saturating_since(next).as_nanos();
+    let skipped = behind / period.as_nanos() + 1;
+    next + period * u32::try_from(skipped).unwrap_or(u32::MAX)
 }
 
 impl Schedule {
@@ -321,14 +326,16 @@ mod tests {
     }
 
     #[test]
-    fn a_late_fire_is_followed_a_period_later() {
+    fn a_late_fire_keeps_the_cadence_and_skips_what_it_missed() {
         let ms = |ms: u64| Time::ZERO + Duration::from_millis(ms);
         let period = Duration::from_millis(100);
-        // On time: the cadence keeps to its deadlines.
         assert_eq!(next_due(ms(100), ms(100), period), ms(200));
-        // Due at 100, delivered at 199: not again at 200, a millisecond on.
-        assert_eq!(next_due(ms(100), ms(199), period), ms(299));
-        // Delivered past the next deadline: no burst to catch up.
-        assert_eq!(next_due(ms(100), ms(350), period), ms(450));
+        // Delivered a few ms late, as every host delivers: the next is
+        // still due on the cadence, not a period after the delivery.
+        assert_eq!(next_due(ms(100), ms(108), period), ms(200));
+        assert_eq!(next_due(ms(100), ms(199), period), ms(200));
+        // Delivered on or past later deadlines: those are skipped, no burst.
+        assert_eq!(next_due(ms(100), ms(200), period), ms(300));
+        assert_eq!(next_due(ms(100), ms(350), period), ms(400));
     }
 }
