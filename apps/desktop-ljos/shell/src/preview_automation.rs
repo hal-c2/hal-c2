@@ -370,8 +370,8 @@ struct State {
 }
 
 /// A wait for a condition on a page: looked at once, then each time the
-/// page says it changed, until it is met or the one deadline passes.
-/// Nothing looks in between.
+/// page says it changed or BACKSTOP_MS pass with no change, and a last
+/// time at the one deadline, until it is met or that look is not.
 struct Watch {
     page: Page,
     request: RequestRef,
@@ -380,10 +380,15 @@ struct Watch {
     /// A look is under way; a change meanwhile is looked at once it is back.
     looking: Cell<bool>,
     changed: Cell<bool>,
-    /// The deadline passed while a look was under way: its answer is the
-    /// last.
+    /// The deadline passed: the look under way, or the one it starts, is
+    /// the last.
     expired: Cell<bool>,
+    /// When the last look began: when it was due, for one a schedule
+    /// started, so the backstop keeps its cadence however late each fire
+    /// is delivered.
     last_look: Cell<Time>,
+    /// When the look about to begin was due.
+    due_look: Cell<Option<Time>>,
     relook: Held,
     /// The look after BACKSTOP_MS with no change heard.
     backstop: Held,
@@ -1299,7 +1304,8 @@ impl PreviewAutomationHost {
     }
 
     /// Looks at `check` now and each time the request's page changes until
-    /// it is met (`then`), or `wait_ms` pass (`timed_out`): one deadline.
+    /// it is met (`then`), or a last look when `wait_ms` pass is not
+    /// (`timed_out`): one deadline.
     /// With no change heard it looks again BACKSTOP_MS after its last
     /// look, not a frame-rate poll, and only while the wait lasts.
     fn watch(
@@ -1323,6 +1329,7 @@ impl PreviewAutomationHost {
             changed: Cell::new(false),
             expired: Cell::new(false),
             last_look: Cell::new(engine.now()),
+            due_look: Cell::new(None),
             relook: Held::default(),
             backstop: Held::default(),
             deadline: Held::default(),
@@ -1334,6 +1341,7 @@ impl PreviewAutomationHost {
         }
         let (host, late) = (self.clone(), watch.clone());
         let delay = Duration::from_millis(wait_ms.max(0) as u64);
+        let due = engine.now() + delay;
         watch.deadline.hold(
             engine,
             schedule::after(
@@ -1342,10 +1350,18 @@ impl PreviewAutomationHost {
                 None,
                 delay,
                 move |engine| {
-                    if late.looking.get() {
-                        late.expired.set(true);
-                    } else {
-                        host.end_watch(engine, &late, false);
+                    // What came true since the last look with no change
+                    // the page reports is seen: a wait shorter than the
+                    // backstop would otherwise never look again. A look
+                    // under way, or one due at the deadline, decides.
+                    late.expired.set(true);
+                    if !late.looking.get() {
+                        if late.last_look.get() >= due {
+                            host.end_watch(engine, &late, false);
+                        } else {
+                            late.due_look.set(Some(due));
+                            host.look(engine, &late);
+                        }
                     }
                 },
             ),
@@ -1362,7 +1378,8 @@ impl PreviewAutomationHost {
         }
         watch.looking.set(true);
         watch.changed.set(false);
-        watch.last_look.set(engine.now());
+        let due = watch.due_look.take().unwrap_or_else(|| engine.now());
+        watch.last_look.set(due);
         watch.backstop.cancel(engine);
         // Asked first, so a change while the look runs is heard.
         watch.page.watch(engine);
@@ -1393,6 +1410,7 @@ impl PreviewAutomationHost {
         watch.backstop.hold(
             engine,
             schedule::at(engine, "preview wait backstop", None, at, move |engine| {
+                again.due_look.set(Some(at));
                 host.relook(engine, &again);
             }),
         );
@@ -1415,6 +1433,7 @@ impl PreviewAutomationHost {
         watch.relook.hold(
             engine,
             schedule::at(engine, "preview wait look", None, at, move |engine| {
+                again.due_look.set(Some(at));
                 host.look(engine, &again);
             }),
         );

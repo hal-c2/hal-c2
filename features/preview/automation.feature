@@ -952,6 +952,13 @@ Feature: Agents drive the preview browser
       When the page shows "#ready" without saying it changed
       Then the wait succeeds within half a second
 
+    # A wait shorter than the backstop is looked at a last time when its deadline comes.
+    @backlog @desktop
+    Scenario: A short wait met with no change the page reports is seen at its deadline
+      Given an agent waits up to 200 milliseconds for "#ready" on a page that does not show it
+      When the page shows "#ready" without saying it changed, before the deadline
+      Then the wait succeeds at its deadline
+
     @backlog @desktop
     Scenario: A page condition that never comes times out at its deadline
       Given an agent waits up to 2 seconds for "#ready" on a page that does not show it
@@ -961,7 +968,7 @@ Feature: Agents drive the preview browser
 
     # The change is heard from the browser itself: the runtime watching the document from
     # its own world says so through the page's console, which the app reads and does not show.
-    @backlog @desktop
+    @desktop
     Scenario: A real page says when a script changes its document
       Given an agent's current tab shows a page without "#ready"
       And the app asked the page to say when its document next changes
@@ -969,7 +976,7 @@ Feature: Agents drive the preview browser
       Then the page says it changed
       And the page's console does not show what the app was told
 
-    @backlog @desktop
+    @desktop
     Scenario: A wait on a real page ends when a script adds what it waits for
       Given an agent's current tab shows a page without "#ready"
       And an agent waits up to 10 seconds there for "#ready", which the page does not show yet

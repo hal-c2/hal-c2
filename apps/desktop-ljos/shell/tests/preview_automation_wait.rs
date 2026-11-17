@@ -1,7 +1,8 @@
 //! An agent's wait for a condition on a page looks at the page once, then
 //! when the page says it changed, at most once a frame, and else every
-//! BACKSTOP_MS for what a page cannot report, and gives up at one
-//! deadline. Nothing is armed once the wait ends, however it ends.
+//! BACKSTOP_MS for what a page cannot report, and at its one deadline looks
+//! a last time before it gives up. Nothing is armed once the wait ends,
+//! however it ends.
 
 mod common;
 
@@ -202,6 +203,40 @@ fn a_condition_met_with_no_change_heard_is_seen_at_the_backstop() {
     assert!(sut.answer().is_none(), "looked before the backstop");
     sut.advance(1);
     let answer = sut.answer().expect("answered at the backstop");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
+}
+
+/// A wait shorter than the backstop whose condition comes true with no
+/// change the page reports is still met: the deadline looks once more
+/// before it gives up.
+#[test]
+fn a_condition_met_silently_before_a_short_deadline_ends_as_met() {
+    let mut sut = Sut::new();
+    sut.wait_for_ready(200);
+    sut.advance(100);
+    sut.page.shows.set(true);
+    sut.advance(99);
+    assert!(sut.answer().is_none(), "answered before the deadline");
+    sut.advance(1);
+    let answer = sut.answer().expect("answered at the deadline");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert_eq!(sut.looks(), 2, "one look at the start, one at the deadline");
+    assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
+}
+
+/// The look the deadline makes still decides when it answers late.
+#[test]
+fn a_slow_last_look_at_the_deadline_decides() {
+    let mut sut = Sut::new();
+    sut.page.answers_after.set(100);
+    sut.wait_for_ready(300);
+    sut.advance(150);
+    sut.page.shows.set(true);
+    sut.advance(150);
+    assert!(sut.answer().is_none(), "answered before the last look did");
+    sut.advance(100);
+    let answer = sut.answer().expect("answered by the last look");
     assert_eq!(answer["ok"], json!(true), "{answer}");
     assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
 }

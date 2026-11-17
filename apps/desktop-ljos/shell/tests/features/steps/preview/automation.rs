@@ -111,8 +111,10 @@ struct Automation {
     took_ms: u128,
     /// The condition an agent waits for on the held page.
     waiting_for: String,
-    /// When the agent's wait on the held page started.
+    /// When the agent's wait on the held page started, and how long it
+    /// waits.
     waited_from: Option<ljos::prelude::Time>,
+    wait_ms: u64,
     /// How often the held page had been looked at when it changed.
     looks_before_change: usize,
     /// How often the real page said its document changed.
@@ -129,7 +131,6 @@ fn held(world: &mut World) -> Outcome<Rc<HeldPage>> {
     }
 }
 
-/// Answers the page's look at the condition, once it has looked.
 /// Answers every look the held page was asked for and has not answered.
 fn answer_looks(world: &mut World, answer: &str) -> Outcome {
     let page = held(world)?;
@@ -163,6 +164,7 @@ fn run_isolated(world: &mut World, page: &Rc<dyn AutomationPage>, script: &str) 
     })
 }
 
+/// Answers the page's look at the condition, once it has looked.
 fn answer_look(world: &mut World, answer: &str) -> Outcome {
     let page = held(world)?;
     let waiting = page.clone();
@@ -530,17 +532,21 @@ pub fn register(steps: &mut Steps) {
     // A wait for a condition: looked at once, then each time the page
     // changes, until it is met or its deadline.
     steps.step(
-        &format!(r"an agent waits up to (\d+) seconds for {Q} on a page that does not show it"),
+        &format!(
+            r"an agent waits up to (\d+) (seconds|milliseconds) for {Q} on a page that does not show it"
+        ),
         |world, c, _| {
-            let seconds: i64 = c[0].parse().unwrap_or(0);
+            let n: u64 = c[0].parse().unwrap_or(0);
+            let wait_ms = if c[1] == "seconds" { n * 1000 } else { n };
             held_page(world, "tab-1", "http://localhost:5173/")?;
-            world.part::<Automation>().waiting_for = c[1].clone();
+            world.part::<Automation>().waiting_for = c[2].clone();
             world.part::<Automation>().waited_from = Some(world.engine().now());
+            world.part::<Automation>().wait_ms = wait_ms;
             ask(
                 world,
                 "waitFor",
-                json!({"selector": c[1], "timeoutMs": seconds * 1000}),
-                (seconds + 30) * 1000,
+                json!({"selector": c[2], "timeoutMs": wait_ms}),
+                wait_ms as i64 + 30_000,
                 "tab-1",
             )?;
             answer_look(world, NOT_MET)
@@ -594,6 +600,42 @@ pub fn register(steps: &mut Steps) {
             answer_looks(world, MET)
         },
     );
+    // A wait shorter than the backstop: only the deadline's last look can
+    // see what changed unreported.
+    steps.step(
+        &format!("the page shows {Q} without saying it changed, before the deadline"),
+        |world, c, _| {
+            let wanted = world.part::<Automation>().waiting_for.clone();
+            expect!(c[0] == wanted, "the agent waits for {wanted:?}");
+            let Some(from) = world.part::<Automation>().waited_from else {
+                fail!("no agent waits on the page");
+            };
+            let wait_ms = world.part::<Automation>().wait_ms;
+            expect!(
+                (wait_ms as i64) < BACKSTOP_MS,
+                "a {wait_ms}ms wait reaches the backstop"
+            );
+            let looks = held(world)?.runs("check");
+            let spent = world.engine().now().saturating_since(from).as_millis() as u64;
+            world.advance(wait_ms.saturating_sub(spent))?;
+            world.pump()?;
+            let page = held(world)?;
+            expect!(
+                page.runs("check") == looks + 1,
+                "the page was looked at {} times at the deadline, not once",
+                page.runs("check") - looks
+            );
+            answer_looks(world, MET)
+        },
+    );
+    steps.step("the wait succeeds at its deadline", |world, _, _| {
+        let last = world.part::<Automation>().last.clone();
+        let Some(waited) = answered(world, &last) else {
+            fail!("the wait was not answered at its deadline");
+        };
+        expect!(waited["ok"] == true, "the wait was answered {waited}");
+        Ok(())
+    });
     steps.step("the wait succeeds within half a second", |world, _, _| {
         let last = world.part::<Automation>().last.clone();
         let Some(waited) = answered(world, &last) else {
