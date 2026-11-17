@@ -241,6 +241,27 @@ fn a_slow_last_look_at_the_deadline_decides() {
     assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
 }
 
+/// A change heard just after a look arms a relook a frame later; a
+/// deadline before that frame looks in its place, so one look decides.
+#[test]
+fn the_deadline_looks_in_place_of_a_pending_relook() {
+    let mut sut = Sut::new();
+    sut.wait_for_ready(10);
+    assert_eq!(sut.looks(), 1, "looked at once");
+    sut.page.change(&sut.engine, false);
+    assert!(
+        sut.armed().contains(&"preview wait look"),
+        "{:?} armed",
+        sut.armed()
+    );
+    sut.page.answers_after.set(50);
+    sut.advance(100);
+    let answer = sut.answer().expect("answered at the deadline");
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert_eq!(sut.looks(), 2, "one look at the start, one at the deadline");
+    assert!(sut.armed().is_empty(), "{:?} still armed", sut.armed());
+}
+
 #[test]
 fn a_condition_that_never_comes_fails_at_its_deadline() {
     let mut sut = Sut::new();

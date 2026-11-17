@@ -1380,6 +1380,9 @@ impl PreviewAutomationHost {
         watch.changed.set(false);
         let due = watch.due_look.take().unwrap_or_else(|| engine.now());
         watch.last_look.set(due);
+        // One look at a time: a look the deadline starts takes the place
+        // of a relook already armed.
+        watch.relook.cancel(engine);
         watch.backstop.cancel(engine);
         // Asked first, so a change while the look runs is heard.
         watch.page.watch(engine);
