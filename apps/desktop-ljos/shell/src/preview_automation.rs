@@ -81,6 +81,10 @@ pub const USER_CONTROL_MS: i64 = 750;
 const POLL_MS: i64 = 100;
 /// How long a key pressed in the page has to reach its scripts.
 pub(crate) const PRESS_CONFIRM_MS: i64 = 5000;
+/// How soon after the agent's click or key a load must start for the input
+/// to have started it: a link or a form begins its navigation within a
+/// frame or two of the press.
+pub const INPUT_LOAD_MS: i64 = 500;
 
 /// What this host can do, as it tells each MC. No recording: the MC tells
 /// an agent this desktop does not support it.
@@ -1838,7 +1842,7 @@ impl PreviewAutomationHost {
                         engine,
                         &r,
                         wait_ms,
-                        seen(page, "clicked", loads),
+                        seen(engine, page, "clicked", loads),
                         Box::new(move |engine| {
                             let status = done.0.tab_status(engine, &done.1);
                             done.0.succeed(engine, &done.1, status);
@@ -1947,7 +1951,7 @@ impl PreviewAutomationHost {
                     engine,
                     request,
                     wait_ms,
-                    seen(page, "key", loads),
+                    seen(engine, page, "key", loads),
                     Box::new(move |engine| {
                         let status = done.tab_status(engine, &done_request);
                         done.succeed(engine, &done_request, status);
@@ -2448,13 +2452,29 @@ fn clean_path(path: &str) -> String {
 }
 
 /// Whether the page saw what the runtime's `op` was armed for (a click, a
-/// key): its value is an object once it did. A load started since the
-/// input was posted (`loads` were started before it) counts as seen: a
-/// link clicked or a form submitted with Enter replaces the document, and
-/// the runtime that was armed with it, so the new one has nothing to say.
-fn seen(page: Page, op: &'static str, loads: u64) -> Check {
+/// key): its value is an object once it did. A load that started within
+/// [`INPUT_LOAD_MS`] of the input being posted (`loads` were started
+/// before it) counts as seen: a link clicked or a form sent with Enter
+/// replaces the document, and the runtime that was armed with it, so the
+/// new one has nothing to say. A load later than that is not the input's
+/// (the dev server's reload, a meta refresh, a timer's redirect), and the
+/// input counts as unseen. One of those that happens to start in the same
+/// half second still counts as seen.
+fn seen(engine: &Engine, page: Page, op: &'static str, loads: u64) -> Check {
+    let posted = engine.now();
+    // A load is judged once, when a check first finds it.
+    let judged = Rc::new(Cell::new(loads));
+    let input_loaded = Rc::new(Cell::new(false));
     Rc::new(move |engine, done| {
-        if page.loads_started(engine) > loads {
+        let started = page.loads_started(engine);
+        if started > judged.get() {
+            judged.set(started);
+            let since = engine.now().saturating_since(posted).as_millis() as i64;
+            if since <= INPUT_LOAD_MS {
+                input_loaded.set(true);
+            }
+        }
+        if input_loaded.get() {
             return done(engine, true);
         }
         page.run_isolated(

@@ -188,7 +188,7 @@ fn user_types_a(scene: &mut Scene) {
 #[test]
 fn a_guarded_key_reaches_the_view_that_kept_the_keyboard() {
     let (engine, view, field, mut scene) = keys();
-    guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
     post_a(&engine, view);
     scene.settle();
     assert_eq!(text(&engine, view, "text"), "a");
@@ -200,7 +200,7 @@ fn a_guarded_key_reaches_the_view_that_kept_the_keyboard() {
 #[test]
 fn a_guarded_key_is_kept_from_what_took_the_keyboard_since() {
     let (engine, view, field, mut scene) = keys();
-    guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
     post_a(&engine, view);
     call(&engine, field, "forceActiveFocus", &[]);
     scene.settle();
@@ -214,8 +214,21 @@ fn a_guarded_key_is_kept_from_what_took_the_keyboard_since() {
 #[test]
 fn a_guard_whose_keys_never_came_lets_the_users_through() {
     let (engine, view, field, mut scene) = keys();
-    guard_keys(&engine, view, KEY_A, Duration::from_millis(100));
+    let _guard = guard_keys(&engine, view, KEY_A, Duration::from_millis(100));
     scene.window.advance(200).unwrap();
+    call(&engine, field, "forceActiveFocus", &[]);
+    scene.settle();
+    user_types_a(&mut scene);
+    assert_eq!(text(&engine, field, "text"), "a");
+}
+
+/// The agent's keys could not be posted: the user's next press of the
+/// key, elsewhere, is theirs.
+#[test]
+fn a_lifted_guard_lets_the_users_key_through() {
+    let (engine, view, field, mut scene) = keys();
+    let guard = guard_keys(&engine, view, KEY_A, Duration::from_secs(5));
+    guard.lift(&engine);
     call(&engine, field, "forceActiveFocus", &[]);
     scene.settle();
     user_types_a(&mut scene);

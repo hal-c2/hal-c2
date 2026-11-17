@@ -520,8 +520,8 @@ impl AutomationPage for BrowserAutomationPage {
         // the focus the check above just saw; posted ones arrive with the
         // next frame, by when the focus may be the app's own field.
         let confirm = Duration::from_millis(PRESS_CONFIRM_MS.max(0) as u64);
-        page_input::guard_keys(engine, view, key, confirm);
-        self.post(
+        let guard = page_input::guard_keys(engine, view, key, confirm);
+        let posted = self.post(
             engine,
             view,
             [
@@ -536,7 +536,11 @@ impl AutomationPage for BrowserAutomationPage {
                         .with_text(text),
                 ),
             ],
-        )
+        );
+        if !posted {
+            guard.lift(engine);
+        }
+        posted
     }
 
     fn viewport(&self, engine: &Engine) -> (i32, i32) {

@@ -70,8 +70,8 @@ pub fn has_keys(engine: &Engine, item: ObjectId) -> bool {
 /// window system's in that frame, so the first press and release of `key`
 /// the window then gets are the posted ones. A key kept never reaches the
 /// item. Gone after `within`, so keys that never arrive (the window closed
-/// first) leave nothing behind.
-pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) {
+/// first) leave nothing behind; lifted at once when they are not posted.
+pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) -> KeyGuard {
     let id: Rc<Cell<Option<KeyFilterId>>> = Rc::default();
     let pressed: Rc<Cell<Option<bool>>> = Rc::default();
     let filter = {
@@ -88,9 +88,7 @@ pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) {
                 }
                 // The release goes where its press went.
                 (KeyKind::Release, Some(keep)) => {
-                    if let Some(id) = id.take() {
-                        keys::remove_key_filter(engine, id);
-                    }
+                    KeyGuard(id.clone()).lift(engine);
                     keep
                 }
                 _ => false,
@@ -98,11 +96,24 @@ pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) {
         }
     };
     id.set(Some(keys::add_key_filter(engine, filter)));
-    engine.call_at(engine.now() + within, move |engine| {
-        if let Some(id) = id.take() {
+    let guard = KeyGuard(id);
+    let late = KeyGuard(guard.0.clone());
+    engine.call_at(engine.now() + within, move |engine| late.lift(engine));
+    guard
+}
+
+/// The guard [`guard_keys`] put up for keys about to be posted.
+#[must_use = "lift the guard when the keys are not posted"]
+pub struct KeyGuard(Rc<Cell<Option<KeyFilterId>>>);
+
+impl KeyGuard {
+    /// Takes the guard down now, for keys that were never posted: up, it
+    /// would keep the user's own next press of the key elsewhere.
+    pub fn lift(&self, engine: &Engine) {
+        if let Some(id) = self.0.take() {
             keys::remove_key_filter(engine, id);
         }
-    });
+    }
 }
 
 /// Whether input an item got takes it over from the app driving it: the

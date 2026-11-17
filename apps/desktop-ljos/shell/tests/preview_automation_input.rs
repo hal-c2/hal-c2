@@ -1,12 +1,14 @@
 //! An agent's click and key reach a page as the user's would, and the host
 //! answers by what the page saw: a click the page never saw is done by
 //! script, a key it never saw fails, and a load the input started is the
-//! page seeing it (the document that would say so is gone).
+//! page seeing it (the document that would say so is gone), but a load
+//! long after it is not.
 
 mod common;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 use common::FakeMc;
 use hal_c2_shell::Launch;
@@ -35,8 +37,9 @@ struct Takes {
     input: bool,
     /// Its runtime sees the input once it came.
     sees: bool,
-    /// The input starts a load: a link, a form sent with Enter.
-    loads: bool,
+    /// A load starts this many ms after the input: a link, a form sent
+    /// with Enter, or a reload that only happens to come after it.
+    loads: Option<u64>,
 }
 
 struct Page {
@@ -44,17 +47,20 @@ struct Page {
     /// The runtime's operations, in the order the host asked for them.
     ops: RefCell<Vec<String>>,
     given: Cell<bool>,
-    loads: Cell<u64>,
+    loads: Rc<Cell<u64>>,
 }
 
 impl Page {
-    fn give(&self) -> bool {
+    fn give(&self, engine: &Engine) -> bool {
         if !self.takes.input {
             return false;
         }
         self.given.set(true);
-        if self.takes.loads {
-            self.loads.set(self.loads.get() + 1);
+        if let Some(ms) = self.takes.loads {
+            let loads = self.loads.clone();
+            engine.call_at(engine.now() + Duration::from_millis(ms), move |_| {
+                loads.set(loads.get() + 1)
+            });
         }
         true
     }
@@ -105,11 +111,11 @@ impl AutomationPage for Page {
     fn loads_started(&self, _: &Engine) -> u64 {
         self.loads.get()
     }
-    fn click(&self, _: &Engine, _: f64, _: f64) -> bool {
-        self.give()
+    fn click(&self, engine: &Engine, _: f64, _: f64) -> bool {
+        self.give(engine)
     }
-    fn key(&self, _: &Engine, _: i32, _: Modifiers, _: &str) -> bool {
-        self.give()
+    fn key(&self, engine: &Engine, _: i32, _: Modifiers, _: &str) -> bool {
+        self.give(engine)
     }
 }
 
@@ -148,7 +154,7 @@ impl Sut {
             takes,
             ops: RefCell::default(),
             given: Cell::new(false),
-            loads: Cell::new(0),
+            loads: Rc::default(),
         });
         host.attach(&engine, "thread-1", "tab-1", page.clone());
         Sut {
@@ -210,7 +216,7 @@ fn a_click_the_page_saw_is_done() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: true,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("click", click(), 2_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -223,7 +229,7 @@ fn a_click_the_page_never_saw_is_done_by_script() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: false,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("click", click(), 3_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -235,7 +241,7 @@ fn a_click_the_page_cannot_take_is_done_by_script_at_once() {
     let mut sut = Sut::new(Takes {
         input: false,
         sees: false,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("click", click(), 200).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -249,9 +255,9 @@ fn a_click_that_starts_a_load_is_done_once() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: false,
-        loads: true,
+        loads: Some(100),
     });
-    let answer = sut.ask("click", click(), 200).expect("answered at once");
+    let answer = sut.ask("click", click(), 600).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
     assert!(!sut.asked("clickScript"));
 }
@@ -261,7 +267,7 @@ fn a_key_the_page_saw_is_done() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: true,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("press", enter(), 2_000).expect("answered");
     assert_eq!(answer["ok"], json!(true), "{answer}");
@@ -275,7 +281,7 @@ fn a_key_the_page_never_saw_fails() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: false,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("press", enter(), 8_000).expect("answered");
     assert_eq!(answer["ok"], json!(false), "{answer}");
@@ -289,9 +295,9 @@ fn a_key_that_starts_a_load_is_done() {
     let mut sut = Sut::new(Takes {
         input: true,
         sees: false,
-        loads: true,
+        loads: Some(0),
     });
-    let answer = sut.ask("press", enter(), 200).expect("answered at once");
+    let answer = sut.ask("press", enter(), 600).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
 }
 
@@ -300,9 +306,35 @@ fn a_key_the_page_cannot_take_is_pressed_by_script() {
     let mut sut = Sut::new(Takes {
         input: false,
         sees: false,
-        loads: false,
+        loads: None,
     });
     let answer = sut.ask("press", enter(), 200).expect("answered at once");
     assert_eq!(answer["ok"], json!(true), "{answer}");
     assert!(sut.asked("keyScript"));
+}
+
+/// The dev server reloads the page well after a click that went nowhere:
+/// the click is still done, by script.
+#[test]
+fn a_load_long_after_a_click_is_not_the_click() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(800),
+    });
+    let answer = sut.ask("click", click(), 3_000).expect("answered");
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(sut.asked("clickScript"));
+}
+
+#[test]
+fn a_load_long_after_a_key_is_not_the_key() {
+    let mut sut = Sut::new(Takes {
+        input: true,
+        sees: false,
+        loads: Some(800),
+    });
+    let answer = sut.ask("press", enter(), 8_000).expect("answered");
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert_eq!(answer["error"]["_tag"], json!(tag::CONDITION_TIMEOUT));
 }
