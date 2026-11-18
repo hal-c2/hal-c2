@@ -1,0 +1,89 @@
+import QtQuick
+import QtTest
+import HalC2.Shell
+import "../qml/HalC2/Bricks"
+
+// The options are clicked, so they sit in a shown item: a TestCase is not.
+Item {
+    id: root
+    width: 600
+    height: 120
+
+    TestCase {
+        id: testCase
+        name: "ShellChoiceTests"
+        when: windowShown
+
+        Component {
+            id: oneComponent
+            ShellChoice {
+                width: 500
+                options: [
+                    { value: "github", label: "GitHub" },
+                    { value: "gitlab", label: "GitLab (coming later)", disabled: true }
+                ]
+                value: "github"
+                onPicked: picked => value = picked
+            }
+        }
+
+        Component {
+            id: manyComponent
+            ShellChoice {
+                width: 500
+                multiple: true
+                optionName: "repository:"
+                options: ["acme/api", "acme/web"]
+                value: []
+                onPicked: picked => value = value.includes(picked) ? value.filter(each => each !== picked) : value.concat([picked])
+            }
+        }
+
+        function init() {
+            Theme.colors = {
+                text: "#111111",
+                textMuted: "#777777",
+                accentText: "#0055ff"
+            };
+        }
+
+        function cleanup() {
+            Theme.colors = {};
+        }
+
+        function test_chosenOptionIsInTheAccentInk() {
+            const choice = createTemporaryObject(oneComponent, root);
+            const github = findChild(choice, "choice:github");
+            verify(github.chosen);
+            compare(github.tint, Qt.color("#0055ff"));
+        }
+
+        // A disabled option cannot be chosen, and is read in the muted ink, at full opacity.
+        function test_disabledOptionIsReadableAndCannotBeChosen() {
+            const choice = createTemporaryObject(oneComponent, root);
+            const gitlab = findChild(choice, "choice:gitlab");
+            verify(!gitlab.enabled);
+            compare(gitlab.opacity, 1);
+            compare(gitlab.tint, Qt.color("#777777"));
+            mouseClick(gitlab);
+            compare(choice.value, "github");
+            verify(!gitlab.chosen);
+        }
+
+        // With `multiple`, each click picks a value in or out, and the keyboard does the same.
+        function test_manyPicksEachInAndOut() {
+            const choice = createTemporaryObject(manyComponent, root);
+            const api = findChild(choice, "repository:acme/api");
+            const web = findChild(choice, "repository:acme/web");
+            compare(api.text, "acme/api");
+            mouseClick(api);
+            mouseClick(web);
+            compare(choice.value, ["acme/api", "acme/web"]);
+            verify(api.chosen && web.chosen);
+            api.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Return);
+            compare(choice.value, ["acme/web"]);
+            verify(!api.chosen);
+        }
+    }
+}
