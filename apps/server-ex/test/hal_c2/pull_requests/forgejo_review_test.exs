@@ -375,7 +375,8 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
             |> Plug.Conn.put_resp_header("x-total-count", "5")
             |> Plug.Conn.put_resp_content_type("application/json")
             |> Plug.Conn.send_resp(200, JSON.encode!(Enum.slice(reviews, (page - 1) * 2, 2)))
-          end
+          end,
+          "/api/v1/settings/api" => {200, %{"max_response_items" => 2}}
         })
       )
 
@@ -386,6 +387,74 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
 
     pages = for r <- FakeHttp.requests(log), r["path"] =~ ~r"/pulls/7/reviews$", do: r["query"]
     assert pages == ["limit=50&page=1", "limit=50&page=2", "limit=50&page=3"]
+  end
+
+  # Forgejo pages reviews before it hides other accounts' pending ones, and counts them.
+  test "a page left empty by hidden reviews is not the end of the list", %{tmp_dir: tmp} do
+    review = %{
+      "id" => 60,
+      "user" => %{"login" => "maint"},
+      "state" => "COMMENT",
+      "body" => "late",
+      "submitted_at" => @t2
+    }
+
+    {base, _} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
+            page = String.to_integer(Plug.Conn.fetch_query_params(conn).query_params["page"])
+
+            conn
+            |> Plug.Conn.put_resp_header("x-total-count", "51")
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, JSON.encode!(if page == 2, do: [review], else: []))
+          end,
+          "/api/v1/settings/api" => {200, %{"max_response_items" => 50}}
+        })
+      )
+
+    assert {:ok, %{"comments" => comments}} = Forgejo.activity(ctx(base))
+    assert for(%{"kind" => "review", "body" => body} <- comments, do: body) == ["late"]
+  end
+
+  test "a list with more pages than are read is an error, not a short history",
+       %{tmp_dir: tmp} do
+    rows = fn page ->
+      for n <- 1..50,
+          do: %{
+            "id" => page * 100 + n,
+            "user" => %{"login" => "maint"},
+            "state" => "COMMENT",
+            "body" => "r",
+            "submitted_at" => @t2
+          }
+    end
+
+    serve_total = fn total ->
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
+            page = String.to_integer(Plug.Conn.fetch_query_params(conn).query_params["page"])
+
+            conn
+            |> Plug.Conn.put_resp_header("x-total-count", "#{total}")
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, JSON.encode!(rows.(page)))
+          end
+        })
+      )
+    end
+
+    {base, _} = serve_total.(501)
+    assert {:error, {:failed, _}} = Forgejo.activity(ctx(base))
+
+    # Ten pages that hold it all are the whole of it.
+    {base, _} = serve_total.(500)
+    assert {:ok, %{"comments" => comments}} = Forgejo.activity(ctx(base))
+    assert length(for %{"kind" => "review"} <- comments, do: 1) == 500
   end
 
   # The code review plugin reposts only when its own review is absent.
@@ -405,9 +474,19 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
       fn conn ->
         page = String.to_integer(Plug.Conn.fetch_query_params(conn).query_params["page"])
 
+        # As Forgejo answers: the body counts the page, the header every status.
         case Enum.at(statuses_by_page, page - 1) do
-          :fail -> {500, %{}}
-          rows -> {200, %{"total_count" => 3, "statuses" => rows}}
+          :fail ->
+            {500, %{}}
+
+          rows ->
+            conn
+            |> Plug.Conn.put_resp_header("x-total-count", "3")
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              JSON.encode!(%{"total_count" => length(rows), "statuses" => rows})
+            )
         end
       end
     end
@@ -438,35 +517,89 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
     assert {:ok, %{"checks" => []}} = Forgejo.detail(ctx(base))
   end
 
+  # A review's comments would be published into the pending review, which may be the
+  # user's draft: it is neither deleted nor posted into.
+  test "a post is refused while the account has a pending review", %{tmp_dir: tmp} do
+    {base, log} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" =>
+            {200,
+             [
+               %{"id" => 5, "user" => %{"login" => "Reviewer"}, "state" => "PENDING"},
+               %{"id" => 6, "user" => %{"login" => "maint"}, "state" => "PENDING"}
+             ]}
+        })
+      )
+
+    assert {:error, {:failed, message}} = Forgejo.submit_review(ctx(base), "comment", "Hm.", [])
+    assert message =~ "pending review"
+    assert for(r <- FakeHttp.requests(log), r["method"] in ~w(POST DELETE), do: r) == []
+
+    # Another account's pending review is no hindrance.
+    {base, log} =
+      serve(
+        tmp,
+        routes("agent", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
+            if conn.method == "POST",
+              do: {200, %{"id" => 9}},
+              else: {200, [%{"id" => 6, "user" => %{"login" => "maint"}, "state" => "PENDING"}]}
+          end
+        })
+      )
+
+    assert :ok = Forgejo.submit_review(ctx(base), "comment", "Hm.", [])
+
+    assert [%{"method" => "POST"}] =
+             for(r <- FakeHttp.requests(log), r["method"] == "POST", do: r)
+  end
+
   # Forgejo keeps a failed post's staged comments in a pending review, and while it
   # stands the next post fails too.
-  test "a post deletes the account's pending review first, and again after it fails",
+  test "a failed post deletes the pending review of its own comments, and no other",
        %{tmp_dir: tmp} do
+    {:ok, posted} = Agent.start_link(fn -> false end)
+    on_exit(fn -> if Process.alive?(posted), do: Agent.stop(posted) end)
+    mine = %{"id" => 8, "user" => %{"login" => "reviewer"}, "state" => "PENDING"}
+    theirs = %{"id" => 9, "user" => %{"login" => "reviewer"}, "state" => "PENDING"}
+
     {base, log} =
       serve(
         tmp,
         routes("reviewer", %{
           "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
-            if conn.method == "POST",
-              do: {500, %{"message" => "boom"}},
-              else:
-                {200,
-                 [
-                   %{"id" => 5, "user" => %{"login" => "Reviewer"}, "state" => "PENDING"},
-                   %{"id" => 6, "user" => %{"login" => "maint"}, "state" => "PENDING"},
-                   %{"id" => 7, "user" => %{"login" => "reviewer"}, "state" => "COMMENT"}
-                 ]}
+            cond do
+              conn.method == "POST" ->
+                Agent.update(posted, fn _ -> true end)
+                {500, %{"message" => "boom"}}
+
+              Agent.get(posted, & &1) ->
+                {200, [mine, theirs]}
+
+              true ->
+                {200, []}
+            end
           end,
-          "/api/v1/repos/acme/shop/pulls/7/reviews/5" => {204, nil}
+          "/api/v1/repos/acme/shop/pulls/7/reviews/8/comments" =>
+            {200, [%{"path" => "a.ex", "body" => "added", "user" => %{"login" => "reviewer"}}]},
+          # One the user began in the web UI meanwhile.
+          "/api/v1/repos/acme/shop/pulls/7/reviews/9/comments" =>
+            {200, [%{"path" => "a.ex", "body" => "Mine.", "user" => %{"login" => "reviewer"}}]},
+          "/api/v1/repos/acme/shop/pulls/7/reviews/8" => {204, nil}
         })
       )
 
-    assert {:error, _} = Forgejo.submit_review(ctx(base), "comment", "Hm.", [])
+    comments = [
+      %{"path" => "a.ex", "body" => "added", "position" => %{"kind" => "added", "newLine" => 4}}
+    ]
+
+    assert {:error, _} = Forgejo.submit_review(ctx(base), "comment", "Hm.", comments)
 
     assert [
-             {"DELETE", "/api/v1/repos/acme/shop/pulls/7/reviews/5"},
              {"POST", "/api/v1/repos/acme/shop/pulls/7/reviews"},
-             {"DELETE", "/api/v1/repos/acme/shop/pulls/7/reviews/5"}
+             {"DELETE", "/api/v1/repos/acme/shop/pulls/7/reviews/8"}
            ] =
              for(
                r <- FakeHttp.requests(log),
@@ -511,10 +644,12 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
   test "a clone fetches from the server the API is read on, with fj's token", %{tmp_dir: tmp} do
     {base, _} = serve(tmp, routes("reviewer"))
 
-    assert {:ok, %{"url" => url, "token" => "t0ken", "username" => _}} =
+    assert {:ok, %{"url" => url, "token" => "t0ken", "username" => _, "server" => server}} =
              Forgejo.fetch_access(ctx(base))
 
     assert url == base <> "/acme/shop.git"
+    # The token is for that server, and git may fetch with it from there alone.
+    assert server == base
   end
 
   defp put_app_env(key, value) do

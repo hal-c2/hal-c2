@@ -26,6 +26,18 @@ Feature: Agent code review on Forgejo
     And the plugin's clone does not keep the token
 
   @mc
+  Scenario Outline: fj's token is not sent where the MC's git configuration would expose it
+    Given the MC's git configuration <configuration>
+    When the user asks for a review of Forgejo pull request #7
+    Then the review of Forgejo pull request #7 fails, saying "<said>"
+    And the plugin sent no fetch with fj's token
+
+    Examples:
+      | configuration                                     | said                                 |
+      | sends the fetch to another server                 | not from the server its token is for |
+      | turns off the check of the server's certificate   | configured not to check              |
+
+  @mc
   Scenario: A review is posted to Forgejo with its comments on their lines
     Given "code-review" posts its reviews automatically
     When the user asks for a review of Forgejo pull request #7

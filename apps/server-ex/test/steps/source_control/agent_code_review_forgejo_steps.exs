@@ -186,6 +186,46 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
     context
   end
 
+  # Configuration the MC's environment hands git, as a deployment may: the scenario's
+  # rewrite to the fake goes to the same server (and is no rewrite to another).
+  step ~r/^the MC's git configuration (?<how>sends the fetch to another server|turns off the check of the server's certificate)$/,
+       %{args: [how]} = context do
+    api = System.get_env("HAL_C2_FORGEJO_API_BASE_URL")
+
+    case how do
+      "sends the fetch to another server" ->
+        other = String.replace(api, "127.0.0.1", "localhost")
+        Shared.put_env("GIT_CONFIG_KEY_0", "url.#{other}/git/.insteadOf")
+
+      _ ->
+        Shared.put_env("GIT_CONFIG_COUNT", "2")
+        Shared.put_env("GIT_CONFIG_KEY_1", "http.sslVerify")
+        Shared.put_env("GIT_CONFIG_VALUE_1", "false")
+    end
+
+    context
+  end
+
+  step "the review of Forgejo pull request \#{int} fails, saying {string}",
+       %{args: [number, said]} = context do
+    assert {:ok, _} = context.reply
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["error"] =~ said
+    context
+  end
+
+  step "the plugin sent no fetch with fj's token", context do
+    assert [] =
+             for(
+               r <- HalC2.Test.FakeHttp.requests(context.forgejo),
+               String.starts_with?(r["path"], "/git/"),
+               password(r["authorization"]) == @token,
+               do: r
+             )
+
+    context
+  end
+
   step "its agent requests changes with a comment on line {int} of {string}",
        %{args: [line, path]} = context do
     {review, context} = await_review(context, 7, &(&1["threadId"] && &1["checkout"]))

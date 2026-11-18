@@ -175,26 +175,32 @@ defmodule HalC2.PullRequests.Forgejo do
   # Every status of the head's combined status, which Forgejo pages like a list.
   defp commit_statuses(_cwd, _target, _base, sha) when not is_binary(sha), do: {:ok, []}
 
+  # The body's `total_count` is the page's own count; the overall one is in the
+  # `X-Total-Count` header, and without it a full page says more may follow.
   defp commit_statuses(cwd, target, base, sha, page \\ 1, acc \\ []) do
     path = "#{base}/commits/#{URI.encode_www_form(sha)}/status?limit=#{@page}&page=#{page}"
 
-    case get(cwd, target, path) do
-      {:ok, %{} = combined} ->
-        rows = Enum.filter(combined["statuses"] || [], &is_map/1)
-        acc = acc ++ rows
-        total = combined["total_count"]
+    with {:ok, body, meta} <- Forgejo.api(cwd, target, path) do
+      case JSON.decode(body) do
+        {:ok, %{} = combined} ->
+          rows = Enum.filter(combined["statuses"] || [], &is_map/1)
+          acc = acc ++ rows
 
-        cond do
-          rows == [] or not is_integer(total) or length(acc) >= total -> {:ok, acc}
-          page >= @max_pages -> {:error, {:failed, "Too many commit statuses to read."}}
-          true -> commit_statuses(cwd, target, base, sha, page + 1, acc)
-        end
+          more? =
+            case Map.get(meta, :total) do
+              total when is_integer(total) -> rows != [] and length(acc) < total
+              _ -> length(rows) >= @page
+            end
 
-      {:ok, _} ->
-        {:error, {:failed, "Forgejo answered in an unexpected shape."}}
+          cond do
+            not more? -> {:ok, acc}
+            page >= @max_pages -> {:error, {:failed, "Too many commit statuses to read."}}
+            true -> commit_statuses(cwd, target, base, sha, page + 1, acc)
+          end
 
-      error ->
-        error
+        _ ->
+          {:error, {:failed, "Forgejo answered in an unexpected shape."}}
+      end
     end
   end
 
@@ -531,8 +537,10 @@ defmodule HalC2.PullRequests.Forgejo do
   inline `comments` (`%{"path", "body", "position"}`, a position as
   `HalC2.PullRequests.GitHub.submit_review/5` takes it) on commit `commit_id`. Forgejo
   places a comment by its line in the new file, or in the old one for a deleted line.
-  A pending review the signed-in account left behind is deleted first, and again when
-  the post fails, so no comment of a failed post is published by a later one.
+  Refused while the signed-in account has a pending review on the pull request, which
+  Forgejo would publish the review's comments into: it may be the user's draft. When
+  the post fails, the pending review it left is deleted, so no comment of a failed post
+  is published by a later one.
   """
   def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review =
@@ -565,36 +573,62 @@ defmodule HalC2.PullRequests.Forgejo do
       }
       |> then(&if(is_binary(commit_id), do: Map.put(&1, "commit_id", commit_id), else: &1))
 
-    discard_pending(ctx)
+    with {:ok, []} <- pending(ctx) do
+      case Forgejo.api(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews",
+             method: "POST",
+             body: review
+           ) do
+        {:ok, _, _} ->
+          :ok
 
-    case Forgejo.api(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews",
-           method: "POST",
-           body: review
-         ) do
-      {:ok, _, _} ->
-        :ok
+        error ->
+          discard_failed(ctx, review["comments"])
+          error
+      end
+    else
+      {:ok, [_ | _]} ->
+        {:error,
+         {:failed,
+          "Your Forgejo account has a pending review on this pull request, which this " <>
+            "review's comments would be published into. Submit or discard it in Forgejo, " <>
+            "and the review is posted on the next attempt."}}
 
       error ->
-        discard_pending(ctx)
         error
     end
   end
 
-  # Forgejo stages a review's comments in a pending review of the signed-in account
-  # before it publishes them, and keeps that review when the publish fails; while it
-  # stands, the next publish fails as well. Each is deleted, before a post and after a
-  # failed one, so a retry starts from nothing.
-  defp discard_pending(ctx) do
-    target = target(ctx)
-    path = "#{base(ctx)}/pulls/#{ctx.number}/reviews"
-
+  # The pending reviews of the signed-in account. Forgejo stages a review's comments in
+  # one before it publishes them; while one stands, a post adds to it.
+  defp pending(ctx) do
     with {:ok, viewer} <- signed_in(ctx),
-         {:ok, reviews} <- pages(ctx.cwd, target, path) do
+         {:ok, reviews} <- pages(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews") do
+      {:ok,
+       for(
+         r <- reviews,
+         r["state"] == "PENDING",
+         is_integer(r["id"]),
+         down(login(r["user"]) || "") == down(viewer),
+         do: r
+       )}
+    end
+  end
+
+  # Forgejo keeps a failed post's staged comments in a pending review, and while it
+  # stands the next post fails as well. There was none before the post, so one now is
+  # the post's own, or one the user began meanwhile: only a review whose comments are
+  # all this post's is deleted.
+  defp discard_failed(_ctx, []), do: :ok
+
+  defp discard_failed(ctx, comments) do
+    path = "#{base(ctx)}/pulls/#{ctx.number}/reviews"
+    posted = MapSet.new(comments, &{&1["path"], &1["body"]})
+
+    with {:ok, reviews} <- pending(ctx) do
       for r <- reviews,
-          r["state"] == "PENDING",
-          is_integer(r["id"]),
-          down(login(r["user"]) || "") == down(viewer) do
-        Forgejo.api(ctx.cwd, target, "#{path}/#{r["id"]}", method: "DELETE")
+          {:ok, [_ | _] = staged} <- [list(ctx.cwd, target(ctx), "#{path}/#{r["id"]}/comments")],
+          Enum.all?(staged, &MapSet.member?(posted, {&1["path"], &1["body"]})) do
+        Forgejo.api(ctx.cwd, target(ctx), "#{path}/#{r["id"]}", method: "DELETE")
       end
     end
 
@@ -603,16 +637,20 @@ defmodule HalC2.PullRequests.Forgejo do
 
   @doc """
   How a clone of the repository fetches it over HTTP from the server the pull
-  request's API is read on: `%{"url", "username", "token"}`, the token fj signs in
-  with for git's credential prompt. It is nil under tea, which keeps its own, and
-  for a server over plain HTTP other than this machine, which would show it to the
-  network.
+  request's API is read on: `%{"url", "username", "token", "server"}`, the token fj
+  signs in with for git's credential prompt, and `server` the address it was issued
+  for, which git may fetch from alone with it. The token is nil under tea, which keeps
+  its own, and for a server over plain HTTP other than this machine, which would show
+  it to the network.
   """
   def fetch_access(ctx) do
     with {:ok, resolved} <- Forgejo.resolve(ctx.cwd, target(ctx)) do
+      server = Forgejo.api_base_url(resolved.base_url)
+
       token =
         with :fj <- resolved.command,
              true <- Forgejo.token_safe?(resolved.base_url),
+             true <- Forgejo.token_safe?(server),
              {:ok, keys} <- Forgejo.keys(),
              token when is_binary(token) <- get_in(keys, ["hosts", resolved.login, "token"]),
              do: token,
@@ -622,7 +660,8 @@ defmodule HalC2.PullRequests.Forgejo do
        %{
          "url" => "#{resolved.base_url}/#{resolved.repository}.git",
          "username" => "hal-c2",
-         "token" => token
+         "token" => token,
+         "server" => server
        }}
     end
   end
@@ -671,10 +710,15 @@ defmodule HalC2.PullRequests.Forgejo do
   defp issue_comments(cwd, target, base, number),
     do: list(cwd, target, "#{base}/issues/#{number}/comments")
 
-  # Every page of a paginated list, `{:ok, rows}`, up to `@max_pages` of them. The
-  # server may cap a page below the `limit` asked for, so its total (`X-Total-Count`)
-  # or a `rel="next"` link says whether more follow; with neither, a full page does.
-  defp pages(cwd, target, path, page \\ 1, acc \\ []) do
+  # Every page of a paginated list, `{:ok, rows}`, up to `@max_pages` of them, or an
+  # error when more are known to follow: a short history is not a complete one. A
+  # `rel="next"` link, or the total (`X-Total-Count`), says whether more follow; with
+  # neither, a full page does. The total counts rows the server pages but hides, such
+  # as other accounts' pending reviews, so a page may be short or empty with more to
+  # come: pages are counted against it, at the server's page size (`size`), which may
+  # be below the `limit` asked for. A short page is read as the last only once that
+  # size is known.
+  defp pages(cwd, target, path, page \\ 1, acc \\ [], size \\ nil) do
     separator = if String.contains?(path, "?"), do: "&", else: "?"
 
     with {:ok, rows, meta} <-
@@ -683,17 +727,37 @@ defmodule HalC2.PullRequests.Forgejo do
       total = Map.get(meta, :total)
       link = Map.get(meta, :link)
 
-      more? =
-        rows != [] and
-          cond do
-            is_integer(total) -> length(acc) < total
-            is_binary(link) -> String.contains?(link, ~s(rel="next"))
-            true -> length(rows) >= @page
-          end
+      size =
+        cond do
+          size -> size
+          length(rows) >= @page -> @page
+          is_integer(total) and length(acc) < total -> page_size(cwd, target)
+          true -> nil
+        end
 
-      if more? and page < @max_pages,
-        do: pages(cwd, target, path, page + 1, acc),
-        else: {:ok, acc}
+      more? =
+        cond do
+          is_binary(link) and link != "" -> String.contains?(link, ~s(rel="next"))
+          not is_integer(total) -> length(rows) >= @page
+          length(acc) >= total -> false
+          is_integer(size) -> page * size < total
+          true -> :unknown
+        end
+
+      cond do
+        more? == :unknown -> {:error, {:failed, "Forgejo's list could not be read to its end."}}
+        not more? -> {:ok, acc}
+        page >= @max_pages -> {:error, {:failed, "Too many pages to read from Forgejo."}}
+        true -> pages(cwd, target, path, page + 1, acc, size)
+      end
+    end
+  end
+
+  # How many rows the server serves a page at most, or nil when it does not say.
+  defp page_size(cwd, target) do
+    case get(cwd, target, "settings/api") do
+      {:ok, %{"max_response_items" => max}} when is_integer(max) and max > 0 -> min(max, @page)
+      _ -> nil
     end
   end
 

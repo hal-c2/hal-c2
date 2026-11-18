@@ -571,9 +571,7 @@ defmodule HalC2.SourceControl.Forgejo do
          token when is_binary(token) <-
            get_in(keys, ["hosts", target.login, "token"]) ||
              {:error, {:unauthenticated, "fj has no credentials for this server."}} do
-      # `HAL_C2_FORGEJO_API_BASE_URL` stands in for the server, as Bitbucket's does.
-      base_url = System.get_env("HAL_C2_FORGEJO_API_BASE_URL") || target.base_url
-      request(cwd, base_url, token, path, method, body)
+      request(cwd, api_base_url(target.base_url), token, path, method, body)
     end
   end
 
@@ -595,6 +593,12 @@ defmodule HalC2.SourceControl.Forgejo do
         send_request(url, token, method, body)
     end
   end
+
+  @doc """
+  The address fj's token for the server at `base_url` is sent to: the server itself,
+  or `HAL_C2_FORGEJO_API_BASE_URL`, which stands in for it as Bitbucket's does.
+  """
+  def api_base_url(base_url), do: System.get_env("HAL_C2_FORGEJO_API_BASE_URL") || base_url
 
   @doc "Whether a token may go to `url`: over HTTPS, or plain HTTP to this machine only."
   def token_safe?(url) when is_binary(url), do: url |> URI.parse() |> token_safe?()
@@ -726,8 +730,7 @@ defmodule HalC2.SourceControl.Forgejo do
            Enum.find(logins, &(String.trim_trailing(&1["url"], "/") == base_url)) ||
              {:error, {:unauthenticated, "fj has no credentials for this server."}},
          {:ok, token} <- authenticate(cwd, login),
-         api_base = System.get_env("HAL_C2_FORGEJO_API_BASE_URL") || base_url,
-         {:ok, text, _} <- request(cwd, api_base, token, "user", "GET", nil) do
+         {:ok, text, _} <- request(cwd, api_base_url(base_url), token, "user", "GET", nil) do
       case JSON.decode(text) do
         {:ok, %{"login" => account}} when is_binary(account) and account != "" ->
           {:ok, account}

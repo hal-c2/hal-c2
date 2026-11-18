@@ -23,7 +23,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
 
     with :ok <- alone(clone, fn -> init(clone, url) end),
-         {credentials, env} = credentials(remote, fetched_url(clone, url)),
+         {:ok, {credentials, env}} <- credentials(clone, remote, url),
          {:ok, _} <-
            git(
              clone,
@@ -248,38 +248,58 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
-  # Git's only credential helper for the fetch, with what it reads from the environment.
-  # gh's is as `gh auth setup-git` would make it. A token goes in the environment, never
-  # in the command line, where any process could read it. Git runs a helper through a shell.
-  defp credentials(%{"gh" => true}, _url) do
+  # Git's only credential helper for the fetch, with what it reads from the environment,
+  # `{:ok, {args, env}}`. gh's is as `gh auth setup-git` would make it. A token goes in
+  # the environment, never in the command line, where any process could read it. Git
+  # runs a helper through a shell.
+  defp credentials(_clone, %{"gh" => true}, _url) do
     case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
       nil ->
-        {[], []}
+        {:ok, {[], []}}
 
       gh ->
         gh = String.replace(gh, "'", "'\\''")
-        {["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"], []}
+
+        {:ok,
+         {["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"],
+          []}}
     end
   end
 
-  # A token's helper is configured for the origin git fetches from alone
-  # (`credential.<url>.helper`), so git asks it about no other: a fetch redirected to
-  # another server gets nothing.
-  defp credentials(%{"token" => token} = remote, url) when is_binary(token) and token != "" do
+  # A token goes only to the server it was issued for (`server`, else `url`'s), and over
+  # a checked certificate: the configuration the MC's environment hands git
+  # (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`) can rewrite `url` to another server
+  # or turn the check off, and is refused when it does. The helper is configured for
+  # that origin alone (`credential.<url>.helper`), so git asks it about no other: a
+  # fetch redirected elsewhere gets nothing.
+  defp credentials(clone, %{"token" => token} = remote, url)
+       when is_binary(token) and token != "" do
     helper =
       ~S|!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$HAL_C2_GIT_USERNAME" "$HAL_C2_GIT_TOKEN"; }; f|
 
-    case origin(url) do
-      nil ->
-        {["-c", "credential.helper="], []}
+    fetched = fetched_url(clone, url)
+    issuer = origin(remote["server"] || url)
 
-      origin ->
-        {["-c", "credential.helper=", "-c", "credential.#{origin}.helper=" <> helper],
-         [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}
+    cond do
+      is_nil(issuer) or origin(fetched) != issuer ->
+        {:error,
+         "git would fetch #{url} from #{origin(fetched) || fetched}, not from the server " <>
+           "its token is for; check the git configuration the MC is started with."}
+
+      git(clone, ["config", "--type=bool", "--get-urlmatch", "http.sslVerify", fetched]) ==
+          {:ok, "false"} ->
+        {:error,
+         "git is configured not to check #{issuer}'s certificate, so its token is not " <>
+           "sent; check the git configuration the MC is started with."}
+
+      true ->
+        {:ok,
+         {["-c", "credential.helper=", "-c", "credential.#{issuer}.helper=" <> helper],
+          [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}}
     end
   end
 
-  defp credentials(_remote, _url), do: {["-c", "credential.helper="], []}
+  defp credentials(_clone, _remote, _url), do: {:ok, {["-c", "credential.helper="], []}}
 
   # `scheme://host[:port]` of an HTTP(S) URL, or nil.
   defp origin(url) do
@@ -296,7 +316,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
-  # can turn the HTTPS address back into SSH, and its hooks have no business here.
+  # can turn the HTTPS address back into SSH, and its hooks have no business here. Nor
+  # does an inherited `GIT_SSL_NO_VERIFY` turn off the server's certificate check.
   defp git(cwd, args, env \\ []) do
     case System.cmd("git", args,
            cd: cwd,
@@ -305,7 +326,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
              [
                {"GIT_TERMINAL_PROMPT", "0"},
                {"GIT_CONFIG_GLOBAL", "/dev/null"},
-               {"GIT_CONFIG_NOSYSTEM", "1"}
+               {"GIT_CONFIG_NOSYSTEM", "1"},
+               {"GIT_SSL_NO_VERIFY", nil}
              ] ++ env
          ) do
       {out, 0} ->
