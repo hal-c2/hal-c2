@@ -41,6 +41,14 @@ defmodule HalC2.Test.Mc do
     start_supervised!({HalC2.Store, path: store})
     start_supervised!(HalC2.Auth)
     start_supervised!(HalC2.Streams)
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
+        id: HalC2.Orchestration.Delegation.Waits
+      )
+    )
+
     start_supervised!(HalC2.Shell)
     start_supervised!(HalC2.Subprocess.Orphans)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
@@ -84,6 +92,7 @@ defmodule HalC2.Test.Mc do
           HalC2.Web,
           HalC2.Subprocess.Orphans,
           HalC2.Shell,
+          HalC2.Orchestration.Delegation.Waits,
           HalC2.Streams,
           HalC2.Auth,
           HalC2.Store

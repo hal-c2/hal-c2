@@ -75,6 +75,7 @@ defmodule HalC2.DelegationPropTest do
         HalC2.Prop.start_services([
           {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
           HalC2.Streams,
+          {Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
           HalC2.Shell,
           HalC2.Orchestration.TurnWatch
         ])

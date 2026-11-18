@@ -21,6 +21,10 @@ defmodule HalC2.Orchestration.DelegationTest do
         ],
         do: start_supervised!({Registry, keys: :unique, name: name}, id: name)
 
+    start_supervised!({Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
+      id: HalC2.Orchestration.Delegation.Waits
+    )
+
     on_exit(fn -> Application.delete_env(:hal_c2, :delegation_hook) end)
     :ok
   end
@@ -177,6 +181,21 @@ defmodule HalC2.Orchestration.DelegationTest do
                task()
 
       assert item()["status"] == "interrupted"
+    end
+  end
+
+  describe "a task whose child's program could not be reattached" do
+    test "is interrupted when its caller's program was reattached and nothing continues the child" do
+      delegate("running")
+      # As `reattach/0` leaves it: the child settled, the caller going on, so neither
+      # is one of the threads `run/0` found active.
+      Recovery.settle("c")
+      :persistent_term.put({Recovery, :failed}, [{"c", nil}])
+      on_exit(fn -> :persistent_term.erase({Recovery, :failed}) end)
+
+      Recovery.continue()
+
+      assert %{"status" => "interrupted"} = task()
     end
   end
 
@@ -1157,6 +1176,327 @@ defmodule HalC2.Orchestration.DelegationTest do
   defp result_message(parent) do
     state = parent |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
     StreamState.get(state, "message")["message:delegate-result:task"]
+  end
+
+  # The child's run `cr` opens request `req` of `kind` (asked at `asked`), with the
+  # timeline item the turn writer gives it.
+  defp open_request(kind, asked \\ @at, capability \\ "live") do
+    item =
+      if kind == "user_input",
+        do: %{
+          "type" => "user_input_request",
+          "questions" => [
+            %{
+              "header" => "Scope",
+              "question" => "Which module?",
+              "options" => [%{"label" => "A"}, %{"label" => "B"}]
+            }
+          ]
+        },
+        else: %{"type" => "approval_request", "prompt" => "rm -rf build", "reason" => "cleanup"}
+
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"node", "node:cr", %{"s" => %{"id" => "node:cr", "runId" => "cr"}}},
+        {"runtime-request", "req",
+         %{
+           "s" => %{
+             "id" => "req",
+             "kind" => kind,
+             "status" => "pending",
+             "nodeId" => "node:cr",
+             "createdAt" => asked,
+             "responseCapability" => %{"type" => capability}
+           }
+         }},
+        {"turn-item", "turn-item:req",
+         %{
+           "s" =>
+             Map.merge(item, %{
+               "id" => "turn-item:req",
+               "runId" => "cr",
+               "ordinal" => 2,
+               "requestId" => "req",
+               "status" => "running"
+             })
+         }}
+      ])
+
+    :ok
+  end
+
+  defp messages(prefix) do
+    "p"
+    |> HalC2.Streams.state()
+    |> StreamState.list("message")
+    |> Enum.filter(&String.starts_with?(&1["id"], prefix))
+  end
+
+  describe "a request the child opens" do
+    test "a question reaches the caller once, for it to answer" do
+      delegate("running", %{"title" => "Look"})
+      open_request("user_input")
+
+      Delegation.request_opened("c", "req")
+      Delegation.request_opened("c", "req")
+
+      assert [message] = messages("message:delegate-request:")
+      assert message["createdBy"] == "system"
+      assert message["text"] =~ "Scope: Which module? (A / B)"
+      assert message["text"] =~ "waits on your answer"
+      assert message["text"] =~ "hal_c2_pending_request_respond (threadId c, requestId req)"
+      assert message["notification"]["summary"] == "Look asks a question"
+      assert message["notification"]["workerThreadId"] == "c"
+    end
+
+    test "told twice at once, a request still reaches the caller once" do
+      delegate("running")
+      open_request("user_input")
+
+      for _ <- 1..4 do
+        Task.async(fn -> Delegation.request_opened("c", "req") end)
+      end
+      |> Task.await_many()
+
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a request the caller's wait returned is not told again" do
+      delegate("running")
+      open_request("user_input")
+
+      assert {:ok, %{"pendingRequest" => %{"requestId" => "req"}}} =
+               Delegation.wait("p", "task", 1_000)
+
+      Delegation.request_opened("c", "req")
+      assert messages("message:delegate-request:") == []
+    end
+
+    test "a task that wakes only an idle caller still tells it of a request" do
+      # As `delegated_task.request` and a waited-for delegation leave a task.
+      delegate("running", %{"completionWake" => "settled_only"})
+      open_request("user_input")
+      Delegation.request_opened("c", "req")
+
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a request opened while the caller waits is the wait's to tell" do
+      delegate("running")
+      open_request("user_input")
+      me = self()
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+          send(me, {:during_wait, messages("message:delegate-request:")})
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"pendingRequest" => %{"requestId" => "req"}}} =
+               Delegation.wait("p", "task", 1_000)
+
+      assert_received {:during_wait, []}
+      assert messages("message:delegate-request:") == []
+    end
+
+    test "a request opened as the wait gives up comes back with it, and is not told again" do
+      delegate("running")
+
+      hook_with(fn
+        :expiring, "task" ->
+          open_request("user_input")
+          Delegation.request_opened("c", "req")
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"waitTimedOut" => true, "pendingRequest" => %{"requestId" => "req"}}} =
+               Delegation.wait("p", "task", 1)
+
+      assert messages("message:delegate-request:") == []
+    end
+
+    # Found by prop/hal_c2/delegation_wakes_prop_test.exs: a second wait within the
+    # millisecond of the first left `expire` a nil change, and the store refused it.
+    test "a second wait that gives up on a task gives up as the first did" do
+      delegate("running")
+
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+    end
+
+    test "a request that does not end the wait is told once the wait is over" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+      me = self()
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+          send(me, {:during_wait, messages("message:delegate-request:")})
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+      assert_received {:during_wait, []}
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a question kept from the caller by its wait is told when the task ended meanwhile" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+
+          {:ok, _} =
+            HalC2.Streams.commit("p", :thread, [
+              {"subagent", "task", %{"s" => %{"status" => "completed"}}}
+            ])
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "completed"}} = Delegation.wait("p", "task", 1)
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a question kept from the caller by its wait is not told for a task cancelled meanwhile" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+
+      hook_with(fn
+        :expiring, "task" ->
+          {:ok, _} =
+            HalC2.Streams.commit("p", :thread, [
+              {"subagent", "task", %{"s" => %{"status" => "cancelled"}}}
+            ])
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.wait("p", "task", 1)
+      assert messages("message:delegate-request:") == []
+    end
+
+    test "asked again under the same id reaches the caller again" do
+      delegate("running")
+      open_request("user_input")
+      Delegation.request_opened("c", "req")
+      open_request("user_input", "2026-09-23T10:05:00.000Z")
+      Delegation.request_opened("c", "req")
+
+      assert [_, _] = messages("message:delegate-request:")
+    end
+
+    test "an approval is the caller's to decide at full access" do
+      delegate("running")
+      open_request("command")
+      Delegation.request_opened("c", "req")
+
+      assert [message] = messages("message:delegate-request:")
+      assert message["text"] =~ "rm -rf build\ncleanup"
+      assert message["text"] =~ "you run at full access"
+      assert message["notification"]["summary"] =~ "waits on an approval"
+    end
+
+    test "an approval under a supervised caller is passed on to the user" do
+      delegate("running")
+
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [thread("p", %{"runtimeMode" => "approval-required"})])
+
+      open_request("command")
+      Delegation.request_opened("c", "req")
+
+      assert [message] = messages("message:delegate-request:")
+      assert message["text"] =~ "only the user can give"
+      refute message["text"] =~ "you run at full access"
+
+      assert {:ok, %{"pendingRequest" => %{"next" => next}}} = Delegation.task_status("p", "task")
+      assert next =~ "only the user can give"
+    end
+
+    test "is not sent once answered, or for a task that ended" do
+      delegate("running")
+      open_request("user_input")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          {"runtime-request", "req", %{"s" => %{"status" => "resolved"}}}
+        ])
+
+      Delegation.request_opened("c", "req")
+      assert messages("message:delegate-request:") == []
+
+      delegate("completed")
+      Delegation.finished("c", "cr", "completed")
+      open_request("user_input")
+      Delegation.request_opened("c", "req")
+      assert messages("message:delegate-request:") == []
+    end
+  end
+
+  describe "a child left with only a held queue" do
+    test "tells its caller once how to resume it, and its task does not end" do
+      delegate("failed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr", 1, "failed", %{
+            "completedAt" => @at,
+            "failure" => %{"message" => "usage limit"}
+          }),
+          run("q1", 2, "queued", %{"queueHeld" => true}),
+          run("q2", 3, "queued", %{"queueHeld" => true})
+        ])
+
+      Delegation.finished("c", "cr", "failed")
+      Delegation.finished("c", "cr", "failed")
+
+      assert task()["status"] == "running"
+      assert [message] = messages("message:delegate-held:")
+      assert message["text"] =~ ~s(queued="2")
+      assert message["text"] =~ "ended failed: usage limit"
+      assert message["text"] =~ "hal_c2_queue_resume (threadId c)"
+    end
+
+    test "says why in an adapter's own words when its failure is plain text" do
+      delegate("failed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr", 1, "failed", %{"completedAt" => @at, "failure" => "worktree is gone"}),
+          run("q1", 2, "queued", %{"queueHeld" => true})
+        ])
+
+      Delegation.finished("c", "cr", "failed")
+
+      assert [message] = messages("message:delegate-held:")
+      assert message["text"] =~ "ended failed: worktree is gone"
+    end
+
+    test "says nothing while a queued run is not held" do
+      delegate("completed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("q1", 2, "queued", %{"queueHeld" => true}),
+          run("q2", 3, "queued")
+        ])
+
+      Delegation.finished("c", "cr", "completed")
+      assert messages("message:delegate-held:") == []
+    end
   end
 
   describe "a delegation without a task" do

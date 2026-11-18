@@ -146,6 +146,15 @@ Feature: Agents working with threads through MCP tools
       | has a turn running | queue | a turn queued after the active one |
       | has a turn running | restart | a restart of the running turn   |
 
+  # A queued send gave no sign of what it waits on, so agents sent again and again
+  # into a busy thread.
+  @mc
+  Scenario: A queued send says what it waits on and how to get through sooner
+    Given "t2" has a turn running
+    When the agent of "caller" sends "check the tests" to "t2" in mode "queue"
+    Then the result names its place in the queue and the turn it waits behind
+    And it says how to join that turn instead
+
   @mc
   Scenario: Restarting needs a running turn
     Given "t2" is idle

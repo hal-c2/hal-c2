@@ -325,41 +325,74 @@ Feature: Delegating tasks to subagents
     And the subagent is still working after 10 minutes
     Then the wait is still open
 
+  # The user is not watching a worker's thread; the agent that delegated it is, and
+  # answers for it.
+  @mc
+  Scenario Outline: A subagent's question reaches the agent that delegated it <when>
+    Given the agent in "parent" delegated a task
+    And <turn>
+    When the subagent asks the user a question and stops until it is answered
+    Then "parent" hears once of the subagent's question, with its task and thread
+    And the message tells it to answer the question itself
+
+    Examples:
+      | when                     | turn                                 |
+      | after its turn ended     | the turn of "parent" ended           |
+      | while its turn still runs | the turn of "parent" is still running |
+
+  # A worker holds no more than its caller's modes: a caller at full access may already
+  # do what its worker asks, and decides; otherwise the approval is the user's.
+  @mc
+  Scenario Outline: A subagent's approval reaches the agent that delegated it, which <decides>
+    Given the agent in "parent" delegated a task
+    And "parent" is now in <mode> mode
+    When the subagent's run stops on an approval
+    Then "parent" hears once of the subagent's approval, with its task and thread
+    And the message tells it <told>
+
+    Examples:
+      | decides                      | mode               | told                             |
+      | decides it                   | full-access        | the approval is its to decide    |
+      | passes it on to the user     | approval-required  | to pass the approval on to the user |
+
   @backlog @mc
-  Scenario: A subagent's question wakes the agent that delegated it
+  Scenario: A subagent's question notice says how the subagent waits, and goes when answered
     Given the agent in "parent" delegated a task and its turn has ended
     When the subagent asks the user a question
-    Then "parent" is woken once with the task, the subagent's thread and the question
-    And it is told whether the subagent is blocked or still working
+    Then it is told whether the subagent is blocked or still working
     And a wake still queued when the question is answered is cancelled
 
-  @backlog @mc
-  Scenario Outline: A subagent's question does not wake its delegating agent when <why>
-    Given the agent in "parent" delegated a task
-    And <situation>
-    When the subagent asks the user a question
-    Then "parent" is not woken for it
+  @mc
+  Scenario Outline: A subagent's question does not reach its delegating agent when <why>
+    Given <situation>
+    When the subagent's question opens
+    Then "parent" does not hear of the subagent's question
 
     Examples:
-      | why                               | situation                                       |
-      | the agent is waiting on the task  | the agent in "parent" is still waiting on it    |
-      | the parent is archived            | "parent" is archived                            |
-      | the user stopped the task         | the user stopped the task                       |
+      | why                               | situation                                                |
+      | the agent is waiting on the task  | the agent in "parent" delegated a task and is waiting    |
+      | the parent is archived            | the agent in "parent" delegated a task and "parent" is archived |
+      | the task was cancelled            | the agent in "parent" delegated a task it cancelled      |
 
   # Upstream #29909: a question notice queued behind the parent's running turn, and an orchestrator
-  # whose turn ran for hours never saw its subagents' questions.
-  @backlog @mc @priority-high
-  Scenario Outline: A subagent's question reaches a parent whose turn is still running
-    Given the agent in "parent" delegated a task and runs on <provider>
+  # whose turn ran for hours never saw its subagents' questions. Here a notice is steered
+  # in at the turn's next safe point: Claude folds it in at its next tool boundary rather
+  # than cancelling the tools it has pending.
+  @mc
+  Scenario: A subagent's question is steered into the parent's running Codex turn
+    Given the agent in "parent" delegated a task
     And the turn of "parent" is still running
-    When the subagent asks a question meant for "parent"
-    Then the question notice <arrives>
+    When the subagent asks the user a question and stops until it is answered
+    Then the question notice is steered into the running turn of "parent"
     And the model the user picked for "parent" is left as it was
 
-    Examples:
-      | provider                                          | arrives                          |
-      | Codex                                             | is steered into the running turn |
-      | a provider that steers only by stopping its tools | is queued behind the running turn |
+  @backlog @mc @plugin-claude
+  Scenario: A subagent's question is folded into the parent's running Claude turn at its next tool boundary
+    Given the agent in "parent" delegated a task and runs on Claude
+    And the turn of "parent" is still running
+    When the subagent asks a question meant for "parent"
+    Then the question notice is sent to Claude to read at its next tool boundary
+    And the tools Claude has pending keep running
 
   # Upstream #29909: a question notice whose steer missed the turn's end was lost on the retry.
   @backlog @mc @priority-high
@@ -367,6 +400,36 @@ Feature: Delegating tasks to subagents
     Given a subagent's question notice is being steered into the turn of "parent"
     When that turn ends before the notice lands
     Then the notice is queued for "parent" on the model the user picked for it
+
+  # Nothing starts a held queue but a resume, so a worker left with one never ends its
+  # task: its caller is told, to resume or cancel it.
+  @mc
+  Scenario: A subagent left with only a held queue tells the agent that delegated it
+    Given the agent in "parent" delegated a task
+    When the subagent's turn ends with its queue held
+    Then "parent" hears once that the subagent's queue is held, and how to resume it
+    And the task is still "running"
+
+  # A restart holds a queue behind a turn it ends; with the turn not continued, no run
+  # of the subagent ends to tell its caller.
+  @mc
+  Scenario: A subagent whose queue a restart held tells the agent that delegated it
+    Given the project does not continue threads after an update
+    And the agent in "parent" delegated a task
+    And the subagent has two messages queued behind its turn
+    When the MC restarts
+    Then "parent" hears once that the subagent's queue is held, and how to resume it
+    And the task is still "running"
+
+  @mc
+  Scenario: An MC without automatic actions does not start the delegating agent over a held queue
+    Given the MC runs without automatic actions
+    And the project does not continue threads after an update
+    And the agent in "parent" delegated a task
+    And the subagent has two messages queued behind its turn
+    When the MC restarts
+    Then "parent" hears nothing of the subagent's queue
+    And the task is still "running"
 
   @mc
   Scenario: A wait gives up before the caller's MCP client would

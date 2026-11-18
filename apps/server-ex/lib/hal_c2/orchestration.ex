@@ -3808,13 +3808,21 @@ defmodule HalC2.Orchestration do
   defp with_changes(state, changes), do: StreamState.with_changes(state, changes)
 
   # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
-  # context) and the message's files, as a turn carries them.
+  # context) and the message's files, as a turn carries them. What another agent or the
+  # MC steers in waits for the turn's next safe point (`priority: :next`: Claude folds
+  # it in at its next tool boundary instead of cancelling the tools it has pending,
+  # Upstream #15892). The user's own steer goes in at once, and so does a plugin's
+  # (`Plugins.Host.steer/4`): its steer is a redirect meant to cut the turn short.
   defp steer_input(message) do
     %{
       text: HalC2.ComposerContext.for_provider(message["text"] || "", message["context"]),
-      attachments: provider_attachments(message["attachments"])
+      attachments: provider_attachments(message["attachments"]),
+      priority: if(deferred_steer?(message), do: :next, else: :now)
     }
   end
+
+  defp deferred_steer?(%{"commandId" => "plugin:" <> _}), do: false
+  defp deferred_steer?(message), do: message["createdBy"] in ["agent", "system"]
 
   # The files providers read, from this MC's attachment store. One whose
   # upload is gone keeps its id and no path, so a provider that checks its

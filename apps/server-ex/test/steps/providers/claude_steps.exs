@@ -5917,6 +5917,35 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step ~r/^(?<sender>another agent|the MC) steers the run$/, %{args: [sender]} = context do
+    World.send_turn(context, @thread, "Look at this instead", %{
+      "createdBy" => %{"another agent" => "agent", "the MC" => "system"}[sender],
+      "creationSource" => "server",
+      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.active_run}
+    })
+  end
+
+  step "the steer is sent for Claude's next tool boundary", context do
+    World.await_provider_log(context, "claude", fn entry ->
+      get_in(entry, ["in", "priority"]) == "next" and
+        inspect(get_in(entry, ["in", "message", "content"])) =~ "Look at this instead"
+    end)
+
+    refute Enum.any?(
+             World.provider_log(context, "claude"),
+             &(get_in(&1, ["in", "priority"]) == "now")
+           )
+
+    context
+  end
+
+  step "the tool call Claude has pending is not cancelled", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    assert %{"status" => status} = Enum.find(items, &(&1["type"] == "command_execution"))
+    assert status != "cancelled"
+    context
+  end
+
   step "the tool call Claude did not run shows as cancelled, not as denied permission",
        context do
     items = StreamState.list(World.stream(context, @thread), "turn-item")

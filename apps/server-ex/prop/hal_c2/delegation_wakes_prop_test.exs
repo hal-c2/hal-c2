@@ -17,6 +17,10 @@ defmodule HalC2.DelegationWakesPropTest do
   - a wake runs as a turn of its own, never joining the turn it found working: the
     caller is on Codex or on Claude, and Claude would cancel its pending tools for a
     message mid-turn (Upstream #15892);
+  - each request a working child opens reaches the caller in one message, however
+    many times, and however concurrently, it is told (`Delegation.request_opened/2`),
+    one opened while the caller waits on the task included: the wait returns it, or
+    tells it once it is over;
 
   and once the commands are done and the caller has worked through its queue, every
   task that ended was named by exactly one wake, and that wake ran to its end.
@@ -56,6 +60,7 @@ defmodule HalC2.DelegationWakesPropTest do
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
       HalC2.Streams,
+      {Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
       HalC2.Shell,
       HalC2.Orchestration.TurnWatch,
       __MODULE__.Provider
@@ -90,8 +95,9 @@ defmodule HalC2.DelegationWakesPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # ended: the tasks that ended, in order.
-  def initial_state, do: %{ended: []}
+  # ended: the tasks that ended, in order. asked: the requests the children opened.
+  # returned: what each `ask_waiting` returned, the request its wait told, or nil.
+  def initial_state, do: %{ended: [], asked: [], returned: []}
 
   def command(state) do
     working = @tasks -- state.ended
@@ -102,24 +108,66 @@ defmodule HalC2.DelegationWakesPropTest do
         {2, {:call, __MODULE__, :start_next, []}},
         {1, {:call, __MODULE__, :user_turn, []}}
       ] ++
-        if(working == [], do: [], else: [{4, {:call, __MODULE__, :finish, [oneof(working)]}}])
+        if(working == [],
+          do: [],
+          else: [
+            {4, {:call, __MODULE__, :finish, [oneof(working)]}},
+            {2,
+             {:call, __MODULE__, oneof([:ask, :ask_waiting]),
+              [oneof(working), oneof(["user_input", "command"]), length(state.asked)]}}
+          ]
+        )
     )
   end
 
-  def precondition(state, {:call, _, :finish, [task]}), do: task not in state.ended
+  def precondition(state, {:call, _, call, [task | _]})
+      when call in [:finish, :ask, :ask_waiting],
+      do: task not in state.ended
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :finish, [task]}),
     do: %{state | ended: state.ended ++ [task]}
 
+  def next_state(state, _result, {:call, _, :ask, [task, _kind, n]}),
+    do: %{state | asked: state.asked ++ [request(task, n)]}
+
+  def next_state(state, result, {:call, _, :ask_waiting, [task, _kind, n]}),
+    do: %{state | asked: state.asked ++ [request(task, n)], returned: [result | state.returned]}
+
   def next_state(state, _result, _call), do: state
 
-  def postcondition(state, {:call, _, call, args}, _result) do
+  def postcondition(state, {:call, _, call, args}, result) do
     ended = if call == :finish, do: state.ended ++ args, else: state.ended
+
+    asked =
+      case {call, args} do
+        {call, [task, _kind, n]} when call in [:ask, :ask_waiting] ->
+          state.asked ++ [request(task, n)]
+
+        _ ->
+          state.asked
+      end
+
+    returned = if call == :ask_waiting, do: [result | state.returned], else: state.returned
     caller = stream(@parent)
 
     ended?(caller, ended) and never_dropped?(caller) and wakes_agree?(caller) and
-      own_turns?(caller)
+      own_turns?(caller) and told_once?(caller, asked, returned)
+  end
+
+  # Each request the children opened reaches the caller once, in a message or in the
+  # wait that returned it, and no message tells of any other.
+  defp told_once?(caller, asked, returned) do
+    told =
+      for message <- StreamState.list(caller, "message"),
+          String.starts_with?(message["id"], "message:delegate-request:"),
+          do: message["id"]
+
+    Enum.all?(told, fn id -> Enum.any?(asked, &(id =~ ":#{&1}:")) end) and
+      Enum.all?(asked, fn request ->
+        Enum.count(told, &(&1 =~ ":#{request}:")) + Enum.count(returned, &(&1 == request)) == 1
+      end)
   end
 
   # Each wake the caller is working on, or worked on, started that turn itself.
@@ -288,6 +336,61 @@ defmodule HalC2.DelegationWakesPropTest do
 
     Delegation.finished(child(task), "run-1", "completed")
   end
+
+  # The task's child opens a request: the turn writer tells the caller as it opens, and
+  # a second telling (a retry, a restart) lands at the same moment.
+  def ask(task, kind, n) do
+    open(task, kind, n)
+    tell_twice(task, n)
+    :ok
+  end
+
+  # The caller waits on the task, briefly, and the child opens the request as the wait
+  # gives up, told twice meanwhile. The wait returns it, or a request an earlier `ask`
+  # left pending, and tells the one it did not return once it is over. Returns the
+  # request opened here if the wait returned it.
+  def ask_waiting(task, kind, n) do
+    Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :during_wait, [task, kind, n]})
+
+    try do
+      {:ok, reply} = Delegation.wait(@parent, task, 1)
+      if get_in(reply, ["pendingRequest", "requestId"]) == request(task, n), do: request(task, n)
+    after
+      Application.delete_env(:hal_c2, :delegation_hook)
+    end
+  end
+
+  @doc false
+  def during_wait(task, kind, n, :expiring, task) do
+    open(task, kind, n)
+    tell_twice(task, n)
+  end
+
+  def during_wait(_task, _kind, _n, _stage, _id), do: :ok
+
+  defp tell_twice(task, n) do
+    [fn -> Delegation.request_opened(child(task), request(task, n)) end]
+    |> List.duplicate(2)
+    |> List.flatten()
+    |> Enum.map(&Task.async/1)
+    |> Enum.each(&(:ok = Task.await(&1)))
+  end
+
+  defp open(task, kind, n) do
+    request = request(task, n)
+
+    commit(child(task), [
+      {"runtime-request", request,
+       %{
+         "id" => request,
+         "kind" => kind,
+         "status" => "pending",
+         "createdAt" => "2026-01-01T00:00:00.000Z"
+       }}
+    ])
+  end
+
+  defp request(task, n), do: "req-#{task}-#{n}"
 
   # The caller's active turn ends, if it has one. As the turn writer does, the end
   # reports to delegation and starts the next queued turn, from two processes, so

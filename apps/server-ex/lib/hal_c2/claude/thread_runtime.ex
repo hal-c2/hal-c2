@@ -587,13 +587,20 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
-  # The message reads like the turn's own: its effort prefix, files and images.
+  # The message reads like the turn's own: its effort prefix, files and images. The
+  # user's steer goes in at once (`now`), cutting short the part it lands in, which
+  # `steered` then swallows. Another agent's or the MC's waits for the next tool
+  # boundary (`next`) and cuts nothing: the tools Claude has pending keep running
+  # (Upstream #15892). One the turn ends before reaching runs as Claude's own turn
+  # after it, which the thread takes as a wake.
   def handle_call({:steer, run_id, message}, _from, %{turn: %{ids: %{run: run_id}}} = state)
       when state.session != nil do
     content = claude_content(Map.put(message, :launch, state.turn.launch))
     # Its uuid is one the turn's result may name (`other_turn?/2`).
     uuid = HalC2.Environment.uuid4()
-    Session.send_message(state.session, content, priority: "now", uuid: uuid)
+    urgent = Map.get(message, :priority, :now) != :next
+    priority = if urgent, do: "now", else: "next"
+    Session.send_message(state.session, content, priority: priority, uuid: uuid)
 
     state =
       if state.turn[:prompt],
@@ -604,7 +611,7 @@ defmodule HalC2.Claude.ThreadRuntime do
           ),
         else: state
 
-    {:reply, :ok, %{state | steered: true}}
+    {:reply, :ok, %{state | steered: state.steered or urgent}}
   end
 
   def handle_call(:rollback, _from, %{turn: nil} = state) do

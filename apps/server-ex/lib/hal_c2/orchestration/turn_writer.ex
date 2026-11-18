@@ -607,6 +607,11 @@ defmodule HalC2.Orchestration.TurnWriter do
       ]
     end)
 
+    # A worker's request goes to the agent that delegated it too, which answers for it
+    # (`Delegation.request_opened/2`), apart from this process so it cannot stall it.
+    thread_id = state.thread_id
+    Task.start(fn -> HalC2.Orchestration.Delegation.request_opened(thread_id, request_id) end)
+
     {state, request_id}
   end
 

@@ -179,11 +179,29 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     |> Map.put(:reader, caller)
   end
 
-  step "only the question is listed", context do
+  step "the question and the approval are listed with their kinds", context do
     [question] = requests(context, "user_input")
-    assert {:ok, %{"requestIds" => [id]}} = context.mcp_result
-    assert id == question["id"]
-    assert [_] = requests(context, "command")
+    [approval] = requests(context, "command")
+    assert {:ok, %{"requestIds" => ids, "requests" => listed}} = context.mcp_result
+    assert Enum.sort(ids) == Enum.sort([question["id"], approval["id"]])
+
+    assert Enum.sort(for(r <- listed, do: {r["requestId"], r["kind"]})) ==
+             Enum.sort([{question["id"], "user_input"}, {approval["id"], "command"}])
+
+    context
+  end
+
+  step "reading the approval returns what it asks and that {string} may not decide it",
+       %{args: [_caller]} = context do
+    [approval] = requests(context, "command")
+
+    assert {:ok, %{"kind" => "command", "canRespond" => false, "options" => [_ | _]} = read} =
+             World.mcp_tool(context, context.reader, "hal_c2_pending_request_read", %{
+               "threadId" => World.thread_id(context, context.asking),
+               "requestId" => approval["id"]
+             })
+
+    assert read["prompt"] =~ "touch x"
     context
   end
 
@@ -235,14 +253,98 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     context
   end
 
-  step "the agent of {string} responds to that request", %{args: [caller]} = context do
+  step("{string} works on a task {string} delegated", %{args: [child, parent]} = context,
+    do: worker(context, child, parent)
+  )
+
+  step "{string} works on a task {string} delegated while {string} is supervised",
+       %{args: [child, parent, parent]} = context do
+    context = worker(context, child, parent)
+
+    # A worker never gets more rights than its parent, so it runs supervised too.
+    for thread <- [parent, child] do
+      {:ok, _} =
+        HalC2.Streams.commit(World.thread_id(context, thread), :thread, [
+          {"thread", World.thread_id(context, thread),
+           %{"s" => %{"runtimeMode" => "approval-required"}}}
+        ])
+    end
+
+    context
+  end
+
+  step("{string} is a thread of its own", context, do: context)
+
+  step "the agent of {string} decides that request with {string}",
+       %{args: [caller, decision]} = context do
     [approval] = requests(context, "command")
 
-    tool(context, caller, "hal_c2_pending_request_respond", %{
+    context
+    |> Map.put(:approval, approval["id"])
+    |> tool(caller, "hal_c2_pending_request_respond", %{
       "threadId" => World.thread_id(context, context.asking),
       "requestId" => approval["id"],
-      "answers" => %{"decision" => "accept"}
+      "decision" => decision
     })
+  end
+
+  step "the approval of {string} is answered with {string}",
+       %{args: [thread, decision]} = context do
+    assert {:ok, %{"sequence" => _}} = context.mcp_result
+
+    request =
+      World.await_state(context, thread, fn state ->
+        StreamState.get(state, "runtime-request")[context.approval]["status"] != "pending"
+      end)
+      |> StreamState.get("runtime-request")
+      |> Map.get(context.approval)
+
+    assert %{"status" => "resolved", "decision" => ^decision} = request
+
+    context
+  end
+
+  step "the approval of {string} still waits for the user", %{args: [thread]} = context do
+    request = StreamState.get(World.state(context, thread), "runtime-request")[context.approval]
+    assert request["status"] == "pending"
+    context
+  end
+
+  # --- held queues -----------------------------------------------------------------
+
+  step "the queue of {string} is held", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        id,
+        :thread,
+        for(
+          run <- [context.queued.first, context.queued.second],
+          do: {"run", run, %{"s" => %{"queueHeld" => true}}}
+        )
+      )
+
+    context
+  end
+
+  step(
+    "the agent of {string} resumes the queue of {string}",
+    %{args: [caller, thread]} = context,
+    do:
+      tool(context, caller, "hal_c2_queue_resume", %{
+        "threadId" => World.thread_id(context, thread)
+      })
+  )
+
+  step "the queue of {string} is no longer held", %{args: [thread]} = context do
+    assert {:ok, %{"sequence" => _}} = context.mcp_result
+    runs = World.runs(context, thread)
+
+    for id <- [context.queued.first, context.queued.second],
+        do: refute(Enum.find(runs, &(&1["id"] == id))["queueHeld"])
+
+    context
   end
 
   # --- projects --------------------------------------------------------------------
@@ -968,6 +1070,26 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     end)
 
     Map.put(context, :asking, thread)
+  end
+
+  # The thread `child` as a worker of `parent`'s, as a delegation makes it.
+  defp worker(context, child, parent) do
+    id = World.thread_id(context, child)
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"thread", id,
+         %{
+           "s" => %{
+             "lineage" => %{
+               "relationshipToParent" => "subagent",
+               "parentThreadId" => World.thread_id(context, parent)
+             }
+           }
+         }}
+      ])
+
+    context
   end
 
   defp requests(context, kind) do

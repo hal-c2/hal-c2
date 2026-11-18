@@ -12,6 +12,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Orchestration.Delegation
   alias HalC2.StreamState
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -2909,6 +2910,224 @@ defmodule HalC2.Steps.Orchestration.Delegation do
         ]
       })
 
+  # --- a child's requests reach its caller -------------------------------------------------
+
+  step "{string} is now in {word} mode", %{args: [thread, mode]} = context do
+    id = World.thread_id(context, thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"runtimeMode" => mode}}}])
+
+    context
+  end
+
+  step "the agent in {string} delegated a task and {string} is archived",
+       %{args: [caller, caller]} = context do
+    context = delegate(context, caller, %{"mode" => "async"})
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.archive",
+        "commandId" => "cmd-archive-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, caller)
+      })
+
+    World.await_row(World.thread_id(context, caller), &(&1["archivedAt"] != nil))
+    context
+  end
+
+  step "the agent in {string} delegated a task it cancelled", %{args: [caller]} = context do
+    context = delegate(context, caller, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    {:ok, _} = World.mcp_tool(context, caller, "task_cancel", %{"taskId" => context.task_id})
+    await_task(context, &(&1["status"] == "cancelled"))
+    context
+  end
+
+  # A child still working asks through its provider; one whose task was cancelled has
+  # no turn left to ask from, so its request stands as it would have been stored.
+  step "the subagent's question opens", context do
+    if Enum.any?(World.runs(context, "subagent"), &(&1["status"] == "running")) do
+      child_question(context)
+    else
+      id = World.thread_id(context, "subagent")
+      request = "runtime-request:codex:late-#{System.unique_integer([:positive])}"
+
+      {:ok, _} =
+        HalC2.Streams.commit(id, :thread, [
+          {"runtime-request", request,
+           %{
+             "s" => %{
+               "id" => request,
+               "kind" => "user_input",
+               "status" => "pending",
+               "createdAt" => HalC2.Orchestration.Entities.now()
+             }
+           }}
+        ])
+
+      Map.put(context, :child_request, request)
+    end
+  end
+
+  # Told by the turn writer as the request opens, which this waits for; telling it
+  # again after is a no-op.
+  step ~r/^"(?<caller>[^"]+)" hears once of the subagent's (?<kind>question|approval), with its task and thread$/,
+       %{args: [caller, kind]} = context do
+    await_request_message(context, caller)
+    :ok = Delegation.request_opened(World.thread_id(context, "subagent"), context.child_request)
+    assert [message] = request_messages(context, caller)
+    child = World.thread_id(context, "subagent")
+
+    for part <- [context.task_id, child, context.child_request],
+        do: assert(message["text"] =~ part)
+
+    assert message["text"] =~
+             ~s(kind="#{if kind == "question", do: "user_input", else: "command"}")
+
+    assert message["notification"]["source"]["taskIds"] == [context.task_id]
+    Map.put(context, :request_message, message)
+  end
+
+  step ~r/^the message tells it (?<told>to answer the question itself|the approval is its to decide|to pass the approval on to the user)$/,
+       %{args: [told]} = context do
+    expected =
+      case told do
+        "to answer the question itself" -> "waits on your answer"
+        "the approval is its to decide" -> "you run at full access"
+        "to pass the approval on to the user" -> "only the user can give"
+      end
+
+    text = context.request_message["text"]
+    assert text =~ expected
+    assert text =~ "hal_c2_pending_request_read"
+    # Only an answer the caller may give names the tool that gives it.
+    assert text =~ "hal_c2_pending_request_respond" ==
+             (told != "to pass the approval on to the user")
+
+    context
+  end
+
+  step "{string} does not hear of the subagent's question", %{args: [caller]} = context do
+    :ok = Delegation.request_opened(World.thread_id(context, "subagent"), context.child_request)
+    assert request_messages(context, caller) == []
+    context
+  end
+
+  step "the question notice is steered into the running turn of {string}",
+       %{args: [parent]} = context do
+    await_request_message(context, parent)
+    :ok = Delegation.request_opened(World.thread_id(context, "subagent"), context.child_request)
+    assert [message] = request_messages(context, parent)
+    assert [%{"id" => run_id, "status" => "running"}] = World.runs(context, parent)
+    assert message["runId"] == run_id
+    Map.put(context, :request_message, message)
+  end
+
+  # The notice names no model of its own, so the thread keeps the one it was given.
+  step "the model the user picked for {string} is left as it was",
+       %{args: [parent]} = context do
+    picked = context.picked_models[parent]
+    assert picked["model"] != nil
+    assert World.thread(context, parent)["modelSelection"] == picked
+    assert context.request_message["modelSelection"] in [nil, picked]
+    context
+  end
+
+  # Nothing starts a held queue but a resume: the child's turn ends with two messages
+  # waiting behind it, held.
+  step "the subagent has two messages queued behind its turn", context do
+    queue_two(context)
+    context
+  end
+
+  step "the subagent's turn ends with its queue held", context do
+    state = queue_two(context)
+    id = World.thread_id(context, "subagent")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        id,
+        :thread,
+        for(
+          run <- StreamState.list(state, "run"),
+          run["status"] == "queued",
+          do: {"run", run["id"], %{"s" => %{"queueHeld" => true}}}
+        )
+      )
+
+    World.send_turn(context, "subagent", "say Done")
+    World.await_runs(context, "subagent", ["completed", "queued", "queued"])
+    context
+  end
+
+  step "{string} hears once that the subagent's queue is held, and how to resume it",
+       %{args: [parent]} = context do
+    child = World.thread_id(context, "subagent")
+
+    held = fn state ->
+      state
+      |> StreamState.list("message")
+      |> Enum.filter(&String.starts_with?(&1["id"], "message:delegate-held:"))
+    end
+
+    World.await_state(context, parent, &(held.(&1) != []))
+
+    # A report retried, or a later check of the child, finds the same held runs.
+    :ok = Delegation.finished(child, hd(World.runs(context, "subagent"))["id"], "completed")
+    assert [message] = held.(World.state(context, parent))
+
+    assert message["text"] =~ ~s(queued="2")
+    assert message["text"] =~ "hal_c2_queue_resume"
+    assert message["text"] =~ child
+    context
+  end
+
+  # The boot's continue has run by the time the restart returns.
+  step "{string} hears nothing of the subagent's queue", %{args: [parent]} = context do
+    refute Enum.any?(
+             StreamState.list(World.state(context, parent), "message"),
+             &String.starts_with?(&1["id"], "message:delegate-held:")
+           )
+
+    context
+  end
+
+  step "the task is still {string}", %{args: [status]} = context do
+    assert task(context)["status"] == status
+    context
+  end
+
+  defp queue_two(context) do
+    World.await_runs(context, "subagent", ["running"])
+
+    for text <- ["first", "second"] do
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(
+          World.message_command(context, "subagent", text, %{
+            "dispatchMode" => %{"type" => "queue_after_active"}
+          })
+        )
+    end
+
+    World.await_runs(context, "subagent", ["running", "queued", "queued"])
+  end
+
+  defp await_request_message(context, thread) do
+    World.await_state(context, thread, fn state ->
+      state
+      |> StreamState.list("message")
+      |> Enum.any?(&String.starts_with?(&1["id"], "message:delegate-request:"))
+    end)
+  end
+
+  defp request_messages(context, thread) do
+    context
+    |> World.state(thread)
+    |> StreamState.list("message")
+    |> Enum.filter(&String.starts_with?(&1["id"], "message:delegate-request:"))
+  end
+
   # --- backlog: stopping ------------------------------------------------------------------
 
   # The caller's turn is over and its task is recorded as running, with a child thread
@@ -3898,7 +4117,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "the turn of {string} is still running", %{args: [parent]} = context do
     assert Enum.any?(World.runs(context, parent), &(&1["status"] == "running"))
-    context
+    picked = World.thread(context, parent)["modelSelection"]
+    Map.update(context, :picked_models, %{parent => picked}, &Map.put(&1, parent, picked))
   end
 
   step "the turn of {string} has ended", %{args: [parent]} = context do

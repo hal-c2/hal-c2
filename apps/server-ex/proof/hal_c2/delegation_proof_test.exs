@@ -68,6 +68,10 @@ defmodule HalC2.DelegationProofTest do
         "stopping the caller's turn disposes its tasks' deliveries and cancels a queued wake; disposal is in the model through cancel, and a suppressed wake can only wake less",
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
+      "HalC2.Orchestration.Delegation.request_opened/2" =>
+        "tells the caller its child opened a question or an approval, in a message of its own, and changes no task or delivery; an idle caller starts a run on it, which the model, whose caller is busy and then idle, lacks, as it lacks a user's later message: a task ending in that run is acknowledged and delivered at its end, as in the caller's first turn",
+      "HalC2.Orchestration.Delegation.held_queue/1" =>
+        "tells the caller its child is left with only a held queue, in a message of its own, and changes no task or delivery; an idle caller starts a run on it, which the model lacks as it lacks the held queue: its child has none, and a task ending in that run is acknowledged and delivered at its end, as in the caller's first turn",
       "HalC2.Orchestration.Delegation.quiet?/1" =>
         "reads whether the child has a run or owed work; changes nothing",
       "HalC2.Orchestration.Delegation.hand_over_pull_requests/1" =>
