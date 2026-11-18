@@ -60,6 +60,8 @@ Dialog {
             objectName: "renameThreadTitle"
             Layout.fillWidth: true
             placeholderText: qsTr("Thread title")
+            // Material's hint colour is too faint to read on the theme's fields.
+            placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
             Accessible.name: qsTr("Thread title")
             onAccepted: dialog.accept()
         }

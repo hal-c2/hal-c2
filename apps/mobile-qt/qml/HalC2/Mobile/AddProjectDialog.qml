@@ -55,6 +55,8 @@ Dialog {
             objectName: "addProjectPath"
             Layout.fillWidth: true
             placeholderText: qsTr("/home/you/code/project")
+            // Material's hint colour is too faint to read on the theme's fields.
+            placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
             inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhUrlCharactersOnly
             Accessible.name: qsTr("Folder path")
             onAccepted: dialog.accept()
