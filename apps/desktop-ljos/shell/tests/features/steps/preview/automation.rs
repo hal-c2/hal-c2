@@ -540,7 +540,6 @@ pub fn register(steps: &mut Steps) {
             let wait_ms = if c[1] == "seconds" { n * 1000 } else { n };
             held_page(world, "tab-1", "http://localhost:5173/")?;
             world.part::<Automation>().waiting_for = c[2].clone();
-            world.part::<Automation>().waited_from = Some(world.engine().now());
             world.part::<Automation>().wait_ms = wait_ms;
             ask(
                 world,
@@ -549,7 +548,14 @@ pub fn register(steps: &mut Steps) {
                 wait_ms as i64 + 30_000,
                 "tab-1",
             )?;
-            answer_look(world, NOT_MET)
+            answer_look(world, NOT_MET)?;
+            // The wait starts when the shell takes the request, in the turn
+            // of its first look: the request crosses the MC's socket and the
+            // shell's own threads first, and waiting for it moves the
+            // shell's clock as real time passes. answer_look leaves the
+            // clock where that turn was.
+            world.part::<Automation>().waited_from = Some(world.engine().now());
+            Ok(())
         },
     );
     steps.step(
