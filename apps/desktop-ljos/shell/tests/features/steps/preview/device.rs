@@ -4,7 +4,7 @@
 //! loopback dev server, as desktop-qt's BrowserSteps.cpp and
 //! BrowserDeviceToolbarSteps.cpp. features/preview/surfaces.feature.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use hal_c2_shell::browser::{self, BrowserPage};
@@ -409,7 +409,6 @@ fn toggle_devices_preset(world: &mut World, id: &str) -> Outcome {
     world.sync()
 }
 
-/// Width and height of `item` as drawn in the window.
 /// The top-left pixel of a picture of `frame`, taken after the next frame
 /// draws it, as desktop-qt's grab of each device frame.
 fn corner_of(world: &mut World, frame: ObjectId, id: &str) -> Outcome<[u8; 4]> {
@@ -431,6 +430,46 @@ fn corner_of(world: &mut World, frame: ObjectId, id: &str) -> Outcome<[u8; 4]> {
     Ok(pixel)
 }
 
+/// Waits until `frame` has drawn and the top-left pixel of a picture of
+/// it is white, as desktop-qt waits for each device frame: a frame not
+/// laid out yet, or drawn before the page's first paint, is grabbed again.
+fn wait_for_white_corner(world: &mut World, frame: ObjectId, id: &str) -> Outcome {
+    const WHITE: [u8; 4] = [255, 255, 255, 255];
+    let last: Rc<RefCell<Option<Option<[u8; 4]>>>> = Rc::default();
+    let refused: Rc<RefCell<Option<String>>> = Rc::default();
+    let grabbing = Rc::new(Cell::new(false));
+    wait_for_engine(
+        world,
+        |w| {
+            if w.painted(frame) == 0 || grabbing.get() {
+                return false;
+            }
+            if *last.borrow() == Some(Some(WHITE)) {
+                return true;
+            }
+            let (into, done) = (last.clone(), grabbing.clone());
+            match ljos::item::grab(w.engine(), frame, move |_, picture| {
+                *into.borrow_mut() = Some(picture.map(|p| p.pixel(0, 0)));
+                done.set(false);
+            }) {
+                Ok(()) => grabbing.set(true),
+                Err(why) => *refused.borrow_mut() = Some(why.to_string()),
+            }
+            false
+        },
+        |w| {
+            format!(
+                "the {id} frame to draw the page on white; {} ops painted, its last picture's \
+                 corner {:?}, its last refusal {:?}",
+                w.painted(frame),
+                last.borrow(),
+                refused.borrow()
+            )
+        },
+    )
+}
+
+/// Width and height of `item` as drawn in the window.
 fn drawn_size(world: &World, brick: Brick, item: ObjectId) -> Outcome<(f64, f64)> {
     let (x0, y0) = brick.at(world, item, 0.0, 0.0)?;
     let (x1, y1) = brick.at(world, item, 1.0, 1.0)?;
@@ -689,11 +728,7 @@ fn register_devices(steps: &mut Steps) {
                 let Some(frame) = devices_frame(world, id) else {
                     fail!("no {id} frame");
                 };
-                let pixel = corner_of(world, frame, id)?;
-                expect!(
-                    pixel == [255, 255, 255, 255],
-                    "the {id} page is drawn on {pixel:?}"
-                );
+                wait_for_white_corner(world, frame, id)?;
             }
             Ok(())
         },
