@@ -8,6 +8,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   it with.
   """
 
+  # The attempts whose refs a process holds: `{clone, attempt}` to its pid.
+  @held HalC2Plugins.CodeReview.Checkout.Held
+
   @doc """
   Fetches pull request `number` and its base branch `base` from `remote` into the bare
   clone at `clone`, made on first use, and puts the worktree at `path` on its head.
@@ -21,17 +24,57 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     # Each attempt fetches into refs of its own: a stopped review's fetch may still
     # finish, and must not move the head or base this one reads.
     attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
-    :global.register_name({__MODULE__, clone, attempt}, self())
-    Process.put(__MODULE__, [{clone, attempt} | Process.get(__MODULE__, [])])
 
-    case prepare_attempt(clone, path, remote, url, number, base, attempt) do
-      {:ok, checkout} ->
-        {:ok,
-         Map.merge(checkout, %{"headRef" => "#{attempt}/head", "baseRef" => "#{attempt}/base"})}
+    with :ok <- hold(clone, attempt) do
+      case prepare_attempt(clone, path, remote, url, number, base, attempt) do
+        {:ok, checkout} ->
+          {:ok,
+           Map.merge(checkout, %{"headRef" => "#{attempt}/head", "baseRef" => "#{attempt}/base"})}
 
-      error ->
-        release()
-        error
+        error ->
+          release()
+          error
+      end
+    end
+  end
+
+  @doc """
+  Makes the table of the attempts being held, owned by the calling process: the
+  plugin's server, which the runs holding them are linked to. It is this machine's
+  alone, as the clones are: a lookup in it asks no other node.
+  """
+  def start do
+    if :ets.whereis(@held) == :undefined,
+      do: :ets.new(@held, [:named_table, :public, :set, read_concurrency: true])
+
+    :ok
+  end
+
+  # Records this process as the holder of `attempt`'s refs, until `release/0` or its end.
+  defp hold(clone, attempt) do
+    if :ets.insert_new(@held, {{clone, attempt}, self()}) do
+      Process.put(__MODULE__, [{clone, attempt} | Process.get(__MODULE__, [])])
+      :ok
+    else
+      {:error, "Another checkout holds #{attempt}."}
+    end
+  rescue
+    ArgumentError -> {:error, "The code review plugin is not running."}
+  end
+
+  # Whether a process still holds `attempt`, forgetting a holder that ended.
+  defp held?(clone, attempt) do
+    case :ets.lookup(@held, {clone, attempt}) do
+      [{_key, pid}] ->
+        if Process.alive?(pid) do
+          true
+        else
+          :ets.delete(@held, {clone, attempt})
+          false
+        end
+
+      [] ->
+        false
     end
   end
 
@@ -43,7 +86,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   def release do
     for {clone, attempt} <- Process.delete(__MODULE__) || [] do
       drop(clone, attempt)
-      :global.unregister_name({__MODULE__, clone, attempt})
+      if :ets.whereis(@held) != :undefined, do: :ets.delete(@held, {clone, attempt})
     end
 
     :ok
@@ -108,7 +151,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   # The refs of attempts no process holds any more: a stopped review's fetch that
   # finished after it was stopped leaves its refs, as nothing is left to drop them. A
-  # live attempt is registered under its refs until it is released.
+  # live attempt is held in `@held` until it is released.
   defp sweep(clone, number) do
     with {:ok, refs} <-
            git(clone, [
@@ -125,7 +168,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
         end
       end)
       |> Enum.uniq()
-      |> Enum.reject(&is_pid(:global.whereis_name({__MODULE__, clone, &1})))
+      |> Enum.reject(&held?(clone, &1))
       |> Enum.each(&drop(clone, &1))
     end
 

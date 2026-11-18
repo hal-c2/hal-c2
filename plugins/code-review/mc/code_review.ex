@@ -421,6 +421,8 @@ defmodule HalC2Plugins.CodeReview do
     # Runs and posts are linked to the server, so stopping the plugin stops them; the
     # server itself only hears that one ended.
     Process.flag(:trap_exit, true)
+    # The checkouts its runs hold, which go when it does.
+    :ok = Checkout.start()
     # A machine leaving gives back the reviews it had queued; they are looked at again.
     :net_kernel.monitor_nodes(true)
     send(self(), :poll)
