@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ThreadId,
 } from "@hal-c2/contracts";
 import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
@@ -68,6 +69,7 @@ import {
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
+import { AGENTS_PANEL, createAgentsPanel } from "./agentsPanel.ts";
 import { buildStatusRow } from "./statusState.ts";
 import {
   createTerminalController,
@@ -490,6 +492,7 @@ export function createHost(options: HostOptions): Host {
       sections?.relayout();
     }
     sourceControl.resize();
+    agents.resize();
     // The footer's compact form follows the conversation width.
     composer?.relayout();
     // The palette and the add-project list window to the rows they were given.
@@ -626,6 +629,7 @@ export function createHost(options: HostOptions): Host {
     }
     threadView.sync(next, prev);
     sourceControl.publish(prev, next);
+    agents.publish(prev, next);
     if (!prev || prev.detail !== next.detail || prev.vcsStatus !== next.vcsStatus) {
       publishSettings();
     }
@@ -675,7 +679,11 @@ export function createHost(options: HostOptions): Host {
 
   /** The mode a focused detail panel of `kind` takes. */
   const panelMode = (kind: string | null): TuiMode | null =>
-    kind === SOURCE_CONTROL_PANEL ? sourceControl.focusMode() : null;
+    kind === SOURCE_CONTROL_PANEL
+      ? sourceControl.focusMode()
+      : kind === AGENTS_PANEL
+        ? "agents"
+        : null;
 
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
@@ -685,10 +693,13 @@ export function createHost(options: HostOptions): Host {
     const wasSourceControl = previous === SOURCE_CONTROL_PANEL;
     const isSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
     if (isSourceControl !== wasSourceControl) sourceControl.panelChanged(isSourceControl);
+    if ((previous === AGENTS_PANEL) !== (rightPanel === AGENTS_PANEL)) {
+      agents.panelChanged(rightPanel === AGENTS_PANEL);
+    }
     publishLayout();
     const focusMode = rightPanelFocused ? panelMode(rightPanel) : null;
     if (focusMode) setMode(focusMode);
-    else if (mode === "panel" || mode === "commit") setMode(restingMode());
+    else if (mode === "panel" || mode === "commit" || mode === "agents") setMode(restingMode());
   };
   const sourceControl = createSourceControl({
     store,
@@ -702,6 +713,26 @@ export function createHost(options: HostOptions): Host {
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
     menu: (spec) => composer!.pick(spec),
     copyToClipboard: options.copyToClipboard,
+  });
+  const agents = createAgentsPanel({
+    store,
+    state,
+    panel: () => ({
+      open: rightPanel === AGENTS_PANEL && (layout?.rightPanel.visible ?? false),
+      focused: rightPanel === AGENTS_PANEL && rightPanelFocused,
+    }),
+    size: () => ({
+      width: layout ? layout.rightPanel.width : 0,
+      height: layout ? layout.panesRows : 0,
+    }),
+    nowMs: () => Date.parse(now()),
+    menu: (spec) => composer!.pick(spec),
+    openThread: (threadId, open) => {
+      const focused = rightPanelFocused && open?.keepFocus === true;
+      dispatch("thread.open", { key: threadKey(threadId) });
+      setRightPanel(AGENTS_PANEL, focused);
+    },
+    interrupt: (threadId) => client.interrupt(ThreadId.make(threadId)),
   });
 
   /** The selected thread's terminal and file workspace: its worktree, else the project root. */
@@ -1081,6 +1112,7 @@ export function createHost(options: HostOptions): Host {
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
+        agentsOpen: rightPanel === AGENTS_PANEL,
         hasCheckpoints:
           revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
       }),
@@ -1329,6 +1361,13 @@ export function createHost(options: HostOptions): Host {
         else setRightPanel(next, true);
         return true;
       }
+      // Opens the agents panel with the keys, gives them to it while it shows without, then closes it.
+      case "agents.toggle":
+        if (rightPanel === AGENTS_PANEL && !rightPanelFocused && layout.rightPanel.visible) {
+          setRightPanel(AGENTS_PANEL, true);
+          return true;
+        }
+        return handle("rightPanel.toggle", { kind: AGENTS_PANEL });
       case "rightPanel.open": {
         const kind = payloadField(payload, "kind");
         setRightPanel(typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL, true);
@@ -1552,6 +1591,7 @@ export function createHost(options: HostOptions): Host {
         if (ask.dispatch(action, payload) || features.dispatch(action, payload)) return true;
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
+        if (agents.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (space.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;

@@ -26,6 +26,8 @@ export type TuiMode =
   | "commit"
   | "project"
   | "panel"
+  // The agents panel has the keys (`agentsPanel.ts`).
+  | "agents"
   | "compose"
   | "newThread"
   | "list"

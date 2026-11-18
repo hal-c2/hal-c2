@@ -6,6 +6,7 @@ import type { PaletteCommand } from "./paletteState.ts";
  */
 export function detailCommands(input: {
   readonly panelOpen: boolean;
+  readonly agentsOpen: boolean;
   readonly hasCheckpoints: boolean;
 }): PaletteCommand[] {
   return [
@@ -26,6 +27,13 @@ export function detailCommands(input: {
       hint: "^L",
       keywords: "git",
       action: "rightPanel.toggle",
+    },
+    {
+      id: "agents",
+      title: input.agentsOpen ? "Hide agents panel" : "Show agents panel",
+      hint: "^X a",
+      keywords: "workers subagents delegated tasks",
+      action: "agents.toggle",
     },
     {
       id: "settings",

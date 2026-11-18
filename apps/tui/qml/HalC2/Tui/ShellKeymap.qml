@@ -51,6 +51,7 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "sectionInput"; bindings: keys.layers.sectionInput; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "sectionConfirm"; bindings: keys.layers.sectionConfirm; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "panel"; bindings: keys.layers.panel; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "agents"; bindings: keys.layers.agents; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "commit"; bindings: keys.layers.commit; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "project"; bindings: keys.layers.project; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "filter"; bindings: keys.layers.filter; onActivated: (action, event) => keys.run(action, event) }

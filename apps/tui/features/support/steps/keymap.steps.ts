@@ -459,10 +459,17 @@ async function settingsText(ctx: World): Promise<string> {
 }
 
 step(
-  "the keybinding reference lists the Global, Conversation, Terminal, Source control and Overlays groups",
+  "the keybinding reference lists the Global, Conversation, Terminal, Source control, Agents and Overlays groups",
   async (ctx: World) => {
     const titles = keybindings(ctx).groups.map((group) => group.title.split(" (")[0]);
-    expect(titles).toEqual(["Global", "Conversation", "Terminal", "Source control", "Overlays"]);
+    expect(titles).toEqual([
+      "Global",
+      "Conversation",
+      "Terminal",
+      "Source control",
+      "Agents",
+      "Overlays",
+    ]);
     const text = await settingsText(ctx);
     for (const title of titles) expect(text).toContain(title!);
   },
