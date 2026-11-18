@@ -184,6 +184,21 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose child's program could not be reattached" do
+    test "is interrupted when its caller's program was reattached and nothing continues the child" do
+      delegate("running")
+      # As `reattach/0` leaves it: the child settled, the caller going on, so neither
+      # is one of the threads `run/0` found active.
+      Recovery.settle("c")
+      :persistent_term.put({Recovery, :failed}, [{"c", nil}])
+      on_exit(fn -> :persistent_term.erase({Recovery, :failed}) end)
+
+      Recovery.continue()
+
+      assert %{"status" => "interrupted"} = task()
+    end
+  end
+
   describe "a check that runs as a restart's continuation is sent" do
     # The check first reads the child quiet, with its run interrupted; the continuation's
     # message and run then land and its effect's row goes before the check reads the

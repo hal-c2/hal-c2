@@ -485,11 +485,12 @@ defmodule HalC2.Orchestration.Recovery do
       end
 
     # A child this boot interrupted and nothing continued will not report: its task ends.
-    # One whose program could not be reattached was settled just now, not by `run/0`.
+    # One whose program could not be reattached was settled just now, not by `run/0`,
+    # and its caller may be a program that was reattached, which `run/0` left out too.
     delegating =
       Enum.uniq(
         :persistent_term.get({__MODULE__, :delegating}, []) ++
-          for({thread_id, _what} <- failed, do: thread_id)
+          for({thread_id, _what} <- failed, id <- [thread_id | delegator(thread_id)], do: id)
       )
 
     :persistent_term.erase({__MODULE__, :delegating})
@@ -505,6 +506,18 @@ defmodule HalC2.Orchestration.Recovery do
     HalC2.Space.PageAgent.reconcile(continued)
 
     :ok
+  end
+
+  # The thread that delegated `thread_id`'s task, when it is a subagent's.
+  defp delegator(thread_id) do
+    case get_in(StreamState.get(HalC2.Streams.state(thread_id), "thread"), [thread_id, "lineage"]) do
+      %{"relationshipToParent" => "subagent", "parentThreadId" => parent}
+      when is_binary(parent) ->
+        [parent]
+
+      _ ->
+        []
+    end
   end
 
   defp continue?(thread_id, run) do
