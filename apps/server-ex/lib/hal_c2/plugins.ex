@@ -202,7 +202,9 @@ defmodule HalC2.Plugins do
   @doc """
   Sends `{:hal_c2_plugin_topic, mc, id, topic, value}` to `pid` whenever plugin `id`
   publishes on `topic`, under `ref` (`HalC2.Watchers`); answers `{:ok, value}` with
-  what it last published, or nil.
+  what it last published, or nil. What a plugin published is forgotten once it stops
+  and is not started again (turned off, failed, removed): it may hold what the
+  plugin was to keep only while it ran.
   """
   def subscribe_topic(pid, id, topic, ref \\ nil),
     do: GenServer.call(__MODULE__, {:subscribe_topic, pid, id, topic, ref})
@@ -1057,12 +1059,16 @@ defmodule HalC2.Plugins do
     {:noreply, state}
   end
 
+  # One from a plugin that no longer runs (sent as it stopped) is not passed on.
   def handle_cast({:publish, id, topic, value}, state) do
-    for {{:topic, _, _, pid}, entry} <-
-          :ets.match_object(@watchers, {{:topic, id, topic, :_}, :_}),
-        do: HalC2.Watchers.tell(pid, entry, {:hal_c2_plugin_topic, node(), id, topic, value})
+    unless match?(%{sup: nil}, state.plugins[id]) do
+      for {{:topic, _, _, pid}, entry} <-
+            :ets.match_object(@watchers, {{:topic, id, topic, :_}, :_}),
+          do: HalC2.Watchers.tell(pid, entry, {:hal_c2_plugin_topic, node(), id, topic, value})
 
-    :ets.insert(@watchers, {{:last, id, topic}, value})
+      :ets.insert(@watchers, {{:last, id, topic}, value})
+    end
+
     {:noreply, state}
   end
 
@@ -1225,6 +1231,7 @@ defmodule HalC2.Plugins do
       end)
 
     Enum.each(plugins, fn {id, plugin} -> revoke_dropped(id, plugin) end)
+    for id <- Map.keys(state.plugins), not is_map_key(plugins, id), do: forget_topics(id)
     drop_copies(plugins)
     %{state | plugins: plugins}
   end
@@ -1629,8 +1636,13 @@ defmodule HalC2.Plugins do
     keys = MapSet.new(rows, &elem(&1, 0))
     for {key, _} <- :ets.tab2list(@providers), key not in keys, do: :ets.delete(@providers, key)
     :ets.insert(@providers, rows)
+
+    for {id, %{sup: nil}} <- state.plugins, do: forget_topics(id)
     state
   end
+
+  # What plugin `id` last published, gone: see `subscribe_topic/4`.
+  defp forget_topics(id), do: :ets.match_delete(@watchers, {{:last, id, :_}, :_})
 
   defp start(state, %{sources: [_ | _]} = plugin) do
     case compile_package(plugin, []) do

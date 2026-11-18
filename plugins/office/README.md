@@ -65,5 +65,6 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
 
 `state` is `working`, `asking`, `waiting`, `idle` or `failed`; `activity` is
 `typing`, `running`, `testing`, `reading`, `browsing`, `planning`, `delegating`,
-`thinking` or null. `talks` are the newest 40, oldest first; `kind` is
-`delegate`, `message` or `result`.
+`thinking` or null. `talks` are the newest 40, oldest first, and each leaves
+ten minutes after it was said, even with fewer than 40; `kind` is `delegate`,
+`message` or `result`.

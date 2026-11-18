@@ -102,6 +102,7 @@ Item {
 
         function init() {
             stood = {};
+            plugin.environments = ["local"];
             plugin.watchers = {};
             plugin.opened = [];
             open();
@@ -125,34 +126,52 @@ Item {
             return a.goal && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0 && a.path.length === 0;
         }
 
-        // Where each person stood when the floor was last checked.
+        // The tiles each person held when the floor was last checked.
         property var stood: ({})
 
-        // Nobody stands on a wall or furniture, a seat is only stepped onto as
-        // where a person is going (and left again), and no two people hold the
-        // same tile.
+        // Nobody stands on a wall or furniture or off the floor, a seat is only
+        // stepped onto as where a person is going (a step already begun ends
+        // there, and the person leaves again), a step goes
+        // to a tile next to the person, each person holds the tiles it stands
+        // on and steps to, and no two people hold the same tile.
         function checkFloor() {
             const w = page.world;
             const held = {};
             const stood = {};
             for (const id of Object.keys(page.actors)) {
                 const a = page.actors[id];
+                verify(a.tx >= 0 && a.ty >= 0 && a.tx < w.cols && a.ty < w.rows, id + " is off the floor at " + a.tx + "," + a.ty);
                 const here = a.ty * w.cols + a.tx;
                 const tiles = [here];
-                if (a.next >= 0)
+                if (a.next >= 0) {
+                    const nx = a.next % w.cols, ny = (a.next - nx) / w.cols;
+                    compare(Math.abs(nx - a.tx) + Math.abs(ny - a.ty), 1, id + " steps from " + a.tx + "," + a.ty + " to " + nx + "," + ny);
                     tiles.push(a.next);
+                }
+                for (const t of tiles)
+                    compare(page.occupied[t], id, id + " holds the tile at " + t % w.cols + "," + Math.floor(t / w.cols));
                 for (const t of tiles) {
                     const x = t % w.cols, y = (t - x) / w.cols;
                     const cell = w.grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
-                    const stayed = t === here && this.stood[id] === here;
+                    const stayed = (this.stood[id] ?? []).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
                     verify(held[t] === undefined, id + " and " + held[t] + " overlap at " + x + "," + y);
                     held[t] = id;
                 }
-                stood[id] = here;
+                stood[id] = tiles;
             }
+            const taken = page.occupied.filter(owner => owner).length;
+            compare(taken, Object.keys(held).length, "only people's tiles are held");
             this.stood = stood;
+        }
+
+        // Runs the office n ticks, checking the floor after each.
+        function walk(n) {
+            for (let i = 0; i < n; i++) {
+                page.advance(1);
+                checkFloor();
+            }
         }
 
         function test_every_person_looks_like_someone_of_their_own() {
@@ -206,11 +225,94 @@ Item {
                 for (let i = 0; i < 16; i++)
                     people[i] = person("t" + i, "Thread " + i, i % 3 === round ? "waiting" : "working", activities[(i + round + 1) % 4]);
                 plugin.publish(people.slice());
-                for (let t = 0; t < 30; t++) {
-                    page.advance(10);
-                    checkFloor();
-                }
+                walk(300);
             }
+        }
+
+        function test_desks_that_change_hands_are_walked_to() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const signature = page.world.signature;
+            const before = page.world.seatOf["b"];
+            // A leaves and C comes in: B takes A's desk and C takes B's.
+            plugin.publish([person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            compare(page.world.signature, signature, "the same desks");
+            verify(page.world.seatOf["b"] !== before, "B was given another desk");
+            runUntil(() => arrived(actor("b")) && arrived(actor("c")), 1500, "both reach their desks");
+            for (const id of ["b", "c"]) {
+                const seat = page.world.seatOf[id];
+                compare([actor(id).tx, actor(id).ty], [seat.x, seat.y], id + " sits at its own desk");
+            }
+        }
+
+        function test_people_stay_on_the_floor_when_the_office_shrinks() {
+            const a = [person("a", "A", "working", "typing")].concat(many(19, "aw", "working", "typing", "a"));
+            const b = [person("b", "B", "working", "typing")].concat(many(19, "bw", "working", "typing", "b"));
+            plugin.publish(a.concat(b));
+            const resting = a.map(p => person(p.id, p.title, "waiting", null, p.parentId));
+            const byId = {};
+            for (const p of resting)
+                byId[p.id] = p;
+            const narrow = page.buildWorld(page.podsFor(page.teamsOf(resting.map(p => p.id), byId))).cols;
+            verify(narrow < page.world.cols, "one team needs a narrower office");
+            plugin.publish(resting.concat(b));
+            // Someone in the break room stands past where the narrower office
+            // ends, by more than a tile so its old place there wraps onto floor.
+            runUntil(() => resting.some(p => actor(p.id).tx > narrow), 3000, "a person reaches the far side of the break room");
+            plugin.publish(resting);
+            compare(page.world.cols, narrow);
+            checkFloor();
+            walk(50);
+        }
+
+        function test_a_break_lasts_from_when_the_person_gets_there() {
+            const people = many(20, "t", "working", "typing");
+            plugin.publish(people);
+            const resting = people.slice(0, 8).map(p => person(p.id, p.title, "waiting"));
+            plugin.publish(resting.concat(people.slice(8)));
+            const first = {}, since = {};
+            runUntil(() => {
+                let done = 0;
+                for (const p of resting) {
+                    const a = actor(p.id);
+                    first[p.id] = first[p.id] ?? a.goal;
+                    if (since[p.id] === undefined) {
+                        if (arrived(a))
+                            since[p.id] = page.now;
+                    } else if (page.now - since[p.id] >= 3000) {
+                        done++;
+                    } else {
+                        verify(a.goal === first[p.id], p.id + " left its break spot " + (page.now - since[p.id]) + " ms after getting there");
+                    }
+                }
+                return done === resting.length;
+            }, 3000, "everyone gets a break");
+        }
+
+        function test_a_person_turned_around_mid_step_walks_back_tile_by_tile() {
+            plugin.publish([person("lead", "Lead", "working", "typing")]);
+            const desk = page.world.seatOf["lead"];
+            plugin.publish([person("lead", "Lead", "waiting")]);
+            runUntil(() => actor("lead").next >= 0 && Math.abs(actor("lead").tx - desk.x) + Math.abs(actor("lead").ty - desk.y) >= 3, 1500, "the person walks off");
+            plugin.publish([person("lead", "Lead", "working", "typing")]);
+            for (let i = 0; i < 400 && !arrived(actor("lead")); i++)
+                walk(1);
+            compare([actor("lead").tx, actor("lead").ty], [desk.x, desk.y]);
+        }
+
+        function test_a_blocked_person_steps_aside() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const b = actor("b");
+            // A heads for B's desk, which B never leaves.
+            page.setGoal(actor("a"), {
+                x: b.tx,
+                y: b.ty,
+                face: 0,
+                offY: 0,
+                pose: "type",
+                kind: "desk",
+                seat: true
+            });
+            runUntil(() => actor("a").sideStep, 400, "the blocked person steps aside");
         }
 
         function test_what_a_person_does_follows_its_agent() {
@@ -273,6 +375,71 @@ Item {
             runUntil(() => actor("lead").talk === null, 400, "the talk ends");
             verify(!bubble.visible);
             runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the speaker goes back to work");
+        }
+
+        function test_a_person_spoken_to_stops_to_listen_and_then_goes_on() {
+            // Lead and C get the desks side by side.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            compare(Math.abs(actor("lead").tx - actor("c").tx) + Math.abs(actor("lead").ty - actor("c").ty), 1);
+            // C heads for a break just as the lead speaks to it.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the talk starts");
+            const a = actor("lead"), c = actor("c");
+            const spot = [c.tx, c.ty];
+            while (a.talk) {
+                compare(c.next, -1, "C stands still while spoken to");
+                compare([c.tx, c.ty], spot);
+                compare(Math.abs(a.tx - c.tx) + Math.abs(a.ty - c.ty), 1, "the two stay together");
+                page.advance(1);
+            }
+            verify(c.path.length > 0 || c.next >= 0, "C still knows where it was going");
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
+        function test_a_person_tabbed_to_is_scrolled_into_view() {
+            plugin.publish(many(20, "t", "working", "typing"));
+            page.zoomStep = 8 - page.autoScale;
+            const scroller = find("officeScroller");
+            const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
+            const hit = find("officePerson:" + far.id);
+            const inView = () => {
+                const r = hit.mapToItem(scroller, 0, 0, hit.width, hit.height);
+                return r.x >= 0 && r.y >= 0 && r.x + r.width <= scroller.width && r.y + r.height <= scroller.height;
+            };
+            verify(!inView(), "the person starts out of view");
+            hit.forceActiveFocus();
+            verify(inView(), "the person is scrolled into view");
+            compare(page.hovered, far.id);
+        }
+
+        function test_markup_in_a_title_shows_as_typed() {
+            plugin.publish([person("t", "<i></i>", "working", "testing")]);
+            page.hovered = "t";
+            tryVerify(() => find("officeCard").visible);
+            verify(find("officeCardTitle").implicitWidth > 0, "the title is shown as text");
+        }
+
+        function test_a_machine_that_leaves_takes_its_office_with_it() {
+            plugin.environments = ["local", "lab"];
+            plugin.watchers["lab/office"]({
+                people: [person("x", "X", "working", "typing")],
+                talks: []
+            });
+            verify(page.byEnvironment["lab"] !== undefined);
+            plugin.environments = ["local"];
+            compare(page.byEnvironment["lab"], undefined);
+            plugin.environments = ["local", "lab"];
+            page.environment = "lab";
+            compare(page.office, null, "nothing stale shows before the new watch delivers");
         }
 
         function test_an_asking_person_shows_a_question_and_opens_its_thread() {

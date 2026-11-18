@@ -7,7 +7,8 @@ working, who is waiting and who needs you.
 ## Start
 
 Put the `office` folder from this repository's `plugins/` into your MC's
-`plugins` folder and turn it on from **Settings → Plugins**. The **Office** page
+`plugins` folder. With the MC running, select **Look for plugins** beside the
+machine's name in **Settings → Plugins**, then turn Office on there. The **Office** page
 shows the machine's office; with more than one machine running the plugin, pick
 the machine at the top. **+** and **−** zoom.
 

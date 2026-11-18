@@ -58,6 +58,22 @@ defmodule HalC2.PluginsTest do
     assert monitors() == 2
   end
 
+  test "what a plugin published is forgotten once it is turned off, and it publishes nothing then" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "notes"})
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+
+    # As it stopped: not said to those following, nor kept.
+    Plugins.publish("notes", "t", 2)
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+    refute_received {:hal_c2_plugin_topic, _, "notes", "t", _}
+  end
+
   test "a busy plugin host counts its plugins as running, a stopped one does not" do
     refute Plugins.running?("alpha")
 

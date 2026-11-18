@@ -68,10 +68,12 @@ defmodule HalC2.Steps.Plugins.Office do
     Enum.reduce([a, b, c, d], context, &thread(&2, &1, project))
   end
 
+  # Waited for until it has left, so the office it comes back to is a change.
   step "a settled thread {string} in the project {string}", %{args: [title, project]} = context do
     context
     |> thread(title, project)
     |> settle(title)
+    |> await_people(&(title not in &1))
   end
 
   step "an idle thread {string}, a working thread {string} and an asking thread {string}",
@@ -172,8 +174,15 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
+  # Waited for at work first, so the idle office that follows is the turn's end, not
+  # the thread as it was made.
   step "its agent finishes a turn", context do
-    World.add_run(context, context.thread, "completed")
+    title = context.thread
+
+    context
+    |> start_turn(title)
+    |> await_person(title, &(&1["state"] == "working"))
+    |> then(&World.add_run(&1, title, "completed", nil, %{"id" => &1.run}))
   end
 
   step "its next turn fails", context do
@@ -248,6 +257,23 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
+  # Every talk said ten minutes earlier, and the timer the plugin set for the first
+  # to grow too old fired: nothing else happens to make it look again.
+  step "ten minutes pass with nothing else said or done", context do
+    office = Process.whereis(HalC2Plugins.Office)
+    test = self()
+
+    :sys.replace_state(office, fn state ->
+      send(test, {:expire_in, state.expire && Process.cancel_timer(state.expire)})
+      talks = Enum.map(state.floor.talks, &Map.update!(&1, "at", fn at -> earlier(at) end))
+      %{state | floor: %{state.floor | talks: talks}}
+    end)
+
+    assert_received {:expire_in, ms} when is_integer(ms) and ms <= 600_001
+    send(office, :expire)
+    context
+  end
+
   step "the project {string} is renamed {string}", %{args: [project, title]} = context do
     id = World.project(context, project).id
 
@@ -318,6 +344,11 @@ defmodule HalC2.Steps.Plugins.Office do
         )
       end)
 
+    context
+  end
+
+  step "the office has no talks", context do
+    {_, context} = await_topic(context, &(&1["talks"] == []))
     context
   end
 
@@ -469,6 +500,11 @@ defmodule HalC2.Steps.Plugins.Office do
   defp person(office, title), do: Enum.find(office["people"], &(&1["title"] == title))
 
   defp now, do: World.iso_from_now(0)
+
+  defp earlier(iso) do
+    {:ok, at, _} = DateTime.from_iso8601(iso)
+    at |> DateTime.add(-600_000, :millisecond) |> DateTime.to_iso8601()
+  end
 
   defp save(context, patch) do
     {_, context} =

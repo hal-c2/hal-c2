@@ -13,7 +13,12 @@ defmodule HalC2.OfficePropTest do
   - each is in its row's state, shows what its agent last did only while working,
     and has a question exactly while asking;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
-    keeps its place and time), those under ten minutes old.
+    keeps its place, time, who said it to whom and its kind), those under ten minutes
+    old, each from, to and of the kind it was said; once the timer fires, the office
+    keeps no talk older, text and all.
+
+  A second property holds the deadline `next_change/2` names to `view/2`: an idle thread
+  is in the office the millisecond before it and gone at it, whatever its idle hours.
 
   The plugin process, the host and the page are covered by
   `features/plugins/office.feature`.
@@ -56,6 +61,29 @@ defmodule HalC2.OfficePropTest do
       |> aggregate(command_names(cmds))
     end
   end
+
+  property "an idle thread leaves the office at the deadline next_change names",
+    numtests: HalC2.Prop.numtests(200) do
+    forall {hours, age} <- {idle_hours(), integer(0, 10_000)} do
+      now = @start
+      floor = %{"maxPeople" => 3, "idleHours" => hours} |> Floor.new() |> put_idle(now - age)
+      at = Floor.next_change(floor, now)
+
+      at == nil or (in_office?(floor, at - 1) and not in_office?(floor, at))
+    end
+  end
+
+  # Hours whose milliseconds are mostly not whole, a few of them short enough to pass.
+  defp idle_hours,
+    do:
+      oneof([
+        let(ms <- integer(1, 20_000), do: (ms + 0.4) / 3_600_000),
+        let(ms <- integer(1, 20_000), do: (ms + 0.6) / 3_600_000),
+        elements([1, 0.5, 1.0e-7, 24])
+      ])
+
+  defp put_idle(floor, at), do: Floor.load(floor, [row("t1", "idle", :none, nil, at)], at)
+  defp in_office?(floor, now), do: Floor.view(floor, now)["people"] != []
 
   def initial_state,
     do: %{
@@ -141,9 +169,13 @@ defmodule HalC2.OfficePropTest do
   def settings(max, hours),
     do: step(&Floor.settings(&1, %{"maxPeople" => max, "idleHours" => hours}))
 
+  # Time passes and the timer fires, as `HalC2Plugins.Office`'s does: what it keeps
+  # is said too.
   def tick(ms) do
-    Process.put(:now, Process.get(:now) + ms)
-    step(& &1)
+    now = Process.get(:now) + ms
+    Process.put(:now, now)
+    view = step(&Floor.expire(&1, now))
+    Map.put(view, "kept", Enum.map(Process.get(:floor).talks, & &1["id"]))
   end
 
   defp event(event), do: step(&Floor.observe(&1, event, Process.get(:now)))
@@ -225,7 +257,7 @@ defmodule HalC2.OfficePropTest do
 
     s =
       if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
-        do: add_talk(s, "delegate:" <> id, "Thread #{id}"),
+        do: add_talk(s, "delegate:" <> id, {parent, id, "delegate"}, "Thread #{id}"),
         else: s
 
     put_in(s, [:rows, id], entry)
@@ -263,42 +295,62 @@ defmodule HalC2.OfficePropTest do
     )
   end
 
-  def next_state(s, _result, {:call, _, :send_message, [from, _to, k]}) do
+  def next_state(s, _result, {:call, _, :send_message, [from, to, k]}) do
     %{s | activity: Map.put(s.activity, from, "delegating")}
-    |> add_talk("message:#{from}:i#{k}", "m#{k}")
+    |> add_talk("message:#{from}:i#{k}", {from, to, "message"}, "m#{k}")
   end
 
   def next_state(s, _result, {:call, _, :finish, [id, run]}) do
     said = s.said[id]
     parent = get_in(s.rows, [id, :parent])
     s = %{s | activity: Map.delete(s.activity, id), said: Map.delete(s.said, id)}
-    if parent && said, do: add_talk(s, "result:#{id}:r#{run}", said), else: s
+
+    if parent && said,
+      do: add_talk(s, "result:#{id}:r#{run}", {id, parent, "result"}, said),
+      else: s
   end
 
   def next_state(s, _result, {:call, _, :settings, [max, hours]}),
     do: %{s | max: max, idle_hours: hours}
 
-  def next_state(s, _result, {:call, _, :tick, [ms]}), do: %{s | now: s.now + ms}
+  def next_state(s, _result, {:call, _, :tick, [ms]}), do: expire(%{s | now: s.now + ms})
 
-  # A talk heard again keeps its place and time and takes the new text.
-  defp add_talk(s, id, text) do
+  # A talk heard again keeps its place, time, ends and kind, and takes the new text; one
+  # too old is gone first, so a talk heard again after that is new.
+  defp add_talk(s, id, {from, to, kind}, text) do
+    s = expire(s)
+
     talks =
-      if List.keymember?(s.talks, id, 0),
-        do: Enum.map(s.talks, &if(elem(&1, 0) == id, do: put_elem(&1, 1, text), else: &1)),
-        else: Enum.take(s.talks ++ [{id, text, s.now}], -40)
+      if Enum.any?(s.talks, &(&1.id == id)),
+        do: Enum.map(s.talks, &if(&1.id == id, do: %{&1 | text: text}, else: &1)),
+        else:
+          Enum.take(
+            s.talks ++ [%{id: id, from: from, to: to, kind: kind, text: text, at: s.now}],
+            -40
+          )
 
     %{s | talks: talks}
   end
 
+  defp expire(s), do: %{s | talks: Enum.filter(s.talks, &(&1.at > s.now - @talk_ms))}
+
   def postcondition(s, call, view) do
     s = next_state(s, nil, call)
     expected = people(s)
+    talks = Enum.filter(s.talks, &(&1.at > s.now - @talk_ms))
 
     Enum.map(view["people"], & &1["id"]) == Enum.map(expected, &elem(&1, 0)) and
       Enum.all?(Enum.zip(view["people"], expected), &person?(s, &1)) and
-      Enum.map(view["talks"], &{&1["id"], &1["text"], Floor.ms(&1["at"])}) ==
-        Enum.filter(s.talks, fn {_, _, at} -> at > s.now - @talk_ms end)
+      Enum.map(view["talks"], &talk/1) ==
+        Enum.map(talks, &{&1.id, &1.from, &1.to, &1.kind, &1.text, &1.at}) and
+      kept?(call, view, talks)
   end
+
+  defp talk(t), do: {t["id"], t["from"], t["to"], t["kind"], t["text"], Floor.ms(t["at"])}
+
+  # After the timer the office keeps only the talks it shows.
+  defp kept?({:call, _, :tick, _}, view, talks), do: view["kept"] == Enum.map(talks, & &1.id)
+  defp kept?(_call, _view, _talks), do: true
 
   defp people(s) do
     s.rows

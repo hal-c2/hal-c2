@@ -9,6 +9,7 @@ defmodule HalC2.Plugins.Host do
   """
 
   alias HalC2.Plugins
+  alias HalC2.Plugins.Host.ThreadRelay
 
   # Pull request methods that change something on the host.
   @writes ~w(runAction update comment updateComment submitReview replyToThread
@@ -187,7 +188,7 @@ defmodule HalC2.Plugins.Host do
          mc == node() and row["deletedAt"] == nil,
          do: row
        )
-       |> with_project_titles()}
+       |> ThreadRelay.with_project_titles()}
     end
   end
 
@@ -195,70 +196,16 @@ defmodule HalC2.Plugins.Host do
   Sends the caller `{:hal_c2_threads, rows}` whenever rows of this MC's threads change:
   the changed rows only, shaped as `threads/1`'s, a deleted one with its `"deletedAt"`
   so the plugin can let it go. A project whose row changes sends its threads again,
-  so a renamed project's `"projectTitle"` follows. Watch first, then read `threads/1`: a change in between
-  comes again. The rows come from a process of the host's (returned as `{:ok, pid}`),
-  linked to the caller and gone with it.
+  so a renamed project's `"projectTitle"` follows. Watch first, then read `threads/1`:
+  a change in between comes again. The rows come from a process of the host's
+  (`ThreadRelay`, returned as `{:ok, pid}`), linked to the caller and gone with it.
   """
   def watch_threads(id) do
     with :ok <- permit(id, "threads:read") do
-      caller = self()
-      relay = spawn_link(fn -> relay_threads(caller) end)
+      relay = ThreadRelay.start_link(self())
       :ok = HalC2.Shell.subscribe(relay)
       {:ok, relay}
     end
-  end
-
-  defp relay_threads(caller) do
-    ref = Process.monitor(caller)
-    relay_threads(caller, ref)
-  end
-
-  defp relay_threads(caller, ref) do
-    receive do
-      {:hal_c2_shell, {:rows, mc, rows}} when mc == node() ->
-        case for({_id, {"thread", row}} <- rows, do: row) ++ retitled(rows) do
-          [] -> :ok
-          rows -> send(caller, {:hal_c2_threads, with_project_titles(rows)})
-        end
-
-        relay_threads(caller, ref)
-
-      {:DOWN, ^ref, :process, _pid, _reason} ->
-        :ok
-
-      _other ->
-        relay_threads(caller, ref)
-    end
-  end
-
-  # A project's row changing (a rename, say) changes the `"projectTitle"` of its
-  # threads, so those come again; the ones among `rows` already come.
-  defp retitled(rows) do
-    projects = for {id, {"project", _}} <- rows, into: MapSet.new(), do: id
-    changed = for {id, {"thread", _}} <- rows, into: MapSet.new(), do: id
-
-    if MapSet.size(projects) == 0 do
-      []
-    else
-      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-          mc == node() and row["deletedAt"] == nil,
-          MapSet.member?(projects, row["projectId"]) and not MapSet.member?(changed, id),
-          do: row
-    end
-  end
-
-  defp with_project_titles(rows) do
-    titles =
-      for project <- rows |> Enum.map(& &1["projectId"]) |> Enum.uniq(),
-          is_binary(project),
-          into: %{} do
-        case HalC2.Shell.row(node(), project) do
-          {"project", row} -> {project, row["title"]}
-          _ -> {project, nil}
-        end
-      end
-
-    Enum.map(rows, &Map.put(&1, "projectTitle", titles[&1["projectId"]]))
   end
 
   @doc """

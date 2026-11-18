@@ -132,10 +132,18 @@ Feature: Office
       Then the office has a "result" talk from "Write the tests" to "Lead" saying "All 12 tests pass"
 
     @mc
-    Scenario: The office keeps only recent talks
+    Scenario: The office keeps only the newest 40 talks
       Given a thread "Lead" with a worker "Write the tests"
       When its agent sends the worker 50 messages
       Then the office has the newest 40 talks
+
+    @mc
+    Scenario: A talk leaves the office ten minutes after it was said
+      Given threads "Lead" and "Reviewer" in the project "api"
+      When the agent of "Lead" sends "Reviewer" the message "Please look at the diff"
+      Then the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
+      When ten minutes pass with nothing else said or done
+      Then the office has no talks
 
   Rule: The office page draws it
 

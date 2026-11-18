@@ -97,11 +97,22 @@ Item {
                 page.byEnvironment = next;
             }, environment);
         }
+        // An environment that left takes its last snapshot with it, so coming
+        // back shows nothing stale before its new watch delivers.
+        let cached = page.byEnvironment;
         for (const environment of Object.keys(page.watches)) {
-            if (watches[environment] === undefined)
-                page.plugin.unwatch(page.watches[environment]);
+            if (watches[environment] !== undefined)
+                continue;
+            page.plugin.unwatch(page.watches[environment]);
+            if (cached[environment] !== undefined) {
+                if (cached === page.byEnvironment)
+                    cached = Object.assign({}, cached);
+                delete cached[environment];
+            }
         }
         page.watches = watches;
+        if (cached !== page.byEnvironment)
+            page.byEnvironment = cached;
         if (!page.plugin.environments.includes(page.environment))
             page.environment = page.plugin.environments[0] ?? "";
     }
@@ -1648,6 +1659,14 @@ Item {
                     page.world.seatOf[id] = seats[k];
             });
         });
+        // Seats move between people even when the floor stays the same; whoever
+        // was headed for a desk that is no longer theirs plans again.
+        for (const id of Object.keys(page.actors)) {
+            const actor = page.actors[id];
+            const seat = page.world.seatOf[id];
+            if (actor.goal?.kind === "desk" && (!seat || seat.x !== actor.goal.x || seat.y !== actor.goal.y))
+                actor.goal = null;
+        }
     }
 
     function newActor(person) {
@@ -1669,6 +1688,7 @@ Item {
             plan: "",
             claim: -1,
             until: 0,
+            stay: 0,
             cup: false,
             icon: "",
             bubble: "",
@@ -1676,6 +1696,7 @@ Item {
             talk: null,
             queue: [],
             blocked: 0,
+            heldBy: "",
             face: -1,
             faceUntil: 0,
             sideStep: false
@@ -1700,7 +1721,9 @@ Item {
 
     function place(actor, x, y, snap) {
         const w = page.world;
-        if (snap && !(w.grid[y * w.cols + x] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y)) || page.occupied[y * w.cols + x] && page.occupied[y * w.cols + x] !== actor.id) {
+        const inside = x >= 0 && y >= 0 && x < w.cols && y < w.rows;
+        const i = y * w.cols + x;
+        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y)) || page.occupied[i] && page.occupied[i] !== actor.id) {
             const free = nearestFree(x, y, actor.id);
             x = free[0];
             y = free[1];
@@ -1905,7 +1928,9 @@ Item {
                 return;
             goal = breakGoal(actor, state === "idle");
             const stage = goal.pose === "machine";
-            actor.until = page.now + (stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 10000, 20000) : between(page.rng, 15000, 40000));
+            // The stay starts once the person gets there (see tick()).
+            actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 10000, 20000) : between(page.rng, 15000, 40000);
+            actor.until = Infinity;
             if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
                 actor.cup = false;
         }
@@ -1928,12 +1953,15 @@ Item {
         page.walking = true;
     }
 
+    // Plans from the tile the person stands on, or the one it is stepping onto.
     function route(actor, avoid) {
         const goal = actor.goal;
         if (!goal)
             return;
-        actor.path = findPath(actor, actor.tx, actor.ty, goal.x, goal.y, avoid) ?? (avoid ? findPath(actor, actor.tx, actor.ty, goal.x, goal.y, false) ?? [] : []);
-        actor.blocked = 0;
+        const W = page.world.cols;
+        const sx = actor.next >= 0 ? actor.next % W : actor.tx;
+        const sy = actor.next >= 0 ? (actor.next - sx) / W : actor.ty;
+        actor.path = findPath(actor, sx, sy, goal.x, goal.y, avoid) ?? (avoid ? findPath(actor, sx, sy, goal.x, goal.y, false) ?? [] : []);
     }
 
     // A* over the tiles, four ways. Seats are entered only as the goal; with
@@ -2044,7 +2072,8 @@ Item {
             phase: "go",
             deadline: page.now + 25000,
             target: -1,
-            until: 0
+            until: 0,
+            met: false
         };
         release(actor);
         actor.goal = null;
@@ -2075,9 +2104,15 @@ Item {
             return;
         }
         const W = page.world.cols;
+        const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
             if (near && actor.next < 0) {
+                // The other person stops once it finishes its step (see held()),
+                // and the talk starts when both stand still side by side.
+                t.met = true;
+                other.heldBy = actor.id;
+                if (other.next >= 0)
+                    return;
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2106,6 +2141,10 @@ Item {
             }
             return;
         }
+        if (!near) {
+            endTalk(actor);
+            return;
+        }
         // Facing each other.
         actor.dir = dirTowards(actor, other);
         other.face = dirTowards(other, actor);
@@ -2119,6 +2158,12 @@ Item {
             other.bubble = "";
             endTalk(actor);
         }
+    }
+
+    // Whether someone who walked up to talk to this person keeps it where it is.
+    function held(actor) {
+        const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met;
     }
 
     function dirTowards(a, b) {
@@ -2144,14 +2189,18 @@ Item {
         let moving = false;
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
-            if (!actor.talk && actor.queue.length && actor.tx >= 0)
+            if (!actor.talk && actor.queue.length && actor.tx >= 0 && !held(actor))
                 startTalk(actor);
             if (actor.talk)
                 stepTalk(actor);
-            else if (actor.plan === "break" && page.now >= actor.until && (actor.next < 0 && actor.path.length === 0)) {
-                if (actor.goal?.pose === "machine" && actor.goal.cup)
-                    actor.cup = true;
-                decide(actor, true);
+            else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
+                if (actor.until === Infinity) {
+                    actor.until = page.now + actor.stay;
+                } else if (page.now >= actor.until) {
+                    if (actor.goal?.pose === "machine" && actor.goal.cup)
+                        actor.cup = true;
+                    decide(actor, true);
+                }
             }
             if (actor.bubble && page.now >= actor.bubbleUntil && !(actor.talk && actor.talk.phase === "say"))
                 actor.bubble = "";
@@ -2173,13 +2222,15 @@ Item {
     // stands on and the one it steps to so nobody walks through anybody.
     function step(actor, dt) {
         const W = page.world.cols;
+        if (actor.next < 0 && actor.path.length && held(actor))
+            return false;
         if (actor.next < 0 && actor.path.length) {
             const n = actor.path[0];
             const there = page.occupied[n];
             if (there && there !== actor.id) {
                 actor.blocked++;
                 if (actor.blocked % 8 === 0 && actor.blocked < 30)
-                    route(actor, true), actor.blocked = actor.blocked || 8;
+                    route(actor, true);
                 if (actor.blocked >= 30) {
                     const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
                     if (sides.length) {
@@ -2947,6 +2998,7 @@ Item {
         Flickable {
             id: scroller
 
+            objectName: "officeScroller"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -3165,9 +3217,10 @@ Item {
                                         page.hovered = "";
                                 }
                                 onActiveFocusChanged: {
-                                    if (activeFocus)
+                                    if (activeFocus) {
                                         page.hovered = person.actorId;
-                                    else if (page.hovered === person.actorId && !containsMouse)
+                                        page.reveal(hit);
+                                    } else if (page.hovered === person.actorId && !containsMouse)
                                         page.hovered = "";
                                 }
                                 onClicked: page.openPerson(person.actorId)
@@ -3266,6 +3319,7 @@ Item {
                                     anchors.centerIn: parent
                                     width: Math.min(204, implicitWidth)
                                     text: over.bubble
+                                    textFormat: Text.PlainText
                                     color: "#211d2a"
                                     wrapMode: Text.Wrap
                                     maximumLineCount: 3
@@ -3326,6 +3380,7 @@ Item {
                                 objectName: "officeCardTitle"
                                 width: parent.width
                                 text: card.person?.title ?? ""
+                                textFormat: Text.PlainText
                                 color: "#fbf8f1"
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -3337,6 +3392,7 @@ Item {
                                 width: parent.width
                                 visible: text.length > 0
                                 text: [card.person?.project ?? "", card.actor?.look.pet ? card.actor.look.breed : ""].filter(s => s).join(" · ")
+                                textFormat: Text.PlainText
                                 color: "#bdb6c9"
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
@@ -3347,6 +3403,7 @@ Item {
                                 width: parent.width
                                 visible: text.length > 0
                                 text: [card.person?.provider ?? "", card.person?.model ?? ""].filter(s => s).join(" · ")
+                                textFormat: Text.PlainText
                                 color: "#bdb6c9"
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
@@ -3356,6 +3413,7 @@ Item {
                                 objectName: "officeCardState"
                                 width: parent.width
                                 text: card.person ? page.personState(card.person) : ""
+                                textFormat: Text.PlainText
                                 color: card.person?.state === "asking" ? "#ffd84a" : card.person?.state === "failed" ? "#ff8a8a" : "#9fe0b0"
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -3376,6 +3434,21 @@ Item {
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
         }
+    }
+
+    // Scrolls the office just enough to show `item`.
+    function reveal(item) {
+        const r = item.mapToItem(scroller.contentItem, 0, 0, item.width, item.height);
+        const fit = (at, size, view, content, start) => {
+            let next = at;
+            if (start < next)
+                next = start;
+            else if (start + size > next + view)
+                next = start + size - view;
+            return Math.max(0, Math.min(Math.max(0, content - view), next));
+        };
+        scroller.contentX = fit(scroller.contentX, r.width, scroller.width, scroller.contentWidth, r.x);
+        scroller.contentY = fit(scroller.contentY, r.height, scroller.height, scroller.contentHeight, r.y);
     }
 
     function summary() {

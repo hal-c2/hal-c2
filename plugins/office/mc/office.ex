@@ -20,6 +20,9 @@ defmodule HalC2Plugins.Office do
   @id "office"
   @topic "office"
   @every_ms 1_000
+  # The longest a timer is set for: Erlang's own limit is about 49 days, and one that
+  # fires early only looks again.
+  @longest_ms 86_400_000
 
   @impl HalC2.Plugins.Extension
   def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
@@ -30,14 +33,19 @@ defmodule HalC2Plugins.Office do
   @impl HalC2.Plugins.Extension
   def validate_settings(settings) do
     cond do
-      not count?(settings["maxPeople"]) -> {:error, "maxPeople: give a whole number, 1 or more."}
-      not hours?(settings["idleHours"]) -> {:error, "idleHours: give a number of hours above 0."}
-      true -> :ok
+      not count?(settings["maxPeople"]) ->
+        {:error, "maxPeople: give a whole number, 1 or more."}
+
+      not hours?(settings["idleHours"]) ->
+        {:error, "idleHours: give a number of hours above 0, at most #{Floor.max_idle_hours()}."}
+
+      true ->
+        :ok
     end
   end
 
   defp count?(n), do: is_number(n) and n >= 1 and n == trunc(n)
-  defp hours?(n), do: is_number(n) and n > 0
+  defp hours?(n), do: is_number(n) and n > 0 and n <= Floor.max_idle_hours()
 
   @impl HalC2.Plugins.Extension
   def call(@topic, _input, _context), do: {:ok, GenServer.call(__MODULE__, :view)}
@@ -64,7 +72,7 @@ defmodule HalC2Plugins.Office do
   def handle_call(:view, _from, state), do: {:reply, Floor.view(state.floor, now()), state}
 
   def handle_call({:settings, settings}, _from, state),
-    do: {:reply, :ok, publish(%{state | floor: Floor.settings(state.floor, settings)})}
+    do: {:reply, :ok, changed(state, fn floor, _now -> Floor.settings(floor, settings) end)}
 
   @impl GenServer
   def handle_cast({:observe, event}, state),
@@ -77,22 +85,24 @@ defmodule HalC2Plugins.Office do
   def handle_info(:publish, state), do: {:noreply, publish(%{state | publish: nil})}
 
   def handle_info(:expire, state),
-    do: {:noreply, changed(%{state | expire: nil}, fn floor, _now -> floor end)}
+    do: {:noreply, changed(%{state | expire: nil}, &Floor.expire/2)}
 
   def handle_info(_message, state), do: {:noreply, state}
 
+  # The throttle reads one monotonic sample, so the wait it sets is never negative.
   defp changed(state, fun) do
     state = %{state | floor: fun.(state.floor, now())}
+    clock = clock()
 
     cond do
       state.publish != nil ->
         state
 
-      state.published_at == nil or now() - state.published_at >= @every_ms ->
+      state.published_at == nil or clock - state.published_at >= @every_ms ->
         publish(state)
 
       true ->
-        wait = state.published_at + @every_ms - now()
+        wait = state.published_at + @every_ms - clock
         %{state | publish: Process.send_after(self(), :publish, wait)}
     end
   end
@@ -108,7 +118,7 @@ defmodule HalC2Plugins.Office do
         state
       else
         Host.publish(@id, @topic, view)
-        %{state | published: view, published_at: now}
+        %{state | published: view, published_at: clock()}
       end
 
     if state.expire, do: Process.cancel_timer(state.expire)
@@ -116,11 +126,13 @@ defmodule HalC2Plugins.Office do
     expire =
       case Floor.next_change(state.floor, now) do
         nil -> nil
-        at -> Process.send_after(self(), :expire, max(at - now, 0) + 1)
+        at -> Process.send_after(self(), :expire, min(max(at - now, 0) + 1, @longest_ms))
       end
 
     %{state | expire: expire}
   end
 
+  # Wall time, for the topic's times; `clock/0` paces publishing.
   defp now, do: System.system_time(:millisecond)
+  defp clock, do: System.monotonic_time(:millisecond)
 end

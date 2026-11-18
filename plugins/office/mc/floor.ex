@@ -12,7 +12,8 @@ defmodule HalC2Plugins.Office.Floor do
 
   A person's `state` comes from its row alone (`state_of/1`); its `activity` from the
   last tool call heard in the turn under way, shown only while it is working. Talks are
-  kept newest last, the newest #{40}, and `view/2` shows those under ten minutes old.
+  kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
+  shows those, and `expire/2` and every talk added drop the rest.
   Times are milliseconds since the epoch; the topic carries them as ISO 8601.
   """
 
@@ -20,6 +21,8 @@ defmodule HalC2Plugins.Office.Floor do
   @live_activity ~w(preparing starting running)
   @kept_talks 40
   @talk_ms 600_000
+  # `idleHours` above this is refused: a year, whose milliseconds stay a small integer.
+  @max_idle_hours 8_760
   @text_chars 120
   # A worker whose row first shows up this long after it was created was not just
   # delegated to: it came back from another machine, say.
@@ -52,8 +55,11 @@ defmodule HalC2Plugins.Office.Floor do
   defp whole(n, _default) when is_number(n) and n >= 0, do: trunc(n)
   defp whole(_n, default), do: default
 
-  defp positive(n, _default) when is_number(n) and n >= 0, do: n
+  defp positive(n, _default) when is_number(n) and n >= 0 and n <= @max_idle_hours, do: n
   defp positive(_n, default), do: default
+
+  @doc "The most hours `idleHours` may be."
+  def max_idle_hours, do: @max_idle_hours
 
   @doc """
   The rows read as the plugin starts: each state is taken as having begun when the row
@@ -90,7 +96,7 @@ defmodule HalC2Plugins.Office.Floor do
       parent = parent_of(row)
 
       if changed? and new? and parent != nil and not seen?(floor, id) and born?(row, now) do
-        add_talk(floor, %{
+        add_talk(floor, now, %{
           "id" => "delegate:" <> id,
           "from" => parent,
           "to" => id,
@@ -106,7 +112,9 @@ defmodule HalC2Plugins.Office.Floor do
 
   defp put_row(floor, _row, _now, _changed?), do: floor
 
-  # Whether a delegate talk to `id` is already kept: a row changes many times.
+  # Whether a delegate talk to `id` is already kept: a row changes many times. A row is
+  # new for two minutes (`born?/2`), well inside a talk's ten, so a talk dropped as too
+  # old is never said again.
   defp seen?(floor, id), do: Enum.any?(floor.talks, &(&1["id"] == "delegate:" <> id))
 
   defp born?(row, now) do
@@ -191,7 +199,7 @@ defmodule HalC2Plugins.Office.Floor do
 
     case talk(event, now) do
       nil -> floor
-      talk -> add_talk(floor, talk)
+      talk -> add_talk(floor, now, talk)
     end
   end
 
@@ -207,7 +215,7 @@ defmodule HalC2Plugins.Office.Floor do
     }
 
     if parent && said do
-      add_talk(floor, %{
+      add_talk(floor, now, %{
         "id" => "result:#{id}:#{event["runId"]}",
         "from" => id,
         "to" => parent,
@@ -358,7 +366,10 @@ defmodule HalC2Plugins.Office.Floor do
     if Regex.match?(@testing, text), do: "testing", else: "running"
   end
 
-  defp add_talk(floor, %{"id" => id} = talk) do
+  # A talk heard again keeps its place and time and takes the new text.
+  defp add_talk(floor, now, %{"id" => id} = talk) do
+    floor = expire(floor, now)
+
     talks =
       if Enum.any?(floor.talks, &(&1["id"] == id)),
         do:
@@ -369,6 +380,11 @@ defmodule HalC2Plugins.Office.Floor do
 
     %{floor | talks: talks}
   end
+
+  @doc "The office without the talks ten minutes old at `now`: their text is not kept."
+  def expire(floor, now), do: %{floor | talks: Enum.filter(floor.talks, &recent?(&1, now))}
+
+  defp recent?(talk, now), do: (ms(talk["at"]) || 0) > now - @talk_ms
 
   @doc "The `office` topic at `now`."
   def view(floor, now) do
@@ -383,7 +399,7 @@ defmodule HalC2Plugins.Office.Floor do
       |> Enum.take(floor.max_people)
       |> Enum.map(fn {row, state} -> person(floor, row, state) end)
 
-    talks = Enum.filter(floor.talks, &((ms(&1["at"]) || 0) > now - @talk_ms))
+    talks = Enum.filter(floor.talks, &recent?(&1, now))
 
     %{"people" => people, "talks" => talks}
   end
@@ -433,7 +449,7 @@ defmodule HalC2Plugins.Office.Floor do
           state in ~w(idle failed),
           in?(floor, row, state, now),
           at = ms(row["updatedAt"]),
-          do: at + round(floor.idle_hours * 3_600_000)
+          do: at + ceil(floor.idle_hours * 3_600_000)
 
     talks = for talk <- floor.talks, at = ms(talk["at"]), at + @talk_ms > now, do: at + @talk_ms
 
