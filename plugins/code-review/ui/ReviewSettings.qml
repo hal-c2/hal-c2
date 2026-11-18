@@ -455,7 +455,7 @@ ColumnLayout {
             Toggle {
                 key: "reviewRequested"
                 label: qsTr("Review when you are asked to review")
-                hint: qsTr("A review request to the gh user starts a review.")
+                hint: qsTr("A review request to the signed-in account starts a review.")
             }
 
             Field {
@@ -734,7 +734,7 @@ ColumnLayout {
         Toggle {
             key: "readReviewMd"
             label: qsTr("Follow REVIEW.md")
-            hint: qsTr("Add the REVIEW.md at the pull request's head to the prompt.")
+            hint: qsTr("Add the REVIEW.md on the pull request's base branch to the prompt.")
         }
 
         Repeater {

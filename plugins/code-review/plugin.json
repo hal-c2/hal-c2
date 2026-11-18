@@ -230,7 +230,7 @@
       "label": "Follow REVIEW.md",
       "type": "boolean",
       "default": true,
-      "description": "Add the REVIEW.md at the pull request's head to the prompt."
+      "description": "Add the REVIEW.md on the pull request's base branch to the prompt."
     },
     {
       "key": "display",

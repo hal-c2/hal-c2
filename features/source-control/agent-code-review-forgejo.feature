@@ -34,6 +34,15 @@ Feature: Agent code review on Forgejo
     And the review of Forgejo pull request #7 is marked as published
 
   @mc
+  Scenario: A read that names the account it expects is checked against fj's login
+    When the plugin asks which account it acts as on Forgejo
+    Then Forgejo answers that it acts as "octocat"
+    When the plugin reads Forgejo pull request #7 expecting the account "octocat"
+    Then Forgejo serves the read
+    When the plugin reads Forgejo pull request #7 expecting the account "someone-else"
+    Then Forgejo refuses the read with "The Forgejo account could not be verified before starting the operation."
+
+  @mc
   Scenario: A Forgejo pull request from someone the repository does not trust waits for the user
     Given Forgejo pull request #7 is opened by "stranger", who is no collaborator of "acme/shop"
     When the user asks for a review of Forgejo pull request #7

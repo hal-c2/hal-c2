@@ -107,6 +107,32 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
     context
   end
 
+  # As the plugin asks through `HalC2.Plugins.Host.pull_requests/3`.
+  step "the plugin asks which account it acts as on Forgejo", context do
+    Map.put(context, :reply, HalC2.PullRequests.plugin_handle("routing", forgejo_ref(context, 7)))
+  end
+
+  step "Forgejo answers that it acts as {string}", %{args: [login]} = context do
+    assert {:ok, %{"accountId" => ^login, "provider" => "forgejo"}} = context.reply
+    context
+  end
+
+  step "the plugin reads Forgejo pull request \#{int} expecting the account {string}",
+       %{args: [number, account]} = context do
+    ref = Map.put(forgejo_ref(context, number), "expectedAccountId", account)
+    Map.put(context, :reply, HalC2.PullRequests.plugin_handle("detail", ref))
+  end
+
+  step "Forgejo serves the read", context do
+    assert {:ok, %{"number" => 7}} = context.reply
+    context
+  end
+
+  step "Forgejo refuses the read with {string}", %{args: [message]} = context do
+    assert {:error, %{"detail" => ^message}} = context.reply
+    context
+  end
+
   step "the user asks for a review of Forgejo pull request \#{int}",
        %{args: [number]} = context do
     {reply, context} =
@@ -123,7 +149,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
        %{args: [number]} = context do
     assert {:ok, _} = context.reply
     {review, context} = await_review(context, number, &(&1["threadId"] && &1["checkout"]))
-    World.await_row(review["threadId"], & &1)
+    thread = World.await_row(review["threadId"], & &1)
+    assert thread["worktreePath"] == review["checkout"]
     assert World.git!(review["checkout"], ~w(rev-parse HEAD)) == head(context)
 
     assert World.git!(review["checkout"], ~w(config remote.origin.url)) ==
@@ -202,6 +229,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
     assert {:error, message, _} = context.reply
     assert message =~ "Approve it on the Reviews page"
     assert Agent.get(context.forgejo_pr, & &1.posted) == []
+
+    # It waits, unstarted: no thread works on it and nothing was checked out.
+    {review, context} = await_review(context, 7, &(&1["status"] == "ready"))
+    assert review["threadId"] == nil
+    assert review["checkout"] == nil
     context
   end
 
@@ -391,5 +423,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
       )
 
     result
+  end
+
+  defp forgejo_ref(context, number) do
+    %{
+      "projectId" => World.project(context, "shop").id,
+      "host" => @host,
+      "repository" => context.repository,
+      "number" => number
+    }
   end
 end

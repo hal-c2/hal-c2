@@ -798,7 +798,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the base branch has a REVIEW.md that links to a file outside its repository",
        context do
-    outside = Path.join(context.mc.home, "outside.md")
+    # Its name says it too, so neither the link's target nor what it holds gets in.
+    outside = Path.join(context.mc.home, "outside the checkout.md")
     File.write!(outside, "outside the checkout\n")
     source = base_checkout(context)
     File.ln_s!(outside, Path.join(source, "REVIEW.md"))
@@ -846,6 +847,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     {review, context} = await_review(context, number, & &1["checkout"])
     assert thread(context.thread)["worktreePath"] == review["checkout"]
     assert World.git!(review["checkout"], ~w(rev-parse HEAD)) == context.heads[number]
+
+    # The plugin's clone keeps the refs a sandbox bundles at what this review fetched,
+    # and none of the attempt's own.
+    clone = World.git!(review["checkout"], ~w(rev-parse --path-format=absolute --git-common-dir))
+    prefix = "refs/hal-c2/code-review/#{number}"
+
+    assert World.git!(clone, ["for-each-ref", "--format=%(refname)", prefix]) ==
+             "#{prefix}/base\n#{prefix}/head"
+
+    assert World.git!(clone, ["rev-parse", "#{prefix}/head"]) == context.heads[number]
+
+    assert World.git!(clone, ["merge-base", "#{prefix}/base", "#{prefix}/head"]) ==
+             review["mergeBase"]
+
     context
   end
 
@@ -1570,11 +1585,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "{string} looks for pull requests again within a minute", %{args: [@id]} = context do
-    # The timer of the next look, as the plugin armed it.
-    %{timer: timer} = :sys.get_state(HalC2Plugins.CodeReview)
+    # The timer of the next look, as the plugin armed it: a minute, and the same timer
+    # still once a setting was refused.
+    %{timer: timer, settings: settings} = :sys.get_state(HalC2Plugins.CodeReview)
     left = Process.read_timer(timer)
-    assert is_integer(left) and left <= 60_000
-    context
+    assert is_integer(left) and left > 50_000 and left <= 60_000
+    assert settings["pollMinutes"] == 1
+    if context[:poll_timer], do: assert(timer == context.poll_timer)
+    Map.put(context, :poll_timer, timer)
   end
 
   step "the setting is refused saying {string}", %{args: [message]} = context do

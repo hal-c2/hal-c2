@@ -532,11 +532,25 @@ defmodule HalC2Plugins.CodeReview do
   # Every setting applies from here on: the next look watches the repositories saved,
   # a new pace re-arms the wait for it, more room starts queued reviews (less lets the
   # running ones finish), and a new display lists the threads there are. Runs and posts
-  # under way finish with the settings they started with.
+  # under way finish with the settings they started with. Another host makes what was
+  # looked at on the old one stale: a look still out is dropped (`apply_look/2` takes
+  # none that started before `looked`), so are the reviews nobody started, and the new
+  # host is looked at now.
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
     old = state.settings
     state = %{state | settings: settings}
+
+    state =
+      if settings["host"] != old["host"] do
+        reviews = Map.reject(state.reviews, fn {_key, review} -> review["status"] == "ready" end)
+
+        %{state | reviews: reviews, looked: System.monotonic_time()}
+        |> look_again()
+      else
+        state
+      end
+
     state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
     state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
     {:reply, :ok, state |> pump() |> changed()}
@@ -574,13 +588,24 @@ defmodule HalC2Plugins.CodeReview do
 
   # The user's ask, with who stands behind the pull request read afresh: what it says
   # now is what the review may start on.
+  # A row of the same name kept from another host (or project) is another pull request:
+  # it takes none of this one's trust, and this one starts from what was read of it.
   def handle_call({:start, pr, trigger}, _from, state) do
+    known = state.reviews[pr["key"]]
+    same? = known != nil and known["projectId"] == pr["projectId"]
+
     review =
-      if known = state.reviews[pr["key"]],
+      if same?,
         do: Map.merge(known, Map.take(pr, ~w(trust seenAt))),
         else: pr
 
     cond do
+      known != nil and not same? and known["status"] in ~w(queued running publishing) ->
+        {:reply,
+         {:error,
+          "A review of #{pr["key"]} on another host is under way. Ask again once it ends."},
+         state}
+
       review["status"] in ~w(queued running) ->
         {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()} |> reply_snapshot()
 
@@ -1623,7 +1648,7 @@ defmodule HalC2Plugins.CodeReview do
           )
         )
 
-      {:ok, Map.put(pr, "trust", facts(trust, label))}
+      {:ok, Map.merge(pr, %{"projectId" => project["id"], "trust" => facts(trust, label)})}
     else
       {:error, error} -> {:error, message(error)}
     end

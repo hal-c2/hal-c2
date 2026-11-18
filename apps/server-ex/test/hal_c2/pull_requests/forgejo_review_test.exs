@@ -93,7 +93,20 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
                "id" => 2,
                "user" => %{"login" => "maint"},
                "state" => "PENDING",
-               "body" => "draft"
+               "body" => "draft",
+               "comments_count" => 1
+             }
+           ]},
+        # The pending review's author can read its drafts; nobody else has seen them.
+        "/api/v1/repos/acme/shop/pulls/7/reviews/2/comments" =>
+          {200,
+           [
+             %{
+               "user" => %{"login" => "maint"},
+               "path" => "lib/cart.ex",
+               "position" => 3,
+               "body" => "Draft.",
+               "created_at" => @t2
              }
            ]},
         "/api/v1/repos/acme/shop/pulls/7/reviews/1/comments" =>

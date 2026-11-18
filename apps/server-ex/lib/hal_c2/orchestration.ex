@@ -615,10 +615,15 @@ defmodule HalC2.Orchestration do
   end
 
   # Which kinds of a link's news wake its thread (`HalC2.PullRequests.Wakes.events/0`);
-  # nil is every kind, [] none. What the thread heard stays, so news that was not told
-  # is not told later either.
+  # nil is every kind, [] none; `drop` takes kinds out of what the link has, read in
+  # this write, so two calls dropping different kinds both hold. News of a newly enabled kind already in the snapshot is
+  # heard without telling (`Wakes.resubscribe/2`); news of a kind already subscribed to
+  # stays to be told.
   def dispatch(%{"type" => "thread.pull-request-link.notify", "threadId" => thread_id} = command) do
-    with {:ok, notify} <- HalC2.PullRequests.Wakes.notify(command["notify"]) do
+    alias HalC2.PullRequests.Wakes
+
+    with {:ok, notify} <- Wakes.notify(command["notify"]),
+         {:ok, drop} <- Wakes.notify(command["drop"]) do
       quiet_update(thread_id, fn thread ->
         links = PullRequests.of(thread)
         key = PullRequests.key(command)
@@ -627,9 +632,14 @@ defmodule HalC2.Orchestration do
           links
           |> Enum.map(fn link ->
             cond do
-              PullRequests.key(link) != key -> link
-              notify == nil -> Map.delete(link, "notify")
-              true -> Map.put(link, "notify", notify)
+              PullRequests.key(link) != key ->
+                link
+
+              Map.has_key?(command, "drop") ->
+                Wakes.resubscribe(link, Wakes.subscribed(link) -- (drop || Wakes.events()))
+
+              true ->
+                Wakes.resubscribe(link, notify)
             end
           end)
           |> then(&pull_request_fields(thread, &1))
@@ -4017,7 +4027,8 @@ defmodule HalC2.Orchestration do
   # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`, a finished
   # task's child handing its links to its caller) never does. A link handed over arrives
   # with what its last owner heard and read of it. A first manual link keeps the
-  # branch's pull request beside it.
+  # branch's pull request beside it. A command with `notify` (`subscribe_pull_request`)
+  # subscribes the new link in the same write.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.key(command)
@@ -4041,6 +4052,14 @@ defmodule HalC2.Orchestration do
                 else: %{}
               )
             )
+
+      link =
+        case Map.has_key?(command, "notify") and
+               HalC2.PullRequests.Wakes.notify(command["notify"]) do
+          {:ok, nil} -> Map.delete(link, "notify")
+          {:ok, notify} -> Map.put(link, "notify", notify)
+          _ -> link
+        end
 
       branch = JS.json(JS.get(thread, "branchPullRequest"))
       branch_key = branch && PullRequests.legacy_key(branch)
@@ -4592,18 +4611,28 @@ defmodule HalC2.Orchestration do
        else: %{"pullRequests" => pull_requests, "linkedPullRequest" => nil}
   end
 
+  # A legacy update that names a pull request the thread already shows keeps that link,
+  # with what it heard and what it is subscribed to; a new one starts from a baseline.
   defp replace_linked(thread, linked, at) do
     replaced =
       for l <- [JS.json(JS.get(thread, "linkedPullRequest")), linked],
           l,
           do: PullRequests.key(PullRequests.legacy_key(l))
 
-    kept = Enum.reject(PullRequests.of(thread), &(PullRequests.key(&1) in replaced))
+    links = PullRequests.of(thread)
+    kept = Enum.reject(links, &(PullRequests.key(&1) in replaced))
 
     added =
-      if linked,
-        do: [new_link(PullRequests.legacy_key(linked), linked["url"], "manual", at)],
-        else: []
+      if linked do
+        key = PullRequests.key(PullRequests.legacy_key(linked))
+
+        case Enum.find(PullRequests.visible(links), &(PullRequests.key(&1) == key)) do
+          nil -> [new_link(PullRequests.legacy_key(linked), linked["url"], "manual", at)]
+          existing -> [existing]
+        end
+      else
+        []
+      end
 
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end

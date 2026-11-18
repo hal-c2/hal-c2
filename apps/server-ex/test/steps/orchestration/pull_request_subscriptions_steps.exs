@@ -39,6 +39,26 @@ defmodule HalC2.Steps.Orchestration.PullRequestSubscriptions do
     end
   end
 
+  step "a legacy client sets {string} as the linked pull request of {string}",
+       %{args: [pr, thread]} = context do
+    [repository, number] = String.split(pr, "#")
+
+    context =
+      World.command(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => World.thread_id(context, thread),
+        "linkedPullRequest" => %{
+          "projectId" => World.project(context).id,
+          "repository" => repository,
+          "number" => String.to_integer(number),
+          "url" => "https://codeberg.org/#{repository}/pulls/#{number}"
+        }
+      })
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
   step "the agent of {string} lists no pull request subscriptions",
        %{args: [thread]} = context do
     assert {:ok, %{"subscriptions" => []}} =

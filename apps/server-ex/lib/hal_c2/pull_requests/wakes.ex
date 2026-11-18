@@ -236,6 +236,51 @@ defmodule HalC2.PullRequests.Wakes do
   def subscribed(%{"notify" => notify}) when is_list(notify), do: notify
   def subscribed(_link), do: @events
 
+  # What `advance/3` moves past for each kind of news.
+  @heard_fields %{
+    "merged" => ~w(state),
+    "closed" => ~w(state),
+    "checks" => ~w(checksState checksFailed),
+    "conflicts" => ~w(mergeability),
+    "merge_queue" => ~w(mergeQueueRemovalAt),
+    "reviews" => ~w(reviewActivityAt),
+    "comments" => ~w(commentActivityAt)
+  }
+
+  # A link heard before the kinds were kept apart holds only `activityAt`.
+  defp held(heard, key) when key in ~w(reviewActivityAt commentActivityAt),
+    do: Map.get(heard, key, heard["activityAt"])
+
+  defp held(heard, key), do: heard[key]
+
+  @doc """
+  `link` subscribed to `notify` (nil is every kind) in place of what it was. News of a
+  kind it now hears for the first time, already in its snapshot, is heard without
+  telling: it arrived while that kind was muted. News of a kind it was already
+  subscribed to stays to be told.
+  """
+  def resubscribe(link, notify) do
+    before = subscribed(link)
+    link = if notify == nil, do: Map.delete(link, "notify"), else: Map.put(link, "notify", notify)
+    heard = link["heard"]
+    snapshot = link["snapshot"]
+    enabled = subscribed(link) -- before
+
+    if is_map(heard) and is_map(snapshot) and enabled != [] do
+      {consumed, pending} = Enum.split_with(changes(heard, snapshot), &(event(&1) in enabled))
+
+      kept =
+        pending
+        |> Enum.flat_map(&Map.fetch!(@heard_fields, event(&1)))
+        |> Map.new(&{&1, held(heard, &1)})
+
+      next = heard |> advance(snapshot, consumed) |> Map.merge(kept)
+      Map.put(link, "heard", next)
+    else
+      link
+    end
+  end
+
   @doc "`{:ok, notify}` for a list of `events/0` (nil is every kind), or `{:error, message}`."
   def notify(nil), do: {:ok, nil}
 
@@ -506,9 +551,11 @@ defmodule HalC2.PullRequests.Wakes do
     """
   end
 
-  # Forgejo has no `gh`; its API answers through `tea api` (or fj's token) the same way.
+  # Forgejo has no `gh`. The pull request's page shows it all to anyone; its API
+  # answers `tea api`, which signs in with the login for the server, and with fj's
+  # login alone (fj has no `api` command) a request carrying fj's token.
   defp describe_forgejo(link, changes) do
-    %{"repository" => repository, "number" => number} = Links.normalize(link)
+    %{"host" => host, "repository" => repository, "number" => number} = Links.normalize(link)
     pull = "repos/#{repository}/pulls/#{number}"
 
     lines =
@@ -542,7 +589,9 @@ defmodule HalC2.PullRequests.Wakes do
     `tea api #{pull}/reviews/<id>/comments`), its comments with \
     `tea api repos/#{repository}/issues/#{number}/comments`, and its checks with \
     `tea api repos/#{repository}/commits/<head sha>/status`, the head sha being \
-    `head.sha` in `tea api #{pull}`.\
+    `head.sha` in `tea api #{pull}`. Without tea, its page #{link["url"]} shows them, and \
+    the same paths answer under `https://#{host}/api/v1/` with the token `fj` signs in \
+    with as `Authorization: token <token>`.\
     """
   end
 

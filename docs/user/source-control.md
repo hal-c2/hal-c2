@@ -203,10 +203,10 @@ out from the matching organization and repository.
 Pull requests on a Forgejo or Gitea server refresh and wake their thread as GitHub ones do, read as
 the account `fj` or `tea` is signed in with. Reviews count from the repository's owner, its
 collaborators and the reviewers asked for; checks are the commit statuses of the pull request's head,
-which Forgejo Actions writes. Forgejo has no stacks.
+which Forgejo Actions writes. Forgejo has no stacks and no merge queue, so it never tells of leaving one.
 
 A linked pull request wakes its thread for every kind of news: reviews, comments, checks failing or
-passing again, merge conflicts, leaving the merge queue, and merges or closes. An agent can choose
+passing again, merge conflicts, leaving the merge queue (on GitHub), and merges or closes. An agent can choose
 which of them wake it with the `subscribe_pull_request` and `unsubscribe_pull_request` tools, and see
 its choices with `list_pull_request_subscriptions`. Unsubscribing keeps the pull request linked, so it
 still shows and still settles the thread; what the thread was not subscribed to is not told later.

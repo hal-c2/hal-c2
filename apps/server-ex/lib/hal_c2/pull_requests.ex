@@ -1964,23 +1964,30 @@ defmodule HalC2.PullRequests do
     end
   end
 
-  # A routed operation names the account it expects to act as; anything else is refused.
+  # A routed operation names the account it expects to act as, as `routing` answered
+  # it (GitHub's account id, Forgejo's login); anything else is refused.
   defp verified(project, %{"expectedAccountId" => expected} = ref) when is_binary(expected) do
     host = ref["host"] && String.downcase(ref["host"])
 
-    case host == project.host && identity(project) do
-      {:ok, %{"id" => ^expected}} ->
+    case host == project.host && account(project) do
+      {:ok, ^expected} ->
         {:ok, project}
 
       _ ->
         refuse(
           "routeIdentity",
-          "The GitHub account could not be verified before starting the operation."
+          "The #{if project.kind == "forgejo", do: "Forgejo", else: "GitHub"} account could not be verified before starting the operation."
         )
     end
   end
 
   defp verified(project, _ref), do: {:ok, project}
+
+  defp account(%{kind: "forgejo"} = project), do: Forgejo.signed_in(ctx(project, nil))
+
+  defp account(project) do
+    with {:ok, %{"id" => id}} <- identity(project), do: {:ok, id}
+  end
 
   defp same?(left, right), do: String.downcase(left) == String.downcase(String.trim(right || ""))
 

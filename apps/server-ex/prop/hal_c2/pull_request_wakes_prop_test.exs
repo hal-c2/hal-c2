@@ -26,7 +26,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   - a link subscribed to some kinds of news (`notify`) wakes the thread only for those;
     the rest is heard without a wake, and is not told once it subscribes again, while
     news of a kind it is subscribed to stays to be told, a review beside a comment
-    included.
+    included; subscribing to a kind hears what of it was not told yet.
   """
 
   use ExUnit.Case, async: false
@@ -218,7 +218,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   def next_state(state, _result, {:call, _, :notify, [n, notify]}) do
     links =
       Enum.map(state.links, fn
-        {^n, link} -> {n, %{link | notify: notify}}
+        {^n, link} -> {n, resubscribe(state, link, notify)}
         other -> other
       end)
 
@@ -263,6 +263,29 @@ defmodule HalC2.PullRequestWakesPropTest do
       do: %{state | links: []},
       else: %{state | links: Enum.map(state.links, fn {n, link} -> {n, hear(state, link)} end)}
   end
+
+  # Subscribing to a kind hears what of it is not told yet: it arrived while the link
+  # was muted. News of a kind already subscribed to stays to be told.
+  defp resubscribe(state, %{told: told, snapshot: snapshot} = link, notify)
+       when told != nil and snapshot != nil do
+    enabled = events(notify) -- events(link.notify)
+    {heard, pending} = Enum.split_with(news(state, told, snapshot), &(event(&1) in enabled))
+    kept = pending |> Enum.flat_map(&fields/1) |> Map.new(&{&1, told[&1]})
+    told = told |> advance(snapshot, heard) |> Map.merge(kept)
+    %{link | told: told, notify: notify}
+  end
+
+  defp resubscribe(_state, link, notify), do: %{link | notify: notify}
+
+  defp events(nil), do: Wakes.events()
+  defp events(notify), do: notify
+
+  # What `told` keeps of each kind of news.
+  defp fields(news) when news in [:merged, :closed], do: [:state]
+  defp fields(news) when news in [:checks_failing, :checks_passing], do: [:checks, :failed]
+  defp fields(:conflicting), do: [:merge]
+  defp fields(:left_merge_queue), do: [:rem]
+  defp fields({:activity, kind}), do: [kind]
 
   # A first snapshot is a baseline; away the thread hears nothing more; busy, news it
   # is subscribed to waits and the rest is heard.

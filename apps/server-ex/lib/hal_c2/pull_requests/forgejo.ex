@@ -198,9 +198,11 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
-  # Replies to a review's thread are its comments, not reviews of their own.
+  # Replies to a review's thread are its comments, not reviews of their own. A pending
+  # review's drafts are readable by its author but not yet said.
   defp review_comments(cwd, target, base, number, reviews) do
     reviews
+    |> Enum.reject(&(&1["state"] == "PENDING"))
     |> Enum.filter(&((&1["comments_count"] || 0) > 0 and is_integer(&1["id"])))
     |> Enum.sort_by(&(epoch(&1["submitted_at"]) || 0), :desc)
     |> Enum.take(@review_comment_reads)

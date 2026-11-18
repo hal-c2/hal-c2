@@ -33,8 +33,9 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   def run("subscribe_pull_request", args, %{row: me}) do
     with {:ok, target} <- target(args, me),
          {:ok, notify} <- events(args["events"]),
-         {:ok, already?} <- link(target, me),
-         {:ok, _} <- set_notify(target, me, notify) do
+         {:ok, already?} <- link(target, me, %{"notify" => notify}),
+         {:ok, _} <-
+           if(already?, do: set_notify(target, me, %{"notify" => notify}), else: {:ok, nil}) do
       {:ok,
        target
        |> Map.put("events", notify || Wakes.events())
@@ -51,13 +52,16 @@ defmodule HalC2.Mcp.Tools.PullRequests do
           {:ok, target |> Map.put("events", []) |> Map.put("wasSubscribed", false)}
 
         link ->
-          before = Wakes.subscribed(link)
-          left = if dropped == nil, do: [], else: before -- dropped
+          # The kinds are dropped in the write itself, from what the link has then.
+          with {:ok, _} <- set_notify(target, me, %{"drop" => dropped}) do
+            now = Enum.find(PullRequests.visible(links(me["id"])), &same?(&1, target))
+            left = if now, do: Wakes.subscribed(now), else: []
 
-          with {:ok, _} <- set_notify(target, me, left),
-               do:
-                 {:ok,
-                  target |> Map.put("events", left) |> Map.put("wasSubscribed", before != [])}
+            {:ok,
+             target
+             |> Map.put("events", left)
+             |> Map.put("wasSubscribed", Wakes.subscribed(link) != [])}
+          end
       end
     end
   end
@@ -121,8 +125,9 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   # --- helpers ----------------------------------------------------------------------------
 
   # `{:ok, already linked?}` once `target` is linked to the caller's thread; a link the
-  # caller dismissed from a stack is linked again.
-  defp link(target, me) do
+  # caller dismissed from a stack is linked again. `extra` joins the link command (a
+  # new link's `notify`, so it is subscribed in the same write).
+  defp link(target, me, extra \\ %{}) do
     existing = Enum.find(links(me["id"]), &same?(&1, target))
 
     if existing && existing["source"] != "stack-dismissed" do
@@ -131,7 +136,9 @@ defmodule HalC2.Mcp.Tools.PullRequests do
       with {:ok, _} <-
              orchestration(
                Orchestration.dispatch(
-                 Map.merge(target, %{
+                 target
+                 |> Map.merge(extra)
+                 |> Map.merge(%{
                    "type" => "thread.pull-request.link",
                    "commandId" => command_id(),
                    "threadId" => me["id"],
@@ -143,16 +150,17 @@ defmodule HalC2.Mcp.Tools.PullRequests do
     end
   end
 
-  defp set_notify(target, me, notify) do
+  # `change` is `%{"notify" => events}` or `%{"drop" => events}`.
+  defp set_notify(target, me, change) do
     orchestration(
       Orchestration.dispatch(
         target
         |> Map.take(~w(host repository number url))
+        |> Map.merge(change)
         |> Map.merge(%{
           "type" => "thread.pull-request-link.notify",
           "commandId" => command_id(),
-          "threadId" => me["id"],
-          "notify" => notify
+          "threadId" => me["id"]
         })
       )
     )
@@ -207,6 +215,9 @@ defmodule HalC2.Mcp.Tools.PullRequests do
     project = project_host(me["projectId"])
 
     case args["host"] || (project && project.host) do
+      host when not is_nil(host) and not is_binary(host) ->
+        {:error, "invalid_request", "host must be a string."}
+
       nil ->
         {:error, "invalid_request",
          "This thread's project has no recognised remote. Pass host or url."}

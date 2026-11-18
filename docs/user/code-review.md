@@ -43,11 +43,14 @@ needs `fj` for its reviews to start.
   Drafts, authors you ignore (bots, by default) and changes over a size you set
   are left out.
 - **Only when asked** waits for you: start a review on the **Reviews** page, or
-  ask on GitHub by requesting a review from the `gh` user, adding a label
+  ask on the host by requesting a review from the account it is signed in as
+  (`gh`'s on GitHub, `fj`'s or `tea`'s on Forgejo), adding a label
   (`agent-review` by default), or commenting a command (`/review` by default).
 
 The plugin looks for pull requests every five minutes, or as often as you set,
-down to once a minute; **Look now** on the page looks at once. A commit is reviewed once. With **Review new pushes** on, a pull
+down to once a minute; **Look now** on the page looks at once. When the host
+limits its requests, the next look waits twice as long, up to eight times the
+interval, until a look goes through. A commit is reviewed once. With **Review new pushes** on, a pull
 request is reviewed again when its head changes; with it off, it is marked as
 changed since its review. A pull request you asked for a review of is followed
 from then on: new pushes to it are picked up in either mode, and even if you
@@ -132,7 +135,8 @@ others listed under it are filled in for each pull request. How the agent
 reports what it finds is added after it. **Reset to the plugin's prompt** undoes
 your changes to it. Each repository can have instructions of its own, and with
 **Follow REVIEW.md** the `REVIEW.md` on the pull request's base branch is added too; one the pull
-request adds or changes is not followed until it is merged.
+request adds or changes is followed only once that change is on the base branch, by
+merging it or otherwise: what is only on the pull request's head is left out.
 
 ## What happens with the findings
 

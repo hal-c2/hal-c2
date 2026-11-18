@@ -18,6 +18,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   def prepare(clone, path, %{"url" => url} = remote, number, base) do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
+    # Each attempt fetches into refs of its own: a stopped review's fetch may still
+    # finish, and must not move the head or base this one reads.
+    attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
 
     with :ok <- alone(clone, fn -> init(clone, url) end),
          {credentials, env} = credentials(remote, fetched_url(clone, url)),
@@ -32,23 +35,48 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                  # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
                  "--no-write-fetch-head",
                  url,
-                 "+refs/pull/#{number}/head:#{head_ref}",
-                 "+refs/heads/#{base}:#{base_ref}"
+                 "+refs/pull/#{number}/head:#{attempt}/head",
+                 "+refs/heads/#{base}:#{attempt}/base"
                ],
              env
            ),
-         {:ok, head} <- git(clone, ["rev-parse", head_ref]),
-         {:ok, base_sha} <- git(clone, ["rev-parse", base_ref]),
+         {:ok, head} <- git(clone, ["rev-parse", "#{attempt}/head"]),
+         {:ok, base_sha} <- git(clone, ["rev-parse", "#{attempt}/base"]),
+         :ok <- publish(clone, attempt, [{head_ref, head}, {base_ref, base_sha}]),
          :ok <- alone(clone, fn -> place(clone, path, head) end) do
       merge_base =
-        case git(clone, ["merge-base", base_ref, head]) do
+        case git(clone, ["merge-base", base_sha, head]) do
           {:ok, sha} -> sha
-          _ -> base_ref
+          _ -> base_sha
         end
 
       {:ok,
        %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
+    else
+      error ->
+        drop(clone, attempt)
+        error
     end
+  end
+
+  # The refs a sandbox bundles (`HalC2.OpenShell.Review`) are set to what this attempt
+  # fetched, and its own refs are dropped.
+  defp publish(clone, attempt, refs) do
+    result =
+      Enum.reduce_while(refs, :ok, fn {ref, sha}, :ok ->
+        case git(clone, ["update-ref", ref, sha]) do
+          {:ok, _} -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+
+    drop(clone, attempt)
+    result
+  end
+
+  defp drop(clone, attempt) do
+    for side <- ~w(head base), do: git(clone, ["update-ref", "-d", "#{attempt}/#{side}"])
+    :ok
   end
 
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."

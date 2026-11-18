@@ -117,6 +117,26 @@ defmodule HalC2.PullRequests.SubscriptionsTest do
     assert told["heard"]["reviewActivityAt"] == @review["at"]
   end
 
+  test "enabling a kind hears what arrived while it was muted; news already subscribed to stays" do
+    # Busy: subscribed only to reviews, the failing checks and the review wait unheard.
+    waiting = link(["reviews"], %{"activity" => @review})
+    assert {[^waiting], _, []} = Wakes.hear([waiting], false, false)
+
+    both = Wakes.resubscribe(waiting, ["reviews", "checks"])
+    assert both["notify"] == ["reviews", "checks"]
+
+    assert %{"checksState" => "failing", "checksFailed" => true, "reviewActivityAt" => nil} =
+             both["heard"]
+
+    assert {_, _, [{_, [{:activity, @review}]}]} = Wakes.hear([both], false, true)
+
+    every = Wakes.resubscribe(waiting, nil)
+    refute Map.has_key?(every, "notify")
+    assert {_, _, [{_, [{:activity, @review}]}]} = Wakes.hear([every], false, true)
+
+    assert Wakes.resubscribe(waiting, ["reviews"])["heard"] == @heard
+  end
+
   test "notify names known kinds in their order, and refuses others" do
     assert Wakes.notify(["merged", "reviews", "merged"]) == {:ok, ["reviews", "merged"]}
     assert Wakes.notify(nil) == {:ok, nil}

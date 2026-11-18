@@ -342,6 +342,50 @@ defmodule HalC2.McpTest do
 
     assert {:ok, %{"wasSubscribed" => false}} =
              tool.("unsubscribe_pull_request", %{"url" => "https://github.com/acme/app/pull/99"})
+
+    assert {:error, text} =
+             tool.("subscribe_pull_request", %{
+               "repository" => "acme/app",
+               "number" => 8,
+               "host" => 42
+             })
+
+    assert text =~ "host must be a string"
+  end
+
+  test "a new subscription is one write, and drops are made from what the link has then" do
+    {caller, tool} = caller("wait for it")
+    forgejo = "https://codeberg.org/acme/shop/pulls/3"
+    sequence = fn -> HalC2.Streams.sequence(caller) end
+
+    before = sequence.()
+
+    {:ok, _} =
+      tool.("subscribe_pull_request", %{
+        "url" => forgejo,
+        "events" => ["reviews", "checks", "merged"]
+      })
+
+    assert sequence.() == before + 1
+
+    # Two drops, each from the same view of the link: both hold.
+    drop = fn events ->
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.pull-request-link.notify",
+        "commandId" => "cmd-drop-#{System.unique_integer([:positive])}",
+        "threadId" => caller,
+        "host" => "codeberg.org",
+        "repository" => "acme/shop",
+        "number" => 3,
+        "drop" => events
+      })
+    end
+
+    {:ok, _} = drop.(["reviews"])
+    {:ok, _} = drop.(["checks"])
+
+    assert {:ok, %{"subscriptions" => [%{"events" => ["merged"]}]}} =
+             tool.("list_pull_request_subscriptions", %{})
   end
 
   test "a plan-mode caller cannot hand off to a worktree", %{work: work} do

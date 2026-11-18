@@ -275,9 +275,32 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     assert wake["text"] =~ "`tea api repos/acme/shop/pulls/7/reviews`"
     refute wake["text"] =~ "gh "
 
-    # Heard: the same snapshot is not news again.
+    # Heard: the same snapshot is not news again, once the thread is idle to hear it.
+    await_idle("t1")
+
+    assert [%{"heard" => %{"checksState" => "failing", "reviewActivityAt" => at}}] =
+             pull_requests("t1")
+
+    assert at == "2030-01-01T10:00:00Z"
     :ok = Sync.sweep()
     assert Wakes.check("t1") == :quiet
+  end
+
+  @busy ~w(preparing starting running waiting queued)
+
+  # Until none of the thread's runs is going (the wake's run fails: no agent here).
+  defp await_idle(id) do
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
+
+    if Enum.any?(StreamState.list(current(id), "run"), &(&1["status"] in @busy)) do
+      receive do
+        {:hal_c2_stream, ^id, _} -> await_idle(id)
+      after
+        10_000 -> flunk("#{id}'s run never ended")
+      end
+    else
+      :ok
+    end
   end
 
   defp current(id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(id))

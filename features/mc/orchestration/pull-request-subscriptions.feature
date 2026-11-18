@@ -2,7 +2,8 @@
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (subscribe_pull_request,
 #     unsubscribe_pull_request, list_pull_request_subscriptions)
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex (subscribed/1, event/1: a link's notify)
-#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.pull-request-link.notify)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.pull-request-link.notify,
+#     replace_linked/3: a legacy metadata update)
 Feature: An agent chooses which news of a pull request wakes it
 
   A linked pull request wakes its thread for every kind of news: reviews, comments,
@@ -48,6 +49,12 @@ Feature: An agent chooses which news of a pull request wakes it
   Scenario: A kind of news HAL-C2 does not know is refused
     When the agent of "fix" subscribes to "acme/shop#7" for "pushes"
     Then the subscription is refused with "Unknown events pushes"
+
+  @mc
+  Scenario: A legacy client naming the subscribed pull request again keeps the subscription
+    When the agent of "fix" subscribes to "acme/shop#7" for "reviews"
+    And a legacy client sets "acme/shop#7" as the linked pull request of "fix"
+    Then the agent of "fix" lists "acme/shop#7" on "codeberg.org" subscribed to "reviews"
 
   @mc
   Scenario: A merge still settles a thread that is not subscribed to it
