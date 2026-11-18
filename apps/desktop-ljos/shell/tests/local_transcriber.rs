@@ -215,11 +215,12 @@ wait"#,
 #[test]
 fn everything_a_helper_wrote_comes_before_its_end() {
     let f = Fixture::new("all-of-it");
-    // Far more than the stream holds (64 chunks) and the pipe holds: the
-    // helper ends while most of what it wrote still waits for the UI.
+    // Far more than the stream (64 chunks) and the pipe (64 KiB) hold, and
+    // under the 1 MiB a run may write (about 820 KB): the helper ends while
+    // most of what it wrote still waits for the UI.
     let helper = f.helper(
         "helper.sh",
-        r#"yes '{"type":"status","phase":"recording"}' | head -n 100000
+        r#"yes '{"type":"status","phase":"recording"}' | head -n 20000
 echo '{"type":"transcript","text":"the last line"}'"#,
     );
     assert!(f.start(&helper));
