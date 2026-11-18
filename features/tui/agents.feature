@@ -54,10 +54,24 @@ Feature: The terminal client's agents panel
   @tui
   Scenario: A click selects a worker, and a second click opens it
     Given the agents panel is open
-    When the user clicks the worker "Review the docs"
+    And the agents panel selects the worker "Review the docs"
+    When the user clicks the worker "Fix the tests"
     Then the conversation shows "Delegating"
-    When the user clicks the worker "Review the docs"
-    Then the conversation shows the thread of "Review the docs"
+    And the agents panel selects the worker "Fix the tests"
+    When the user clicks the worker "Fix the tests"
+    Then the conversation shows the thread of "Fix the tests"
+
+  @tui
+  Scenario: A click on a worker the keys left and came back to only selects it
+    Given the agents panel is open
+    And the user clicked the worker "Fix the tests"
+    And the user moves the selection to the worker "Write notes"
+    And the user moves the selection to the worker "Fix the tests"
+    When the user clicks the worker "Fix the tests"
+    Then the conversation shows "Delegating"
+    And the agents panel selects the worker "Fix the tests"
+    When the user clicks the worker "Fix the tests"
+    Then the conversation shows the thread of "Fix the tests"
 
   @tui
   Scenario: Opening a worker the thread filter hides clears the filter
@@ -94,6 +108,17 @@ Feature: The terminal client's agents panel
     And nothing was stopped
 
   @tui
+  Scenario: A stop question whose run arrives after the user left the panel is not asked
+    Given the agents panel is open
+    And reading the run of "Fix the tests" waits
+    When the user selects the worker "Fix the tests" and presses "c"
+    And the user presses "Esc"
+    And the run of "Fix the tests" is read
+    Then no question is asked
+    And the prompt has the keys and the agents panel stays open
+    And nothing was stopped
+
+  @tui
   Scenario: A worker that ended cannot be stopped
     Given the agents panel is open
     When the user selects the worker "Write notes" and presses "c"
@@ -124,6 +149,15 @@ Feature: The terminal client's agents panel
     When the user presses "Esc"
     And the user chose "Hide agents panel" from the command palette
     Then the agents panel is closed
+
+  @tui
+  Scenario: The agents panel the file browser hides is offered to show, not to hide
+    Given the agents panel is open
+    And the user presses "Esc"
+    And the user browses the open thread's files
+    When the user chose "Show agents panel" from the command palette
+    Then the agents panel has the keys
+    And the file browser is closed
 
   @tui
   Scenario: Showing the agents panel from the file browser closes the browser

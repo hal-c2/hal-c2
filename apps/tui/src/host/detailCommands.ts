@@ -6,6 +6,7 @@ import type { PaletteCommand } from "./paletteState.ts";
  */
 export function detailCommands(input: {
   readonly panelOpen: boolean;
+  /** The agents panel is open and shows (nothing hides it). */
   readonly agentsOpen: boolean;
   readonly hasCheckpoints: boolean;
 }): PaletteCommand[] {
@@ -34,7 +35,8 @@ export function detailCommands(input: {
       hint: "^X a",
       keywords: "workers subagents delegated tasks",
       // Hiding closes the panel; ^X a's toggle would focus a panel that shows without the keys.
-      action: input.agentsOpen ? "agents.close" : "agents.toggle",
+      // Showing opens it with the keys, also when the file browser or a page hides it.
+      action: input.agentsOpen ? "agents.close" : "agents.show",
     },
     {
       id: "settings",

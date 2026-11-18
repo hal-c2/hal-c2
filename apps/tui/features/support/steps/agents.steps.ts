@@ -27,6 +27,27 @@ const GLYPH_OF: Record<string, string> = {
   "Write notes": "✓",
 };
 
+/** What the parent and each worker said, so the conversation on screen tells them apart. */
+const PARENT_SAID = "Three workers are on it.";
+const workerSaid = (title: string) => `${title}: on my way.`;
+
+/** A message as the MC's projection (`at` a DateTime) or a thread's detail (`at` ISO) holds it. */
+const said = (id: string, threadId: string, text: string, at: unknown) => ({
+  id,
+  threadId,
+  runId: null,
+  nodeId: null,
+  turnId: null,
+  role: "assistant",
+  text,
+  attachments: [],
+  streaming: false,
+  createdAt: at,
+  updatedAt: at,
+  createdBy: "agent",
+  creationSource: "provider",
+});
+
 const childOf = (title: string) => WORKERS.find((worker) => worker.title === title)!.child;
 
 function subagent(
@@ -73,6 +94,7 @@ step(
   async (ctx: TurnWorld) => {
     const fixture = await turns(ctx);
     fixture.thread = { title: PARENT_TITLE };
+    fixture.messages.push(said("parent-said", "t1", PARENT_SAID, time(60)));
     fixture.subagents.push(
       subagent(WORKERS[0], { progress: "Running bun test cart", startedAt: time(184) }),
       subagent(WORKERS[1], {
@@ -168,15 +190,26 @@ step("the agents panel's summary counts {string}", async (ctx: TurnWorld, summar
   expect(hostState(ctx, "agents").summary).toBe(summary);
 });
 
+/** Move the highlight to `title` with the arrow keys, up or down as it lies. */
 const moveTo = async (ctx: TurnWorld, title: string) => {
   for (let step = 0; step < WORKERS.length; step += 1) {
-    const agents = hostState(ctx, "agents");
-    const selected = agents.rows.find((row: { selected: boolean }) => row.selected);
-    if (selected?.title.trim() === title) return;
-    await pressKey(ctx, "Down");
+    const rows: ReadonlyArray<{ title: string; selected: boolean }> = hostState(ctx, "agents").rows;
+    const at = rows.findIndex((row) => row.selected);
+    const target = rows.findIndex((row) => row.title.trim() === title);
+    if (target < 0) break;
+    if (at === target) return;
+    await pressKey(ctx, target > at ? "Down" : "Up");
   }
   throw new Error(`"${title}" is not in the agents panel`);
 };
+
+step(
+  "the user moves the selection to the worker {string}",
+  async (ctx: TurnWorld, title: string) => {
+    await moveTo(ctx, title);
+    await settle();
+  },
+);
 
 step(
   "the user selects the worker {string} and presses {string}",
@@ -189,10 +222,22 @@ step(
 
 const showsWorker = async (ctx: TurnWorld, title: string) => {
   // What the worker's own thread holds, as the MC sends it once it is opened.
-  ctx.fake!.emitThread({ ...baseThread(), id: childOf(title), title } as never);
+  const child = childOf(title);
+  ctx.fake!.emitThread({
+    ...baseThread(),
+    id: child,
+    title,
+    messages: [
+      said(`${child}-said`, child, workerSaid(title), new Date(NOW_MS - 60_000).toISOString()),
+    ],
+  } as never);
   await settle();
-  expect(hostState(ctx, "page").threadId).toBe(childOf(title));
+  expect(hostState(ctx, "page").threadId).toBe(child);
   expect(hostState(ctx, "mode")).toBe("compose");
+  // Its conversation is drawn, not just selected.
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(workerSaid(title));
+  expect(screen).not.toContain(PARENT_SAID);
 };
 
 step("the conversation shows the worker's thread", (ctx: TurnWorld) =>
@@ -206,9 +251,13 @@ step("the conversation shows {string}", async (ctx: TurnWorld, title: string) =>
     .fake!.latestShell()
     .threads.find((thread: { title: string }) => thread.title === title);
   expect(hostState(ctx, "page").threadId).toBe(selection!.id);
+  // The parent's conversation is the one drawn.
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(PARENT_SAID);
+  for (const worker of WORKERS) expect(screen).not.toContain(workerSaid(worker.title));
 });
 
-step("the user clicks the worker {string}", async (ctx: TurnWorld, title: string) => {
+const clickWorker = async (ctx: TurnWorld, title: string) => {
   // The worker's threads are listed in the sidebar too: the panel's row is the one
   // to the right of the border it draws ("│ ! Review the docs").
   const lines = (await snapshot(ctx)).split("\n");
@@ -217,6 +266,16 @@ step("the user clicks the worker {string}", async (ctx: TurnWorld, title: string
   const line = lines[y]!;
   await click(ctx, { x: Bun.stringWidth(line.slice(0, line.lastIndexOf(title))), y });
   await settle();
+};
+
+step("the user clicks the worker {string}", clickWorker);
+step("the user clicked the worker {string}", clickWorker);
+
+step("the agents panel selects the worker {string}", (ctx: TurnWorld, title: string) => {
+  const selected = hostState(ctx, "agents").rows.filter(
+    (row: { selected: boolean }) => row.selected,
+  );
+  expect(selected.map((row: { title: string }) => row.title.trim())).toEqual([title]);
 });
 
 step("the user clicks the prompt", async (ctx: TurnWorld) => {
@@ -230,6 +289,7 @@ step("the thread list is filtered to {string}", async (ctx: TurnWorld, query: st
   await pressKey(ctx, "Enter");
   await settle();
   expect(hostState(ctx, "mode")).toBe("compose");
+  expect(hostState(ctx, "sidebar").filter).toBe(query);
 });
 
 step(
@@ -239,6 +299,7 @@ step(
     ctx.fake!.emitShell(ctx.fake!.latestShell());
     await settle();
     const sidebar = await snapshot(ctx);
+    expect(hostState(ctx, "sidebar").filter).toBe("");
     expect(sidebar).toContain("Fix the tests");
     expect(hostState(ctx, "page").threadId).toBe(childOf("Fix the tests"));
   },
@@ -292,6 +353,36 @@ step("the worker {string} has no run to interrupt", (ctx: TurnWorld, title: stri
   ctx.fake!.override("interruptibleRun", async (threadId) =>
     threadId === child ? null : `run-${threadId}`,
   );
+});
+
+step(
+  "reading the run of {string} waits",
+  (ctx: TurnWorld & { readRun?: () => void }, title: string) => {
+    const child = childOf(title);
+    ctx.fake!.override("interruptibleRun", (threadId) =>
+      threadId === child
+        ? new Promise<string>((resolve) => {
+            ctx.readRun = () => resolve(`run-${threadId}`);
+          })
+        : Promise.resolve(`run-${threadId}`),
+    );
+  },
+);
+
+step(
+  "the run of {string} is read",
+  async (ctx: TurnWorld & { readRun?: () => void }, _title: string) => {
+    expect(ctx.readRun, "nothing is reading the run").toBeDefined();
+    ctx.readRun!();
+    await settle();
+    await settle();
+  },
+);
+
+step("no question is asked", async (ctx: TurnWorld) => {
+  expect(hostState(ctx, "select").open).toBe(false);
+  expect(await snapshot(ctx)).not.toContain("Stop Fix the tests?");
+  expect(hostState(ctx, "mode")).toBe("compose");
 });
 
 step("the worker {string} starts another run", (ctx: TurnWorld, title: string) => {

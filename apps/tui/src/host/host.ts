@@ -690,8 +690,16 @@ export function createHost(options: HostOptions): Host {
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
     // The file browser hides the panel; asking for the agents panel's keys closes it,
-    // so the keys never go to a panel the user cannot see.
-    if (kind === AGENTS_PANEL && focused && filesOpen) files.close();
+    // so the keys never go to a panel the user cannot see. An edit not saved yet keeps
+    // it open: closing would drop the text if the save it starts failed too.
+    if (kind === AGENTS_PANEL && focused && filesOpen) {
+      const unsaved = files.unsaved();
+      if (unsaved !== null) {
+        store.setStatus(`Save ${unsaved} before opening the agents panel.`, "error");
+        return;
+      }
+      files.close();
+    }
     const previous = rightPanel;
     rightPanel = kind;
     rightPanelFocused = kind !== null && focused;
@@ -1126,7 +1134,8 @@ export function createHost(options: HostOptions): Host {
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
-        agentsOpen: rightPanel === AGENTS_PANEL,
+        // A panel the file browser or a page hides is offered to show, not to hide.
+        agentsOpen: rightPanel === AGENTS_PANEL && layout.rightPanel.visible,
         hasCheckpoints:
           revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
       }),
@@ -1386,6 +1395,16 @@ export function createHost(options: HostOptions): Host {
         return handle("rightPanel.toggle", { kind: AGENTS_PANEL });
       case "agents.close":
         if (rightPanel === AGENTS_PANEL) setRightPanel(null, false);
+        return true;
+      // Shows the agents panel with the keys, giving it back the pane that hid it.
+      case "agents.show":
+        if (files.unsaved() === null) {
+          space.close();
+          sections!.close();
+          if (settingsOpen) dispatch("settings.close");
+          if (mode === "diff") dispatch("diff.close");
+        }
+        setRightPanel(AGENTS_PANEL, true);
         return true;
       case "rightPanel.open": {
         const kind = payloadField(payload, "kind");

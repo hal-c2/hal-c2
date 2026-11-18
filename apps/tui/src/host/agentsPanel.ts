@@ -52,6 +52,9 @@ export function createAgentsPanel(deps: {
 }) {
   const { store, state } = deps;
   let selectedId: string | null = null;
+  // Counts the stop questions asked: one whose run arrives after the user left the
+  // panel, or its thread, is not asked any more.
+  let asking = 0;
 
   const blocks = (shell: StoreState["shell"]): ReadonlyMap<string, AgentBlock> =>
     new Map(
@@ -144,10 +147,18 @@ export function createAgentsPanel(deps: {
     const childThreadId = agent.childThreadId;
     const returnMode = deps.panel().focused ? AGENTS_PANEL : "compose";
     const failed = () => store.setStatus(`Could not stop ${title}.`, "error");
+    const ask = ++asking;
+    const threadId = store.getState().detail?.id;
+    // Still on the panel (and the thread) the question was asked from.
+    const current = () =>
+      ask === asking &&
+      store.getState().detail?.id === threadId &&
+      (returnMode === AGENTS_PANEL ? deps.panel().focused : deps.panel().open);
     // The run is read when the user is asked, and only that run is interrupted:
     // a run started while the question is open is not stopped by its answer.
     deps.track(
       deps.interruptibleRun(childThreadId).then((runId) => {
+        if (!current()) return;
         if (runId === null) {
           store.setStatus(`${title} has no run to interrupt.`);
           return;
@@ -224,8 +235,11 @@ export function createAgentsPanel(deps: {
 
   const publish = (prev: StoreState | null, next: StoreState) => {
     if (!prev || prev.detail !== next.detail || prev.shell !== next.shell) {
-      // Another thread's workers: start at the top.
-      if (prev?.detail?.id !== next.detail?.id) selectedId = null;
+      // Another thread's workers: start at the top, and ask nothing of the last one's.
+      if (prev?.detail?.id !== next.detail?.id) {
+        selectedId = null;
+        asking += 1;
+      }
       publishAgents();
     }
   };
@@ -244,6 +258,7 @@ export function createAgentsPanel(deps: {
     /** The panel opened (highlight the first worker that needs the user) or closed. */
     panelChanged: (open: boolean) => {
       if (open) selectedId = null;
+      else asking += 1;
       publishAgents();
     },
   };

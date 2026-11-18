@@ -187,7 +187,26 @@ describe("buildTuiAgentsState", () => {
       agent("a", { progress: "Reading the tests" }),
       agent("b", { progress: "Running bun test", startedAt: at(30) }),
     ];
-    expect(build(agents, { height: 7 }).compact).toBe(false);
+    // Seven rows: the title, the hint and one worker fill the five inside the border, so
+    // "↓ 1 more" gives way; an eighth row has room for it.
+    const used = (state: ReturnType<typeof build>) =>
+      2 +
+      state.rows.reduce((total, row) => total + row.lines, 0) +
+      (state.above > 0 ? 1 : 0) +
+      (state.below > 0 ? 1 : 0);
+    const seven = build(agents, { height: 7 });
+    expect(seven.compact).toBe(false);
+    expect(seven.rows.map((row) => [row.id, row.lines])).toEqual([["a", 3]]);
+    expect([seven.above, seven.below]).toEqual([0, 0]);
+    expect(used(seven)).toBeLessThanOrEqual(7 - 2);
+    const eight = build(agents, { height: 8 });
+    expect([eight.above, eight.below]).toEqual([0, 1]);
+    expect(used(eight)).toBeLessThanOrEqual(8 - 2);
+    // Selected below the window: the label above it shows, with the line it has.
+    const last = build(agents, { height: 8, selectedId: "b" });
+    expect(last.rows.map((row) => row.id)).toEqual(["b"]);
+    expect([last.above, last.below]).toEqual([1, 0]);
+    expect(used(last)).toBeLessThanOrEqual(8 - 2);
 
     // Four rows (80 by 24 with the terminal open): the border and two lines.
     const short = build(agents, { height: 4, selectedId: "b" });

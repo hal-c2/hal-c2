@@ -104,6 +104,8 @@ export interface FilesController {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   readonly close: () => void;
   readonly isOpen: () => boolean;
+  /** The edited file whose text is not saved yet (a save failed or is still on its way). */
+  readonly unsaved: () => string | null;
   /** The mode the open browser has the keys in. */
   readonly mode: () => "files" | "fileEdit";
   /** Republish after a resize. */
@@ -751,6 +753,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     },
     close,
     isOpen: () => open,
+    unsaved: () => (open && viewer?.edit && viewer.edit.save !== "saved" ? viewer.path : null),
     mode: () => (viewer?.edit ? "fileEdit" : "files"),
     sync: () => {
       if (open) publish();

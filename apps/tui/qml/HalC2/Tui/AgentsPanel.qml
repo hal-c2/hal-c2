@@ -14,6 +14,14 @@ Rectangle {
     readonly property bool focused: Shell.state.mode === "agents"
     // The worker the mouse last clicked: the host's first highlight is not a click.
     property string clickedId: ""
+    // The highlighted worker. Once the keys move the highlight off the clicked one,
+    // that click no longer counts: coming back to it, a click selects it again.
+    readonly property string selectedId: {
+        const rows = agents.rows
+        for (let i = 0; i < rows.length; i++) if (rows[i].selected) return rows[i].id
+        return ""
+    }
+    onSelectedIdChanged: if (selectedId !== clickedId) clickedId = ""
 
     border.width: 1
     border.style: "rounded"

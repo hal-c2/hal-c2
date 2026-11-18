@@ -323,6 +323,15 @@ step("the user is told the file could not be saved", async (ctx: ViewerWorld) =>
   expect(screen).toContain("not saved · Esc done");
 });
 
+step("the user asks for the agents panel", async (ctx: ViewerWorld) => {
+  // What ^X a runs (agents.toggle), and the palette's "Show agents panel" too.
+  for (const action of ["agents.toggle", "agents.show"]) {
+    ctx.host!.dispatch(action, undefined);
+    await settle(ctx);
+    expect((ctx.host!.state.get("files") as { open: boolean }).open).toBe(true);
+  }
+});
+
 step("the edit is still in the editor", async (ctx: ViewerWorld) => {
   expect(viewer(ctx)).toMatchObject({ editing: true, save: "error" });
   expect(editorText(ctx)).toContain(CHANGE);

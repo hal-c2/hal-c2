@@ -242,6 +242,14 @@ export function buildTuiAgentsState(input: {
     Math.max(0, ordered.length - windowRows),
   );
   const shown = ordered.slice(start, start + windowRows);
+  // What the title, the hint and the workers leave of the lines inside the border: a
+  // panel too short for the overflow labels drops them, never the selected worker.
+  let spare = compact ? 0 : Math.max(0, input.height - 4 - shown.length * AGENT_ROW_LINES);
+  const hiddenAbove = start;
+  const hiddenBelow = Math.max(0, ordered.length - start - shown.length);
+  const above = hiddenAbove > 0 && spare > 0 ? hiddenAbove : 0;
+  if (above > 0) spare -= 1;
+  const below = hiddenBelow > 0 && spare > 0 ? hiddenBelow : 0;
 
   const rows = shown.map(({ agent, block, state }, offset): TuiAgentRow => {
     const live = state === "blocked" || state === "working";
@@ -291,8 +299,8 @@ export function buildTuiAgentsState(input: {
     rows,
     ids: ordered.map(({ agent }) => agent.id),
     // A compact panel has no line to spare for "↑ 2 more".
-    above: compact ? 0 : start,
-    below: compact ? 0 : Math.max(0, ordered.length - start - shown.length),
+    above,
+    below,
     selectedIndex,
     live: ordered.some(({ state }) => state === "working" || state === "blocked"),
     blocked: count("blocked"),

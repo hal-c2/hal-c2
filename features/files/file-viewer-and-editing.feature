@@ -1298,6 +1298,16 @@ Feature: Viewing and editing files
       Then the user is told the file could not be saved
       And the edit is still in the editor
 
+    # The agents panel takes the file browser's place (tui/agents.feature); a save that
+    # failed again on the way would have no editor left to keep the text.
+    @tui
+    Scenario: The agents panel waits for an edit that is not saved
+      Given writing "src/app.ts" fails
+      And the user edits "src/app.ts"
+      When the user asks for the agents panel
+      Then the status says "Save src/app.ts before opening the agents panel."
+      And the edit is still in the editor
+
     @desktop
     Scenario: A save that failed is tried again when the file is closed
       Given writing "src/app.ts" failed after an edit
