@@ -175,6 +175,76 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  This MC's thread sidebar rows (`OrchestrationV2ThreadShell`), deleted ones left out,
+  each with its project's title as `"projectTitle"` (nil when the project is unknown).
+  Threads on other machines of the cluster are theirs to show.
+  """
+  def threads(id) do
+    with :ok <- permit(id, "threads:read") do
+      {:ok,
+       for(
+         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+         mc == node() and row["deletedAt"] == nil,
+         do: row
+       )
+       |> with_project_titles()}
+    end
+  end
+
+  @doc """
+  Sends the caller `{:hal_c2_threads, rows}` whenever rows of this MC's threads change:
+  the changed rows only, shaped as `threads/1`'s, a deleted one with its `"deletedAt"`
+  so the plugin can let it go. Watch first, then read `threads/1`: a change in between
+  comes again. The rows come from a process of the host's (returned as `{:ok, pid}`),
+  linked to the caller and gone with it.
+  """
+  def watch_threads(id) do
+    with :ok <- permit(id, "threads:read") do
+      caller = self()
+      relay = spawn_link(fn -> relay_threads(caller) end)
+      :ok = HalC2.Shell.subscribe(relay)
+      {:ok, relay}
+    end
+  end
+
+  defp relay_threads(caller) do
+    ref = Process.monitor(caller)
+    relay_threads(caller, ref)
+  end
+
+  defp relay_threads(caller, ref) do
+    receive do
+      {:hal_c2_shell, {:rows, mc, rows}} when mc == node() ->
+        case for({_id, {"thread", row}} <- rows, do: row) do
+          [] -> :ok
+          rows -> send(caller, {:hal_c2_threads, with_project_titles(rows)})
+        end
+
+        relay_threads(caller, ref)
+
+      {:DOWN, ^ref, :process, _pid, _reason} ->
+        :ok
+
+      _other ->
+        relay_threads(caller, ref)
+    end
+  end
+
+  defp with_project_titles(rows) do
+    titles =
+      for project <- rows |> Enum.map(& &1["projectId"]) |> Enum.uniq(),
+          is_binary(project),
+          into: %{} do
+        case HalC2.Shell.row(node(), project) do
+          {"project", row} -> {project, row["title"]}
+          _ -> {project, nil}
+        end
+      end
+
+    Enum.map(rows, &Map.put(&1, "projectTitle", titles[&1["projectId"]]))
+  end
+
+  @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
   thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`

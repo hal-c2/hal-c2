@@ -11,6 +11,7 @@ folder to install it, or start your own from one of them.
 | [issue-tracker](issue-tracker/)       | A triage queue over GitHub issues; agents prioritise, ask for follow-up and summarise, and you apply.                                        | issues, threads, agent tools                                  |
 | [maintenance](maintenance/)           | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.                                           | pull requests, threads, agent tools                           |
 | [token-economizer](token-economizer/) | Spends fewer tokens on the same work: redirects an agent stuck in a loop, and turns tools a project never uses off at the next conversation. | turns, threads, runs, text generation                         |
+| [office](office/)                     | Your threads as people in a pixel-art office: who works, waits, talks to whom and asks you something.                                        | threads, turns                                                |
 
 ## Writing one
 

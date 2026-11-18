@@ -124,6 +124,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.issues/3" => @host,
       "HalC2.Plugins.Host.open_pull_request/3" => @host,
       "HalC2.Plugins.Host.thread/2" => @agent,
+      "HalC2.Plugins.Host.threads/1" => @host,
+      "HalC2.Plugins.Host.watch_threads/1" => @host,
       "HalC2Plugins.CodeReview handle_call {:run, _, _}" => @agent,
       "HalC2.Plugins.Host.launch_thread/4" => @agent,
       "HalC2.Plugins.Host.organize_thread/3" => @shown,

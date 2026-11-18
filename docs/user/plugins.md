@@ -85,7 +85,8 @@ format, and one bound to `Format.relative` moves on once a minute.
 
 Some plugins do work on a machine rather than in one app, such as
 [agent code review](code-review.md), the [planner](planner.md), the
-[issue tracker](issue-tracker.md) and [maintenance](maintenance.md). They are
+[issue tracker](issue-tracker.md), [maintenance](maintenance.md) and the
+[office](office.md). They are
 folders with a `plugin.json`, and each MC runs its own: put the folder in
 `plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists

@@ -1,0 +1,334 @@
+// Run from a hal-c2 checkout:
+//   ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
+//     plugins/office/test/tst_OfficePage.qml
+// and with Qt, with QT_QPA_PLATFORM=offscreen:
+//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+//     -input plugins/office/test/tst_OfficePage.qml
+import QtQuick
+import QtTest
+
+// A TestCase is never visible, so what it clicks lives beside it.
+Item {
+    id: test
+
+    width: 1200
+    height: 760
+
+    function person(id, title, state, activity, parentId) {
+        return {
+            id: id,
+            title: title,
+            projectId: "p-api",
+            project: "api",
+            parentId: parentId ?? null,
+            provider: "claudeAgent",
+            model: "claude-opus-5-5",
+            state: state,
+            activity: activity ?? null,
+            question: state === "asking" ? {
+                kind: "approval",
+                since: "2026-11-18T21:00:00Z"
+            } : null,
+            since: "2026-11-18T21:00:00Z"
+        };
+    }
+
+    function many(n, prefix, state, activity, parentId) {
+        const people = [];
+        for (let i = 0; i < n; i++)
+            people.push(person(prefix + i, prefix + " " + i, state, activity, parentId));
+        return people;
+    }
+
+    // The plugin object a page gets, with the MC part faked: `publish` is what
+    // the MC part publishes, and each thread opened is recorded.
+    QtObject {
+        id: plugin
+
+        property var environments: ["local"]
+        property var watchers: ({})
+        property var opened: []
+
+        function watch(topic, callback, environment) {
+            watchers[environment + "/" + topic] = callback;
+            return environment + "/" + topic;
+        }
+
+        function unwatch(handle) {
+        }
+
+        function call(method, input, callback, environment) {
+            callback(null, null);
+        }
+
+        function openThread(threadId, environment) {
+            opened = opened.concat([environment + "/" + threadId]);
+        }
+
+        function publish(people, talks) {
+            watchers["local/office"]({
+                people: people,
+                talks: talks ?? []
+            });
+        }
+    }
+
+    Loader {
+        id: loader
+
+        width: test.width
+        height: test.height
+    }
+
+    TestCase {
+        name: "OfficePage"
+        when: windowShown
+
+        readonly property var page: loader.item
+
+        function find(name) {
+            return findChild(loader.item, name);
+        }
+
+        function open() {
+            loader.source = "";
+            loader.setSource(Qt.resolvedUrl("../ui/OfficePage.qml"), {
+                plugin: plugin
+            });
+            tryVerify(() => loader.status === Loader.Ready && plugin.watchers["local/office"] !== undefined);
+            // The office's own clock holds still; each test runs it with advance().
+            loader.item.applicationActive = false;
+        }
+
+        function init() {
+            stood = {};
+            plugin.watchers = {};
+            plugin.opened = [];
+            open();
+        }
+
+        function actor(id) {
+            return page.actors[id];
+        }
+
+        // Runs the office until `done` holds, or fails after `limit` ticks.
+        function runUntil(done, limit, message) {
+            for (let i = 0; i < (limit ?? 1500); i++) {
+                if (done())
+                    return;
+                page.advance(1);
+            }
+            verify(done(), message ?? "the office never got there");
+        }
+
+        function arrived(a) {
+            return a.goal && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0 && a.path.length === 0;
+        }
+
+        // Where each person stood when the floor was last checked.
+        property var stood: ({})
+
+        // Nobody stands on a wall or furniture, a seat is only stepped onto as
+        // where a person is going (and left again), and no two people hold the
+        // same tile.
+        function checkFloor() {
+            const w = page.world;
+            const held = {};
+            const stood = {};
+            for (const id of Object.keys(page.actors)) {
+                const a = page.actors[id];
+                const here = a.ty * w.cols + a.tx;
+                const tiles = [here];
+                if (a.next >= 0)
+                    tiles.push(a.next);
+                for (const t of tiles) {
+                    const x = t % w.cols, y = (t - x) / w.cols;
+                    const cell = w.grid[t];
+                    const goal = a.goal && a.goal.x === x && a.goal.y === y;
+                    const stayed = t === here && this.stood[id] === here;
+                    verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
+                    verify(held[t] === undefined, id + " and " + held[t] + " overlap at " + x + "," + y);
+                    held[t] = id;
+                }
+                stood[id] = here;
+            }
+            this.stood = stood;
+        }
+
+        function test_every_person_looks_like_someone_of_their_own() {
+            const people = many(12, "t", "working", "typing");
+            plugin.publish(people);
+            const looks = people.map(p => JSON.stringify(actor(p.id).look));
+            compare(new Set(looks).size, 12);
+            const genders = new Set(people.map(p => actor(p.id).look.gender));
+            verify(genders.has("woman") && genders.has("man"), "a mix of women and men");
+            for (const p of people)
+                verify(!actor(p.id).look.pet, p.id + " is not a worker, so it is a person");
+
+            // The page reopened draws everyone as before.
+            open();
+            plugin.publish(people);
+            compare(people.map(p => JSON.stringify(actor(p.id).look)), looks);
+        }
+
+        function test_some_workers_are_cats_and_dogs() {
+            const lead = person("lead", "Lead", "working", "typing");
+            const workers = many(20, "w", "working", "typing", "lead");
+            plugin.publish([lead].concat(workers));
+            const species = workers.map(w => actor(w.id).look.species);
+            verify(species.includes("cat"), "some workers are cats");
+            verify(species.includes("dog"), "some workers are dogs");
+            verify(species.includes("human"), "most workers are people");
+            compare(actor("lead").look.species, "human");
+        }
+
+        function test_workers_sit_with_the_thread_that_delegated_to_them() {
+            const people = [person("lead", "Lead", "working", "typing")].concat(many(3, "w", "working", "typing", "lead"), many(6, "o", "working", "typing"));
+            plugin.publish(people);
+            const podOf = id => page.world.pods.findIndex(pod => pod.members.includes(id));
+            const pod = podOf("lead");
+            verify(pod >= 0);
+            for (const w of ["w0", "w1", "w2"]) {
+                compare(podOf(w), pod);
+                verify(page.world.pods[pod].seats.includes(page.world.seatOf[w]), w + " has a desk in the lead's pod");
+            }
+        }
+
+        function test_people_walk_around_furniture_and_never_through_each_other() {
+            const activities = ["typing", "planning", "reading", "testing"];
+            const people = [];
+            for (let i = 0; i < 16; i++)
+                people.push(person("t" + i, "Thread " + i, "working", activities[i % 4]));
+            plugin.publish(people);
+            checkFloor();
+            // Everyone changes what they do, so they cross the office.
+            for (let round = 0; round < 3; round++) {
+                for (let i = 0; i < 16; i++)
+                    people[i] = person("t" + i, "Thread " + i, i % 3 === round ? "waiting" : "working", activities[(i + round + 1) % 4]);
+                plugin.publish(people.slice());
+                for (let t = 0; t < 30; t++) {
+                    page.advance(10);
+                    checkFloor();
+                }
+            }
+        }
+
+        function test_what_a_person_does_follows_its_agent() {
+            const lead = person("lead", "Lead", "working", "typing");
+            plugin.publish([lead]);
+            runUntil(() => arrived(actor("lead")));
+            compare(actor("lead").goal.kind, "desk");
+            page.advance(7);
+            verify([page.frame.type1, page.frame.type2].includes(actor("lead").frame), "typing at the computer");
+
+            plugin.publish([person("lead", "Lead", "working", "planning")]);
+            compare(actor("lead").goal.kind, "board");
+            runUntil(() => arrived(actor("lead")));
+            verify([page.frame.raise1, page.frame.raise2].includes(actor("lead").frame), "drawing on the whiteboard");
+
+            plugin.publish([person("lead", "Lead", "working", "reading")]);
+            compare(actor("lead").goal.kind, "shelf");
+            runUntil(() => arrived(actor("lead")));
+            compare(actor("lead").frame, page.frame.book);
+        }
+
+        function test_waiting_people_take_a_break_and_come_back() {
+            plugin.publish([person("lead", "Lead", "working", "typing")]);
+            runUntil(() => arrived(actor("lead")));
+            const desk = [actor("lead").tx, actor("lead").ty];
+
+            plugin.publish([person("lead", "Lead", "waiting")]);
+            verify(actor("lead").goal.area === "break" || actor("lead").goal.kind === "floor");
+            runUntil(() => arrived(actor("lead")) && actor("lead").tx > page.world.xd, 2000, "the person reaches the break room");
+
+            plugin.publish([person("lead", "Lead", "working", "typing")]);
+            runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the person walks back to its desk");
+            compare([actor("lead").tx, actor("lead").ty], desk);
+        }
+
+        function test_two_agents_that_talk_walk_up_to_each_other() {
+            const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing")].concat(many(6, "o", "working", "typing"));
+            plugin.publish(people);
+            runUntil(() => arrived(actor("lead")) && arrived(actor("rev")));
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "rev",
+                    kind: "message",
+                    text: "Please look at the diff",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the speaker walks up");
+            page.advance(1);
+            const a = actor("lead"), b = actor("rev");
+            compare(Math.abs(a.tx - b.tx) + Math.abs(a.ty - b.ty), 1);
+            compare(a.dir, page.dirTowards(a, b));
+            compare(b.face, page.dirTowards(b, a));
+            const bubble = find("officeBubble:lead");
+            verify(bubble.visible);
+            compare(page.overlays["lead"].bubble, "Please look at the diff");
+
+            runUntil(() => actor("lead").talk === null, 400, "the talk ends");
+            verify(!bubble.visible);
+            runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the speaker goes back to work");
+        }
+
+        function test_an_asking_person_shows_a_question_and_opens_its_thread() {
+            plugin.publish([person("ask", "Fix the parser", "asking"), person("busy", "Busy", "working", "typing")]);
+            runUntil(() => arrived(actor("ask")));
+            compare(page.iconOf(actor("ask")), "ask");
+            verify(find("officeIcon:ask").visible);
+            verify(!find("officeIcon:busy").visible);
+            waitForRendering(loader.item);
+            mouseClick(find("officePerson:ask"));
+            compare(plugin.opened, ["local/ask"]);
+        }
+
+        function test_hovering_a_person_names_it_and_what_it_does() {
+            plugin.publish([person("t", "Fix the parser", "working", "testing")]);
+            runUntil(() => arrived(actor("t")));
+            waitForRendering(loader.item);
+            mouseMove(find("officePerson:t"));
+            tryVerify(() => find("officeCard").visible);
+            compare(find("officeCardTitle").text, "Fix the parser");
+            compare(find("officeCardProject").text.indexOf("api") >= 0, true);
+            compare(find("officeCardAgent").text, "claudeAgent · claude-opus-5-5");
+            verify(find("officeCardState").text.toLowerCase().indexOf("test") >= 0, find("officeCardState").text);
+        }
+
+        function test_the_keyboard_reaches_a_person() {
+            plugin.publish([person("ask", "Fix the parser", "asking")]);
+            runUntil(() => arrived(actor("ask")));
+            const hit = find("officePerson:ask");
+            hit.forceActiveFocus();
+            compare(page.hovered, "ask");
+            keyClick(Qt.Key_Return);
+            compare(plugin.opened, ["local/ask"]);
+        }
+
+        function test_the_office_grows_with_the_people_in_it() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const small = page.deskCount;
+            verify(small >= 4);
+            plugin.publish(many(20, "t", "working", "typing"));
+            verify(page.deskCount >= 20, "a desk for each of 20 threads, has " + page.deskCount);
+            for (let i = 0; i < 20; i++)
+                verify(page.world.seatOf["t" + i] !== undefined, "t" + i + " has a desk");
+            checkFloor();
+        }
+
+        function test_the_office_holds_still_while_it_is_not_shown() {
+            plugin.publish(many(2, "t", "working", "typing"));
+            page.applicationActive = true;
+            verify(page.animating);
+            page.visible = false;
+            verify(!page.animating);
+            page.visible = true;
+            verify(page.animating);
+            page.applicationActive = false;
+            verify(!page.animating);
+        }
+    }
+}
