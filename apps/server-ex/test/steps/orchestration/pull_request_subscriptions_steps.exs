@@ -25,8 +25,11 @@ defmodule HalC2.Steps.Orchestration.PullRequestSubscriptions do
       }
       |> then(fn args ->
         case events do
-          [list] when is_binary(list) and list != "" -> Map.put(args, "events", String.split(list, ", "))
-          _ -> args
+          [list] when is_binary(list) and list != "" ->
+            Map.put(args, "events", String.split(list, ", "))
+
+          _ ->
+            args
         end
       end)
 
