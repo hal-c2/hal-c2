@@ -413,6 +413,46 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running", "reviewedSha" => ^second, "headSha" => ^second} = review()
   end
 
+  test "a checkout drops the refs of attempts whose holder ended and keeps those still held",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    # Who holds each attempt's refs, which `prepare` records and its sweep reads.
+    held = HalC2Plugins.CodeReview.Checkout.Held
+    remote = %{"url" => Path.join(context.dir, "remotes/acme/api.git")}
+    clone = Path.join(context.dir, "sweep/api.git")
+    prepare = fn n -> apply(checkout, :prepare, [clone, "#{clone}-#{n}", remote, 1, "main"]) end
+
+    refs = fn ->
+      git!(clone, ["for-each-ref", "--format=%(refname)", "refs/hal-c2/code-review/1/"])
+    end
+
+    # The first checkout makes the clone, and gives its refs back.
+    assert {:ok, _} = prepare.(1)
+    :ok = apply(checkout, :release, [])
+
+    live = spawn(fn -> receive do: (:done -> :ok) end)
+    on_exit(fn -> send(live, :done) end)
+    {dead, ended} = spawn_monitor(fn -> :ok end)
+    assert_receive {:DOWN, ^ended, :process, ^dead, _}
+    kept = "refs/hal-c2/code-review/1/attempt-900000001"
+    gone = "refs/hal-c2/code-review/1/attempt-900000002"
+
+    for attempt <- [kept, gone],
+        side <- ~w(head base),
+        do: git!(clone, ["update-ref", "#{attempt}/#{side}", context.shas[1]])
+
+    :ets.insert(held, [{{clone, kept}, live}, {{clone, gone}, dead}])
+
+    assert {:ok, %{"headRef" => head, "baseRef" => base}} = prepare.(2)
+    listed = String.split(refs.(), "\n", trim: true)
+    assert "#{kept}/head" in listed and "#{kept}/base" in listed
+    assert head in listed and base in listed
+    refute Enum.any?(listed, &String.starts_with?(&1, gone <> "/"))
+    assert :ets.lookup(held, {clone, gone}) == []
+    assert [{_, ^live}] = :ets.lookup(held, {clone, kept})
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a review asked for before its pull request is listed starts at the head of the pull request",
        context do
     rules!(context, head: 1, listed: false)
