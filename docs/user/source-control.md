@@ -200,6 +200,11 @@ review is terminal. An open or unsynced link keeps it active.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+Pull requests on a Forgejo or Gitea server refresh and wake their thread as GitHub ones do, read as
+the account `fj` or `tea` is signed in with. Reviews count from the repository's owner, its
+collaborators and the reviewers asked for; checks are the commit statuses of the pull request's head,
+which Forgejo Actions writes. Forgejo has no stacks.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a

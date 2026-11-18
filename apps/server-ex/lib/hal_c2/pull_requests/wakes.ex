@@ -385,8 +385,20 @@ defmodule HalC2.PullRequests.Wakes do
 
   defp describe(link, changes) do
     %{"host" => host, "repository" => repository, "number" => number} = Links.normalize(link)
-    api = if host == "github.com", do: "gh api", else: "gh api --hostname #{host}"
     url = link["url"]
+
+    if forgejo?(host, url),
+      do: describe_forgejo(link, changes),
+      else: describe_github(link, changes, host, repository, number, url)
+  end
+
+  defp forgejo?(host, url),
+    do:
+      HalC2.PullRequests.host_kind(host) == "forgejo" or
+        String.match?(url || "", ~r{/pulls/\d+(?:[/?#]|$)})
+
+  defp describe_github(link, changes, host, repository, number, url) do
+    api = if host == "github.com", do: "gh api", else: "gh api --hostname #{host}"
 
     lines =
       Enum.map(changes, fn
@@ -406,6 +418,46 @@ defmodule HalC2.PullRequests.Wakes do
     `#{api} repos/#{repository}/pulls/#{number}/comments` and \
     `#{api} repos/#{repository}/issues/#{number}/comments`, and its checks with \
     `gh pr checks #{url}`.\
+    """
+  end
+
+  # Forgejo has no `gh`; its API answers through `tea api` (or fj's token) the same way.
+  defp describe_forgejo(link, changes) do
+    %{"repository" => repository, "number" => number} = Links.normalize(link)
+    pull = "repos/#{repository}/pulls/#{number}"
+
+    lines =
+      Enum.map(changes, fn
+        :checks_failing ->
+          "- Checks are failing. Each failing status's `target_url` links its job's log."
+
+        :checks_passing ->
+          "- Checks pass again."
+
+        :conflicting ->
+          "- It conflicts with its base branch."
+
+        :merged ->
+          "- It was merged."
+
+        :closed ->
+          "- It was closed without merging."
+
+        {:left_merge_queue, _reason} ->
+          "- It left the merge queue."
+
+        {:activity, activity} ->
+          "- " <> said(activity)
+      end)
+
+    """
+    Pull request #{name(link)} #{link["url"]} needs your attention:
+    #{Enum.join(lines, "\n")}
+    Read its reviews with `tea api #{pull}/reviews` (a review's inline comments with \
+    `tea api #{pull}/reviews/<id>/comments`), its comments with \
+    `tea api repos/#{repository}/issues/#{number}/comments`, and its checks with \
+    `tea api repos/#{repository}/commits/<head sha>/status`, the head sha being \
+    `head.sha` in `tea api #{pull}`.\
     """
   end
 

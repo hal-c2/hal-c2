@@ -1007,18 +1007,72 @@ defmodule HalC2.PullRequests do
   end
 
   @doc "The host-native stack a pull request is in, or nil; `details?` false skips its second read."
-  def stack(ref, details? \\ true),
-    do: read(ref, "stack", fn _project, ctx -> GitHub.stack(ctx, details?) end)
+  def stack(ref, details? \\ true) do
+    # Only GitHub has native stacks; on another host a pull request is in none.
+    if ref_kind(ref) in [nil, "github"],
+      do: read(ref, "stack", fn _project, ctx -> GitHub.stack(ctx, details?) end),
+      else: {:ok, nil}
+  end
 
   @doc """
-  Summaries for pull requests on this MC's GitHub hosts, keyed by the refs asked
-  for (`%{"host", "repository", "number"}`), read in one batch per host through any
-  checkout there. A ref no checkout here can answer for, or GitHub left unanswered, is
-  absent.
+  Summaries for pull requests on this MC's GitHub and Forgejo hosts, keyed by the refs
+  asked for (`%{"host", "repository", "number"}`, with `"projectId"` when known). On
+  GitHub they are read in one batch per host through any checkout there; on Forgejo
+  through the ref's own checkout when it is on that server, else any checkout there
+  (`HalC2.PullRequests.Forgejo`). A ref no checkout here can answer for, or the host
+  left unanswered, is absent.
   """
   def summaries(refs) do
-    checkouts = projects() |> Enum.filter(&(&1.kind == "github")) |> Enum.group_by(& &1.host)
+    all = projects()
+    forgejo = Enum.filter(all, &(&1.kind == "forgejo"))
+    {on_forgejo, rest} = Enum.split_with(refs, &(forgejo_route(&1, forgejo) != nil))
 
+    Map.merge(
+      github_summaries(
+        rest,
+        all |> Enum.filter(&(&1.kind == "github")) |> Enum.group_by(& &1.host)
+      ),
+      forgejo_summaries(on_forgejo, forgejo)
+    )
+  end
+
+  defp forgejo_summaries(refs, projects) do
+    refs
+    |> Enum.group_by(&forgejo_route(&1, projects))
+    |> Enum.flat_map(fn {project, refs} ->
+      remote =
+        case HalC2.Git.ok(project.root, ~w(remote get-url origin)) do
+          {:ok, url} -> String.trim(url)
+          _ -> nil
+        end
+
+      found =
+        HalC2.PullRequests.Forgejo.summaries(
+          project.root,
+          remote,
+          Enum.map(refs, &{&1["repository"], &1["number"]})
+        )
+
+      for ref <- refs,
+          summary = found[{String.downcase(ref["repository"]), ref["number"]}],
+          do: {ref, summary}
+    end)
+    |> Map.new()
+  end
+
+  # The Forgejo checkout a ref is read through: its own project when that is on the
+  # ref's server, else one of the same repository there, else any there. A link's host
+  # keeps the server's port; a project's does not.
+  defp forgejo_route(ref, projects) do
+    host = (ref["host"] || "") |> String.downcase() |> String.split(":") |> hd()
+    on_host = Enum.filter(projects, &(&1.host == host))
+    repository = ref["repository"] || ""
+
+    Enum.find(on_host, &(&1.id == ref["projectId"])) ||
+      Enum.find(on_host, &same?(&1.repository, repository)) || List.first(on_host)
+  end
+
+  defp github_summaries(refs, checkouts) do
     refs
     |> Enum.group_by(&String.downcase(&1["host"] || ""))
     |> Enum.flat_map(fn {host, refs} ->
@@ -1676,6 +1730,12 @@ defmodule HalC2.PullRequests do
         do: %{host: host, repository: repository, kind: kind}
     end
   end
+
+  @doc "The kind of host `host` is (`\"github\"`, `\"forgejo\"`, …), its port aside."
+  def host_kind(host) when is_binary(host),
+    do: host |> String.trim() |> String.downcase() |> String.split(":") |> hd() |> kind()
+
+  def host_kind(_host), do: nil
 
   defp kind(host) do
     labels = String.split(host, ".")
