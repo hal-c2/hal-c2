@@ -216,7 +216,7 @@ wait"#,
 fn everything_a_helper_wrote_comes_before_its_end() {
     let f = Fixture::new("all-of-it");
     // Far more than the stream (64 chunks) and the pipe (64 KiB) hold, and
-    // under the 1 MiB a run may write (about 820 KB): the helper ends while
+    // under the 1 MiB a run may write (about 780 KB): the helper ends while
     // most of what it wrote still waits for the UI.
     let helper = f.helper(
         "helper.sh",
