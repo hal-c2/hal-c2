@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 
 import { step } from "../../steps.ts";
 import { findObject, pressKey, settle as settleHost, snapshot, typeText } from "../world.ts";
@@ -15,6 +16,7 @@ import {
   addItem,
   currentRun,
   lastOf,
+  NOW_MS,
   setThread,
   settleRun,
   startRun,
@@ -305,7 +307,19 @@ step(
   async (ctx: PlanWorld, model: string) => {
     await startRun(ctx);
     // The MC lists the task with the model it was delegated to (delegation.ex).
-    (await turns(ctx)).subagents.push({ id: SUBAGENT.subagentId, model, status: "running" });
+    (await turns(ctx)).subagents.push({
+      id: SUBAGENT.subagentId,
+      driver: SUBAGENT.driver,
+      childThreadId: SUBAGENT.childThreadId,
+      title: SUBAGENT.title,
+      prompt: SUBAGENT.prompt,
+      model,
+      status: "running",
+      result: null,
+      startedAt: DateTime.makeUnsafe(new Date(NOW_MS)),
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe(new Date(NOW_MS)),
+    });
     await addItem(ctx, "subagent", { ...SUBAGENT, status: "running" });
   },
 );
