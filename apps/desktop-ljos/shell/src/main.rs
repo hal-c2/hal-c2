@@ -8,6 +8,8 @@
 //!               [--render PNG [--size WxH] [--settle MS]]
 //!               [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...
 //!   hal-c2-ljos --check [--qml-dir DIR]
+//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
+//!               [--json] [--allow FILE] [--render options]...
 //!
 //! As desktop-qt's main.cpp, the shell runs the desktop host
 //! (`apps/desktop-qt/host/main.ts`, `--host-entry`, under `--node`, else
@@ -45,6 +47,18 @@
 //! before the snapshot wait, for a render of a given place, and settles for
 //! `--settle` ms. `--check` only compiles the QML, and fails when a file
 //! does not compile.
+//!
+//! `--audit` runs Ljós's design audit (`ljos audit`, which cannot load the
+//! bricks: they need HalC2.Shell's native types) on what `--render` would
+//! draw, at the points of `--matrix` (`current` by default; `full`, or
+//! points as `ljos audit` takes them), and prints the report by rule, or
+//! with `--json` as JSON. A `<config>/shell.qml` (`--config-dir`) is audited
+//! instead of the shell, which is how a brick is audited on its own. It
+//! exits 1 when an error is found that `--allow` does not name: a file of
+//! lines `RULE PATH  # why`, PATH the end of the path of the QML file the
+//! finding is in, or of one it names (what covers a control, for
+//! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
+//! toggles, popups) from running the shell's handlers.
 //!
 //! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
 //! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
@@ -99,6 +113,7 @@ struct Options {
     check: bool,
     render: Option<PathBuf>,
     screenshot: Option<PathBuf>,
+    audit: Audit,
     size: (u32, u32),
     settle_ms: u64,
     home_dir: Option<PathBuf>,
@@ -125,7 +140,9 @@ fn usage() -> ExitCode {
          \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
-         \x20      hal-c2-ljos --check [--qml-dir DIR]"
+         \x20      hal-c2-ljos --check [--qml-dir DIR]\n\
+         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]\n\
+         \x20                  [--json] [--allow FILE] [--render options]..."
     );
     ExitCode::from(2)
 }
@@ -148,6 +165,7 @@ fn parse() -> Result<Options, String> {
         check: false,
         render: None,
         screenshot: None,
+        audit: Audit::default(),
         size: (1280, 800),
         settle_ms: 1500,
         home_dir: None,
@@ -218,6 +236,25 @@ fn parse() -> Result<Options, String> {
                 o.steps.push(Step::Key(chord));
             }
             "--check" => o.check = true,
+            "--audit" => o.audit.on = true,
+            "--matrix" => {
+                let v = value()?;
+                o.audit.matrix = v.parse().map_err(|e| format!("--matrix {v}: {e}"))?;
+            }
+            "--rules" => o
+                .audit
+                .rules
+                .extend(value()?.split(',').map(str::trim).map(str::to_owned)),
+            "--touch" => o.audit.touch = true,
+            "--act" => {
+                o.audit.act = match value()?.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    v => return Err(format!("--act takes true or false, not {v:?}")),
+                }
+            }
+            "--json" => o.audit.json = true,
+            "--allow" => o.audit.allow = Some(value()?.into()),
             "--render" => o.render = Some(value()?.into()),
             "--screenshot" => o.screenshot = Some(value()?.into()),
             "--size" => {
@@ -261,7 +298,15 @@ fn parse() -> Result<Options, String> {
     if o.render.is_some() && o.screenshot.is_some() {
         return Err("--render and --screenshot are two ways to take a picture; use one".into());
     }
-    if o.render.is_some() && o.steps.iter().any(|s| matches!(s, Step::Key(_))) {
+    if o.audit.on && (o.render.is_some() || o.screenshot.is_some()) {
+        return Err("--audit reads the scene --render would draw; it takes no picture".into());
+    }
+    // The checks that act run the shell's handlers, which write settings and
+    // drafts: never into the user's own files.
+    if o.audit.on && o.home_dir.is_none() {
+        return Err("--audit runs the shell's handlers: give it a --home-dir of its own".into());
+    }
+    if (o.render.is_some() || o.audit.on) && o.steps.iter().any(|s| matches!(s, Step::Key(_))) {
         return Err("--key needs the shell running: use --screenshot, not --render".into());
     }
     Ok(o)
@@ -293,7 +338,7 @@ fn main() -> ExitCode {
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
     // A launch asked for a picture draws its own window instead, of the MC
     // as it is: it adds no projects and starts no threads.
-    let picture = options.screenshot.is_some() || options.render.is_some();
+    let picture = options.screenshot.is_some() || options.render.is_some() || options.audit.on;
     if picture && !options.folders.is_empty() {
         eprintln!(
             "hal-c2-ljos: a picture opens no folders, so not {}",
@@ -341,6 +386,7 @@ fn main() -> ExitCode {
     if let Some(out) = &options.screenshot {
         // ScriptedRun's codes: 0 for a picture, 2 for none, or for the
         // picture of a start that failed.
+        let out = Output::Png(out);
         return match render_to(app, &options, out, Capture::scripted(&options, failure)) {
             Ok(false) => ExitCode::SUCCESS,
             Ok(true) => ExitCode::from(2),
@@ -350,8 +396,21 @@ fn main() -> ExitCode {
             }
         };
     }
+    if options.audit.on {
+        let out = Output::Audit(&options.audit);
+        return match render_to(app, &options, out, Capture::render(&options)) {
+            Ok(false) => ExitCode::SUCCESS,
+            Ok(true) => ExitCode::FAILURE,
+            Err(e) => {
+                eprintln!("hal-c2-ljos: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let result = match &options.render {
-        Some(out) => render_to(app, &options, out, Capture::render(&options)).map(drop),
+        Some(out) => {
+            render_to(app, &options, Output::Png(out), Capture::render(&options)).map(drop)
+        }
         None => run(app, options),
     };
     match result {
@@ -585,15 +644,47 @@ impl Capture {
     }
 }
 
+/// `--audit` and the options only it reads.
+struct Audit {
+    on: bool,
+    matrix: ljos_audit::Matrix,
+    rules: Vec<String>,
+    touch: bool,
+    act: bool,
+    json: bool,
+    allow: Option<PathBuf>,
+}
+
+impl Default for Audit {
+    fn default() -> Audit {
+        Audit {
+            on: false,
+            matrix: ljos_audit::Matrix::Current,
+            rules: Vec::new(),
+            touch: false,
+            act: true,
+            json: false,
+            allow: None,
+        }
+    }
+}
+
+/// What [`render_to`] makes of the scene once it settles.
+enum Output<'a> {
+    Png(&'a PathBuf),
+    Audit(&'a Audit),
+}
+
 /// A picture without a window: the shell once its MC's first snapshot is in
 /// (what the cache kept, when the MC does not answer in time), or as it
-/// shows disconnected. True when it is the picture of a start that failed
-/// (`capture.failure`, or the MC refusing the connection here), which
-/// ScriptedRun's `captureFailure` takes for exit code 2.
+/// shows disconnected; or `--audit`'s report of that scene. True when it is
+/// the picture of a start that failed (`capture.failure`, or the MC refusing
+/// the connection here), which ScriptedRun's `captureFailure` takes for
+/// exit code 2; for an audit, when it found an error `--allow` does not name.
 fn render_to(
     app: App,
     options: &Options,
-    out: &PathBuf,
+    out: Output<'_>,
     mut capture: Capture,
 ) -> Result<bool, String> {
     // The bundled font: the same picture on every machine.
@@ -710,6 +801,18 @@ fn render_to(
         // On the picture's virtual clock: they all run while it settles.
         scripted_run::play(&engine, capture.steps.clone());
     }
+    let out = match out {
+        Output::Png(out) => out,
+        Output::Audit(audit) => {
+            // A harness that does not load would pass as the built-in shell.
+            if let Some(e) = hal_c2_shell::runtime::user_shell_failed(&engine) {
+                return Err(format!("shell.qml did not load: {e}"));
+            }
+            let failed = audited(&engine, &picture, root, audit)?;
+            store::flush(&engine);
+            return Ok(failed);
+        }
+    };
     let png = picture.png(&engine, root).map_err(|e| e.to_string())?;
     store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -718,6 +821,114 @@ fn render_to(
     std::fs::write(out, png).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("hal-c2-ljos: wrote {}", out.display());
     Ok(capture.failure.is_some())
+}
+
+/// `--audit`'s report of `root` as `picture` would draw it, on stdout; true
+/// when it has an error `audit.allow` does not name.
+fn audited(
+    engine: &Engine,
+    picture: &Picture,
+    root: ljos::ObjectId,
+    audit: &Audit,
+) -> Result<bool, String> {
+    use ljos_audit::Severity;
+    let allow = match &audit.allow {
+        Some(file) => Allowed::read(file)?,
+        None => Allowed::default(),
+    };
+    let mut options = if audit.touch {
+        ljos_audit::Options::mobile()
+    } else {
+        ljos_audit::Options::desktop()
+    };
+    options.matrix = audit.matrix.clone();
+    options.act = audit.act;
+    let options = options.only(&audit.rules).map_err(|e| e.to_string())?;
+    let mut before = None;
+    let mut scene = picture
+        .scene_seen(engine, root, |e, s| {
+            before = Some(Arc::new(ljos_audit::Placement::of(e, s)));
+        })
+        .map_err(|e| e.to_string())?;
+    let options = ljos_audit::Options { before, ..options };
+    let mut report = ljos_audit::audit(engine, &mut scene, picture.now(), &options);
+    // What `--allow` names is said apart, so the report shows what it hides.
+    let (allowed, findings): (Vec<_>, Vec<_>) = std::mem::take(&mut report.findings)
+        .into_iter()
+        .partition(|f| f.severity() == Severity::Error && allow.which(f).is_some());
+    report.findings = findings;
+    if audit.json {
+        let mut json = report.json();
+        json["allowed"] = allowed.iter().map(ljos_audit::Finding::json).collect();
+        println!("{json}");
+    } else {
+        // Places from the checkout's root.
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .map(|p| format!("file://{}", p.display()))
+            .unwrap_or_default();
+        print!("{}", report.by_rule(&checkout));
+        // How many each line let through; `--json` lists them.
+        let mut counts = vec![0; allow.0.len()];
+        for i in allowed.iter().filter_map(|f| allow.which(f)) {
+            counts[i] += 1;
+        }
+        for ((rule, path), n) in allow.0.iter().zip(counts).filter(|(_, n)| *n > 0) {
+            println!("allowed: {n} {rule} {path}");
+        }
+        let points: Vec<String> = report.points.iter().map(ToString::to_string).collect();
+        println!(
+            "{} error(s), {} warning(s), {} hint(s), {} allowed, at {} point(s): {}",
+            report.count(Severity::Error),
+            report.count(Severity::Warning),
+            report.count(Severity::Hint),
+            allowed.len(),
+            points.len(),
+            points.join("; ")
+        );
+    }
+    Ok(report.count(Severity::Error) > 0)
+}
+
+/// `--allow`'s lines: a rule and the end of a QML file's path, each error of
+/// that rule in that file, or naming a place in it, let through.
+#[derive(Default)]
+struct Allowed(Vec<(String, String)>);
+
+impl Allowed {
+    fn read(file: &Path) -> Result<Allowed, String> {
+        let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let mut lines = Vec::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut words = line.split_whitespace();
+            match (words.next(), words.next(), words.next()) {
+                (Some(rule), Some(path), None) => lines.push((rule.to_owned(), path.to_owned())),
+                _ => return Err(format!("{}:{}: not `RULE PATH`", file.display(), n + 1)),
+            }
+        }
+        Ok(Allowed(lines))
+    }
+
+    /// The line that lets `finding` through, if one does.
+    fn which(&self, finding: &ljos_audit::Finding) -> Option<usize> {
+        // `file:///…/File.qml:12:5`: the path, without the line and column.
+        let file = finding
+            .place
+            .as_deref()
+            .map(|p| p.trim_end_matches(|c: char| c.is_ascii_digit() || c == ':'))
+            .unwrap_or("");
+        self.0.iter().position(|(rule, path)| {
+            rule == finding.code
+                && (file.ends_with(path.as_str())
+                    // A place the message names: `(file:///…/File.qml:115:5)`.
+                    || finding.message.contains(&format!("/{path}:")))
+        })
+    }
 }
 
 /// What other threads tell the window's.

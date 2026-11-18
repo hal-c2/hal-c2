@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#MISE description="Run Ljós's design audit (ljos audit) on the desktop shell at each place in apps/desktop-ljos/audit/places, or at the --action given; fails on an error audit/allow does not name"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+# Usage: mise run desktop-ljos:audit [hal-c2-ljos --audit options]...
+#   With no --action, every place in audit/places; otherwise the shell at the
+#   actions given (--action settings.open, --config-dir DIR for a shell.qml);
+#   --first-run keeps the first-run wizard up.
+set -euo pipefail
+# The shell's files go to a home of the run's own, never the user's.
+home="$(mktemp -d "${TMPDIR:-/tmp}/hal-c2-audit.XXXXXX")"
+trap 'rm -rf "$home"' EXIT
+# CI has the toolchain on its path and no mise.
+cargo=(mise exec -- cargo)
+[[ -z "${CI:-}" ]] || cargo=(cargo)
+# Past the first-run wizard (onboardingCompletedAt) unless --first-run.
+audit() {
+  local args=() first_run=
+  for a in "$@"; do
+    if [[ "$a" == --first-run ]]; then first_run=1; else args+=("$a"); fi
+  done
+  if [[ -z "$first_run" ]]; then
+    mkdir -p "$home/config/shell"
+    echo '{"onboardingCompletedAt":"2026-01-01T00:00:00.000Z"}' >"$home/config/shell/preferences.json"
+  fi
+  "${cargo[@]}" run --release -q -p hal_c2_shell -- \
+    --audit --home-dir "$home" --allow audit/allow "${args[@]}"
+}
+if [[ " $* " == *" --action"* || " $* " == *" --config-dir"* ]]; then
+  audit "$@"
+  exit
+fi
+failed=0
+while IFS= read -r line; do
+  line="${line%%#*}"
+  [[ -n "${line// /}" ]] || continue
+  echo "== ${line}" >&2
+  read -ra place <<<"$line"
+  audit "${place[@]}" "$@" || failed=1
+  rm -rf "${home:?}"/*
+done <audit/places
+exit "$failed"
