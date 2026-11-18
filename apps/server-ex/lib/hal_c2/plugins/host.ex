@@ -123,10 +123,11 @@ defmodule HalC2.Plugins.Host do
   How the plugin's own clone fetches the Forgejo repository of pull request `ref`
   over HTTP: `{:ok, %{"url", "username", "token"}}`, with the token the MC signs in to
   that server with (nil when it has none to give). A token is git's to send, never to
-  log or show. Needs `pullRequests:read`.
+  log or show. Needs `pullRequests:write`: the token can do whatever the MC's login
+  can, writes included, so reading pull requests is not enough to be handed it.
   """
   def pull_request_fetch(id, ref) do
-    with :ok <- permit(id, "pullRequests:read"), do: HalC2.PullRequests.fetch_access(ref)
+    with :ok <- permit(id, "pullRequests:write"), do: HalC2.PullRequests.fetch_access(ref)
   end
 
   @doc """

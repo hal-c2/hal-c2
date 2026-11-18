@@ -36,6 +36,13 @@ defmodule HalC2.PullRequests do
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry."
   }
 
+  @forgejo_requirements %{
+    "cli-missing" =>
+      "Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`tea` 0.16 or later) is required to read pull requests on this host. Install one and reload.",
+    "cli-unauthenticated" =>
+      "No Forgejo login for this server. Run `fj --host <server-url> auth add-token` (or `tea login add`) and retry."
+  }
+
   @action_refusals %{
     "merge" => "You need write access on this repository to merge.",
     "ready" =>
@@ -2027,7 +2034,7 @@ defmodule HalC2.PullRequests do
           {:ok, nil}
 
         {:error, {reason, detail}} when is_atom(reason) ->
-          provider_error(operation, {reason, detail})
+          provider_error(operation, {reason, detail}, project.kind)
 
         other ->
           other
@@ -2106,20 +2113,37 @@ defmodule HalC2.PullRequests do
     end
   end
 
-  defp provider_error(_operation, {:missing, _}), do: unavailable("cli-missing", "github")
+  # A host's CLI missing or signed out, told in that host's terms: Forgejo's own detail
+  # names `fj` or `tea` and what to run.
+  defp provider_error(operation, failure, provider \\ "github")
 
-  defp provider_error(_operation, {:unauthenticated, _}),
-    do: unavailable("cli-unauthenticated", "github")
+  defp provider_error(_operation, {reason, detail}, "forgejo")
+       when reason in [:missing, :unauthenticated] do
+    reason = if reason == :missing, do: "cli-missing", else: "cli-unauthenticated"
 
-  defp provider_error(operation, {_reason, detail}), do: refuse(operation, detail)
+    unavailable(
+      reason,
+      "forgejo",
+      if(is_binary(detail), do: detail, else: @forgejo_requirements[reason])
+    )
+  end
 
-  defp unavailable(reason, provider) do
+  defp provider_error(_operation, {:missing, _}, provider),
+    do: unavailable("cli-missing", provider)
+
+  defp provider_error(_operation, {:unauthenticated, _}, provider),
+    do: unavailable("cli-unauthenticated", provider)
+
+  defp provider_error(operation, {_reason, detail}, _provider), do: refuse(operation, detail)
+
+  defp unavailable(reason, provider, message \\ nil) do
     message =
-      case reason do
-        "cli-missing" -> @requirements.missing
-        "cli-unauthenticated" -> @requirements.unauthenticated
-        _ -> "Change requests cannot be browsed for this project's host yet."
-      end
+      message ||
+        case reason do
+          "cli-missing" -> @requirements.missing
+          "cli-unauthenticated" -> @requirements.unauthenticated
+          _ -> "Change requests cannot be browsed for this project's host yet."
+        end
 
     {:error,
      %{"_tag" => "PullRequestUnavailableError", "reason" => reason, "message" => message}

@@ -86,6 +86,37 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     %{server: server}
   end
 
+  test "without a Forgejo login, a plugin's read says what Forgejo needs, not GitHub",
+       %{tmp_dir: dir} do
+    File.write!(Path.join(dir, "keys.json"), JSON.encode!(%{"hosts" => %{}}))
+    put_app_env(:tea_command, Path.join(dir, "no-tea"))
+
+    for read <- [&HalC2.PullRequests.trust/1, &HalC2.PullRequests.fetch_access/1] do
+      assert {:error, %{"provider" => "forgejo", "message" => message}} =
+               read.(%{"projectId" => "p1", "repository" => "acme/shop", "number" => 7})
+
+      assert message =~ "fj"
+      refute message =~ "gh "
+    end
+  end
+
+  test "a plugin is handed fj's token only when it may write to pull requests" do
+    start_supervised!(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+
+    plugins = %{
+      "reader" => %{"enabled" => true, "granted" => ["pullRequests:read"]},
+      "writer" => %{"enabled" => true, "granted" => ["pullRequests:read", "pullRequests:write"]}
+    }
+
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    ref = %{"projectId" => "p1", "repository" => "acme/shop", "number" => 7}
+
+    assert {:error, refusal} = HalC2.Plugins.Host.pull_request_fetch("reader", ref)
+    assert refusal =~ "pullRequests:write"
+    assert {:ok, %{"token" => "t"}} = HalC2.Plugins.Host.pull_request_fetch("writer", ref)
+  end
+
   test "a linked Forgejo pull request syncs and wakes its thread on a review and failing checks",
        %{server: server} do
     start_supervised!({Sync, interval: nil})

@@ -56,7 +56,7 @@ defmodule HalC2.PullRequests.Forgejo do
          head when is_binary(head) <- get_in(pull, ["head", "ref"]),
          base_branch when is_binary(base_branch) <- get_in(pull, ["base", "ref"]) do
       reviews = pages(cwd, target, "#{base}/pulls/#{number}/reviews")
-      comments = list(cwd, target, "#{base}/issues/#{number}/comments")
+      comments = issue_comments(cwd, target, base, number)
       review_comments = review_comments(cwd, target, base, number, reviews)
       requested = for user <- pull["requested_reviewers"] || [], login = login(user), do: login
 
@@ -176,7 +176,8 @@ defmodule HalC2.PullRequests.Forgejo do
 
   # The newest published review or comment by someone trusted (`activity`) and the
   # newest by the signed-in account (`ownActivity`), as `%{"at", "author", "kind",
-  # "state"}` or nil.
+  # "state"}` or nil; and the newest review and newest comment of each (`activities`,
+  # `ownActivities`), which `HalC2.PullRequests.Wakes` tells apart.
   defp activity(reviews, comments, viewer, trusted) do
     viewer = down(viewer || "")
 
@@ -196,11 +197,21 @@ defmodule HalC2.PullRequests.Forgejo do
     {own, others} =
       Enum.split_with(reviews ++ comments, fn {author, _, _, _} -> down(author) == viewer end)
 
+    trusted = Enum.filter(others, fn {author, _, _, _} -> down(author) in trusted end)
+
     %{
-      "activity" =>
-        others |> Enum.filter(fn {author, _, _, _} -> down(author) in trusted end) |> newest(),
-      "ownActivity" => newest(own)
+      "activity" => newest(trusted),
+      "ownActivity" => newest(own),
+      "activities" => newest_of_each_kind(trusted),
+      "ownActivities" => newest_of_each_kind(own)
     }
+  end
+
+  defp newest_of_each_kind(activities) do
+    activities
+    |> Enum.group_by(fn {_, _, kind, _} -> kind end)
+    |> Enum.map(fn {_, of_kind} -> newest(of_kind) end)
+    |> Enum.sort_by(&(epoch(&1["at"]) || 0))
   end
 
   defp review_state("APPROVED"), do: "approved"
@@ -297,7 +308,7 @@ defmodule HalC2.PullRequests.Forgejo do
       reviews = pages(ctx.cwd, target, "#{base}/pulls/#{ctx.number}/reviews")
 
       remarks =
-        for c <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/comments"),
+        for c <- issue_comments(ctx.cwd, target, base, ctx.number),
             do: remark("comment", c["user"], c["body"], c["created_at"])
 
       verdicts =
@@ -415,7 +426,7 @@ defmodule HalC2.PullRequests.Forgejo do
          "headSha" => trimmed(get_in(pull, ["head", "sha"])),
          "comments" =>
            for(
-             c <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/comments"),
+             c <- issue_comments(ctx.cwd, target, base, ctx.number),
              actor = as_actor.(c["user"]),
              do:
                Map.merge(actor, %{"body" => c["body"] || "", "createdAt" => utc(c["created_at"])})
@@ -565,6 +576,11 @@ defmodule HalC2.PullRequests.Forgejo do
       _ -> []
     end
   end
+
+  # An issue's comments come in one answer: the endpoint takes `since` and `before`, not
+  # `page` and `limit`, so paging it would read the whole list again on every page.
+  defp issue_comments(cwd, target, base, number),
+    do: list(cwd, target, "#{base}/issues/#{number}/comments")
 
   # Every page of a paginated list, up to `@max_pages` of them.
   defp pages(cwd, target, path, page \\ 1) do

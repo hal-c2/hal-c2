@@ -135,6 +135,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
       "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
       "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
+      "HalC2.Plugins.Host.pull_request_fetch/2" => @host,
       "HalC2.Plugins.Host.left_cluster?/2" =>
         "a machine the user switched off or removed from the cluster stops counting with the others; the model's machines stay in it",
       "HalC2.Plugins.Host.steer/4" => @host,

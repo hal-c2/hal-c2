@@ -303,24 +303,54 @@ defmodule HalC2.PullRequests.Wakes do
     |> advance_removal(heard, snapshot)
   end
 
+  # `activityAt` is the newest review or comment heard; `reviewActivityAt` and
+  # `commentActivityAt` the newest of each kind, so news of one kind heard without
+  # telling (a subscription to the other) never hides the other's. A link heard
+  # before the kinds were kept apart starts both at `activityAt`.
   defp advance_activity(next, heard, snapshot) do
     cond do
-      Map.has_key?(snapshot, "activity") ->
-        Map.put(
-          next,
-          "activityAt",
-          heard["activityAt"]
-          |> latest(get_in(snapshot, ["activity", "at"]))
-          |> latest(get_in(snapshot, ["ownActivity", "at"]))
+      Map.has_key?(snapshot, "activity") or Map.has_key?(snapshot, "activities") ->
+        all = activities(snapshot)
+        newest = fn activities, from -> Enum.reduce(activities, from, &latest(&2, &1["at"])) end
+
+        Enum.reduce(
+          ~w(review comment),
+          Map.put(next, "activityAt", newest.(all, heard["activityAt"])),
+          fn kind, next ->
+            key = kind_key(kind)
+            of_kind = Enum.filter(all, &(kind_key(&1) == key))
+            Map.put(next, key, newest.(of_kind, Map.get(heard, key, heard["activityAt"])))
+          end
         )
 
       Map.has_key?(heard, "activityAt") ->
-        Map.put(next, "activityAt", heard["activityAt"])
+        Map.merge(next, Map.take(heard, ~w(activityAt reviewActivityAt commentActivityAt)))
 
       true ->
         next
     end
   end
+
+  # The newest trusted review and comment, then the signed-in account's own; a snapshot
+  # synced before the kinds were kept apart carries only the newest of either.
+  defp activities(snapshot), do: trusted_activities(snapshot) ++ own_activities(snapshot)
+  defp trusted_activities(snapshot), do: activities(snapshot, "activities", "activity")
+  defp own_activities(snapshot), do: activities(snapshot, "ownActivities", "ownActivity")
+
+  defp activities(snapshot, key, fallback) do
+    case snapshot[key] do
+      list when is_list(list) -> list
+      _ -> List.wrap(snapshot[fallback])
+    end
+    |> Enum.filter(&is_map/1)
+    |> Enum.sort_by(&(JS.epoch_ms(&1["at"]) || 0))
+  end
+
+  defp kind_key(%{"kind" => kind}), do: kind_key(kind)
+  defp kind_key("review"), do: "reviewActivityAt"
+  defp kind_key(_comment), do: "commentActivityAt"
+
+  defp heard_at(heard, activity), do: Map.get(heard, kind_key(activity), heard["activityAt"])
 
   defp advance_removal(next, heard, snapshot) do
     cond do
@@ -343,17 +373,15 @@ defmodule HalC2.PullRequests.Wakes do
   The news in `snapshot` for a thread that heard `heard`, oldest kind first: a merge
   or a close; while open, checks that went to failing, checks that pass again after
   the thread heard they failed, a conflict with the base branch, and leaving the
-  merge queue (`{:left_merge_queue, reason}`) later than any removal it heard; and a
-  review or comment newer than any it heard (`{:activity, activity}`). One by the
-  signed-in account counts only when none of the thread's `runs` was going as it was
-  posted: that one is the agent's own. A removal is open-only news, so one whose pull
+  merge queue (`{:left_merge_queue, reason}`) later than any removal it heard; and the
+  newest review and the newest comment each newer than any of its kind it heard
+  (`{:activity, activity}`). One by the signed-in account counts only when none of the
+  thread's `runs` was going as it was posted: that one is the agent's own. A removal is open-only news, so one whose pull
   request then merged or closed is told as that, not as a queue failure.
   """
   def changes(heard, snapshot, runs \\ []) do
     state = snapshot["state"]
     open? = state == "open"
-    new? = &(is_map(&1) and later?(&1["at"], heard["activityAt"]))
-    own = snapshot["ownActivity"]
     removal = snapshot["mergeQueueRemoval"]
 
     [
@@ -367,13 +395,24 @@ defmodule HalC2.PullRequests.Wakes do
         heard["mergeability"] != "conflicting" and :conflicting,
       open? and Map.has_key?(heard, "mergeQueueRemovalAt") and is_map(removal) and
         later?(removal["at"], heard["mergeQueueRemovalAt"]) and
-        {:left_merge_queue, removal["reason"]},
-      Map.has_key?(heard, "activityAt") and new?.(snapshot["activity"]) and
-        {:activity, snapshot["activity"]},
-      Map.has_key?(heard, "activityAt") and new?.(own) and not during_run?(own["at"], runs) and
-        {:activity, own}
+        {:left_merge_queue, removal["reason"]}
     ]
     |> Enum.filter(& &1)
+    |> Kernel.++(activity_changes(heard, snapshot, runs))
+  end
+
+  defp activity_changes(heard, snapshot, runs) do
+    if Map.has_key?(heard, "activityAt") do
+      new? = &later?(&1["at"], heard_at(heard, &1))
+      others = Enum.filter(trusted_activities(snapshot), new?)
+
+      own =
+        Enum.filter(own_activities(snapshot), &(new?.(&1) and not during_run?(&1["at"], runs)))
+
+      Enum.map(others ++ own, &{:activity, &1})
+    else
+      []
+    end
   end
 
   defp during_run?(at, runs) do

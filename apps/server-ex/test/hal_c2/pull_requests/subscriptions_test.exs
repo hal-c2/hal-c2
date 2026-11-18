@@ -66,6 +66,57 @@ defmodule HalC2.PullRequests.SubscriptionsTest do
     assert {[%{"heard" => @heard}], _, []} = Wakes.hear([link(["checks"], %{})], false, false)
   end
 
+  @comment %{"at" => "2030-01-01T00:00:20Z", "author" => "maint", "kind" => "comment"}
+
+  defp both(review, comment),
+    do: %{"activity" => comment, "activities" => Enum.reject([review, comment], &is_nil/1)}
+
+  test "a review followed by a comment still wakes a subscription to reviews" do
+    {_, [told], [{_, changes}]} =
+      Wakes.hear([link(["reviews"], both(@review, @comment))], false, true)
+
+    assert changes == [{:activity, @review}]
+
+    assert %{
+             "activityAt" => "2030-01-01T00:00:20Z",
+             "reviewActivityAt" => "2030-01-01T00:00:10Z",
+             "commentActivityAt" => "2030-01-01T00:00:20Z"
+           } = told["heard"]
+
+    assert {_, _, []} = Wakes.hear([told], false, true)
+  end
+
+  test "a comment followed by a review still wakes a subscription to comments" do
+    review = %{@review | "at" => "2030-01-01T00:00:30Z"}
+
+    assert {_, _, [{_, [{:activity, @comment}]}]} =
+             Wakes.hear(
+               [link(["comments"], %{both(review, @comment) | "activity" => review})],
+               false,
+               true
+             )
+  end
+
+  test "a comment heard quietly does not hide a review that lands while the thread is busy" do
+    {[quiet], _, []} = Wakes.hear([link(["reviews"], both(nil, @comment))], false, true)
+    assert quiet["heard"]["commentActivityAt"] == @comment["at"]
+    assert quiet["heard"]["reviewActivityAt"] == nil
+
+    review = %{@review | "at" => "2030-01-01T00:00:15Z"}
+    later = %{quiet | "snapshot" => Map.merge(quiet["snapshot"], both(review, @comment))}
+
+    assert {[^later], _, []} = Wakes.hear([later], false, false)
+    assert {_, _, [{_, [{:activity, ^review}]}]} = Wakes.hear([later], false, true)
+  end
+
+  test "a link heard before the kinds were kept apart hears from its one marker" do
+    heard = %{@heard | "activityAt" => @review["at"]}
+    old = %{link(["comments"], both(@review, @comment)) | "heard" => heard}
+
+    assert {_, [told], [{_, [{:activity, @comment}]}]} = Wakes.hear([old], false, true)
+    assert told["heard"]["reviewActivityAt"] == @review["at"]
+  end
+
   test "notify names known kinds in their order, and refuses others" do
     assert Wakes.notify(["merged", "reviews", "merged"]) == {:ok, ["reviews", "merged"]}
     assert Wakes.notify(nil) == {:ok, nil}

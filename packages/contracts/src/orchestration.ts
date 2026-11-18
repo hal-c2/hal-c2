@@ -300,6 +300,11 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   // The newest by the account the MC reads the host as, kept apart because it may be the
   // agent's own.
   ownActivity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
+  // The newest trusted review and the newest trusted comment, oldest first, so a wake
+  // subscribed to one kind hears it even when the other landed after.
+  activities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
+  // The same, by the account the MC reads the host as.
+  ownActivities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
   // In the host's merge queue now, and where; null when it is not (or the host has none).
   mergeQueue: Schema.optional(
     Schema.NullOr(Schema.Struct({ state: Schema.String, position: NonNegativeInt })),
@@ -371,6 +376,8 @@ export const ThreadPullRequestLink = Schema.Struct({
       mergeability: Schema.optional(Schema.NullOr(PullRequestMergeability)),
       checksFailed: Schema.optional(Schema.Boolean),
       activityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      reviewActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      commentActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
       mergeQueueRemovalAt: Schema.optional(Schema.NullOr(IsoDateTime)),
     }),
   ),

@@ -180,6 +180,27 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
            ] = threads
   end
 
+  # Forgejo answers an issue's comments all at once and ignores `page` and `limit`.
+  test "an issue's many comments are read once, not once a page", %{tmp_dir: tmp} do
+    many =
+      for n <- 1..120,
+          do: %{"user" => %{"login" => "stranger"}, "body" => "#{n}", "created_at" => @t1}
+
+    {base, log} =
+      serve(
+        tmp,
+        routes("reviewer", %{"/api/v1/repos/acme/shop/issues/7/comments" => {200, many}})
+      )
+
+    assert {:ok, %{"comments" => comments}} = Forgejo.activity(ctx(base))
+    assert Enum.count(comments, &(&1["kind"] == "comment")) == 120
+    assert {:ok, %{"comments" => trusted}} = Forgejo.trust(ctx(base), nil)
+    assert length(trusted) == 120
+
+    reads = for r <- FakeHttp.requests(log), r["path"] =~ ~r"/issues/7/comments$", do: r["query"]
+    assert reads == ["", ""]
+  end
+
   test "trust names the owner and collaborators, and who last labelled or asked for a review",
        %{tmp_dir: tmp} do
     timeline = [
