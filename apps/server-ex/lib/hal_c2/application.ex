@@ -65,6 +65,7 @@ defmodule HalC2.Application do
       HalC2.Orchestration.Wake,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
       {Registry, keys: :duplicate, name: HalC2.Traces.Registry},
+      {Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
       # Owns the table of Claude's sign-in reads.

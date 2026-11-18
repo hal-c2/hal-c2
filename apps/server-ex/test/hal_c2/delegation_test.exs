@@ -21,6 +21,10 @@ defmodule HalC2.Orchestration.DelegationTest do
         ],
         do: start_supervised!({Registry, keys: :unique, name: name}, id: name)
 
+    start_supervised!({Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
+      id: HalC2.Orchestration.Delegation.Waits
+    )
+
     on_exit(fn -> Application.delete_env(:hal_c2, :delegation_hook) end)
     :ok
   end
@@ -1161,7 +1165,7 @@ defmodule HalC2.Orchestration.DelegationTest do
 
   # The child's run `cr` opens request `req` of `kind` (asked at `asked`), with the
   # timeline item the turn writer gives it.
-  defp open_request(kind, asked \\ @at) do
+  defp open_request(kind, asked \\ @at, capability \\ "live") do
     item =
       if kind == "user_input",
         do: %{
@@ -1187,7 +1191,7 @@ defmodule HalC2.Orchestration.DelegationTest do
              "status" => "pending",
              "nodeId" => "node:cr",
              "createdAt" => asked,
-             "responseCapability" => %{"type" => "live"}
+             "responseCapability" => %{"type" => capability}
            }
          }},
         {"turn-item", "turn-item:req",
@@ -1251,6 +1255,55 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       Delegation.request_opened("c", "req")
       assert messages("message:delegate-request:") == []
+    end
+
+    test "a task that wakes only an idle caller still tells it of a request" do
+      # As `delegated_task.request` and a waited-for delegation leave a task.
+      delegate("running", %{"completionWake" => "settled_only"})
+      open_request("user_input")
+      Delegation.request_opened("c", "req")
+
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a request opened while the caller waits is the wait's to tell" do
+      delegate("running")
+      open_request("user_input")
+      me = self()
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+          send(me, {:during_wait, messages("message:delegate-request:")})
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"pendingRequest" => %{"requestId" => "req"}}} =
+               Delegation.wait("p", "task", 1_000)
+
+      assert_received {:during_wait, []}
+      assert messages("message:delegate-request:") == []
+    end
+
+    test "a request that does not end the wait is told once the wait is over" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+      me = self()
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+          send(me, {:during_wait, messages("message:delegate-request:")})
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+      assert_received {:during_wait, []}
+      assert [_] = messages("message:delegate-request:")
     end
 
     test "asked again under the same id reaches the caller again" do

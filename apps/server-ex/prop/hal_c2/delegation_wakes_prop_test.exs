@@ -18,7 +18,9 @@ defmodule HalC2.DelegationWakesPropTest do
     caller is on Codex or on Claude, and Claude would cancel its pending tools for a
     message mid-turn (Upstream #15892);
   - each request a working child opens reaches the caller in one message, however
-    many times, and however concurrently, it is told (`Delegation.request_opened/2`);
+    many times, and however concurrently, it is told (`Delegation.request_opened/2`),
+    one opened while the caller waits on the task included: the wait tells it when it
+    is over;
 
   and once the commands are done and the caller has worked through its queue, every
   task that ended was named by exactly one wake, and that wake ran to its end.
@@ -58,6 +60,7 @@ defmodule HalC2.DelegationWakesPropTest do
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
       HalC2.Streams,
+      {Registry, keys: :duplicate, name: HalC2.Orchestration.Delegation.Waits},
       HalC2.Shell,
       HalC2.Orchestration.TurnWatch,
       __MODULE__.Provider
@@ -109,23 +112,25 @@ defmodule HalC2.DelegationWakesPropTest do
           else: [
             {4, {:call, __MODULE__, :finish, [oneof(working)]}},
             {2,
-             {:call, __MODULE__, :ask,
+             {:call, __MODULE__, oneof([:ask, :ask_waiting]),
               [oneof(working), oneof(["user_input", "command"]), length(state.asked)]}}
           ]
         )
     )
   end
 
-  def precondition(state, {:call, _, call, [task | _]}) when call in [:finish, :ask],
-    do: task not in state.ended
+  def precondition(state, {:call, _, call, [task | _]})
+      when call in [:finish, :ask, :ask_waiting],
+      do: task not in state.ended
 
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :finish, [task]}),
     do: %{state | ended: state.ended ++ [task]}
 
-  def next_state(state, _result, {:call, _, :ask, [task, _kind, n]}),
-    do: %{state | asked: state.asked ++ [request(task, n)]}
+  def next_state(state, _result, {:call, _, call, [task, _kind, n]})
+      when call in [:ask, :ask_waiting],
+      do: %{state | asked: state.asked ++ [request(task, n)]}
 
   def next_state(state, _result, _call), do: state
 
@@ -134,8 +139,11 @@ defmodule HalC2.DelegationWakesPropTest do
 
     asked =
       case {call, args} do
-        {:ask, [task, _kind, n]} -> state.asked ++ [request(task, n)]
-        _ -> state.asked
+        {call, [task, _kind, n]} when call in [:ask, :ask_waiting] ->
+          state.asked ++ [request(task, n)]
+
+        _ ->
+          state.asked
       end
 
     caller = stream(@parent)
@@ -325,6 +333,43 @@ defmodule HalC2.DelegationWakesPropTest do
   # The task's child opens a request: the turn writer tells the caller as it opens, and
   # a second telling (a retry, a restart) lands at the same moment.
   def ask(task, kind, n) do
+    open(task, kind, n)
+    tell_twice(task, n)
+    :ok
+  end
+
+  # The caller waits on the task, briefly, and the child opens the request during the
+  # wait, which outlasts it and is told twice meanwhile. A request an earlier `ask`
+  # left pending may end the wait instead.
+  def ask_waiting(task, kind, n) do
+    Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :during_wait, [task, kind, n]})
+
+    try do
+      {:ok, _} = Delegation.wait(@parent, task, 1)
+    after
+      Application.delete_env(:hal_c2, :delegation_hook)
+    end
+
+    :ok
+  end
+
+  @doc false
+  def during_wait(task, kind, n, :expiring, task) do
+    open(task, kind, n)
+    tell_twice(task, n)
+  end
+
+  def during_wait(_task, _kind, _n, _stage, _id), do: :ok
+
+  defp tell_twice(task, n) do
+    [fn -> Delegation.request_opened(child(task), request(task, n)) end]
+    |> List.duplicate(2)
+    |> List.flatten()
+    |> Enum.map(&Task.async/1)
+    |> Enum.each(&(:ok = Task.await(&1)))
+  end
+
+  defp open(task, kind, n) do
     request = request(task, n)
 
     commit(child(task), [
@@ -336,14 +381,6 @@ defmodule HalC2.DelegationWakesPropTest do
          "createdAt" => "2026-01-01T00:00:00.000Z"
        }}
     ])
-
-    [fn -> Delegation.request_opened(child(task), request) end]
-    |> List.duplicate(2)
-    |> List.flatten()
-    |> Enum.map(&Task.async/1)
-    |> Enum.each(&(:ok = Task.await(&1)))
-
-    :ok
   end
 
   defp request(task, n), do: "req-#{task}-#{n}"

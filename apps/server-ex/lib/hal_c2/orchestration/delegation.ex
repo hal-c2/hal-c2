@@ -20,6 +20,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   @active ~w(preparing starting running waiting)
   @terminal ~w(completed failed interrupted cancelled)
+  @waits HalC2.Orchestration.Delegation.Waits
   @runtime_ranks %{
     "approval-required" => 0,
     "auto-accept-edits" => 1,
@@ -47,10 +48,14 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, interaction} <-
            mode(thread["interactionMode"], input["interactionMode"], :interaction),
          {:ok, workspace} <- resolve_workspace(thread, input["workspace"]) do
+      task_id =
+        request_task_id(thread["id"], input["clientRequestId"]) ||
+          "node:subagent:" <> HalC2.Environment.uuid4()
+
       spec = %{
         "task" => input["task"],
         "prompt" => framed(input),
-        "taskId" => request_task_id(thread["id"], input["clientRequestId"]),
+        "taskId" => task_id,
         "workspace" => workspace,
         "title" => input["title"],
         "modelSelection" => selection,
@@ -61,20 +66,25 @@ defmodule HalC2.Orchestration.Delegation do
         "creationSource" => "mcp"
       }
 
-      case start(thread, run, spec) do
-        {tag, task_id} when tag in [:ok, :existing] ->
-          if input["mode"] == "wait",
-            do:
-              wait(
-                thread["id"],
-                task_id,
-                min(wait_budget(input["timeoutMs"]), HalC2.Mcp.max_wait_ms(instance))
-              ),
-            else: {:ok, status(thread["id"], task_id)}
+      launch = fn ->
+        case start(thread, run, spec) do
+          {tag, task_id} when tag in [:ok, :existing] ->
+            if input["mode"] == "wait",
+              do:
+                wait_on(
+                  thread["id"],
+                  task_id,
+                  min(wait_budget(input["timeoutMs"]), HalC2.Mcp.max_wait_ms(instance))
+                ),
+              else: {:ok, status(thread["id"], task_id)}
 
-        {:error, message} ->
-          {:error, "task_not_started", message}
+          {:error, message} ->
+            {:error, "task_not_started", message}
+        end
       end
+
+      # Waiting from before the child starts, so no request it opens is told twice.
+      if input["mode"] == "wait", do: waiting(thread["id"], task_id, launch), else: launch.()
     end
   end
 
@@ -1729,7 +1739,7 @@ defmodule HalC2.Orchestration.Delegation do
   is working on at that turn's next safe point, else starting or queueing one. Its
   questions are the caller's to answer; its approvals are the caller's to decide only
   at full access, and are otherwise passed on to the user. Once per request, and not
-  to a caller waiting on the task, whose wait returns on it.
+  while the caller waits on the task: the wait returns on it, or tells it when it ends.
   """
   def request_opened(child_id, request_id) do
     child = stream(child_id)
@@ -1749,8 +1759,8 @@ defmodule HalC2.Orchestration.Delegation do
              &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
                  &1["status"] not in @terminal)
            ),
-         # A caller waiting on the task hears of it from its wait (`wait/3`).
-         true <- task["completionWake"] != "settled_only" do
+         # A caller waiting on the task hears of it from its wait (`waiting/3`).
+         false <- waited?(task["id"]) do
       item =
         Enum.find(
           StreamState.list(child, "turn-item"),
@@ -1844,7 +1854,34 @@ defmodule HalC2.Orchestration.Delegation do
   defp subagent(thread_id, task_id), do: StreamState.get(stream(thread_id), "subagent")[task_id]
 
   @doc "Waits for the task to end; a timeout leaves it running and returns its state."
-  def wait(thread_id, task_id, timeout) do
+  def wait(thread_id, task_id, timeout),
+    do: waiting(thread_id, task_id, fn -> wait_on(thread_id, task_id, timeout) end)
+
+  # While a caller waits on a task, the wait tells it of the child's requests and
+  # `request_opened/2` sends no message about them. The mark is the waiting process's
+  # own, so it goes with a wait that ends or dies; a request still pending when it
+  # goes, which the wait did not return, is told then.
+  defp waiting(thread_id, task_id, fun) do
+    marked =
+      Process.whereis(@waits) != nil and match?({:ok, _}, Registry.register(@waits, task_id, nil))
+
+    try do
+      fun.()
+    after
+      if marked, do: Registry.unregister(@waits, task_id)
+
+      with %{"childThreadId" => child} when is_binary(child) <- subagent(thread_id, task_id) do
+        for request <- StreamState.list(stream(child), "runtime-request"),
+            request["status"] == "pending",
+            do: request_opened(child, request["id"])
+      end
+    end
+  end
+
+  defp waited?(task_id),
+    do: Process.whereis(@waits) != nil and Registry.lookup(@waits, task_id) != []
+
+  defp wait_on(thread_id, task_id, timeout) do
     # The child's stream too: a request it stops on ends the wait.
     child = (subagent(thread_id, task_id) || %{})["childThreadId"] || thread_id
     watched = Enum.uniq([thread_id, child])
@@ -1892,14 +1929,22 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # The wait returns the request to its caller, so `request_opened/2` sends no message
-  # about it: its command is marked handled before the wait ends, and until it ends
-  # that sends none to a caller waiting on the task.
+  # The wait returns the request to its caller: its notice is marked sent before the
+  # wait is over, so `request_opened/2` sends none after it either.
   defp told_by_wait(thread_id, task_id, child, request_id) do
     request = StreamState.get(stream(child), "runtime-request")[request_id] || %{}
-    key = "command-receipt:command:delegate-request:" <> request_key(task_id, request)
-    receipt = %{"ok" => %{"toldByWait" => true}, "threadId" => thread_id}
-    HalC2.Store.put_meta(key, JSON.encode!(receipt))
+    command_id = "command:delegate-request:" <> request_key(task_id, request)
+    receipt = JSON.encode!(%{"ok" => %{"toldByWait" => true}, "threadId" => thread_id})
+
+    # Under `notify/1`'s lock, so the two never both tell of the request.
+    :global.trans(
+      {{__MODULE__, command_id}, self()},
+      fn ->
+        if HalC2.Store.meta(HalC2.Store.path(), "command-receipt:" <> command_id) == nil,
+          do: HalC2.Store.put_meta("command-receipt:" <> command_id, receipt)
+      end,
+      [node()]
+    )
   end
 
   # The wait is over: a child that ends from now on wakes the caller. A task that ended
