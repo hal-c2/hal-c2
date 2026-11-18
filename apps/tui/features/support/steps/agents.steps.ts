@@ -6,9 +6,10 @@ import * as DateTime from "effect/DateTime";
 
 import { step } from "../../steps.ts";
 import { thread as baseThread } from "../fakeClient.ts";
+import { chooseCommand, click } from "../threadUi.ts";
 import { hostState, recorded, settle } from "../threadWorld.ts";
 import { NOW_MS, sync, turns, type TurnWorld } from "../turnWorld.ts";
-import { pressKey, resize, snapshot } from "../world.ts";
+import { clickObject, pressKey, resize, snapshot, typeText } from "../world.ts";
 
 const time = (secondsAgo: number) => DateTime.makeUnsafe(new Date(NOW_MS - secondsAgo * 1000));
 
@@ -18,6 +19,13 @@ const WORKERS = [
   { id: "task-docs", title: "Review the docs", child: "thread-docs" },
   { id: "task-notes", title: "Write notes", child: "thread-notes" },
 ] as const;
+
+/** The glyph each worker's row starts with, by its state in the Background. */
+const GLYPH_OF: Record<string, string> = {
+  "Review the docs": "!",
+  "Fix the tests": "●",
+  "Write notes": "✓",
+};
 
 const childOf = (title: string) => WORKERS.find((worker) => worker.title === title)!.child;
 
@@ -179,16 +187,73 @@ step(
   },
 );
 
-step("the conversation shows the worker's thread", async (ctx: TurnWorld) => {
+const showsWorker = async (ctx: TurnWorld, title: string) => {
   // What the worker's own thread holds, as the MC sends it once it is opened.
-  ctx.fake!.emitThread({
-    ...baseThread(),
-    id: childOf("Fix the tests"),
-    title: "Fix the tests",
-  } as never);
+  ctx.fake!.emitThread({ ...baseThread(), id: childOf(title), title } as never);
   await settle();
-  expect(hostState(ctx, "page").threadId).toBe(childOf("Fix the tests"));
+  expect(hostState(ctx, "page").threadId).toBe(childOf(title));
   expect(hostState(ctx, "mode")).toBe("compose");
+};
+
+step("the conversation shows the worker's thread", (ctx: TurnWorld) =>
+  showsWorker(ctx, "Fix the tests"),
+);
+step("the conversation shows the thread of {string}", showsWorker);
+
+step("the conversation shows {string}", async (ctx: TurnWorld, title: string) => {
+  await settle();
+  const selection = ctx
+    .fake!.latestShell()
+    .threads.find((thread: { title: string }) => thread.title === title);
+  expect(hostState(ctx, "page").threadId).toBe(selection!.id);
+});
+
+step("the user clicks the worker {string}", async (ctx: TurnWorld, title: string) => {
+  // The worker's threads are listed in the sidebar too: the panel's row is the one
+  // to the right of the border it draws ("│ ! Review the docs").
+  const lines = (await snapshot(ctx)).split("\n");
+  const y = lines.findIndex((line) => line.includes(`│ ${GLYPH_OF[title]} ${title}`));
+  expect(y, `"${title}" is not drawn in the agents panel`).toBeGreaterThanOrEqual(0);
+  const line = lines[y]!;
+  await click(ctx, { x: Bun.stringWidth(line.slice(0, line.lastIndexOf(title))), y });
+  await settle();
+});
+
+step("the user clicks the prompt", async (ctx: TurnWorld) => {
+  await clickObject(ctx, "composerEditorRow");
+  await settle();
+});
+
+step("the thread list is filtered to {string}", async (ctx: TurnWorld, query: string) => {
+  await pressKey(ctx, "Ctrl+F");
+  await typeText(ctx, query);
+  await pressKey(ctx, "Enter");
+  await settle();
+  expect(hostState(ctx, "mode")).toBe("compose");
+});
+
+step(
+  "the thread list is no longer filtered and the worker's thread stays selected",
+  async (ctx: TurnWorld) => {
+    // The next shell update rebuilds the list: the opened worker is still in it.
+    ctx.fake!.emitShell(ctx.fake!.latestShell());
+    await settle();
+    const sidebar = await snapshot(ctx);
+    expect(sidebar).toContain("Fix the tests");
+    expect(hostState(ctx, "page").threadId).toBe(childOf("Fix the tests"));
+  },
+);
+
+step("the user browses the open thread's files", async (ctx: TurnWorld) => {
+  await chooseCommand(ctx, "Browse files");
+  await settle();
+  expect(hostState(ctx, "files").open).toBe(true);
+});
+
+step("the file browser is closed", async (ctx: TurnWorld) => {
+  await snapshot(ctx);
+  expect(hostState(ctx, "files").open).toBe(false);
+  expect(hostState(ctx, "layout").rightPanel).toMatchObject({ kind: "agents", visible: true });
 });
 
 step("the agents panel is closed and the prompt has the keys", async (ctx: TurnWorld) => {
@@ -222,9 +287,24 @@ step("the user chooses {string} in the question", async (ctx: TurnWorld, label: 
   await settle();
 });
 
-step("the client stops the run of the worker's thread", (ctx: TurnWorld) => {
-  expect(recorded(ctx, "interrupt").map(([threadId]) => threadId)).toEqual([
-    childOf("Fix the tests"),
+step("the worker {string} has no run to interrupt", (ctx: TurnWorld, title: string) => {
+  const child = childOf(title);
+  ctx.fake!.override("interruptibleRun", async (threadId) =>
+    threadId === child ? null : `run-${threadId}`,
+  );
+});
+
+step("the worker {string} starts another run", (ctx: TurnWorld, title: string) => {
+  const child = childOf(title);
+  ctx.fake!.override("interruptibleRun", async (threadId) =>
+    threadId === child ? `run-${threadId}-next` : `run-${threadId}`,
+  );
+});
+
+step("the client requests an interrupt of the run the user was asked about", (ctx: TurnWorld) => {
+  // The run read when the user was asked, not whichever is active when they answer.
+  expect(recorded(ctx, "interrupt")).toEqual([
+    [childOf("Fix the tests"), `run-${childOf("Fix the tests")}`],
   ]);
   expect(hostState(ctx, "status")).toMatchObject({
     text: "Asked Fix the tests to stop.",
@@ -243,7 +323,13 @@ step("nothing was stopped", (ctx: TurnWorld) => {
 step("the prompt has the keys and the agents panel stays open", async (ctx: TurnWorld) => {
   await snapshot(ctx);
   expect(hostState(ctx, "mode")).toBe("compose");
-  expect(hostState(ctx, "layout").rightPanel).toMatchObject({ kind: "agents", focused: false });
+  expect(hostState(ctx, "layout").rightPanel).toMatchObject({
+    kind: "agents",
+    visible: true,
+    focused: false,
+  });
+  // The hint follows the keys: the panel no longer offers Enter.
+  expect(await snapshot(ctx)).toContain("^X a focus");
 });
 
 step("the agents panel has the keys", (ctx: TurnWorld) => {

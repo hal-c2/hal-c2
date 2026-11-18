@@ -131,7 +131,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       { keys: "↑/↓ · k/j", description: "Move between workers", chords: ["up", "down", "k", "j"] },
       { keys: "Enter", description: "Open the worker's thread", chords: ["return"] },
-      { keys: "c", description: "Stop the worker (asks first)", chords: ["c"] },
+      { keys: "c", description: "Interrupt the worker's run (asks first)", chords: ["c"] },
       { keys: "u", description: "Back to the thread that started this one", chords: ["u"] },
       { keys: "Esc / ^P", description: "Return to the conversation", chords: ["escape", "ctrl+p"] },
     ],

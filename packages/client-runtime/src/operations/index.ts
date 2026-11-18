@@ -4,6 +4,7 @@ export {
   deleteProject,
   deleteThread,
   interruptThreadTurn,
+  interruptibleThreadRun,
   respondToThreadApproval,
   resumeThreadQueue,
   respondToThreadUserInput,

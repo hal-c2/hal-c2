@@ -23,7 +23,10 @@ export interface TuiAgentRow {
   readonly title: string;
   readonly elapsed: string;
   readonly stateLabel: string;
-  /** " · provider · model" after the state, clipped to what is left. */
+  /**
+   * " · provider · model" after the state, clipped to what is left; in a
+   * two-line row, " · " and the latest activity instead.
+   */
   readonly meta: string;
   /** Its latest word: progress while it works, its answer once it ended. */
   readonly activity: string;
@@ -32,6 +35,8 @@ export interface TuiAgentRow {
   readonly selected: boolean;
   /** The row's place in `all`, for mouse selection. */
   readonly index: number;
+  /** The lines it is drawn on: three, fewer in a panel too short for one whole worker. */
+  readonly lines: number;
 }
 
 export interface TuiAgentsState {
@@ -47,6 +52,11 @@ export interface TuiAgentsState {
   /** Something still works: the elapsed times move (`agents.tick` once a second). */
   readonly live: boolean;
   readonly blocked: number;
+  /**
+   * The panel is too short for its title, hint and one whole worker: it shows
+   * only the selected worker, on the lines it has, without the title and hint.
+   */
+  readonly compact: boolean;
 }
 
 /** Lines one worker takes: title and time, state and model, latest activity. */
@@ -215,9 +225,18 @@ export function buildTuiAgentsState(input: {
   // The border and paddingX take four columns; the title and hint lines, two of the rows.
   const inner = Math.max(1, input.width - 4);
   const fits = (rows: number) => Math.max(1, Math.floor(rows / AGENT_ROW_LINES));
+  // Too short for the title, the hint and one worker: the selected worker alone,
+  // on the lines inside the border (`lines`), so its state stays in the panel.
+  const compact = input.height - 4 < AGENT_ROW_LINES;
+  const lines = compact
+    ? Math.max(0, Math.min(AGENT_ROW_LINES, input.height - 2))
+    : AGENT_ROW_LINES;
   // An overflowing list gives a line each to "↑ 2 more" and "↓ 1 more".
-  const windowRows =
-    ordered.length > fits(input.height - 4) ? fits(input.height - 6) : fits(input.height - 4);
+  const windowRows = compact
+    ? 1
+    : ordered.length > fits(input.height - 4)
+      ? fits(input.height - 6)
+      : fits(input.height - 4);
   const start = Math.min(
     Math.max(0, selectedIndex - windowRows + 1),
     Math.max(0, ordered.length - windowRows),
@@ -234,6 +253,7 @@ export function buildTuiAgentsState(input: {
     const meta = providerAndModel(agent.driver, agent.model);
     const titleWidth = inner - 2 - (elapsed ? Bun.stringWidth(elapsed) + 1 : 0);
     const labelText = clip(label, inner - 2);
+    const latest = activity(agent, live);
     return {
       id: agent.id,
       state,
@@ -241,11 +261,16 @@ export function buildTuiAgentsState(input: {
       title: padClip(agentTitle(agent), titleWidth),
       elapsed,
       stateLabel: labelText,
-      meta: clip(` · ${meta}`, inner - 2 - Bun.stringWidth(labelText)),
-      activity: clip(activity(agent, live), inner - 2),
+      // Two lines keep the state and the latest word; the model gives way.
+      meta: clip(
+        lines === 2 && latest ? ` · ${latest}` : ` · ${meta}`,
+        inner - 2 - Bun.stringWidth(labelText),
+      ),
+      activity: clip(latest, inner - 2),
       childThreadId: agent.childThreadId,
       selected: start + offset === selectedIndex,
       index: start + offset,
+      lines,
     };
   });
 
@@ -265,10 +290,12 @@ export function buildTuiAgentsState(input: {
     summary,
     rows,
     ids: ordered.map(({ agent }) => agent.id),
-    above: start,
-    below: Math.max(0, ordered.length - start - shown.length),
+    // A compact panel has no line to spare for "↑ 2 more".
+    above: compact ? 0 : start,
+    below: compact ? 0 : Math.max(0, ordered.length - start - shown.length),
     selectedIndex,
     live: ordered.some(({ state }) => state === "working" || state === "blocked"),
     blocked: count("blocked"),
+    compact,
   };
 }

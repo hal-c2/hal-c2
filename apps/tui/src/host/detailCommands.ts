@@ -33,7 +33,8 @@ export function detailCommands(input: {
       title: input.agentsOpen ? "Hide agents panel" : "Show agents panel",
       hint: "^X a",
       keywords: "workers subagents delegated tasks",
-      action: "agents.toggle",
+      // Hiding closes the panel; ^X a's toggle would focus a panel that shows without the keys.
+      action: input.agentsOpen ? "agents.close" : "agents.toggle",
     },
     {
       id: "settings",

@@ -220,10 +220,15 @@ for its matches.
 `subagents` (`presentTuiThread`); a worker is blocked when its own thread's
 shell row has a pending approval or question, and blocked rows sort first.
 Actions: `agents.next/previous`, `agents.select {index}`, `agents.open
-{index?}` (opens the worker's thread), `agents.stop {index?}` (asks, then
-`run.interrupt` with `stopDelegated` on the worker's thread), `agents.parent`
-(back from a worker's thread), and `agents.tick`, the panel's once-a-second
-clock, which runs only while a worker is live.
+{index?}` (opens the worker's thread), `agents.stop {index?}`, `agents.parent`
+(back from a worker's thread), `agents.close`, and `agents.tick`, the panel's
+once-a-second clock, which runs only while a worker is live. `agents.stop`
+interrupts a run; it does not cancel the worker's task. It reads the run an
+interrupt would stop (the worker thread's active run, or one whose background
+work is still pending) and asks only when there is one. Confirming sends
+`run.interrupt` with `stopDelegated` for that run, and only while it is still
+the one to stop: a run that ended or was replaced while the question was open
+gets a status instead.
 
 `addProject` is the add-project flow (`addProjectState.ts`): source, then a
 local folder or a repository and its clone destination, with the folders

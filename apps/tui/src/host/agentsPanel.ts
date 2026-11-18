@@ -25,7 +25,7 @@ const payloadIndex = (payload: unknown): number | undefined => {
 /**
  * The agents panel (`Shell.state.agents`, `agents.*`): the open thread's
  * workers, what each is doing and for how long. Enter follows a worker's own
- * thread; `c` stops it after asking. The host owns the panel slot and
+ * thread; `c` interrupts its run after asking. The host owns the panel slot and
  * forwards store changes (`publish`), open/close (`panelChanged`) and actions.
  */
 export function createAgentsPanel(deps: {
@@ -43,8 +43,12 @@ export function createAgentsPanel(deps: {
    * timeline to follow) unless `keepFocus` leaves them on the panel.
    */
   readonly openThread: (threadId: string, options?: { readonly keepFocus?: boolean }) => void;
-  /** Stop a thread's run and what it delegated (`run.interrupt`, `stopDelegated`). */
-  readonly interrupt: (threadId: string) => Promise<void>;
+  /** Interrupt one run of a thread and what it delegated (`run.interrupt`, `stopDelegated`). */
+  readonly interrupt: (threadId: string, runId: string) => Promise<void>;
+  /** The run of a thread an interrupt would stop now, or null when it has none. */
+  readonly interruptibleRun: (threadId: string) => Promise<string | null>;
+  /** Count a request in `Host.idle()` until it settles. */
+  readonly track: (request: Promise<unknown>) => void;
 }) {
   const { store, state } = deps;
   let selectedId: string | null = null;
@@ -138,28 +142,50 @@ export function createAgentsPanel(deps: {
       return;
     }
     const childThreadId = agent.childThreadId;
-    deps.menu({
-      title: `Stop ${title}?`,
-      returnMode: deps.panel().focused ? AGENTS_PANEL : "compose",
-      options: [
-        {
-          label: "Stop the worker",
-          description: "Its run ends, with what it delegated; the thread that started it is told.",
-          value: "stop",
-        },
-        { label: "Keep it running", description: "Nothing is stopped.", value: "keep" },
-      ],
-      index: 1,
-      onChoose: (choice) => {
-        if (choice !== "stop") return;
-        deps.interrupt(childThreadId).then(
-          // The interrupt resolves even when the worker's thread has no active run,
-          // so this says what was asked, not that the worker stopped.
-          () => store.setStatus(`Asked ${title} to stop.`),
-          () => store.setStatus(`Could not stop ${title}.`, "error"),
-        );
-      },
-    });
+    const returnMode = deps.panel().focused ? AGENTS_PANEL : "compose";
+    const failed = () => store.setStatus(`Could not stop ${title}.`, "error");
+    // The run is read when the user is asked, and only that run is interrupted:
+    // a run started while the question is open is not stopped by its answer.
+    deps.track(
+      deps.interruptibleRun(childThreadId).then((runId) => {
+        if (runId === null) {
+          store.setStatus(`${title} has no run to interrupt.`);
+          return;
+        }
+        deps.menu({
+          title: `Stop ${title}?`,
+          returnMode,
+          options: [
+            {
+              label: "Stop the worker",
+              description:
+                "Its run is interrupted, with what it delegated; the thread that started it is told.",
+              value: "stop",
+            },
+            { label: "Keep it running", description: "Nothing is stopped.", value: "keep" },
+          ],
+          index: 1,
+          onChoose: (choice) => {
+            if (choice !== "stop") return;
+            deps.track(
+              deps.interruptibleRun(childThreadId).then((current) => {
+                if (current !== runId) {
+                  store.setStatus(
+                    current === null
+                      ? `${title}'s run already ended; nothing was stopped.`
+                      : `${title} started another run; press c again to stop it.`,
+                  );
+                  return;
+                }
+                return deps
+                  .interrupt(childThreadId, runId)
+                  .then(() => store.setStatus(`Asked ${title} to stop.`), failed);
+              }, failed),
+            );
+          },
+        });
+      }, failed),
+    );
   };
 
   const dispatch = (action: string, payload?: unknown): boolean => {

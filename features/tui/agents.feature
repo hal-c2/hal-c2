@@ -41,12 +41,57 @@ Feature: The terminal client's agents panel
     And the agents panel is closed and the prompt has the keys
 
   @tui
+  Scenario: On a narrow terminal, going back to the parent shows it in place of the panel
+    Given the terminal is narrowed to 72 columns
+    And the agents panel is open
+    And the user selects the worker "Fix the tests" and presses "Enter"
+    And the conversation shows the worker's thread
+    When the user opens the agents panel
+    And the user presses "u"
+    Then the conversation shows "Delegating"
+    And the agents panel is closed and the prompt has the keys
+
+  @tui
+  Scenario: A click selects a worker, and a second click opens it
+    Given the agents panel is open
+    When the user clicks the worker "Review the docs"
+    Then the conversation shows "Delegating"
+    When the user clicks the worker "Review the docs"
+    Then the conversation shows the thread of "Review the docs"
+
+  @tui
+  Scenario: Opening a worker the thread filter hides clears the filter
+    Given the thread list is filtered to "Delegating"
+    And the agents panel is open
+    When the user selects the worker "Fix the tests" and presses "Enter"
+    Then the conversation shows the worker's thread
+    And the thread list is no longer filtered and the worker's thread stays selected
+
+  @tui
   Scenario: Stopping a worker asks first, then asks its run to stop
     Given the agents panel is open
     When the user selects the worker "Fix the tests" and presses "c"
     Then the client asks "Stop Fix the tests?" with "Keep it running" chosen
+    And nothing was stopped
     When the user chooses "Stop the worker" in the question
-    Then the client stops the run of the worker's thread
+    Then the client requests an interrupt of the run the user was asked about
+
+  @tui
+  Scenario: A worker with no run to interrupt is not stopped
+    Given the agents panel is open
+    And the worker "Fix the tests" has no run to interrupt
+    When the user selects the worker "Fix the tests" and presses "c"
+    Then the status says "Fix the tests has no run to interrupt."
+    And nothing was stopped
+
+  @tui
+  Scenario: A run that started while the user was asked is not stopped
+    Given the agents panel is open
+    When the user selects the worker "Fix the tests" and presses "c"
+    And the worker "Fix the tests" starts another run
+    And the user chooses "Stop the worker" in the question
+    Then the status says "Fix the tests started another run; press c again to stop it."
+    And nothing was stopped
 
   @tui
   Scenario: A worker that ended cannot be stopped
@@ -64,3 +109,25 @@ Feature: The terminal client's agents panel
     Then the agents panel has the keys
     When the user presses "Ctrl+X" and then "a"
     Then the agents panel is closed
+
+  @tui
+  Scenario: Clicking the prompt takes the keys, and the leader key gives them back to the panel
+    Given the agents panel is open
+    When the user clicks the prompt
+    Then the prompt has the keys and the agents panel stays open
+    When the user presses "Ctrl+X" and then "a"
+    Then the agents panel has the keys
+
+  @tui
+  Scenario: Hiding the agents panel from the command palette closes it
+    Given the agents panel is open
+    When the user presses "Esc"
+    And the user chose "Hide agents panel" from the command palette
+    Then the agents panel is closed
+
+  @tui
+  Scenario: Showing the agents panel from the file browser closes the browser
+    Given the user browses the open thread's files
+    When the user chose "Show agents panel" from the command palette
+    Then the agents panel has the keys
+    And the file browser is closed

@@ -182,6 +182,28 @@ describe("buildTuiAgentsState", () => {
     expect(build(agents.slice(0, 4), { height: 17 }).rows).toHaveLength(4);
   });
 
+  it("keeps the selected worker inside a panel too short for one whole worker", () => {
+    const agents = [
+      agent("a", { progress: "Reading the tests" }),
+      agent("b", { progress: "Running bun test", startedAt: at(30) }),
+    ];
+    expect(build(agents, { height: 7 }).compact).toBe(false);
+
+    // Four rows (80 by 24 with the terminal open): the border and two lines.
+    const short = build(agents, { height: 4, selectedId: "b" });
+    expect(short.compact).toBe(true);
+    expect(short.rows.map((row) => [row.id, row.lines])).toEqual([["b", 2]]);
+    // The state and the latest word share the second line; the model gives way.
+    expect(short.rows[0]!.meta).toBe(" · Running bun test");
+    expect([short.above, short.below]).toEqual([0, 0]);
+
+    // Five or six: the whole worker, without the title and hint.
+    expect(build(agents, { height: 5 }).rows.map((row) => row.lines)).toEqual([3]);
+    // Three: its title line alone; two: nothing fits inside the border.
+    expect(build(agents, { height: 3 }).rows.map((row) => row.lines)).toEqual([1]);
+    expect(build(agents, { height: 2 }).rows.map((row) => row.lines)).toEqual([0]);
+  });
+
   it("falls back to the first worker when the selected one is gone, and is empty with none", () => {
     expect(build([agent("a"), agent("b")], { selectedId: "gone" }).selectedIndex).toBe(0);
     const empty = build([]);

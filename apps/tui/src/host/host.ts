@@ -319,6 +319,8 @@ export function createHost(options: HostOptions): Host {
   let filesOpen = false;
   // So do the Spaces and their pages (SpaceView).
   let spaceOpen = false;
+  // Requests an action started outside the composer (a worker's interrupt): `idle()` waits on them.
+  const requests = new Set<Promise<unknown>>();
   // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
   let editorRows: number | undefined;
   let popoverRows = 0;
@@ -687,6 +689,9 @@ export function createHost(options: HostOptions): Host {
 
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
+    // The file browser hides the panel; asking for the agents panel's keys closes it,
+    // so the keys never go to a panel the user cannot see.
+    if (kind === AGENTS_PANEL && focused && filesOpen) files.close();
     const previous = rightPanel;
     rightPanel = kind;
     rightPanelFocused = kind !== null && focused;
@@ -730,12 +735,18 @@ export function createHost(options: HostOptions): Host {
     openThread: (threadId, open) => {
       const focused = rightPanelFocused && open?.keepFocus === true;
       dispatch("thread.open", { key: threadKey(threadId) });
-      // A panel standing in for the conversation closes when it gives the keys back,
-      // as `rightPanel.blur` does, so the opened thread is what the user sees.
-      if (!focused && layout?.rightPanel.asMain) setRightPanel(null, false);
+      // A panel standing in for the conversation closes, so the opened thread is
+      // what the user sees; ^X a brings it back, with its way to the parent.
+      if (layout?.rightPanel.asMain) setRightPanel(null, false);
       else setRightPanel(AGENTS_PANEL, focused);
     },
-    interrupt: (threadId) => client.interrupt(ThreadId.make(threadId)),
+    interrupt: (threadId, runId) => client.interrupt(ThreadId.make(threadId), runId),
+    interruptibleRun: (threadId) => client.interruptibleRun(ThreadId.make(threadId)),
+    track: (request) => {
+      const done = () => void requests.delete(request);
+      requests.add(request);
+      request.then(done, done);
+    },
   });
 
   /** The selected thread's terminal and file workspace: its worktree, else the project root. */
@@ -1285,6 +1296,8 @@ export function createHost(options: HostOptions): Host {
       case "composer.focus":
         palette.dispatch("palette.close");
         composer!.dispatch("select.close");
+        // A focused panel gives the keys up with it, so ^X a focuses it again.
+        if (rightPanelFocused) setRightPanel(rightPanel, false);
         setMode("compose");
         return true;
       case "thread.open": {
@@ -1371,6 +1384,9 @@ export function createHost(options: HostOptions): Host {
           return true;
         }
         return handle("rightPanel.toggle", { kind: AGENTS_PANEL });
+      case "agents.close":
+        if (rightPanel === AGENTS_PANEL) setRightPanel(null, false);
+        return true;
       case "rightPanel.open": {
         const kind = payloadField(payload, "kind");
         setRightPanel(typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL, true);
@@ -1788,7 +1804,13 @@ export function createHost(options: HostOptions): Host {
     state,
     dispatch,
     setMode,
-    idle: () => composer!.idle(),
+    idle: async () => {
+      for (;;) {
+        await composer!.idle();
+        if (requests.size === 0) return;
+        await Promise.allSettled(requests);
+      }
+    },
     resize: (next) => {
       if (next.columns === size.columns && next.rows === size.rows) return;
       size = next;

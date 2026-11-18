@@ -3,12 +3,17 @@ import OpenTUI
 // The agents panel: the open thread's workers (`Shell.state.agents`, drawn to
 // the panel and windowed by the host). A worker waiting on the user, for an
 // approval or an answer, sits first in the warning colour. Keys come from the
-// shell's agents-mode shortcuts; a click selects, a second click opens.
+// shell's agents-mode shortcuts; a click selects, a second click on the same
+// worker opens it. A panel too short for one whole worker (`agents.compact`)
+// drops its title and hint and draws the selected worker on the lines it has.
 Rectangle {
     id: panel
     objectName: "agentsPanel"
     readonly property var agents: Shell.state.agents
-    readonly property bool focused: Shell.state.layout.rightPanel.focused
+    // The keys, not the layout's flag: a click on the prompt takes them without closing the panel.
+    readonly property bool focused: Shell.state.mode === "agents"
+    // The worker the mouse last clicked: the host's first highlight is not a click.
+    property string clickedId: ""
 
     border.width: 1
     border.style: "rounded"
@@ -39,6 +44,7 @@ Rectangle {
 
     Text {
         objectName: "agentsTitle"
+        visible: !panel.agents.compact
         height: 1
         wrapMode: "none"
         Bold { text: "Agents"; color: Theme.colors.text }
@@ -48,11 +54,12 @@ Rectangle {
         }
     }
     Text {
+        visible: !panel.agents.compact
         height: 1
         wrapMode: "none"
         truncate: true
         text: panel.focused
-            ? "Enter open · c stop · Esc"
+            ? "Enter open · c interrupt · Esc"
             : "^X a focus"
         color: Theme.colors.dim
     }
@@ -88,11 +95,13 @@ Rectangle {
             objectName: "agentRow"
             flexShrink: 0
             flexDirection: "column"
-            height: 3
+            height: modelData.lines
             color: modelData.selected ? Theme.colors.selectedBg : Theme.colors.bg
-            onMouseDown: Shell.dispatch(
-                modelData.selected ? "agents.open" : "agents.select",
-                { index: modelData.index })
+            onMouseDown: {
+                const again = modelData.selected && panel.clickedId === modelData.id
+                panel.clickedId = modelData.id
+                Shell.dispatch(again ? "agents.open" : "agents.select", { index: modelData.index })
+            }
             Text {
                 height: 1
                 wrapMode: "none"
@@ -108,6 +117,7 @@ Rectangle {
                 }
             }
             Text {
+                visible: modelData.lines >= 2
                 height: 1
                 wrapMode: "none"
                 text: "  "
@@ -115,6 +125,7 @@ Rectangle {
                 Span { text: modelData.meta; color: Theme.colors.dim }
             }
             Text {
+                visible: modelData.lines >= 3
                 height: 1
                 wrapMode: "none"
                 text: "  " + modelData.activity
