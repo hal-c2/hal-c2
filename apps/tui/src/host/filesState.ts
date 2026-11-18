@@ -104,6 +104,11 @@ export interface FilesController {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   readonly close: () => void;
   readonly isOpen: () => boolean;
+  /**
+   * The file whose edit is not on disk yet: a save failed or is still on its way,
+   * or a refused write left the edit on screen.
+   */
+  readonly unsaved: () => string | null;
   /** The mode the open browser has the keys in. */
   readonly mode: () => "files" | "fileEdit";
   /** Republish after a resize. */
@@ -214,9 +219,24 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     /** The rendering, laid out to `renderedWidth`. */
     rendered?: StyledText[] | undefined;
     renderedWidth?: number;
-    edit?: { text: string; seq: number; save: TuiFileViewerState["save"] } | undefined;
+    edit?:
+      | {
+          text: string;
+          seq: number;
+          save: TuiFileViewerState["save"];
+          /** Esc was pressed: the editor closes once the edit is written. */
+          closing?: boolean;
+        }
+      | undefined;
+    /** An edit a refused write left on screen: not on disk, it goes only when the user lets it. */
+    kept?: boolean;
   } | null = null;
   let editSeq = 0;
+  /**
+   * The files being written, one write each at a time, with the text a save asked
+   * for meanwhile: that follows, so an older write never lands after a newer one.
+   */
+  const writing = new Map<string, { next: string | null }>();
   /**
    * Workspaces whose MC refused a write by full path: their files outside the
    * project open read-only from then on. The client learns its scopes only so.
@@ -483,30 +503,46 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-  /** Write the edit; the answer to an older save never marks a newer edit as saved. */
+  /** Write the edit, after any write of the file still under way. */
   const save = () => {
     const edit = viewer?.edit;
     if (!viewer || !edit || edit.save === "saved") return;
-    const { path } = viewer;
-    const workspace = cwd;
-    const text = edit.text;
+    const pending = writing.get(viewer.path);
+    if (pending) pending.next = edit.text;
+    else write(viewer.path, cwd, edit.text);
+  };
+
+  /** The answer to a write marks the edit saved only when it is the last one and the edit is what it wrote. */
+  const write = (path: string, workspace: string, text: string) => {
+    const pending: { next: string | null } = { next: null };
+    writing.set(path, pending);
     const call = client.writeFile
-      ? client.writeFile(cwd, path, text)
+      ? client.writeFile(workspace, path, text)
       : Promise.reject(new Error("This server cannot write files."));
+    // A save asked for while this one was under way writes its text now, whatever became of this.
+    const followed = () => {
+      writing.delete(path);
+      if (pending.next === null || pending.next === text) return false;
+      write(path, workspace, pending.next);
+      return true;
+    };
     track(
       call.then(
         () => {
+          const more = followed();
           if (viewer?.path !== path || !viewer.edit) return;
           // What was written is the file now, whether or not more was typed since.
           viewer.lines = text.split("\n");
           viewer.rendered = undefined;
-          if (viewer.edit.text === text) {
+          if (!more && viewer.edit.text === text) {
             viewer.edit.save = "saved";
             options.status?.(`Saved ${path}.`, "success");
+            if (viewer.edit.closing) closeEditor();
           }
           publish();
         },
         (error: unknown) => {
+          if (followed()) return;
           if (path.startsWith("/") && hostWriteRefused(error)) {
             hostWritesRefused.add(workspace);
             options.status?.(`Could not save ${path}: ${HOST_WRITE_REFUSED}`, "error");
@@ -515,12 +551,14 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
             viewer.lines = viewer.edit.text.split("\n");
             viewer.rendered = undefined;
             viewer.edit = undefined;
+            viewer.kept = true;
             options.setEditing?.(false);
             publish();
             return;
           }
           if (viewer?.path !== path || !viewer.edit) return;
           viewer.edit.save = "error";
+          viewer.edit.closing = false;
           options.status?.(`Could not save ${path}: ${errorText(error)}`, "error");
           publish();
         },
@@ -540,17 +578,28 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
   };
 
-  /** Esc in the editor: what is not saved yet is written first. */
-  const finishEdit = () => {
+  const closeEditor = () => {
     if (!viewer?.edit) return;
-    const failed = viewer.edit.save === "error";
-    save();
-    // A failed save keeps the editor open with the edit in it.
-    if (failed) return;
     viewer.lines = viewer.edit.text.split("\n");
     viewer.rendered = undefined;
     viewer.edit = undefined;
     options.setEditing?.(false);
+    publish();
+  };
+
+  /**
+   * Esc in the editor: what is not saved yet is written first, and the editor
+   * closes once it is. A write that fails keeps it open with the edit in it.
+   */
+  const finishEdit = () => {
+    const edit = viewer?.edit;
+    if (!edit) return;
+    if (edit.save === "saved") {
+      closeEditor();
+      return;
+    }
+    edit.closing = true;
+    save();
     publish();
   };
 
@@ -720,6 +769,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           if (!viewer?.edit || typeof text !== "string" || text === viewer.edit.text) return true;
           viewer.edit.text = text;
           viewer.edit.save = "pending";
+          // Typing again after Esc keeps the editor open.
+          viewer.edit.closing = false;
           publish();
           return true;
         }
@@ -751,6 +802,12 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     },
     close,
     isOpen: () => open,
+    unsaved: () =>
+      open &&
+      viewer &&
+      (viewer.kept || (viewer.edit && viewer.edit.save !== "saved") || writing.has(viewer.path))
+        ? viewer.path
+        : null,
     mode: () => (viewer?.edit ? "fileEdit" : "files"),
     sync: () => {
       if (open) publish();

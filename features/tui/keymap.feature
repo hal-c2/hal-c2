@@ -166,7 +166,7 @@ Feature: Keyboard map of the terminal client
   @tui
   Scenario: The settings overlay lists every binding by context
     When the user opens settings from the command palette
-    Then the keybinding reference lists the Global, Conversation, Terminal, Source control and Overlays groups
+    Then the keybinding reference lists the Global, Conversation, Terminal, Source control, Agents and Overlays groups
     And every chord the client handles appears in it
 
   @tui

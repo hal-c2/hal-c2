@@ -82,6 +82,7 @@ const KEY: Record<string, string> = {
   "space.select": "space.next",
   "terminal.scroll": "terminal.scroll.lineUp",
   "composer.queue.resume": "leader.run.q",
+  "agents.parent": "agents.parent",
 };
 /** A palette entry: a command that dispatches this action is defined. */
 const PALETTE: Record<string, string> = {
@@ -115,6 +116,8 @@ const DYNAMIC: Record<string, string> = {
   "TerminalDrawer.qml": "terminal.scroll.lineUp",
   "Sidebar.qml": "thread.next",
   "Conversation.qml": "timeline.showEnd",
+  // A click selects a worker, a second opens it: the arrows and Enter.
+  "AgentsPanel.qml": "agents.open",
 };
 
 const boundActions = new Set(

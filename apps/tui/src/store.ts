@@ -161,13 +161,13 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
   let vcsCwd: string | null = null;
 
   const selectedThreadId = () => (state.selection?.kind === "thread" ? state.selection.id : null);
-  const rowsNow = () =>
+  const rowsNow = (filter = state.filter, selectedId = selectedThreadId()) =>
     buildRows(
       state.shell,
       state.expanded,
       state.settledShown,
-      selectedThreadId(),
-      state.filter,
+      selectedId,
+      filter,
       state.projectScopeId,
       now(),
       state.showSettledPluginThreads,
@@ -313,7 +313,17 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       const target = rowsNow().filter((row) => row.kind === "thread")[index - 1];
       if (target) applySelection(selectionFromRow(target));
     },
-    select: (selection) => applySelection(selection),
+    select: (selection) => {
+      // A thread opened from outside the list (a worker from the agents panel, a
+      // page's link) clears a filter that hides it; the next update would
+      // otherwise move the selection to a listed row.
+      if (selection?.kind === "thread" && state.filter !== "") {
+        const listed = (filter: string) =>
+          rowsNow(filter, selection.id).some((row) => selectionEquals(selection, row));
+        if (!listed(state.filter) && listed("")) state = { ...state, filter: "" };
+      }
+      applySelection(selection);
+    },
     toggleProject: (id) => {
       state = { ...state, projectScopeId: id };
       ensureValidSelection(rowsNow());

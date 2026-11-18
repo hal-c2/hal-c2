@@ -60,8 +60,11 @@ Rectangle {
         readonly property int editSeq: viewer.file ? viewer.file.editSeq : 0
         onEditSeqChanged: if (viewer.file && viewer.file.editing) text = viewer.file.editText
         visible: editing
-        onVisibleChanged: if (visible) forceActiveFocus()
-        focus: editing
+        // The keys are the editor's in its own mode only: ^X opens the leader over it,
+        // and the key that follows is the leader's, not typed into the file.
+        readonly property bool hasKeys: editing && Shell.state.mode === "fileEdit"
+        onHasKeysChanged: if (hasKeys) forceActiveFocus()
+        focus: hasKeys
         flexGrow: 1
         flexShrink: 1
         flexBasis: 0

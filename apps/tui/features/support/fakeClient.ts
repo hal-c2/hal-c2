@@ -620,6 +620,8 @@ export function fakeClient({
     setRuntimeMode: echo((runtimeMode) => ({ runtimeMode }) as never),
     setThreadModel: echo((modelSelection) => ({ modelSelection }) as never) as never,
     interrupt: async () => {},
+    // Every fake thread has a run to stop unless a step says otherwise.
+    interruptibleRun: async (threadId: string) => `run-${threadId}`,
     resumeQueue: async () => {},
     renameThread,
     archiveThread,
