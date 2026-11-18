@@ -191,6 +191,16 @@ fn ensure_shell(world: &mut World) -> Outcome {
 
 /// The MC's keybindings.json becomes `rules`, pushed when the shell is
 /// connected and in the snapshot when it connects.
+/// Waits for the shell's keymap to hold the rules the MC's config has: rules
+/// stored before the shell subscribed reach it with the config, whenever that
+/// lands, so a step that leans on them waits for them first.
+pub(crate) fn await_rules(world: &mut World) -> Outcome {
+    let rules = stored_rules(&mut world.mc);
+    world.wait_for("the keybinding rules to reach the shell", move |w| {
+        keymap_of(w).rules() == rules
+    })
+}
+
 fn set_rules(world: &mut World, rules: Vec<Value>) -> Outcome {
     fake_config(&mut world.mc)
         .config
