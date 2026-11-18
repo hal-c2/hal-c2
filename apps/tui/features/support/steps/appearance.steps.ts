@@ -22,6 +22,7 @@ import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { launchSetup, type LaunchWorld } from "../launchWorld.ts";
 import { thread } from "../fakeClient.ts";
+import { chooseCommand } from "../threadUi.ts";
 import {
   checkpoint,
   hostState,
@@ -812,6 +813,18 @@ step("an image is open full size", async (ctx: ImageWorld) => {
   await clickImage(ctx);
   expect(hostState(ctx, "imageViewer")).not.toBeNull();
 });
+
+// ^P gives the prompt the keys over the image, so ^K opens the palette with the image still open.
+step(
+  "the user takes the prompt and shows the agents panel from the command palette",
+  async (ctx: ImageWorld) => {
+    await pressKey(ctx, "Ctrl+P");
+    await settleWorld(ctx);
+    expect(hostState(ctx, "imageViewer")).not.toBeNull();
+    await chooseCommand(ctx, "Show agents panel");
+    await settleWorld(ctx);
+  },
+);
 
 step("the image closes", async (ctx: ImageWorld) => {
   expect(hostState(ctx, "imageViewer")).toBeNull();
