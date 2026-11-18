@@ -18,6 +18,13 @@
 //! helper's pipe fills and the helper waits in its write; nothing is dropped
 //! and at most [`CAPACITY`] chunks wait for the UI.
 //!
+//! DECISION: the helper's end comes after everything it wrote, however long
+//! the UI takes, and it never waits on a guess of time. Once the helper and
+//! its group are gone, everything the helper wrote is in its pipes. The
+//! thread that waits for it then closes a pipe of its own, and each reader
+//! takes what is left in its pipe and ends. That holds even when something
+//! outside the group still holds the pipe open.
+//!
 //! Where Qt reports `started` later, once the process exists, this reports
 //! it as soon as `start()` has spawned the helper.
 
@@ -27,11 +34,12 @@ mod prop;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{PipeReader, Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
@@ -408,19 +416,20 @@ impl Process {
                 });
             }
         }
+        // Closed once the helper and its group are gone ([`Reader::read`]).
+        // Made before the helper, so that a failure leaves no helper behind;
+        // std's pipes are close-on-exec, so the helper does not hold it.
+        let (gone, going) = std::io::pipe()?;
         let mut child = command.spawn()?;
         let pid = child.id();
         let stdin = child.stdin.take();
         let (done, drained) = mpsc::channel();
-        // Readers waiting for the UI to take what they read, not for the
-        // pipe: those are waited for however long the UI takes.
-        let handing = Arc::new(AtomicUsize::new(0));
         let reader = Reader {
             shared: shared.clone(),
             id,
             run,
             done,
-            handing: handing.clone(),
+            gone: Arc::new(gone),
         };
         if let Some(out) = child.stdout.take() {
             reader.clone().read(out, Event::Stdout);
@@ -435,17 +444,10 @@ impl Process {
             // Whatever the helper left behind goes with it, as the end of a
             // QProcess does; its pipes then close.
             signal_group(i64::from(pid), true);
-            // The readers end with the pipes. One that does not (something
-            // out of the group holds it) is not waited for; one handing
-            // output to the UI is, so the end comes after all of it.
-            loop {
-                match drained.recv_timeout(Duration::from_secs(1)) {
-                    Ok(()) => {}
-                    Err(mpsc::RecvTimeoutError::Timeout) if handing.load(Ordering::Acquire) > 0 => {
-                    }
-                    Err(_) => break,
-                }
-            }
+            // All the helper wrote is in its pipes now. Its readers take it
+            // and end, so the end comes after all of it.
+            drop(going);
+            while drained.recv().is_ok() {}
             // A helper a signal ended has no code: not a normal exit.
             let code = status.and_then(|s| s.code());
             let (lock, cv) = &*flag;
@@ -512,31 +514,101 @@ struct Reader {
     run: u64,
     /// Dropped when the reader ends.
     done: mpsc::Sender<()>,
-    handing: Arc<AtomicUsize>,
+    /// Ends (reads as closed) once the helper and its group are gone.
+    gone: Arc<PipeReader>,
 }
 
 impl Reader {
-    /// Reads `pipe` to its end, handing each chunk over as `event` of the
-    /// run. The UI gone, it stops reading.
-    fn read(self, mut pipe: impl Read + Send + 'static, event: fn(Vec<u8>) -> Event) {
+    /// Reads `pipe`, handing each chunk over as `event` of the run. It
+    /// stops at the pipe's end, or once the helper is gone and the pipe
+    /// holds nothing more: something outside the helper's group may hold
+    /// the pipe open, and what that writes later is not the helper's. The
+    /// UI gone, it stops reading too.
+    fn read(self, mut pipe: impl Pipe, event: fn(Vec<u8>) -> Event) {
         std::thread::spawn(move || {
             let mut buffer = vec![0; 64 * 1024];
-            while let Ok(n) = pipe.read(&mut buffer) {
-                if n == 0 {
+            loop {
+                // The wait looked at the pipe before it saw the helper gone,
+                // so the pipe is looked at again: the helper's last output
+                // may have come in between.
+                if !output_or_end(&pipe, &self.gone) && !has_output(&pipe) {
                     break;
                 }
-                self.handing.fetch_add(1, Ordering::AcqRel);
-                let sent = self
-                    .shared
-                    .send((self.id, self.run, event(buffer[..n].to_vec())));
-                self.handing.fetch_sub(1, Ordering::AcqRel);
-                if sent.is_err() {
+                let n = match pipe.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                let chunk = (self.id, self.run, event(buffer[..n].to_vec()));
+                if self.shared.send(chunk).is_err() {
                     break;
                 }
             }
             drop(self.done);
         });
     }
+}
+
+/// One of the helper's pipes, which its reader waits on before reading it.
+#[cfg(unix)]
+trait Pipe: Read + AsFd + Send + 'static {}
+#[cfg(unix)]
+impl<T: Read + AsFd + Send + 'static> Pipe for T {}
+
+/// Waits until `pipe` has output or has ended, so that a read does not
+/// block (true), or until `gone` closes (false). It reads neither.
+#[cfg(unix)]
+fn output_or_end(pipe: &impl AsFd, gone: &PipeReader) -> bool {
+    let mut fds = [poll_in(pipe), poll_in(gone)];
+    poll(&mut fds, -1);
+    // A poll that failed says nothing: the read then says what is wrong.
+    fds[0].revents != 0 || fds[1].revents == 0
+}
+
+/// Whether a read of `pipe` would not block now: it has output, or has
+/// ended.
+#[cfg(unix)]
+fn has_output(pipe: &impl AsFd) -> bool {
+    let mut fds = [poll_in(pipe)];
+    poll(&mut fds, 0);
+    fds[0].revents != 0
+}
+
+#[cfg(unix)]
+fn poll_in(fd: &impl AsFd) -> libc::pollfd {
+    libc::pollfd {
+        fd: fd.as_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    }
+}
+
+/// poll(2), again when a signal interrupts it.
+#[cfg(unix)]
+fn poll(fds: &mut [libc::pollfd], timeout: libc::c_int) {
+    loop {
+        // SAFETY: poll reads and writes `fds`, which outlive the call.
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
+        if n >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return;
+        }
+    }
+}
+
+// Not Windows: its pipes cannot be polled, so a reader there reads to the
+// pipe's end. The desktop-ljos shell is built for Linux and macOS.
+#[cfg(not(unix))]
+trait Pipe: Read + Send + 'static {}
+#[cfg(not(unix))]
+impl<T: Read + Send + 'static> Pipe for T {}
+
+#[cfg(not(unix))]
+fn output_or_end<T>(_: &T, _: &PipeReader) -> bool {
+    true
+}
+
+#[cfg(not(unix))]
+fn has_output<T>(_: &T) -> bool {
+    true
 }
 
 #[cfg(unix)]

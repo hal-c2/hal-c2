@@ -213,6 +213,56 @@ wait"#,
 }
 
 #[test]
+fn everything_a_helper_wrote_comes_before_its_end() {
+    let f = Fixture::new("all-of-it");
+    // Far more than the stream holds (64 chunks) and the pipe holds: the
+    // helper ends while most of what it wrote still waits for the UI.
+    let helper = f.helper(
+        "helper.sh",
+        r#"yes '{"type":"status","phase":"recording"}' | head -n 100000
+echo '{"type":"transcript","text":"the last line"}'"#,
+    );
+    assert!(f.start(&helper));
+    f.until("the end", |f| f.get("running") == "false");
+    assert_eq!(f.get("error"), "");
+    assert_eq!(f.get("heard"), "the last line");
+    assert_eq!(f.get("heardCount"), "1");
+}
+
+/// A process the helper started in a session of its own outlives the
+/// helper's group and holds its pipes open. The run still ends when the
+/// helper does, with all the helper wrote.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pipe_held_open_outside_the_helpers_group_does_not_hold_up_its_end() {
+    let f = Fixture::new("held-open");
+    let pid_file = f.dir.join("pid");
+    let helper = f.helper(
+        "helper.sh",
+        &format!(
+            r#"setsid sh -c 'echo $$ > {pid}; exec sleep 600' &
+until [ -s {pid} ]; do :; done
+echo '{{"type":"transcript","text":"left one behind"}}'"#,
+            pid = pid_file.display()
+        ),
+    );
+    assert!(f.start(&helper));
+    f.until("the end", |f| f.get("running") == "false");
+    assert_eq!(f.get("error"), "");
+    assert_eq!(f.get("heard"), "left one behind");
+    let outsider: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: signal 0 only asks whether the process exists; SIGKILL ends
+    // the sleep this test started.
+    let alive = unsafe { libc::kill(outsider, 0) == 0 };
+    unsafe { libc::kill(outsider, libc::SIGKILL) };
+    assert!(alive, "the process outside the group held the pipes open");
+}
+
+#[test]
 fn a_helper_that_fails_says_what_it_wrote_to_stderr() {
     let f = Fixture::new("fails");
     let helper = f.helper("helper.sh", "echo 'no microphone' >&2\nexit 1");
