@@ -1266,6 +1266,39 @@ fn a_snapshot_of_a_members_progress_does_not_redraw_its_group() {
     assert!(!redrawn(&w));
 }
 
+// Regression (timeline_prop): a model a member's subagent was given while
+// the client was away, read back from a snapshot, is drawn by the lone
+// subagent's row, never by a group.
+#[test]
+fn a_snapshot_of_a_members_model_does_not_redraw_its_group() {
+    let mut w = World::new();
+    w.seq = 4;
+    let rows = |agent: Json| {
+        vec![
+            row("run", run("running")),
+            row("subagent", agent),
+            row(
+                "turn-item",
+                item("suba-2", "subagent", 2, json!({"subagentId": "agent-1"})),
+            ),
+            row(
+                "turn-item",
+                item("suba-3", "subagent", 3, json!({"subagentId": "agent-2"})),
+            ),
+        ]
+    };
+    w.snapshot(rows(json!({"id": "agent-1"})));
+    let group = w.tl.row_id(w.last_of("subagents")).unwrap().to_owned();
+    let redrawn = |w: &World| w.view.redrawn.iter().any(|(id, _)| *id == group);
+    w.view.redrawn.clear();
+    w.snapshot(rows(json!({"id": "agent-1", "model": "sonnet"})));
+    assert!(!redrawn(&w));
+    w.snapshot(rows(
+        json!({"id": "agent-1", "model": "sonnet", "status": "failed"}),
+    ));
+    assert!(redrawn(&w));
+}
+
 #[test]
 fn a_subagent_model_changed_back_redraws_nothing() {
     let mut w = World::new();

@@ -78,6 +78,9 @@ const STRUCTURAL: [&str; 6] = [
     "inputIntent",
     "nodeId",
 ];
+/// The fields of a member's subagent a subagents group draws: avatars,
+/// statuses and span.
+const GROUP_MEMBER_FIELDS: [&str; 4] = ["title", "status", "startedAt", "completedAt"];
 const SETTLED: [&str; 4] = ["completed", "failed", "interrupted", "cancelled"];
 const RUNNING: [&str; 4] = ["preparing", "starting", "running", "waiting"];
 
@@ -1789,17 +1792,30 @@ impl Timeline {
         let differs = |kind: &str, id: &str| {
             !id.is_empty() && was(kind, id).unwrap_or(&NONE) != self.entity(kind, id)
         };
+        // A subagents group draws only these of a member's subagent; its
+        // model, progress and result are the lone subagent row's.
+        let group_differs = |id: &str| {
+            let was = was("subagent", id).unwrap_or(&NONE);
+            let now = self.entity("subagent", id);
+            GROUP_MEMBER_FIELDS
+                .iter()
+                .any(|field| was.get(*field) != now.get(*field))
+        };
         let mut changed = HashSet::new();
         let mut restated = HashSet::new();
         for (id, item) in self.entities("turn-item") {
             let was_item = was("turn-item", id);
-            let others = differs("runtime-request", text(item, "requestId"))
-                || differs("subagent", text(item, "subagentId"));
-            if was_item.unwrap_or(&NONE) == item && !others {
+            let request = differs("runtime-request", text(item, "requestId"));
+            let agent = text(item, "subagentId");
+            let subagent = differs("subagent", agent);
+            if was_item.unwrap_or(&NONE) == item && !request && !subagent {
                 continue;
             }
             changed.insert(id.clone());
-            if others || !was_item.is_some_and(|was| only_appended(was, item)) {
+            if request
+                || (subagent && group_differs(agent))
+                || !was_item.is_some_and(|was| only_appended(was, item))
+            {
                 restated.insert(id.clone());
             }
         }
