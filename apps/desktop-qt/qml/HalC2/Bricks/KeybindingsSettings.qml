@@ -67,6 +67,8 @@ Rectangle {
 
         property string key: ""
         property string label: ""
+        // The command it binds, for its accessible name.
+        property string command: ""
         property bool recording: false
         signal recorded(string key)
 
@@ -78,7 +80,7 @@ Rectangle {
         border.color: recording || activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: qsTr("Shortcut")
+        Accessible.name: command.length > 0 ? qsTr("Shortcut for %1").arg(command) : qsTr("Shortcut")
 
         onActiveFocusChanged: if (!activeFocus)
             recording = false
@@ -460,6 +462,7 @@ Rectangle {
 
                         KeyRecorder {
                             objectName: "keyField"
+                            command: row.modelData.label
                             key: row.keyDraft
                             label: row.labelDraft
                             onRecorded: next => {
@@ -515,6 +518,7 @@ Rectangle {
                             visible: !rowWhen.visible
                             subtle: true
                             text: qsTr("Edit condition")
+                            Accessible.name: qsTr("Edit condition for %1").arg(row.modelData.label)
                             onClicked: {
                                 row.editingWhen = true;
                                 rowWhen.edit();

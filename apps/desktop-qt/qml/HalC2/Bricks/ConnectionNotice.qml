@@ -67,8 +67,8 @@ Item {
         background: Rectangle {
             radius: height / 2
             color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: chip.hovered || notice.open ? notice.tint : Theme.palette.color("border", "#27272a")
-            border.width: 1
+            border.color: chip.visualFocus ? Theme.palette.color("focus", "#3b82f6") : chip.hovered || notice.open ? notice.tint : Theme.palette.color("border", "#27272a")
+            border.width: chip.visualFocus ? 2 : 1
         }
 
         contentItem: Item {
