@@ -1628,7 +1628,10 @@ defmodule HalC2.Orchestration.Delegation do
     |> String.replace("\r", "&#13;")
   end
 
-  defp status(thread_id, task_id) do
+  defp status(thread_id, task_id), do: thread_id |> snapshot(task_id) |> elem(0)
+
+  # A task's status and the request its child is blocked on, read together.
+  defp snapshot(thread_id, task_id) do
     with %{} = task <- subagent(thread_id, task_id) do
       child = stream(task["childThreadId"])
       runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
@@ -1666,6 +1669,9 @@ defmodule HalC2.Orchestration.Delegation do
       |> put_blocked(blocked, thread_id)
       |> put_next(task, blocked)
       |> put_latest(answer(child))
+      |> then(&{&1, blocked})
+    else
+      _ -> {nil, nil}
     end
   end
 
@@ -1751,7 +1757,11 @@ defmodule HalC2.Orchestration.Delegation do
   at full access, and are otherwise passed on to the user. Once per request, and not
   while the caller waits on the task: the wait returns on it, or tells it when it ends.
   """
-  def request_opened(child_id, request_id) do
+  def request_opened(child_id, request_id),
+    do: tell_request(child_id, request_id, &(&1["status"] not in @terminal))
+
+  # Tells the caller of the task of `child_id` that `wanted` picks of `request_id`.
+  defp tell_request(child_id, request_id, wanted) do
     child = stream(child_id)
     request = StreamState.get(child, "runtime-request")[request_id]
     lineage = get_in(StreamState.get(child, "thread"), [child_id, "lineage"]) || %{}
@@ -1766,8 +1776,7 @@ defmodule HalC2.Orchestration.Delegation do
          %{} = task <-
            Enum.find(
              StreamState.list(parent, "subagent"),
-             &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
-                 &1["status"] not in @terminal)
+             &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and wanted.(&1))
            ),
          # A caller waiting on the task hears of it from its wait (`waiting/3`).
          false <- waited?(task["id"]) do
@@ -1880,13 +1889,35 @@ defmodule HalC2.Orchestration.Delegation do
       fun.()
     after
       if marked, do: Registry.unregister(@waits, task_id)
-
-      with %{"childThreadId" => child} when is_binary(child) <- subagent(thread_id, task_id) do
-        for request <- StreamState.list(stream(child), "runtime-request"),
-            request["status"] == "pending",
-            do: request_opened(child, request["id"])
-      end
+      tell_unreturned(thread_id, task_id)
     end
+  end
+
+  # The requests a wait kept from its caller and did not return, told once it is over:
+  # also when the task ended meanwhile, since a question answered with a message
+  # outlives the child's turn, unless the task was cancelled. A notice that fails here
+  # leaves no receipt and does not take the wait's reply with it.
+  defp tell_unreturned(thread_id, task_id) do
+    with %{"childThreadId" => child} when is_binary(child) <- subagent(thread_id, task_id) do
+      for request <- StreamState.list(stream(child), "runtime-request"),
+          request["status"] == "pending",
+          do:
+            tell_request(
+              child,
+              request["id"],
+              &(&1["id"] == task_id and &1["status"] != "cancelled")
+            )
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "could not tell #{thread_id} of #{task_id}'s requests: #{Exception.message(e)}"
+      )
+  catch
+    kind, reason ->
+      Logger.warning(
+        "could not tell #{thread_id} of #{task_id}'s requests: #{inspect({kind, reason})}"
+      )
   end
 
   defp waited?(task_id),
@@ -1919,18 +1950,15 @@ defmodule HalC2.Orchestration.Delegation do
       task["pendingRequest"] != nil ->
         hook(:expiring, task_id)
         expire(thread_id, task_id)
-        {:ok, told_by_wait(thread_id, task_id, child, status(thread_id, task_id))}
+        {reply, request} = snapshot(thread_id, task_id)
+        {:ok, told_by_wait(thread_id, task_id, request, reply)}
 
       left <= 0 ->
         hook(:expiring, task_id)
-
-        reply =
-          case expire(thread_id, task_id) do
-            :expired -> Map.put(status(thread_id, task_id), "waitTimedOut", true)
-            :ended -> status(thread_id, task_id)
-          end
-
-        {:ok, told_by_wait(thread_id, task_id, child, reply)}
+        expired = expire(thread_id, task_id)
+        {reply, request} = snapshot(thread_id, task_id)
+        reply = if expired == :expired, do: Map.put(reply, "waitTimedOut", true), else: reply
+        {:ok, told_by_wait(thread_id, task_id, request, reply)}
 
       true ->
         receive do
@@ -1944,14 +1972,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   # The request a wait's `reply` returns to its caller, whichever way the wait ended:
   # its notice is marked sent before the wait is over, so `request_opened/2` sends
-  # none after it either. One told before the wait began stays told.
-  defp told_by_wait(
-         thread_id,
-         task_id,
-         child,
-         %{"pendingRequest" => %{"requestId" => request_id}} = reply
-       ) do
-    request = StreamState.get(stream(child), "runtime-request")[request_id] || %{}
+  # none after it either. One told before the wait began stays told. `request` is the
+  # one `reply` was read with, so a request reopened since is not the one marked.
+  defp told_by_wait(thread_id, task_id, %{} = request, reply) do
     command_id = "command:delegate-request:" <> request_key(task_id, request)
     receipt = JSON.encode!(%{"ok" => %{"toldByWait" => true}, "threadId" => thread_id})
 
@@ -1968,7 +1991,7 @@ defmodule HalC2.Orchestration.Delegation do
     reply
   end
 
-  defp told_by_wait(_thread_id, _task_id, _child, reply), do: reply
+  defp told_by_wait(_thread_id, _task_id, nil, reply), do: reply
 
   # The wait is over: a child that ends from now on wakes the caller. A task that ended
   # meanwhile was acknowledged to this wait, so it is answered with that end instead;

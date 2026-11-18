@@ -1333,6 +1333,46 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert [_] = messages("message:delegate-request:")
     end
 
+    test "a question kept from the caller by its wait is told when the task ended meanwhile" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+
+      hook_with(fn
+        :expiring, "task" ->
+          Delegation.request_opened("c", "req")
+
+          {:ok, _} =
+            HalC2.Streams.commit("p", :thread, [
+              {"subagent", "task", %{"s" => %{"status" => "completed"}}}
+            ])
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "completed"}} = Delegation.wait("p", "task", 1)
+      assert [_] = messages("message:delegate-request:")
+    end
+
+    test "a question kept from the caller by its wait is not told for a task cancelled meanwhile" do
+      delegate("running")
+      open_request("user_input", @at, "message")
+
+      hook_with(fn
+        :expiring, "task" ->
+          {:ok, _} =
+            HalC2.Streams.commit("p", :thread, [
+              {"subagent", "task", %{"s" => %{"status" => "cancelled"}}}
+            ])
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.wait("p", "task", 1)
+      assert messages("message:delegate-request:") == []
+    end
+
     test "asked again under the same id reaches the caller again" do
       delegate("running")
       open_request("user_input")

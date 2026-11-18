@@ -422,6 +422,16 @@ Feature: Delegating tasks to subagents
     And the task is still "running"
 
   @mc
+  Scenario: An MC without automatic actions does not start the delegating agent over a held queue
+    Given the MC runs without automatic actions
+    And the project does not continue threads after an update
+    And the agent in "parent" delegated a task
+    And the subagent has two messages queued behind its turn
+    When the MC restarts
+    Then "parent" hears nothing of the subagent's queue
+    And the task is still "running"
+
+  @mc
   Scenario: A wait gives up before the caller's MCP client would
     Given thread "acp" exists in "demo"
     And "acp" has a running turn on "grok"

@@ -3083,6 +3083,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # The boot's continue has run by the time the restart returns.
+  step "{string} hears nothing of the subagent's queue", %{args: [parent]} = context do
+    refute Enum.any?(
+             StreamState.list(World.state(context, parent), "message"),
+             &String.starts_with?(&1["id"], "message:delegate-held:")
+           )
+
+    context
+  end
+
   step "the task is still {string}", %{args: [status]} = context do
     assert task(context)["status"] == status
     context
