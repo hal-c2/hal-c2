@@ -155,6 +155,9 @@ Feature: The terminal client's agents panel
     Given the agents panel is open
     And the user presses "Esc"
     And the user browses the open thread's files
+    And the user closes the file browser
+    And the agents panel shows again without the keys
+    And the user browses the open thread's files
     When the user chose "Show agents panel" from the command palette
     Then the agents panel has the keys
     And the file browser is closed

@@ -146,7 +146,6 @@ export function createAgentsPanel(deps: {
     }
     const childThreadId = agent.childThreadId;
     const returnMode = deps.panel().focused ? AGENTS_PANEL : "compose";
-    const failed = () => store.setStatus(`Could not stop ${title}.`, "error");
     const ask = ++asking;
     const threadId = store.getState().detail?.id;
     // Still on the panel (and the thread) the question was asked from.
@@ -154,6 +153,10 @@ export function createAgentsPanel(deps: {
       ask === asking &&
       store.getState().detail?.id === threadId &&
       (returnMode === AGENTS_PANEL ? deps.panel().focused : deps.panel().open);
+    // A lookup that failed is reported only to the question still asked.
+    const failed = () => {
+      if (current()) store.setStatus(`Could not stop ${title}.`, "error");
+    };
     // The run is read when the user is asked, and only that run is interrupted:
     // a run started while the question is open is not stopped by its answer.
     deps.track(

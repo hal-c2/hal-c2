@@ -23,6 +23,8 @@ import { expectSource, type MermaidWorld } from "./mermaid.steps.ts";
 interface ViewerWorld extends World {
   /** The MC's reason for refusing to write a path. */
   writeErrors?: Record<string, string>;
+  /** Writes of these paths wait until the scenario lets them go on. */
+  heldWrites?: Record<string, { promise: Promise<void>; release: () => void }>;
   /** This device was paired without terminal:operate: the MC refuses writes by full path. */
   noTerminal?: boolean;
   /** What the editor held before the scenario typed into it. */
@@ -55,6 +57,7 @@ export const beforeBoot = (ctx: World, setup: () => void) => {
 /** The MC writes files, refusing the paths the scenario says it cannot. */
 const servesWrites = (ctx: ViewerWorld) => {
   ctx.fake!.override("writeFile", async (cwd, relativePath, contents) => {
+    await ctx.heldWrites?.[relativePath]?.promise;
     const refusal = ctx.writeErrors?.[relativePath];
     if (refusal) throw new Error(refusal);
     if (ctx.noTerminal && relativePath.startsWith("/")) {
@@ -323,13 +326,97 @@ step("the user is told the file could not be saved", async (ctx: ViewerWorld) =>
   expect(screen).toContain("not saved · Esc done");
 });
 
-step("the user asks for the agents panel", async (ctx: ViewerWorld) => {
-  // What ^X a runs (agents.toggle), and the palette's "Show agents panel" too.
-  for (const action of ["agents.toggle", "agents.show"]) {
-    ctx.host!.dispatch(action, undefined);
+// ^X a runs agents.toggle; the palette's "Show agents panel" runs agents.show.
+step(
+  /^the user asks for the agents panel (with Ctrl\+X and then a|from the command palette)$/,
+  async (ctx: ViewerWorld, how: string) => {
+    if (how.startsWith("with")) {
+      await pressKey(ctx, "Ctrl+X");
+      await pressKey(ctx, "a");
+    } else {
+      // The editor keeps ^K and ^P for its text: ^X k opens the palette over it.
+      if (ctx.host!.state.get("mode") === "fileEdit") {
+        await pressKey(ctx, "Ctrl+X");
+        await pressKey(ctx, "k");
+      }
+      await chooseCommand(ctx, "Show agents panel");
+    }
     await settle(ctx);
-    expect((ctx.host!.state.get("files") as { open: boolean }).open).toBe(true);
-  }
+    expect(files(ctx).open).toBe(true);
+    expect(
+      (ctx.host!.state.get("layout") as { rightPanel: { focused: boolean } }).rightPanel,
+    ).not.toMatchObject({ focused: true });
+  },
+);
+
+step("writing {string} is held", (ctx: ViewerWorld, path: string) => {
+  let release = () => {};
+  const promise = new Promise<void>((resolve) => (release = resolve));
+  (ctx.heldWrites ??= {})[path] = { promise, release };
+  // settle() waits for the host's requests, so not while one is held.
+  ctx.held = (ctx.held ?? 0) + 1;
+});
+
+step(
+  /^the held write of "([^"]+)" (fails|finishes)$/,
+  async (ctx: ViewerWorld, path: string, how: string) => {
+    if (how === "fails") (ctx.writeErrors ??= {})[path] = "permission denied";
+    const held = ctx.heldWrites![path]!;
+    delete ctx.heldWrites![path];
+    ctx.held = (ctx.held ?? 1) - 1;
+    held.release();
+    await settle(ctx);
+  },
+);
+
+step("the editor stays open while it saves", async (ctx: ViewerWorld) => {
+  const screen = await settle(ctx);
+  expect(ctx.host!.state.get("mode")).toBe("fileEdit");
+  expect(viewer(ctx)).toMatchObject({ editing: true, save: "pending" });
+  expect(writes(ctx)).toHaveLength(1);
+  expect(screen).toContain("saving… · Esc done");
+});
+
+step("the editor closes on the saved file", async (ctx: ViewerWorld) => {
+  const screen = await settle(ctx);
+  expect(writes(ctx)).toHaveLength(1);
+  expect(String(writes(ctx)[0]!.contents)).toContain(CHANGE);
+  expect(ctx.host!.state.get("mode")).toBe("files");
+  expect(viewer(ctx)).toMatchObject({ editing: false });
+  expect(status(ctx)).toEqual({ kind: "success", text: `Saved ${viewer(ctx).path}.` });
+  expect(screen).toContain(CHANGE);
+});
+
+const MORE = "more ";
+
+step("the user types more and pauses", async (ctx: ViewerWorld) => {
+  await typeText(ctx, MORE);
+  await advance(ctx, 500);
+  await settle(ctx);
+  // The first write is still under way: the second waits for it.
+  expect(writes(ctx)).toHaveLength(1);
+  expect(viewer(ctx).save).toBe("pending");
+});
+
+step(
+  "{string} is written again with the newer text, and saved",
+  async (ctx: ViewerWorld, path: string) => {
+    const screen = await settle(ctx);
+    const written = writes(ctx).map((write) => String(write.contents));
+    expect(writes(ctx).map((write) => write.relativePath)).toEqual([path, path]);
+    expect(written[0]).not.toContain(MORE);
+    expect(written[1]).toContain(MORE);
+    expect(written[1]).toBe(editorText(ctx));
+    expect(viewer(ctx).save).toBe("saved");
+    expect(screen).toContain("saved · Esc done");
+  },
+);
+
+step("the edit is still on screen", async (ctx: ViewerWorld) => {
+  const screen = await settle(ctx);
+  expect(files(ctx).open).toBe(true);
+  expect(viewer(ctx)).toMatchObject({ editing: false });
+  expect(screen).toContain(CHANGE);
 });
 
 step("the edit is still in the editor", async (ctx: ViewerWorld) => {

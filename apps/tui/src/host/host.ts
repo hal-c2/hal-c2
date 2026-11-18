@@ -695,7 +695,12 @@ export function createHost(options: HostOptions): Host {
     if (kind === AGENTS_PANEL && focused && filesOpen) {
       const unsaved = files.unsaved();
       if (unsaved !== null) {
-        store.setStatus(`Save ${unsaved} before opening the agents panel.`, "error");
+        store.setStatus(
+          files.mode() === "fileEdit"
+            ? `Save ${unsaved} before opening the agents panel.`
+            : `${unsaved} was not saved: copy the edit or close the file before opening the agents panel.`,
+          "error",
+        );
         return;
       }
       files.close();
@@ -1402,7 +1407,12 @@ export function createHost(options: HostOptions): Host {
           space.close();
           sections!.close();
           if (settingsOpen) dispatch("settings.close");
-          if (mode === "diff") dispatch("diff.close");
+          // A diff or an image in the conversation pane gives it back, whatever has the keys:
+          // the palette this came from leaves the mode at "compose".
+          if (threadView.paneReplaced()) {
+            dispatch("diff.close");
+            dispatch("image.close");
+          }
         }
         setRightPanel(AGENTS_PANEL, true);
         return true;

@@ -1301,12 +1301,58 @@ Feature: Viewing and editing files
     # The agents panel takes the file browser's place (tui/agents.feature); a save that
     # failed again on the way would have no editor left to keep the text.
     @tui
-    Scenario: The agents panel waits for an edit that is not saved
+    Scenario Outline: The agents panel waits for an edit that is not saved
       Given writing "src/app.ts" fails
       And the user edits "src/app.ts"
-      When the user asks for the agents panel
+      When the user asks for the agents panel <how>
       Then the status says "Save src/app.ts before opening the agents panel."
       And the edit is still in the editor
+
+      Examples:
+        | how                      |
+        | with Ctrl+X and then a   |
+        | from the command palette |
+
+    # Esc writes what is not saved yet and the editor closes once it is written,
+    # so a write that fails on the way still has the editor to keep the text.
+    @tui
+    Scenario: The editor left during its save waits for it
+      Given writing "src/app.ts" is held
+      And the user edits "src/app.ts"
+      When the user presses "Esc"
+      And the user asks for the agents panel from the command palette
+      Then the status says "Save src/app.ts before opening the agents panel."
+      When the held write of "src/app.ts" fails
+      Then the user is told the file could not be saved
+      And the edit is still in the editor
+
+    @tui
+    Scenario: The editor left during its save closes once it is written
+      Given writing "src/app.ts" is held
+      And the user edits "src/app.ts"
+      When the user presses "Esc"
+      Then the editor stays open while it saves
+      When the held write of "src/app.ts" finishes
+      Then the editor closes on the saved file
+
+    # One write to a file at a time: an older write never lands over a newer text.
+    @tui
+    Scenario: A save made while another is under way is written after it
+      Given writing "src/app.ts" is held
+      And the user edits "src/app.ts"
+      When the user types more and pauses
+      And the held write of "src/app.ts" finishes
+      Then "src/app.ts" is written again with the newer text, and saved
+
+    # A refused write leaves the edit on screen, read-only: it is not on disk.
+    @tui
+    Scenario: The agents panel waits for an edit a refused save left on screen
+      Given this device was paired without terminal access
+      And the agent wrote "/tmp/report/menu.csv" outside the project
+      When the user opens "/tmp/report/menu.csv" and edits it
+      And the user asks for the agents panel from the command palette
+      Then the status says "/tmp/report/menu.csv was not saved: copy the edit or close the file before opening the agents panel."
+      And the edit is still on screen
 
     @desktop
     Scenario: A save that failed is tried again when the file is closed

@@ -139,6 +139,24 @@ describe("createHost", () => {
     host.destroy();
   });
 
+  // The palette leaves the mode at "compose" when it closes, over a diff still open.
+  it("gives the pane a diff took back when the palette shows the agents panel", () => {
+    const { host, connect, emitThread, get } = boot();
+    connect();
+    host.dispatch("thread.open", { key: "local:t1" });
+    emitThread(thread());
+    host.dispatch("diff.open", { turnCount: null });
+    expect(get("mode")).toBe("diff");
+    host.dispatch("palette.open");
+    host.dispatch("palette.close");
+    expect(get("mode")).toBe("compose");
+    host.dispatch("agents.show");
+    expect(get("diff").open).toBe(false);
+    expect(get("layout").rightPanel).toMatchObject({ kind: "agents", visible: true });
+    expect(get("mode")).toBe("agents");
+    host.destroy();
+  });
+
   it("logs an unknown action once", () => {
     const { host, logged } = boot();
     host.dispatch("nope");

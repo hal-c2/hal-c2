@@ -311,6 +311,17 @@ step("the user browses the open thread's files", async (ctx: TurnWorld) => {
   expect(hostState(ctx, "files").open).toBe(true);
 });
 
+// The browser only hid the panel: closing it shows the same panel, not a new one.
+step("the agents panel shows again without the keys", async (ctx: TurnWorld) => {
+  const screen = await snapshot(ctx);
+  expect(hostState(ctx, "layout").rightPanel).toMatchObject({
+    kind: "agents",
+    visible: true,
+    focused: false,
+  });
+  expect(screen).toContain("Review the docs");
+});
+
 step("the file browser is closed", async (ctx: TurnWorld) => {
   await snapshot(ctx);
   expect(hostState(ctx, "files").open).toBe(false);
