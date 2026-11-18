@@ -1107,7 +1107,7 @@ Feature: Agent code review
 
   Rule: The host is the user's choice
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The settings offer each source control host
       When the user opens the settings of "code-review"
       Then GitHub, GitLab, Forgejo, Bitbucket and Azure DevOps are offered as hosts

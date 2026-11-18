@@ -3979,6 +3979,7 @@ timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for wh
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [hal_c2_thread_wait, Wait for a HAL-C2 thread]
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [link_pull_request, Link a pull request]
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [preview_open, Open a page in the preview browser]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [subscribe_pull_request, Subscribe to pull request news]
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [task_cancel, Cancel delegated task]
 timeline/tool-calls.feature: A changed file offers the file's own actions on right click
 timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["/bin/zsh -lc 'git diff --check'", git]
