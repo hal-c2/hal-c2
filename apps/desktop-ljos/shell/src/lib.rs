@@ -113,7 +113,7 @@ pub fn register(engine: &Engine) {
 }
 
 /// Gives `scope` the bridge's own `T` ([`bridge::Bridge::in_scope`]).
-fn give<T: ljos::ljos_engine::QmlSingleton + Default>(
+fn give<T: ljos::prelude::QmlSingleton + Default>(
     engine: &Engine,
     bridge: bridge::Bridge,
     scope: ljos::prelude::WindowScope,
