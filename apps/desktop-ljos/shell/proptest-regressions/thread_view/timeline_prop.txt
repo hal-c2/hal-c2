@@ -8,3 +8,4 @@ cc 39f43f3d8722f2272f23e53ef572cca48624088737613f6af48bb9b122bcacbf # shrinks to
 cc f06bacff682374a16026067eeccf5c702febb9eb450176891d77c6f545e3e9c3
 cc e41b0ccccb11d906908b8c78ee5a677bc469cffdf1ceba771f0ac14033b027e0 # a subagents group redrawn when a delta reached one of its launches
 cc e8ad0efbf0799c81f5ac048081f171c219c849033d53ae8346d37d84352aedec # a subagent group is redrawn unchanged after a resubscribe
+cc 6eca831622dfa80dfc6752360646d56c6ed683bd67ca83950f6be437088f1a83 # a subagent group is redrawn unchanged after a new log and a model change
