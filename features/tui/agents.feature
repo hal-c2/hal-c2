@@ -33,7 +33,15 @@ Feature: The terminal client's agents panel
     And the agents panel offers the way back to "Delegating"
 
   @tui
-  Scenario: Stopping a worker asks first, then stops its run
+  Scenario: On a narrow terminal, opening a worker shows its thread in place of the panel
+    Given the terminal is narrowed to 72 columns
+    And the agents panel is open
+    When the user selects the worker "Fix the tests" and presses "Enter"
+    Then the conversation shows the worker's thread
+    And the agents panel is closed and the prompt has the keys
+
+  @tui
+  Scenario: Stopping a worker asks first, then asks its run to stop
     Given the agents panel is open
     When the user selects the worker "Fix the tests" and presses "c"
     Then the client asks "Stop Fix the tests?" with "Keep it running" chosen

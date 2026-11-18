@@ -153,7 +153,9 @@ export function createAgentsPanel(deps: {
       onChoose: (choice) => {
         if (choice !== "stop") return;
         deps.interrupt(childThreadId).then(
-          () => store.setStatus(`Stopping ${title}…`, "success"),
+          // The interrupt resolves even when the worker's thread has no active run,
+          // so this says what was asked, not that the worker stopped.
+          () => store.setStatus(`Asked ${title} to stop.`),
           () => store.setStatus(`Could not stop ${title}.`, "error"),
         );
       },

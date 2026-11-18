@@ -8,7 +8,7 @@ import { step } from "../../steps.ts";
 import { thread as baseThread } from "../fakeClient.ts";
 import { hostState, recorded, settle } from "../threadWorld.ts";
 import { NOW_MS, sync, turns, type TurnWorld } from "../turnWorld.ts";
-import { pressKey, snapshot } from "../world.ts";
+import { pressKey, resize, snapshot } from "../world.ts";
 
 const time = (secondsAgo: number) => DateTime.makeUnsafe(new Date(NOW_MS - secondsAgo * 1000));
 
@@ -53,6 +53,11 @@ function subagent(
 step("the terminal is {int} by {int}", (ctx: TurnWorld, columns: number, rows: number) => {
   ctx.columns = columns;
   ctx.rows = rows;
+});
+
+step("the terminal is narrowed to {int} columns", async (ctx: TurnWorld, columns: number) => {
+  await resize(ctx, columns);
+  await settle();
 });
 
 step(
@@ -106,6 +111,7 @@ const openPanel = async (ctx: TurnWorld) => {
   await pressKey(ctx, "a");
   await settle();
   expect(hostState(ctx, "layout").rightPanel).toMatchObject({ kind: "agents", visible: true });
+  if ((ctx.columns ?? 80) < 80) expect(hostState(ctx, "layout").rightPanel.asMain).toBe(true);
 };
 
 step("the user opens the agents panel", openPanel);
@@ -185,6 +191,12 @@ step("the conversation shows the worker's thread", async (ctx: TurnWorld) => {
   expect(hostState(ctx, "mode")).toBe("compose");
 });
 
+step("the agents panel is closed and the prompt has the keys", async (ctx: TurnWorld) => {
+  await snapshot(ctx);
+  expect(hostState(ctx, "layout").rightPanel.visible).toBe(false);
+  expect(hostState(ctx, "mode")).toBe("compose");
+});
+
 step("the agents panel offers the way back to {string}", async (ctx: TurnWorld, title: string) => {
   const screen = await snapshot(ctx);
   expect(screen).toContain(`↳ ${title}`);
@@ -214,7 +226,10 @@ step("the client stops the run of the worker's thread", (ctx: TurnWorld) => {
   expect(recorded(ctx, "interrupt").map(([threadId]) => threadId)).toEqual([
     childOf("Fix the tests"),
   ]);
-  expect(hostState(ctx, "status").text).toBe("Stopping Fix the tests…");
+  expect(hostState(ctx, "status")).toMatchObject({
+    text: "Asked Fix the tests to stop.",
+    kind: "info",
+  });
 });
 
 step("the status says {string}", (ctx: TurnWorld, text: string) => {

@@ -730,7 +730,10 @@ export function createHost(options: HostOptions): Host {
     openThread: (threadId, open) => {
       const focused = rightPanelFocused && open?.keepFocus === true;
       dispatch("thread.open", { key: threadKey(threadId) });
-      setRightPanel(AGENTS_PANEL, focused);
+      // A panel standing in for the conversation closes when it gives the keys back,
+      // as `rightPanel.blur` does, so the opened thread is what the user sees.
+      if (!focused && layout?.rightPanel.asMain) setRightPanel(null, false);
+      else setRightPanel(AGENTS_PANEL, focused);
     },
     interrupt: (threadId) => client.interrupt(ThreadId.make(threadId)),
   });
