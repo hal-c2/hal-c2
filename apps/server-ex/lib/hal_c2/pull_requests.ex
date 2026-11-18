@@ -1984,18 +1984,13 @@ defmodule HalC2.PullRequests do
   defp verified(project, _ref), do: {:ok, project}
 
   # Whether `host`, as a reference names it, is the server of `project`. A Forgejo
-  # reference keeps its server's web port, which a project's host does not: with a
-  # port, the host must be that of an HTTP(S) remote's own authority, so two servers
+  # reference keeps its server's web port, which a project's host does not, so the
+  # host must be an HTTP(S) remote's own authority, port or none alike: two servers
   # on one hostname stay apart. An SSH remote does not say the web port, so there the
   # hostname decides, as `forgejo_route/2` reads summaries.
   defp on_host?(project, host) do
-    case String.split(host, ":", parts: 2) do
-      [hostname, _port] ->
-        hostname == project.host and web_authority(project) in [nil, host]
-
-      _ ->
-        host == project.host
-    end
+    [hostname | _] = String.split(host, ":", parts: 2)
+    hostname == project.host and web_authority(project) in [nil, host]
   end
 
   defp web_authority(project) do

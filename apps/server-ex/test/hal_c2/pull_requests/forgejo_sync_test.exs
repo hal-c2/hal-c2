@@ -212,6 +212,15 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
 
     assert {:ok, %{"projectId" => "p1"}} =
              HalC2.PullRequests.plugin_handle("detail", ref.("forgejo.test"))
+
+    # Nor is the server on the default port read through the one on 8443.
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => "p1"})
+    await_row("p1", & &1["deletedAt"])
+
+    for projectless <- [ref.("forgejo.test"), Map.put(ref.("forgejo.test"), "projectId", "p2")] do
+      assert {:error, %{"reason" => "provider-unsupported"}} =
+               HalC2.PullRequests.plugin_handle("detail", projectless)
+    end
   end
 
   # Forgejo has no native stacks, GitHub does: one this MC cannot read stays as it was,
