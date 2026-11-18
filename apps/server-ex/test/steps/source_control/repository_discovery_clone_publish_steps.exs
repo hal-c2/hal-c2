@@ -502,6 +502,15 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     no_fj(context)
   end
 
+  step "the Forgejo CLI is installed with no login for the server and the Gitea CLI is not installed",
+       context do
+    World.put_app_env(:tea_command, "hal-c2-test-no-tea")
+
+    context
+    |> fj_storage_file(JSON.encode!(keys_map(%{})))
+    |> fj_installed()
+  end
+
   step "the user is told to install the Forgejo CLI 0.6 or later or the Gitea CLI 0.16 or later",
        context do
     assert World.failure(context) =~

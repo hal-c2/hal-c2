@@ -22,15 +22,20 @@ as published.
    threads and give the agent a tool to report with.
 2. Sign in on the MC's machine: to GitHub with `gh auth login`, or to a Forgejo
    (or Gitea) server with `fj auth login` or `tea login add`. Reviews use that
-   login, both to read pull requests and to post reviews, and the plugin's clone
-   fetches with it. Pick the host in the plugin's settings.
+   login to read pull requests and to post reviews. Pick the host in the plugin's
+   settings.
 3. Open the plugin's settings and add the repositories to watch. A repository is
    watched only if a project on that MC has it as its remote; the settings
    suggest the ones that do.
 
 GitHub and Forgejo can be chosen today. GitLab, Bitbucket and Azure DevOps are
-listed, but cannot be chosen yet. On Forgejo, sign in with `fj` for the clone to
-fetch with that login's token; with `tea`, it fetches with git's own credentials.
+listed, but cannot be chosen yet.
+
+The plugin fetches each pull request into a clone of its own, which leaves your git
+config and credential helpers out. On GitHub it fetches with `gh`'s login. On
+Forgejo it fetches with `fj`'s token, and only from that login's server over
+HTTPS; with `tea` alone it fetches without signing in, so a private repository
+needs `fj` for its reviews to start.
 
 ## When a review starts
 

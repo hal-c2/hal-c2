@@ -19,9 +19,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
-    {credentials, env} = credentials(remote)
-
     with :ok <- alone(clone, fn -> init(clone, url) end),
+         {credentials, env} = credentials(remote, fetched_url(clone, url)),
          {:ok, _} <-
            git(
              clone,
@@ -47,7 +46,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
           _ -> base_ref
         end
 
-      {:ok, %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
+      {:ok,
+       %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
     end
   end
 
@@ -136,7 +136,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
           {mark(files, file, {"old", old}, "deleted"), file, old + 1, new, false}
 
         String.starts_with?(text, " ") ->
-          files = files |> mark(file, {"new", new}, "context") |> mark(file, {"old", old}, "context")
+          files =
+            files |> mark(file, {"new", new}, "context") |> mark(file, {"old", old}, "context")
+
           {files, file, old + 1, new + 1, false}
 
         true ->
@@ -160,10 +162,13 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     if String.starts_with?(path, prefix), do: String.replace_prefix(path, prefix, "")
   end
 
-  defp unquote_c(<<?\\, a, b, c, rest::binary>>, acc) when a in ?0..?3 and b in ?0..?7 and c in ?0..?7,
-    do: unquote_c(rest, <<acc::binary, (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)>>)
+  defp unquote_c(<<?\\, a, b, c, rest::binary>>, acc)
+       when a in ?0..?3 and b in ?0..?7 and c in ?0..?7,
+       do: unquote_c(rest, <<acc::binary, (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)>>)
 
-  defp unquote_c(<<?\\, char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, escaped(char)>>)
+  defp unquote_c(<<?\\, char, rest::binary>>, acc),
+    do: unquote_c(rest, <<acc::binary, escaped(char)>>)
+
   defp unquote_c(<<char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, char>>)
   defp unquote_c(<<>>, acc), do: acc
 
@@ -191,7 +196,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   # Reviews of one repository share its clone; one at a time makes it or changes its
   # worktrees, or one's prune takes another's worktree while it is being added.
-  defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
+  defp alone(repository, fun),
+    do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
   # Run each time, as `git init` leaves a clone alone and finishes one it was cut short making.
   # `origin` is for the agent's git in a checkout; the plugin fetches `url` itself.
@@ -200,14 +206,24 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
     with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]),
          {:ok, _} <- git(clone, ["config", "remote.origin.url", url]),
-         {:ok, _} <- git(clone, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]),
+         {:ok, _} <-
+           git(clone, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]),
          do: :ok
+  end
+
+  # The address git fetches `url` from, after the `insteadOf` rewrites in the config it
+  # is given: the server a token's helper is for.
+  defp fetched_url(clone, url) do
+    case git(clone, ["ls-remote", "--get-url", url]) do
+      {:ok, fetched} when fetched != "" -> fetched
+      _ -> url
+    end
   end
 
   # Git's only credential helper for the fetch, with what it reads from the environment.
   # gh's is as `gh auth setup-git` would make it. A token goes in the environment, never
   # in the command line, where any process could read it. Git runs a helper through a shell.
-  defp credentials(%{"gh" => true}) do
+  defp credentials(%{"gh" => true}, _url) do
     case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
       nil ->
         {[], []}
@@ -218,15 +234,38 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
-  defp credentials(%{"token" => token} = remote) when is_binary(token) and token != "" do
+  # A token's helper is configured for the origin git fetches from alone
+  # (`credential.<url>.helper`), so git asks it about no other: a fetch redirected to
+  # another server gets nothing.
+  defp credentials(%{"token" => token} = remote, url) when is_binary(token) and token != "" do
     helper =
       ~S|!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$HAL_C2_GIT_USERNAME" "$HAL_C2_GIT_TOKEN"; }; f|
 
-    {["-c", "credential.helper=", "-c", "credential.helper=" <> helper],
-     [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}
+    case origin(url) do
+      nil ->
+        {["-c", "credential.helper="], []}
+
+      origin ->
+        {["-c", "credential.helper=", "-c", "credential.#{origin}.helper=" <> helper],
+         [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}
+    end
   end
 
-  defp credentials(_remote), do: {["-c", "credential.helper="], []}
+  defp credentials(_remote, _url), do: {["-c", "credential.helper="], []}
+
+  # `scheme://host[:port]` of an HTTP(S) URL, or nil.
+  defp origin(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port}
+      when scheme in ~w(http https) and is_binary(host) and host != "" ->
+        if port && port != URI.default_port(scheme),
+          do: "#{scheme}://#{host}:#{port}",
+          else: "#{scheme}://#{host}"
+
+      _ ->
+        nil
+    end
+  end
 
   # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
   # can turn the HTTPS address back into SSH, and its hooks have no business here.
@@ -234,7 +273,12 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     case System.cmd("git", args,
            cd: cwd,
            stderr_to_stdout: true,
-           env: [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_CONFIG_GLOBAL", "/dev/null"}, {"GIT_CONFIG_NOSYSTEM", "1"}] ++ env
+           env:
+             [
+               {"GIT_TERMINAL_PROMPT", "0"},
+               {"GIT_CONFIG_GLOBAL", "/dev/null"},
+               {"GIT_CONFIG_NOSYSTEM", "1"}
+             ] ++ env
          ) do
       {out, 0} ->
         {:ok, String.trim(out)}
@@ -244,7 +288,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
         {:error, "git #{command(args)} failed: #{said}"}
     end
   rescue
-    e in [ErlangError, File.Error] -> {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+    e in [ErlangError, File.Error] ->
+      {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
   end
 
   defp command(["-c", _ | args]), do: command(args)

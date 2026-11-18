@@ -214,7 +214,8 @@ defmodule HalC2.SourceControl.Forgejo do
   @doc """
   fj's logins, one per server (per SSH alias when it has any). A server mounted under
   a path is left out: fj 0.6 cannot serve it. fj stores no scheme, so the URL is
-  https unless `remote_url` is an explicit http remote on that server.
+  https unless `remote_url` is an explicit http remote on that server (whose API
+  `api/4` calls only on this machine: it does not send a token in the clear).
   """
   def logins_from_keys(keys, remote_url \\ nil) do
     remote = remote_url && parse_remote(remote_url)
@@ -460,11 +461,22 @@ defmodule HalC2.SourceControl.Forgejo do
       end
 
     fj ||
-      with {:ok, logins} <- tea_logins(cwd) do
-        case select.(logins) do
-          nil -> {:error, {:unauthenticated, @no_login}}
-          login -> {:ok, :tea, login}
-        end
+      case tea_logins(cwd) do
+        {:ok, logins} ->
+          case select.(logins) do
+            nil -> {:error, {:unauthenticated, @no_login}}
+            login -> {:ok, :tea, login}
+          end
+
+        # fj there without a login for the server is a sign-in to make, not a CLI to install.
+        {:error, {:missing, _}} = missing ->
+          case Cli.run("fj", ["version"], cd: cwd, timeout: 10_000) do
+            {:ok, _, _} -> {:error, {:unauthenticated, @no_login}}
+            _ -> missing
+          end
+
+        error ->
+          error
       end
   end
 
@@ -515,8 +527,10 @@ defmodule HalC2.SourceControl.Forgejo do
 
   @doc """
   One API call (`path` under `/api/v1/`) for the repository `target_opts` names
-  (`resolve/2`): `{:ok, body, %{status, link}}`, or `{:error, {reason, detail}}` with
-  the HTTP failure named. Options: `:method` (default `"GET"`) and `:body`.
+  (`resolve/2`): `{:ok, body, %{status, link, total}}` (`total` from `X-Total-Count`,
+  or nil), or `{:error, {reason, detail}}` with the HTTP failure named. Options:
+  `:method` (default `"GET"`) and `:body`. fj's token goes over plain HTTP only to
+  this machine.
   """
   def api(cwd, target_opts, path, opts \\ []) do
     method = opts[:method] || "GET"
@@ -567,33 +581,58 @@ defmodule HalC2.SourceControl.Forgejo do
     base = URI.parse(base_url <> "/api/v1/")
     url = URI.merge(base, path)
 
-    if url.host != base.host or url.port != base.port or url.userinfo != nil or
-         not String.starts_with?(url.path || "", base.path) do
-      {:error, {:failed, "Invalid Forgejo API path."}}
-    else
-      method = method |> String.downcase() |> String.to_existing_atom()
+    cond do
+      url.host != base.host or url.port != base.port or url.userinfo != nil or
+          not String.starts_with?(url.path || "", base.path) ->
+        {:error, {:failed, "Invalid Forgejo API path."}}
 
-      case Http.request(method, URI.to_string(url), [{"authorization", "token " <> token}],
-             body: body
-           ) do
-        {:ok, status, headers, text} when status in 200..299 ->
-          {:ok, text, %{status: status, link: headers["link"]}}
+      not token_safe?(base) ->
+        {:error,
+         {:failed,
+          "Refusing to send this server's fj token over plain HTTP. Use an https remote."}}
 
-        {:ok, 404, _, _} ->
-          {:error, {:not_found, "Forgejo repository or pull request was not found."}}
+      true ->
+        send_request(url, token, method, body)
+    end
+  end
 
-        {:ok, status, _, text} ->
-          detail =
-            if text != "",
-              do: "Forgejo API request failed (HTTP #{status}): #{text}",
-              else:
-                "Forgejo API request failed (HTTP #{status}). Check this server's fj credentials and permissions."
+  @doc "Whether a token may go to `url`: over HTTPS, or plain HTTP to this machine only."
+  def token_safe?(url) when is_binary(url), do: url |> URI.parse() |> token_safe?()
 
-          {:error, {http_reason(status), detail}}
+  def token_safe?(%URI{scheme: scheme, host: host}),
+    do: String.downcase(scheme || "") == "https" or loopback?(host)
 
-        {:error, _} ->
-          {:error, {:failed, "Forgejo API request failed or timed out."}}
-      end
+  defp loopback?(host) when host in ["localhost", "::1", "[::1]"], do: true
+
+  defp loopback?(host) when is_binary(host),
+    do: match?({:ok, {127, _, _, _}}, :inet.parse_address(String.to_charlist(host)))
+
+  defp loopback?(_), do: false
+
+  defp send_request(url, token, method, body) do
+    method = method |> String.downcase() |> String.to_existing_atom()
+
+    case Http.request(method, URI.to_string(url), [{"authorization", "token " <> token}],
+           body: body
+         ) do
+      {:ok, status, headers, text} when status in 200..299 ->
+        {:ok, text,
+         %{status: status, link: headers["link"], total: total(headers["x-total-count"])}}
+
+      {:ok, 404, _, _} ->
+        {:error, {:not_found, "Forgejo repository or pull request was not found."}}
+
+      {:ok, status, _, text} ->
+        detail =
+          if text != "",
+            do: "Forgejo API request failed (HTTP #{status}): #{text}",
+            else:
+              "Forgejo API request failed (HTTP #{status}). Check this server's fj credentials and permissions."
+
+        {:error, {http_reason(status), detail}}
+
+      {:error, _} ->
+        {:error, {:failed, "Forgejo API request failed or timed out."}}
     end
   end
 
@@ -620,9 +659,15 @@ defmodule HalC2.SourceControl.Forgejo do
             nil -> nil
           end
 
+        total =
+          case Regex.run(~r/^x-total-count:\s*(\S+)\s*$/mi, err) do
+            [_, total] -> total(total)
+            nil -> nil
+          end
+
         cond do
           status && status < 400 ->
-            {:ok, out, %{status: status, link: link}}
+            {:ok, out, %{status: status, link: link, total: total}}
 
           true ->
             detail =
@@ -653,6 +698,15 @@ defmodule HalC2.SourceControl.Forgejo do
         {:error, {reason, "Forgejo CLI command failed."}}
     end
   end
+
+  defp total(text) when is_binary(text) do
+    case Integer.parse(String.trim(text)) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp total(_), do: nil
 
   defp http_reason(401), do: :unauthenticated
   defp http_reason(403), do: :forbidden

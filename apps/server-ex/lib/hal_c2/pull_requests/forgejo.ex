@@ -13,7 +13,12 @@ defmodule HalC2.PullRequests.Forgejo do
 
   Activity counts as `activity` only from someone the repository trusts: its owner,
   a collaborator, an official reviewer or a requested one. The signed-in account's
-  own newest is `ownActivity`.
+  own newest is `ownActivity`. Until the server says who is signed in, a summary holds
+  no activity at all: the account's own comment must not pass for someone else's.
+
+  A list is read to its end, however small a page the server's administrator allows.
+  A pull request whose reviews, comments or check statuses cannot all be read has no
+  summary (or, for checks, no `checksState`), rather than one that misses some.
   """
 
   require Logger
@@ -38,12 +43,18 @@ defmodule HalC2.PullRequests.Forgejo do
     |> Enum.group_by(fn {repository, _} -> repository end, fn {_, number} -> number end)
     |> Enum.flat_map(fn {repository, numbers} ->
       target = Keyword.put(target, :repository, repository)
-      trusted = collaborators(cwd, target, repository)
 
-      for number <- Enum.uniq(numbers),
-          is_integer(number) and number > 0,
-          summary = summary(cwd, target, repository, number, viewer, trusted),
-          do: {{String.downcase(repository), number}, summary}
+      case collaborators(cwd, target, repository) do
+        {:ok, trusted} ->
+          for number <- Enum.uniq(numbers),
+              is_integer(number) and number > 0,
+              summary = summary(cwd, target, repository, number, viewer, trusted),
+              do: {{String.downcase(repository), number}, summary}
+
+        {:error, reason} ->
+          Logger.debug("Forgejo collaborators of #{repository}: #{inspect(reason)}")
+          []
+      end
     end)
     |> Map.new()
   end
@@ -54,10 +65,10 @@ defmodule HalC2.PullRequests.Forgejo do
     with {:ok, %{"number" => ^number, "title" => title} = pull} <-
            get(cwd, target, "#{base}/pulls/#{number}"),
          head when is_binary(head) <- get_in(pull, ["head", "ref"]),
-         base_branch when is_binary(base_branch) <- get_in(pull, ["base", "ref"]) do
-      reviews = pages(cwd, target, "#{base}/pulls/#{number}/reviews")
-      comments = issue_comments(cwd, target, base, number)
-      review_comments = review_comments(cwd, target, base, number, reviews)
+         base_branch when is_binary(base_branch) <- get_in(pull, ["base", "ref"]),
+         {:ok, reviews} <- pages(cwd, target, "#{base}/pulls/#{number}/reviews"),
+         {:ok, comments} <- issue_comments(cwd, target, base, number),
+         {:ok, review_comments} <- review_comments(cwd, target, base, number, reviews) do
       requested = for user <- pull["requested_reviewers"] || [], login = login(user), do: login
 
       trusted =
@@ -99,7 +110,9 @@ defmodule HalC2.PullRequests.Forgejo do
         "mergeQueue" => nil,
         "mergeQueueRemoval" => nil
       }
-      |> Map.merge(activity(reviews, comments ++ review_comments, viewer, trusted))
+      |> Map.merge(
+        if(viewer, do: activity(reviews, comments ++ review_comments, viewer, trusted), else: %{})
+      )
     else
       {:error, reason} ->
         Logger.debug("Forgejo pull request #{repository}##{number}: #{inspect(reason)}")
@@ -138,30 +151,50 @@ defmodule HalC2.PullRequests.Forgejo do
   end
 
   # The head's statuses, one per context: a failure (or error) fails it, anything
-  # still pending keeps it pending, and otherwise it passes. Nil when there are none.
-  defp checks(_cwd, _target, _base, sha) when not is_binary(sha), do: nil
-
+  # still pending keeps it pending, and otherwise it passes. Nil when there are none,
+  # or when they cannot all be read: a page of successes says nothing of the next.
   defp checks(cwd, target, base, sha) do
-    case get(cwd, target, "#{base}/commits/#{URI.encode_www_form(sha)}/status?limit=#{@page}") do
-      {:ok, %{} = combined} ->
-        states =
-          for status <- combined["statuses"] || [],
-              state = status["status"] || status["state"],
-              is_binary(state),
-              do: state
+    with {:ok, statuses} <- commit_statuses(cwd, target, base, sha) do
+      states =
+        for status <- statuses,
+            state = status["status"] || status["state"],
+            is_binary(state),
+            do: state
 
-        states = if states == [], do: List.wrap(combined["state"]), else: states
+      cond do
+        Enum.any?(states, &(&1 in ~w(failure error))) -> "failing"
+        Enum.any?(states, &(&1 == "pending")) -> "pending"
+        Enum.any?(states, &(&1 in ~w(success warning))) -> "passing"
+        true -> nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # Every status of the head's combined status, which Forgejo pages like a list.
+  defp commit_statuses(_cwd, _target, _base, sha) when not is_binary(sha), do: {:ok, []}
+
+  defp commit_statuses(cwd, target, base, sha, page \\ 1, acc \\ []) do
+    path = "#{base}/commits/#{URI.encode_www_form(sha)}/status?limit=#{@page}&page=#{page}"
+
+    case get(cwd, target, path) do
+      {:ok, %{} = combined} ->
+        rows = Enum.filter(combined["statuses"] || [], &is_map/1)
+        acc = acc ++ rows
+        total = combined["total_count"]
 
         cond do
-          (combined["total_count"] || length(states)) == 0 -> nil
-          Enum.any?(states, &(&1 in ~w(failure error))) -> "failing"
-          Enum.any?(states, &(&1 == "pending")) -> "pending"
-          Enum.any?(states, &(&1 in ~w(success warning))) -> "passing"
-          true -> nil
+          rows == [] or not is_integer(total) or length(acc) >= total -> {:ok, acc}
+          page >= @max_pages -> {:error, {:failed, "Too many commit statuses to read."}}
+          true -> commit_statuses(cwd, target, base, sha, page + 1, acc)
         end
 
-      _ ->
-        nil
+      {:ok, _} ->
+        {:error, {:failed, "Forgejo answered in an unexpected shape."}}
+
+      error ->
+        error
     end
   end
 
@@ -171,7 +204,12 @@ defmodule HalC2.PullRequests.Forgejo do
     |> Enum.filter(&((&1["comments_count"] || 0) > 0 and is_integer(&1["id"])))
     |> Enum.sort_by(&(epoch(&1["submitted_at"]) || 0), :desc)
     |> Enum.take(@review_comment_reads)
-    |> Enum.flat_map(&list(cwd, target, "#{base}/pulls/#{number}/reviews/#{&1["id"]}/comments"))
+    |> Enum.reduce_while({:ok, []}, fn review, {:ok, acc} ->
+      case list(cwd, target, "#{base}/pulls/#{number}/reviews/#{review["id"]}/comments") do
+        {:ok, rows} -> {:cont, {:ok, acc ++ rows}}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   # The newest published review or comment by someone trusted (`activity`) and the
@@ -228,12 +266,20 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
-  # Who the repository lists as collaborators; nothing when the account may not see.
+  # Who the repository lists as collaborators, `{:ok, logins}`; none when the account
+  # may not see them. Another failure is an error: a missing collaborator would read
+  # as a stranger.
   defp collaborators(cwd, target, repository) do
-    cwd
-    |> pages(target, "repos/#{Forgejo.encode_repository(repository)}/collaborators")
-    |> MapSet.new(&down(login(&1) || ""))
-    |> MapSet.delete("")
+    case pages(cwd, target, "repos/#{Forgejo.encode_repository(repository)}/collaborators") do
+      {:ok, rows} ->
+        {:ok, rows |> MapSet.new(&down(login(&1) || "")) |> MapSet.delete("")}
+
+      {:error, {reason, _}} when reason in [:forbidden, :not_found, :unauthenticated] ->
+        {:ok, MapSet.new()}
+
+      error ->
+        error
+    end
   end
 
   defp viewer(cwd, target) do
@@ -298,17 +344,21 @@ defmodule HalC2.PullRequests.Forgejo do
   them: `comments` holds its conversation comments (`kind` `"comment"`) and its
   reviews (`"review"`), each with `author.login`, `body` and `createdAt`; each inline
   review comment is a `reviewThreads` entry of its own (`path`, `line`, `isResolved`,
-  `comments`), as Forgejo's API does not group replies.
+  `comments`), as Forgejo's API does not group replies. An error when any of them
+  cannot be read in full.
   """
   def activity(ctx) do
     target = target(ctx)
     base = base(ctx)
 
-    with {:ok, _} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}") do
-      reviews = pages(ctx.cwd, target, "#{base}/pulls/#{ctx.number}/reviews")
-
+    # A review that cannot be read must not pass for one never posted: the code review
+    # plugin reposts only when its own is absent.
+    with {:ok, _} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}"),
+         {:ok, reviews} <- pages(ctx.cwd, target, "#{base}/pulls/#{ctx.number}/reviews"),
+         {:ok, comments} <- issue_comments(ctx.cwd, target, base, ctx.number),
+         {:ok, review_comments} <- review_comments(ctx.cwd, target, base, ctx.number, reviews) do
       remarks =
-        for c <- issue_comments(ctx.cwd, target, base, ctx.number),
+        for c <- comments,
             do: remark("comment", c["user"], c["body"], c["created_at"])
 
       verdicts =
@@ -317,7 +367,7 @@ defmodule HalC2.PullRequests.Forgejo do
             do: remark("review", r["user"], r["body"], r["submitted_at"])
 
       threads =
-        for c <- review_comments(ctx.cwd, target, base, ctx.number, reviews) do
+        for c <- review_comments do
           %{
             "path" => c["path"],
             "line" =>
@@ -360,10 +410,12 @@ defmodule HalC2.PullRequests.Forgejo do
     target = target(ctx)
     base = base(ctx)
 
-    with {:ok, %{"number" => _} = pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}") do
+    with {:ok, %{"number" => _} = pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}"),
+         {:ok, collaborators} <- collaborators(ctx.cwd, target, ctx.repository),
+         {:ok, events} <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/timeline"),
+         {:ok, comments} <- issue_comments(ctx.cwd, target, base, ctx.number) do
       viewer = viewer(ctx.cwd, target)
       owner = down(login(get_in(pull, ["base", "repo", "owner"])) || "")
-      collaborators = collaborators(ctx.cwd, target, ctx.repository)
 
       association = fn user ->
         name = down(login(user) || "")
@@ -392,7 +444,6 @@ defmodule HalC2.PullRequests.Forgejo do
         end
       end
 
-      events = pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/timeline")
       label = label && trimmed(label)
 
       labeled =
@@ -426,7 +477,7 @@ defmodule HalC2.PullRequests.Forgejo do
          "headSha" => trimmed(get_in(pull, ["head", "sha"])),
          "comments" =>
            for(
-             c <- issue_comments(ctx.cwd, target, base, ctx.number),
+             c <- comments,
              actor = as_actor.(c["user"]),
              do:
                Map.merge(actor, %{"body" => c["body"] || "", "createdAt" => utc(c["created_at"])})
@@ -478,6 +529,8 @@ defmodule HalC2.PullRequests.Forgejo do
   inline `comments` (`%{"path", "body", "position"}`, a position as
   `HalC2.PullRequests.GitHub.submit_review/5` takes it) on commit `commit_id`. Forgejo
   places a comment by its line in the new file, or in the old one for a deleted line.
+  A pending review the signed-in account left behind is deleted first, and again when
+  the post fails, so no comment of a failed post is published by a later one.
   """
   def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review =
@@ -510,24 +563,54 @@ defmodule HalC2.PullRequests.Forgejo do
       }
       |> then(&if(is_binary(commit_id), do: Map.put(&1, "commit_id", commit_id), else: &1))
 
+    discard_pending(ctx)
+
     case Forgejo.api(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews",
            method: "POST",
            body: review
          ) do
-      {:ok, _, _} -> :ok
-      error -> error
+      {:ok, _, _} ->
+        :ok
+
+      error ->
+        discard_pending(ctx)
+        error
     end
+  end
+
+  # Forgejo stages a review's comments in a pending review of the signed-in account
+  # before it publishes them, and keeps that review when the publish fails; while it
+  # stands, the next publish fails as well. Each is deleted, before a post and after a
+  # failed one, so a retry starts from nothing.
+  defp discard_pending(ctx) do
+    target = target(ctx)
+    path = "#{base(ctx)}/pulls/#{ctx.number}/reviews"
+
+    with {:ok, viewer} <- signed_in(ctx),
+         {:ok, reviews} <- pages(ctx.cwd, target, path) do
+      for r <- reviews,
+          r["state"] == "PENDING",
+          is_integer(r["id"]),
+          down(login(r["user"]) || "") == down(viewer) do
+        Forgejo.api(ctx.cwd, target, "#{path}/#{r["id"]}", method: "DELETE")
+      end
+    end
+
+    :ok
   end
 
   @doc """
   How a clone of the repository fetches it over HTTP from the server the pull
   request's API is read on: `%{"url", "username", "token"}`, the token fj signs in
-  with (nil under tea, which keeps its own), for git's credential prompt.
+  with for git's credential prompt. It is nil under tea, which keeps its own, and
+  for a server over plain HTTP other than this machine, which would show it to the
+  network.
   """
   def fetch_access(ctx) do
     with {:ok, resolved} <- Forgejo.resolve(ctx.cwd, target(ctx)) do
       token =
         with :fj <- resolved.command,
+             true <- Forgejo.token_safe?(resolved.base_url),
              {:ok, keys} <- Forgejo.keys(),
              token when is_binary(token) <- get_in(keys, ["hosts", resolved.login, "token"]),
              do: token,
@@ -543,13 +626,10 @@ defmodule HalC2.PullRequests.Forgejo do
   end
 
   # The head's statuses, as checks.
-  defp statuses(_cwd, _target, _base, sha) when not is_binary(sha), do: []
-
   defp statuses(cwd, target, base, sha) do
-    case get(cwd, target, "#{base}/commits/#{URI.encode_www_form(sha)}/status?limit=#{@page}") do
-      {:ok, %{} = combined} ->
-        for s <- combined["statuses"] || [],
-            do: %{"name" => s["context"], "status" => s["status"] || s["state"]}
+    case commit_statuses(cwd, target, base, sha) do
+      {:ok, statuses} ->
+        for s <- statuses, do: %{"name" => s["context"], "status" => s["status"] || s["state"]}
 
       _ ->
         []
@@ -570,11 +650,18 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
-  defp list(cwd, target, path) do
-    case get(cwd, target, path) do
-      {:ok, rows} when is_list(rows) -> Enum.filter(rows, &is_map/1)
-      _ -> []
+  # A list's rows, `{:ok, rows, meta}` (`meta` as `Forgejo.api/4` answers it).
+  defp list_page(cwd, target, path) do
+    with {:ok, body, meta} <- Forgejo.api(cwd, target, path) do
+      case JSON.decode(body) do
+        {:ok, rows} when is_list(rows) -> {:ok, Enum.filter(rows, &is_map/1), meta}
+        _ -> {:error, {:failed, "Forgejo answered in an unexpected shape."}}
+      end
     end
+  end
+
+  defp list(cwd, target, path) do
+    with {:ok, rows, _} <- list_page(cwd, target, path), do: {:ok, rows}
   end
 
   # An issue's comments come in one answer: the endpoint takes `since` and `before`, not
@@ -582,14 +669,30 @@ defmodule HalC2.PullRequests.Forgejo do
   defp issue_comments(cwd, target, base, number),
     do: list(cwd, target, "#{base}/issues/#{number}/comments")
 
-  # Every page of a paginated list, up to `@max_pages` of them.
-  defp pages(cwd, target, path, page \\ 1) do
+  # Every page of a paginated list, `{:ok, rows}`, up to `@max_pages` of them. The
+  # server may cap a page below the `limit` asked for, so its total (`X-Total-Count`)
+  # or a `rel="next"` link says whether more follow; with neither, a full page does.
+  defp pages(cwd, target, path, page \\ 1, acc \\ []) do
     separator = if String.contains?(path, "?"), do: "&", else: "?"
-    rows = list(cwd, target, "#{path}#{separator}limit=#{@page}&page=#{page}")
 
-    if length(rows) >= @page and page < @max_pages,
-      do: rows ++ pages(cwd, target, path, page + 1),
-      else: rows
+    with {:ok, rows, meta} <-
+           list_page(cwd, target, "#{path}#{separator}limit=#{@page}&page=#{page}") do
+      acc = acc ++ rows
+      total = Map.get(meta, :total)
+      link = Map.get(meta, :link)
+
+      more? =
+        rows != [] and
+          cond do
+            is_integer(total) -> length(acc) < total
+            is_binary(link) -> String.contains?(link, ~s(rel="next"))
+            true -> length(rows) >= @page
+          end
+
+      if more? and page < @max_pages,
+        do: pages(cwd, target, path, page + 1, acc),
+        else: {:ok, acc}
+    end
   end
 
   defp actor(%{} = user) do

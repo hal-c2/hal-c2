@@ -367,8 +367,10 @@ export const ThreadPullRequestLink = Schema.Struct({
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
-  // What the thread's agent was last told of the pull request, so the MC wakes it only
-  // for news (HalC2.PullRequests.Wakes). Absent until the first snapshot.
+  // The pull request as the wakes have accounted for it, so the MC wakes the thread only
+  // for news (HalC2.PullRequests.Wakes): what its agent was told, and news `notify`
+  // left untold, which a later subscription does not replay. Absent until the first
+  // snapshot.
   heard: Schema.optional(
     Schema.Struct({
       state: Schema.optional(PullRequestState),

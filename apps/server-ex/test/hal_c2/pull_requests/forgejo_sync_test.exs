@@ -18,12 +18,17 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
   @url "https://forgejo.test/acme/shop/pulls/7"
 
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, dir)
-    {:ok, server} = Agent.start_link(fn -> %{reviews: [], status: "pending"} end)
+    put_app_env(:home, dir)
+    {:ok, server} = Agent.start_link(fn -> %{reviews: [], status: "pending", viewer: "agent"} end)
 
     {base, _log} =
       FakeHttp.start(%{
-        "/api/v1/user" => {200, %{"login" => "agent"}},
+        "/api/v1/user" => fn _ ->
+          case Agent.get(server, & &1.viewer) do
+            nil -> {500, %{}}
+            viewer -> {200, %{"login" => viewer}}
+          end
+        end,
         "/api/v1/repos/acme/shop/collaborators" => {200, [%{"login" => "maint"}]},
         "/api/v1/repos/acme/shop/pulls/7" =>
           {200,
@@ -61,8 +66,7 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     File.chmod!(fj, 0o755)
     put_app_env(:fj_keys_paths, [keys])
     put_app_env(:fj_command, fj)
-    System.put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
-    on_exit(fn -> System.delete_env("HAL_C2_FORGEJO_API_BASE_URL") end)
+    put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
 
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
@@ -83,7 +87,96 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
       })
 
     await_row("p1", & &1)
-    %{server: server}
+    %{server: server, root: root}
+  end
+
+  # The account's own comment must not pass for a collaborator's, which wakes a thread
+  # even during its own run.
+  test "until the server says who is signed in, a summary holds state and checks, no activity",
+       %{server: server, root: root} do
+    Agent.update(server, fn s ->
+      %{
+        s
+        | viewer: nil,
+          status: "failure",
+          reviews: [
+            %{
+              "id" => 1,
+              "user" => %{"login" => "agent"},
+              "state" => "COMMENT",
+              "body" => "mine",
+              "submitted_at" => "2030-01-01T10:00:00Z"
+            }
+          ]
+      }
+    end)
+
+    summaries =
+      HalC2.PullRequests.Forgejo.summaries(root, "https://forgejo.test/acme/shop.git", [
+        {"acme/shop", 7}
+      ])
+
+    assert %{{"acme/shop", 7} => summary} = summaries
+    assert %{"state" => "open", "checksState" => "failing"} = summary
+
+    refute Enum.any?(
+             ~w(activity ownActivity activities ownActivities),
+             &Map.has_key?(summary, &1)
+           )
+  end
+
+  # With a second server's login beside it, a read pointed at no remote could not tell
+  # which server the repository is on.
+  test "a checkout whose only remote is not origin is read through that remote's server",
+       %{tmp_dir: dir} do
+    File.write!(
+      Path.join(dir, "keys.json"),
+      JSON.encode!(%{
+        "hosts" => %{
+          "forgejo.test" => %{"type" => "Application", "token" => "t"},
+          "other.test" => %{"type" => "Application", "token" => "o"}
+        }
+      })
+    )
+
+    root = Path.join(dir, "upstream-only")
+    File.mkdir_p!(root)
+    {_, 0} = System.cmd("git", ~w(init -q -b main), cd: root)
+
+    {_, 0} =
+      System.cmd("git", ~w(remote add upstream https://forgejo.test/acme/shop.git), cd: root)
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "p2",
+        "title" => "shop upstream",
+        "workspaceRoot" => root
+      })
+
+    await_row("p2", & &1)
+
+    ref = %{
+      "host" => "forgejo.test",
+      "repository" => "acme/shop",
+      "number" => 7,
+      "projectId" => "p2"
+    }
+
+    assert %{^ref => %{"state" => "open"}} = HalC2.PullRequests.summaries([ref])
+  end
+
+  # Forgejo has no native stacks, GitHub does: one this MC cannot read stays as it was,
+  # never recorded as none.
+  test "a GitHub pull request a Forgejo project's thread links is not taken for Forgejo's" do
+    ref = %{
+      "projectId" => "p1",
+      "host" => "github.com",
+      "repository" => "acme/shop",
+      "number" => 7
+    }
+
+    assert {:error, _} = HalC2.PullRequests.stack(ref)
   end
 
   test "without a Forgejo login, a plugin's read says what Forgejo needs, not GitHub",
@@ -209,6 +302,15 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     after
       2_000 -> flunk("#{id}'s row never changed as expected")
     end
+  end
+
+  defp put_env(name, value) do
+    previous = System.get_env(name)
+    System.put_env(name, value)
+
+    on_exit(fn ->
+      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+    end)
   end
 
   defp put_app_env(key, value) do

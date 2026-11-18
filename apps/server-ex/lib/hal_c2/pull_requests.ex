@@ -1158,16 +1158,10 @@ defmodule HalC2.PullRequests do
     refs
     |> Enum.group_by(&forgejo_route(&1, projects))
     |> Enum.flat_map(fn {project, refs} ->
-      remote =
-        case HalC2.Git.ok(project.root, ~w(remote get-url origin)) do
-          {:ok, url} -> String.trim(url)
-          _ -> nil
-        end
-
       found =
         HalC2.PullRequests.Forgejo.summaries(
           project.root,
-          remote,
+          Map.get(project, :remote_url),
           Enum.map(refs, &{&1["repository"], &1["number"]})
         )
 
@@ -1629,7 +1623,8 @@ defmodule HalC2.PullRequests do
   # --- projects -----------------------------------------------------------------------
 
   # This MC's projects whose checkout has a remote, as
-  # `%{id, title, root, host, repository, kind}`.
+  # `%{id, title, root, host, repository, kind, remote_url}`, `remote_url` the remote
+  # they were told by (`origin`, else the first).
   @doc "This MC's projects whose checkout has a remote, with its host and repository."
   def projects do
     for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
@@ -1668,8 +1663,10 @@ defmodule HalC2.PullRequests do
              [name, url | _] <- [String.split(line)],
              do: {name, url}
            ),
-         {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes) do
-      url |> parse_remote() |> resolve_ssh_alias()
+         {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes),
+         %{} = parsed <- url |> parse_remote() |> resolve_ssh_alias() do
+      # The remote the project was told by, which a Forgejo read is pointed at.
+      Map.put(parsed, :remote_url, url)
     else
       _ -> nil
     end
@@ -1988,18 +1985,12 @@ defmodule HalC2.PullRequests do
   defp same?(left, right), do: String.downcase(left) == String.downcase(String.trim(right || ""))
 
   defp ctx(%{kind: "forgejo"} = project, number) do
-    remote =
-      case HalC2.Git.ok(project.root, ~w(remote get-url origin)) do
-        {:ok, url} -> String.trim(url)
-        _ -> nil
-      end
-
     %{
       cwd: project.root,
       host: project.host,
       repository: project.repository,
       number: number,
-      remote_url: remote
+      remote_url: Map.get(project, :remote_url)
     }
   end
 
@@ -2070,14 +2061,17 @@ defmodule HalC2.PullRequests do
     if String.trim(body || "") == "", do: refuse(operation, detail), else: fun.()
   end
 
-  # The kind of the host a reference names, from its project's checkout (or the
-  # host it names), without asking that host anything.
+  # The kind of the host a reference names, without asking that host anything: its
+  # project's where the ref names that project's host or none, else the named host's
+  # (a Forgejo project's thread can link a GitHub pull request).
   defp ref_kind(ref) do
     project = Enum.find(projects(), &(&1.id == ref["projectId"]))
+    host = if is_binary(ref["host"]), do: ref["host"] |> String.trim() |> String.downcase()
 
     cond do
-      project -> project.kind
-      is_binary(ref["host"]) -> kind(String.downcase(String.trim(ref["host"])))
+      project && host in [nil, ""] -> project.kind
+      project && host |> String.split(":") |> hd() == project.host -> project.kind
+      host not in [nil, ""] -> host_kind(host)
       true -> nil
     end
   end
