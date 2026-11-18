@@ -484,11 +484,10 @@ fn a_silent_mc_is_dropped_while_the_owner_is_behind() {
     assert_ne!(harness.ready(), socket, "the connection did not come back");
 }
 
-#[test]
-fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
-    // More than every queue between the MC and the owner holds, so the
-    // socket stops reading and the MC's answers wait behind the burst.
-    const BURST: usize = 2_000;
+/// A burst of `burst` frames with the owner behind for five pong timeouts,
+/// every ping that reaches the MC answered: the socket stays, the
+/// connection keeps pinging, and every frame arrives once the owner catches up.
+fn a_live_mc_keeps_its_socket_behind(burst: usize) {
     let harness = Harness::new();
     let (got, on_frame) = frames();
     let id = harness.client.subscribe(json!({"type": "burst"}), on_frame);
@@ -498,20 +497,25 @@ fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
     harness.mc_gets("sub");
 
     harness.fall_behind();
-    for n in 0..BURST {
+    for n in 0..burst {
         harness
             .mc
             .send(socket, json!({"t": "delta", "id": id, "n": n}));
     }
-    // Five pong timeouts with the owner behind, every ping that reaches the
-    // MC answered.
-    let until = Instant::now() + Duration::from_millis(1_500);
+    let started = Instant::now();
+    let until = started + Duration::from_millis(1_500);
+    // Pings the MC got in the last second, when the socket has long stopped
+    // reading: an MC that closes idle sockets needs them.
+    let mut late_pings = 0;
     while let Some(left) = until.checked_duration_since(Instant::now()) {
         match harness.events.recv_timeout(left) {
             Ok(Event::Mc(Seen::Closed { .. })) => {
                 panic!("a live MC's socket was dropped while the owner was behind")
             }
             Ok(Event::Mc(Seen::Text { socket, frame })) if frame["t"] == "ping" => {
+                if started.elapsed() > Duration::from_millis(500) {
+                    late_pings += 1;
+                }
                 harness.mc.send(socket, json!({"t": "pong"}));
             }
             Ok(Event::Mc(_)) => {}
@@ -519,10 +523,14 @@ fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
             Err(_) => break,
         }
     }
+    assert!(
+        late_pings >= 3,
+        "the connection stopped pinging while the owner was behind ({late_pings} pings)"
+    );
 
     harness.catch_up();
-    harness.until(|_| got.borrow().len() == BURST);
-    assert_eq!(got.borrow()[BURST - 1]["n"], json!(BURST - 1));
+    harness.until(|_| got.borrow().len() == burst);
+    assert_eq!(got.borrow()[burst - 1]["n"], json!(burst - 1));
     assert!(harness.client.is_ready());
     assert!(
         !harness
@@ -532,4 +540,18 @@ fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
             .any(|seen| matches!(seen, Seen::Closed { .. } | Seen::Socket { .. })),
         "the connection started over"
     );
+}
+
+#[test]
+fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
+    // More than every queue between the MC and the owner holds, so the
+    // socket stops reading and the MC's answers wait behind the burst.
+    a_live_mc_keeps_its_socket_behind(2_000);
+}
+
+#[test]
+fn a_live_mc_keeps_its_socket_behind_a_burst_the_queues_hold() {
+    // Fewer than the connection's inputs hold: the socket keeps reading, and
+    // the pongs wait in the connection behind the burst.
+    a_live_mc_keeps_its_socket_behind(100);
 }
