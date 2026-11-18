@@ -20,7 +20,7 @@ defmodule HalC2.PullRequests do
   require Logger
 
   alias HalC2.GitHub.Limits
-  alias HalC2.PullRequests.{Branches, GitHub, Held, Hosts, Refreshes}
+  alias HalC2.PullRequests.{Branches, Forgejo, GitHub, Held, Hosts, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
   alias HalC2.SourceControl.Cli
 
@@ -146,6 +146,93 @@ defmodule HalC2.PullRequests do
       fun -> apply(__MODULE__, fun, [input])
     end
   end
+
+  @doc """
+  `handle/2` as a plugin asks it (`HalC2.Plugins.Host.pull_requests/3`). A plugin also
+  reads and reviews a Forgejo pull request: `detail`, `activity`, `routing` and
+  `submitReview` answer it in the fields of GitHub's answers a reviewer uses
+  (`HalC2.PullRequests.Forgejo`). The review page does not ask them for Forgejo yet,
+  as they leave out most of what it shows.
+  """
+  def plugin_handle(method, input) when method in ~w(detail activity routing submitReview) do
+    if is_map(input) and ref_kind(input) == "forgejo",
+      do: forgejo(method, input),
+      else: handle(method, input)
+  end
+
+  def plugin_handle(method, input), do: handle(method, input)
+
+  defp forgejo("detail", ref) do
+    read(
+      ref,
+      "detail",
+      fn project, ctx ->
+        with {:ok, detail} <- Forgejo.detail(ctx) do
+          {:ok,
+           Map.merge(detail, %{
+             "provider" => "forgejo",
+             "projectId" => project.id,
+             "projectTitle" => project.title,
+             "workspaceRoot" => project.root,
+             "repository" => project.repository,
+             "observedAt" => System.system_time(:millisecond)
+           })}
+        end
+      end,
+      ["forgejo"]
+    )
+  end
+
+  defp forgejo("activity", ref),
+    do: read(ref, "activity", fn _project, ctx -> Forgejo.activity(ctx) end, ["forgejo"])
+
+  defp forgejo("routing", ref) do
+    read(
+      ref,
+      "routeIdentity",
+      fn project, ctx ->
+        with {:ok, login} <- Forgejo.signed_in(ctx) do
+          {:ok,
+           %{
+             "accountId" => login,
+             "viewer" => login,
+             "host" => project.host,
+             "provider" => "forgejo",
+             "projectTitle" => project.title,
+             "workspaceRoot" => project.root
+           }}
+        end
+      end,
+      ["forgejo"]
+    )
+  end
+
+  defp forgejo("submitReview", input) do
+    review_refusal(input) ||
+      change(
+        input,
+        "submitReview",
+        fn _project, ctx ->
+          verdict = input["verdict"]
+          comments = input["comments"] || []
+
+          if verdict != "approve" and String.trim(input["body"] || "") == "" and comments == [] do
+            refuse("submitReview", "A review needs a summary or at least one comment.")
+          else
+            Forgejo.submit_review(ctx, verdict, input["body"] || "", comments, input["commitId"])
+          end
+        end,
+        ["forgejo"]
+      )
+  end
+
+  @doc """
+  How a plugin's own clone fetches the Forgejo repository of `ref` over HTTP:
+  `%{"url", "username", "token"}` (`HalC2.PullRequests.Forgejo.fetch_access/1`).
+  Not a client method: only `HalC2.Plugins.Host` calls it.
+  """
+  def fetch_access(ref),
+    do: read(ref, "fetchAccess", fn _project, ctx -> Forgejo.fetch_access(ctx) end, ["forgejo"])
 
   # --- listing ----------------------------------------------------------------------
 
@@ -763,10 +850,24 @@ defmodule HalC2.PullRequests do
     wanted =
       for ref <- refs,
           project = by_id[ref["projectId"]],
-          project.kind == "github",
+          project.kind in ["github", "forgejo"],
           same?(project.repository, ref["repository"]),
           uniq: true,
           do: {project, ref["number"]}
+
+    {forgejo, wanted} = Enum.split_with(wanted, fn {project, _} -> project.kind == "forgejo" end)
+
+    forgejo_stats =
+      for {project, number} <- forgejo,
+          {additions, deletions} <- [Forgejo.stats(ctx(project, number))] do
+        %{
+          "projectId" => project.id,
+          "repository" => project.repository,
+          "number" => number,
+          "additions" => additions,
+          "deletions" => deletions
+        }
+      end
 
     stats =
       wanted
@@ -787,7 +888,7 @@ defmodule HalC2.PullRequests do
         end
       end)
 
-    {:ok, %{"stats" => stats}}
+    {:ok, %{"stats" => stats ++ forgejo_stats}}
   end
 
   # --- one pull request ----------------------------------------------------------------
@@ -963,7 +1064,17 @@ defmodule HalC2.PullRequests do
   for a plugin deciding whether to act on it. `ref` may carry the `label` whose last
   adder to read. Not a client method: only `HalC2.Plugins.Host` calls it.
   """
-  def trust(ref), do: read(ref, "trust", fn _project, ctx -> GitHub.trust(ctx, ref["label"]) end)
+  def trust(ref) do
+    read(
+      ref,
+      "trust",
+      fn
+        %{kind: "forgejo"}, ctx -> Forgejo.trust(ctx, ref["label"])
+        _project, ctx -> GitHub.trust(ctx, ref["label"])
+      end,
+      ["github", "forgejo"]
+    )
+  end
 
   def thread_comments(input),
     do:
@@ -1869,6 +1980,22 @@ defmodule HalC2.PullRequests do
 
   defp same?(left, right), do: String.downcase(left) == String.downcase(String.trim(right || ""))
 
+  defp ctx(%{kind: "forgejo"} = project, number) do
+    remote =
+      case HalC2.Git.ok(project.root, ~w(remote get-url origin)) do
+        {:ok, url} -> String.trim(url)
+        _ -> nil
+      end
+
+    %{
+      cwd: project.root,
+      host: project.host,
+      repository: project.repository,
+      number: number,
+      remote_url: remote
+    }
+  end
+
   defp ctx(project, number),
     do: %{cwd: project.root, host: project.host, repository: project.repository, number: number}
 
@@ -1909,7 +2036,7 @@ defmodule HalC2.PullRequests do
   end
 
   # A change forgets what is held of the pull request, whether or not the host took it.
-  defp change(ref, operation, fun) do
+  defp change(ref, operation, fun, kinds \\ ["github"]) do
     forgetting = fn project, ctx ->
       try do
         fun.(project, ctx)
@@ -1919,7 +2046,7 @@ defmodule HalC2.PullRequests do
       end
     end
 
-    with {:ok, _} = done <- read(ref, operation, forgetting) do
+    with {:ok, _} = done <- read(ref, operation, forgetting, kinds) do
       Refreshes.bump()
       done
     end

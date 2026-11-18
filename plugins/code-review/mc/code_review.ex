@@ -53,6 +53,8 @@ defmodule HalC2Plugins.CodeReview do
   # write access or triage by their permission on it. Everyone else, a fork's author
   # included, is not, unless the settings name them.
   @trusted_associations ~w(OWNER MEMBER COLLABORATOR)
+  # The hosts whose pull requests can be reviewed.
+  @hosts ~w(github forgejo)
   @trusted_roles ~w(admin maintain write triage)
   # What a report may hold. A posted review's body has to stay under GitHub's 65,536
   # characters, with room for the headline, the index and the marker; the rest keeps a
@@ -121,8 +123,9 @@ defmodule HalC2Plugins.CodeReview do
     by_repo = settings["publishingByRepository"] || %{}
 
     cond do
-      settings["host"] != "github" ->
-        {:error, "host: only GitHub can be reviewed so far; #{settings["host"]} is coming later."}
+      settings["host"] not in @hosts ->
+        {:error,
+         "host: only GitHub and Forgejo can be reviewed so far; #{settings["host"]} is coming later."}
 
       bad = Enum.find(repos, &(not repository?(&1))) ->
         {:error, "repositories: #{inspect(bad)} is not owner/name."}
@@ -165,7 +168,7 @@ defmodule HalC2Plugins.CodeReview do
 
       not (is_list(settings["trustedLogins"] || []) and
                Enum.all?(settings["trustedLogins"] || [], &is_binary/1)) ->
-        {:error, "trustedLogins: give them as a list of GitHub logins."}
+        {:error, "trustedLogins: give them as a list of logins on the host."}
 
       key =
           Enum.find(
@@ -1306,7 +1309,10 @@ defmodule HalC2Plugins.CodeReview do
         watched =
           for repo <- repos,
               project =
-                Enum.find(projects, &(&1["kind"] == "github" and same?(&1["repository"], repo))),
+                Enum.find(
+                  projects,
+                  &(&1["kind"] == settings["host"] and same?(&1["repository"], repo))
+                ),
               do: project
 
         unwatched =
@@ -2084,14 +2090,9 @@ defmodule HalC2Plugins.CodeReview do
                project["host"],
                review["repository"] <> ".git"
              ]),
+           {:ok, remote} <- remote(project, review),
            {:ok, checkout} <-
-             Checkout.prepare(
-               clone,
-               path,
-               "https://#{project["host"]}/#{review["repository"]}.git",
-               review["number"],
-               review["baseBranch"]
-             ),
+             Checkout.prepare(clone, path, remote, review["number"], review["baseBranch"]),
            :ok <- approved_head(settings, review, checkout, clone),
            :ok <-
              claim(key, thread_id, %{
@@ -2346,6 +2347,25 @@ defmodule HalC2Plugins.CodeReview do
   defp option?(descriptor, value),
     do: is_binary(value) and Enum.any?(descriptor["options"] || [], &(&1["id"] == value))
 
+  # Where the plugin's clone fetches `review`'s pull request from, and how it signs in
+  # (`Checkout.prepare/5`): GitHub over HTTPS with gh's credentials, Forgejo from the
+  # server and with the token the MC reads it with.
+  defp remote(%{"kind" => "forgejo"} = project, review) do
+    ref = %{
+      "projectId" => project["id"],
+      "repository" => review["repository"],
+      "number" => review["number"]
+    }
+
+    case Host.pull_request_fetch(@id, ref) do
+      {:ok, access} -> {:ok, access}
+      {:error, error} -> {:error, "Could not tell where to fetch #{review["key"]}: #{message(error)}"}
+    end
+  end
+
+  defp remote(project, review),
+    do: {:ok, %{"url" => "https://#{project["host"]}/#{review["repository"]}.git", "gh" => true}}
+
   # The pull request beyond its diff, read for the prompt: what its author says
   # it does, the checks already failing, and the review comments already on it,
   # so the agent judges the change against its intent and does not raise what
@@ -2428,9 +2448,12 @@ defmodule HalC2Plugins.CodeReview do
         if same?(repo, review["repository"]) and String.trim(text) != "", do: text
       end)
 
+    # The base's, not the head's: the pull request under review does not get to say
+    # how it is reviewed.
     review_md =
       if settings["readReviewMd"] do
-        text = Checkout.read(checkout["path"], checkout["headSha"], "REVIEW.md", @review_md_limit)
+        base = checkout["baseSha"] || checkout["mergeBase"]
+        text = Checkout.read(checkout["path"], base, "REVIEW.md", @review_md_limit)
         if text && String.trim(text) != "", do: text
       end
 
@@ -2955,7 +2978,7 @@ defmodule HalC2Plugins.CodeReview do
                "#{unsure["machine"]} did not answer whether it posted this review; try again."}
 
             true ->
-              post_unless_on_github(review, input)
+              post_unless_posted(review, input)
           end
 
         case result do
@@ -3001,8 +3024,8 @@ defmodule HalC2Plugins.CodeReview do
     not match?(%{"status" => "publishing", "threadId" => ^thread_id}, server(:reviews)[key])
   end
 
-  defp post_unless_on_github(review, input) do
-    case on_github(review) do
+  defp post_unless_posted(review, input) do
+    case on_host(review) do
       {:ok, false} ->
         Host.pull_requests(@id, "submitReview", input)
 
@@ -3019,9 +3042,9 @@ defmodule HalC2Plugins.CodeReview do
   # and of which commit. Older MCs post it too.
   defp marker(review), do: "<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->"
 
-  # Whether the pull request has a review carrying the marker under the login gh is
+  # Whether the pull request has a review carrying the marker under the login the host is
   # signed in as: another user's HAL-C2 reviewing the same commit posts the same one.
-  defp on_github(review) do
+  defp on_host(review) do
     ref = Map.take(review, ~w(projectId repository number))
 
     with {:ok, %{"viewer" => viewer}} <- Host.pull_requests(@id, "routing", ref),
@@ -3037,7 +3060,7 @@ defmodule HalC2Plugins.CodeReview do
   defp may_give?(review) do
     case Host.pull_requests(@id, "detail", Map.take(review, ~w(projectId repository number))) do
       {:ok, %{"viewerPermissions" => %{"verdicts" => verdicts}}} -> review["verdict"] in verdicts
-      # Unread, GitHub has the last word on the post.
+      # Unread, the host has the last word on the post.
       _ -> true
     end
   end

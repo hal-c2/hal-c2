@@ -20,14 +20,17 @@ as published.
 1. Put the `code-review` folder in the MC's `plugins` folder, click **Look for
    plugins** in **Settings → Plugins** and turn it on there. It asks to read and comment on pull requests, start
    threads and give the agent a tool to report with.
-2. Sign in to GitHub with `gh auth login` on the MC's machine. Reviews use that
-   login, both to read pull requests and to post reviews.
+2. Sign in on the MC's machine: to GitHub with `gh auth login`, or to a Forgejo
+   (or Gitea) server with `fj auth login` or `tea login add`. Reviews use that
+   login, both to read pull requests and to post reviews, and the plugin's clone
+   fetches with it. Pick the host in the plugin's settings.
 3. Open the plugin's settings and add the repositories to watch. A repository is
    watched only if a project on that MC has it as its remote; the settings
    suggest the ones that do.
 
-GitHub is the only host today. GitLab, Forgejo, Bitbucket and Azure DevOps are
-listed, but cannot be chosen yet.
+GitHub and Forgejo can be chosen today. GitLab, Bitbucket and Azure DevOps are
+listed, but cannot be chosen yet. On Forgejo, sign in with `fj` for the clone to
+fetch with that login's token; with `tea`, it fetches with git's own credentials.
 
 ## When a review starts
 
@@ -38,8 +41,8 @@ listed, but cannot be chosen yet.
   ask on GitHub by requesting a review from the `gh` user, adding a label
   (`agent-review` by default), or commenting a command (`/review` by default).
 
-The plugin looks for pull requests every few minutes; **Look now** on the page
-looks at once. A commit is reviewed once. With **Review new pushes** on, a pull
+The plugin looks for pull requests every five minutes, or as often as you set,
+down to once a minute; **Look now** on the page looks at once. A commit is reviewed once. With **Review new pushes** on, a pull
 request is reviewed again when its head changes; with it off, it is marked as
 changed since its review. A pull request you asked for a review of is followed
 from then on: new pushes to it are picked up in either mode, and even if you
@@ -114,7 +117,7 @@ review's thread stops a running review.
 Pick the agent, its model, what that model offers beside itself (its reasoning
 effort, most of all) and its access in the settings. Each review's agent
 works in a checkout of the pull request's head of its own, made from the plugin's
-own copy of the repository and fetched over HTTPS with your `gh` sign-in. Your
+own copy of the repository and fetched over HTTPS with your `gh` or `fj` sign-in. Your
 repository is not touched, but if it runs commands it runs the pull request's code. Choose its
 access with that in mind. Reviewing a pull request again removes the last
 review's checkout.
@@ -123,7 +126,8 @@ The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and th
 others listed under it are filled in for each pull request. How the agent
 reports what it finds is added after it. **Reset to the plugin's prompt** undoes
 your changes to it. Each repository can have instructions of its own, and with
-**Follow REVIEW.md** the `REVIEW.md` at the pull request's head is added too.
+**Follow REVIEW.md** the `REVIEW.md` on the pull request's base branch is added too; one the pull
+request adds or changes is not followed until it is merged.
 
 ## What happens with the findings
 

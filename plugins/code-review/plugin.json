@@ -50,12 +50,12 @@
       "options": [
         { "value": "github", "label": "GitHub" },
         { "value": "gitlab", "label": "GitLab (coming later)", "disabled": true },
-        { "value": "forgejo", "label": "Forgejo (coming later)", "disabled": true },
+        { "value": "forgejo", "label": "Forgejo" },
         { "value": "bitbucket", "label": "Bitbucket (coming later)", "disabled": true },
         { "value": "azure-devops", "label": "Azure DevOps (coming later)", "disabled": true }
       ],
       "default": "github",
-      "description": "GitHub uses the gh login of this MC's machine."
+      "description": "GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login."
     },
     {
       "key": "repositories",
@@ -79,7 +79,7 @@
       "label": "Review when you are asked to review",
       "type": "boolean",
       "default": true,
-      "description": "Only when asked: a review request to the gh user starts a review."
+      "description": "Only when asked: a review request to the signed-in account starts a review."
     },
     {
       "key": "label",
@@ -153,7 +153,8 @@
       "key": "pollMinutes",
       "label": "Look for pull requests every (minutes)",
       "type": "number",
-      "default": 5
+      "default": 5,
+      "description": "At least 1."
     },
     {
       "key": "provider",

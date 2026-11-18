@@ -3,24 +3,29 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   The checkout a review's agent works in: a detached worktree, at the pull request's
   head, of the plugin's own bare clone of the repository. Both live under the plugin's
   data directory, so the user's repository is never fetched into or given a worktree.
-  The clone is fetched over HTTPS with gh's credentials, which a service has where it
-  may have no SSH agent.
+  The clone is fetched over HTTP(S), which a service can where it may have no SSH
+  agent: from GitHub with gh's credentials, from Forgejo with the token the MC reads
+  it with.
   """
 
   @doc """
-  Fetches pull request `number` and its base branch `base` from `url` into the bare
+  Fetches pull request `number` and its base branch `base` from `remote` into the bare
   clone at `clone`, made on first use, and puts the worktree at `path` on its head.
-  Answers `{:ok, %{"path", "headSha", "mergeBase"}}`.
+  `remote` is `%{"url"}` with how to sign in: `"gh" => true` for gh's credentials, or
+  a `"username"` and `"token"`. Answers `{:ok, %{"path", "headSha", "baseSha",
+  "mergeBase"}}`, `baseSha` being the base branch as fetched.
   """
-  def prepare(clone, path, url, number, base) do
+  def prepare(clone, path, %{"url" => url} = remote, number, base) do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
+
+    {credentials, env} = credentials(remote)
 
     with :ok <- alone(clone, fn -> init(clone, url) end),
          {:ok, _} <-
            git(
              clone,
-             credentials() ++
+             credentials ++
                [
                  "fetch",
                  "-q",
@@ -30,9 +35,11 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                  url,
                  "+refs/pull/#{number}/head:#{head_ref}",
                  "+refs/heads/#{base}:#{base_ref}"
-               ]
+               ],
+             env
            ),
          {:ok, head} <- git(clone, ["rev-parse", head_ref]),
+         {:ok, base_sha} <- git(clone, ["rev-parse", base_ref]),
          :ok <- alone(clone, fn -> place(clone, path, head) end) do
       merge_base =
         case git(clone, ["merge-base", base_ref, head]) do
@@ -40,7 +47,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
           _ -> base_ref
         end
 
-      {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
+      {:ok, %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
     end
   end
 
@@ -197,26 +204,37 @@ defmodule HalC2Plugins.CodeReview.Checkout do
          do: :ok
   end
 
-  # gh as git's only credential helper, as `gh auth setup-git` would make it. Git runs
-  # the helper through a shell.
-  defp credentials do
+  # Git's only credential helper for the fetch, with what it reads from the environment.
+  # gh's is as `gh auth setup-git` would make it. A token goes in the environment, never
+  # in the command line, where any process could read it. Git runs a helper through a shell.
+  defp credentials(%{"gh" => true}) do
     case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
       nil ->
-        []
+        {[], []}
 
       gh ->
         gh = String.replace(gh, "'", "'\\''")
-        ["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"]
+        {["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"], []}
     end
   end
 
+  defp credentials(%{"token" => token} = remote) when is_binary(token) and token != "" do
+    helper =
+      ~S|!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$HAL_C2_GIT_USERNAME" "$HAL_C2_GIT_TOKEN"; }; f|
+
+    {["-c", "credential.helper=", "-c", "credential.helper=" <> helper],
+     [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}
+  end
+
+  defp credentials(_remote), do: {["-c", "credential.helper="], []}
+
   # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
   # can turn the HTTPS address back into SSH, and its hooks have no business here.
-  defp git(cwd, args) do
+  defp git(cwd, args, env \\ []) do
     case System.cmd("git", args,
            cd: cwd,
            stderr_to_stdout: true,
-           env: [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_CONFIG_GLOBAL", "/dev/null"}, {"GIT_CONFIG_NOSYSTEM", "1"}]
+           env: [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_CONFIG_GLOBAL", "/dev/null"}, {"GIT_CONFIG_NOSYSTEM", "1"}] ++ env
          ) do
       {out, 0} ->
         {:ok, String.trim(out)}

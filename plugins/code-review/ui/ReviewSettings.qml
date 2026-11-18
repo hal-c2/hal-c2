@@ -35,7 +35,7 @@ ColumnLayout {
     readonly property var hosts: [
         { value: "github", label: qsTr("GitHub") },
         { value: "gitlab", label: qsTr("GitLab"), disabled: true },
-        { value: "forgejo", label: qsTr("Forgejo"), disabled: true },
+        { value: "forgejo", label: qsTr("Forgejo") },
         { value: "bitbucket", label: qsTr("Bitbucket"), disabled: true },
         { value: "azure-devops", label: qsTr("Azure DevOps"), disabled: true }
     ]
@@ -344,7 +344,7 @@ ColumnLayout {
 
         Field {
             label: qsTr("Host")
-            hint: qsTr("GitHub uses the gh login of this MC's machine.")
+            hint: qsTr("GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login.")
 
             Choice {
                 objectName: "codeReviewHosts"

@@ -792,34 +792,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     put_in(context, [:heads, number], head)
   end
 
-  step "the head of \#{int} has a REVIEW.md that links to a file outside its repository",
-       %{args: [number]} = context do
+  step "the base branch has a REVIEW.md saying {string}", %{args: [text]} = context do
+    push_base(context, %{"REVIEW.md" => text <> "\n"})
+  end
+
+  step "the base branch has a REVIEW.md that links to a file outside its repository",
+       context do
     outside = Path.join(context.mc.home, "outside.md")
     File.write!(outside, "outside the checkout\n")
-    source = context.source
-    World.git!(source, ~w(fetch -q origin))
-    World.git!(source, ~w(checkout -q --detach origin/main))
+    source = base_checkout(context)
     File.ln_s!(outside, Path.join(source, "REVIEW.md"))
-    File.mkdir_p!(Path.join(source, "src"))
-    File.write!(Path.join(source, "src/limits.ts"), @limits)
-    World.git!(source, ~w(add REVIEW.md src/limits.ts))
-    World.git!(source, ["commit", "-q", "-m", "Pull request #{number}"])
-    World.git!(source, ["push", "-q", "--force", "origin", "HEAD:refs/pull/#{number}/head"])
-    put_in(context, [:heads, number], World.git!(source, ~w(rev-parse HEAD)))
+    World.git!(source, ~w(add REVIEW.md))
+    World.git!(source, ["commit", "-q", "-m", "Review rules"])
+    World.git!(source, ~w(push -q origin HEAD:refs/heads/main))
+    context
   end
 
-  step "the head of \#{int} has a REVIEW.md that is longer than a prompt takes",
-       %{args: [number]} = context do
+  step "the base branch has a REVIEW.md that is longer than a prompt takes", context do
     text = "a very long REVIEW.md\n" <> String.duplicate("Check everything.\n", 4000)
-    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
-    put_in(context, [:heads, number], head)
+    push_base(context, %{"REVIEW.md" => text})
   end
 
-  step "the head of \#{int} has a REVIEW.md that is not UTF-8 text",
-       %{args: [number]} = context do
-    text = "not UTF-8 text\n" <> <<0xFF, 0xFE>>
-    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
-    put_in(context, [:heads, number], head)
+  step "the base branch has a REVIEW.md that is not UTF-8 text", context do
+    push_base(context, %{"REVIEW.md" => "not UTF-8 text\n" <> <<0xFF, 0xFE>>})
   end
 
   step "the agent's prompt does not include {string}", %{args: [text]} = context do
@@ -1561,6 +1556,31 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the review of \#{int} failed", %{args: [number]} = context do
     context = context |> running(number) |> end_turns()
     await_review!(context, number, &(&1["status"] == "failed"))
+  end
+
+  step "the user sets {string} to look for pull requests every {int} minute(s)",
+       %{args: [@id, minutes]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"pollMinutes" => minutes}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
+  step "{string} looks for pull requests again within a minute", %{args: [@id]} = context do
+    # The timer of the next look, as the plugin armed it.
+    %{timer: timer} = :sys.get_state(HalC2Plugins.CodeReview)
+    left = Process.read_timer(timer)
+    assert is_integer(left) and left <= 60_000
+    context
+  end
+
+  step "the setting is refused saying {string}", %{args: [message]} = context do
+    assert {:error, refusal, _} = context.saved
+    assert refusal =~ message
+    context
   end
 
   step "the plugin looks at the pull requests again", context do
@@ -2907,6 +2927,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # A commit off main with `files` at `refs/pull/<number>/head` of the fake GitHub.
+  # The source checked out at the remote's main, to commit the base branch from.
+  defp base_checkout(context) do
+    source = context.source
+    World.git!(source, ~w(fetch -q origin))
+    World.git!(source, ~w(checkout -q --detach origin/main))
+    source
+  end
+
+  # Commits `files` onto the remote's main, the base a pull request is reviewed against.
+  defp push_base(context, files) do
+    source = base_checkout(context)
+    World.commit!(source, files, "Review rules")
+    World.git!(source, ~w(push -q origin HEAD:refs/heads/main))
+    context
+  end
+
   defp push_head(context, number, files) do
     source = context.source
     World.git!(source, ~w(fetch -q origin))

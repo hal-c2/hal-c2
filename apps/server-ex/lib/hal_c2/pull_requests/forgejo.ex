@@ -232,6 +232,322 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
+  # --- what a reviewer reads and posts ----------------------------------------------
+
+  # `ctx` is `%{cwd, remote_url, repository, number}`: the checkout read through, its
+  # remote, and the pull request.
+
+  @doc """
+  The pull request as a reviewer needs it, in the fields `GitHub.detail/1` names them:
+  its title, body, author, branches, head, labels, size, the commit statuses of its
+  head as `checks` (`%{"name", "status"}`), the reviewers asked for, who is signed in
+  (`viewer`) and the verdicts they may give (`viewerPermissions.verdicts`): Forgejo
+  refuses an approval or change request on one's own pull request.
+  """
+  def detail(ctx) do
+    target = target(ctx)
+    base = base(ctx)
+
+    with {:ok, %{"number" => _} = pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}") do
+      viewer = viewer(ctx.cwd, target)
+      author = actor(pull["user"])
+      own? = viewer != nil and author != nil and down(author["login"]) == down(viewer)
+
+      {:ok,
+       %{
+         "number" => ctx.number,
+         "title" => pull["title"],
+         "body" => pull["body"] || "",
+         "url" => pull["html_url"],
+         "state" => state(pull),
+         "isDraft" => draft?(pull),
+         "author" => author,
+         "headBranch" => get_in(pull, ["head", "ref"]),
+         "baseBranch" => get_in(pull, ["base", "ref"]),
+         "headSha" => trimmed(get_in(pull, ["head", "sha"])),
+         "baseSha" => trimmed(get_in(pull, ["base", "sha"])),
+         "labels" => for(l <- pull["labels"] || [], n = trimmed(l["name"]), do: %{"name" => n}),
+         "additions" => pull["additions"] || 0,
+         "deletions" => pull["deletions"] || 0,
+         "updatedAt" => utc(pull["updated_at"]),
+         "checks" => statuses(ctx.cwd, target, base, get_in(pull, ["head", "sha"])),
+         "reviewers" =>
+           for(u <- pull["requested_reviewers"] || [], l = login(u), do: %{"login" => l}),
+         "viewer" => viewer,
+         "viewerPermissions" => %{
+           "verdicts" =>
+             if(own?, do: ["comment"], else: ["approve", "request-changes", "comment"])
+         }
+       }}
+    end
+  end
+
+  @doc """
+  What has been said on the pull request, in the fields `GitHub.activity/1` names
+  them: `comments` holds its conversation comments (`kind` `"comment"`) and its
+  reviews (`"review"`), each with `author.login`, `body` and `createdAt`; each inline
+  review comment is a `reviewThreads` entry of its own (`path`, `line`, `isResolved`,
+  `comments`), as Forgejo's API does not group replies.
+  """
+  def activity(ctx) do
+    target = target(ctx)
+    base = base(ctx)
+
+    with {:ok, _} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}") do
+      reviews = pages(ctx.cwd, target, "#{base}/pulls/#{ctx.number}/reviews")
+
+      remarks =
+        for c <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/comments"),
+            do: remark("comment", c["user"], c["body"], c["created_at"])
+
+      verdicts =
+        for r <- reviews,
+            r["state"] in ~w(APPROVED REQUEST_CHANGES COMMENT),
+            do: remark("review", r["user"], r["body"], r["submitted_at"])
+
+      threads =
+        for c <- review_comments(ctx.cwd, target, base, ctx.number, reviews) do
+          %{
+            "path" => c["path"],
+            "line" =>
+              Enum.find([c["position"], c["original_position"]], &(is_integer(&1) and &1 > 0)),
+            "isResolved" => c["resolver"] != nil,
+            "comments" => [remark("review", c["user"], c["body"], c["created_at"])]
+          }
+        end
+
+      {:ok, %{"comments" => remarks ++ verdicts, "reviewThreads" => threads}}
+    end
+  end
+
+  defp remark(kind, user, body, at),
+    do: %{
+      "kind" => kind,
+      "author" => %{"login" => login(user)},
+      "body" => body || "",
+      "createdAt" => utc(at)
+    }
+
+  @doc "Who is signed in to the pull request's server, as `{:ok, login}`."
+  def signed_in(ctx) do
+    case get(ctx.cwd, target(ctx), "user") do
+      {:ok, %{"login" => login}} when is_binary(login) -> {:ok, login}
+      {:ok, _} -> {:error, {:failed, "Forgejo did not say who is signed in."}}
+      error -> error
+    end
+  end
+
+  @doc """
+  Who stands behind the pull request, in the shape `GitHub.trust/2` answers. An
+  actor's `association` is `OWNER` for the repository's owner, `COLLABORATOR` for one
+  of its collaborators and `NONE` otherwise; Forgejo has no bots or mannequins, so
+  every actor is a user. `labeled` is whoever last added `label` and `requested`
+  whoever last asked the signed-in account for a review, from the pull request's
+  timeline, with `tied` naming anyone else who did the same within that second.
+  """
+  def trust(ctx, label \\ nil) do
+    target = target(ctx)
+    base = base(ctx)
+
+    with {:ok, %{"number" => _} = pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}") do
+      viewer = viewer(ctx.cwd, target)
+      owner = down(login(get_in(pull, ["base", "repo", "owner"])) || "")
+      collaborators = collaborators(ctx.cwd, target, ctx.repository)
+
+      association = fn user ->
+        name = down(login(user) || "")
+
+        cond do
+          name == "" -> "NONE"
+          name == owner -> "OWNER"
+          MapSet.member?(collaborators, name) -> "COLLABORATOR"
+          true -> "NONE"
+        end
+      end
+
+      as_actor = fn user ->
+        case login(user) do
+          nil ->
+            nil
+
+          name ->
+            %{
+              "login" => name,
+              "isBot" => false,
+              "isUser" => true,
+              "association" => association.(user),
+              "role" => nil
+            }
+        end
+      end
+
+      events = pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/timeline")
+      label = label && trimmed(label)
+
+      labeled =
+        label &&
+          last_event(
+            events,
+            &(&1["type"] == "label" and &1["body"] == "1" and
+                down(trimmed(get_in(&1, ["label", "name"])) || "") == down(label)),
+            as_actor
+          )
+
+      requested =
+        viewer &&
+          last_event(
+            events,
+            &(&1["type"] == "review_request" and &1["removed_assignee"] != true and
+                down(login(&1["assignee"]) || "") == down(viewer)),
+            as_actor
+          )
+
+      head_repo = get_in(pull, ["head", "repo"])
+      base_repo = get_in(pull, ["base", "repo"])
+
+      {:ok,
+       %{
+         "viewer" => viewer,
+         "author" => as_actor.(pull["user"]),
+         "isCrossRepository" =>
+           is_map(head_repo) and is_map(base_repo) and head_repo["id"] != base_repo["id"],
+         "headOwner" => login(get_in(pull, ["head", "repo", "owner"])),
+         "headSha" => trimmed(get_in(pull, ["head", "sha"])),
+         "comments" =>
+           for(
+             c <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/comments"),
+             actor = as_actor.(c["user"]),
+             do:
+               Map.merge(actor, %{"body" => c["body"] || "", "createdAt" => utc(c["created_at"])})
+           ),
+         "labeled" => labeled,
+         "requested" => requested
+       }}
+    end
+  end
+
+  # The newest matching timeline event's actor with its `createdAt`; the others at
+  # that second by someone else are `tied`, as GitHub's are. Nil when none matches.
+  defp last_event(events, match?, as_actor) do
+    matching = Enum.filter(events, &(is_map(&1) and match?.(&1)))
+
+    case matching do
+      [] ->
+        nil
+
+      _ ->
+        at = fn e -> epoch(utc(e["created_at"])) || 0 end
+        latest = matching |> Enum.map(at) |> Enum.max()
+        [last | tied] = matching |> Enum.filter(&(at.(&1) == latest)) |> Enum.reverse()
+
+        with %{} = actor <- as_actor.(last["user"]) do
+          actor = Map.put(actor, "createdAt", utc(last["created_at"]))
+
+          others =
+            tied
+            |> Enum.map(&(as_actor.(&1["user"]) || %{"login" => nil}))
+            |> Enum.reject(&(&1["login"] != nil and down(&1["login"]) == down(actor["login"])))
+            |> Enum.uniq_by(& &1["login"])
+
+          if others == [], do: actor, else: Map.put(actor, "tied", others)
+        end
+    end
+  end
+
+  @doc "The pull request's `{additions, deletions}`, or nil when it cannot be read."
+  def stats(ctx) do
+    case get(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}") do
+      {:ok, %{"additions" => a, "deletions" => d}} when is_integer(a) and is_integer(d) -> {a, d}
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Posts a review (`verdict` `approve`, `request-changes` or `comment`) with `body` and
+  inline `comments` (`%{"path", "body", "position"}`, a position as
+  `HalC2.PullRequests.GitHub.submit_review/5` takes it) on commit `commit_id`. Forgejo
+  places a comment by its line in the new file, or in the old one for a deleted line.
+  """
+  def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
+    review =
+      %{
+        "event" =>
+          %{
+            "approve" => "APPROVED",
+            "request-changes" => "REQUEST_CHANGES",
+            "comment" => "COMMENT"
+          }[
+            verdict
+          ],
+        "body" => body,
+        "comments" =>
+          for c <- comments do
+            place =
+              case c["position"] do
+                %{"kind" => "deleted", "oldLine" => line} ->
+                  %{"old_position" => line}
+
+                %{"kind" => "context", "side" => "left", "oldLine" => line} ->
+                  %{"old_position" => line}
+
+                %{"newLine" => line} ->
+                  %{"new_position" => line}
+              end
+
+            Map.merge(%{"path" => c["path"], "body" => c["body"]}, place)
+          end
+      }
+      |> then(&if(is_binary(commit_id), do: Map.put(&1, "commit_id", commit_id), else: &1))
+
+    case Forgejo.api(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews",
+           method: "POST",
+           body: review
+         ) do
+      {:ok, _, _} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  How a clone of the repository fetches it over HTTP from the server the pull
+  request's API is read on: `%{"url", "username", "token"}`, the token fj signs in
+  with (nil under tea, which keeps its own), for git's credential prompt.
+  """
+  def fetch_access(ctx) do
+    with {:ok, resolved} <- Forgejo.resolve(ctx.cwd, target(ctx)) do
+      token =
+        with :fj <- resolved.command,
+             {:ok, keys} <- Forgejo.keys(),
+             token when is_binary(token) <- get_in(keys, ["hosts", resolved.login, "token"]),
+             do: token,
+             else: (_ -> nil)
+
+      {:ok,
+       %{
+         "url" => "#{resolved.base_url}/#{resolved.repository}.git",
+         "username" => "hal-c2",
+         "token" => token
+       }}
+    end
+  end
+
+  # The head's statuses, as checks.
+  defp statuses(_cwd, _target, _base, sha) when not is_binary(sha), do: []
+
+  defp statuses(cwd, target, base, sha) do
+    case get(cwd, target, "#{base}/commits/#{URI.encode_www_form(sha)}/status?limit=#{@page}") do
+      {:ok, %{} = combined} ->
+        for s <- combined["statuses"] || [],
+            do: %{"name" => s["context"], "status" => s["status"] || s["state"]}
+
+      _ ->
+        []
+    end
+  end
+
+  defp target(ctx), do: [remote_url: ctx[:remote_url], repository: ctx.repository]
+  defp base(ctx), do: "repos/#{Forgejo.encode_repository(ctx.repository)}"
+
   # --- reading ------------------------------------------------------------------------
 
   defp get(cwd, target, path) do

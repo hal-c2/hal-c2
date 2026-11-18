@@ -109,15 +109,29 @@ defmodule HalC2.Plugins.Host do
      end}
   end
 
-  @doc "`pullRequests.<method>` as a client calls it (`HalC2.PullRequests.handle/2`)."
+  @doc """
+  `pullRequests.<method>` as a client calls it (`HalC2.PullRequests.handle/2`), and on
+  Forgejo the reads and the review post a reviewer needs
+  (`HalC2.PullRequests.plugin_handle/2`).
+  """
   def pull_requests(id, method, input) do
     permission = if method in @writes, do: "pullRequests:write", else: "pullRequests:read"
-    with :ok <- permit(id, permission), do: HalC2.PullRequests.handle(method, input)
+    with :ok <- permit(id, permission), do: HalC2.PullRequests.plugin_handle(method, input)
+  end
+
+  @doc """
+  How the plugin's own clone fetches the Forgejo repository of pull request `ref`
+  over HTTP: `{:ok, %{"url", "username", "token"}}`, with the token the MC signs in to
+  that server with (nil when it has none to give). A token is git's to send, never to
+  log or show. Needs `pullRequests:read`.
+  """
+  def pull_request_fetch(id, ref) do
+    with :ok <- permit(id, "pullRequests:read"), do: HalC2.PullRequests.fetch_access(ref)
   end
 
   @doc """
   Who opened a pull request and who asked for its review, with the standing GitHub
-  gives each (`HalC2.PullRequests.trust/1`). Needs `pullRequests:read`.
+  or Forgejo gives each (`HalC2.PullRequests.trust/1`). Needs `pullRequests:read`.
   """
   def pull_request_trust(id, ref) do
     with :ok <- permit(id, "pullRequests:read"), do: HalC2.PullRequests.trust(ref)
