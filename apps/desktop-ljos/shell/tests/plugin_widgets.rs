@@ -38,22 +38,32 @@ fn qml_files(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// The type a line declares an object of, as in `Switch {`, `delegate: Switch {`
-/// or `component Toggle: Switch {`; never an attached property (`ToolTip.text`).
+/// The type a line declares an object of, as in `Switch {`, `delegate: Switch {`,
+/// `component Toggle: Switch {`, `property Component row: Switch {` or
+/// `Controls.Switch {`; never an attached property (`ToolTip.text`).
 fn declared(line: &str) -> Option<&str> {
     let line = line.trim_start();
-    let line = line
-        .strip_prefix("component ")
-        .map_or(line, |rest| rest.split_once(':').map_or(rest, |(_, ty)| ty));
+    let line = [
+        "component ",
+        "property ",
+        "readonly property ",
+        "required property ",
+        "default property ",
+    ]
+    .iter()
+    .find_map(|prefix| line.strip_prefix(prefix))
+    .map_or(line, |rest| rest.split_once(':').map_or(rest, |(_, ty)| ty));
     let line = match line.split_once(':') {
         Some((property, rest)) if property.chars().all(|c| c.is_alphanumeric() || c == '.') => rest,
         _ => line,
     };
     let line = line.trim_start();
     let end = line
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
         .unwrap_or(line.len());
     let (name, rest) = line.split_at(end);
+    // A type named through its module's qualifier is still that type.
+    let name = name.rsplit('.').next().unwrap_or(name);
     rest.trim_start().starts_with('{').then_some(name)
 }
 
@@ -94,4 +104,13 @@ fn a_declaration_is_told_from_an_attached_property() {
     assert_eq!(declared("    ToolTip.text: qsTr(\"Open\")"), None);
     assert_eq!(declared("        ShellSwitch {"), Some("ShellSwitch"));
     assert_eq!(declared("    text: \"Switch {\""), None);
+    assert_eq!(declared("    Controls.Switch {"), Some("Switch"));
+    assert_eq!(
+        declared("    property Component row: Switch {"),
+        Some("Switch")
+    );
+    assert_eq!(
+        declared("    readonly property var tip: ToolTip.text"),
+        None
+    );
 }

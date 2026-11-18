@@ -254,6 +254,7 @@ ColumnLayout {
         value: settings.values[count.key] ?? 1
         Accessible.name: label
         onValueModified: settings.set(count.key, value)
+        onValueTyped: typed => settings.set(count.key, typed)
     }
 
     component Line: ShellTextField {

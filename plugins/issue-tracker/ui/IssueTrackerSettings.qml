@@ -322,6 +322,7 @@ ColumnLayout {
                 value: settings.values.pollMinutes ?? 10
                 Accessible.name: qsTr("Look at GitHub every (minutes)")
                 onValueModified: settings.set("pollMinutes", value)
+                onValueTyped: typed => settings.set("pollMinutes", typed)
             }
         }
 

@@ -320,6 +320,7 @@ ColumnLayout {
                 value: settings.values.concurrency ?? 1
                 Accessible.name: qsTr("Runs at once")
                 onValueModified: settings.set("concurrency", value)
+                onValueTyped: typed => settings.set("concurrency", typed)
             }
         }
 

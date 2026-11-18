@@ -43,6 +43,11 @@ TestCase {
         }
     }
 
+    Component {
+        id: spyComponent
+        SignalSpy {}
+    }
+
     function init() {
         Theme.appearance = "dark";
         Theme.colors = dark;
@@ -105,5 +110,25 @@ TestCase {
         });
         compare(control.up.indicator.opacity, 0.4);
         compare(control.down.indicator.opacity, 1);
+    }
+
+    // A number typed in range is reported at once, before Return makes it the
+    // value; what reads no number in range is not.
+    function test_spinBoxReportsATypedNumberInRange() {
+        const control = createTemporaryObject(spinComponent, testCase);
+        const typed = createTemporaryObject(spyComponent, testCase, {
+            target: control,
+            signalName: "valueTyped"
+        });
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Backspace);
+        compare(typed.count, 0);
+        keyClick(Qt.Key_7);
+        compare(typed.count, 1);
+        compare(typed.signalArguments[0][0], 7);
+        compare(control.value, 5);
+        keyClick(Qt.Key_Return);
+        compare(control.value, 7);
     }
 }

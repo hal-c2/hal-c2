@@ -153,6 +153,7 @@ ColumnLayout {
         to: 999999999
         value: settings.values[count.key] ?? 0
         onValueModified: settings.set(count.key, value)
+        onValueTyped: typed => settings.set(count.key, typed)
     }
 
     // Logins separated by commas. The text stays as typed while it is edited, with

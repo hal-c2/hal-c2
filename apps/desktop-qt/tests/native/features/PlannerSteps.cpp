@@ -525,7 +525,7 @@ QStringList accessibleInputNames(const QQuickItem* root) {
 }
 
 // Types `text` into the number field of the count `key`, as the user does, and
-// leaves it there: a count is set only once the field is left.
+// stays in it: a count is set as soon as what is typed reads one in range.
 void typeCount(World& world, const QString& key, const QString& text) {
   QQuickItem* editor = waitShownNamed(world, QStringLiteral("plannerSetting:") + key)->property("contentItem").value<QQuickItem*>();
   expect(editor, QStringLiteral("%1 cannot be typed in").arg(key));

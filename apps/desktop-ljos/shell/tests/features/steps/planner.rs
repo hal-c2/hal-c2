@@ -906,7 +906,7 @@ fn set_text_and(world: &mut World, name: &str, typed: &str, signal: &str) -> Out
 }
 
 /// Types `typed` into the number field of the count `key`, as the user does,
-/// and leaves it there: a count is set only once the field is left.
+/// and stays in it: a count is set as soon as what is typed reads one in range.
 fn type_count(world: &mut World, key: &str, typed: &str) -> Outcome {
     let brick = shell(world)?;
     let count = shown_named(world, &format!("plannerSetting:{key}"))?;

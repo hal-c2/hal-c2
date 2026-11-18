@@ -5,8 +5,14 @@ import HalC2.Shell
 // A number field in the theme's colours: a bordered input
 // with a minus stepper on the left and a plus on the right. Replaces the stock
 // SpinBox, whose colours come from a system palette.
+//
+// `valueTyped` reports a number as soon as what is typed reads one in range, before
+// Return or the keyboard leaving makes it the value: a page saved with a button
+// handles it as well as `valueModified`, so a count typed and then saved is kept.
 SpinBox {
     id: control
+
+    signal valueTyped(int typed)
 
     readonly property color border: Theme.palette.color("input", "#27272a")
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
@@ -31,6 +37,10 @@ SpinBox {
         readOnly: !control.editable
         validator: control.validator
         inputMethodHints: control.inputMethodHints
+        onTextEdited: {
+            if (acceptableInput)
+                control.valueTyped(control.valueFromText(text, control.locale));
+        }
     }
 
     up.indicator: Rectangle {
