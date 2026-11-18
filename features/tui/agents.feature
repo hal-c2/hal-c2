@@ -45,7 +45,7 @@ Feature: The terminal client's agents panel
     Given the agents panel is open
     When the user selects the worker "Fix the tests" and presses "c"
     Then the client asks "Stop Fix the tests?" with "Keep it running" chosen
-    When the user chooses "Stop the worker"
+    When the user chooses "Stop the worker" in the question
     Then the client stops the run of the worker's thread
 
   @tui

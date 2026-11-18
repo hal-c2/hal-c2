@@ -213,7 +213,7 @@ step(
   },
 );
 
-step("the user chooses {string}", async (ctx: TurnWorld, label: string) => {
+step("the user chooses {string} in the question", async (ctx: TurnWorld, label: string) => {
   const select = hostState(ctx, "select");
   const target = select.options.findIndex((option: { label: string }) => option.label === label);
   for (let index = select.index; index > target; index -= 1) await pressKey(ctx, "Up");
