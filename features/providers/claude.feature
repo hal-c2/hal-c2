@@ -2287,6 +2287,21 @@ Feature: Claude
     Then the steer goes in at once
     And the tool call Claude did not run shows as cancelled, not as denied permission
 
+  # Another agent's or the MC's steer waits for Claude's next tool boundary instead,
+  # and the tool calls Claude has pending run on. A plugin's steer (TokenEconomizer's
+  # redirect) goes in at once, as the user's does.
+  @priority-high
+  Scenario Outline: A steer from <sender> waits for Claude's next tool boundary
+    Given Claude has a tool call pending
+    When <sender> steers the run
+    Then the steer is sent for Claude's next tool boundary
+    And the tool call Claude has pending is not cancelled
+
+    Examples:
+      | sender        |
+      | another agent |
+      | the MC        |
+
   @mc @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Claude's goal shows as a work state
     When the user sends "/goal" with an objective in a Claude thread
