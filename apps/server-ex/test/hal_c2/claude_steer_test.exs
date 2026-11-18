@@ -43,6 +43,26 @@ defmodule HalC2.ClaudeSteerTest do
     assert Task.await(task)
   end
 
+  # Another agent's or the MC's steer waits for Claude's next tool boundary and cuts
+  # nothing short; the user's goes in at once and the part it cuts is swallowed.
+  for {priority, sent, steered} <- [{:next, "next", false}, {:now, "now", true}] do
+    test "a #{priority} steer is sent as #{sent}" do
+      state = %{
+        session: self(),
+        steered: false,
+        turn: %{ids: %{run: "run-1"}, launch: %{prompt_effort: nil}}
+      }
+
+      message = %{text: "hi", attachments: [], priority: unquote(priority)}
+
+      assert {:reply, :ok, %{steered: unquote(steered)}} =
+               ThreadRuntime.handle_call({:steer, "run-1", message}, nil, state)
+
+      assert_received {:"$gen_cast", {:user_message, _content, opts}}
+      assert opts[:priority] == unquote(sent)
+    end
+  end
+
   # A process standing in for the runtime in its registry: it answers the steer
   # with `steer_reply` (`:hold` never answers it), as a runtime busy with the
   # messages ahead of that call would not.

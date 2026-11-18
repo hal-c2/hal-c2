@@ -312,6 +312,21 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  step "the result names its place in the queue and the turn it waits behind", context do
+    assert {:ok, %{"delivery" => "queue_after_active"} = result} = context.mcp_result
+    first = List.first(context.runs_before)
+    assert result["queuePosition"] == 1
+    assert result["queueHeld"] == false
+    assert result["activeRunId"] == first["id"]
+    context
+  end
+
+  step "it says how to join that turn instead", context do
+    assert {:ok, %{"next" => next}} = context.mcp_result
+    assert next =~ "hal_c2_queue_promote_to_steer"
+    context
+  end
+
   step "it is recorded as sent by {string}, created by an agent through MCP",
        %{args: [caller]} = context do
     assert {:ok, %{"messageId" => id}} = context.mcp_result

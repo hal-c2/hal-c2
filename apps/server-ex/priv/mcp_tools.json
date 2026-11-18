@@ -1868,7 +1868,7 @@
   },
   {
     "name": "hal_c2_pending_request_list",
-    "description": "List pending user questions in a thread in the calling project. Approval requests are not included.",
+    "description": "List the requests a thread in the calling project waits on: questions and approvals, each with its kind. A worker you delegated to (delegate_task) also tells you of each one as a message.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1888,7 +1888,7 @@
   },
   {
     "name": "hal_c2_pending_request_read",
-    "description": "Read a pending user question. Answer with hal_c2_pending_request_respond; existing live or message response handling is used.",
+    "description": "Read a pending request: a question's questions, or an approval's prompt, reason and options. canRespond says whether you may decide the approval: only the agent that delegated the thread's work, running at full access, may; otherwise it is the user's, so tell them. Answer with hal_c2_pending_request_respond.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1912,7 +1912,7 @@
   },
   {
     "name": "hal_c2_pending_request_respond",
-    "description": "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
+    "description": "Answer a pending request. A question takes answers (by question id). An approval takes a decision (accept, acceptForSession, decline or cancel, as its options offer), and only from the agent that delegated the thread's work while that agent runs at full access; a supervised parent leaves approvals to the user.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1931,9 +1931,13 @@
         },
         "answers": {
           "type": "object"
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["accept", "acceptForSession", "decline", "cancel"]
         }
       },
-      "required": ["requestId", "answers"],
+      "required": ["requestId"],
       "additionalProperties": true
     }
   },
@@ -2735,6 +2739,26 @@
     }
   },
   {
+    "name": "hal_c2_queue_resume",
+    "description": "Resume a thread's held queue, as the user's Resume does: queued messages wait held after an MC restart, a usage limit or a stop, and nothing else starts them. Needs a thread you may write.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
     "name": "hal_c2_thread_configuration",
     "description": "Read a thread's provider/model selection and modes in the calling project. modelSelection is what the thread's next turn runs on; activeRun, when a turn is in progress, names the model that turn is running on. orchestrator_capabilities lists available providers and models.",
     "inputSchema": {
@@ -3530,7 +3554,7 @@
   },
   {
     "name": "hal_c2_thread_send",
-    "description": "Send a message to a HAL-C2 thread in the calling project. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
+    "description": "Send a message to a HAL-C2 thread in the calling project. mode='auto' (the default) starts an idle thread, or joins a working turn at its next safe point (a tool boundary) without cutting short what it is doing, or queues behind a turn that cannot take it yet. queue waits for the turn to end, however long that is: use it only for a separate follow-up turn. steer is auto for a working turn only (refused when the thread is idle); restart interrupts the turn and runs the message first, for what cannot wait. The result says where the message went: its queue position, whether the queue is held (resume it with hal_c2_queue_resume) and any request the thread is blocked on. clientRequestId makes retries idempotent.",
     "inputSchema": {
       "type": "object",
       "properties": {

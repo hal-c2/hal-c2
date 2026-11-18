@@ -276,7 +276,107 @@ defmodule HalC2.Orchestration.Delegation do
   @doc "Called when a run of `thread_id` ends: settles a subagent's task once it is quiet (`settle_if_quiet/1`)."
   def finished(thread_id, _run_id, _status) do
     settle_if_quiet(thread_id)
+    held_queue(thread_id)
     flush_pending(thread_id)
+  end
+
+  # A child left with only a held queue (a usage limit, a stop, a restart held it) has
+  # nothing that will start it, and its task does not end: its caller hears so once
+  # for each held queue, to resume or cancel it.
+  defp held_queue(child_id) do
+    child = stream(child_id)
+    runs = StreamState.list(child, "run")
+    held = for run <- runs, run["status"] == "queued", do: run
+    lineage = get_in(StreamState.get(child, "thread"), [child_id, "lineage"]) || %{}
+    parent_id = lineage["parentThreadId"]
+
+    with [_ | _] <- held,
+         true <- Enum.all?(held, &(&1["queueHeld"] == true)) and settled?(child),
+         "subagent" <- lineage["relationshipToParent"],
+         true <- is_binary(parent_id),
+         parent = stream(parent_id),
+         %{} = thread <- StreamState.get(parent, "thread")[parent_id],
+         nil <- thread["archivedAt"] || thread["deletedAt"],
+         %{} = task <-
+           Enum.find(
+             StreamState.list(parent, "subagent"),
+             &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
+                 &1["status"] not in @terminal)
+           ) do
+      notify(held_command(parent_id, task, held, latest(runs -- held)))
+    end
+
+    :ok
+  end
+
+  # Sends the caller a message about its task: into the turn it works on, at that
+  # turn's next safe point, else a turn of its own; one its runtime would not take
+  # into the turn waits behind it instead. Once per command id, also when two callers
+  # tell it at once: a receipt is stored only after its dispatch, so they take turns.
+  defp notify(command) do
+    :global.trans(
+      {{__MODULE__, command["commandId"]}, self()},
+      fn ->
+        with {:error, _} <- Orchestration.dispatch_once(command) do
+          command
+          |> Map.update!("commandId", &(&1 <> ":queued"))
+          |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+          |> Orchestration.dispatch_once()
+        end
+      end,
+      [node()]
+    )
+  end
+
+  defp held_command(parent_id, task, held, last) do
+    key = "#{task["id"]}:" <> (held |> Enum.map(& &1["id"]) |> Enum.sort() |> Enum.join(","))
+    key = :crypto.hash(:sha256, key) |> Base.url_encode64(padding: false) |> binary_part(0, 22)
+
+    title =
+      String.trim(task["title"] || "") |> then(&if(&1 == "", do: "Delegated task", else: &1))
+
+    child = task["childThreadId"]
+    count = length(held)
+    waiting = if count == 1, do: "1 queued message waits", else: "#{count} queued messages wait"
+
+    why =
+      case last do
+        %{"status" => status} = run ->
+          failure = get_in(run, ["failure", "message"])
+          " Its last turn ended #{status}" <> if(failure, do: ": #{failure}", else: ".")
+
+        _ ->
+          ""
+      end
+
+    detail = "#{waiting} in the worker's held queue, and nothing starts them.#{why}"
+
+    %{
+      "type" => "message.dispatch",
+      "commandId" => "command:delegate-held:" <> key,
+      "threadId" => parent_id,
+      "messageId" => "message:delegate-held:" <> key,
+      "text" =>
+        """
+        <delegated_task_held taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" childThreadId="#{attr(child)}" queued="#{count}">
+        #{detail}
+        </delegated_task_held>
+        Resume the queue with hal_c2_queue_resume (threadId #{child}) once what held it is past, or cancel what is no longer wanted with hal_c2_queue_cancel (hal_c2_queue_list shows them). Until then the task does not end.
+        """
+        |> String.trim(),
+      "attachments" => [],
+      "createdBy" => "system",
+      "creationSource" => "server",
+      "dispatchMode" => %{"type" => "start_immediately"},
+      "notification" => %{
+        "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
+        "outcome" => "updated",
+        "summary" => "#{title} has a held queue",
+        "workerThreadId" => child,
+        "workerTitle" => title,
+        "detail" => detail
+      }
+    }
   end
 
   @doc """
@@ -1543,7 +1643,7 @@ defmodule HalC2.Orchestration.Delegation do
         "worktreePath" => thread["worktreePath"],
         "branch" => thread["branch"]
       }
-      |> put_blocked(blocked)
+      |> put_blocked(blocked, thread_id)
       |> put_next(task, blocked)
       |> put_latest(answer(child))
     end
@@ -1581,21 +1681,151 @@ defmodule HalC2.Orchestration.Delegation do
     )
   end
 
-  defp put_blocked(status, nil), do: status
+  defp put_blocked(status, nil, _thread_id), do: status
 
-  defp put_blocked(status, request) do
+  defp put_blocked(status, request, thread_id) do
     child = status["childThreadId"]
 
     Map.put(status, "pendingRequest", %{
       "requestId" => request["id"],
       "kind" => request["kind"],
       "runId" => request_run(child, request),
-      "next" =>
-        "The subagent waits on this. Read it with hal_c2_pending_request_read and answer it " <>
-          "with hal_c2_pending_request_respond (threadId #{child}, requestId #{request["id"]}), " <>
-          "or ask the user to; its result still wakes this thread."
+      "next" => answer_hint(request, child, thread_id) <> " Its result still wakes this thread."
     })
   end
+
+  # Who answers a request a child stopped on, and how: the caller answers its
+  # questions; it decides its approvals only at full access, the child holding no more
+  # than its modes; otherwise they are the user's.
+  defp answer_hint(request, child, parent_id) do
+    where = "(threadId #{child}, requestId #{request["id"]})"
+
+    cond do
+      request["kind"] == "user_input" ->
+        "The subagent waits on your answer. Read it with hal_c2_pending_request_read and answer " <>
+          "it with hal_c2_pending_request_respond #{where}; ask the user only what you cannot answer."
+
+      approves?(parent_id) ->
+        "The subagent waits on an approval. Read it with hal_c2_pending_request_read and decide " <>
+          "it with hal_c2_pending_request_respond #{where}: you run at full access, so this is yours " <>
+          "to accept or decline."
+
+      true ->
+        "The subagent waits on an approval only the user can give: this thread is not at full " <>
+          "access. Tell the user what it asks (hal_c2_pending_request_read #{where}) and that it " <>
+          "waits in the worker's thread."
+    end
+  end
+
+  defp approves?(thread_id),
+    do:
+      (StreamState.get(stream(thread_id), "thread")[thread_id] || %{})["runtimeMode"] ==
+        "full-access"
+
+  @doc """
+  Tells the caller of an app-owned task that its child opened a request
+  (`TurnWriter`'s approvals and questions), since the user is not watching the child
+  and the caller is who answers for it: a message to the caller, steering a turn it
+  is working on at that turn's next safe point, else starting or queueing one. Its
+  questions are the caller's to answer; its approvals are the caller's to decide only
+  at full access, and are otherwise passed on to the user. Once per request, and not
+  to a caller waiting on the task, whose wait returns on it.
+  """
+  def request_opened(child_id, request_id) do
+    child = stream(child_id)
+    request = StreamState.get(child, "runtime-request")[request_id]
+    lineage = get_in(StreamState.get(child, "thread"), [child_id, "lineage"]) || %{}
+    parent_id = lineage["parentThreadId"]
+
+    with %{"status" => "pending"} <- request,
+         "subagent" <- lineage["relationshipToParent"],
+         true <- is_binary(parent_id),
+         parent = stream(parent_id),
+         %{} = thread <- StreamState.get(parent, "thread")[parent_id],
+         nil <- thread["archivedAt"] || thread["deletedAt"],
+         %{} = task <-
+           Enum.find(
+             StreamState.list(parent, "subagent"),
+             &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
+                 &1["status"] not in @terminal)
+           ),
+         # A caller waiting on the task hears of it from its wait (`wait/3`).
+         true <- task["completionWake"] != "settled_only" do
+      item =
+        Enum.find(
+          StreamState.list(child, "turn-item"),
+          &(&1["requestId"] == request_id and
+              &1["type"] in ["approval_request", "user_input_request"])
+        ) || %{}
+
+      notify(request_command(parent_id, task, request, item))
+    end
+
+    :ok
+  end
+
+  defp request_command(parent_id, task, request, item) do
+    key = request_key(task["id"], request)
+    question? = request["kind"] == "user_input"
+
+    title =
+      String.trim(task["title"] || "") |> then(&if(&1 == "", do: "Delegated task", else: &1))
+
+    %{
+      "type" => "message.dispatch",
+      "commandId" => "command:delegate-request:" <> key,
+      "threadId" => parent_id,
+      "messageId" => "message:delegate-request:" <> key,
+      "text" => request_text(task, request, item, parent_id),
+      "attachments" => [],
+      "createdBy" => "system",
+      "creationSource" => "server",
+      "dispatchMode" => %{"type" => "start_immediately"},
+      "notification" => %{
+        "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
+        "outcome" => "updated",
+        "summary" =>
+          if(question?, do: "#{title} asks a question", else: "#{title} waits on an approval"),
+        "workerThreadId" => task["childThreadId"],
+        "workerTitle" => title,
+        "detail" => cap_result(request_detail(request, item))
+      }
+    }
+  end
+
+  # Claude asks again under an answered request's id: each ask is its own message.
+  defp request_key(task_id, request), do: "#{task_id}:#{request["id"]}:#{request["createdAt"]}"
+
+  defp request_text(task, request, item, parent_id) do
+    """
+    <delegated_task_request taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" childThreadId="#{attr(task["childThreadId"])}" requestId="#{attr(request["id"])}" kind="#{attr(request["kind"])}">
+    #{request_close_safe(request_detail(request, item))}
+    </delegated_task_request>
+    #{answer_hint(request, task["childThreadId"], parent_id)}
+    """
+    |> String.trim()
+  end
+
+  defp request_detail(%{"kind" => "user_input"}, item) do
+    (item["questions"] || [])
+    |> Enum.map_join("\n", fn question ->
+      options = for option <- question["options"] || [], do: option["label"]
+
+      [question["header"], question["question"]]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join(": ")
+      |> then(&if(options == [], do: &1, else: "#{&1} (#{Enum.join(options, " / ")})"))
+    end)
+  end
+
+  defp request_detail(request, item) do
+    [item["prompt"] || request["kind"], item["reason"]]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n")
+  end
+
+  defp request_close_safe(text),
+    do: Regex.replace(~r{</(?=delegated_task_request)}i, text, "&lt;/")
 
   defp request_run(child_id, request) do
     get_in(StreamState.get(stream(child_id), "node"), [request["nodeId"], "runId"])
@@ -1640,6 +1870,7 @@ defmodule HalC2.Orchestration.Delegation do
       # the wait returns with the request, and the task's end wakes the caller.
       task["pendingRequest"] != nil ->
         hook(:expiring, task_id)
+        told_by_wait(thread_id, task_id, child, task["pendingRequest"]["requestId"])
         expire(thread_id, task_id)
         {:ok, status(thread_id, task_id)}
 
@@ -1659,6 +1890,16 @@ defmodule HalC2.Orchestration.Delegation do
           min(left, 5_000) -> wait_loop(thread_id, task_id, deadline, child)
         end
     end
+  end
+
+  # The wait returns the request to its caller, so `request_opened/2` sends no message
+  # about it: its command is marked handled before the wait ends, and until it ends
+  # that sends none to a caller waiting on the task.
+  defp told_by_wait(thread_id, task_id, child, request_id) do
+    request = StreamState.get(stream(child), "runtime-request")[request_id] || %{}
+    key = "command-receipt:command:delegate-request:" <> request_key(task_id, request)
+    receipt = %{"ok" => %{"toldByWait" => true}, "threadId" => thread_id}
+    HalC2.Store.put_meta(key, JSON.encode!(receipt))
   end
 
   # The wait is over: a child that ends from now on wakes the caller. A task that ended

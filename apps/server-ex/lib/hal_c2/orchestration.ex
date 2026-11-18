@@ -3808,11 +3808,15 @@ defmodule HalC2.Orchestration do
   defp with_changes(state, changes), do: StreamState.with_changes(state, changes)
 
   # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
-  # context) and the message's files, as a turn carries them.
+  # context) and the message's files, as a turn carries them. What another agent or the
+  # MC steers in waits for the turn's next safe point (`priority: :next`: Claude folds
+  # it in at its next tool boundary instead of cancelling the tools it has pending,
+  # Upstream #15892); the user's own steer goes in at once.
   defp steer_input(message) do
     %{
       text: HalC2.ComposerContext.for_provider(message["text"] || "", message["context"]),
-      attachments: provider_attachments(message["attachments"])
+      attachments: provider_attachments(message["attachments"]),
+      priority: if(message["createdBy"] in ["agent", "system"], do: :next, else: :now)
     }
   end
 

@@ -17,6 +17,8 @@ defmodule HalC2.DelegationWakesPropTest do
   - a wake runs as a turn of its own, never joining the turn it found working: the
     caller is on Codex or on Claude, and Claude would cancel its pending tools for a
     message mid-turn (Upstream #15892);
+  - each request a working child opens reaches the caller in one message, however
+    many times, and however concurrently, it is told (`Delegation.request_opened/2`);
 
   and once the commands are done and the caller has worked through its queue, every
   task that ended was named by exactly one wake, and that wake ran to its end.
@@ -90,8 +92,8 @@ defmodule HalC2.DelegationWakesPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # ended: the tasks that ended, in order.
-  def initial_state, do: %{ended: []}
+  # ended: the tasks that ended, in order. asked: the requests the children opened.
+  def initial_state, do: %{ended: [], asked: []}
 
   def command(state) do
     working = @tasks -- state.ended
@@ -102,24 +104,55 @@ defmodule HalC2.DelegationWakesPropTest do
         {2, {:call, __MODULE__, :start_next, []}},
         {1, {:call, __MODULE__, :user_turn, []}}
       ] ++
-        if(working == [], do: [], else: [{4, {:call, __MODULE__, :finish, [oneof(working)]}}])
+        if(working == [],
+          do: [],
+          else: [
+            {4, {:call, __MODULE__, :finish, [oneof(working)]}},
+            {2,
+             {:call, __MODULE__, :ask,
+              [oneof(working), oneof(["user_input", "command"]), length(state.asked)]}}
+          ]
+        )
     )
   end
 
-  def precondition(state, {:call, _, :finish, [task]}), do: task not in state.ended
+  def precondition(state, {:call, _, call, [task | _]}) when call in [:finish, :ask],
+    do: task not in state.ended
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :finish, [task]}),
     do: %{state | ended: state.ended ++ [task]}
 
+  def next_state(state, _result, {:call, _, :ask, [task, _kind, n]}),
+    do: %{state | asked: state.asked ++ [request(task, n)]}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, call, args}, _result) do
     ended = if call == :finish, do: state.ended ++ args, else: state.ended
+
+    asked =
+      case {call, args} do
+        {:ask, [task, _kind, n]} -> state.asked ++ [request(task, n)]
+        _ -> state.asked
+      end
+
     caller = stream(@parent)
 
     ended?(caller, ended) and never_dropped?(caller) and wakes_agree?(caller) and
-      own_turns?(caller)
+      own_turns?(caller) and told_once?(caller, asked)
+  end
+
+  # One message per request the children opened, and none for any other.
+  defp told_once?(caller, asked) do
+    told =
+      for message <- StreamState.list(caller, "message"),
+          String.starts_with?(message["id"], "message:delegate-request:"),
+          do: message["id"]
+
+    length(told) == length(asked) and
+      Enum.all?(asked, fn request -> Enum.count(told, &(&1 =~ ":#{request}:")) == 1 end)
   end
 
   # Each wake the caller is working on, or worked on, started that turn itself.
@@ -288,6 +321,32 @@ defmodule HalC2.DelegationWakesPropTest do
 
     Delegation.finished(child(task), "run-1", "completed")
   end
+
+  # The task's child opens a request: the turn writer tells the caller as it opens, and
+  # a second telling (a retry, a restart) lands at the same moment.
+  def ask(task, kind, n) do
+    request = request(task, n)
+
+    commit(child(task), [
+      {"runtime-request", request,
+       %{
+         "id" => request,
+         "kind" => kind,
+         "status" => "pending",
+         "createdAt" => "2026-01-01T00:00:00.000Z"
+       }}
+    ])
+
+    [fn -> Delegation.request_opened(child(task), request) end]
+    |> List.duplicate(2)
+    |> List.flatten()
+    |> Enum.map(&Task.async/1)
+    |> Enum.each(&(:ok = Task.await(&1)))
+
+    :ok
+  end
+
+  defp request(task, n), do: "req-#{task}-#{n}"
 
   # The caller's active turn ends, if it has one. As the turn writer does, the end
   # reports to delegation and starts the next queued turn, from two processes, so

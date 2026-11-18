@@ -948,10 +948,59 @@ defmodule HalC2.Mcp.Tools do
            "runId" => run && run["id"],
            "status" => (run && run["status"]) || "queued",
            "delivery" => mode["type"]
-         }}
+         }
+         |> Map.merge(waiting(row["id"], run))}
       end
     end
   end
+
+  # What a queued message waits on, so its sender can choose another way: its place
+  # in the queue, a hold only a resume lifts, the turn ahead of it and how long that
+  # has run, and a request the thread stopped on.
+  defp waiting(thread_id, %{"status" => "queued"} = run) do
+    state = stream(thread_id)
+    runs = StreamState.list(state, "run")
+    queued = runs |> Enum.filter(&(&1["status"] == "queued"))
+    active = Enum.find(runs, &(&1["status"] in ~w(preparing starting running waiting)))
+
+    blocked =
+      state
+      |> StreamState.list("runtime-request")
+      |> Enum.find(
+        &(&1["status"] == "pending" and get_in(&1, ["responseCapability", "type"]) != "message")
+      )
+
+    position =
+      Enum.count(
+        queued,
+        &({&1["queuePosition"] || 0, &1["ordinal"] || 0} <
+            {run["queuePosition"] || 0, run["ordinal"] || 0})
+      ) + 1
+
+    %{
+      "queuePosition" => position,
+      "queueHeld" => run["queueHeld"] == true,
+      "activeRunId" => active && active["id"],
+      "activeRunStartedAt" => active && (active["startedAt"] || active["createdAt"]),
+      "blockedOn" => blocked && %{"requestId" => blocked["id"], "kind" => blocked["kind"]},
+      "next" => queued_next(run, blocked)
+    }
+    |> Map.reject(fn {_key, value} -> value == nil end)
+  end
+
+  defp waiting(_thread_id, _run), do: %{}
+
+  defp queued_next(%{"queueHeld" => true}, _blocked),
+    do:
+      "The queue is held: nothing starts it but hal_c2_queue_resume (or the user's Resume). Cancel the message with hal_c2_queue_cancel if it is no longer wanted."
+
+  defp queued_next(_run, %{} = _blocked),
+    do:
+      "The thread is blocked on a request: hal_c2_pending_request_read it and answer it if it is yours to answer, or tell the user."
+
+  defp queued_next(_run, _blocked),
+    do:
+      "It starts when the working turn ends. If it cannot wait, hal_c2_queue_promote_to_steer joins it to that turn, or send again with mode restart."
 
   @doc """
   Interrupts a run of a thread of this MC, or of the MC it moved to, on behalf

@@ -6,7 +6,8 @@
 #   https://github.com/pingdotgg/t3code/pull/27994
 #   https://github.com/pingdotgg/t3code/pull/27925
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
-#     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
+#     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_queue_resume,
+#     hal_c2_pending_request_list,
 #     hal_c2_pending_request_read, hal_c2_pending_request_respond)
 #   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (hal_c2_project_create, hal_c2_project_update,
 #     hal_c2_project_delete, hal_c2_project_clone, hal_c2_worktree_list, hal_c2_worktree_status,
@@ -15,7 +16,7 @@
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request,
 #     unlink_pull_request, list_thread_pull_requests)
 #   V2 commands issued: queued-run.edit, queued-run.cancel, queued-run.reorder,
-#     queued-message.promote-to-steer, runtime-request.respond, thread.delete,
+#     queued-message.promote-to-steer, queue.resume, runtime-request.respond, thread.delete,
 #     thread.metadata.update, message.dispatch (queue_after_active),
 #     thread.pull-request.link, thread.pull-request.unlink
 #   apps/server/src/mcp/toolkits/orchestrator, project, worktree, pullRequests
@@ -25,8 +26,8 @@
 #   https://github.com/pingdotgg/t3code/pull/29810
 Feature: Agents managing queues, projects, worktrees and pull requests through MCP
   Beyond threads themselves, an agent can manage queued messages, answer
-  questions, register projects, move its own thread into a worktree and link
-  pull requests.
+  questions, decide the approvals of the workers it delegated to, register
+  projects, move its own thread into a worktree and link pull requests.
 
   Background:
     Given an MC with a project "demo"
@@ -63,11 +64,12 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Then it fails with code "invalid_request" and "The queued message was not found."
 
   @mc
-  Scenario: Listing and reading pending questions
+  Scenario: Listing and reading pending requests
     Given the agent of "t2" asked the user a question and asked for an approval
     When the agent of "caller" lists the pending requests of "t2"
-    Then only the question is listed
+    Then the question and the approval are listed with their kinds
     And reading it returns its questions
+    And reading the approval returns what it asks and that "caller" may not decide it
 
   @mc
   Scenario: Answering another thread's question
@@ -75,11 +77,41 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     When the agent of "caller" answers it
     Then the turn of "t2" continues with the answer
 
+  # A worker holds no more than its caller's modes, so a caller at full access may
+  # already do what its worker asks; anyone else leaves the approval to the user.
   @mc
-  Scenario: Agents cannot answer approvals
-    Given the agent of "t2" asked for approval to run a command
-    When the agent of "caller" responds to that request
-    Then it fails with code "invalid_request" and "The pending user-input request was not found."
+  Scenario: The full-access agent that delegated a worker decides its approvals
+    Given "t2" works on a task "caller" delegated
+    And the agent of "t2" asked for approval to run a command
+    When the agent of "caller" decides that request with "accept"
+    Then the approval of "t2" is answered with "accept"
+
+  @mc
+  Scenario Outline: Other agents leave approvals to the user
+    Given <relation>
+    And the agent of "t2" asked for approval to run a command
+    When the agent of "caller" decides that request with "accept"
+    Then it fails with code "capability_denied"
+    And the approval of "t2" still waits for the user
+
+    Examples:
+      | relation                                                        |
+      | "t2" is a thread of its own                                     |
+      | "t2" works on a task "caller" delegated while "caller" is supervised |
+
+  @mc
+  Scenario: A standing rule stays the user's
+    Given "t2" works on a task "caller" delegated
+    And the agent of "t2" asked for approval to run a command
+    When the agent of "caller" decides that request with "acceptAlways"
+    Then it fails with code "invalid_request"
+    And the approval of "t2" still waits for the user
+
+  @mc
+  Scenario: Resuming a held queue
+    Given the queue of "t2" is held
+    When the agent of "caller" resumes the queue of "t2"
+    Then the queue of "t2" is no longer held
 
   # Upstream #22850: every request no longer pending was reported as not found.
   @backlog @mc
