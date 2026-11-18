@@ -248,7 +248,20 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
+  step "the project {string} is renamed {string}", %{args: [project, title]} = context do
+    id = World.project(context, project).id
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{"type" => "project.update", "projectId" => id, "title" => title})
+
+    context
+  end
+
   # --- the office --------------------------------------------------------------------------
+
+  step "the office has {string} in the project {string}", %{args: [title, project]} = context do
+    await_person(context, title, &(&1["project"] == project))
+  end
 
   step ~r/^the office has "(?<title>[^"]+)" (?<state>[a-z]+), (?<activity>[a-z]+)$/,
        %{args: [title, state, activity]} = context do

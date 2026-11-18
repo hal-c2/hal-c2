@@ -1165,6 +1165,7 @@ Item {
     }
 
     function paintCell(ctx, parts, ox, oy, mirror) {
+        let style = null;
         const fill = (x, y, w, h, c) => {
             if (mirror)
                 x = 16 - x - w;
@@ -1178,7 +1179,6 @@ Item {
             }
             ctx.fillRect(ox + x0, oy + y0, x1 - x0, y1 - y0);
         };
-        let style = null;
         for (const r of parts[0])
             fill(r[0], r[1], r[2], r[3], r[4]);
         for (const r of parts[1])

@@ -194,7 +194,8 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Sends the caller `{:hal_c2_threads, rows}` whenever rows of this MC's threads change:
   the changed rows only, shaped as `threads/1`'s, a deleted one with its `"deletedAt"`
-  so the plugin can let it go. Watch first, then read `threads/1`: a change in between
+  so the plugin can let it go. A project whose row changes sends its threads again,
+  so a renamed project's `"projectTitle"` follows. Watch first, then read `threads/1`: a change in between
   comes again. The rows come from a process of the host's (returned as `{:ok, pid}`),
   linked to the caller and gone with it.
   """
@@ -215,7 +216,7 @@ defmodule HalC2.Plugins.Host do
   defp relay_threads(caller, ref) do
     receive do
       {:hal_c2_shell, {:rows, mc, rows}} when mc == node() ->
-        case for({_id, {"thread", row}} <- rows, do: row) do
+        case for({_id, {"thread", row}} <- rows, do: row) ++ retitled(rows) do
           [] -> :ok
           rows -> send(caller, {:hal_c2_threads, with_project_titles(rows)})
         end
@@ -227,6 +228,22 @@ defmodule HalC2.Plugins.Host do
 
       _other ->
         relay_threads(caller, ref)
+    end
+  end
+
+  # A project's row changing (a rename, say) changes the `"projectTitle"` of its
+  # threads, so those come again; the ones among `rows` already come.
+  defp retitled(rows) do
+    projects = for {id, {"project", _}} <- rows, into: MapSet.new(), do: id
+    changed = for {id, {"thread", _}} <- rows, into: MapSet.new(), do: id
+
+    if MapSet.size(projects) == 0 do
+      []
+    else
+      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+          mc == node() and row["deletedAt"] == nil,
+          MapSet.member?(projects, row["projectId"]) and not MapSet.member?(changed, id),
+          do: row
     end
   end
 

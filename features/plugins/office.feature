@@ -101,6 +101,12 @@ Feature: Office
       Then the office has "Recent" and not "Old"
 
     @mc
+    Scenario: A renamed project is renamed in the office
+      Given a thread "Fix the parser" in the project "api"
+      When the project "api" is renamed "billing"
+      Then the office has "Fix the parser" in the project "billing"
+
+    @mc
     Scenario: A thread on another machine of the cluster is in that machine's office
       Given a thread "Fix the parser" moved to another machine
       Then the office does not have "Fix the parser"
