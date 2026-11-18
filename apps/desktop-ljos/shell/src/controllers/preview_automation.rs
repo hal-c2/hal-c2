@@ -27,8 +27,8 @@ use crate::mc::Mc;
 use crate::page_input;
 use crate::platform_window;
 use crate::preview_automation::{
-    AutomationPage, GrabDone, MAX_ENTRIES, PRESS_CONFIRM_MS, PreviewAutomationHost, Reveal,
-    ScriptDone, machine_client_id,
+    AutomationPage, Changed, GrabDone, MAX_ENTRIES, PRESS_CONFIRM_MS, PreviewAutomationHost,
+    Reveal, ScriptDone, machine_client_id, script,
 };
 use crate::store;
 use crate::thread_view::previews::ThreadPreviews;
@@ -274,6 +274,8 @@ pub struct BrowserAutomationPage {
     /// The guard of the key last posted, which knows where it went; none
     /// once a click was posted since.
     last_key: RefCell<Option<page_input::KeyGuard>>,
+    /// What the host is told when the page changed.
+    changed: RefCell<Option<Changed>>,
 }
 
 impl BrowserAutomationPage {
@@ -291,6 +293,7 @@ impl BrowserAutomationPage {
             view_connections: RefCell::default(),
             view_input: Cell::new(None),
             last_key: RefCell::new(None),
+            changed: RefCell::new(None),
         });
         let weak = Rc::downgrade(&driver);
         let mut connections = Vec::new();
@@ -299,6 +302,7 @@ impl BrowserAutomationPage {
             move |engine: &Engine, _: &[Value]| {
                 if let Some(driver) = weak.upgrade() {
                     driver.follow(engine, &host);
+                    driver.notify(engine);
                 }
             }
         };
@@ -308,6 +312,11 @@ impl BrowserAutomationPage {
             move |engine: &Engine, args: &[Value]| {
                 let Some(driver) = weak.upgrade() else { return };
                 let arg = |i: usize| args.get(i).map(|v| engine.to_js_string(v));
+                // The runtime saying the document changed is the host's, not
+                // the page's own logging.
+                if arg(1).as_deref() == Some(script::CHANGED) {
+                    return driver.notify(engine);
+                }
                 let mut entry = json!({
                     "level": arg(0).unwrap_or_default(),
                     "text": arg(1).unwrap_or_default(),
@@ -375,12 +384,36 @@ impl BrowserAutomationPage {
                 }
                 log.load_starts.push_back(engine.now());
             }
+            driver.notify(engine);
         };
-        let (host, tab) = (host.clone(), self.tab.clone());
-        let moved = move |engine: &Engine, _: &[Value]| host.url_changed(engine, &tab);
+        let (host, tab, weak) = (host.clone(), self.tab.clone(), Rc::downgrade(self));
+        let moved = move |engine: &Engine, _: &[Value]| {
+            host.url_changed(engine, &tab);
+            if let Some(driver) = weak.upgrade() {
+                driver.notify(engine);
+            }
+        };
         let mut connections = self.view_connections.borrow_mut();
         connections.extend(engine.connect_by_name(view, "loadingChanged", loading).ok());
         connections.extend(engine.connect_by_name(view, "urlChanged", moved).ok());
+        // The drawn size, which a resize waits for.
+        for signal in ["widthChanged", "heightChanged"] {
+            let weak = Rc::downgrade(self);
+            let resized = move |engine: &Engine, _: &[Value]| {
+                if let Some(driver) = weak.upgrade() {
+                    driver.notify(engine);
+                }
+            };
+            connections.extend(engine.connect_by_name(view, signal, resized).ok());
+        }
+    }
+
+    /// Tells the host the page changed.
+    fn notify(&self, engine: &Engine) {
+        let changed = self.changed.borrow().clone();
+        if let Some(changed) = changed {
+            changed(engine);
+        }
     }
 
     /// Lets go of the page's signals.
@@ -618,5 +651,14 @@ impl AutomationPage for BrowserAutomationPage {
 
     fn set_color_scheme(&self, engine: &Engine, scheme: &str) {
         let _ = engine.write_by_name(self.page, "appearance", Value::String(Atom::new(scheme)));
+    }
+
+    fn set_on_change(&self, _engine: &Engine, changed: Changed) {
+        self.changed.replace(Some(changed));
+    }
+
+    fn watch(&self, engine: &Engine) {
+        let watch = script::call("watch", &json!({}));
+        self.evaluate(engine, &watch, 1, Box::new(|_, _| {}));
     }
 }

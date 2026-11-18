@@ -39,7 +39,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos::prelude::{Engine, ObjectId, Value};
+use ljos::prelude::{Engine, Value};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -298,7 +298,7 @@ pub struct ConnectionHealth {
     /// Whether a reconnect is held back, and the timer that runs while it is.
     grace: Cell<Grace>,
     grace_ms: Cell<i32>,
-    grace_timer: Cell<Option<ObjectId>>,
+    grace_timer: crate::schedule::Held,
 }
 
 impl Controller for ConnectionHealth {
@@ -350,7 +350,7 @@ impl Controller for ConnectionHealth {
             pairing_error: String::new(),
             grace: Cell::new(Grace::Shown),
             grace_ms: Cell::new(GRACE_MS),
-            grace_timer: Cell::new(None),
+            grace_timer: crate::schedule::Held::default(),
         };
         health.network_changed(engine);
         health.update(engine);
@@ -644,38 +644,23 @@ impl ConnectionHealth {
     /// once it is not.
     fn run_grace(&self, engine: &Engine, settling: bool) {
         if !settling {
-            if let Some(timer) = self.grace_timer.take() {
-                controller::stop_timer(engine, timer);
-            }
+            self.grace_timer.cancel(engine);
             return;
         }
-        if self.grace_timer.get().is_some() {
+        if self.grace_timer.is_pending() {
             return;
         }
-        let native = ljos::prelude::Timer {
-            interval: self.grace_ms.get(),
-            repeat: false,
-            running: true,
-            ..ljos::prelude::Timer::default()
-        };
-        let Ok(timer) = engine.create_native(native, None) else {
-            return;
-        };
-        self.grace_timer.set(Some(timer));
         let me = self.me.clone();
-        let fired = engine.connect_by_name(timer, "triggered", move |engine, _| {
-            me.run(engine, |c, engine| {
-                if let Some(timer) = c.grace_timer.take() {
-                    controller::stop_timer(engine, timer);
-                }
-                c.grace.set(c.grace.get().expire());
-                c.update(engine);
+        let delay =
+            std::time::Duration::from_millis(u64::try_from(self.grace_ms.get()).unwrap_or(0));
+        let timer =
+            crate::schedule::after(engine, "connection grace", None, delay, move |engine| {
+                me.run(engine, |c, engine| {
+                    c.grace.set(c.grace.get().expire());
+                    c.update(engine);
+                });
             });
-        });
-        if fired.is_err() || engine.complete(timer).is_err() {
-            self.grace_timer.set(None);
-            controller::stop_timer(engine, timer);
-        }
+        self.grace_timer.hold(engine, timer);
     }
 
     fn update(&self, engine: &Engine) {

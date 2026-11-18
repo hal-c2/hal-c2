@@ -767,22 +767,28 @@ pub fn cursor_flash_ms(e: &Engine) -> u64 {
 /// the next half while the cursor may still blink.
 fn blink_later(e: &Engine, me: ObjectId, generation: u64) {
     let half = cursor_flash_ms(e) / 2;
-    e.call_at(e.now() + Duration::from_millis(half), move |e| {
-        let flipped = e
-            .with_mut::<Terminal, _>(me, |t| {
-                let state = &mut t.state;
-                if state.blink_due != Some(generation) {
-                    return false;
-                }
-                state.blink_due = None;
-                state.blink_off = !state.blink_off;
-                true
-            })
-            .unwrap_or(false);
-        if flipped {
-            item::repaint(e, me);
-        }
-    });
+    crate::schedule::after(
+        e,
+        "terminal cursor blink",
+        Some(me),
+        Duration::from_millis(half),
+        move |e| {
+            let flipped = e
+                .with_mut::<Terminal, _>(me, |t| {
+                    let state = &mut t.state;
+                    if state.blink_due != Some(generation) {
+                        return false;
+                    }
+                    state.blink_due = None;
+                    state.blink_off = !state.blink_off;
+                    true
+                })
+                .unwrap_or(false);
+            if flipped {
+                item::repaint(e, me);
+            }
+        },
+    );
 }
 
 // Keys.
@@ -1069,7 +1075,7 @@ fn hold_at_edge(e: &Engine, me: ObjectId, at: kurbo::Point) {
 /// while timer `generation` is still the one due.
 fn edge_later(e: &Engine, me: ObjectId, generation: u64) {
     const EVERY: Duration = Duration::from_millis(50);
-    e.call_at(e.now() + EVERY, move |e| {
+    crate::schedule::after(e, "terminal edge scroll", Some(me), EVERY, move |e| {
         let held = e
             .with::<Terminal, _>(me, |t| {
                 let state = &t.state;

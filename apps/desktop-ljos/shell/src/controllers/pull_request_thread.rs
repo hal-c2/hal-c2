@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
 
@@ -148,7 +148,7 @@ pub struct PullRequestThread {
     /// What is being asked: a reply for an older ask is dropped.
     generation: u64,
     /// The pause after typing that resolves what the text names.
-    debounce: Option<TimerId>,
+    debounce: Option<crate::schedule::Schedule>,
 }
 
 impl Controller for PullRequestThread {
@@ -272,7 +272,7 @@ impl PullRequestThread {
 
     fn stop_debounce(&mut self, engine: &Engine) {
         if let Some(timer) = self.debounce.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
     }
 
@@ -295,12 +295,18 @@ impl PullRequestThread {
         }
         let me = self.me.clone();
         let at = engine.now() + Duration::from_millis(DEBOUNCE_MS);
-        self.debounce = Some(engine.call_at(at, move |engine| {
-            me.run(engine, |c, engine| {
-                c.debounce = None;
-                c.request(engine);
-            });
-        }));
+        self.debounce = Some(crate::schedule::at(
+            engine,
+            "pull request lookup",
+            None,
+            at,
+            move |engine| {
+                me.run(engine, |c, engine| {
+                    c.debounce = None;
+                    c.request(engine);
+                });
+            },
+        ));
     }
 
     fn resolve(&mut self, engine: &Engine, text: &str) {

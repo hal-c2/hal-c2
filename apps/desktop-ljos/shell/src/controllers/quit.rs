@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use ljos::keys::{KeyEvent, KeyKind, Modifiers};
 use ljos::prelude::Engine;
-use ljos::prelude::{Time, TimerId};
+use ljos::prelude::Time;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -77,7 +77,7 @@ pub struct QuitController {
     bridge: Bridge,
     me: Me<Self>,
     active: bool,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     watch_at: Option<Time>,
     on_watchdog: Option<Then>,
     linger_at: Option<Time>,
@@ -365,18 +365,24 @@ impl QuitController {
     /// One call at the nearest deadline wakes [`Self::poll`].
     fn schedule(&mut self, engine: &Engine) {
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let Some(next) = self.watch_at.into_iter().chain(self.linger_at).min() else {
             return;
         };
         let me = self.me.clone();
-        self.timer = Some(engine.call_at(next, move |engine| {
-            me.run(engine, |quit, engine| {
-                quit.timer = None;
-                quit.poll(engine);
-            });
-        }));
+        self.timer = Some(crate::schedule::at(
+            engine,
+            "quit watch",
+            None,
+            next,
+            move |engine| {
+                me.run(engine, |quit, engine| {
+                    quit.timer = None;
+                    quit.poll(engine);
+                });
+            },
+        ));
     }
 
     fn show_hint(&mut self, engine: &Engine, mode: Mode) {

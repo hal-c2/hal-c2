@@ -458,7 +458,7 @@ fn the_window_reports_itself_when_the_mc_is_ready_and_every_report_interval() {
     assert_eq!(payload["environmentId"], json!("env-1"));
     window.advance(REPORT_MS as u64).unwrap();
     assert_eq!(reports(&mc).len(), 2);
-    // Gone: the timer keeps running and says nothing.
+    // Gone: nothing is renewed, and nothing wakes for it.
     mc.set_ready(&engine, false);
     window.advance(REPORT_MS as u64).unwrap();
     assert_eq!(reports(&mc).len(), 2);

@@ -45,8 +45,8 @@ use std::time::Duration;
 
 use ljos::keys::KeyKind;
 use ljos::prelude::QmlValue;
+use ljos::prelude::Time;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
-use ljos::prelude::{Time, TimerId};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -165,7 +165,7 @@ struct State {
     file_issue: String,
     /// When "Keybindings updated" last showed.
     reload_toast_at: Option<Time>,
-    jump_hint_timer: Option<TimerId>,
+    jump_hint_timer: Option<crate::schedule::Schedule>,
     /// The registry's size the shortcuts were last built for.
     commands: usize,
     /// Adding the native commands: the shortcuts are built once after.
@@ -444,20 +444,26 @@ impl Keymap {
             if self.0.state.borrow().jump_hint_timer.is_some() {
                 return;
             }
-            let timer = engine.call_at(engine.now() + JUMP_HINT_DELAY, |engine| {
-                let keymap = Keymap::of(engine);
-                keymap.0.state.borrow_mut().jump_hint_timer = None;
-                let labels: Vec<String> = (1..=9)
-                    .map(|n| keymap.shortcut_label(engine, &format!("thread.jump.{n}")))
-                    .collect();
-                keymap.jump_hints(engine, labels, true);
-            });
+            let timer = crate::schedule::at(
+                engine,
+                "jump hints",
+                None,
+                engine.now() + JUMP_HINT_DELAY,
+                |engine| {
+                    let keymap = Keymap::of(engine);
+                    keymap.0.state.borrow_mut().jump_hint_timer = None;
+                    let labels: Vec<String> = (1..=9)
+                        .map(|n| keymap.shortcut_label(engine, &format!("thread.jump.{n}")))
+                        .collect();
+                    keymap.jump_hints(engine, labels, true);
+                },
+            );
             self.0.state.borrow_mut().jump_hint_timer = Some(timer);
             return;
         }
         let timer = self.0.state.borrow_mut().jump_hint_timer.take();
         if let Some(timer) = timer {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         self.jump_hints(engine, Vec::new(), false);
     }

@@ -46,7 +46,7 @@ use std::time::Duration;
 use chrono::{DateTime, Local, TimeZone, Utc};
 use ljos::locale::Locale;
 use ljos::prelude::Engine;
-use ljos::prelude::{Time, TimerId};
+use ljos::prelude::Time;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -397,8 +397,10 @@ pub struct Sidebar {
     /// "<thread key>:<updatedAt>" of the last visit sent, and when.
     visited: String,
     visited_at: Option<Time>,
-    visit_later: Option<TimerId>,
-    minute: Option<TimerId>,
+    visit_later: Option<crate::schedule::Schedule>,
+    /// The next moment a row reads otherwise with nothing else changed
+    /// (an age, a countdown, a wake's day).
+    turn: Option<crate::schedule::Schedule>,
     anchor: String,
     /// The listed drafts' labels, and the open draft's row as it was when
     /// the window opened it (nothing when it was empty).
@@ -414,7 +416,7 @@ pub struct Sidebar {
     working_shelf: bool,
     working: WorkingTracker,
     /// Refreshes when a thread's grace in the Working section runs out.
-    working_grace: Option<TimerId>,
+    working_grace: Option<crate::schedule::Schedule>,
     /// The threads whose composer holds something unsent.
     unsent_threads: HashSet<String>,
     scope_restored: bool,
@@ -453,7 +455,7 @@ impl Controller for Sidebar {
             visited: String::new(),
             visited_at: None,
             visit_later: None,
-            minute: None,
+            turn: None,
             anchor: String::new(),
             draft_labels: HashMap::new(),
             open_draft_id: String::new(),
@@ -501,6 +503,8 @@ impl Sidebar {
             }
         };
         store::on_changed(engine, later(self.me.clone()));
+        // A clock that jumped, or a machine that slept, moved every age.
+        crate::clock::on_change(engine, later(self.me.clone()));
         drafts::on_changed(engine, later(self.me.clone()));
         mc_plugin::on_running_changed(engine, later(self.me.clone()));
         Settings::of(engine).on_device_changed(later(self.me.clone()));
@@ -729,12 +733,15 @@ impl Sidebar {
         *shared.view.borrow_mut() = view;
         self.bridge.publish_shared(engine, "sidebar", state);
         if let Some(timer) = self.working_grace.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         if let Some(deadline) = self.working.next_deadline() {
             let wait = (deadline - now).clamp(1, model::WORKING_EXIT_GRACE_MS) as u64;
             let me = self.me.clone();
-            self.working_grace = Some(engine.call_at(
+            self.working_grace = Some(crate::schedule::at(
+                engine,
+                "sidebar working grace",
+                None,
                 engine.now() + Duration::from_millis(wait),
                 move |engine| {
                     me.run(engine, |c, e| {
@@ -744,21 +751,39 @@ impl Sidebar {
                 },
             ));
         }
-        // Snoozes wake and "2h" labels tick over on the minute.
-        if let Some(timer) = self.minute.take() {
-            engine.cancel_call(timer);
+        // Ages, countdowns and a wake's day move on by themselves: built
+        // again when the first of them turns, not on a tick. A clock that
+        // jumped builds them again at once (see `activate`).
+        crate::schedule::clear(engine, &mut self.turn);
+        let midnight = threads
+            .iter()
+            .any(|thread| model::lists(thread) && thread.snoozed_until.is_some())
+            .then(|| {
+                let at = Utc.timestamp_millis_opt(now).single().unwrap_or_default();
+                match &*shared.zone.borrow() {
+                    Some(zone) => model::next_midnight(&at.with_timezone(zone)),
+                    None => model::next_midnight(&at.with_timezone(&Local)),
+                }
+            })
+            .flatten();
+        let turn = [model::next_turn(&threads, now), midnight]
+            .into_iter()
+            .flatten()
+            .min();
+        if let Some(turn) = turn {
+            let me = self.me.clone();
+            self.turn = Some(controller::after(
+                engine,
+                "sidebar labels",
+                Duration::from_millis((turn - now).max(1).unsigned_abs()),
+                move |engine| {
+                    me.run(engine, |c, e| {
+                        c.turn = None;
+                        c.refresh(e);
+                    });
+                },
+            ));
         }
-        let to_minute = (60_000 - now.rem_euclid(60_000)).max(1000) as u64;
-        let me = self.me.clone();
-        self.minute = Some(engine.call_at(
-            engine.now() + Duration::from_millis(to_minute),
-            move |engine| {
-                me.run(engine, |c, e| {
-                    c.minute = None;
-                    c.refresh(e);
-                });
-            },
-        ));
         if regrouped {
             let hooks = shared.grouped.borrow().clone();
             for hook in hooks {
@@ -964,15 +989,21 @@ impl Sidebar {
             && now - at < VISIT_EVERY
         {
             if let Some(timer) = self.visit_later.take() {
-                engine.cancel_call(timer);
+                timer.cancel(engine);
             }
             let me = self.me.clone();
-            self.visit_later = Some(engine.call_at(at + VISIT_EVERY, move |engine| {
-                me.run(engine, |c, e| {
-                    c.visit_later = None;
-                    c.visit_open_thread(e);
-                });
-            }));
+            self.visit_later = Some(crate::schedule::at(
+                engine,
+                "sidebar visit",
+                None,
+                at + VISIT_EVERY,
+                move |engine| {
+                    me.run(engine, |c, e| {
+                        c.visit_later = None;
+                        c.visit_open_thread(e);
+                    });
+                },
+            ));
             return;
         }
         self.visited = visit;

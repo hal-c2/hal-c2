@@ -866,7 +866,7 @@ impl Composer {
         }
         // The MC's answer or the wait running out, whichever is first.
         let pending: Rc<RefCell<Option<Placed>>> = Rc::new(RefCell::new(Some(then)));
-        let timer: Rc<Cell<Option<ljos::prelude::ObjectId>>> = Rc::new(Cell::new(None));
+        let timer: Rc<Cell<Option<crate::schedule::Schedule>>> = Rc::new(Cell::new(None));
         let answer = {
             let (pending, timer) = (pending.clone(), timer.clone());
             let picked = (environment_id.to_owned(), project_id.to_owned());
@@ -874,9 +874,7 @@ impl Composer {
                 let Some(then) = pending.borrow_mut().take() else {
                     return;
                 };
-                if let Some(timer) = timer.take() {
-                    controller::stop_timer(engine, timer);
-                }
+                crate::schedule::clear_cell(engine, &timer);
                 let placed = result.unwrap_or(Json::Null);
                 let on = placed["environmentId"]
                     .as_str()
@@ -906,29 +904,23 @@ impl Composer {
                 }
             }),
         );
-        let native = ljos::prelude::Timer {
-            interval: PLACEMENT_WAIT_MS,
-            repeat: false,
-            running: true,
-            ..ljos::prelude::Timer::default()
-        };
-        let Ok(id) = engine.create_native(native, Some(Bridge::of(engine).object())) else {
-            return;
-        };
-        timer.set(Some(id));
         let me = self.me.clone();
-        let fired = engine.connect_by_name(id, "triggered", move |engine, _| {
-            let Some(answer) = answer.borrow_mut().take() else {
-                return;
-            };
-            later(&me, engine, move |c, e| {
-                answer(c, e, Err(McError::new("no answer")))
-            });
-        });
-        if fired.is_err() || engine.complete(id).is_err() {
-            timer.set(None);
-            controller::stop_timer(engine, id);
-        }
+        let wait = std::time::Duration::from_millis(PLACEMENT_WAIT_MS.unsigned_abs().into());
+        let owner = Some(Bridge::of(engine).object());
+        timer.set(Some(crate::schedule::after(
+            engine,
+            "thread placement wait",
+            owner,
+            wait,
+            move |engine| {
+                let Some(answer) = answer.borrow_mut().take() else {
+                    return;
+                };
+                later(&me, engine, move |c, e| {
+                    answer(c, e, Err(McError::new("no answer")))
+                });
+            },
+        )));
     }
 
     /// A new thread's first send: the thread is placed, its images stored,

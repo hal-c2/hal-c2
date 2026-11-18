@@ -29,7 +29,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use ljos::prelude::{Engine, TimerId};
+use ljos::prelude::Engine;
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -79,7 +79,7 @@ pub struct ProviderUpdateNotice {
     mc: Rc<dyn Mc>,
     scope: Rc<EnvironmentSettings>,
     now: Rc<dyn Fn() -> DateTime<Utc>>,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     active: bool,
     hooked: bool,
     /// The version sets offered this run.
@@ -279,12 +279,15 @@ impl ProviderUpdateNotice {
             }
         }
         if let Some(timer) = self.timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         let Some(next) = next else { return };
         let ms = (next - (self.now)()).num_milliseconds().max(0) as u64;
         let me = self.me.clone();
-        self.timer = Some(engine.call_at(
+        self.timer = Some(crate::schedule::at(
+            engine,
+            "provider update notice",
+            None,
             engine.now() + Duration::from_millis(ms),
             move |engine| {
                 me.run(engine, |c, engine| {

@@ -7,14 +7,15 @@
 use std::collections::HashMap;
 
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
+use hal_c2_shell::controllers::scheduled_tasks::relative_label;
 use serde_json::{Map, Value, json};
 
 use super::settings::{document_of, fake_config, publish_providers};
 use super::workspace::seed_branches;
-use crate::expect;
 use crate::fake_mc::{FakeMc, Rpc};
 use crate::harness::{Outcome, Q, Steps, show, text};
 use crate::world::World;
+use crate::{expect, fail};
 
 #[derive(Default)]
 struct FakeTasks {
@@ -369,6 +370,29 @@ fn draft_of(world: &mut World) -> Value {
     world.mc.part::<FakeTasks>().draft.clone()
 }
 
+/// The schedule that shows the labels again when one turns.
+const LABELS: &str = "scheduled task labels";
+
+/// The label turns counted since scheduled tasks opened, and when.
+#[derive(Default)]
+struct LabelWatch {
+    fired: u64,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+fn label_turns(world: &World) -> u64 {
+    hal_c2_shell::schedule::fired(world.engine())
+        .get(LABELS)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The one task this machine lists.
+fn only_row(world: &World) -> Value {
+    let own = world.mc.environment_id.clone();
+    environment(world, &own)["tasks"][0].clone()
+}
+
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
 
@@ -549,6 +573,115 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step("the user opens scheduled tasks", |world, _, _| {
         open_tasks(world)
+    });
+    // Labels that move on with the clock ("Next run in 7m").
+    steps.step(
+        r"an enabled task whose next run is (\d+) (seconds?|minutes?|hours?|days?) away",
+        |world, c, _| {
+            let count: i64 = c[0].parse().unwrap_or(0);
+            let away = match c[1].trim_end_matches('s') {
+                "second" => chrono::Duration::seconds(count),
+                "minute" => chrono::Duration::minutes(count),
+                "hour" => chrono::Duration::hours(count),
+                _ => chrono::Duration::days(count),
+            };
+            let next = (world.now() + away).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            seed(
+                world,
+                task("task-1", "Check Sentry", "api", json!({"nextRunAt": next})),
+            );
+            Ok(())
+        },
+    );
+    steps.step("an enabled task that has no next run", |world, _, _| {
+        seed(
+            world,
+            task("task-1", "Check Sentry", "api", json!({"nextRunAt": null})),
+        );
+        Ok(())
+    });
+    steps.step("the user has scheduled tasks open", |world, _, _| {
+        open_tasks(world)?;
+        ready(world)?;
+        let fired = label_turns(world);
+        let since = world.now();
+        let watch = world.part::<LabelWatch>();
+        watch.fired = fired;
+        watch.since = Some(since);
+        Ok(())
+    });
+    steps.step(&format!("the task says {Q}"), |world, c, _| {
+        let wanted = c[0].clone();
+        world.wait_for_with(
+            |w| {
+                only_row(w)["when"]
+                    .as_str()
+                    .is_some_and(|when| when.ends_with(wanted.as_str()))
+            },
+            |w| format!("the task to say {wanted:?}; it is {}", show(&only_row(w))),
+        )?;
+        Ok(())
+    });
+    steps.step(
+        "the labels were shown again only when one turned",
+        |world, _, _| {
+            let (before, since) = {
+                let watch = world.part::<LabelWatch>();
+                (watch.fired, watch.since)
+            };
+            let Some(since) = since else {
+                fail!("scheduled tasks were never open");
+            };
+            let next = text(&stored(world)[0]["nextRunAt"]);
+            let (from, to) = (since.timestamp_millis(), world.now().timestamp_millis());
+            // The moments in between at which the label read otherwise.
+            let mut turned = 0;
+            let mut shown = relative_label(&next, from);
+            for at in (from..=to).step_by(1000).skip(1) {
+                let label = relative_label(&next, at);
+                if label != shown {
+                    turned += 1;
+                    shown = label;
+                }
+            }
+            let woke = label_turns(world) - before;
+            expect!(
+                woke == turned,
+                "the labels were shown again {woke} times; they turned {turned} times"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        r"the system clock is set (\d+) minutes ahead",
+        |world, c, _| {
+            let minutes: i64 = c[0].parse().unwrap_or(0);
+            let later = world.now() + chrono::Duration::minutes(minutes);
+            world.set_time(later);
+            hal_c2_shell::clock::changed(world.engine());
+            world.pump()
+        },
+    );
+    steps.step("the user leaves scheduled tasks", |world, _, _| {
+        world.with::<Navigation, _>(|navigation, engine| {
+            navigation.open(engine, Route::Settings("/settings/general".to_owned()))
+        })?;
+        world.wait_for_with(
+            |w| section(w)["open"].as_bool() == Some(false),
+            |w| format!("scheduled tasks to close; they are {}", show(&section(w))),
+        )?;
+        let fired = label_turns(world);
+        world.part::<LabelWatch>().fired = fired;
+        Ok(())
+    });
+    steps.step("the labels were never shown again", |world, _, _| {
+        let woke = label_turns(world) - world.part::<LabelWatch>().fired;
+        let armed = hal_c2_shell::schedule::pending(world.engine());
+        expect!(
+            woke == 0 && armed.iter().all(|(name, _)| *name != LABELS),
+            "the labels were shown again {woke} times, and {armed:?} are scheduled"
+        );
+        Ok(())
     });
     steps.step("the paused task says it is paused", |world, _, _| {
         let paused = row(world, "Nightly build")?;

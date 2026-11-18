@@ -6,6 +6,7 @@ pub mod attachment_files;
 pub mod bridge;
 pub mod browser;
 pub mod cache;
+pub mod clock;
 pub mod code_highlighter;
 pub mod commands;
 pub mod composer_model;
@@ -38,6 +39,7 @@ pub mod qml;
 pub mod qr;
 pub mod runtime;
 pub mod saved_environments;
+pub mod schedule;
 pub mod scripted_run;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod secret_service;

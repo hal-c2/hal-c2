@@ -94,7 +94,7 @@ pub fn timetable(count: usize) -> (Vec<Duration>, Duration) {
 pub fn play(engine: &Engine, steps: Vec<Step>) {
     let (delays, _) = timetable(steps.len());
     for (step, delay) in steps.into_iter().zip(delays) {
-        engine.call_at(engine.now() + delay, move |engine| {
+        crate::schedule::after(engine, "scripted step", None, delay, move |engine| {
             eprintln!("[shell] {}", step.describe());
             run(engine, &step);
         });

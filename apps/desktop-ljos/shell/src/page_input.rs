@@ -99,7 +99,9 @@ pub fn guard_keys(engine: &Engine, item: ObjectId, key: i32, within: Duration) -
     };
     guard.filter.set(Some(keys::add_key_filter(engine, filter)));
     let late = guard.clone();
-    engine.call_at(engine.now() + within, move |engine| late.lift(engine));
+    crate::schedule::after(engine, "key guard", None, within, move |engine| {
+        late.lift(engine)
+    });
     guard
 }
 

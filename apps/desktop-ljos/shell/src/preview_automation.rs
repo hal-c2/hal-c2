@@ -22,12 +22,13 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use ljos::keys::Modifiers;
-use ljos::prelude::{Engine, Time, TimerId};
+use ljos::prelude::{Engine, Time};
 use serde_json::{Map, json};
 
 use crate::controllers::client_activity::now_iso8601;
 use crate::json::Json;
 use crate::mc::{Frame, Mc, McError, SubId};
+use crate::schedule::{self, Held, Schedule};
 
 /// The tags the MC passes on as they are, or names in its own words. Any
 /// other tag reaches the agent as an execution error carrying this host's
@@ -78,7 +79,15 @@ pub const ANSWER_MARGIN_MS: i64 = 300;
 /// the user shows as in control this long after their own input.
 pub const IDLE_FADE_MS: i64 = 1500;
 pub const USER_CONTROL_MS: i64 = 750;
-const POLL_MS: i64 = 100;
+/// A condition is looked at again when its page changes, but no sooner
+/// than a frame after the last look, so a page that never stops changing
+/// is looked at once a frame rather than as fast as it answers.
+const RELOOK_MS: i64 = 16;
+/// A condition that holds with nothing the page reports changing (a script
+/// setting a box's `checked`, layout that moved by itself) is looked at
+/// again this long after the last look. Only while a wait is armed, so a
+/// page nobody waits on is never looked at.
+pub const BACKSTOP_MS: i64 = 500;
 /// How long a key pressed in the page has to reach its scripts.
 pub(crate) const PRESS_CONFIRM_MS: i64 = 5000;
 /// How soon after the agent's click or key a load must start for the input
@@ -266,7 +275,21 @@ pub trait AutomationPage {
     fn input_reached(&self, _engine: &Engine) -> Option<bool> {
         Some(true)
     }
+    /// Gives the page what it calls when something a condition reads may
+    /// have changed: its address, its loads, its drawn size, input reaching
+    /// it, and what [`watch`](Self::watch) asks to hear of. A page that
+    /// never calls it has its conditions looked at every
+    /// [`BACKSTOP_MS`] while they are waited for.
+    fn set_on_change(&self, _engine: &Engine, _changed: Changed) {}
+    /// Asks the page to say the next time its document changes (a node,
+    /// an attribute, text, its readiness, a script's promise settling).
+    /// Asked before each look at a condition, so a change while the look
+    /// runs is not missed.
+    fn watch(&self, _engine: &Engine) {}
 }
+
+/// What a page calls when it changed; see [`AutomationPage::set_on_change`].
+pub type Changed = Rc<dyn Fn(&Engine)>;
 
 /// A tab the MC asked for that has no page yet: the browser shows it, and
 /// attaches its page. `show` is the agent's wish (None: it said nothing).
@@ -287,7 +310,6 @@ type Captured = Box<dyn FnOnce(&Engine, &RequestRef, Json)>;
 type Page = Rc<dyn AutomationPage>;
 /// One look at a condition: `done(engine, met)`.
 type Check = Rc<dyn Fn(&Engine, Box<dyn FnOnce(&Engine, bool)>)>;
-type Ends = Rc<RefCell<Option<(Then, Then)>>>;
 
 struct Request {
     environment_id: String,
@@ -306,7 +328,7 @@ struct Request {
     page: Option<Page>,
     done: bool,
     waiting_for_page: bool,
-    deadline: Option<TimerId>,
+    deadline: Option<Schedule>,
     /// Its entry in its tab's action timeline, once it acted.
     timeline_id: String,
 }
@@ -342,6 +364,38 @@ struct State {
     on_reveal: Option<OnReveal>,
     on_activity: Option<OnActivity>,
     evaluations: u64,
+    /// The conditions being waited for, each until it is met or its wait
+    /// runs out.
+    watches: Vec<Weak<Watch>>,
+}
+
+/// A wait for a condition on a page: looked at once, then each time the
+/// page says it changed or BACKSTOP_MS pass with no change, and a last
+/// time at the one deadline, until it is met or that look is not.
+struct Watch {
+    page: Page,
+    request: RequestRef,
+    check: Check,
+    ends: RefCell<Option<(Then, Then)>>,
+    /// A look is under way; a change meanwhile is looked at once it is back.
+    looking: Cell<bool>,
+    changed: Cell<bool>,
+    /// The deadline passed: the look under way, or the one it starts, is
+    /// the last.
+    expired: Cell<bool>,
+    /// When the last look began: when it was due, for one a schedule
+    /// started, so the backstop keeps its cadence however late each fire
+    /// is delivered.
+    last_look: Cell<Time>,
+    /// When the look about to begin was due.
+    due_look: Cell<Option<Time>>,
+    /// When the last look really began, however late: a change is looked
+    /// at no sooner than a frame after it.
+    began: Cell<Time>,
+    relook: Held,
+    /// The look after BACKSTOP_MS with no change heard.
+    backstop: Held,
+    deadline: Held,
 }
 
 /// The host; clones are the same host.
@@ -368,6 +422,7 @@ impl PreviewAutomationHost {
             on_reveal: None,
             on_activity: None,
             evaluations: 0,
+            watches: Vec::new(),
         })));
         // The client offers every subscription again once it is back, and
         // each MC answers with a new connection; until then requests cannot
@@ -527,20 +582,26 @@ impl PreviewAutomationHost {
             };
             let weak = self.weak();
             let name = name.to_owned();
-            engine.call_at(after(engine, 500), move |_| {
-                let Some(state) = weak.upgrade() else { return };
-                let host = PreviewAutomationHost(state);
-                let same = host
-                    .0
-                    .borrow()
-                    .connections
-                    .get(&name)
-                    .map(|c| c.subscription)
-                    == Some(subscription);
-                if same {
-                    host.subscribe(&name);
-                }
-            });
+            schedule::after(
+                engine,
+                "preview host offer",
+                None,
+                Duration::from_millis(500),
+                move |_| {
+                    let Some(state) = weak.upgrade() else { return };
+                    let host = PreviewAutomationHost(state);
+                    let same = host
+                        .0
+                        .borrow()
+                        .connections
+                        .get(&name)
+                        .map(|c| c.subscription)
+                        == Some(subscription);
+                    if same {
+                        host.subscribe(&name);
+                    }
+                },
+            );
             return;
         }
         if kind != "previewAutomation" {
@@ -603,6 +664,15 @@ impl PreviewAutomationHost {
             self.detach(engine, &elsewhere);
         }
         self.detach(engine, tab_id);
+        let (host, changed) = (self.weak(), Rc::downgrade(&page));
+        page.set_on_change(
+            engine,
+            Rc::new(move |engine| {
+                if let Some(state) = host.upgrade() {
+                    PreviewAutomationHost(state).page_changed(engine, &changed);
+                }
+            }),
+        );
         let waiters = {
             let mut state = self.0.borrow_mut();
             state.pages.insert(tab_id.to_owned(), page);
@@ -751,22 +821,28 @@ impl PreviewAutomationHost {
         self.activity_changed(engine);
         let host = self.weak();
         let tab = tab_id.to_owned();
-        engine.call_at(after(engine, USER_CONTROL_MS), move |engine| {
-            let Some(state) = host.upgrade() else { return };
-            let host = PreviewAutomationHost(state);
-            {
-                let mut state = host.0.borrow_mut();
-                if state.activity_generation.get(&tab) != Some(&generation) {
-                    return;
+        schedule::after(
+            engine,
+            "preview user control",
+            None,
+            ms(USER_CONTROL_MS),
+            move |engine| {
+                let Some(state) = host.upgrade() else { return };
+                let host = PreviewAutomationHost(state);
+                {
+                    let mut state = host.0.borrow_mut();
+                    if state.activity_generation.get(&tab) != Some(&generation) {
+                        return;
+                    }
+                    let Some(entry) = state.activity.get_mut(&tab) else {
+                        return;
+                    };
+                    entry["userInControl"] = json!(false);
                 }
-                let Some(entry) = state.activity.get_mut(&tab) else {
-                    return;
-                };
-                entry["userInControl"] = json!(false);
-            }
-            host.activity_changed(engine);
-            host.clear_activity(engine, &tab);
-        });
+                host.activity_changed(engine);
+                host.clear_activity(engine, &tab);
+            },
+        );
     }
 
     // Requests.
@@ -828,8 +904,11 @@ impl PreviewAutomationHost {
         // drop it.
         let weak_host = self.weak();
         let weak = Rc::downgrade(&request);
-        let deadline = engine.call_at(
-            after(engine, (timeout_ms - ANSWER_MARGIN_MS).max(50)),
+        let deadline = schedule::after(
+            engine,
+            "preview request deadline",
+            None,
+            ms((timeout_ms - ANSWER_MARGIN_MS).max(50)),
             move |engine| {
                 let (Some(state), Some(request)) = (weak_host.upgrade(), weak.upgrade()) else {
                     return;
@@ -1074,7 +1153,20 @@ impl PreviewAutomationHost {
             )
         };
         if let Some(deadline) = deadline {
-            engine.cancel_call(deadline);
+            deadline.cancel(engine);
+        }
+        // A wait ended some other way (its tab went, the MC's deadline)
+        // keeps nothing armed: its looks and its own deadline go with it.
+        let watches: Vec<Rc<Watch>> = self
+            .0
+            .borrow()
+            .watches
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|w| Rc::ptr_eq(&w.request, request))
+            .collect();
+        for watch in watches {
+            self.drop_watch(engine, &watch);
         }
         if timeline {
             let (status, error) = match &failure {
@@ -1103,14 +1195,20 @@ impl PreviewAutomationHost {
                 *generation
             };
             let host = self.weak();
-            engine.call_at(after(engine, IDLE_FADE_MS), move |engine| {
-                let Some(state) = host.upgrade() else { return };
-                let host = PreviewAutomationHost(state);
-                let same = host.0.borrow().activity_generation.get(&tab) == Some(&generation);
-                if same {
-                    host.clear_activity(engine, &tab);
-                }
-            });
+            schedule::after(
+                engine,
+                "preview cue fade",
+                None,
+                ms(IDLE_FADE_MS),
+                move |engine| {
+                    let Some(state) = host.upgrade() else { return };
+                    let host = PreviewAutomationHost(state);
+                    let same = host.0.borrow().activity_generation.get(&tab) == Some(&generation);
+                    if same {
+                        host.clear_activity(engine, &tab);
+                    }
+                },
+            );
         }
         let mut next = Vec::new();
         {
@@ -1194,16 +1292,26 @@ impl PreviewAutomationHost {
     ) {
         let host = self.clone();
         let request = request.clone();
-        engine.call_at(after(engine, ms), move |engine| {
-            if host.alive(&request) {
-                then(engine);
-            }
-        });
+        let delay = Duration::from_millis(ms.max(0) as u64);
+        schedule::after(
+            engine,
+            "preview automation step",
+            None,
+            delay,
+            move |engine| {
+                if host.alive(&request) {
+                    then(engine);
+                }
+            },
+        );
     }
 
-    /// Looks at `check` every 100 ms until it is met (`then`) or `wait_ms`
-    /// pass (`timed_out`).
-    fn poll(
+    /// Looks at `check` now and each time the request's page changes until
+    /// it is met (`then`), or a last look when `wait_ms` pass is not
+    /// (`timed_out`): one deadline.
+    /// With no change heard it looks again BACKSTOP_MS after its last
+    /// look, not a frame-rate poll, and only while the wait lasts.
+    fn watch(
         &self,
         engine: &Engine,
         request: &RequestRef,
@@ -1212,43 +1320,172 @@ impl PreviewAutomationHost {
         then: Then,
         timed_out: Then,
     ) {
-        let since = engine.now();
-        let ends: Ends = Rc::new(RefCell::new(Some((then, timed_out))));
-        self.poll_step(engine, request.clone(), since, wait_ms, check, ends);
+        let Some(page) = self.page_of(request) else {
+            return;
+        };
+        let watch = Rc::new(Watch {
+            page,
+            request: request.clone(),
+            check,
+            ends: RefCell::new(Some((then, timed_out))),
+            looking: Cell::new(false),
+            changed: Cell::new(false),
+            expired: Cell::new(false),
+            last_look: Cell::new(engine.now()),
+            due_look: Cell::new(None),
+            began: Cell::new(engine.now()),
+            relook: Held::default(),
+            backstop: Held::default(),
+            deadline: Held::default(),
+        });
+        {
+            let mut state = self.0.borrow_mut();
+            state.watches.retain(|w| w.strong_count() > 0);
+            state.watches.push(Rc::downgrade(&watch));
+        }
+        let (host, late) = (self.clone(), watch.clone());
+        let delay = Duration::from_millis(wait_ms.max(0) as u64);
+        let due = engine.now() + delay;
+        watch.deadline.hold(
+            engine,
+            schedule::after(
+                engine,
+                "preview wait deadline",
+                None,
+                delay,
+                move |engine| {
+                    // What came true since the last look with no change
+                    // the page reports is seen: a wait shorter than the
+                    // backstop would otherwise never look again. A look
+                    // under way, or one due at the deadline, decides.
+                    late.expired.set(true);
+                    if !late.looking.get() {
+                        if late.last_look.get() >= due {
+                            host.end_watch(engine, &late, false);
+                        } else {
+                            late.due_look.set(Some(due));
+                            host.look(engine, &late);
+                        }
+                    }
+                },
+            ),
+        );
+        self.look(engine, &watch);
     }
 
-    fn poll_step(
-        &self,
-        engine: &Engine,
-        request: RequestRef,
-        since: Time,
-        wait_ms: i64,
-        check: Check,
-        ends: Ends,
-    ) {
-        let host = self.clone();
-        let again = check.clone();
-        check(
+    fn look(&self, engine: &Engine, watch: &Rc<Watch>) {
+        if watch.ends.borrow().is_none() {
+            return;
+        }
+        if !self.alive(&watch.request) {
+            return self.drop_watch(engine, watch);
+        }
+        watch.looking.set(true);
+        watch.changed.set(false);
+        let due = watch.due_look.take().unwrap_or_else(|| engine.now());
+        watch.last_look.set(due);
+        watch.began.set(engine.now());
+        // One look at a time: a look the deadline starts takes the place
+        // of a relook already armed.
+        watch.relook.cancel(engine);
+        watch.backstop.cancel(engine);
+        // Asked first, so a change while the look runs is heard.
+        watch.page.watch(engine);
+        let (host, looked) = (self.clone(), watch.clone());
+        (watch.check)(
             engine,
             Box::new(move |engine, met| {
-                if !host.alive(&request) {
-                    return;
+                looked.looking.set(false);
+                if !host.alive(&looked.request) {
+                    return host.drop_watch(engine, &looked);
                 }
-                let waited = engine.now().saturating_since(since).as_millis() as i64;
-                if met || waited >= wait_ms {
-                    let end = ends.borrow_mut().take();
-                    if let Some((then, timed_out)) = end {
-                        if met { then(engine) } else { timed_out(engine) }
-                    }
-                    return;
+                if met || looked.expired.get() {
+                    host.end_watch(engine, &looked, met);
+                } else if looked.changed.get() {
+                    host.relook(engine, &looked);
+                } else {
+                    host.backstop(engine, &looked);
                 }
-                let step = host.clone();
-                let r = request.clone();
-                host.after(engine, &request, POLL_MS, move |engine| {
-                    step.poll_step(engine, r, since, wait_ms, again, ends);
-                });
             }),
         );
+    }
+
+    /// Looks again BACKSTOP_MS after the last look unless the page says it
+    /// changed first: what the page cannot report is still seen. A look
+    /// that ran past later backstops is followed at the next one still to
+    /// come: those it missed are skipped, not looked at in a burst.
+    fn backstop(&self, engine: &Engine, watch: &Rc<Watch>) {
+        let period = Duration::from_millis(BACKSTOP_MS as u64);
+        let at = schedule::next_due(watch.last_look.get(), engine.now(), period);
+        let (host, again) = (self.clone(), watch.clone());
+        watch.backstop.hold(
+            engine,
+            schedule::at(engine, "preview wait backstop", None, at, move |engine| {
+                again.due_look.set(Some(at));
+                host.relook(engine, &again);
+            }),
+        );
+    }
+
+    /// The page changed: looks again, a frame after the last look at most.
+    fn relook(&self, engine: &Engine, watch: &Rc<Watch>) {
+        if watch.looking.get() {
+            watch.changed.set(true);
+            return;
+        }
+        if watch.relook.is_pending() {
+            return;
+        }
+        let at = watch.began.get() + Duration::from_millis(RELOOK_MS as u64);
+        if at <= engine.now() {
+            return self.look(engine, watch);
+        }
+        let (host, again) = (self.clone(), watch.clone());
+        watch.relook.hold(
+            engine,
+            schedule::at(engine, "preview wait look", None, at, move |engine| {
+                again.due_look.set(Some(at));
+                host.look(engine, &again);
+            }),
+        );
+    }
+
+    fn end_watch(&self, engine: &Engine, watch: &Rc<Watch>, met: bool) {
+        let ends = watch.ends.borrow_mut().take();
+        self.drop_watch(engine, watch);
+        if let Some((then, timed_out)) = ends
+            && self.alive(&watch.request)
+        {
+            if met { then(engine) } else { timed_out(engine) }
+        }
+    }
+
+    fn drop_watch(&self, engine: &Engine, watch: &Rc<Watch>) {
+        watch.ends.borrow_mut().take();
+        watch.deadline.cancel(engine);
+        watch.relook.cancel(engine);
+        watch.backstop.cancel(engine);
+        self.0
+            .borrow_mut()
+            .watches
+            .retain(|w| w.upgrade().is_some_and(|w| !Rc::ptr_eq(&w, watch)));
+    }
+
+    /// What `page` calls when it changed: each condition waited for on it
+    /// is looked at again.
+    fn page_changed(&self, engine: &Engine, page: &Weak<dyn AutomationPage>) {
+        let Some(page) = page.upgrade() else { return };
+        let watches: Vec<Rc<Watch>> = self
+            .0
+            .borrow()
+            .watches
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|w| Rc::ptr_eq(&w.page, &page))
+            .collect();
+        for watch in watches {
+            self.relook(engine, &watch);
+        }
     }
 
     fn wait_for_page(&self, engine: &Engine, request: &RequestRef, tab_id: &str, then: Then) {
@@ -1537,7 +1774,7 @@ impl PreviewAutomationHost {
         });
         let (host, done_request) = (self.clone(), request.clone());
         let (late, late_request) = (self.clone(), request.clone());
-        self.poll(
+        self.watch(
             engine,
             request,
             wait_ms,
@@ -1581,7 +1818,7 @@ impl PreviewAutomationHost {
         };
         let host = self.clone();
         let asked = request.clone();
-        let polled = page.clone();
+        let settling = page.clone();
         page.run_script(
             engine,
             &script::evaluate(&expression, &key, MAX_EVALUATION_BYTES),
@@ -1617,7 +1854,7 @@ impl PreviewAutomationHost {
                     let settled = settled.clone();
                     Rc::new(move |engine, done| {
                         let settled = settled.clone();
-                        polled.run_script(
+                        settling.run_script(
                             engine,
                             &script::settled(&key),
                             Box::new(move |engine, result| {
@@ -1632,7 +1869,7 @@ impl PreviewAutomationHost {
                 let wait_ms = host.remaining_ms(engine, request);
                 let (h, r) = (host.clone(), request.clone());
                 let (late, late_request) = (host.clone(), request.clone());
-                host.poll(
+                host.watch(
                     engine,
                     request,
                     wait_ms,
@@ -1849,7 +2086,7 @@ impl PreviewAutomationHost {
                     }
                     let wait_ms = clicking.remaining_ms(engine, &r).min(1000);
                     let done = (clicking.clone(), r.clone());
-                    clicking.poll(
+                    clicking.watch(
                         engine,
                         &r,
                         wait_ms,
@@ -1958,7 +2195,7 @@ impl PreviewAutomationHost {
                 let wait_ms = host.remaining_ms(engine, request).min(PRESS_CONFIRM_MS);
                 let (done, done_request) = (host.clone(), request.clone());
                 let (late, late_request) = (host.clone(), request.clone());
-                host.poll(
+                host.watch(
                     engine,
                     request,
                     wait_ms,
@@ -2061,7 +2298,7 @@ impl PreviewAutomationHost {
         };
         let (host, done_request) = (self.clone(), request.clone());
         let (late, late_request) = (self.clone(), request.clone());
-        self.poll(
+        self.watch(
             engine,
             request,
             wait_ms,
@@ -2156,7 +2393,7 @@ impl PreviewAutomationHost {
         let (host, done_request) = (self.clone(), request.clone());
         let (late, late_request) = (self.clone(), request.clone());
         let (width, height) = size.unwrap_or_default();
-        self.poll(
+        self.watch(
             engine,
             request,
             wait_ms,
@@ -2516,8 +2753,8 @@ fn seen(engine: &Engine, page: Page, op: &'static str, loads: u64) -> Check {
     })
 }
 
-fn after(engine: &Engine, ms: i64) -> Time {
-    engine.now() + Duration::from_millis(ms.max(0) as u64)
+fn ms(ms: i64) -> Duration {
+    Duration::from_millis(ms.max(0) as u64)
 }
 
 fn text(value: &Json) -> String {
@@ -2628,12 +2865,22 @@ pub mod script {
   try { value = (0, eval)(source); } catch (e) { return JSON.stringify(failure(e)); }
   if (value && typeof value.then === "function") {
     window[key] = { pending: true };
-    Promise.resolve(value).then(function (v) { window[key] = settle(v); }, function (e) { window[key] = failure(e); });
+    var settled = function () { document.dispatchEvent(new Event(SETTLED)); };
+    Promise.resolve(value).then(function (v) { window[key] = settle(v); settled(); }, function (e) { window[key] = failure(e); settled(); });
     return JSON.stringify({ pending: true });
   }
   return JSON.stringify(settle(value));
 })
 "#;
+
+    /// What the runtime logs when a document it watches changed
+    /// (`watch`). Keep it the same as the runtime's `CHANGED`.
+    pub const CHANGED: &str = "__halc2:changed";
+
+    /// The event a promise the agent's script made fires on the document
+    /// when it settles, which the runtime's watch hears from its own world.
+    /// Keep it the same as the runtime's `SETTLED`.
+    const SETTLED: &str = "__halc2:settled";
 
     /// desktop-qt's automation runtime: `(name, args)` answers
     /// {ok: true, value} | {ok: false, kind, reason}.
@@ -2654,7 +2901,8 @@ pub mod script {
     /// {"done": true, "tooLarge": bytes} | {"pending": true}.
     pub fn evaluate(expression: &str, key: &str, max_bytes: usize) -> String {
         format!(
-            "{EVALUATE}({}, {}, {max_bytes})",
+            "{}({}, {}, {max_bytes})",
+            EVALUATE.replace("SETTLED", &literal(SETTLED)),
             literal(expression),
             literal(key)
         )

@@ -53,6 +53,7 @@ pub mod files_viewer;
 pub mod files_workspace;
 pub mod git;
 pub mod header;
+pub mod idle;
 pub mod integrations_settings;
 pub mod keybinding;
 pub mod keymap;
@@ -229,6 +230,7 @@ pub fn register(steps: &mut Steps) {
     files_viewer::register(steps);
     git::register(steps);
     header::register(steps);
+    idle::register(steps);
     integrations_settings::register(steps);
     keybinding::register(steps);
     keymap::register(steps);

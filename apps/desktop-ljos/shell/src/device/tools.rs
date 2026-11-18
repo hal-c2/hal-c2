@@ -22,6 +22,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use ljos::prelude::{
     Atom, Cx, Engine, EngineError, ObjectId, QmlObject, QmlValue, Value, qml_impl,
@@ -31,6 +32,7 @@ use serde_json::json;
 use super::percent;
 use crate::json::Json;
 use crate::mc::{Mc, McError, StreamEvent, StreamId};
+use crate::schedule::{self, Held};
 
 const EVENT_LOG_LIMIT: usize = 100;
 const AX_ELEMENT_LIMIT: usize = 500;
@@ -874,9 +876,11 @@ struct Inner {
     mc: Rc<dyn Mc>,
     feeds: RefCell<HashMap<Feed, StreamId>>,
     ax: RefCell<Option<(StreamId, Vec<u8>)>>,
-    ax_timeout: RefCell<Option<ObjectId>>,
-    ax_timer: RefCell<Option<ObjectId>>,
-    retry: RefCell<Option<ObjectId>>,
+    ax_timeout: Held,
+    /// The accessibility tree's refresh while the overlay shows: the hub
+    /// answers for the tree when asked and says nothing when it changes.
+    ax_timer: Held,
+    retry: Held,
 }
 
 impl Drop for Inner {
@@ -936,9 +940,9 @@ impl DeviceTools {
             mc,
             feeds: RefCell::default(),
             ax: RefCell::default(),
-            ax_timeout: RefCell::default(),
-            ax_timer: RefCell::default(),
-            retry: RefCell::default(),
+            ax_timeout: Held::default(),
+            ax_timer: Held::default(),
+            retry: Held::default(),
         });
         engine.create_native(DeviceTools { view, inner }, owner)
     }
@@ -988,11 +992,8 @@ impl DeviceTools {
     }
 }
 
-fn stop(engine: &Engine, slot: &RefCell<Option<ObjectId>>) {
-    let old = slot.borrow_mut().take();
-    if let Some(old) = old {
-        engine.destroy(old);
-    }
+fn ms(ms: i32) -> Duration {
+    Duration::from_millis(ms.max(0).unsigned_abs().into())
 }
 
 fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
@@ -1082,59 +1083,55 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             if let Some((old, _)) = old {
                 inner.mc.close_stream(old);
             }
-            stop(engine, &inner.ax_timeout);
-            *inner.ax_timeout.borrow_mut() =
-                timer(engine, obj, AX_TIMEOUT_MS, false, move |engine| {
+            let timeout = schedule::after(
+                engine,
+                "device accessibility timeout",
+                Some(obj),
+                ms(AX_TIMEOUT_MS),
+                move |engine| {
                     DeviceTools::update(engine, obj, |t| t.on_ax_timeout(token));
-                });
+                },
+            );
+            inner.ax_timeout.hold(engine, timeout);
         }
         Effect::DropAx => {
             let old = inner.ax.borrow_mut().take();
             if let Some((old, _)) = old {
                 inner.mc.close_stream(old);
             }
-            stop(engine, &inner.ax_timeout);
+            inner.ax_timeout.cancel(engine);
         }
         Effect::Retry(wait) => {
-            stop(engine, &inner.retry);
-            if let Some(ms) = wait {
-                *inner.retry.borrow_mut() = timer(engine, obj, ms, false, move |engine| {
-                    DeviceTools::update(engine, obj, Tools::retry_foreground);
-                });
+            inner.retry.cancel(engine);
+            if let Some(wait) = wait {
+                let retry = schedule::after(
+                    engine,
+                    "device foreground retry",
+                    Some(obj),
+                    ms(wait),
+                    move |engine| {
+                        DeviceTools::update(engine, obj, Tools::retry_foreground);
+                    },
+                );
+                inner.retry.hold(engine, retry);
             }
         }
         Effect::AxTimer(on) => {
-            stop(engine, &inner.ax_timer);
+            inner.ax_timer.cancel(engine);
             if on {
-                *inner.ax_timer.borrow_mut() =
-                    timer(engine, obj, AX_REFRESH_MS, true, move |engine| {
+                let refresh = schedule::every(
+                    engine,
+                    "device accessibility refresh",
+                    Some(obj),
+                    ms(AX_REFRESH_MS),
+                    move |engine| {
                         DeviceTools::update(engine, obj, Tools::fetch_ax);
-                    });
+                    },
+                );
+                inner.ax_timer.hold(engine, refresh);
             }
         }
     }
-}
-
-/// A timer owned by `obj` that runs `f` after `ms`, again and again with
-/// `repeat`.
-fn timer(
-    engine: &Engine,
-    obj: ObjectId,
-    ms: i32,
-    repeat: bool,
-    f: impl Fn(&Engine) + 'static,
-) -> Option<ObjectId> {
-    let native = ljos::prelude::Timer {
-        interval: ms,
-        repeat,
-        running: true,
-        ..ljos::prelude::Timer::default()
-    };
-    let made = engine.create_native(native, Some(obj)).ok()?;
-    engine
-        .connect_by_name(made, "triggered", move |engine, _| f(engine))
-        .ok()?;
-    Some(made)
 }
 
 #[qml_impl]

@@ -447,6 +447,33 @@ Feature: Scheduled tasks
       When 5 minutes pass
       Then the task says "in 7m"
 
+    # The labels are shown again at the moment one reads otherwise instead of on a minute tick, so
+    # an open section that nothing changes in wakes the app once per turn of a label.
+    @backlog @desktop
+    Scenario: The next run turns at its moment with no tick in between
+      Given an enabled task whose next run is 12 minutes away
+      And the user has scheduled tasks open
+      When 5 minutes pass
+      Then the task says "in 7m"
+      And the labels were shown again only when one turned
+
+    # The section's wake is on the app's steady clock, which a clock set by hand or by the network
+    # does not move and sleep may stop.
+    @backlog @desktop
+    Scenario: The next run is said again when the system clock jumps
+      Given an enabled task whose next run is 12 minutes away
+      And the user has scheduled tasks open
+      When the system clock is set 10 minutes ahead
+      Then the task says "in 2m"
+
+    @backlog @desktop
+    Scenario: Scheduled tasks that are closed are never shown again
+      Given an enabled task whose next run is 12 minutes away
+      And the user has scheduled tasks open
+      When the user leaves scheduled tasks
+      And 30 minutes pass
+      Then the labels were never shown again
+
     @backlog @desktop
     Scenario: A task with no next run says it is not scheduled
       Given an enabled task that has no next run

@@ -31,7 +31,6 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use ljos::prelude::TimerId;
 use ljos::prelude::{
     Atom, Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, qml_impl,
 };
@@ -150,7 +149,7 @@ struct Runtime {
     program: String,
     arguments: Vec<String>,
     process: Option<Process>,
-    timer: Option<TimerId>,
+    timer: Option<crate::schedule::Schedule>,
     /// Which spawn the process's events are for: an earlier run's are late.
     run: u64,
     /// The `running` and `status` the properties show.
@@ -222,12 +221,13 @@ fn apply(engine: &Engine, obj: ObjectId, state: &Rc<RefCell<Runtime>>) {
                 Effect::StartKillTimer => {
                     stop_timer(engine, state);
                     let at = engine.now() + Duration::from_millis(KILL_AFTER_MS);
-                    let timer = engine.call_at(at, move |engine| {
-                        if let Some(state) = state_of(engine, obj) {
-                            state.borrow_mut().timer = None;
-                            step(engine, obj, |m| m.kill_timer_fired());
-                        }
-                    });
+                    let timer =
+                        crate::schedule::at(engine, "transcriber kill", None, at, move |engine| {
+                            if let Some(state) = state_of(engine, obj) {
+                                state.borrow_mut().timer = None;
+                                step(engine, obj, |m| m.kill_timer_fired());
+                            }
+                        });
                     state.borrow_mut().timer = Some(timer);
                 }
                 Effect::StopKillTimer => stop_timer(engine, state),
@@ -244,7 +244,7 @@ fn apply(engine: &Engine, obj: ObjectId, state: &Rc<RefCell<Runtime>>) {
 fn stop_timer(engine: &Engine, state: &Rc<RefCell<Runtime>>) {
     let timer = state.borrow_mut().timer.take();
     if let Some(timer) = timer {
-        engine.cancel_call(timer);
+        timer.cancel(engine);
     }
 }
 

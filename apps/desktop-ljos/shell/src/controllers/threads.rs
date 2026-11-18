@@ -23,9 +23,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use ljos::locale::Locale;
-use ljos::prelude::{
-    Atom, Cx, Engine, ObjectId, QmlObject, Time, TimerId, Value, qml_impl, qml_singleton,
-};
+use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Time, Value, qml_impl, qml_singleton};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -223,7 +221,7 @@ pub struct ThreadStore {
     recent: Vec<String>,
     /// When each thread was left.
     left_at: BTreeMap<String, Time>,
-    idle_timer: Option<TimerId>,
+    idle_timer: Option<crate::schedule::Schedule>,
     phase: Phase,
     hooked: bool,
     /// The thread the route showed when last heard: a route published again
@@ -604,16 +602,22 @@ impl ThreadStore {
             }
         }
         if let Some(timer) = self.idle_timer.take() {
-            engine.cancel_call(timer);
+            timer.cancel(engine);
         }
         if let Some(next) = next {
             let me = self.me.clone();
-            self.idle_timer = Some(engine.call_at(now + next, move |engine| {
-                me.run(engine, |s, e| {
-                    s.idle_timer = None;
-                    s.evict_idle(e);
-                });
-            }));
+            self.idle_timer = Some(crate::schedule::at(
+                engine,
+                "idle thread eviction",
+                None,
+                now + next,
+                move |engine| {
+                    me.run(engine, |s, e| {
+                        s.idle_timer = None;
+                        s.evict_idle(e);
+                    });
+                },
+            ));
         }
     }
 

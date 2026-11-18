@@ -1226,7 +1226,7 @@ struct Inner {
     core: RefCell<Core>,
     mc: Rc<dyn Mc>,
     streams: RefCell<HashMap<Conn, StreamId>>,
-    timers: RefCell<HashMap<Timer, ObjectId>>,
+    timers: RefCell<HashMap<Timer, crate::schedule::Schedule>>,
     /// The `DeviceScreen`s showing the stream.
     screens: RefCell<Vec<ObjectId>>,
     /// The newest picture, for a screen that starts showing the stream.
@@ -1564,18 +1564,19 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
         Effect::StartTimer { timer, id, ms } => {
             let old = inner.timers.borrow_mut().remove(&timer);
             if let Some(old) = old {
-                engine.destroy(old);
+                old.cancel(engine);
             }
-            if let Some(made) = single_shot(engine, obj, ms, move |engine| {
-                DeviceStream::update(engine, obj, |c| c.on_timer(timer, id));
-            }) {
-                inner.timers.borrow_mut().insert(timer, made);
-            }
+            let delay = std::time::Duration::from_millis(ms.max(0).unsigned_abs().into());
+            let made =
+                crate::schedule::after(engine, "device stream", Some(obj), delay, move |engine| {
+                    DeviceStream::update(engine, obj, |c| c.on_timer(timer, id));
+                });
+            inner.timers.borrow_mut().insert(timer, made);
         }
         Effect::StopTimer(timer) => {
             let old = inner.timers.borrow_mut().remove(&timer);
             if let Some(old) = old {
-                engine.destroy(old);
+                old.cancel(engine);
             }
         }
         Effect::MintTicket { epoch } => {
@@ -1591,26 +1592,6 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             );
         }
     }
-}
-
-/// A timer owned by `obj` that runs `f` once after `ms`.
-fn single_shot(
-    engine: &Engine,
-    obj: ObjectId,
-    ms: i32,
-    f: impl Fn(&Engine) + 'static,
-) -> Option<ObjectId> {
-    let native = ljos::prelude::Timer {
-        interval: ms,
-        repeat: false,
-        running: true,
-        ..ljos::prelude::Timer::default()
-    };
-    let timer = engine.create_native(native, Some(obj)).ok()?;
-    engine
-        .connect_by_name(timer, "triggered", move |engine, _| f(engine))
-        .ok()?;
-    Some(timer)
 }
 
 /// `screen` shows `stream`'s pictures from now on, starting with its newest.

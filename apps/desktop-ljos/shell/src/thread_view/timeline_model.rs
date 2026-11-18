@@ -43,7 +43,7 @@ struct Rows {
     /// (a view toggles a row as it hears of it), which wait their turn.
     pending: RefCell<VecDeque<Out>>,
     telling: Cell<bool>,
-    flush_timer: Cell<Option<ObjectId>>,
+    flush_timer: crate::schedule::Held,
     observers: RefCell<Vec<Observer>>,
 }
 
@@ -55,7 +55,7 @@ impl Rows {
             listeners: ModelListeners::default(),
             pending: RefCell::default(),
             telling: Cell::new(false),
-            flush_timer: Cell::new(None),
+            flush_timer: crate::schedule::Held::default(),
             observers: RefCell::default(),
         }
     }
@@ -315,11 +315,19 @@ fn tell(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
             );
         }
         Out::FlushTimer(start) => {
-            if let Some(timer) = rows.flush_timer.take() {
-                engine.destroy(timer);
-            }
+            rows.flush_timer.cancel(engine);
             if *start {
-                rows.flush_timer.set(flush_after(engine, obj));
+                let delay = std::time::Duration::from_millis(FLUSH_DELAY_MS.unsigned_abs().into());
+                let flush = crate::schedule::after(
+                    engine,
+                    "timeline flush",
+                    Some(obj),
+                    delay,
+                    move |engine| {
+                        TimelineModel::update(engine, obj, Timeline::flush);
+                    },
+                );
+                rows.flush_timer.hold(engine, flush);
             }
         }
         Out::TurnChanged => drop(TimelineModel::emit_turn_changed(&cx)),
@@ -409,24 +417,6 @@ fn sync(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
             e.to_string(),
         );
     }
-}
-
-/// A single shot of the flush timer, owned by the model.
-fn flush_after(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
-    let native = ljos::prelude::Timer {
-        interval: FLUSH_DELAY_MS,
-        repeat: false,
-        running: true,
-        ..ljos::prelude::Timer::default()
-    };
-    let timer = engine.create_native(native, Some(obj)).ok()?;
-    engine
-        .connect_by_name(timer, "triggered", move |engine, _| {
-            TimelineModel::update(engine, obj, Timeline::flush);
-        })
-        .ok()?;
-    engine.complete(timer).ok()?;
-    Some(timer)
 }
 
 #[qml_impl]

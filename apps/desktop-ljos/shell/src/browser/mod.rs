@@ -14,8 +14,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::prelude::{
-    Atom, ConnectionId, Cx, Engine, EngineError, ObjectId, QmlObject, QmlValue, TimerId, Value,
-    Version, qml_impl,
+    Atom, ConnectionId, Cx, Engine, EngineError, ObjectId, QmlObject, QmlValue, Value, Version,
+    qml_impl,
 };
 use serde_json::json;
 
@@ -534,7 +534,7 @@ struct PageInner {
     /// The previews followed, and the connections to their signals.
     previews: Cell<Option<ObjectId>>,
     connections: RefCell<Vec<ConnectionId>>,
-    timers: RefCell<HashMap<(String, u64), TimerId>>,
+    timers: RefCell<HashMap<(String, u64), crate::schedule::Schedule>>,
     enrolled: RefCell<String>,
     requests: Cell<i32>,
     evaluations: RefCell<HashMap<i32, Evaluated>>,
@@ -993,19 +993,25 @@ fn run(engine: &Engine, obj: ObjectId, inner: &PageInner, effect: PageEffect) {
         } => {
             let key = (tab.clone(), pick);
             let timer_key = key.clone();
-            let timer = engine.call_at(engine.now() + RESIZE_TIMEOUT, move |engine| {
-                if let Some(inner) = inner_of(engine, obj) {
-                    inner.timers.borrow_mut().remove(&timer_key);
-                }
-                let (tab, pick) = &timer_key;
-                BrowserPage::update(engine, obj, |core| core.timed_out(tab, *pick));
-            });
+            let timer = crate::schedule::after(
+                engine,
+                "browser resize timeout",
+                Some(obj),
+                RESIZE_TIMEOUT,
+                move |engine| {
+                    if let Some(inner) = inner_of(engine, obj) {
+                        inner.timers.borrow_mut().remove(&timer_key);
+                    }
+                    let (tab, pick) = &timer_key;
+                    BrowserPage::update(engine, obj, |core| core.timed_out(tab, *pick));
+                },
+            );
             inner.timers.borrow_mut().insert(key.clone(), timer);
             ThreadPreviews::resize_tab(engine, previews, &tab, viewport, move |engine, error| {
                 if let Some(inner) = inner_of(engine, obj)
                     && let Some(timer) = inner.timers.borrow_mut().remove(&key)
                 {
-                    engine.cancel_call(timer);
+                    timer.cancel(engine);
                 }
                 let (tab, pick) = &key;
                 BrowserPage::update(engine, obj, |core| {
