@@ -540,7 +540,8 @@ defmodule HalC2.PullRequests.Forgejo do
   Refused while the signed-in account has a pending review on the pull request, which
   Forgejo would publish the review's comments into: it may be the user's draft. When
   the post fails, the pending review it left is deleted, so no comment of a failed post
-  is published by a later one.
+  is published by a later one; one that could not be deleted then is deleted by the
+  next attempt, as its comments are all this review's.
   """
   def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review =
@@ -573,7 +574,10 @@ defmodule HalC2.PullRequests.Forgejo do
       }
       |> then(&if(is_binary(commit_id), do: Map.put(&1, "commit_id", commit_id), else: &1))
 
-    with {:ok, []} <- pending(ctx) do
+    posted = MapSet.new(review["comments"], &{&1["path"], &1["body"]})
+
+    with {:ok, reviews} <- pending(ctx),
+         [] <- Enum.reject(reviews, &discard_own(ctx, &1, posted)) do
       case Forgejo.api(ctx.cwd, target(ctx), "#{base(ctx)}/pulls/#{ctx.number}/reviews",
              method: "POST",
              body: review
@@ -582,16 +586,17 @@ defmodule HalC2.PullRequests.Forgejo do
           :ok
 
         error ->
-          discard_failed(ctx, review["comments"])
+          discard_failed(ctx, posted)
           error
       end
     else
-      {:ok, [_ | _]} ->
+      [_ | _] ->
         {:error,
          {:failed,
           "Your Forgejo account has a pending review on this pull request, which this " <>
-            "review's comments would be published into. Submit or discard it in Forgejo, " <>
-            "and the review is posted on the next attempt."}}
+            "review's comments would be published into. It may be a draft of yours, or " <>
+            "left over from an earlier post of this plugin's that failed. Submit or " <>
+            "discard it in Forgejo, and the review is posted on the next attempt."}}
 
       error ->
         error
@@ -616,23 +621,24 @@ defmodule HalC2.PullRequests.Forgejo do
 
   # Forgejo keeps a failed post's staged comments in a pending review, and while it
   # stands the next post fails as well. There was none before the post, so one now is
-  # the post's own, or one the user began meanwhile: only a review whose comments are
-  # all this post's is deleted.
-  defp discard_failed(_ctx, []), do: :ok
-
-  defp discard_failed(ctx, comments) do
-    path = "#{base(ctx)}/pulls/#{ctx.number}/reviews"
-    posted = MapSet.new(comments, &{&1["path"], &1["body"]})
-
-    with {:ok, reviews} <- pending(ctx) do
-      for r <- reviews,
-          {:ok, [_ | _] = staged} <- [list(ctx.cwd, target(ctx), "#{path}/#{r["id"]}/comments")],
-          Enum.all?(staged, &MapSet.member?(posted, {&1["path"], &1["body"]})) do
-        Forgejo.api(ctx.cwd, target(ctx), "#{path}/#{r["id"]}", method: "DELETE")
-      end
-    end
-
+  # the post's own, or one the user began meanwhile.
+  defp discard_failed(ctx, posted) do
+    with {:ok, reviews} <- pending(ctx), do: Enum.each(reviews, &discard_own(ctx, &1, posted))
     :ok
+  end
+
+  # Deletes pending review `r` when it stages comments and all of them are among
+  # `posted` (`{path, body}`): a failed post of this review left it. True once it is gone.
+  defp discard_own(ctx, r, posted) do
+    path = "#{base(ctx)}/pulls/#{ctx.number}/reviews/#{r["id"]}"
+
+    with {:ok, [_ | _] = staged} <- list(ctx.cwd, target(ctx), "#{path}/comments"),
+         true <- Enum.all?(staged, &MapSet.member?(posted, {&1["path"], &1["body"]})),
+         {:ok, _, _} <- Forgejo.api(ctx.cwd, target(ctx), path, method: "DELETE") do
+      true
+    else
+      _ -> false
+    end
   end
 
   @doc """

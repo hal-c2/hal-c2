@@ -16,13 +16,24 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   "mergeBase"}}`, `baseSha` being the base branch as fetched.
   """
   def prepare(clone, path, %{"url" => url} = remote, number, base) do
-    head_ref = "refs/hal-c2/code-review/#{number}/head"
-    base_ref = "refs/hal-c2/code-review/#{number}/base"
     # Each attempt fetches into refs of its own: a stopped review's fetch may still
     # finish, and must not move the head or base this one reads.
     attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
+    :global.register_name({__MODULE__, clone, attempt}, self())
+
+    try do
+      prepare_attempt(clone, path, remote, url, number, base, attempt)
+    after
+      :global.unregister_name({__MODULE__, clone, attempt})
+    end
+  end
+
+  defp prepare_attempt(clone, path, remote, url, number, base, attempt) do
+    head_ref = "refs/hal-c2/code-review/#{number}/head"
+    base_ref = "refs/hal-c2/code-review/#{number}/base"
 
     with :ok <- alone(clone, fn -> init(clone, url) end),
+         :ok <- sweep(clone, number),
          {:ok, {credentials, env}} <- credentials(clone, remote, url),
          {:ok, _} <-
            git(
@@ -76,6 +87,32 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   defp drop(clone, attempt) do
     for side <- ~w(head base), do: git(clone, ["update-ref", "-d", "#{attempt}/#{side}"])
+    :ok
+  end
+
+  # The refs of attempts no process is making any more: a stopped review's fetch that
+  # finished after it was stopped leaves its refs, as nothing is left to drop them. A
+  # live attempt is registered under its refs while it runs.
+  defp sweep(clone, number) do
+    with {:ok, refs} <-
+           git(clone, [
+             "for-each-ref",
+             "--format=%(refname)",
+             "refs/hal-c2/code-review/#{number}/"
+           ]) do
+      refs
+      |> String.split("\n", trim: true)
+      |> Enum.flat_map(fn ref ->
+        case Regex.run(~r{^(.+/attempt-\d+)/(?:head|base)$}, ref) do
+          [_, attempt] -> [attempt]
+          _ -> []
+        end
+      end)
+      |> Enum.uniq()
+      |> Enum.reject(&is_pid(:global.whereis_name({__MODULE__, clone, &1})))
+      |> Enum.each(&drop(clone, &1))
+    end
+
     :ok
   end
 
