@@ -420,7 +420,7 @@ defmodule HalC2.PullRequests.Forgejo do
 
     with {:ok, %{"number" => _} = pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}"),
          {:ok, collaborators} <- collaborators(ctx.cwd, target, ctx.repository),
-         {:ok, events} <- pages(ctx.cwd, target, "#{base}/issues/#{ctx.number}/timeline"),
+         {:ok, events} <- timeline(ctx.cwd, target, base, ctx.number),
          {:ok, comments} <- issue_comments(ctx.cwd, target, base, ctx.number) do
       viewer = viewer(ctx.cwd, target)
       owner = down(login(get_in(pull, ["base", "repo", "owner"])) || "")
@@ -541,7 +541,8 @@ defmodule HalC2.PullRequests.Forgejo do
   Forgejo would publish the review's comments into: it may be the user's draft. When
   the post fails, the pending review it left is deleted, so no comment of a failed post
   is published by a later one; one that could not be deleted then is deleted by the
-  next attempt, as its comments are all this review's.
+  next attempt, as its comments are all this review's. One it cannot tell is its own
+  (one with no comments staged) is left, and the failure says so.
   """
   def submit_review(ctx, verdict, body, comments, commit_id \\ nil) do
     review =
@@ -586,8 +587,7 @@ defmodule HalC2.PullRequests.Forgejo do
           :ok
 
         error ->
-          discard_failed(ctx, posted)
-          error
+          if discard_failed(ctx, posted), do: error, else: left_pending(error)
       end
     else
       [_ | _] ->
@@ -622,10 +622,26 @@ defmodule HalC2.PullRequests.Forgejo do
   # Forgejo keeps a failed post's staged comments in a pending review, and while it
   # stands the next post fails as well. There was none before the post, so one now is
   # the post's own, or one the user began meanwhile.
+  # True when none is left: one with no comments staged, or any not all this review's,
+  # is not this review's to delete.
   defp discard_failed(ctx, posted) do
-    with {:ok, reviews} <- pending(ctx), do: Enum.each(reviews, &discard_own(ctx, &1, posted))
-    :ok
+    case pending(ctx) do
+      {:ok, reviews} -> Enum.all?(reviews, &discard_own(ctx, &1, posted))
+      _ -> false
+    end
   end
+
+  # The post's failure, saying the pending review it may have left stands: the next post
+  # is refused until the user discards it.
+  defp left_pending({:error, {kind, message}}) when is_binary(message),
+    do:
+      {:error,
+       {kind,
+        message <>
+          " It may have left a pending review on the pull request that could not be " <>
+          "cleared. Discard it in Forgejo before the review is posted again."}}
+
+  defp left_pending(error), do: error
 
   # Deletes pending review `r` when it stages comments and all of them are among
   # `posted` (`{path, body}`): a failed post of this review left it. True once it is gone.
@@ -723,8 +739,9 @@ defmodule HalC2.PullRequests.Forgejo do
   # as other accounts' pending reviews, so a page may be short or empty with more to
   # come: pages are counted against it, at the server's page size (`size`), which may
   # be below the `limit` asked for. A short page is read as the last only once that
-  # size is known.
-  defp pages(cwd, target, path, page \\ 1, acc \\ [], size \\ nil) do
+  # size is known. A total that changes between pages means the list changed while it
+  # was read, and a row may have moved to a page already read: that read is an error.
+  defp pages(cwd, target, path, page \\ 1, acc \\ [], size \\ nil, first \\ nil) do
     separator = if String.contains?(path, "?"), do: "&", else: "?"
 
     with {:ok, rows, meta} <-
@@ -732,6 +749,7 @@ defmodule HalC2.PullRequests.Forgejo do
       acc = acc ++ rows
       total = Map.get(meta, :total)
       link = Map.get(meta, :link)
+      first = first || total
 
       size =
         cond do
@@ -751,10 +769,41 @@ defmodule HalC2.PullRequests.Forgejo do
         end
 
       cond do
+        total != first -> {:error, {:failed, "Forgejo's list changed while it was read."}}
         more? == :unknown -> {:error, {:failed, "Forgejo's list could not be read to its end."}}
         not more? -> {:ok, acc}
         page >= @max_pages -> {:error, {:failed, "Too many pages to read from Forgejo."}}
-        true -> pages(cwd, target, path, page + 1, acc, size)
+        true -> pages(cwd, target, path, page + 1, acc, size, first)
+      end
+    end
+  end
+
+  # The pull request's timeline. Forgejo pages it without a total (its `X-Total-Count`
+  # counts the page) or a `rel="next"` link, and leaves review line comments out of each
+  # page after reading it, so a short page, even an empty one, may have more after it.
+  # The reviews' line comments (`hidden`) are as many rows as it can leave out: a page
+  # is the last when it is short by more than are left.
+  defp timeline(cwd, target, base, number) do
+    with {:ok, reviews} <- pages(cwd, target, "#{base}/pulls/#{number}/reviews") do
+      hidden =
+        reviews
+        |> Enum.map(&if(is_integer(&1["comments_count"]), do: &1["comments_count"], else: 0))
+        |> Enum.sum()
+
+      size = page_size(cwd, target) || @page
+      timeline_pages(cwd, target, "#{base}/issues/#{number}/timeline", size, hidden, 1, [])
+    end
+  end
+
+  defp timeline_pages(cwd, target, path, size, hidden, page, acc) do
+    with {:ok, rows, _} <- list_page(cwd, target, "#{path}?limit=#{size}&page=#{page}") do
+      acc = acc ++ rows
+      short = max(size - length(rows), 0)
+
+      cond do
+        short > hidden -> {:ok, acc}
+        page >= @max_pages -> {:error, {:failed, "Too many pages to read from Forgejo."}}
+        true -> timeline_pages(cwd, target, path, size, hidden - short, page + 1, acc)
       end
     end
   end

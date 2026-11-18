@@ -343,14 +343,16 @@ defmodule HalC2.McpTest do
     assert {:ok, %{"wasSubscribed" => false}} =
              tool.("unsubscribe_pull_request", %{"url" => "https://github.com/acme/app/pull/99"})
 
-    assert {:error, text} =
-             tool.("subscribe_pull_request", %{
-               "repository" => "acme/app",
-               "number" => 8,
-               "host" => 42
-             })
+    for host <- [42, false] do
+      assert {:error, text} =
+               tool.("subscribe_pull_request", %{
+                 "repository" => "acme/app",
+                 "number" => 8,
+                 "host" => host
+               })
 
-    assert text =~ "host must be a string"
+      assert text =~ "host must be a string"
+    end
   end
 
   test "a new subscription is one write, and drops are made from what the link has then" do

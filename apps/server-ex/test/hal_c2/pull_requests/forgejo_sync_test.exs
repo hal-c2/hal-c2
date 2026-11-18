@@ -3,7 +3,7 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
   A thread linked to a pull request on Forgejo: `HalC2.PullRequests.Sync` keeps its
   snapshot from the server's REST API (Forgejo has no native stacks, so it has none),
   and `HalC2.PullRequests.Wakes` wakes the thread when a review lands or its checks
-  fail, telling it how to read them with `tea`.
+  fail, telling it how to read them from that server's API.
   """
 
   use ExUnit.Case, async: false
@@ -272,7 +272,8 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     assert wake["notification"]["summary"] == "acme/shop#7: checks failing, new review"
     assert wake["notification"]["outcome"] == "failed"
     assert wake["text"] =~ "New review from maint (changes requested)."
-    assert wake["text"] =~ "`tea api repos/acme/shop/pulls/7/reviews`"
+    assert wake["text"] =~ "`https://forgejo.test/api/v1/repos/acme/shop/pulls/7/reviews`"
+    refute wake["text"] =~ "tea "
     refute wake["text"] =~ "gh "
 
     # Heard: the same snapshot is not news again, once the thread is idle to hear it.
@@ -289,14 +290,20 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
   @busy ~w(preparing starting running waiting queued)
 
   # Until none of the thread's runs is going (the wake's run fails: no agent here).
+  # Subscribes once and waits on the one deadline: each subscription replays the state,
+  # so subscribing on every message would keep the mailbox from ever running dry.
   defp await_idle(id) do
     :ok = HalC2.Streams.subscribe(id, self(), nil)
+    await_idle(id, System.monotonic_time(:millisecond) + 10_000)
+  end
 
+  defp await_idle(id, deadline) do
     if Enum.any?(StreamState.list(current(id), "run"), &(&1["status"] in @busy)) do
       receive do
-        {:hal_c2_stream, ^id, _} -> await_idle(id)
+        {:hal_c2_stream, ^id, _} -> await_idle(id, deadline)
       after
-        10_000 -> flunk("#{id}'s run never ended")
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          flunk("#{id}'s run never ended")
       end
     else
       :ok

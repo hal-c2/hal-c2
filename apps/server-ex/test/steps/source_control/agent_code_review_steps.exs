@@ -848,8 +848,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert thread(context.thread)["worktreePath"] == review["checkout"]
     assert World.git!(review["checkout"], ~w(rev-parse HEAD)) == context.heads[number]
 
-    # The plugin's clone keeps the refs a sandbox bundles at what this review fetched,
-    # and none of the attempt's own.
+    # The plugin's clone keeps the pull request's refs at what this review fetched, and
+    # none of the attempt's own once its run started.
     clone = World.git!(review["checkout"], ~w(rev-parse --path-format=absolute --git-common-dir))
     prefix = "refs/hal-c2/code-review/#{number}"
 
@@ -1585,12 +1585,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "{string} looks for pull requests again within a minute", %{args: [@id]} = context do
-    # The timer of the next look, as the plugin armed it: a minute, and the same timer
-    # still once a setting was refused.
-    %{timer: timer, settings: settings} = :sys.get_state(HalC2Plugins.CodeReview)
-    left = Process.read_timer(timer)
-    assert is_integer(left) and left > 50_000 and left <= 60_000
-    assert settings["pollMinutes"] == 1
+    # The timer of the next look, once the plugin armed it (a look under way arms it
+    # when it ends): set for a minute at the pace saved, and the same timer still once a
+    # setting was refused. The delay is the one it was set with, not what is left of it,
+    # which depends on how long the test took to get here.
+    %{timer: timer} = state = await_poll_timer(System.monotonic_time(:millisecond) + 15_000)
+    assert state.settings["pollMinutes"] == 1
+    assert trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff) == 60_000
+    assert is_integer(Process.read_timer(timer))
     if context[:poll_timer], do: assert(timer == context.poll_timer)
     Map.put(context, :poll_timer, timer)
   end
@@ -2804,6 +2806,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     if Enum.any?(runs, &(&1["status"] in ~w(preparing starting running waiting))) do
       assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
       await_no_runs(thread_id)
+    end
+  end
+
+  defp await_poll_timer(deadline) do
+    case :sys.get_state(HalC2Plugins.CodeReview) do
+      %{timer: timer} = state when timer != nil ->
+        state
+
+      _ ->
+        if System.monotonic_time(:millisecond) > deadline,
+          do: flunk("code-review never armed its next look")
+
+        Process.sleep(20)
+        await_poll_timer(deadline)
     end
   end
 

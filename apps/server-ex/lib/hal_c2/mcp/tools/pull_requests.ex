@@ -29,39 +29,32 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   end
 
   # Links the pull request (as link_pull_request would) and sets which of its news
-  # wakes this thread: `events`, or every kind when it is omitted.
+  # wakes this thread: `events`, or every kind when it is omitted. They are set on the
+  # link after it is made, so they hold even when another call linked it first.
   def run("subscribe_pull_request", args, %{row: me}) do
     with {:ok, target} <- target(args, me),
          {:ok, notify} <- events(args["events"]),
          {:ok, already?} <- link(target, me, %{"notify" => notify}),
-         {:ok, _} <-
-           if(already?, do: set_notify(target, me, %{"notify" => notify}), else: {:ok, nil}) do
+         {:ok, %{"events" => events}} <- set_notify(target, me, %{"notify" => notify}) do
       {:ok,
        target
-       |> Map.put("events", notify || Wakes.events())
+       |> Map.put("events", events)
        |> Map.put("alreadyLinked", already?)}
     end
   end
 
-  # Drops `events` from what wakes this thread, or all of them; the link stays.
+  # Drops `events` from what wakes this thread, or all of them; the link stays. What
+  # it woke for before and after are the write's own, which reads the link it changes.
   def run("unsubscribe_pull_request", args, %{row: me}) do
     with {:ok, target} <- target(args, me),
          {:ok, dropped} <- events(args["events"]) do
-      case Enum.find(PullRequests.visible(links(me["id"])), &same?(&1, target)) do
-        nil ->
-          {:ok, target |> Map.put("events", []) |> Map.put("wasSubscribed", false)}
-
-        link ->
-          # The kinds are dropped in the write itself, from what the link has then.
-          with {:ok, _} <- set_notify(target, me, %{"drop" => dropped}) do
-            now = Enum.find(PullRequests.visible(links(me["id"])), &same?(&1, target))
-            left = if now, do: Wakes.subscribed(now), else: []
-
-            {:ok,
-             target
-             |> Map.put("events", left)
-             |> Map.put("wasSubscribed", Wakes.subscribed(link) != [])}
-          end
+      if Enum.any?(PullRequests.visible(links(me["id"])), &same?(&1, target)) do
+        with {:ok, %{"was" => was, "events" => left}} <-
+               set_notify(target, me, %{"drop" => dropped}) do
+          {:ok, target |> Map.put("events", left) |> Map.put("wasSubscribed", was != [])}
+        end
+      else
+        {:ok, target |> Map.put("events", []) |> Map.put("wasSubscribed", false)}
       end
     end
   end
@@ -214,7 +207,10 @@ defmodule HalC2.Mcp.Tools.PullRequests do
        when is_binary(repository) and is_integer(number) do
     project = project_host(me["projectId"])
 
-    case args["host"] || (project && project.host) do
+    # Only an absent (or null) host falls back to the project's; `false` is refused.
+    host = if is_nil(args["host"]), do: project && project.host, else: args["host"]
+
+    case host do
       host when not is_nil(host) and not is_binary(host) ->
         {:error, "invalid_request", "host must be a string."}
 

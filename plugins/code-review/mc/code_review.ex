@@ -2123,7 +2123,7 @@ defmodule HalC2Plugins.CodeReview do
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
                "root" => clone,
-               "mergeBase" => checkout["mergeBase"],
+               "mergeBase" => checkout["mergeBase"] || checkout["baseSha"],
                "reviewedSha" => checkout["headSha"],
                "headSha" => checkout["headSha"],
                "sandboxed" => sandboxed
@@ -2142,8 +2142,12 @@ defmodule HalC2Plugins.CodeReview do
           if server({:run, key, thread_id}) == :over, do: retire(started)
           launched
         else
-          :over -> {:stopped, started}
-          :finished -> {:stopped, started}
+          :over ->
+            {:stopped, started}
+
+          :finished ->
+            {:stopped, started}
+
           # No agent will work in the checkout, so it does not wait for the review's
           # next run, which a stopped or failed review may never get.
           error ->
@@ -2151,6 +2155,9 @@ defmodule HalC2Plugins.CodeReview do
             error
         end
       end
+
+    # The sandbox, if any, is made from the checkout's refs by now.
+    Checkout.release()
 
     case result do
       {:ok, _} ->
@@ -2217,15 +2224,14 @@ defmodule HalC2Plugins.CodeReview do
   # The review's sandbox, with its checkout made from the plugin's clone at the
   # commit checked out here.
   defp open_sandbox(review, settings, model, clone, checkout) do
-    number = review["number"]
     tokens = settings["sandboxTokens"] || 0
 
     with {:ok, _} <-
            Host.open_sandbox(@id, review["threadId"], %{
              instance: model["instanceId"],
              clone: clone,
-             head_ref: "refs/hal-c2/code-review/#{number}/head",
-             base_ref: "refs/hal-c2/code-review/#{number}/base",
+             head_ref: checkout["headRef"],
+             base_ref: checkout["baseRef"],
              head: checkout["headSha"],
              merge_base: checkout["mergeBase"],
              review: review["key"],
@@ -2383,8 +2389,11 @@ defmodule HalC2Plugins.CodeReview do
     }
 
     case Host.pull_request_fetch(@id, ref) do
-      {:ok, access} -> {:ok, access}
-      {:error, error} -> {:error, "Could not tell where to fetch #{review["key"]}: #{message(error)}"}
+      {:ok, access} ->
+        {:ok, access}
+
+      {:error, error} ->
+        {:error, "Could not tell where to fetch #{review["key"]}: #{message(error)}"}
     end
   end
 
@@ -2458,7 +2467,7 @@ defmodule HalC2Plugins.CodeReview do
       "pr.base" => review["baseBranch"],
       "pr.head" => review["headBranch"],
       "pr.headSha" => checkout["headSha"],
-      "pr.mergeBase" => checkout["mergeBase"],
+      "pr.mergeBase" => checkout["mergeBase"] || checkout["baseSha"],
       "pr.body" => review["body"],
       "repository" => review["repository"]
     }

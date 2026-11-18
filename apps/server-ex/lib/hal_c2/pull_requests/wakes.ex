@@ -551,12 +551,14 @@ defmodule HalC2.PullRequests.Wakes do
     """
   end
 
-  # Forgejo has no `gh`. The pull request's page shows it all to anyone; its API
-  # answers `tea api`, which signs in with the login for the server, and with fj's
-  # login alone (fj has no `api` command) a request carrying fj's token.
+  # Forgejo has no `gh`. The pull request's page shows it all to anyone; its API answers
+  # a request carrying fj's token. Every path names the link's server: `tea api` would
+  # ask whichever server tea's active login is for, which may hold another pull request
+  # of the same repository and number (fj has no `api` command).
   defp describe_forgejo(link, changes) do
     %{"host" => host, "repository" => repository, "number" => number} = Links.normalize(link)
     pull = "repos/#{repository}/pulls/#{number}"
+    api = "https://#{host}/api/v1"
 
     lines =
       Enum.map(changes, fn
@@ -585,13 +587,13 @@ defmodule HalC2.PullRequests.Wakes do
     """
     Pull request #{name(link)} #{link["url"]} needs your attention:
     #{Enum.join(lines, "\n")}
-    Read its reviews with `tea api #{pull}/reviews` (a review's inline comments with \
-    `tea api #{pull}/reviews/<id>/comments`), its comments with \
-    `tea api repos/#{repository}/issues/#{number}/comments`, and its checks with \
-    `tea api repos/#{repository}/commits/<head sha>/status`, the head sha being \
-    `head.sha` in `tea api #{pull}`. Without tea, its page #{link["url"]} shows them, and \
-    the same paths answer under `https://#{host}/api/v1/` with the token `fj` signs in \
-    with as `Authorization: token <token>`.\
+    Its page #{link["url"]} shows them. Over its API, with the token `fj` signs in \
+    to #{host} with as `Authorization: token <token>`, read its reviews at \
+    `#{api}/#{pull}/reviews` (a review's inline comments at \
+    `#{api}/#{pull}/reviews/<id>/comments`), its comments at \
+    `#{api}/repos/#{repository}/issues/#{number}/comments`, and its checks at \
+    `#{api}/repos/#{repository}/commits/<head sha>/status`, the head sha being `head.sha` \
+    in `#{api}/#{pull}`.\
     """
   end
 

@@ -13,19 +13,40 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   clone at `clone`, made on first use, and puts the worktree at `path` on its head.
   `remote` is `%{"url"}` with how to sign in: `"gh" => true` for gh's credentials, or
   a `"username"` and `"token"`. Answers `{:ok, %{"path", "headSha", "baseSha",
-  "mergeBase"}}`, `baseSha` being the base branch as fetched.
+  "mergeBase", "headRef", "baseRef"}}`: `baseSha` is the base branch as fetched,
+  `mergeBase` nil when it shares no history with the head, and the two refs hold the
+  head and base in the clone until `release/0`.
   """
   def prepare(clone, path, %{"url" => url} = remote, number, base) do
     # Each attempt fetches into refs of its own: a stopped review's fetch may still
     # finish, and must not move the head or base this one reads.
     attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
     :global.register_name({__MODULE__, clone, attempt}, self())
+    Process.put(__MODULE__, [{clone, attempt} | Process.get(__MODULE__, [])])
 
-    try do
-      prepare_attempt(clone, path, remote, url, number, base, attempt)
-    after
+    case prepare_attempt(clone, path, remote, url, number, base, attempt) do
+      {:ok, checkout} ->
+        {:ok,
+         Map.merge(checkout, %{"headRef" => "#{attempt}/head", "baseRef" => "#{attempt}/base"})}
+
+      error ->
+        release()
+        error
+    end
+  end
+
+  @doc """
+  Drops the refs of the checkouts this process prepared, which hold the head and base
+  they fetched until a sandbox is made from them. Those of a process that ends first
+  are dropped by the next checkout of the pull request.
+  """
+  def release do
+    for {clone, attempt} <- Process.delete(__MODULE__) || [] do
+      drop(clone, attempt)
       :global.unregister_name({__MODULE__, clone, attempt})
     end
+
+    :ok
   end
 
   defp prepare_attempt(clone, path, remote, url, number, base, attempt) do
@@ -53,36 +74,31 @@ defmodule HalC2Plugins.CodeReview.Checkout do
            ),
          {:ok, head} <- git(clone, ["rev-parse", "#{attempt}/head"]),
          {:ok, base_sha} <- git(clone, ["rev-parse", "#{attempt}/base"]),
-         :ok <- publish(clone, attempt, [{head_ref, head}, {base_ref, base_sha}]),
+         :ok <- publish(clone, [{head_ref, head}, {base_ref, base_sha}]),
          :ok <- alone(clone, fn -> place(clone, path, head) end) do
+      # Nil when the two have no common ancestor, as after the base branch was rewritten:
+      # a merge-base git did not find is not one the sandbox can check its checkout for.
       merge_base =
         case git(clone, ["merge-base", base_sha, head]) do
-          {:ok, sha} -> sha
-          _ -> base_sha
+          {:ok, sha} when sha != "" -> sha
+          _ -> nil
         end
 
       {:ok,
        %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
-    else
-      error ->
-        drop(clone, attempt)
-        error
     end
   end
 
-  # The refs a sandbox bundles (`HalC2.OpenShell.Review`) are set to what this attempt
-  # fetched, and its own refs are dropped.
-  defp publish(clone, attempt, refs) do
-    result =
-      Enum.reduce_while(refs, :ok, fn {ref, sha}, :ok ->
-        case git(clone, ["update-ref", ref, sha]) do
-          {:ok, _} -> {:cont, :ok}
-          error -> {:halt, error}
-        end
-      end)
-
-    drop(clone, attempt)
-    result
+  # The pull request's refs, which keep what the last checkout of it fetched, are set
+  # to what this attempt fetched. A sandbox is made from the attempt's own refs, which
+  # an attempt stopped meanwhile cannot move.
+  defp publish(clone, refs) do
+    Enum.reduce_while(refs, :ok, fn {ref, sha}, :ok ->
+      case git(clone, ["update-ref", ref, sha]) do
+        {:ok, _} -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   defp drop(clone, attempt) do
@@ -90,9 +106,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     :ok
   end
 
-  # The refs of attempts no process is making any more: a stopped review's fetch that
+  # The refs of attempts no process holds any more: a stopped review's fetch that
   # finished after it was stopped leaves its refs, as nothing is left to drop them. A
-  # live attempt is registered under its refs while it runs.
+  # live attempt is registered under its refs until it is released.
   defp sweep(clone, number) do
     with {:ok, refs} <-
            git(clone, [
@@ -354,7 +370,15 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
   # can turn the HTTPS address back into SSH, and its hooks have no business here. Nor
-  # does an inherited `GIT_SSL_NO_VERIFY` turn off the server's certificate check.
+  # does an inherited `GIT_SSL_NO_VERIFY` turn off the server's certificate check, or
+  # `GIT_CONFIG` point `git config` at a file other than the one `git fetch` reads, so
+  # the certificate check is read from what the fetch uses. Tracing is off, as a trace
+  # of the fetch can carry its token into the error a failed one answers; the token is
+  # taken out of that error as well.
+  @untraced ~w(GIT_TRACE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA GIT_CURL_VERBOSE
+               GIT_TRACE_PACKET GIT_TRACE_PACKFILE GIT_TRACE_SETUP GIT_TRACE2
+               GIT_TRACE2_EVENT GIT_TRACE2_PERF)
+
   defp git(cwd, args, env \\ []) do
     case System.cmd("git", args,
            cd: cwd,
@@ -364,19 +388,33 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                {"GIT_TERMINAL_PROMPT", "0"},
                {"GIT_CONFIG_GLOBAL", "/dev/null"},
                {"GIT_CONFIG_NOSYSTEM", "1"},
-               {"GIT_SSL_NO_VERIFY", nil}
-             ] ++ env
+               {"GIT_CONFIG", nil},
+               {"GIT_SSL_NO_VERIFY", nil},
+               {"GIT_TRACE_REDACT", "1"}
+             ] ++ Enum.map(@untraced, &{&1, nil}) ++ env
          ) do
       {out, 0} ->
         {:ok, String.trim(out)}
 
       {out, _} ->
-        said = out |> String.split("\n", trim: true) |> Enum.map_join(" ", &String.trim/1)
+        said =
+          out
+          |> redact(env)
+          |> String.split("\n", trim: true)
+          |> Enum.map_join(" ", &String.trim/1)
+
         {:error, "git #{command(args)} failed: #{said}"}
     end
   rescue
     e in [ErlangError, File.Error] ->
       {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+  end
+
+  defp redact(out, env) do
+    case List.keyfind(env, "HAL_C2_GIT_TOKEN", 0) do
+      {_, token} when is_binary(token) and token != "" -> String.replace(out, token, "[token]")
+      _ -> out
+    end
   end
 
   defp command(["-c", _ | args]), do: command(args)

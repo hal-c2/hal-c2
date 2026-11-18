@@ -265,17 +265,24 @@ defmodule HalC2.PullRequestWakesPropTest do
   end
 
   # Subscribing to a kind hears what of it is not told yet: it arrived while the link
-  # was muted. News of a kind already subscribed to stays to be told.
+  # was muted. News of a kind already subscribed to stays to be told, and a change that
+  # subscribes to no new kind hears nothing.
   defp resubscribe(state, %{told: told, snapshot: snapshot} = link, notify)
        when told != nil and snapshot != nil do
-    enabled = events(notify) -- events(link.notify)
+    case events(notify) -- events(link.notify) do
+      [] -> %{link | notify: notify}
+      enabled -> hear_enabled(state, link, notify, enabled)
+    end
+  end
+
+  defp resubscribe(_state, link, notify), do: %{link | notify: notify}
+
+  defp hear_enabled(state, %{told: told, snapshot: snapshot} = link, notify, enabled) do
     {heard, pending} = Enum.split_with(news(state, told, snapshot), &(event(&1) in enabled))
     kept = pending |> Enum.flat_map(&fields/1) |> Map.new(&{&1, told[&1]})
     told = told |> advance(snapshot, heard) |> Map.merge(kept)
     %{link | told: told, notify: notify}
   end
-
-  defp resubscribe(_state, link, notify), do: %{link | notify: notify}
 
   defp events(nil), do: Wakes.events()
   defp events(notify), do: notify

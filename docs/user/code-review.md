@@ -35,10 +35,11 @@ The plugin fetches each pull request into a clone of its own, which leaves your 
 config and credential helpers out. On GitHub it fetches with `gh`'s login. On
 Forgejo it fetches with `fj`'s token, and only from that login's server over
 HTTPS; with `tea` alone it fetches without signing in, so a private repository
-needs `fj` for its reviews to start. A review does not start when the git
-configuration the MC is started with (`GIT_CONFIG_COUNT` or `-c`) would send the
-fetch to another server or skip the server's certificate check, as the token
-would go with it.
+needs `fj` for its reviews to start. On Forgejo with `fj`, a review does not
+start when the git configuration the MC is started with would send the fetch to
+another server or skip the server's certificate check, as the token would go with
+it: turn certificate checks back on, or remove the setting that redirects the
+server, and restart the MC.
 
 ## When a review starts
 
@@ -174,8 +175,12 @@ an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses
 a review, you are told why and the review keeps waiting with its comments. On
 Forgejo, a review is not posted while your account has a pending review of its
-own on the pull request, as its comments would be published into that draft:
-submit or discard the draft in Forgejo, then publish again.
+own on the pull request, as its comments would be published into that draft.
+Open the draft in Forgejo first: discard the comments left by a post that
+failed, submit a draft of your own only if you mean to publish it, then publish
+again. Forgejo has no way to keep a draft you save meanwhile out of a review
+being posted, so post reviews from an account that nobody uses to write review
+drafts by hand.
 
 **Publish** posts the review as you see it. On the **Reviews** page it first
 says whether the review goes up with its verdict or as a comment; in a review's

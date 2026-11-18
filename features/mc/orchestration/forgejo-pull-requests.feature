@@ -20,7 +20,8 @@ Feature: A thread hears about a pull request it owns on Forgejo
     When its checks start failing and the MC reads it again
     Then the agent of "fix" is woken about "acme/shop#7: checks failing"
     And the message says "Checks are failing."
-    And the message says "`tea api repos/acme/shop/commits/<head sha>/status`"
+    And the message says "`https://codeberg.org/api/v1/repos/acme/shop/commits/<head sha>/status`"
+    And the message does not say "tea "
     And the message does not say "gh "
 
   @mc

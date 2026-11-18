@@ -419,6 +419,97 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
     assert for(%{"kind" => "review", "body" => body} <- comments, do: body) == ["late"]
   end
 
+  # A review is deleted between two reads: the second page's rows moved up a page.
+  test "a list whose total changes while it is read is an error", %{tmp_dir: tmp} do
+    {base, _} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
+            page = String.to_integer(Plug.Conn.fetch_query_params(conn).query_params["page"])
+
+            {total, rows} =
+              if page == 1,
+                do:
+                  {"3",
+                   [%{"id" => 1, "state" => "COMMENT", "body" => "A", "submitted_at" => @t2}]},
+                else: {"2", []}
+
+            conn
+            |> Plug.Conn.put_resp_header("x-total-count", total)
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, JSON.encode!(rows))
+          end,
+          "/api/v1/settings/api" => {200, %{"max_response_items" => 1}}
+        })
+      )
+
+    assert {:error, {:failed, message}} = Forgejo.activity(ctx(base))
+    assert message =~ "changed"
+  end
+
+  # Forgejo's timeline leaves review line comments out of each page after reading it,
+  # and its total counts only the page: a short page is the last only when the line
+  # comments cannot account for it.
+  test "trust reads the timeline past pages that line comments shortened", %{tmp_dir: tmp} do
+    event = fn n ->
+      %{
+        "type" => "comment",
+        "body" => "c#{n}",
+        "user" => %{"login" => "stranger"},
+        "created_at" => "2030-01-01T08:00:00Z"
+      }
+    end
+
+    label = %{
+      "type" => "label",
+      "body" => "1",
+      "label" => %{"name" => "ai-review"},
+      "user" => %{"login" => "maint"},
+      "created_at" => "2030-01-01T09:00:00Z"
+    }
+
+    # 40 of page 1's rows and 20 of page 2's are line comments.
+    by_page = %{
+      1 => for(n <- 1..10, do: event.(n)),
+      2 => for(n <- 11..40, do: event.(n)),
+      3 => [label]
+    }
+
+    {base, log} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" =>
+            {200,
+             [
+               %{
+                 "id" => 1,
+                 "user" => %{"login" => "maint"},
+                 "state" => "COMMENT",
+                 "submitted_at" => @t2,
+                 "comments_count" => 60
+               }
+             ]},
+          "/api/v1/repos/acme/shop/issues/7/timeline" => fn conn ->
+            page = String.to_integer(Plug.Conn.fetch_query_params(conn).query_params["page"])
+            rows = Map.get(by_page, page, [])
+
+            conn
+            |> Plug.Conn.put_resp_header("x-total-count", "#{length(rows)}")
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, JSON.encode!(rows))
+          end,
+          "/api/v1/settings/api" => {200, %{"max_response_items" => 50}}
+        })
+      )
+
+    assert {:ok, %{"labeled" => %{"login" => "maint"}}} = Forgejo.trust(ctx(base), "ai-review")
+
+    reads = for r <- FakeHttp.requests(log), r["path"] =~ ~r"/issues/7/timeline$", do: r["query"]
+    assert reads == ["limit=50&page=1", "limit=50&page=2", "limit=50&page=3"]
+  end
+
   test "a list with more pages than are read is an error, not a short history",
        %{tmp_dir: tmp} do
     rows = fn page ->
@@ -636,7 +727,10 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
       %{"path" => "a.ex", "body" => "added", "position" => %{"kind" => "added", "newLine" => 4}}
     ]
 
-    assert {:error, _} = Forgejo.submit_review(ctx(base), "comment", "Hm.", comments)
+    assert {:error, {_, message}} =
+             Forgejo.submit_review(ctx(base), "comment", "Hm.", comments)
+
+    assert message =~ "could not be cleared"
 
     assert [
              {"POST", "/api/v1/repos/acme/shop/pulls/7/reviews"},
@@ -647,6 +741,46 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
                r["method"] in ~w(POST DELETE),
                do: {r["method"], r["path"]}
              )
+  end
+
+  # Forgejo creates the pending review before it stores the first comment: a post that
+  # failed in between leaves one with nothing staged, which is not known to be its own.
+  test "a failed post that leaves an empty pending review says to discard it",
+       %{tmp_dir: tmp} do
+    {:ok, posted} = Agent.start_link(fn -> false end)
+    on_exit(fn -> if Process.alive?(posted), do: Agent.stop(posted) end)
+    empty = %{"id" => 8, "user" => %{"login" => "reviewer"}, "state" => "PENDING"}
+
+    {base, log} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews" => fn conn ->
+            cond do
+              conn.method == "POST" ->
+                Agent.update(posted, fn _ -> true end)
+                {500, %{"message" => "boom"}}
+
+              Agent.get(posted, & &1) ->
+                {200, [empty]}
+
+              true ->
+                {200, []}
+            end
+          end,
+          "/api/v1/repos/acme/shop/pulls/7/reviews/8/comments" => {200, []}
+        })
+      )
+
+    comments = [
+      %{"path" => "a.ex", "body" => "added", "position" => %{"kind" => "added", "newLine" => 4}}
+    ]
+
+    assert {:error, {_, message}} =
+             Forgejo.submit_review(ctx(base), "comment", "Hm.", comments)
+
+    assert message =~ "Discard it in Forgejo"
+    refute Enum.any?(FakeHttp.requests(log), &(&1["method"] == "DELETE"))
   end
 
   # A failed post whose pending review could not be deleted then leaves one of this
