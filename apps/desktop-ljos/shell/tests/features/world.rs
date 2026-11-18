@@ -27,6 +27,7 @@ use hal_c2_shell::controllers::usage::Usage;
 use hal_c2_shell::json::{self, Json};
 use hal_c2_shell::mc::{Connection, Mc};
 use hal_c2_shell::session::Session;
+use hal_c2_shell::streams::Pump;
 use hal_c2_shell::thread_view::time::Clock;
 use hal_c2_shell::{Launch, this_machine};
 use ljos::App;
@@ -192,6 +193,9 @@ struct Shell {
     engine: Engine,
     window: TestWindow,
     connection: Rc<Connection>,
+    /// The side streams, drained by [`World::pump`] as a window's frames
+    /// drain them.
+    streams: Pump,
 }
 
 pub type Question = Rc<dyn Fn(&mut World, bool) -> Outcome>;
@@ -240,6 +244,58 @@ pub struct World {
     /// The keyring saved environments keep their credentials in, across
     /// restarts (desktop-qt's World::secrets): never the system's.
     pub secrets: Rc<hal_c2_shell::saved_environments::MemorySecretStore>,
+    /// The window draws no frames: [`World::pump`] leaves the side streams
+    /// alone, so what the shell's threads send waits in them.
+    pub frames_held: bool,
+    /// What someone watching the shell's queues saw, once a step started
+    /// watching.
+    pub queues: Option<QueueWatch>,
+}
+
+/// The shell's side streams as someone watching the app sees them (Ljós's
+/// Observer: `ljos_runtime::observe`), sampled around every frame.
+pub struct QueueWatch {
+    _observing: ljos_runtime::observe::ObserveGuard,
+    /// By the stream's name.
+    pub seen: HashMap<&'static str, Watched>,
+}
+
+/// One stream over the scenario.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Watched {
+    /// The most it held at one look.
+    pub peak: usize,
+    /// The frames that handled some of it.
+    pub frames: usize,
+    drained: u64,
+}
+
+impl QueueWatch {
+    pub fn start() -> QueueWatch {
+        QueueWatch {
+            _observing: ljos_runtime::observe::enable(),
+            seen: HashMap::new(),
+        }
+    }
+
+    /// Every stream now: what it holds, and whether a frame handled some.
+    pub fn look(&mut self) -> Vec<ljos_runtime::observe::MailboxSample> {
+        let samples = ljos_runtime::observe::mailboxes(0);
+        for sample in &samples {
+            let watched = self.seen.entry(sample.name).or_default();
+            watched.peak = watched.peak.max(sample.depth);
+            if sample.drained > watched.drained {
+                watched.frames += 1;
+                watched.drained = sample.drained;
+            }
+        }
+        samples
+    }
+
+    /// The stream named `name`, now.
+    pub fn sample(&mut self, name: &str) -> Option<ljos_runtime::observe::MailboxSample> {
+        self.look().into_iter().find(|s| s.name == name)
+    }
 }
 
 impl World {
@@ -276,6 +332,8 @@ impl World {
             home,
             shell: None,
             secrets: Rc::default(),
+            frames_held: false,
+            queues: None,
         };
         world.start();
         world
@@ -313,17 +371,12 @@ impl World {
             let signal = signal.clone();
             move || signal.notify()
         };
-        hal_c2_shell::folders::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::device::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::controllers::plugin::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::local_transcriber::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::theme::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::controllers::desktop_update::set_wake(&engine, wake(&self.signal));
-        hal_c2_shell::controllers::settings::set_wake(&engine, wake(&self.signal));
+        let mut streams = Pump::new(wake(&self.signal));
+        let wired = hal_c2_shell::streams::wire(&engine, &mut streams);
         Platform::of(&engine).set_waker(wake(&self.signal));
         // A real host fetches an Image's http source; the fake MC serves it.
         Platform::of(&engine).set_fetcher(Arc::new(LocalFetcher));
-        let connection = Rc::new(Connection::spawn(wake(&self.signal)));
+        let connection = Connection::spawn(&wired.mc);
         connection
             .client()
             .set_retry_delays(vec![Duration::from_millis(20)]);
@@ -349,7 +402,7 @@ impl World {
             self.secrets.clone(),
         );
         hal_c2_shell::start(&engine, &launch, connection.clone() as Rc<dyn Mc>);
-        hal_c2_shell::controllers::threads::set_wake(&engine, wake(&self.signal));
+        hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
         hal_c2_shell::controllers::sidebar::set_time_zone(
             &engine,
             hal_c2_shell::time_zone::Zone::named("UTC"),
@@ -387,6 +440,7 @@ impl World {
             engine,
             window,
             connection,
+            streams,
         });
         let now = self.now;
         self.set_time(now);
@@ -394,6 +448,20 @@ impl World {
 
     pub fn engine(&self) -> &Engine {
         &self.shell.as_ref().expect("the app is running").engine
+    }
+
+    /// What drains the shell's side streams, as the window's frames do.
+    pub fn streams(&mut self) -> &mut Pump {
+        &mut self.shell.as_mut().expect("the app is running").streams
+    }
+
+    /// The shell's connection to its MC, as what it opens takes it.
+    pub fn connection(&self) -> Rc<dyn Mc> {
+        self.shell
+            .as_ref()
+            .expect("the app is running")
+            .connection
+            .clone()
     }
 
     pub fn running(&self) -> bool {
@@ -996,18 +1064,21 @@ impl World {
             }
             if let Some(shell) = &mut self.shell {
                 let engine = &shell.engine;
-                let connection = &shell.connection;
+                if !self.frames_held {
+                    // One look before the frame takes its run, one after.
+                    if let Some(queues) = &mut self.queues {
+                        queues.look();
+                    }
+                    any |= shell.streams.pump(engine) > 0;
+                    if let Some(queues) = &mut self.queues {
+                        queues.look();
+                    }
+                }
+                // The scenarios' own snapshot and update backends queue
+                // what they say without a wake: looked at every time.
                 engine.turn(None, || {
-                    connection.deliver(engine);
-                    hal_c2_shell::folders::deliver(engine);
-                    hal_c2_shell::device::deliver(engine);
-                    hal_c2_shell::controllers::plugin::deliver(engine);
-                    hal_c2_shell::local_transcriber::deliver(engine);
-                    hal_c2_shell::theme::deliver(engine);
-                    hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
                     hal_c2_shell::controllers::desktop_update::deliver(engine);
-                    hal_c2_shell::controllers::settings::deliver(engine);
                 });
                 any |= Platform::of(engine).deliver(engine) > 0;
                 shell.window.settle().map_err(|e| Failure(e.to_string()))?;

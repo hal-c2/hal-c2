@@ -7,7 +7,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use fake_mc::{Event, FakeMc, Seen, TOKEN};
 use hal_c2_mc::{CallError, Frame, McClient, Phase};
@@ -16,19 +17,45 @@ use serde_json::{Value, json};
 /// How long anything may take before the test counts it as never coming.
 const PATIENCE: Duration = Duration::from_secs(10);
 
+/// Whether the owner takes events. Shut, the sink waits, as it does on a
+/// UI whose queue is full.
+#[derive(Default)]
+struct Gate {
+    shut: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl Gate {
+    fn pass(&self) {
+        let mut shut = self.shut.lock().unwrap();
+        while *shut {
+            shut = self.changed.wait(shut).unwrap();
+        }
+    }
+
+    fn set(&self, shut: bool) {
+        *self.shut.lock().unwrap() = shut;
+        self.changed.notify_all();
+    }
+}
+
 struct Harness {
     client: McClient,
     mc: FakeMc,
     events: Receiver<Event>,
     /// What the MC saw that no wait has taken yet, in order.
     seen: RefCell<VecDeque<Seen>>,
+    gate: Arc<Gate>,
 }
 
 impl Harness {
     fn new() -> Self {
         let (sender, events) = channel();
         let mc = FakeMc::start(sender.clone());
+        let gate = Arc::new(Gate::default());
+        let passing = gate.clone();
         let handle = hal_c2_mc::spawn(move |event| {
+            passing.pass();
             let _ = sender.send(Event::Client(event));
         });
         let client = McClient::new(handle);
@@ -38,7 +65,17 @@ impl Harness {
             mc,
             events,
             seen: RefCell::default(),
+            gate,
         }
+    }
+
+    /// The owner falls behind: the next event the sink gets, it waits on.
+    fn fall_behind(&self) {
+        self.gate.set(true);
+    }
+
+    fn catch_up(&self) {
+        self.gate.set(false);
     }
 
     fn open(&self) {
@@ -416,4 +453,105 @@ fn a_dropped_socket_fails_the_calls_on_it_and_none_go_out_before_hello() {
         in_flight.take().unwrap().unwrap_err().message,
         "disconnected"
     );
+}
+
+/// Pings that go unanswered fast, for the tests that wait them out.
+fn quick_pings(harness: &Harness) {
+    harness.client.set_ping_interval(Duration::from_millis(100));
+    harness.client.set_pong_timeout(Duration::from_millis(300));
+}
+
+#[test]
+fn a_silent_mc_is_dropped_while_the_owner_is_behind() {
+    let harness = Harness::new();
+    let (got, on_frame) = frames();
+    let id = harness.client.subscribe(json!({"type": "burst"}), on_frame);
+    quick_pings(&harness);
+    harness.open();
+    let socket = harness.ready();
+    harness.mc_gets("sub");
+
+    // The sink waits on this frame until the owner catches up.
+    harness.fall_behind();
+    harness.mc.send(socket, json!({"t": "delta", "id": id}));
+    // The connection still pings and, unanswered, drops the socket, all
+    // while the owner is behind.
+    harness.mc_gets("ping");
+    harness.mc_sees(|seen| *seen == Seen::Closed { socket });
+
+    harness.catch_up();
+    harness.until(|_| !got.borrow().is_empty());
+    assert_ne!(harness.ready(), socket, "the connection did not come back");
+}
+
+/// A burst of `burst` frames with the owner behind for five pong timeouts,
+/// every ping that reaches the MC answered: the socket stays, the
+/// connection keeps pinging, and every frame arrives once the owner catches up.
+fn a_live_mc_keeps_its_socket_behind(burst: usize) {
+    let harness = Harness::new();
+    let (got, on_frame) = frames();
+    let id = harness.client.subscribe(json!({"type": "burst"}), on_frame);
+    quick_pings(&harness);
+    harness.open();
+    let socket = harness.ready();
+    harness.mc_gets("sub");
+
+    harness.fall_behind();
+    for n in 0..burst {
+        harness
+            .mc
+            .send(socket, json!({"t": "delta", "id": id, "n": n}));
+    }
+    let started = Instant::now();
+    let until = started + Duration::from_millis(1_500);
+    // Pings the MC got in the last second, when the socket has long stopped
+    // reading: an MC that closes idle sockets needs them.
+    let mut late_pings = 0;
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match harness.events.recv_timeout(left) {
+            Ok(Event::Mc(Seen::Closed { .. })) => {
+                panic!("a live MC's socket was dropped while the owner was behind")
+            }
+            Ok(Event::Mc(Seen::Text { socket, frame })) if frame["t"] == "ping" => {
+                if started.elapsed() > Duration::from_millis(500) {
+                    late_pings += 1;
+                }
+                harness.mc.send(socket, json!({"t": "pong"}));
+            }
+            Ok(Event::Mc(_)) => {}
+            Ok(Event::Client(event)) => harness.client.deliver(event),
+            Err(_) => break,
+        }
+    }
+    assert!(
+        late_pings >= 3,
+        "the connection stopped pinging while the owner was behind ({late_pings} pings)"
+    );
+
+    harness.catch_up();
+    harness.until(|_| got.borrow().len() == burst);
+    assert_eq!(got.borrow()[burst - 1]["n"], json!(burst - 1));
+    assert!(harness.client.is_ready());
+    assert!(
+        !harness
+            .seen
+            .borrow()
+            .iter()
+            .any(|seen| matches!(seen, Seen::Closed { .. } | Seen::Socket { .. })),
+        "the connection started over"
+    );
+}
+
+#[test]
+fn a_live_mc_keeps_its_socket_while_the_owner_is_behind() {
+    // More than every queue between the MC and the owner holds, so the
+    // socket stops reading and the MC's answers wait behind the burst.
+    a_live_mc_keeps_its_socket_behind(2_000);
+}
+
+#[test]
+fn a_live_mc_keeps_its_socket_behind_a_burst_the_queues_hold() {
+    // Fewer than the connection's inputs hold: the socket keeps reading, and
+    // the pongs wait in the connection behind the burst.
+    a_live_mc_keeps_its_socket_behind(100);
 }

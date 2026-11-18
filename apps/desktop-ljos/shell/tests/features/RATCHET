@@ -601,6 +601,10 @@ desktop/native-sidebar.feature: An environment that does not track visits is sen
 desktop/native-toasts.feature: A refused settle shows the shell's own toast
 desktop/shell-host.feature: A screenshot of a desktop app that fails to start shows why and quits
 desktop/shell-host.feature: A screenshot taken without a display shows the app's window
+desktop/side-streams.feature: A burst of updates from the MC reaches the sidebar over several frames
+desktop/side-streams.feature: A screen's pictures the window has not drawn give way to its newest
+desktop/side-streams.feature: Each of the shell's queues is listed with its size and counts
+desktop/side-streams.feature: The MC waits while the window draws no frames
 desktop/stage.feature: A tab goes back to the side panel
 desktop/stage.feature: A tab moves to the centre beside the conversation
 desktop/stage.feature: A tab on the stage works while the right panel is closed

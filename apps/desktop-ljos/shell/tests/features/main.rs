@@ -106,7 +106,9 @@ fn repo() -> PathBuf {
 
 /// What desktop-qt runs: tst_Features.cpp's kDefaultGlobs, the
 /// `qt-scenarios.feature` files whose sources name tst_Scenarios.qml, and
-/// the scenarios tst_Scenarios.qml names in a `// Scenario:` comment.
+/// the scenarios tst_Scenarios.qml names in a `// Scenario:` comment; and
+/// what only this shell does: every file whose sources name this runner
+/// (mise-tasks/features/check counts them as the desktop's too).
 fn default_globs(repo: &Path) -> Vec<String> {
     let mut globs = Vec::new();
     let native = repo.join("apps/desktop-qt/tests/native/tst_Features.cpp");
@@ -138,6 +140,7 @@ fn default_globs(repo: &Path) -> Vec<String> {
             ));
         }
     }
+    own_files(&features, &features, &mut globs);
     let qml = repo.join("apps/desktop-qt/tests/tst_Scenarios.qml");
     let comment =
         fancy_regex::Regex::new(r"//\s*Scenario:\s*(.+?)\s*\(features/([^)]+\.feature)\)")
@@ -148,6 +151,37 @@ fn default_globs(repo: &Path) -> Vec<String> {
         }
     }
     globs
+}
+
+/// The feature files under `directory` whose leading comment block names
+/// this runner, as globs relative to `features`.
+fn own_files(features: &Path, directory: &Path, globs: &mut Vec<String>) {
+    let mut entries: Vec<_> = std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            own_files(features, &path, globs);
+            continue;
+        }
+        if path.extension().is_none_or(|e| e != "feature") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let ours = text
+            .lines()
+            .take_while(|l| l.starts_with('#'))
+            .any(|l| l.contains("apps/desktop-ljos/shell/tests/features"));
+        if ours && let Ok(relative) = path.strip_prefix(features) {
+            globs.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
 }
 
 enum Verdict {

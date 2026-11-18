@@ -558,16 +558,17 @@ fn a_device_screen_is_decoded_on_the_desktop() {
     let t = tab_with(true);
     let (woke, wakes) = std::sync::mpsc::channel();
     let woke = std::sync::Mutex::new(woke);
-    device::set_wake(&t.engine, move || {
+    let mut streams = hal_c2_shell::streams::Pump::new(move || {
         let _ = woke.lock().map(|w| w.send(()));
     });
+    device::wire(&t.engine, &mut streams);
     t.watching(&[PIXEL_9], &[PIXEL], PIXEL);
     t.android_sends();
-    // A guard, not a pace: the decoder wakes the shell when it has a picture.
+    // A guard, not a pace: the decoder tells the shell when it has a picture.
     wakes
         .recv_timeout(std::time::Duration::from_secs(60))
-        .expect("the decoder wakes the shell");
-    t.decoded();
+        .expect("the decoder tells the shell");
+    streams.pump(&t.engine);
     assert_eq!(t.text("status"), "streaming");
     assert!(t.shown());
 }

@@ -1,16 +1,22 @@
 //! The Device tab: a device's live screen and input over the MC's device hub
 //! (desktop-qt's DeviceDecoder, DeviceStream and ThreadDevices).
 //!
-//! Decoders work on threads of their own. One with a picture or news wakes
-//! the shell through the waker ([`set_wake`]), which then calls [`deliver`]
-//! on the Engine thread: every stream takes what its decoder has. A headless
-//! host (a test) calls [`deliver`] itself.
+//! Decoders work on threads of their own. One with a picture or news says so
+//! on the "device-frames" side stream ([`wire`]), keyed by its screen: a
+//! newer picture of a screen whose last the UI has not shown yet replaces
+//! that notice (the Observer counts it `replaced`), so the UI shows each
+//! screen's newest and never queues behind. The UI thread then calls
+//! [`deliver`]: every stream takes what its decoder has. A headless host (a
+//! test) may call [`deliver`] itself.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use ljos::prelude::{Engine, ObjectId};
+use ljos::{BatchPolicy, BatchSender, CoalesceKey};
+
+use crate::streams::Wire;
 
 pub mod decoder;
 pub mod devices;
@@ -19,14 +25,20 @@ pub mod tools;
 
 use decoder::{Decode, Decoder, Notify};
 
-type Wake = Arc<dyn Fn() + Send + Sync>;
 type Decoders = Rc<dyn Fn(Notify) -> Box<dyn Decode>>;
 
-/// The engine's streams, the waker their decoders share, and what makes
-/// their decoders.
+/// How many screens' notices wait at most. More screens than this open at
+/// once is past what the Device tab shows; a notice refused then is not
+/// lost, as a full stream is drained soon and every drain looks at every
+/// screen.
+pub const FRAMES_CAPACITY: usize = 16;
+
+/// The engine's streams, the side stream their decoders tell, and what
+/// makes their decoders.
 #[derive(Default)]
 struct Hub {
-    wake: Arc<Mutex<Option<Wake>>>,
+    frames: RefCell<Option<BatchSender<u64>>>,
+    next_screen: Cell<u64>,
     streams: RefCell<Vec<ObjectId>>,
     decoders: RefCell<Option<Decoders>>,
 }
@@ -49,14 +61,20 @@ pub fn register(engine: &Engine) {
     ]));
 }
 
-/// Says what to run, on any thread, when a decoder has something for
-/// [`deliver`]: post a message to the Engine thread, which calls it.
-pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
-    let wake: Wake = Arc::new(wake);
-    *Hub::of(engine)
-        .wake
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(wake);
+/// Makes the "device-frames" stream the decoders made from now on tell,
+/// handled by [`deliver`]. DECISION: coalesced per screen, not the oldest
+/// dropped across screens: one busy screen never pushes out another's only
+/// picture.
+pub fn wire(engine: &Engine, wire: &mut impl Wire) {
+    let frames = wire.stream(
+        "device-frames",
+        FRAMES_CAPACITY,
+        BatchPolicy::Coalesce(|screen: &u64| CoalesceKey(*screen)),
+        // The run only says which screens have a picture; deliver looks at
+        // each screen's newest, and the batch drops the run's items.
+        |engine, _screens| deliver(engine),
+    );
+    *Hub::of(engine).frames.borrow_mut() = Some(frames);
 }
 
 /// Hands each stream what its decoder made. On the Engine thread.
@@ -78,14 +96,16 @@ pub fn set_decoders(engine: &Engine, make: impl Fn(Notify) -> Box<dyn Decode> + 
     *Hub::of(engine).decoders.borrow_mut() = Some(Rc::new(make));
 }
 
-/// A decoder for a new stream, which wakes the shell when it has news.
+/// A decoder for a new stream, which tells the shell when it has news.
 fn decoder(engine: &Engine) -> Box<dyn Decode> {
     let hub = Hub::of(engine);
-    let wake = hub.wake.clone();
+    let screen = hub.next_screen.get() + 1;
+    hub.next_screen.set(screen);
+    let frames = hub.frames.borrow().clone();
     let notify: Notify = Arc::new(move || {
-        let wake = wake.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        if let Some(wake) = wake {
-            wake();
+        if let Some(frames) = &frames {
+            // Refused only when full, and a full stream is drained soon.
+            let _ = frames.send(screen);
         }
     });
     let make = hub.decoders.borrow().clone();

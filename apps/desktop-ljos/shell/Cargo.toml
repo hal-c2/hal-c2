@@ -52,6 +52,8 @@ ljos_quick3d.workspace = true
 ljos_webengine = { workspace = true, features = ["cef"] }
 cef = { version = "=156.3.0", default-features = false }
 hal_c2_mc.workspace = true
+# streams::Pump: a side stream's inbox and clock, and the Observer's counts.
+ljos_runtime.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
 serde_json.workspace = true

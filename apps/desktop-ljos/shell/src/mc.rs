@@ -1,11 +1,11 @@
 //! The controllers' MC: what they ask of it, whoever answers.
 //!
 //! [`Mc`] is the seam. [`Connection`] is the real one, over the `hal_c2_mc`
-//! crate's [`McClient`]: its I/O thread hands every event to a sink, which
-//! queues it and wakes the UI through the shell's inbox; the UI thread then
-//! hands the queue to [`Connection::deliver`], where replies and frames reach
-//! the controllers. [`Disconnected`] is the shell with no MC (a render, a
-//! test that needs none).
+//! crate's [`McClient`]: its I/O thread hands every event to the "mc" side
+//! stream ([`McStreams`]), waiting while it is full, and the UI thread hands
+//! each frame's run of it to the client, where replies and frames reach the
+//! controllers. [`Disconnected`] is the shell with no MC (a render, a test
+//! that needs none).
 //!
 //! Every callback runs on the UI thread, with the engine, and never inside
 //! the call that registered it, so a controller can register one while it
@@ -13,12 +13,12 @@
 //!
 //! Besides RPC, the MC's origin serves streams the socket does not carry (a
 //! device's screen and input through `/api/device-hub`): [`Mc::open_stream`]
-//! opens one with the access token, and its events reach the UI the same way.
+//! opens one with the access token, and its events reach the UI the same way,
+//! through the "mc-streams" stream.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
-use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 
@@ -29,6 +29,7 @@ pub use hal_c2_mc::{Phase, Status};
 use ljos::prelude::Engine;
 
 use crate::json::Json;
+use crate::streams::{Feed, Tick, Wire};
 
 /// A frame as the MC sent it: a JSON object with its type in `t`.
 pub type Frame = serde_json::Map<String, Json>;
@@ -270,29 +271,9 @@ pub trait Mc {
     }
 }
 
-/// What the I/O thread said, waiting for the UI thread. Only the wake-up
-/// goes through the shell's inbox, coalesced: the UI thread takes whatever
-/// queued in one turn, and the I/O thread never waits on it (as it would
-/// with a message per frame and `send_blocking`).
-#[derive(Clone, Default)]
-pub struct McQueue(Arc<Mutex<VecDeque<McEvent>>>);
-
-impl McQueue {
-    /// Queues `event`; true when the queue was empty, so the UI needs waking.
-    pub fn push(&self, event: McEvent) -> bool {
-        let mut queue = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        queue.push_back(event);
-        queue.len() == 1
-    }
-
-    fn take(&self) -> VecDeque<McEvent> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-}
-
 thread_local! {
-    /// The engine while [`Connection::deliver`] runs: `McClient`'s callbacks
-    /// get none, and every one of them runs inside `deliver`.
+    /// The engine while the "mc" stream's handler runs: `McClient`'s
+    /// callbacks get none, and every one of them runs inside it.
     static DELIVERING: RefCell<Option<Engine>> = const { RefCell::new(None) };
 }
 
@@ -300,31 +281,96 @@ fn with_delivering(f: impl FnOnce(&Engine)) {
     let engine = DELIVERING.with(|d| d.borrow().clone());
     match engine {
         Some(engine) => f(&engine),
-        None => debug_assert!(
-            false,
-            "an McClient callback ran outside Connection::deliver"
-        ),
+        None => debug_assert!(false, "an McClient callback ran outside the MC's stream"),
     }
 }
 
-/// The streams' events waiting for the UI thread, each with its stream's id;
-/// woken as [`McQueue`].
-#[derive(Clone, Default)]
-struct StreamQueue(Arc<Mutex<VecDeque<(u64, StreamEvent)>>>);
+/// How many of the MC's events wait for the UI at most: a frame's worth of
+/// a busy thread's deltas. A burst beyond it waits on the I/O thread, whose
+/// socket then waits on the MC (DECISION: backpressure, not a drop; every
+/// event is a reply or a frame some controller is owed).
+pub const MC_CAPACITY: usize = 1024;
+/// How many of the streams' events wait at most: a device's video comes in
+/// pieces of a few kilobytes, and a full stream holds its reader as above.
+pub const STREAMS_CAPACITY: usize = 256;
 
-impl StreamQueue {
-    fn push(&self, id: u64, event: StreamEvent) -> bool {
-        let mut queue = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        queue.push_back((id, event));
-        queue.len() == 1
-    }
+/// The connections as the streams' handlers find them, by the id each
+/// event carries.
+type Registry = Rc<RefCell<HashMap<u64, Weak<Connection>>>>;
 
-    fn take(&self) -> VecDeque<(u64, StreamEvent)> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+/// The side streams every [`Connection`] hands its events to, and the
+/// connections they go to. One set for the shell: the saved environments'
+/// links ([`Mc::spawn_link`]) share their first connection's.
+pub struct McStreams {
+    events: Feed<(u64, McEvent)>,
+    streams: Feed<(u64, u64, StreamEvent)>,
+    /// That a call went out: its followers ([`Mc::on_call`]) hear of it on
+    /// the UI's next frame, before its answer can arrive.
+    calls: Tick,
+    registry: Registry,
+    next: Cell<u64>,
+}
+
+impl McStreams {
+    /// Makes the MC's streams on `wire`: "mc-calls", "mc" and
+    /// "mc-streams", drained in that order.
+    pub fn new(wire: &mut impl Wire) -> Rc<McStreams> {
+        let registry: Registry = Rc::default();
+        let calls = {
+            let registry = registry.clone();
+            Tick::new(wire, "mc-calls", move |engine| {
+                for connection in live(&registry) {
+                    connection.tell_started(engine);
+                }
+            })
+        };
+        let events = {
+            let registry = registry.clone();
+            Feed::new(wire, "mc", MC_CAPACITY, move |engine, run| {
+                // A call made since the last frame is heard of before any
+                // answer in this run.
+                let connections = live(&registry);
+                for connection in &connections {
+                    connection.tell_started(engine);
+                }
+                let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
+                for (id, event) in run {
+                    let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
+                    if let Some(connection) = connection {
+                        connection.client.deliver(event);
+                    }
+                }
+                DELIVERING.with(|d| *d.borrow_mut() = outer);
+            })
+        };
+        let streams = {
+            let registry = registry.clone();
+            Feed::new(wire, "mc-streams", STREAMS_CAPACITY, move |engine, run| {
+                for (id, stream, event) in run {
+                    let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
+                    if let Some(connection) = connection {
+                        connection.deliver_stream(engine, stream, event);
+                    }
+                }
+            })
+        };
+        Rc::new(McStreams {
+            events,
+            streams,
+            calls,
+            registry,
+            next: Cell::new(0),
+        })
     }
 }
 
-type Wake = Arc<Mutex<Box<dyn Fn() + Send>>>;
+/// The connections still open, taken out of the registry's borrow: a
+/// handler may open another.
+fn live(registry: &Registry) -> Vec<Rc<Connection>> {
+    let mut registry = registry.borrow_mut();
+    registry.retain(|_, connection| connection.strong_count() > 0);
+    registry.values().filter_map(Weak::upgrade).collect()
+}
 
 /// An open stream and its handler, out of the map while it runs.
 struct OpenStream {
@@ -335,15 +381,12 @@ struct OpenStream {
 /// The real MC, over `hal_c2_mc`.
 pub struct Connection {
     client: McClient,
-    queue: McQueue,
-    wake: Wake,
-    stream_queue: StreamQueue,
+    /// What its events carry, so the streams' handlers find it.
+    id: u64,
+    sides: Rc<McStreams>,
     streams: RefCell<HashMap<u64, OpenStream>>,
     next_stream: Cell<u64>,
     calls: Rc<Calls>,
-    /// The saved environments' clients ([`Mc::spawn_link`]), delivered with
-    /// this one.
-    links: RefCell<Vec<Weak<Connection>>>,
     route: RefCell<Option<Route>>,
     /// Subscriptions another client serves: the id given out, and that
     /// client's own.
@@ -405,8 +448,8 @@ impl Forwarded {
 const FORWARDED: u64 = 1 << 62;
 
 /// Who follows the calls ([`Mc::on_call`]), and the calls that went out
-/// since the last delivery: a call has no engine to tell them with, so they
-/// hear of it in the next [`Connection::deliver`], before its answer.
+/// since they last heard: a call has no engine to tell them with, so they
+/// hear of it on the next frame ([`McStreams`]), before its answer.
 #[derive(Default)]
 struct Calls {
     next: Cell<u64>,
@@ -428,32 +471,31 @@ impl Calls {
 }
 
 impl Connection {
-    /// Starts the I/O thread; `wake` runs on it (or a stream's thread)
-    /// whenever events wait for [`Connection::deliver`] (the shell posts to
-    /// its inbox).
-    pub fn spawn(wake: impl Fn() + Send + 'static) -> Connection {
-        let wake: Wake = Arc::new(Mutex::new(Box::new(wake)));
-        let queue = McQueue::default();
-        let sink = queue.clone();
-        let waking = wake.clone();
+    /// Starts the I/O thread, which hands its events to `sides`.
+    pub fn spawn(sides: &Rc<McStreams>) -> Rc<Connection> {
+        let id = sides.next.get() + 1;
+        sides.next.set(id);
+        let feed = sides.events.clone();
         let handle = hal_c2_mc::spawn(move |event| {
-            if sink.push(event) {
-                (waking.lock().unwrap_or_else(|e| e.into_inner()))();
-            }
+            // Handed back only once the window is gone: nobody to tell.
+            let _ = feed.send((id, event));
         });
-        Connection {
+        let connection = Rc::new(Connection {
             client: McClient::new(handle),
-            queue,
-            wake,
-            stream_queue: StreamQueue::default(),
+            id,
+            sides: sides.clone(),
             streams: RefCell::default(),
             next_stream: Cell::new(0),
             calls: Rc::default(),
-            links: RefCell::default(),
             route: RefCell::default(),
             forwarded: RefCell::default(),
             next_forwarded: Cell::new(FORWARDED),
-        }
+        });
+        sides
+            .registry
+            .borrow_mut()
+            .insert(id, Rc::downgrade(&connection));
+        connection
     }
 
     /// The client that serves `environment` (or the cluster MC `mc`) when
@@ -482,36 +524,12 @@ impl Connection {
         Ok(())
     }
 
-    /// Hands what the I/O thread and the streams said to the callbacks, in
-    /// order.
-    pub fn deliver(&self, engine: &Engine) {
-        self.deliver_own(engine);
-        // Taken out while they run: a callback may spawn a link.
-        let links: Vec<Rc<Connection>> = {
-            let mut links = self.links.borrow_mut();
-            links.retain(|link| link.strong_count() > 0);
-            links.iter().filter_map(Weak::upgrade).collect()
-        };
-        for link in links {
-            link.deliver(engine);
-        }
-    }
-
-    fn deliver_own(&self, engine: &Engine) {
+    /// Tells the calls' followers of the calls that went out since they
+    /// last heard.
+    fn tell_started(&self, engine: &Engine) {
         let started = std::mem::take(&mut *self.calls.started.borrow_mut());
         for event in &started {
             self.calls.notify(engine, event);
-        }
-        let events = self.queue.take();
-        if !events.is_empty() {
-            let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
-            for event in events {
-                self.client.deliver(event);
-            }
-            DELIVERING.with(|d| *d.borrow_mut() = outer);
-        }
-        for (id, event) in self.stream_queue.take() {
-            self.deliver_stream(engine, id, event);
         }
     }
 
@@ -555,25 +573,12 @@ impl Mc for Connection {
         let id = self.calls.next.get() + 1;
         self.calls.next.set(id);
         let calls = self.calls.clone();
-        let first = {
-            let mut started = calls.started.borrow_mut();
-            started.push(CallEvent::Started {
-                id,
-                environment: environment.to_owned(),
-                method: method.to_owned(),
-            });
-            started.len() == 1
-        };
-        if first
-            && self
-                .queue
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_empty()
-        {
-            (self.wake.lock().unwrap_or_else(|e| e.into_inner()))();
-        }
+        calls.started.borrow_mut().push(CallEvent::Started {
+            id,
+            environment: environment.to_owned(),
+            method: method.to_owned(),
+        });
+        self.sides.calls.give();
         self.client
             .call(environment, method, payload, move |result| {
                 with_delivering(|engine| {
@@ -740,12 +745,8 @@ impl Mc for Connection {
     }
 
     fn spawn_link(&self) -> Option<Rc<dyn Mc>> {
-        let wake = self.wake.clone();
-        let link = Rc::new(Connection::spawn(move || {
-            (wake.lock().unwrap_or_else(|e| e.into_inner()))()
-        }));
+        let link = Connection::spawn(&self.sides);
         self.client.copy_timings_to(&link.client);
-        self.links.borrow_mut().push(Rc::downgrade(&link));
         Some(link)
     }
 
@@ -820,11 +821,9 @@ impl Mc for Connection {
         let request = self.client.request(path, query, socket)?;
         let id = self.next_stream.get() + 1;
         self.next_stream.set(id);
-        let (queue, wake) = (self.stream_queue.clone(), self.wake.clone());
+        let (feed, connection) = (self.sides.streams.clone(), self.id);
         let stream = hal_c2_mc::stream::open(request, socket, move |event| {
-            if queue.push(id, event) {
-                (wake.lock().unwrap_or_else(|e| e.into_inner()))();
-            }
+            let _ = feed.send((connection, id, event));
         });
         self.streams.borrow_mut().insert(
             id,
@@ -898,7 +897,15 @@ impl Mc for Disconnected {
 #[cfg(test)]
 mod reroute_tests {
     use super::*;
+    use crate::streams::Pump;
     use serde_json::json;
+
+    /// A connection that is never opened: its streams' pump is kept with it.
+    fn connection() -> (Pump, Rc<Connection>) {
+        let mut pump = Pump::new(|| {});
+        let sides = McStreams::new(&mut pump);
+        (pump, Connection::spawn(&sides))
+    }
 
     /// A link that keeps what was subscribed on it.
     #[derive(Default)]
@@ -933,7 +940,7 @@ mod reroute_tests {
 
     #[test]
     fn a_held_subscription_moves_to_the_link_that_replaced_its_own() {
-        let own = Connection::spawn(|| {});
+        let (_pump, own) = connection();
         let old = Rc::new(Recorder::default());
         let serving: Rc<RefCell<Rc<dyn Mc>>> = Rc::new(RefCell::new(old.clone()));
         let route = serving.clone();
@@ -961,7 +968,7 @@ mod reroute_tests {
 
     #[test]
     fn a_held_subscription_comes_back_when_no_link_serves_it() {
-        let own = Connection::spawn(|| {});
+        let (_pump, own) = connection();
         let link = Rc::new(Recorder::default());
         let serving: Rc<RefCell<Option<Rc<dyn Mc>>>> = Rc::new(RefCell::new(Some(link.clone())));
         let route = serving.clone();
@@ -987,7 +994,7 @@ mod reroute_tests {
 
     #[test]
     fn a_subscription_this_client_served_first_moves_to_a_link_that_comes_to_serve_it() {
-        let own = Connection::spawn(|| {});
+        let (_pump, own) = connection();
         let serving: Rc<RefCell<Option<Rc<dyn Mc>>>> = Rc::new(RefCell::new(None));
         let route = serving.clone();
         own.set_route(Rc::new(move |_, _| route.borrow().clone()));

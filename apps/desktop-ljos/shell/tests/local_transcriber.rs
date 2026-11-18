@@ -1,14 +1,15 @@
 //! `LocalTranscriber` as trusted QML uses it: a real helper (a shell script
 //! written under the target's temp dir) speaking the line protocol, driven
 //! through `start`, `finishRecording` and `cancel`. The helper's output
-//! arrives on threads; a test waits on the waker, then delivers, and never
-//! sleeps. The state machine's orders of events are src/local_transcriber's
+//! arrives on threads; a test waits on its side stream's wake, then drains
+//! it, and never sleeps. The state machine's orders of events are src/local_transcriber's
 //! property test.
 
 #![cfg(unix)]
 
 mod common;
 
+use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -16,8 +17,9 @@ use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
 use common::{call, shell, text};
-use hal_c2_shell::local_transcriber::{Effect, Machine, deliver, set_wake};
+use hal_c2_shell::local_transcriber::{self, Effect, Machine};
 use hal_c2_shell::mc::Disconnected;
+use hal_c2_shell::streams::Pump;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{Engine, ObjectId, Value};
 
@@ -53,6 +55,7 @@ struct Fixture {
     engine: Engine,
     root: ObjectId,
     woken: mpsc::Receiver<()>,
+    streams: RefCell<Pump>,
     dir: PathBuf,
 }
 
@@ -61,9 +64,10 @@ impl Fixture {
         let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
         let (wake, woken) = mpsc::channel();
         let wake = Mutex::new(wake);
-        set_wake(&engine, move || {
+        let mut streams = Pump::new(move || {
             let _ = wake.lock().unwrap().send(());
         });
+        local_transcriber::wire(&engine, &mut streams);
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
             .join("local-transcriber")
             .join(test);
@@ -73,6 +77,7 @@ impl Fixture {
             engine,
             root,
             woken,
+            streams: RefCell::new(streams),
             dir,
         }
     }
@@ -112,7 +117,7 @@ impl Fixture {
                         self.get("error")
                     )
                 });
-            deliver(&self.engine);
+            self.streams.borrow_mut().pump(&self.engine);
         }
     }
 }
@@ -205,6 +210,58 @@ wait"#,
         !alive(child) || zombie || pending,
         "the helper's child outlived it"
     );
+}
+
+#[test]
+fn everything_a_helper_wrote_comes_before_its_end() {
+    let f = Fixture::new("all-of-it");
+    // 20 000 lines of 38 bytes (37 characters and a newline) are 760 000
+    // bytes: under the 1 048 576 bytes a run may write (OUTPUT_LIMIT), and
+    // well past the 64 KiB pipe and the 64-chunk stream, so the helper ends
+    // while most of what it wrote still waits for the UI.
+    let helper = f.helper(
+        "helper.sh",
+        r#"yes '{"type":"status","phase":"recording"}' | head -n 20000
+echo '{"type":"transcript","text":"the last line"}'"#,
+    );
+    assert!(f.start(&helper));
+    f.until("the end", |f| f.get("running") == "false");
+    assert_eq!(f.get("error"), "");
+    assert_eq!(f.get("heard"), "the last line");
+    assert_eq!(f.get("heardCount"), "1");
+}
+
+/// A process the helper started in a session of its own outlives the
+/// helper's group and holds its pipes open. The run still ends when the
+/// helper does, with all the helper wrote.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pipe_held_open_outside_the_helpers_group_does_not_hold_up_its_end() {
+    let f = Fixture::new("held-open");
+    let pid_file = f.dir.join("pid");
+    let helper = f.helper(
+        "helper.sh",
+        &format!(
+            r#"setsid sh -c 'echo $$ > {pid}; exec sleep 600' &
+until [ -s {pid} ]; do :; done
+echo '{{"type":"transcript","text":"left one behind"}}'"#,
+            pid = pid_file.display()
+        ),
+    );
+    assert!(f.start(&helper));
+    f.until("the end", |f| f.get("running") == "false");
+    assert_eq!(f.get("error"), "");
+    assert_eq!(f.get("heard"), "left one behind");
+    let outsider: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: signal 0 only asks whether the process exists; SIGKILL ends
+    // the sleep this test started.
+    let alive = unsafe { libc::kill(outsider, 0) == 0 };
+    unsafe { libc::kill(outsider, libc::SIGKILL) };
+    assert!(alive, "the process outside the group held the pipes open");
 }
 
 #[test]

@@ -29,7 +29,7 @@ use ljos::prelude::{
 };
 
 use plain::{broad_directory, clean, occupied, plain_directory, plain_entry, within};
-pub use watch::{deliver, set_wake};
+pub use watch::{CAPACITY, wire};
 
 const NO_ROOT: &str = "The selected root is no longer a plain local folder.";
 const BAD_ROOT: &str = "Choose an existing local folder other than your home or a filesystem root. Symlinks are not supported.";
@@ -524,6 +524,20 @@ impl<'e> Model<'e> {
                 self.list(&dir);
             }
         }
+    }
+
+    /// The OS saw changes the watch stream had no room for: the root is
+    /// checked and every folder shown is read again.
+    fn changed_everywhere(&self) {
+        if self.enabled() && !self.root().is_empty() {
+            self.check_root();
+        }
+        if !self.active() {
+            return;
+        }
+        let shown: Vec<String> = self.state.tree.borrow().children.keys().cloned().collect();
+        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
+        self.refresh(&shown);
     }
 
     /// A root that was replaced by a link, or removed, is given up.
