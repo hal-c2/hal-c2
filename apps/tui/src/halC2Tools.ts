@@ -53,6 +53,9 @@ export type HalC2ToolSummaryAction =
   | "link-pr"
   | "unlink-pr"
   | "list-prs"
+  | "subscribe-pr"
+  | "unsubscribe-pr"
+  | "list-pr-subscriptions"
   | "browser"
   | "device";
 
@@ -89,6 +92,21 @@ const HAL_C2_TOOLS: Readonly<Record<string, HalC2ToolDefinition>> = {
   list_thread_pull_requests: tool(
     ["Check", "Checking", "Checked", "linked pull requests"],
     "list-prs",
+    "pull-request",
+  ),
+  subscribe_pull_request: tool(
+    ["Subscribe to", "Subscribing to", "Subscribed to", "pull request news"],
+    "subscribe-pr",
+    "pull-request",
+  ),
+  unsubscribe_pull_request: tool(
+    ["Unsubscribe from", "Unsubscribing from", "Unsubscribed from", "pull request news"],
+    "unsubscribe-pr",
+    "pull-request",
+  ),
+  list_pull_request_subscriptions: tool(
+    ["Check", "Checking", "Checked", "pull request subscriptions"],
+    "list-pr-subscriptions",
     "pull-request",
   ),
   orchestrator_capabilities: tool(
@@ -610,6 +628,16 @@ export function summarizeHalC2ToolCalls(
           "check",
           `linked pull requests${selected.length === 1 ? "" : ` ${times}`}`,
         );
+      case "subscribe-pr":
+        return phrase("Subscribed to", "subscribe to", quantity(selected.length, "pull request"));
+      case "unsubscribe-pr":
+        return phrase(
+          "Unsubscribed from",
+          "unsubscribe from",
+          quantity(selected.length, "pull request"),
+        );
+      case "list-pr-subscriptions":
+        return phrase("Checked", "check", `pull request subscriptions ${times}`);
       case "browser":
         return phrase("Used", "use", `browser ${times}`);
       case "device":

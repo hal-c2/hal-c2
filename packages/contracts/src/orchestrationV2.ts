@@ -44,6 +44,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   ThreadPullRequestKey,
+  ThreadPullRequestNotifyEvent,
   ThreadPullRequestLinkSource,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
@@ -2590,6 +2591,13 @@ export const OrchestrationV2Command = Schema.Union([
     ...ThreadPullRequestKey.fields,
     snapshot: ThreadPullRequestSnapshot,
     stack: Schema.NullOr(ThreadPullRequestStack),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-link.notify"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    notify: Schema.NullOr(Schema.Array(ThreadPullRequestNotifyEvent)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.sync"),

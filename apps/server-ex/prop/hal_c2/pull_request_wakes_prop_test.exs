@@ -20,7 +20,9 @@ defmodule HalC2.PullRequestWakesPropTest do
     no run of the thread was going as it was posted, and never hides one by someone
     else;
   - leaving the merge queue (`rem`, numbered like activity) is news once per removal
-    while the pull request is open, and never beside the merge or close that ended it.
+    while the pull request is open, and never beside the merge or close that ended it;
+  - a link subscribed to some kinds of news (`notify`) wakes the thread only for those;
+    the rest is heard without a wake, and is not told once it subscribes again.
   """
 
   use ExUnit.Case, async: false
@@ -66,9 +68,10 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # links: `[{number, %{snapshot, told}}]` in the order they were linked, `snapshot`
-  # what the host said last (nil before the first sync) and `told` what the thread
-  # heard of it (nil before its baseline). A snapshot is %{state, checks, merge, act,
+  # links: `[{number, %{snapshot, told, notify}}]` in the order they were linked,
+  # `snapshot` what the host said last (nil before the first sync), `told` what the
+  # thread heard of it (nil before its baseline) and `notify` the kinds of news it is
+  # subscribed to (nil for every kind). A snapshot is %{state, checks, merge, act,
   # own, rem}, `act` numbering the newest trusted review or comment by someone else,
   # `own` the newest by the signed-in account and `rem` the newest removal from the
   # merge queue (0 for none); `clock` is the newest so far, and `during` the own ones
@@ -102,7 +105,11 @@ defmodule HalC2.PullRequestWakesPropTest do
             []
 
           linked ->
-            [{1, {:call, __MODULE__, :unlink, [oneof(linked)]}}, {6, sync_call(state, linked)}]
+            [
+              {1, {:call, __MODULE__, :unlink, [oneof(linked)]}},
+              {6, sync_call(state, linked)},
+              {2, {:call, __MODULE__, :notify, [oneof(linked), notify()]}}
+            ]
         end
     )
   end
@@ -133,6 +140,19 @@ defmodule HalC2.PullRequestWakesPropTest do
     end
   end
 
+  # Every kind of news, or a subset of them in their order.
+  defp notify do
+    events = Wakes.events()
+
+    frequency([
+      {1, nil},
+      {3,
+       let picks <- vector(length(events), boolean()) do
+         for {event, true} <- Enum.zip(events, picks), do: event
+       end}
+    ])
+  end
+
   defp linked(state), do: Enum.map(state.links, &elem(&1, 0))
 
   defp snapshot_of(state, n) do
@@ -143,6 +163,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   end
 
   def precondition(state, {:call, _, :unlink, [n]}), do: n in linked(state)
+  def precondition(state, {:call, _, :notify, [n, _]}), do: n in linked(state)
 
   # A sync is of a link that is there, and its activity is never older than the last,
   # with at most one of them new.
@@ -175,7 +196,17 @@ defmodule HalC2.PullRequestWakesPropTest do
   def next_state(state, _result, {:call, _, :link, [n]}) do
     if n in linked(state),
       do: state,
-      else: %{state | links: state.links ++ [{n, %{snapshot: nil, told: nil}}]}
+      else: %{state | links: state.links ++ [{n, %{snapshot: nil, told: nil, notify: nil}}]}
+  end
+
+  def next_state(state, _result, {:call, _, :notify, [n, notify]}) do
+    links =
+      Enum.map(state.links, fn
+        {^n, link} -> {n, %{link | notify: notify}}
+        other -> other
+      end)
+
+    %{state | links: links}
   end
 
   def next_state(state, _result, {:call, _, :unlink, [n]}),
@@ -219,8 +250,8 @@ defmodule HalC2.PullRequestWakesPropTest do
       else: %{state | links: Enum.map(state.links, fn {n, link} -> {n, hear(state, link)} end)}
   end
 
-  # A first snapshot is a baseline; away the thread hears nothing more; busy, news
-  # waits and the rest is heard.
+  # A first snapshot is a baseline; away the thread hears nothing more; busy, news it
+  # is subscribed to waits and the rest is heard.
   defp hear(_state, %{snapshot: nil} = link), do: link
 
   defp hear(_state, %{told: nil, snapshot: snapshot} = link),
@@ -230,10 +261,12 @@ defmodule HalC2.PullRequestWakesPropTest do
   defp hear(state, link) when state.delegated and not state.busy, do: link
 
   defp hear(state, %{told: told, snapshot: snapshot} = link) do
-    case news(state, told, snapshot) do
-      [] -> %{link | told: advance(told, snapshot, [])}
+    news = news(state, told, snapshot)
+
+    case subscribed(link, news) do
+      [] -> %{link | told: advance(told, snapshot, news)}
       _ when state.busy -> link
-      news -> %{link | told: advance(told, snapshot, news)}
+      _ -> %{link | told: advance(told, snapshot, news)}
     end
   end
 
@@ -278,11 +311,23 @@ defmodule HalC2.PullRequestWakesPropTest do
     )
   end
 
-  # The news a check finds, as `[{number, news}]` in link order.
+  # The news of a kind the link is subscribed to.
+  defp subscribed(%{notify: nil}, news), do: news
+  defp subscribed(%{notify: notify}, news), do: Enum.filter(news, &(event(&1) in notify))
+
+  defp event(:merged), do: "merged"
+  defp event(:closed), do: "closed"
+  defp event(:checks_failing), do: "checks"
+  defp event(:checks_passing), do: "checks"
+  defp event(:conflicting), do: "conflicts"
+  defp event(:left_merge_queue), do: "merge_queue"
+  defp event(:activity), do: "comments"
+
+  # The news a check finds and tells, as `[{number, news}]` in link order.
   defp pending(state) do
-    for {n, %{told: told, snapshot: snapshot}} <- state.links,
+    for {n, %{told: told, snapshot: snapshot} = link} <- state.links,
         told != nil and snapshot != nil,
-        news = news(state, told, snapshot),
+        news = subscribed(link, news(state, told, snapshot)),
         news != [],
         do: {n, news}
   end
@@ -311,6 +356,9 @@ defmodule HalC2.PullRequestWakesPropTest do
         result == :woken and match?([_], wakes) and told?(hd(wakes), expected)
     end
   end
+
+  def postcondition(_state, {:call, _, :notify, [n, _]}, {result, wakes, _, shown}),
+    do: wakes == [] and (result == :ok or n not in shown)
 
   def postcondition(_state, _call, {_result, wakes, _, _}), do: wakes == []
 
@@ -372,6 +420,28 @@ defmodule HalC2.PullRequestWakesPropTest do
         "url" => "https://github.com/acme/app/pull/#{n}",
         "source" => "manual"
       })
+    end)
+  end
+
+  # The MC refuses a link the thread no longer shows; a wake starts a run, so a thread
+  # delegated after one has handed its links over, which the model does not follow
+  # (a sync or an unlink of such a link changes nothing).
+  def notify(n, events) do
+    observe(fn ->
+      command = %{
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => @thread,
+        "type" => "thread.pull-request-link.notify",
+        "host" => "github.com",
+        "repository" => "acme/app",
+        "number" => n,
+        "notify" => events
+      }
+
+      case HalC2.Orchestration.dispatch(command) do
+        {:ok, _} -> :ok
+        {:error, "Thread t does not link " <> _} -> :not_linked
+      end
     end)
   end
 

@@ -3,38 +3,82 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   MCP tools that link the pull requests an agent opens to its own thread, so HAL-C2
   tracks them beside it (`HalC2.Mcp.Tools`). A pull request is named by its URL, or
   by repository and number on the project's host.
+
+  A subscription is a link and the kinds of its news that wake the thread
+  (`HalC2.PullRequests.Wakes.events/0`, kept as the link's `notify`):
+  `subscribe_pull_request` links a pull request if it is not yet and chooses them,
+  `unsubscribe_pull_request` drops some or all of them and keeps the link (its status
+  and settling stay), and `list_pull_request_subscriptions` lists them.
   """
 
   import HalC2.Mcp.Tools, only: [command_id: 0, orchestration: 1, project_row: 1, thread: 1]
 
   alias HalC2.Orchestration
   alias HalC2.Projection.PullRequests
+  alias HalC2.PullRequests.Wakes
 
-  @tools ~w(link_pull_request unlink_pull_request list_thread_pull_requests)
+  @tools ~w(link_pull_request unlink_pull_request list_thread_pull_requests
+            subscribe_pull_request unsubscribe_pull_request list_pull_request_subscriptions)
 
   def tools, do: @tools
 
   def run("link_pull_request", args, %{row: me}) do
-    with {:ok, target} <- target(args, me) do
-      existing = Enum.find(links(me["id"]), &same?(&1, target))
+    with {:ok, target} <- target(args, me),
+         {:ok, already?} <- link(target, me),
+         do: {:ok, Map.put(target, "alreadyLinked", already?)}
+  end
 
-      if existing && existing["source"] != "stack-dismissed" do
-        {:ok, Map.put(target, "alreadyLinked", true)}
-      else
-        with {:ok, _} <-
-               orchestration(
-                 Orchestration.dispatch(
-                   Map.merge(target, %{
-                     "type" => "thread.pull-request.link",
-                     "commandId" => command_id(),
-                     "threadId" => me["id"],
-                     "source" => "agent"
-                   })
-                 )
-               ),
-             do: {:ok, Map.put(target, "alreadyLinked", false)}
+  # Links the pull request (as link_pull_request would) and sets which of its news
+  # wakes this thread: `events`, or every kind when it is omitted.
+  def run("subscribe_pull_request", args, %{row: me}) do
+    with {:ok, target} <- target(args, me),
+         {:ok, notify} <- events(args["events"]),
+         {:ok, already?} <- link(target, me),
+         {:ok, _} <- set_notify(target, me, notify) do
+      {:ok,
+       target
+       |> Map.put("events", notify || Wakes.events())
+       |> Map.put("alreadyLinked", already?)}
+    end
+  end
+
+  # Drops `events` from what wakes this thread, or all of them; the link stays.
+  def run("unsubscribe_pull_request", args, %{row: me}) do
+    with {:ok, target} <- target(args, me),
+         {:ok, dropped} <- events(args["events"]) do
+      case Enum.find(PullRequests.visible(links(me["id"])), &same?(&1, target)) do
+        nil ->
+          {:ok, target |> Map.put("events", []) |> Map.put("wasSubscribed", false)}
+
+        link ->
+          before = Wakes.subscribed(link)
+          left = if dropped == nil, do: [], else: before -- dropped
+
+          with {:ok, _} <- set_notify(target, me, left),
+               do:
+                 {:ok,
+                  target |> Map.put("events", left) |> Map.put("wasSubscribed", before != [])}
       end
     end
+  end
+
+  def run("list_pull_request_subscriptions", _args, %{row: me}) do
+    {:ok,
+     %{
+       "subscriptions" =>
+         for link <- PullRequests.visible(links(me["id"])),
+             events = Wakes.subscribed(link),
+             events != [] do
+           %{
+             "host" => PullRequests.normalize(link)["host"],
+             "repository" => link["repository"],
+             "number" => link["number"],
+             "url" => link["url"],
+             "state" => (link["snapshot"] || %{})["state"],
+             "events" => events
+           }
+         end
+     }}
   end
 
   def run("unlink_pull_request", args, %{row: me}) do
@@ -75,6 +119,53 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   end
 
   # --- helpers ----------------------------------------------------------------------------
+
+  # `{:ok, already linked?}` once `target` is linked to the caller's thread; a link the
+  # caller dismissed from a stack is linked again.
+  defp link(target, me) do
+    existing = Enum.find(links(me["id"]), &same?(&1, target))
+
+    if existing && existing["source"] != "stack-dismissed" do
+      {:ok, true}
+    else
+      with {:ok, _} <-
+             orchestration(
+               Orchestration.dispatch(
+                 Map.merge(target, %{
+                   "type" => "thread.pull-request.link",
+                   "commandId" => command_id(),
+                   "threadId" => me["id"],
+                   "source" => "agent"
+                 })
+               )
+             ),
+           do: {:ok, false}
+    end
+  end
+
+  defp set_notify(target, me, notify) do
+    orchestration(
+      Orchestration.dispatch(
+        target
+        |> Map.take(~w(host repository number url))
+        |> Map.merge(%{
+          "type" => "thread.pull-request-link.notify",
+          "commandId" => command_id(),
+          "threadId" => me["id"],
+          "notify" => notify
+        })
+      )
+    )
+  end
+
+  defp events(nil), do: {:ok, nil}
+
+  defp events(events) do
+    case Wakes.notify(events) do
+      {:ok, notify} -> {:ok, notify}
+      {:error, message} -> {:error, "invalid_request", message}
+    end
+  end
 
   defp links(thread_id), do: PullRequests.of(thread(thread_id) || %{})
 

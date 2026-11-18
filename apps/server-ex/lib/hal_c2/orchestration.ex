@@ -614,6 +614,32 @@ defmodule HalC2.Orchestration do
     end)
   end
 
+  # Which kinds of a link's news wake its thread (`HalC2.PullRequests.Wakes.events/0`);
+  # nil is every kind, [] none. What the thread heard stays, so news that was not told
+  # is not told later either.
+  def dispatch(%{"type" => "thread.pull-request-link.notify", "threadId" => thread_id} = command) do
+    with {:ok, notify} <- HalC2.PullRequests.Wakes.notify(command["notify"]) do
+      quiet_update(thread_id, fn thread ->
+        links = PullRequests.of(thread)
+        key = PullRequests.key(command)
+
+        if Enum.any?(PullRequests.visible(links), &(PullRequests.key(&1) == key)) do
+          links
+          |> Enum.map(fn link ->
+            cond do
+              PullRequests.key(link) != key -> link
+              notify == nil -> Map.delete(link, "notify")
+              true -> Map.put(link, "notify", notify)
+            end
+          end)
+          |> then(&pull_request_fields(thread, &1))
+        else
+          {:error, "Thread #{thread_id} does not link #{key}."}
+        end
+      end)
+    end
+  end
+
   # The branch's pull request, from `HalC2.PullRequests.Discovery`, refused when what it
   # was decided from (`expected`) no longer holds.
   def dispatch(%{"type" => "thread.pull-request.sync", "threadId" => thread_id} = command) do
@@ -4011,7 +4037,7 @@ defmodule HalC2.Orchestration do
             |> new_link(command["url"], source, at)
             |> Map.merge(
               if(command["automatic"] == true,
-                do: Map.take(command, ~w(heard snapshot stack)),
+                do: Map.take(command, ~w(heard snapshot stack notify)),
                 else: %{}
               )
             )
@@ -4036,8 +4062,8 @@ defmodule HalC2.Orchestration do
 
   # A layer of a native stack, a pull request the thread created, or one it hands
   # over (`"tombstone"`), stays as a tombstone, so the sync or discovery
-  # (`HalC2.PullRequests.Opened`) does not link it again. It forgets what the thread heard of it, so a link back starts from a new
-  # baseline.
+  # (`HalC2.PullRequests.Opened`) does not link it again. It forgets what the thread heard of it and
+  # what it subscribed to, so a link back starts from a new baseline with every kind of news.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
@@ -4060,7 +4086,7 @@ defmodule HalC2.Orchestration do
         links
         |> Enum.map(fn link ->
           if link == existing,
-            do: link |> Map.put("source", "stack-dismissed") |> Map.delete("heard"),
+            do: link |> Map.put("source", "stack-dismissed") |> Map.drop(~w(heard notify)),
             else: link
         end)
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))

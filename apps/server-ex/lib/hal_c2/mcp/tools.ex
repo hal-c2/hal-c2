@@ -50,6 +50,7 @@ defmodule HalC2.Mcp.Tools do
                 hal_c2_worktree_list hal_c2_project_list hal_c2_project_read
                 hal_c2_thread_search hal_c2_preview_list hal_c2_environment_read
                 hal_c2_queue_list hal_c2_queue_read list_thread_pull_requests
+                list_pull_request_subscriptions
                 hal_c2_page_list hal_c2_page_read)
 
   @doc "The read-only tools' Claude names, of those this MC advertises."

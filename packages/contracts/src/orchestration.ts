@@ -343,6 +343,18 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/** A kind of pull request news that wakes a thread (HalC2.PullRequests.Wakes.events/0). */
+export const ThreadPullRequestNotifyEvent = Schema.Literals([
+  "reviews",
+  "comments",
+  "checks",
+  "conflicts",
+  "merge_queue",
+  "merged",
+  "closed",
+]);
+export type ThreadPullRequestNotifyEvent = typeof ThreadPullRequestNotifyEvent.Type;
+
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
@@ -362,6 +374,9 @@ export const ThreadPullRequestLink = Schema.Struct({
       mergeQueueRemovalAt: Schema.optional(Schema.NullOr(IsoDateTime)),
     }),
   ),
+  // The kinds of news that wake the thread (subscribe_pull_request); absent is every
+  // kind, empty none.
+  notify: Schema.optional(Schema.Array(ThreadPullRequestNotifyEvent)),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
@@ -1168,10 +1183,19 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
   stack: Schema.NullOr(ThreadPullRequestStack),
 });
 
+const ThreadPullRequestLinkNotifyCommand = Schema.Struct({
+  type: Schema.Literal("thread.pull-request-link.notify"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  ...ThreadPullRequestKey.fields,
+  notify: Schema.NullOr(Schema.Array(ThreadPullRequestNotifyEvent)),
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
+  ThreadPullRequestLinkNotifyCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,

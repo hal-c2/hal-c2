@@ -16,6 +16,9 @@ defmodule HalC2.PullRequests.Wakes do
   (`changes/2`). A link's first snapshot is its baseline. A settled or archived thread
   hears nothing, and what it heard stays as it was, so bringing it back tells it what
   changed meanwhile in one message. Unlinking drops the link and what it heard.
+  A link's `notify` (`subscribed/1`) names the kinds of news that wake its thread;
+  news of another kind is heard without telling, so subscribing again later does
+  not bring it back.
 
   News is delivered only when the thread is idle: while it has a run working or
   queued, nothing new is marked heard, so everything that lands meanwhile shares the
@@ -208,13 +211,55 @@ defmodule HalC2.PullRequests.Wakes do
         {link, []}
 
       true ->
-        case changes(heard, snapshot, runs) do
-          [] -> {Map.put(link, "heard", advance(heard, snapshot, [])), []}
+        changes = changes(heard, snapshot, runs)
+
+        # News of a kind the thread is not subscribed to is heard without telling.
+        case Enum.filter(changes, &(event(&1) in subscribed(link))) do
+          [] -> {Map.put(link, "heard", advance(heard, snapshot, changes)), []}
           _ when not idle? -> {link, []}
-          changes -> {Map.put(link, "heard", advance(heard, snapshot, changes)), changes}
+          told -> {Map.put(link, "heard", advance(heard, snapshot, changes)), told}
         end
     end
   end
+
+  @events ~w(reviews comments checks conflicts merge_queue merged closed)
+
+  @doc """
+  The kinds of news a link can wake its thread with, the `notify` a subscription
+  keeps (`subscribed/1`): a review or a comment from someone the repository trusts,
+  checks that start failing (or pass again after failing), a conflict with the base
+  branch, leaving the merge queue, a merge and a close.
+  """
+  def events, do: @events
+
+  @doc "The kinds of news `link` wakes its thread with: its `notify`, or every kind."
+  def subscribed(%{"notify" => notify}) when is_list(notify), do: notify
+  def subscribed(_link), do: @events
+
+  @doc "`{:ok, notify}` for a list of `events/0` (nil is every kind), or `{:error, message}`."
+  def notify(nil), do: {:ok, nil}
+
+  def notify(events) when is_list(events) do
+    case Enum.reject(events, &(&1 in @events)) do
+      [] ->
+        {:ok, Enum.filter(@events, &(&1 in events))}
+
+      unknown ->
+        {:error, "Unknown events #{Enum.join(unknown, ", ")}; use #{Enum.join(@events, ", ")}."}
+    end
+  end
+
+  def notify(_events), do: {:error, "events must be a list of #{Enum.join(@events, ", ")}."}
+
+  @doc "The kind of news (`events/0`) a change from `changes/3` is."
+  def event(:merged), do: "merged"
+  def event(:closed), do: "closed"
+  def event(:checks_failing), do: "checks"
+  def event(:checks_passing), do: "checks"
+  def event(:conflicting), do: "conflicts"
+  def event({:left_merge_queue, _reason}), do: "merge_queue"
+  def event({:activity, %{"kind" => "review"}}), do: "reviews"
+  def event({:activity, _comment}), do: "comments"
 
   # The link list as the thread keeps it; host state is not activity.
   defp heard(state, thread_id, links) do
@@ -358,7 +403,8 @@ defmodule HalC2.PullRequests.Wakes do
     text =
       Enum.map_join(news, "\n\n", fn {link, changes} -> describe(link, changes) end) <>
         "\n\nlist_thread_pull_requests lists every pull request this thread owns. " <>
-        "Unlinking one (unlink_pull_request) or settling the thread stops these messages."
+        "unsubscribe_pull_request stops some or all of these messages for one; " <>
+        "unlinking it (unlink_pull_request) or settling the thread stops them all."
 
     id = HalC2.Environment.uuid4()
 
