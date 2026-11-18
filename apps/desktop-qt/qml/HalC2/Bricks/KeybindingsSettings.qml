@@ -390,6 +390,9 @@ Rectangle {
                 readonly property var conflicts: dirty ? Keybindings.conflicts(modelData.id, keyDraft, rowWhen.text) : modelData.conflicts
                 // The condition shows in words; its expression opens to edit.
                 property bool editingWhen: false
+                // What a screen reader calls this binding: a command can have
+                // several, so its saved key tells them apart.
+                readonly property string binding: modelData.keyLabel.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(modelData.keyLabel) : modelData.label
 
                 width: ListView.view.width
                 implicitHeight: rowColumn.implicitHeight + 2 * Theme.space.md
@@ -462,7 +465,7 @@ Rectangle {
 
                         KeyRecorder {
                             objectName: "keyField"
-                            command: row.modelData.label
+                            command: row.binding
                             key: row.keyDraft
                             label: row.labelDraft
                             onRecorded: next => {
@@ -518,7 +521,7 @@ Rectangle {
                             visible: !rowWhen.visible
                             subtle: true
                             text: qsTr("Edit condition")
-                            Accessible.name: qsTr("Edit condition for %1").arg(row.modelData.label)
+                            Accessible.name: qsTr("Edit condition for %1").arg(row.binding)
                             onClicked: {
                                 row.editingWhen = true;
                                 rowWhen.edit();
