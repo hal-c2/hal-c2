@@ -20,7 +20,24 @@ defmodule HalC2.ClaudeSubagentTest do
       |> World.launch_on(@thread, "claudeAgent", "wait for the survey")
 
     World.await_running(context, @thread)
+    # The fake's own init for that prompt lands when it lands; wait for it, so it
+    # never arrives between the turns a test plays and waits with a wake there.
+    await_session(context, System.monotonic_time(:millisecond) + 5_000)
     {:ok, context: context}
+  end
+
+  defp await_session(context, deadline) do
+    cond do
+      :sys.get_state(runtime(context)).session_id != nil ->
+        :ok
+
+      System.monotonic_time(:millisecond) < deadline ->
+        Process.sleep(10)
+        await_session(context, deadline)
+
+      true ->
+        flunk("the fake Claude never said it started")
+    end
   end
 
   test "a subagent's messages go to its thread while the parent's turn streams on",
