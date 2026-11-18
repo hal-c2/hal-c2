@@ -866,17 +866,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "an operator imports it into the MC's home", context do
     # The import runs offline, against a stopped MC's store.
-    for child <- [
-          HalC2.Orchestration.Wake,
-          HalC2.RuntimeRecord,
-          HalC2.Web,
-          HalC2.Subprocess.Orphans,
-          HalC2.Shell,
-          HalC2.Streams,
-          HalC2.Auth,
-          HalC2.Store
-        ],
-        do: ExUnit.Callbacks.stop_supervised(child)
+    Mc.stop(context.mc)
 
     lines = World.mix_output(Mix.Tasks.HalC2.Import, :run, [[context.ts_source]])
     GenServer.stop(HalC2.Store)
