@@ -410,6 +410,27 @@ fn toggle_devices_preset(world: &mut World, id: &str) -> Outcome {
 }
 
 /// Width and height of `item` as drawn in the window.
+/// The top-left pixel of a picture of `frame`, taken after the next frame
+/// draws it, as desktop-qt's grab of each device frame.
+fn corner_of(world: &mut World, frame: ObjectId, id: &str) -> Outcome<[u8; 4]> {
+    let corner: Rc<RefCell<Option<Option<[u8; 4]>>>> = Rc::default();
+    let into = corner.clone();
+    if let Err(why) = ljos::item::grab(world.engine(), frame, move |_, picture| {
+        *into.borrow_mut() = Some(picture.map(|p| p.pixel(0, 0)));
+    }) {
+        fail!("the {id} frame cannot give a picture: {why}");
+    }
+    wait_for_engine(
+        world,
+        |_| corner.borrow().is_some(),
+        |_| format!("the {id} frame's picture"),
+    )?;
+    let Some(Some(pixel)) = *corner.borrow() else {
+        fail!("the {id} frame drew no picture");
+    };
+    Ok(pixel)
+}
+
 fn drawn_size(world: &World, brick: Brick, item: ObjectId) -> Outcome<(f64, f64)> {
     let (x0, y0) = brick.at(world, item, 0.0, 0.0)?;
     let (x1, y1) = brick.at(world, item, 1.0, 1.0)?;
@@ -587,9 +608,7 @@ fn register_devices(steps: &mut Steps) {
                 },
                 |w| format!("every frame to load {url}; {}", state(w, brick)),
             )?;
-            // TODO(hal-c2#1565): desktop-qt also grabs each frame to see the
-            // page drawn; the runner cannot grab a device frame, so the painted
-            // list stands in.
+            // desktop-qt grabs each frame to see the page drawn.
             wait_for_engine(
                 world,
                 |w| {
@@ -598,7 +617,12 @@ fn register_devices(steps: &mut Steps) {
                         .all(|id| devices_frame(w, id).is_some_and(|f| w.painted(f) > 0))
                 },
                 |w| format!("every frame to draw the page; {}", state(w, brick)),
-            )
+            )?;
+            for id in DEVICES {
+                let frame = devices_frame(world, id).expect("waited for above");
+                corner_of(world, frame, id)?;
+            }
+            Ok(())
         },
     );
     steps.step(
@@ -658,11 +682,21 @@ fn register_devices(steps: &mut Steps) {
         );
         Ok(())
     });
-    // TODO(hal-c2#1565): desktop-qt grabs each device frame's view; the
-    // runner can only ask the brick for the tab's own page.
     steps.step(
         "every device in the view draws the page on white",
-        |_, _, _| fail!("a device frame's picture cannot be taken yet"),
+        |world, _, _| {
+            for id in DEVICES {
+                let Some(frame) = devices_frame(world, id) else {
+                    fail!("no {id} frame");
+                };
+                let pixel = corner_of(world, frame, id)?;
+                expect!(
+                    pixel == [255, 255, 255, 255],
+                    "the {id} page is drawn on {pixel:?}"
+                );
+            }
+            Ok(())
+        },
     );
     steps.step("the user navigates to another page", |world, _, _| {
         dev_server(world)?.page("/other", "Other", "");
