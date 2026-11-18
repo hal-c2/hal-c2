@@ -43,7 +43,7 @@ pub use self::core::{
     DEFAULT_SETUP_TIMEOUT, DEFAULT_STEADY_AFTER,
 };
 pub use client::{AuthorizedRequest, ListenerId, McClient, SubId, WeakMcClient};
-pub use driver::{McHandle, spawn};
+pub use driver::{EVENTS, McHandle, spawn};
 pub use http::fetch;
 
 /// The protocol this client speaks (apps/server-ex `HalC2.Web.Protocol`).

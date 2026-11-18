@@ -1367,10 +1367,17 @@ impl SystemBackend {
         let wake = wake();
         std::thread::spawn(move || {
             let send = |event: Event| {
-                arrivals
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(event);
+                let mut arrivals = arrivals.lock().unwrap_or_else(|e| e.into_inner());
+                // DECISION: a download's progress the UI has not taken yet is
+                // replaced by the newer one, so what waits stays a handful
+                // of steps however many chunks arrive while the UI is busy.
+                match arrivals.last_mut() {
+                    Some(last @ Event::Progress(_)) if matches!(event, Event::Progress(_)) => {
+                        *last = event;
+                    }
+                    _ => arrivals.push(event),
+                }
+                drop(arrivals);
                 if let Some(wake) = &wake {
                     wake();
                 }

@@ -248,6 +248,9 @@ pub(crate) struct Core {
     pong_by: Option<Instant>,
     setup_by: Option<Instant>,
     probe_by: Option<Instant>,
+    /// Whether frames the socket read wait to be handled, as the driver
+    /// last said.
+    waiting: bool,
     held_at: Option<Instant>,
     last_status: Status,
     effects: Vec<Effect>,
@@ -292,6 +295,7 @@ impl Core {
             pong_by: None,
             setup_by: None,
             probe_by: None,
+            waiting: false,
             held_at: None,
             last_status: Status::default(),
             effects: Vec::new(),
@@ -312,6 +316,16 @@ impl Core {
         .into_iter()
         .flatten()
         .min()
+    }
+
+    /// Whether frames the current socket read off the wire wait to be
+    /// handled, by the connection or behind an owner that is behind. A
+    /// deadline that waits on the MC's answer (a pong, the hello, wake's
+    /// check) passes only once nothing does: any of them may be the answer,
+    /// so the deadline gets its timeout again. Frames already handled never
+    /// put it off; they were not the answer.
+    pub fn heard(&mut self, waiting: bool) {
+        self.waiting = waiting;
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -617,20 +631,18 @@ impl Core {
             self.retry_at = None;
             self.connect();
         }
-        if self.pong_by.is_some_and(|at| at <= now) {
-            self.pong_by = None;
+        let waiting = self.waiting;
+        if silent(&mut self.pong_by, self.pong_timeout, now, waiting) {
             self.emit(McEvent::Checked(false));
             self.drop_socket("timeout");
         }
         // A socket that opens but is never said hello to is as dead as one that drops.
-        if self.setup_by.is_some_and(|at| at <= now) {
-            self.setup_by = None;
+        if silent(&mut self.setup_by, self.setup_timeout, now, waiting) {
             self.drop_socket("timeout");
         }
         // A foreground check that goes unanswered replaces the connection at
         // once: one that died while the app was away is the likely case.
-        if self.probe_by.is_some_and(|at| at <= now) {
-            self.probe_by = None;
+        if silent(&mut self.probe_by, self.probe_timeout, now, waiting) {
             self.pong_by = None;
             self.emit(McEvent::Checked(false));
             self.drop_socket("check");
@@ -992,4 +1004,156 @@ fn same_status(a: &Status, b: &Status) -> bool {
         && Arc::ptr_eq(&a.descriptor, &b.descriptor)
         && a.mc == b.mc
         && a.environment == b.environment
+}
+
+/// Whether deadline `by` passed with the MC silent. Frames that wait to be
+/// handled are not silence: the deadline gets `timeout` again from `now`.
+fn silent(by: &mut Option<Instant>, timeout: Duration, now: Instant, waiting: bool) -> bool {
+    if !by.is_some_and(|at| at <= now) {
+        return false;
+    }
+    if waiting {
+        *by = Some(now + timeout);
+        return false;
+    }
+    *by = None;
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok(body: Value) -> HttpAnswer {
+        HttpAnswer {
+            status: Some(200),
+            body: body.to_string().into_bytes(),
+            error: None,
+        }
+    }
+
+    /// A core with a socket open that has not said hello yet, and its attempt.
+    fn opened(core: &mut Core, now: Instant) -> u64 {
+        let origin = Url::parse("https://mc.example").unwrap();
+        let open = Command::Open {
+            origin,
+            token: "token".into(),
+            environment: String::new(),
+        };
+        let mut effects = core.handle(Input::Command(open), now);
+        let mut socket = None;
+        while socket.is_none() {
+            let mut next = Vec::new();
+            for effect in effects {
+                match effect {
+                    Effect::GetDescriptor { attempt, .. } => {
+                        let answer = ok(json!({"orchestrationProtocolVersion": PROTOCOL}));
+                        next.extend(core.handle(Input::Descriptor { attempt, answer }, now));
+                    }
+                    Effect::PostTicket { attempt, .. } => {
+                        let answer = ok(json!({"ticket": "t"}));
+                        next.extend(core.handle(Input::Ticket { attempt, answer }, now));
+                    }
+                    Effect::OpenSocket { attempt, .. } => socket = Some(attempt),
+                    _ => {}
+                }
+            }
+            assert!(
+                socket.is_some() || !next.is_empty(),
+                "the core stopped before a socket"
+            );
+            effects = next;
+        }
+        socket.unwrap()
+    }
+
+    /// A core whose socket said hello, and the attempt it is on.
+    fn ready(core: &mut Core, now: Instant) -> u64 {
+        let attempt = opened(core, now);
+        let text =
+            json!({"t": "hello", "protocol": PROTOCOL, "mc": "mc@host", "environment": "env"})
+                .to_string();
+        core.handle(Input::SocketText { attempt, text }, now);
+        assert_eq!(core.status().phase, Phase::Ready);
+        attempt
+    }
+
+    fn closed(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::CloseSocket { .. }))
+    }
+
+    #[test]
+    fn a_pong_still_waiting_to_be_handled_does_not_expire() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        let attempt = ready(&mut core, start);
+        let pinged = start + DEFAULT_PING_INTERVAL;
+        let effects = core.handle(Input::Tick, pinged);
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::Send { .. })),
+            "no ping"
+        );
+
+        // The owner is behind: frames the socket read wait, the pong among them.
+        core.heard(true);
+        let due = pinged + DEFAULT_PONG_TIMEOUT;
+        assert!(
+            !closed(&core.handle(Input::Tick, due)),
+            "dropped while the MC's frames waited to be handled"
+        );
+
+        // The pong arrives once the owner drains.
+        core.heard(false);
+        let pong = json!({"t": "pong"}).to_string();
+        core.handle(
+            Input::SocketText {
+                attempt,
+                text: pong,
+            },
+            due,
+        );
+        assert!(!closed(
+            &core.handle(Input::Tick, due + DEFAULT_PONG_TIMEOUT)
+        ));
+        assert_eq!(core.status().phase, Phase::Ready);
+    }
+
+    #[test]
+    fn a_silent_mc_expires_the_pong_once_nothing_waits_on_the_owner() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        ready(&mut core, start);
+        let pinged = start + DEFAULT_PING_INTERVAL;
+        core.handle(Input::Tick, pinged);
+        core.heard(true);
+        let due = pinged + DEFAULT_PONG_TIMEOUT;
+        assert!(!closed(&core.handle(Input::Tick, due)));
+
+        // Everything read was handled, and no pong was in it: the MC went quiet.
+        core.heard(false);
+        assert!(
+            closed(&core.handle(Input::Tick, due + DEFAULT_PONG_TIMEOUT)),
+            "a silent MC kept its socket"
+        );
+    }
+
+    #[test]
+    fn frames_handled_that_are_not_hello_do_not_put_off_the_hello() {
+        let start = Instant::now();
+        let mut core = Core::new(start);
+        let attempt = opened(&mut core, start);
+        // The socket talks, but never says hello.
+        let mut now = start;
+        while now < start + DEFAULT_SETUP_TIMEOUT {
+            now += Duration::from_secs(1);
+            let text = json!({"t": "pong"}).to_string();
+            core.handle(Input::SocketText { attempt, text }, now);
+        }
+        assert!(
+            closed(&core.handle(Input::Tick, start + DEFAULT_SETUP_TIMEOUT)),
+            "a socket that never said hello kept the connection waiting"
+        );
+    }
 }

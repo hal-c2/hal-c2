@@ -50,6 +50,7 @@ pub mod single_instance;
 pub mod snap_shot;
 pub mod storage;
 pub mod store;
+pub mod streams;
 pub mod terminal;
 pub mod theme;
 pub mod this_machine;

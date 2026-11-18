@@ -116,6 +116,7 @@ pub mod settings_scoped_rows;
 pub mod settings_search;
 pub mod settings_text_generation;
 pub mod shortcut;
+pub mod side_streams;
 pub mod sidebar;
 pub mod snap_shot;
 pub mod snap_shot_bus;
@@ -292,6 +293,7 @@ pub fn register(steps: &mut Steps) {
     settings_search::register(steps);
     settings_text_generation::register(steps);
     shortcut::register(steps);
+    side_streams::register(steps);
     sidebar::register(steps);
     snap_shot::register(steps);
     #[cfg(all(unix, not(target_os = "macos")))]

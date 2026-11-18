@@ -18,16 +18,15 @@
 //! its file after a question, and `plugins.report {plugins, problems}` is the
 //! registry's.
 //!
-//! The download runs on a thread of its own: [`set_wake`] says how that
-//! thread reaches the Engine thread, which then calls [`deliver`]. The same
-//! hand-over carries the directory watcher's news. A test gives its own
-//! download with [`set_fetcher`].
+//! The download runs on a thread of its own and hands its answer to the
+//! Engine thread on the "plugin-downloads" side stream; the directory
+//! watcher's news is the "plugins" one ([`wire`] makes both). A test gives
+//! its own download with [`set_fetcher`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use ljos::prelude::Engine;
@@ -40,6 +39,7 @@ use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::menus::Menus;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::json::Json;
+use crate::streams::{Feed, Tick, Wire};
 
 const KEY: &str = "plugins";
 const RECORDS: &str = "plugins.json";
@@ -56,41 +56,23 @@ pub type Download = Box<dyn FnOnce(&Engine, Result<Vec<u8>, String>)>;
 /// the call.
 pub type Fetcher = Rc<dyn Fn(&Engine, &str, Download)>;
 
-type Wake = Arc<dyn Fn() + Send + Sync>;
+/// How many finished downloads wait for the UI at most; each is a file of
+/// at most [`MAX_PLUGIN_BYTES`], and one the user asked for.
+pub const DOWNLOADS_CAPACITY: usize = 16;
 
-/// What other threads leave for the Engine thread.
-enum Event {
-    /// The plugin directory changed.
-    Changed,
-    Downloaded(u64, Result<Vec<u8>, String>),
-}
-
-#[derive(Default)]
-struct Shared {
-    events: Mutex<Vec<Event>>,
-    wake: Mutex<Option<Wake>>,
-}
-
-impl Shared {
-    fn push(&self, event: Event) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(event);
-        let wake = self
-            .wake
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        if let Some(wake) = wake {
-            wake();
-        }
-    }
-}
+/// A finished download: its id, and the file's bytes or why not.
+type Downloaded = (u64, Result<Vec<u8>, String>);
 
 #[derive(Default)]
 struct Hub {
-    shared: Arc<Shared>,
+    /// DECISION: the directory's news is coalesced: whatever changed, the
+    /// controller reads the whole directory again, so one queued notice
+    /// stands for any number. Its sender is the OS watcher's thread, which
+    /// must never wait (`notify` answers the UI's `watch` on it).
+    changed: RefCell<Option<Tick>>,
+    /// DECISION: a download's answer waits for room ([`Feed`]): the user
+    /// asked for each, so none is dropped, and its thread may wait.
+    downloaded: RefCell<Option<Feed<Downloaded>>>,
     downloads: RefCell<HashMap<u64, Download>>,
     next: Cell<u64>,
     fetcher: RefCell<Option<Fetcher>>,
@@ -109,49 +91,35 @@ pub fn install(engine: &Engine, config_dir: Option<PathBuf>) {
     *Hub::of(engine).config_dir.borrow_mut() = config_dir;
 }
 
-/// Says what to run, on any thread, when [`deliver`] has something to do:
-/// post a message to the Engine thread, which calls [`deliver`].
-pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
-    let wake: Wake = Arc::new(wake);
-    *Hub::of(engine)
-        .shared
-        .wake
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(wake);
+/// Makes the "plugins" and "plugin-downloads" streams the controller's
+/// watcher and downloads use from now on.
+pub fn wire(engine: &Engine, wire: &mut impl Wire) {
+    let hub = Hub::of(engine);
+    let changed = Tick::new(wire, "plugins", |engine| {
+        controller::with::<Plugin, _>(engine, |plugin, engine| plugin.scan(engine));
+    });
+    let downloaded = Feed::new(
+        wire,
+        "plugin-downloads",
+        DOWNLOADS_CAPACITY,
+        |engine, run| {
+            let hub = Hub::of(engine);
+            for (id, result) in run {
+                let done = hub.downloads.borrow_mut().remove(&id);
+                if let Some(done) = done {
+                    done(engine, result);
+                }
+            }
+        },
+    );
+    *hub.changed.borrow_mut() = Some(changed);
+    *hub.downloaded.borrow_mut() = Some(downloaded);
 }
 
 /// Replaces the download (which fetches on a thread of its own); a test's
 /// answers when it says.
 pub fn set_fetcher(engine: &Engine, fetcher: Fetcher) {
     *Hub::of(engine).fetcher.borrow_mut() = Some(fetcher);
-}
-
-/// Hands the controller what the threads left: the finished downloads, and
-/// that its directory changed. On the Engine thread.
-pub fn deliver(engine: &Engine) {
-    let hub = Hub::of(engine);
-    let events = std::mem::take(
-        &mut *hub
-            .shared
-            .events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner),
-    );
-    let mut changed = false;
-    for event in events {
-        match event {
-            Event::Changed => changed = true,
-            Event::Downloaded(id, result) => {
-                let done = hub.downloads.borrow_mut().remove(&id);
-                if let Some(done) = done {
-                    done(engine, result);
-                }
-            }
-        }
-    }
-    if changed {
-        controller::with::<Plugin, _>(engine, |plugin, engine| plugin.scan(engine));
-    }
 }
 
 fn fetch(engine: &Engine, url: &str, done: Download) {
@@ -161,21 +129,35 @@ fn fetch(engine: &Engine, url: &str, done: Download) {
         fetcher(engine, url, done);
         return;
     }
+    let Some(downloaded) = hub.downloaded.borrow().clone() else {
+        // Not wired (a host without the streams): said on the next turn,
+        // never inside the call.
+        let _ = engine.call_at(engine.now(), move |engine| {
+            done(engine, Err("the shell has no stream for downloads".into()));
+        });
+        return;
+    };
     let id = hub.next.get() + 1;
     hub.next.set(id);
     hub.downloads.borrow_mut().insert(id, done);
-    let (shared, url) = (hub.shared.clone(), url.to_owned());
+    let url = url.to_owned();
     let spawned = std::thread::Builder::new()
         .name("plugin-download".into())
         .spawn({
-            let shared = shared.clone();
+            let downloaded = downloaded.clone();
             move || {
                 let result = hal_c2_mc::fetch(&url, TIMEOUT, MAX_PLUGIN_BYTES);
-                shared.push(Event::Downloaded(id, result));
+                // Refused only once the UI is gone, and nobody waits then.
+                let _ = downloaded.send((id, result));
             }
         });
     if let Err(error) = spawned {
-        shared.push(Event::Downloaded(id, Err(error.to_string())));
+        let _ = engine.call_at(engine.now(), move |engine| {
+            let done = Hub::of(engine).downloads.borrow_mut().remove(&id);
+            if let Some(done) = done {
+                done(engine, Err(error.to_string()));
+            }
+        });
     }
 }
 
@@ -289,14 +271,15 @@ impl Plugin {
     fn start(&mut self, engine: &Engine) {
         if let Some(dir) = self.plugin_dir.clone() {
             let _ = std::fs::create_dir_all(&dir);
-            let shared = Hub::of(engine).shared.clone();
-            self.watcher =
+            let changed = Hub::of(engine).changed.borrow().clone();
+            self.watcher = changed.and_then(|changed| {
                 notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                     if event.is_ok_and(|event| !event.kind.is_access()) {
-                        shared.push(Event::Changed);
+                        changed.give();
                     }
                 })
-                .ok();
+                .ok()
+            });
             if let Some(watcher) = self.watcher.as_mut() {
                 let _ = watcher.watch(&dir, RecursiveMode::NonRecursive);
             }

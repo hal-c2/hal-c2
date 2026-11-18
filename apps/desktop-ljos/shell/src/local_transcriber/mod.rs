@@ -9,10 +9,21 @@
 //! a recorder it started and left behind; the group is signalled when the
 //! run is cancelled, fails, ends, or the object goes away.
 //!
-//! The helper's pipes are read on threads of their own. What they see queues
-//! here with the transcriber it is for, and the shell hears of it through
-//! the waker ([`set_wake`]): it then calls [`deliver`] on the Engine thread.
-//! A headless host (a test) waits on its own waker instead.
+//! The helper's pipes are read on threads of their own. What they see goes
+//! on the "local-transcriber" side stream ([`wire`]) with the transcriber it
+//! is for, and the stream's handler hands it over on the Engine thread.
+//!
+//! DECISION: that stream waits ([`Feed`]): every chunk of the helper's
+//! output matters, in order. A reader whose stream is full waits, so the
+//! helper's pipe fills and the helper waits in its write; nothing is dropped
+//! and at most [`CAPACITY`] chunks wait for the UI.
+//!
+//! DECISION: the helper's end comes after everything it wrote, however long
+//! the UI takes, and it never waits on a guess of time. Once the helper and
+//! its group are gone, everything the helper wrote is in its pipes. The
+//! thread that waits for it then closes a pipe of its own, and each reader
+//! takes what is left in its pipe and ends. That holds even when something
+//! outside the group still holds the pipe open.
 //!
 //! Where Qt reports `started` later, once the process exists, this reports
 //! it as soon as `start()` has spawned the helper.
@@ -23,7 +34,9 @@ mod prop;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{PipeReader, Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
 use std::rc::{Rc, Weak};
@@ -36,6 +49,12 @@ use ljos::prelude::{
 };
 
 pub use machine::{Effect, KILL_AFTER_MS, Machine};
+
+use crate::streams::{Feed, Wire};
+
+/// How many chunks of the helpers' output wait for the UI at most: a chunk
+/// is one read of up to 64 KiB, so at most 4 MiB waits.
+pub const CAPACITY: usize = 64;
 
 /// Adds the type to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
@@ -255,7 +274,13 @@ fn spawn(engine: &Engine, state: &Rc<RefCell<Runtime>>) {
         rt.run += 1;
         (rt.id, rt.run, rt.program.clone(), rt.arguments.clone())
     };
-    let shared = Hub::of(engine).shared.clone();
+    let Some(shared) = Hub::of(engine).shared.borrow().clone() else {
+        state
+            .borrow_mut()
+            .machine
+            .failed_to_start("the shell has no stream for the helper's output");
+        return;
+    };
     match Process::spawn(&program, &arguments, shared, id, run) {
         Ok(process) => {
             let pid = i64::from(process.pid);
@@ -290,12 +315,9 @@ fn show(engine: &Engine, obj: ObjectId, state: &Rc<RefCell<Runtime>>) {
     }
 }
 
-/// What the helper's threads leave for the Engine thread.
-#[derive(Default)]
-struct Shared {
-    events: Mutex<Vec<(u64, u64, Event)>>,
-    wake: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
-}
+/// What the helper's threads hand the Engine thread: a transcriber's id,
+/// its run, and what happened.
+type Shared = Feed<(u64, u64, Event)>;
 
 enum Event {
     Stdout(Vec<u8>),
@@ -303,30 +325,13 @@ enum Event {
     Finished { code: i32, normal: bool },
 }
 
-impl Shared {
-    fn push(&self, id: u64, run: u64, event: Event) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((id, run, event));
-        let wake = self
-            .wake
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        if let Some(wake) = wake {
-            wake();
-        }
-    }
-}
-
 /// A transcriber's object and what it keeps, by its id.
 type Entry = (ObjectId, Weak<RefCell<Runtime>>);
 
-/// The engine's transcribers, and the queue their helpers share.
+/// The engine's transcribers, and the stream their helpers share.
 #[derive(Default)]
 struct Hub {
-    shared: Arc<Shared>,
+    shared: RefCell<Option<Shared>>,
     transcribers: RefCell<HashMap<u64, Entry>>,
     next: Cell<u64>,
 }
@@ -337,27 +342,19 @@ impl Hub {
     }
 }
 
-/// Says what to run, on any thread, when [`deliver`] has something to do:
-/// post a message to the Engine thread, which calls [`deliver`].
-pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
-    *Hub::of(engine)
-        .shared
-        .wake
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(wake));
+/// Makes the "local-transcriber" stream the helpers started from now on
+/// feed.
+pub fn wire(engine: &Engine, wire: &mut impl Wire) {
+    let feed = Feed::new(wire, "local-transcriber", CAPACITY, |engine, run| {
+        deliver(engine, run)
+    });
+    *Hub::of(engine).shared.borrow_mut() = Some(feed);
 }
 
 /// Hands each transcriber what its helper wrote and how it ended. On the
 /// Engine thread.
-pub fn deliver(engine: &Engine) {
+fn deliver(engine: &Engine, events: impl Iterator<Item = (u64, u64, Event)>) {
     let hub = Hub::of(engine);
-    let events = std::mem::take(
-        &mut *hub
-            .shared
-            .events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner),
-    );
     for (id, run, event) in events {
         let found = hub.transcribers.borrow().get(&id).cloned();
         let Some((obj, state)) = found else { continue };
@@ -397,7 +394,7 @@ impl Process {
     fn spawn(
         program: &str,
         arguments: &[String],
-        shared: Arc<Shared>,
+        shared: Shared,
         id: u64,
         run: u64,
     ) -> std::io::Result<Process> {
@@ -419,17 +416,27 @@ impl Process {
                 });
             }
         }
+        // Closed once the helper and its group are gone ([`Reader::read`]).
+        // Made before the helper, so that a failure leaves no helper behind;
+        // std's pipes are close-on-exec, so the helper does not hold it.
+        let (gone, going) = std::io::pipe()?;
         let mut child = command.spawn()?;
         let pid = child.id();
         let stdin = child.stdin.take();
         let (done, drained) = mpsc::channel();
+        let reader = Reader {
+            shared: shared.clone(),
+            id,
+            run,
+            done,
+            gone: Arc::new(gone),
+        };
         if let Some(out) = child.stdout.take() {
-            read_pipe(out, shared.clone(), id, run, Event::Stdout, done.clone());
+            reader.clone().read(out, Event::Stdout);
         }
         if let Some(err) = child.stderr.take() {
-            read_pipe(err, shared.clone(), id, run, Event::Stderr, done.clone());
+            reader.read(err, Event::Stderr);
         }
-        drop(done);
         let exited = Arc::new((Mutex::new(false), Condvar::new()));
         let flag = exited.clone();
         std::thread::spawn(move || {
@@ -437,22 +444,21 @@ impl Process {
             // Whatever the helper left behind goes with it, as the end of a
             // QProcess does; its pipes then close.
             signal_group(i64::from(pid), true);
-            // The readers end with the pipes. One that does not (something
-            // out of the group holds it) is not waited for.
-            while drained.recv_timeout(Duration::from_secs(1)).is_ok() {}
+            // All the helper wrote is in its pipes now. Its readers take it
+            // and end, so the end comes after all of it.
+            drop(going);
+            while drained.recv().is_ok() {}
             // A helper a signal ended has no code: not a normal exit.
             let code = status.and_then(|s| s.code());
             let (lock, cv) = &*flag;
             *lock.lock().unwrap_or_else(PoisonError::into_inner) = true;
             cv.notify_all();
-            shared.push(
-                id,
-                run,
-                Event::Finished {
-                    code: code.unwrap_or(0),
-                    normal: code.is_some(),
-                },
-            );
+            let finished = Event::Finished {
+                code: code.unwrap_or(0),
+                normal: code.is_some(),
+            };
+            // Refused only once the UI is gone, and nobody hears it then.
+            let _ = shared.send((id, run, finished));
         });
         Ok(Process { pid, stdin, exited })
     }
@@ -500,25 +506,109 @@ impl Drop for Process {
     }
 }
 
-/// Reads `pipe` to its end, handing each chunk over as `event` of the run.
-fn read_pipe(
-    mut pipe: impl Read + Send + 'static,
-    shared: Arc<Shared>,
+/// What a thread reading one of the helper's pipes hands its chunks to.
+#[derive(Clone)]
+struct Reader {
+    shared: Shared,
     id: u64,
     run: u64,
-    event: fn(Vec<u8>) -> Event,
+    /// Dropped when the reader ends.
     done: mpsc::Sender<()>,
-) {
-    std::thread::spawn(move || {
-        let mut buffer = vec![0; 64 * 1024];
-        while let Ok(n) = pipe.read(&mut buffer) {
-            if n == 0 {
-                break;
+    /// Ends (reads as closed) once the helper and its group are gone.
+    gone: Arc<PipeReader>,
+}
+
+impl Reader {
+    /// Reads `pipe`, handing each chunk over as `event` of the run. It
+    /// stops at the pipe's end, or once the helper is gone and the pipe
+    /// holds nothing more: something outside the helper's group may hold
+    /// the pipe open, and what that writes later is not the helper's. The
+    /// UI gone, it stops reading too.
+    fn read(self, mut pipe: impl Pipe, event: fn(Vec<u8>) -> Event) {
+        std::thread::spawn(move || {
+            let mut buffer = vec![0; 64 * 1024];
+            loop {
+                // The wait looked at the pipe before it saw the helper gone,
+                // so the pipe is looked at again: the helper's last output
+                // may have come in between.
+                if !output_or_end(&pipe, &self.gone) && !has_output(&pipe) {
+                    break;
+                }
+                let n = match pipe.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                let chunk = (self.id, self.run, event(buffer[..n].to_vec()));
+                if self.shared.send(chunk).is_err() {
+                    break;
+                }
             }
-            shared.push(id, run, event(buffer[..n].to_vec()));
+            drop(self.done);
+        });
+    }
+}
+
+/// One of the helper's pipes, which its reader waits on before reading it.
+#[cfg(unix)]
+trait Pipe: Read + AsFd + Send + 'static {}
+#[cfg(unix)]
+impl<T: Read + AsFd + Send + 'static> Pipe for T {}
+
+/// Waits until `pipe` has output or has ended, so that a read does not
+/// block (true), or until `gone` closes (false). It reads neither.
+#[cfg(unix)]
+fn output_or_end(pipe: &impl AsFd, gone: &PipeReader) -> bool {
+    let mut fds = [poll_in(pipe), poll_in(gone)];
+    poll(&mut fds, -1);
+    // A poll that failed says nothing: the read then says what is wrong.
+    fds[0].revents != 0 || fds[1].revents == 0
+}
+
+/// Whether a read of `pipe` would not block now: it has output, or has
+/// ended.
+#[cfg(unix)]
+fn has_output(pipe: &impl AsFd) -> bool {
+    let mut fds = [poll_in(pipe)];
+    poll(&mut fds, 0);
+    fds[0].revents != 0
+}
+
+#[cfg(unix)]
+fn poll_in(fd: &impl AsFd) -> libc::pollfd {
+    libc::pollfd {
+        fd: fd.as_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    }
+}
+
+/// poll(2), again when a signal interrupts it.
+#[cfg(unix)]
+fn poll(fds: &mut [libc::pollfd], timeout: libc::c_int) {
+    loop {
+        // SAFETY: poll reads and writes `fds`, which outlive the call.
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
+        if n >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return;
         }
-        let _ = done.send(());
-    });
+    }
+}
+
+// Not Windows: its pipes cannot be polled, so a reader there reads to the
+// pipe's end. The desktop-ljos shell is built for Linux and macOS.
+#[cfg(not(unix))]
+trait Pipe: Read + Send + 'static {}
+#[cfg(not(unix))]
+impl<T: Read + Send + 'static> Pipe for T {}
+
+#[cfg(not(unix))]
+fn output_or_end<T>(_: &T, _: &PipeReader) -> bool {
+    true
+}
+
+#[cfg(not(unix))]
+fn has_output<T>(_: &T) -> bool {
+    true
 }
 
 #[cfg(unix)]

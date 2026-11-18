@@ -12,6 +12,9 @@ runner::collectScenarios / parseFeature
 scenario the ledger claims but no glob selects, so the claim and the
 proof cannot drift apart. Scenarios a QML test proves instead still get
 the backlog tag: the ledger claims only what tst_Features runs (#213).
+The desktop-ljos shell's runner (apps/desktop-ljos/shell/tests/features)
+runs those globs too, and every file whose leading comment block names
+it: behaviour only that shell has, such as its bounded side streams.
 
 Exit 1 while such a scenario remains; --fix writes the missing
 '@backlog-<surface>' tags (at the widest true scope: the scenario, its
@@ -32,6 +35,11 @@ RUNNERS = {
     "mobile": ROOT / "apps/mobile-qt/tests/tst_Features.cpp",
 }
 SURFACES = list(RUNNERS)
+# A feature file whose leading comment block names one of these is run, all
+# of it, by that surface's other runner as well as by the globs above.
+HEADER_RUNNERS = {
+    "desktop": "apps/desktop-ljos/shell/tests/features",
+}
 
 
 def qt_wildcard(glob: str) -> re.Pattern:
@@ -193,6 +201,18 @@ def already_backlogged(row: Row, surface: str) -> bool:
     return "@backlog" in tags or f"@backlog-{surface}" in tags or "@dropped" in tags
 
 
+def header_names(path: Path, runner: str) -> bool:
+    """Whether the file's leading '#' lines name `runner`, as the
+    desktop-ljos harness's default_globs reads them."""
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.startswith("#"):
+                return False
+            if runner in line:
+                return True
+    return False
+
+
 def analyse():
     """Returns (retag, ambiguous, unmatched): retag maps
     (file, 1-based target line) -> {surface: [rows it covers]};
@@ -221,6 +241,11 @@ def analyse():
                         glob_hit[idx] = True
                         selected.add(id(row))
         unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
+        runner = HEADER_RUNNERS.get(surface)
+        if runner:
+            for rel, rows in all_rows.items():
+                if header_names(FEATURES / rel, runner):
+                    selected.update(id(row) for row in rows)
 
         def tag_at(rel, line, row):
             retag.setdefault((rel, line), {}).setdefault(surface, []).append(row)

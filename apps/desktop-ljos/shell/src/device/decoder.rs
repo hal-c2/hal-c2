@@ -9,9 +9,10 @@
 //! for one.
 //!
 //! [`Decoder`] runs on a thread of its own and calls its [`Notify`] there
-//! when it has something to say; its owner then takes [`Decode::take_events`]
-//! on the UI thread: [`Decoded::Frame`] once per new picture nobody has taken
-//! yet ([`Decode::take_frame`] takes the newest). [`Decode`] is what the
+//! for every new picture and every failure; its owner then takes
+//! [`Decode::take_events`] on the UI thread: [`Decoded::Frame`] once per new
+//! picture nobody has taken yet ([`Decode::take_frame`] takes the newest), a
+//! failure once however often it happened since. [`Decode`] is what the
 //! stream sees of it, so tests can give it another.
 
 use std::collections::VecDeque;
@@ -387,10 +388,16 @@ fn work(shared: &Shared) {
                     state.events.push(Decoded::Frame);
                 }
             }
-            match unusable {
-                Some(why) => state.events.push(Decoded::Unsupported(why)),
-                None if failed => state.events.push(Decoded::Broken),
-                None => {}
+            // Once each while the UI has not taken them: a decoder that
+            // keeps failing while the UI is busy says so once, so what
+            // waits for the UI stays a picture and a word or two.
+            let news = match unusable {
+                Some(why) => Some(Decoded::Unsupported(why)),
+                None if failed => Some(Decoded::Broken),
+                None => None,
+            };
+            if let Some(news) = news.filter(|n| !state.events.contains(n)) {
+                state.events.push(news);
             }
             !state.events.is_empty()
         };
