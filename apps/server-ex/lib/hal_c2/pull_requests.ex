@@ -1928,7 +1928,7 @@ defmodule HalC2.PullRequests do
 
     project =
       cond do
-        own && same?(own.repository, repository) && host in [nil, own.host] ->
+        own && same?(own.repository, repository) && (host == nil or on_host?(own, host)) ->
           {:ok, own}
 
         host == nil and own == nil ->
@@ -1941,7 +1941,7 @@ defmodule HalC2.PullRequests do
           )
 
         true ->
-          on_host = Enum.filter(all, &(&1.host == host))
+          on_host = Enum.filter(all, &on_host?(&1, host))
 
           case Enum.find(on_host, &same?(&1.repository, repository)) || List.first(on_host) do
             nil -> unavailable("provider-unsupported", nil)
@@ -1969,7 +1969,7 @@ defmodule HalC2.PullRequests do
   defp verified(project, %{"expectedAccountId" => expected} = ref) when is_binary(expected) do
     host = ref["host"] && String.downcase(ref["host"])
 
-    case host == project.host && account(project) do
+    case (is_binary(host) and on_host?(project, host)) && account(project) do
       {:ok, ^expected} ->
         {:ok, project}
 
@@ -1982,6 +1982,32 @@ defmodule HalC2.PullRequests do
   end
 
   defp verified(project, _ref), do: {:ok, project}
+
+  # Whether `host`, as a reference names it, is the server of `project`. A Forgejo
+  # reference keeps its server's web port, which a project's host does not: with a
+  # port, the host must be that of an HTTP(S) remote's own authority, so two servers
+  # on one hostname stay apart. An SSH remote does not say the web port, so there the
+  # hostname decides, as `forgejo_route/2` reads summaries.
+  defp on_host?(project, host) do
+    case String.split(host, ":", parts: 2) do
+      [hostname, _port] ->
+        hostname == project.host and web_authority(project) in [nil, host]
+
+      _ ->
+        host == project.host
+    end
+  end
+
+  defp web_authority(project) do
+    with url when is_binary(url) <- Map.get(project, :remote_url),
+         {:ok, %URI{scheme: scheme, host: host, port: port}}
+         when scheme in ~w(http https) and is_binary(host) <- URI.new(url) do
+      host = String.downcase(host)
+      if port && port != URI.default_port(scheme), do: "#{host}:#{port}", else: host
+    else
+      _ -> nil
+    end
+  end
 
   defp account(%{kind: "forgejo"} = project), do: Forgejo.signed_in(ctx(project, nil))
 

@@ -166,6 +166,54 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
     assert %{^ref => %{"state" => "open"}} = HalC2.PullRequests.summaries([ref])
   end
 
+  # A link keeps the server's web port; a project's host does not.
+  test "a reference that names a Forgejo server with its port is read through that server's checkout",
+       %{tmp_dir: dir} do
+    File.write!(
+      Path.join(dir, "keys.json"),
+      JSON.encode!(%{
+        "hosts" => %{
+          "forgejo.test" => %{"type" => "Application", "token" => "t"},
+          "forgejo.test:8443" => %{"type" => "Application", "token" => "p"}
+        }
+      })
+    )
+
+    root = Path.join(dir, "on-port")
+    File.mkdir_p!(root)
+    {_, 0} = System.cmd("git", ~w(init -q -b main), cd: root)
+
+    {_, 0} =
+      System.cmd("git", ~w(remote add origin https://forgejo.test:8443/acme/shop.git), cd: root)
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "p2",
+        "title" => "shop on a port",
+        "workspaceRoot" => root
+      })
+
+    await_row("p2", & &1)
+    ref = fn host -> %{"host" => host, "repository" => "acme/shop", "number" => 7} end
+
+    assert {:ok, %{"projectId" => "p2"}} =
+             HalC2.PullRequests.plugin_handle("detail", ref.("forgejo.test:8443"))
+
+    assert {:ok, %{"projectId" => "p2"}} =
+             HalC2.PullRequests.plugin_handle(
+               "detail",
+               Map.put(ref.("forgejo.test:8443"), "projectId", "p2")
+             )
+
+    # Another server on the same hostname is not this one, nor the one on the default port.
+    assert {:error, %{"reason" => "provider-unsupported"}} =
+             HalC2.PullRequests.plugin_handle("detail", ref.("forgejo.test:9000"))
+
+    assert {:ok, %{"projectId" => "p1"}} =
+             HalC2.PullRequests.plugin_handle("detail", ref.("forgejo.test"))
+  end
+
   # Forgejo has no native stacks, GitHub does: one this MC cannot read stays as it was,
   # never recorded as none.
   test "a GitHub pull request a Forgejo project's thread links is not taken for Forgejo's" do
