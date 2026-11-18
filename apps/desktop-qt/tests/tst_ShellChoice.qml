@@ -85,5 +85,16 @@ Item {
             compare(choice.value, ["acme/web"]);
             verify(!api.chosen);
         }
+
+        // Sized by its natural width, as in a Flow, its options stay on one line.
+        function test_naturalWidthKeepsTheOptionsOnOneLine() {
+            const choice = createTemporaryObject(manyComponent, root, { width: 0 });
+            choice.width = Qt.binding(() => choice.naturalWidth);
+            const api = findChild(choice, "repository:acme/api");
+            const web = findChild(choice, "repository:acme/web");
+            tryCompare(web, "y", api.y);
+            verify(web.x > api.x);
+            compare(choice.naturalWidth, api.implicitWidth + web.implicitWidth + choice.spacing);
+        }
     }
 }

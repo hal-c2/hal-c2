@@ -50,9 +50,8 @@ ColumnLayout {
         return builtin.concat(Object.keys(actions).filter(id => !builtin.includes(id)));
     }
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color border: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property var modes: [
         { value: "approval-required", label: qsTr("Ask before acting") },
@@ -209,7 +208,7 @@ ColumnLayout {
 
     objectName: "plannerSettings"
     width: parent ? parent.width : implicitWidth
-    spacing: 22
+    spacing: Theme.space.xl
     Component.onCompleted: {
         load();
         listBoards();
@@ -222,162 +221,39 @@ ColumnLayout {
         onTriggered: settings.readDateFields()
     }
 
-    component Heading: Label {
-        Layout.fillWidth: true
-        Layout.topMargin: 6
-        color: settings.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
-
-    component Hint: Label {
-        Layout.fillWidth: true
-        visible: text.length > 0
-        color: settings.muted
-        wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-    }
-
-    // A setting: its label, what it means, and its control below.
-    component Field: ColumnLayout {
-        id: field
-
-        property string label
-        property string hint
-        default property alias content: controls.data
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Label {
-            text: field.label
-            color: settings.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-
-        Hint {
-            text: field.hint
-        }
-
-        ColumnLayout {
-            id: controls
-
-            Layout.fillWidth: true
-            spacing: 6
-        }
-    }
-
     // A setting that is on or off, its switch beside it.
-    component Toggle: RowLayout {
+    component Toggle: SettingsField {
         id: toggle
 
         property string key
-        property string label
-        property string hint
 
         objectName: "plannerSetting:" + key
-        Layout.fillWidth: true
-        spacing: 12
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
-
-            Label {
-                text: toggle.label
-                color: settings.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.weight: Font.Medium
-            }
-
-            Hint {
-                text: toggle.hint
-            }
-        }
-
-        ShellSwitch {
+        control: ShellSwitch {
             checked: settings.values[toggle.key] === true
-            Accessible.name: toggle.label
+            Accessible.name: toggle.title
             onToggled: settings.set(toggle.key, checked)
         }
     }
 
-    // One of a few values, side by side.
-    component Choice: Flow {
-        id: choice
-
-        property var options: []
-        property var value
-        signal picked(var value)
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: choice.options
-
-            delegate: Rectangle {
-                id: option
-
-                required property var modelData
-                readonly property bool chosen: modelData.value === choice.value
-
-                objectName: "choice:" + modelData.value
-                implicitWidth: optionText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                activeFocusOnTab: true
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        choice.picked(modelData.value);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.RadioButton
-                Accessible.name: optionText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: choice.picked(modelData.value)
-
-                Text {
-                    id: optionText
-
-                    anchors.centerIn: parent
-                    text: option.modelData.label
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: choice.picked(option.modelData.value)
-                }
-            }
-        }
-    }
-
-    component Count: ShellTextField {
+    // A whole number of at least 1. Typed, it is set once the field is left or
+    // Return is pressed; what it cannot be is never set, and `acceptableInput`
+    // says whether the field reads a count at all.
+    component Count: ShellSpinBox {
         id: count
 
         property string key
         // What it counts, to name it to a screen reader and in a refusal.
         property string label
+        readonly property bool acceptableInput: contentItem.acceptableInput
 
         objectName: "plannerSetting:" + key
-        implicitWidth: 100
+        editable: true
+        from: 1
+        to: 999999999
+        value: settings.values[count.key] ?? 1
         Accessible.name: label
-        inputMethodHints: Qt.ImhDigitsOnly
-        validator: IntValidator {
-            bottom: 1
-        }
-        text: String(settings.values[count.key] ?? "")
-        onTextEdited: if (acceptableInput)
-            settings.set(count.key, Number(text))
+        onValueModified: settings.set(count.key, value)
     }
 
     component Line: ShellTextField {
@@ -420,42 +296,30 @@ ColumnLayout {
         }
     }
 
-    component Area: TextArea {
-        Layout.fillWidth: true
-        wrapMode: TextEdit.Wrap
-        color: settings.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
-    }
-
     Label {
         Layout.fillWidth: true
         visible: !settings.loaded || settings.problem.length > 0
         text: settings.problem.length > 0 ? qsTr("The settings could not be read: %1").arg(settings.problem) : qsTr("Loading…")
         color: settings.problem.length > 0 ? settings.errorColor : settings.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     ColumnLayout {
         Layout.fillWidth: true
         visible: settings.loaded
-        spacing: 22
+        spacing: Theme.space.xl
 
-        Heading {
+        SettingsHeading {
             text: qsTr("The agent")
         }
 
-        Field {
-            label: qsTr("Agent and model")
-            hint: qsTr("Runs every action and the work on a task.")
+        SettingsField {
+            title: qsTr("Agent and model")
+            description: qsTr("Runs every action and the work on a task.")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     objectName: "plannerSetting:provider"
@@ -486,33 +350,35 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Access for actions")
-            hint: qsTr("Actions read the plan and the project and report back; they rarely need more.")
+        SettingsField {
+            title: qsTr("Access for actions")
+            description: qsTr("Actions read the plan and the project and report back; they rarely need more.")
 
-            Choice {
+            ShellChoice {
                 objectName: "plannerSetting:runtimeMode"
+                Layout.fillWidth: true
                 options: settings.modes
                 value: settings.values.runtimeMode
                 onPicked: value => settings.set("runtimeMode", value)
             }
         }
 
-        Field {
-            label: qsTr("Access for work on a task")
-            hint: qsTr("Work on a task happens in a worktree of its own.")
+        SettingsField {
+            title: qsTr("Access for work on a task")
+            description: qsTr("Work on a task happens in a worktree of its own.")
 
-            Choice {
+            ShellChoice {
                 objectName: "plannerSetting:workRuntimeMode"
+                Layout.fillWidth: true
                 options: settings.modes
                 value: settings.values.workRuntimeMode
                 onPicked: value => settings.set("workRuntimeMode", value)
             }
         }
 
-        Field {
-            label: qsTr("Default project")
-            hint: qsTr("Where actions on tasks with no project, and actions on the whole plan, run.")
+        SettingsField {
+            title: qsTr("Default project")
+            description: qsTr("Where actions on tasks with no project, and actions on the whole plan, run.")
 
             ShellComboBox {
                 objectName: "plannerSetting:defaultProject"
@@ -528,11 +394,11 @@ ColumnLayout {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 24
+            spacing: Theme.space.xl
 
-            Field {
+            SettingsField {
                 Layout.fillWidth: false
-                label: qsTr("Actions at once")
+                title: qsTr("Actions at once")
 
                 Count {
                     id: concurrencyCount
@@ -543,12 +409,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Show planner threads")
-            hint: qsTr("On the Planner page only, its threads stay out of the thread list.")
+        SettingsField {
+            title: qsTr("Show planner threads")
+            description: qsTr("On the Planner page only, its threads stay out of the thread list.")
 
-            Choice {
+            ShellChoice {
                 objectName: "plannerSetting:display"
+                Layout.fillWidth: true
                 options: [
                     { value: "page", label: qsTr("On the Planner page") },
                     { value: "threads", label: qsTr("As threads") },
@@ -561,22 +428,27 @@ ColumnLayout {
 
         Toggle {
             key: "offerToAllThreads"
-            label: qsTr("Let every thread read the plan")
-            hint: qsTr("Agents in any thread can read the plan. Only planner threads can change it.")
+            title: qsTr("Let every thread read the plan")
+            description: qsTr("Agents in any thread can read the plan. Only planner threads can change it.")
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("Actions")
         }
 
-        Hint {
+        Label {
+            Layout.fillWidth: true
+            visible: text.length > 0
+            color: settings.muted
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.meta.size
             text: qsTr("Each action's label, whether it acts on one task or the whole plan, whether its changes wait for you, and its prompt.")
         }
 
         Repeater {
             model: settings.actionIds
 
-            delegate: Rectangle {
+            delegate: ShellCard {
                 id: card
 
                 required property string modelData
@@ -585,21 +457,20 @@ ColumnLayout {
 
                 objectName: "plannerActionCard:" + modelData
                 Layout.fillWidth: true
-                implicitHeight: cardColumn.implicitHeight + 24
-                radius: Math.min(Theme.radius, 8)
+                implicitHeight: cardColumn.implicitHeight + 2 * Theme.space.md
+                radius: Theme.radiusMd
                 color: Theme.palette.color("surfaceRaised", "#1f1f23")
-                border.color: settings.border
 
                 ColumnLayout {
                     id: cardColumn
 
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 10
+                    anchors.margins: Theme.space.md
+                    spacing: Theme.space.sm
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         ShellTextField {
                             objectName: "plannerActionLabel:" + card.modelData
@@ -621,13 +492,12 @@ ColumnLayout {
 
                     Flow {
                         Layout.fillWidth: true
-                        spacing: 16
+                        spacing: Theme.space.lg
 
                         // Work is always on one task.
-                        Choice {
+                        ShellChoice {
                             objectName: "plannerActionScope:" + card.modelData
-                            width: implicitWidth
-                            Layout.fillWidth: false
+                            width: Math.min(naturalWidth, parent.width)
                             visible: card.action.kind !== "work"
                             options: [
                                 { value: "item", label: qsTr("On a task") },
@@ -637,9 +507,8 @@ ColumnLayout {
                             onPicked: value => settings.setAction(card.modelData, "scope", value)
                         }
 
-                        Choice {
-                            width: implicitWidth
-                            Layout.fillWidth: false
+                        ShellChoice {
+                            width: Math.min(naturalWidth, parent.width)
                             visible: card.action.kind !== "work"
                             options: [
                                 { value: "propose", label: qsTr("Proposes changes") },
@@ -650,8 +519,9 @@ ColumnLayout {
                         }
                     }
 
-                    Area {
+                    ShellTextArea {
                         objectName: "plannerActionPrompt:" + card.modelData
+                        Layout.fillWidth: true
                         Layout.preferredHeight: Math.max(120, implicitHeight)
                         text: card.action.prompt ?? ""
                         Accessible.name: qsTr("Prompt of %1").arg(card.action.label ?? card.modelData)
@@ -661,9 +531,14 @@ ColumnLayout {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.space.sm
 
-                        Hint {
+                        Label {
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            color: settings.muted
+                            wrapMode: Text.Wrap
+                            font.pixelSize: Theme.type.meta.size
                             text: card.builtin && card.action.prompt !== settings.defaultActions[card.modelData]?.prompt ? qsTr("Changed from the plugin's prompt.") : ""
                         }
 
@@ -674,7 +549,7 @@ ColumnLayout {
                         ShellButton {
                             objectName: "plannerActionReset:" + card.modelData
                             visible: card.builtin
-                            subtle: true
+                            iconName: "undo-2"
                             enabled: card.action.prompt !== settings.defaultActions[card.modelData]?.prompt
                             text: qsTr("Reset to the plugin's prompt")
                             onClicked: settings.resetPrompt(card.modelData)
@@ -684,7 +559,12 @@ ColumnLayout {
             }
         }
 
-        Hint {
+        Label {
+            Layout.fillWidth: true
+            visible: text.length > 0
+            color: settings.muted
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.meta.size
             text: settings.variables
         }
 
@@ -694,14 +574,14 @@ ColumnLayout {
             onClicked: settings.addAction()
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("GitHub")
         }
 
-        Field {
+        SettingsField {
             objectName: "plannerRepositories"
-            label: qsTr("Repositories")
-            hint: qsTr("owner/name of each repository whose issues become tasks. Each needs a project on this MC.")
+            title: qsTr("Repositories")
+            description: qsTr("owner/name of each repository whose issues become tasks. Each needs a project on this MC.")
 
             Repeater {
                 model: settings.watched
@@ -712,7 +592,7 @@ ColumnLayout {
                     required property string modelData
 
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Label {
                         Layout.fillWidth: true
@@ -720,12 +600,13 @@ ColumnLayout {
                         color: settings.foreground
                         elide: Text.ElideRight
                         font.family: Theme.fontMono
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ShellButton {
-                        subtle: true
+                        iconName: "x"
                         text: qsTr("Stop following")
+                        Accessible.name: qsTr("Stop following %1").arg(repository.modelData)
                         onClicked: settings.unwatch(repository.modelData)
                     }
                 }
@@ -733,7 +614,7 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     id: addRepository
@@ -756,7 +637,7 @@ ColumnLayout {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Repeater {
                     model: settings.offered.filter(each => !settings.watched.some(watched => watched.toLowerCase() === each.toLowerCase()))
@@ -764,8 +645,8 @@ ColumnLayout {
                     delegate: ShellButton {
                         required property string modelData
 
-                        subtle: true
-                        text: qsTr("+ %1").arg(modelData)
+                        iconName: "plus"
+                        text: modelData
                         Accessible.name: qsTr("Follow %1").arg(modelData)
                         onClicked: settings.watch(modelData)
                     }
@@ -773,12 +654,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("GitHub sync")
-            hint: qsTr("Both ways sends changes to a task back to its issue and board.")
+        SettingsField {
+            title: qsTr("GitHub sync")
+            description: qsTr("Both ways sends changes to a task back to its issue and board.")
 
-            Choice {
+            ShellChoice {
                 objectName: "plannerSetting:sync"
+                Layout.fillWidth: true
                 options: [
                     { value: "off", label: qsTr("Off") },
                     { value: "import", label: qsTr("Import from GitHub") },
@@ -789,9 +671,9 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Only issues labelled")
-            hint: qsTr("Empty to follow every open issue.")
+        SettingsField {
+            title: qsTr("Only issues labelled")
+            description: qsTr("Empty to follow every open issue.")
 
             Line {
                 key: "issueLabel"
@@ -799,12 +681,12 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("GitHub Project")
-            hint: qsTr("A GitHub Project whose date fields are the tasks' dates, or one typed as owner/number. Needs gh's project scope.")
+        SettingsField {
+            title: qsTr("GitHub Project")
+            description: qsTr("A GitHub Project whose date fields are the tasks' dates, or one typed as owner/number. Needs gh's project scope.")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     // The board's place in the list, or -1 for one typed in.
@@ -835,7 +717,11 @@ ColumnLayout {
                 }
             }
 
-            Hint {
+            Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+                font.pixelSize: Theme.type.meta.size
                 objectName: "plannerBoardProblem"
                 text: settings.boardProblem
                 color: settings.warningColor
@@ -844,11 +730,11 @@ ColumnLayout {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 24
+            spacing: Theme.space.xl
 
-            Field {
+            SettingsField {
                 Layout.fillWidth: false
-                label: qsTr("Start date field")
+                title: qsTr("Start date field")
 
                 DateField {
                     key: "startField"
@@ -856,9 +742,9 @@ ColumnLayout {
                 }
             }
 
-            Field {
+            SettingsField {
                 Layout.fillWidth: false
-                label: qsTr("Target date field")
+                title: qsTr("Target date field")
 
                 DateField {
                     key: "targetField"
@@ -867,7 +753,11 @@ ColumnLayout {
             }
         }
 
-        Hint {
+        Label {
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.meta.size
             objectName: "plannerDateFieldsProblem"
             text: settings.dateFieldsProblem.length > 0 ? qsTr("The board's date fields could not be read: %1").arg(settings.dateFieldsProblem) : ""
             color: settings.warningColor
@@ -875,11 +765,11 @@ ColumnLayout {
 
         Toggle {
             key: "doneWhenMerged"
-            label: qsTr("Done when its pull requests merge")
+            title: qsTr("Done when its pull requests merge")
         }
 
-        Field {
-            label: qsTr("Look at GitHub every (minutes)")
+        SettingsField {
+            title: qsTr("Look at GitHub every (minutes)")
 
             Count {
                 id: pollCount
@@ -889,22 +779,26 @@ ColumnLayout {
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("Slack")
         }
 
-        Hint {
+        Label {
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.meta.size
             objectName: "plannerSlackProblem"
             text: settings.slackConnected ? "" : qsTr("Slack is not connected on this MC. Connect it in Settings → Integrations.")
             color: settings.warningColor
         }
 
-        Field {
-            label: qsTr("Post to Slack channel")
-            hint: qsTr("A channel the MC's Slack bot is in, as #name or its id. Empty for no Slack.")
+        SettingsField {
+            title: qsTr("Post to Slack channel")
+            description: qsTr("A channel the MC's Slack bot is in, as #name or its id. Empty for no Slack.")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     // The channel's place in the list, or -1 for one typed in.
@@ -940,13 +834,13 @@ ColumnLayout {
         Toggle {
             key: "slackAnnounce"
             objectName: "plannerSlackAnnounce"
-            label: qsTr("Announce proposals in Slack")
-            hint: qsTr("Says in the channel when an action's changes wait for you.")
+            title: qsTr("Announce proposals in Slack")
+            description: qsTr("Says in the channel when an action's changes wait for you.")
         }
 
-        Field {
-            label: qsTr("Slash command")
-            hint: qsTr("Add it to your Slack app to ask for the plan's status or run an action from Slack.")
+        SettingsField {
+            title: qsTr("Slash command")
+            description: qsTr("Add it to your Slack app to ask for the plan's status or run an action from Slack.")
 
             Line {
                 key: "slackCommand"
@@ -962,12 +856,12 @@ ColumnLayout {
             text: qsTr("Not saved: %1").arg(settings.refusal)
             color: settings.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             Item {
                 Layout.fillWidth: true

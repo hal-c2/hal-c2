@@ -106,7 +106,7 @@ Rectangle {
                 text: header.run ? qsTr("Maintenance of %1").arg(header.run.repository) : ""
                 color: header.foreground
                 elide: Text.ElideRight
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -147,7 +147,7 @@ Rectangle {
             }
             color: header.muted
             elide: Text.ElideRight
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -157,7 +157,7 @@ Rectangle {
             text: header.refusal || header.run?.publishError || (header.status === "failed" ? header.run?.error ?? "" : "")
             color: header.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 }

@@ -154,7 +154,7 @@ Item {
                     text: page.maintenance === null ? qsTr("Waiting for the maintenance plugin…") : qsTr("%n repository(ies) maintained", "", page.repositories.length)
                     color: page.muted
                     elide: Text.ElideRight
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellComboBox {
@@ -175,7 +175,7 @@ Item {
                 text: page.refusal
                 color: page.warningColor
                 wrapMode: Text.Wrap
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Text {
@@ -184,7 +184,7 @@ Item {
                 text: qsTr("No repositories yet. Pick them in the plugin's settings from this machine's GitHub projects.")
                 color: page.muted
                 wrapMode: Text.Wrap
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Repeater {
@@ -208,7 +208,7 @@ Item {
                             text: repository.modelData.repository
                             color: page.foreground
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             font.weight: Font.Medium
                         }
 
@@ -227,7 +227,7 @@ Item {
                             }
                             color: page.muted
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                     }
 
@@ -273,7 +273,7 @@ Item {
                             text: qsTr("%1, %2").arg(run.modelData.repository).arg(run.modelData.date)
                             color: page.foreground
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             font.weight: Font.Medium
                         }
 
@@ -347,7 +347,7 @@ Item {
                         }
                         color: page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Text {
@@ -357,7 +357,7 @@ Item {
                         text: run.modelData.report?.summary ?? ""
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Text {
@@ -367,7 +367,7 @@ Item {
                         text: page.categoryLines(run.modelData).join("\n")
                         color: page.muted
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Text {
@@ -377,7 +377,7 @@ Item {
                         text: run.problem
                         color: run.status === "skipped" ? page.muted : page.errorColor
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
             }

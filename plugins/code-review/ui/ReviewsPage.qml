@@ -226,7 +226,7 @@ Item {
                         }
                         color: page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellComboBox {
@@ -313,7 +313,7 @@ Item {
                         text: page.several ? page.environmentLabel(modelData) + ": " + problem : problem
                         color: page.warningColor
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
 
@@ -324,7 +324,7 @@ Item {
                     text: page.refusal
                     color: page.errorColor
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -367,7 +367,7 @@ Item {
                         bottomPadding: 4
                         text: page.statusText(entry.modelData.status)
                         color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.Medium
                         font.capitalization: Font.AllUppercase
                     }
@@ -409,14 +409,14 @@ Item {
                                     text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
                                     color: page.foreground
                                     elide: Text.ElideRight
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                 }
 
                                 Text {
                                     visible: text.length > 0
                                     text: page.verdictText(row.modelData.verdict)
                                     color: page.verdictColor(row.modelData.verdict)
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                     font.weight: Font.Medium
                                 }
                             }
@@ -434,7 +434,7 @@ Item {
                                 }
                                 color: page.muted
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
 
                             Text {
@@ -444,7 +444,7 @@ Item {
                                 text: page.note(row.modelData)
                                 color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
@@ -458,7 +458,7 @@ Item {
                     color: page.muted
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
             }
 
@@ -573,7 +573,7 @@ Item {
                         text: findings.review ? "#" + findings.review.number + "  " + (findings.review.title ?? "") : ""
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(16 * Theme.fontScale)
+                        font.pixelSize: Theme.type.title.size
                         font.weight: Font.DemiBold
                     }
 
@@ -590,7 +590,7 @@ Item {
                         }
                         color: page.muted
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     RowLayout {
@@ -610,7 +610,7 @@ Item {
                                 return page.statusText(review.status);
                             }
                             color: page.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         Text {
@@ -618,7 +618,7 @@ Item {
                             visible: text.length > 0
                             text: page.verdictText(findings.review?.verdict)
                             color: page.verdictColor(findings.review?.verdict)
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.DemiBold
                         }
 
@@ -628,7 +628,7 @@ Item {
                             visible: findings.review?.sandboxed === true
                             text: qsTr("In a sandbox")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         Item {
@@ -661,7 +661,7 @@ Item {
                             textFormat: Text.PlainText
                             text: findings.preview ? qsTr("Posted as: %1").arg(page.verdictText(findings.preview.verdict)) : qsTr("Reading what will be posted…")
                             color: page.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellButton {
@@ -710,7 +710,7 @@ Item {
                             textFormat: Text.PlainText
                             text: findings.moved ? qsTr("Pushed since you opened it: now at %1, not %2").arg(findings.headSha.slice(0, 7)).arg(findings.seenSha.slice(0, 7)) : qsTr("At commit %1").arg(findings.seenSha.slice(0, 7))
                             color: findings.moved ? page.warningColor : page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         // The user vouches for the commit shown, and only that one: a push
@@ -774,7 +774,7 @@ Item {
                         text: findings.review ? page.note(findings.review) : ""
                         color: !findings.review?.elsewhere && (findings.status === "failed" || findings.review?.publishError) ? page.errorColor : page.muted
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     // A check the machine kept the agent from running is the machine's
@@ -799,7 +799,7 @@ Item {
                             text: qsTr("The agent could not run these on the MC's machine. Fix them there and review again:") + "\n" + (findings.review?.validation?.blocked ?? []).map(entry => "• " + entry.check + ": " + entry.error).join("\n")
                             color: page.warningColor
                             wrapMode: Text.Wrap
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
 
@@ -811,7 +811,7 @@ Item {
                         text: findings.review?.headline ?? ""
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.DemiBold
                     }
 
@@ -825,7 +825,7 @@ Item {
                         text: findings.review?.summary ?? ""
                         color: page.foreground
                         wrapMode: TextEdit.Wrap
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         onLinkActivated: link => Qt.openUrlExternally(link)
                     }
 
@@ -847,7 +847,7 @@ Item {
                             Text {
                                 text: section.modelData.title
                                 color: page.muted
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 font.weight: Font.Medium
                                 font.capitalization: Font.AllUppercase
                             }
@@ -859,7 +859,7 @@ Item {
                                 text: section.modelData.lines.map(line => "• " + line).join("\n")
                                 color: page.foreground
                                 wrapMode: Text.Wrap
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
                     }
@@ -868,7 +868,7 @@ Item {
                         visible: (findings.review?.comments ?? []).length > 0
                         text: findings.open ? qsTr("Comments, posted on their lines when you publish") : qsTr("Comments")
                         color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.Medium
                         font.capitalization: Font.AllUppercase
                     }
@@ -909,7 +909,7 @@ Item {
                                         color: page.muted
                                         elide: Text.ElideMiddle
                                         font.family: Theme.fontMono
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         font.strikeout: comment.dismissed
                                     }
 
@@ -931,7 +931,7 @@ Item {
                                     text: comment.modelData.body
                                     color: page.foreground
                                     wrapMode: TextEdit.Wrap
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                     onLinkActivated: link => Qt.openUrlExternally(link)
                                 }
                             }
@@ -944,7 +944,7 @@ Item {
                     visible: page.review === null && page.reviews.length > 0
                     text: qsTr("Pick a review")
                     color: page.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
             }
         }

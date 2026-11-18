@@ -1057,9 +1057,12 @@ pub fn register(steps: &mut Steps) {
         let brick = shell(world)?;
         let settings = shown_named(world, "codeReviewSettings")?;
         let hosts = shown_named(world, "codeReviewHosts")?;
+        // The other hosts are offered but disabled: a click on one does nothing.
         let gitlab = part_of(world, hosts, "choice:gitlab")?;
-        click_item(world, gitlab)?;
-        world.sync()?;
+        expect!(
+            !brick.flag(world, gitlab, "enabled"),
+            "GitLab can be chosen"
+        );
         let values = json::from_value(world.engine(), &brick.read(world, settings, "values"));
         expect!(
             values["host"] == json!("github") && !brick.flag(world, settings, "dirty"),

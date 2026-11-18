@@ -905,6 +905,21 @@ fn set_text_and(world: &mut World, name: &str, typed: &str, signal: &str) -> Out
     world.sync()
 }
 
+/// Types `typed` into the number field of the count `key`, as the user does,
+/// and leaves it there: a count is set only once the field is left.
+fn type_count(world: &mut World, key: &str, typed: &str) -> Outcome {
+    let brick = shell(world)?;
+    let count = shown_named(world, &format!("plannerSetting:{key}"))?;
+    let Value::Object(editor) = brick.read(world, count, "contentItem") else {
+        fail!("{key} cannot be typed in");
+    };
+    brick.write(world, editor, "text", Value::from(typed))?;
+    if let Err(error) = emit(world, editor, "textEdited", &[]) {
+        fail!("{key} cannot be typed in: {error:?}");
+    }
+    world.sync()
+}
+
 /// Presses the button `target` as a script does.
 fn press_button(world: &mut World, target: ObjectId, what: &str) -> Outcome {
     if let Err(error) = emit(world, target, "clicked", &[]) {
@@ -2594,7 +2609,7 @@ fn register_settings(steps: &mut Steps) {
         ),
         |world, c, _| {
             for key in ["concurrency", "pollMinutes"] {
-                set_text_and(world, &format!("plannerSetting:{key}"), &c[0], "textEdited")?;
+                type_count(world, key, &c[0])?;
             }
             Ok(())
         },
@@ -2624,7 +2639,7 @@ fn register_settings(steps: &mut Steps) {
                 "text",
                 Value::from("My own reschedule prompt."),
             )?;
-            set_text_and(world, "plannerSetting:concurrency", "", "textEdited")?;
+            type_count(world, "concurrency", "")?;
             save_settings(world)
         },
     );

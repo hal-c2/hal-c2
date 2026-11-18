@@ -712,7 +712,7 @@ Item {
             anchors.centerIn: parent
             text: chip.text
             color: chip.tone
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             font.weight: Font.Medium
         }
     }
@@ -720,7 +720,7 @@ Item {
     component Caption: Text {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: Math.round(11 * Theme.fontScale)
+        font.pixelSize: Theme.type.caption.size
         font.weight: Font.Medium
         font.capitalization: Font.AllUppercase
     }
@@ -729,7 +729,7 @@ Item {
         Layout.fillWidth: true
         color: page.foreground
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     // A text field of the picked item, kept as the MC has it until the user edits it.
@@ -815,7 +815,7 @@ Item {
                                     anchors.centerIn: parent
                                     text: (tab.current && page.changed ? "• " : "") + tab.modelData.name + (page.several ? " (" + page.environmentLabel(tab.modelData.environment) + ")" : "")
                                     color: page.foreground
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     font.weight: tab.current ? Font.DemiBold : Font.Normal
                                 }
                             }
@@ -1272,7 +1272,7 @@ Item {
                         text: page.latest ? page.latest.text + "  ·  " + page.time(page.latest.at) : qsTr("No status update yet")
                         color: page.latest ? page.foreground : page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Chip {
@@ -1308,7 +1308,7 @@ Item {
                     }
                     color: page.muted
                     elide: Text.ElideRight
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
 
                 Text {
@@ -1324,7 +1324,7 @@ Item {
                     }
                     color: page.warningColor
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Text {
@@ -1334,7 +1334,7 @@ Item {
                     text: page.plan?.sync?.slack?.problem ?? ""
                     color: page.warningColor
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 // What agents and Slack said about the plan as a whole.
@@ -1355,7 +1355,7 @@ Item {
                             text: note.modelData.text + (note.modelData.by ? "  — " + String(note.modelData.by).replace(/^slack:/, "") + (String(note.modelData.by).startsWith("slack:") ? qsTr(" in Slack") : "") : "")
                             color: page.foreground
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellButton {
@@ -1373,7 +1373,7 @@ Item {
                     text: page.refusal
                     color: page.errorColor
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -1401,7 +1401,7 @@ Item {
                     color: page.muted
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
             }
 
@@ -1484,7 +1484,7 @@ Item {
                         }
                         color: page.warningColor
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     GridLayout {
@@ -1496,7 +1496,7 @@ Item {
                         Text {
                             text: qsTr("Kind")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellComboBox {
@@ -1512,7 +1512,7 @@ Item {
                         Text {
                             text: qsTr("Status")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellComboBox {
@@ -1529,7 +1529,7 @@ Item {
                             visible: itemColumn.item?.kind !== "milestone"
                             text: qsTr("Start")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ItemField {
@@ -1544,7 +1544,7 @@ Item {
                         Text {
                             text: itemColumn.item?.kind === "milestone" ? qsTr("On") : qsTr("Due")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ItemField {
@@ -1558,7 +1558,7 @@ Item {
                         Text {
                             text: qsTr("Progress")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ItemField {
@@ -1577,7 +1577,7 @@ Item {
                         Text {
                             text: qsTr("Owner")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ItemField {
@@ -1591,7 +1591,7 @@ Item {
                         Text {
                             text: qsTr("Labels")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ItemField {
@@ -1605,7 +1605,7 @@ Item {
                         Text {
                             text: qsTr("Project")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellComboBox {
@@ -1627,7 +1627,7 @@ Item {
                         Text {
                             text: qsTr("Under")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellComboBox {
@@ -1644,7 +1644,7 @@ Item {
                             Layout.alignment: Qt.AlignTop
                             text: qsTr("Waits for")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ColumnLayout {
@@ -1667,7 +1667,7 @@ Item {
                                         text: page.byId[dependency.modelData]?.title ?? dependency.modelData
                                         color: (itemColumn.item?.early ?? []).includes(dependency.modelData) ? page.errorColor : page.foreground
                                         elide: Text.ElideRight
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                     }
 
                                     ShellButton {
@@ -1700,7 +1700,7 @@ Item {
                         text: qsTr("Notes")
                     }
 
-                    TextArea {
+                    ShellTextArea {
                         id: notes
 
                         readonly property string current: itemColumn.item?.notes ?? ""
@@ -1710,18 +1710,10 @@ Item {
                         Layout.preferredHeight: Math.max(80, implicitHeight)
                         text: current
                         placeholderText: qsTr("Markdown")
-                        wrapMode: TextEdit.Wrap
-                        color: page.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         Accessible.name: qsTr("Notes")
                         onCurrentChanged: text = current
                         onEditingFinished: if (text !== current)
                             page.update(itemColumn.item, { notes: text })
-                        background: Rectangle {
-                            radius: Math.min(Theme.radius, 8)
-                            color: Theme.palette.color("input", "#18181b")
-                            border.color: notes.activeFocus ? Theme.palette.color("focus", "#3b82f6") : page.border
-                        }
                     }
 
                     Line {
@@ -1989,7 +1981,7 @@ Item {
                         text: qsTr("No runs yet. Run an action on the plan or on a task.")
                         color: page.muted
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Repeater {
@@ -2029,14 +2021,14 @@ Item {
                                     }
                                     color: page.foreground
                                     elide: Text.ElideRight
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
 
                                 Text {
                                     objectName: "plannerRunState"
                                     text: page.runLabel(entry.modelData)
                                     color: entry.modelData.status === "failed" ? page.errorColor : entry.modelData.status === "proposed" ? page.warningColor : page.muted
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                 }
                             }
                         }
@@ -2065,7 +2057,7 @@ Item {
                                 text: runsColumn.run?.label ?? ""
                                 color: page.foreground
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.prose.size
                                 font.weight: Font.DemiBold
                             }
 
@@ -2098,7 +2090,7 @@ Item {
                             text: runsColumn.run?.summary ?? ""
                             color: page.foreground
                             wrapMode: TextEdit.Wrap
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
 
@@ -2136,7 +2128,7 @@ Item {
                                             text: page.changeText(change.modelData)
                                             color: page.foreground
                                             wrapMode: Text.Wrap
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             font.strikeout: change.dismissed
                                         }
 
@@ -2156,7 +2148,7 @@ Item {
                                         text: change.modelData.outcome === "stale" ? qsTr("Not applied: %1").arg(change.modelData.staleReason ?? "") : (change.modelData.reason ?? "")
                                         color: change.modelData.outcome === "stale" ? page.warningColor : page.muted
                                         wrapMode: Text.Wrap
-                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.caption.size
                                     }
                                 }
                             }
@@ -2396,7 +2388,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: gantt.tickLabel(tick.day)
                             color: page.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                     }
                 }
@@ -2412,7 +2404,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: page.fieldLabel("title")
                         color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.Medium
                     }
                 }
@@ -2715,7 +2707,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: (lane.item?.title ?? "") + (lane.item?.owner ? "  · " + lane.item.owner : "")
                     color: page.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
 
                 // The row's name, pinned while the timeline scrolls.
@@ -2752,7 +2744,7 @@ Item {
                         visible: lane.modelData.children
                         text: page.collapsed[lane.modelData.key] ? "▸" : "▾"
                         color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     Text {
@@ -2764,7 +2756,7 @@ Item {
                         text: lane.item ? lane.item.title : (lane.modelData.label ?? "") + "  " + (lane.modelData.count ?? "")
                         color: lane.item ? page.foreground : page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: lane.item ? (lane.item.kind === "milestone" ? Font.DemiBold : Font.Normal) : Font.DemiBold
                     }
 
@@ -2896,7 +2888,7 @@ Item {
                             y: 10
                             text: column.modelData.label + "  " + column.modelData.items.length
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.DemiBold
                         }
 
@@ -2945,7 +2937,7 @@ Item {
                                         text: (card.modelData.kind === "milestone" ? "◆ " : "") + card.modelData.title
                                         color: page.foreground
                                         wrapMode: Text.Wrap
-                                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.body.size
                                     }
 
                                     Flow {
@@ -2960,7 +2952,7 @@ Item {
 
                                                 text: page.fieldText(card.modelData, modelData)
                                                 color: modelData === "due" && card.modelData.late ? page.warningColor : page.muted
-                                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.caption.size
                                             }
                                         }
                                     }
@@ -3022,7 +3014,7 @@ Item {
                     text: board.dragged?.title ?? ""
                     color: page.foreground
                     elide: Text.ElideRight
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -3079,7 +3071,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: page.fieldLabel(heading.modelData) + (page.working?.sortBy === heading.sorts ? " ↓" : "")
                                 color: page.muted
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 font.weight: Font.Medium
                             }
 
@@ -3147,7 +3139,7 @@ Item {
                         text: row.item ? (row.item.kind === "milestone" ? "◆ " : "") + row.item.title : (row.modelData.label ?? "") + "  " + (row.modelData.count ?? "")
                         color: row.item ? page.foreground : page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: row.item ? Font.Normal : Font.DemiBold
                     }
 
@@ -3165,7 +3157,7 @@ Item {
                             text: page.fieldText(row.item, modelData)
                             color: modelData === "status" ? page.statusColor(row.item.status) : modelData === "due" && row.item.late ? page.warningColor : page.foreground
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
                 }
@@ -3174,7 +3166,7 @@ Item {
     }
 
     // Names a new, copied or renamed view.
-    Popup {
+    ShellPopover {
         id: namer
 
         property string mode: "new"
@@ -3189,22 +3181,18 @@ Item {
 
         anchors.centerIn: Overlay.overlay
         modal: true
-        padding: 16
+        padding: Theme.space.lg
         width: 320
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 10)
-            color: page.surface
-            border.color: page.border
-        }
+        Overlay.modal: ShellScrim {}
 
         ColumnLayout {
             anchors.fill: parent
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: namer.mode === "rename" ? qsTr("Rename the view") : namer.mode === "copy" ? qsTr("Save as a new view") : qsTr("New view")
                 color: page.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.prose.size
                 font.weight: Font.DemiBold
             }
 
@@ -3248,34 +3236,30 @@ Item {
     }
 
     // Posts how the plan is going, kept in its history and sent to Slack when set up.
-    Popup {
+    ShellPopover {
         id: poster
 
         property string health: "on-track"
 
         anchors.centerIn: Overlay.overlay
         modal: true
-        padding: 16
+        padding: Theme.space.lg
         width: 380
         onOpened: {
             poster.health = page.latest?.health ?? "on-track";
             updateText.text = "";
             updateText.forceActiveFocus();
         }
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 10)
-            color: page.surface
-            border.color: page.border
-        }
+        Overlay.modal: ShellScrim {}
 
         ColumnLayout {
             anchors.fill: parent
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Post a status update")
                 color: page.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.prose.size
                 font.weight: Font.DemiBold
             }
 
@@ -3296,21 +3280,14 @@ Item {
                 }
             }
 
-            TextArea {
+            ShellTextArea {
                 id: updateText
 
                 objectName: "plannerUpdateText"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 100
                 placeholderText: qsTr("How the plan is going")
-                wrapMode: TextEdit.Wrap
-                color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                background: Rectangle {
-                    radius: Math.min(Theme.radius, 8)
-                    color: Theme.palette.color("input", "#18181b")
-                    border.color: page.border
-                }
+                Accessible.name: qsTr("Status update")
             }
 
             RowLayout {

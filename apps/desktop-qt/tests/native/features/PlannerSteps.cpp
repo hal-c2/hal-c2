@@ -514,7 +514,7 @@ QStringList accessibleInputNames(const QQuickItem* root) {
   QStringList names;
   for (QQuickItem* child : root->childItems()) {
     if (!child->isVisible()) continue;
-    if (child->inherits("QQuickTextInput") || child->inherits("QQuickComboBox")) {
+    if (child->inherits("QQuickTextInput") || child->inherits("QQuickComboBox") || child->inherits("QQuickSpinBox")) {
       for (const QObject* each : child->children()) {
         if (qstrcmp(each->metaObject()->className(), "QQuickAccessibleAttached") == 0) names.append(each->property("name").toString());
       }
@@ -522,6 +522,15 @@ QStringList accessibleInputNames(const QQuickItem* root) {
     names.append(accessibleInputNames(child));
   }
   return names;
+}
+
+// Types `text` into the number field of the count `key`, as the user does, and
+// leaves it there: a count is set only once the field is left.
+void typeCount(World& world, const QString& key, const QString& text) {
+  QQuickItem* editor = waitShownNamed(world, QStringLiteral("plannerSetting:") + key)->property("contentItem").value<QQuickItem*>();
+  expect(editor, QStringLiteral("%1 cannot be typed in").arg(key));
+  editor->setProperty("text", text);
+  expect(QMetaObject::invokeMethod(editor, "textEdited"), QStringLiteral("%1 cannot be typed in").arg(key));
 }
 
 // The Planner tab, on the view `name` when one is given.
@@ -1387,11 +1396,7 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the user types %1 as the actions at once and as the minutes between looks at GitHub").arg(q), [](World& world, const Captures& c, const Table&) {
-    for (const QString& key : {QStringLiteral("concurrency"), QStringLiteral("pollMinutes")}) {
-      QQuickItem* count = waitShownNamed(world, QStringLiteral("plannerSetting:") + key);
-      count->setProperty("text", c[0]);
-      expect(QMetaObject::invokeMethod(count, "textEdited"), QStringLiteral("%1 cannot be typed in").arg(key));
-    }
+    for (const QString& key : {QStringLiteral("concurrency"), QStringLiteral("pollMinutes")}) typeCount(world, key, c[0]);
   });
   step(QStringLiteral("neither setting is changed"), [](World& world, const Captures&, const Table&) {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
@@ -1403,9 +1408,7 @@ const Steps steps([] {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("plannerSettings"));
     world.waitFor([&] { return settings->property("loaded").toBool(); }, QStringLiteral("the settings to be read"));
     waitShownNamed(world, QStringLiteral("plannerActionPrompt:") + actionId(world, c[0]))->setProperty("text", QStringLiteral("My own reschedule prompt."));
-    QQuickItem* count = waitShownNamed(world, QStringLiteral("plannerSetting:concurrency"));
-    count->setProperty("text", QString());
-    expect(QMetaObject::invokeMethod(count, "textEdited"), QStringLiteral("the actions at once cannot be typed in"));
+    typeCount(world, QStringLiteral("concurrency"), QString());
     QQuickItem* save = waitShownNamed(world, QStringLiteral("plannerSave"));
     world.waitFor([&] { return save->isEnabled(); }, QStringLiteral("the settings to be saveable"));
     expect(QMetaObject::invokeMethod(save, "clicked"), QStringLiteral("the settings cannot be saved"));
