@@ -488,6 +488,8 @@ defmodule HalC2.Orchestration.Recovery do
     delegating = :persistent_term.get({__MODULE__, :delegating}, [])
     :persistent_term.erase({__MODULE__, :delegating})
     for thread_id <- delegating, do: HalC2.Orchestration.Delegation.reconcile(thread_id, false)
+    # A child whose queue this boot held and whose turn nothing continued tells its caller.
+    for thread_id <- delegating, do: HalC2.Orchestration.Delegation.held_queue(thread_id)
     # A page's agent that is not going on says so on its page, whatever the crash lost.
     HalC2.Space.PageAgent.reconcile(continued)
 

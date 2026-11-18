@@ -1287,6 +1287,33 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert messages("message:delegate-request:") == []
     end
 
+    test "a request opened as the wait gives up comes back with it, and is not told again" do
+      delegate("running")
+
+      hook_with(fn
+        :expiring, "task" ->
+          open_request("user_input")
+          Delegation.request_opened("c", "req")
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert {:ok, %{"waitTimedOut" => true, "pendingRequest" => %{"requestId" => "req"}}} =
+               Delegation.wait("p", "task", 1)
+
+      assert messages("message:delegate-request:") == []
+    end
+
+    # Found by prop/hal_c2/delegation_wakes_prop_test.exs: a second wait within the
+    # millisecond of the first left `expire` a nil change, and the store refused it.
+    test "a second wait that gives up on a task gives up as the first did" do
+      delegate("running")
+
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+      assert {:ok, %{"waitTimedOut" => true}} = Delegation.wait("p", "task", 1)
+    end
+
     test "a request that does not end the wait is told once the wait is over" do
       delegate("running")
       open_request("user_input", @at, "message")

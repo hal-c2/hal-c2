@@ -3036,19 +3036,13 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   # Nothing starts a held queue but a resume: the child's turn ends with two messages
   # waiting behind it, held.
+  step "the subagent has two messages queued behind its turn", context do
+    queue_two(context)
+    context
+  end
+
   step "the subagent's turn ends with its queue held", context do
-    World.await_runs(context, "subagent", ["running"])
-
-    for text <- ["first", "second"] do
-      {:ok, _} =
-        HalC2.Orchestration.dispatch(
-          World.message_command(context, "subagent", text, %{
-            "dispatchMode" => %{"type" => "queue_after_active"}
-          })
-        )
-    end
-
-    state = World.await_runs(context, "subagent", ["running", "queued", "queued"])
+    state = queue_two(context)
     id = World.thread_id(context, "subagent")
 
     {:ok, _} =
@@ -3092,6 +3086,21 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   step "the task is still {string}", %{args: [status]} = context do
     assert task(context)["status"] == status
     context
+  end
+
+  defp queue_two(context) do
+    World.await_runs(context, "subagent", ["running"])
+
+    for text <- ["first", "second"] do
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(
+          World.message_command(context, "subagent", text, %{
+            "dispatchMode" => %{"type" => "queue_after_active"}
+          })
+        )
+    end
+
+    World.await_runs(context, "subagent", ["running", "queued", "queued"])
   end
 
   defp await_request_message(context, thread) do

@@ -290,10 +290,13 @@ defmodule HalC2.Orchestration.Delegation do
     flush_pending(thread_id)
   end
 
-  # A child left with only a held queue (a usage limit, a stop, a restart held it) has
-  # nothing that will start it, and its task does not end: its caller hears so once
-  # for each held queue, to resume or cancel it.
-  defp held_queue(child_id) do
+  @doc """
+  Tells the caller of `child_id` once that its child is left with only a held queue
+  (a usage limit, a stop, a restart held it): nothing will start it and its task does
+  not end, so the caller resumes or cancels it. A run of the child that ends asks
+  (`finished/3`); Recovery asks for a child it held whose turn it does not continue.
+  """
+  def held_queue(child_id) do
     child = stream(child_id)
     runs = StreamState.list(child, "run")
     held = for run <- runs, run["status"] == "queued", do: run
@@ -1867,7 +1870,8 @@ defmodule HalC2.Orchestration.Delegation do
   # While a caller waits on a task, the wait tells it of the child's requests and
   # `request_opened/2` sends no message about them. The mark is the waiting process's
   # own, so it goes with a wait that ends or dies; a request still pending when it
-  # goes, which the wait did not return, is told then.
+  # goes, which the wait did not return, is told then. The mark, like `notify/1`'s
+  # lock, is this node's: a child's turn writer runs on the MC that has its caller.
   defp waiting(thread_id, task_id, fun) do
     marked =
       Process.whereis(@waits) != nil and match?({:ok, _}, Registry.register(@waits, task_id, nil))
@@ -1914,17 +1918,19 @@ defmodule HalC2.Orchestration.Delegation do
       # the wait returns with the request, and the task's end wakes the caller.
       task["pendingRequest"] != nil ->
         hook(:expiring, task_id)
-        told_by_wait(thread_id, task_id, child, task["pendingRequest"]["requestId"])
         expire(thread_id, task_id)
-        {:ok, status(thread_id, task_id)}
+        {:ok, told_by_wait(thread_id, task_id, child, status(thread_id, task_id))}
 
       left <= 0 ->
         hook(:expiring, task_id)
 
-        case expire(thread_id, task_id) do
-          :expired -> {:ok, Map.put(status(thread_id, task_id), "waitTimedOut", true)}
-          :ended -> {:ok, status(thread_id, task_id)}
-        end
+        reply =
+          case expire(thread_id, task_id) do
+            :expired -> Map.put(status(thread_id, task_id), "waitTimedOut", true)
+            :ended -> status(thread_id, task_id)
+          end
+
+        {:ok, told_by_wait(thread_id, task_id, child, reply)}
 
       true ->
         receive do
@@ -1936,9 +1942,15 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # The wait returns the request to its caller: its notice is marked sent before the
-  # wait is over, so `request_opened/2` sends none after it either.
-  defp told_by_wait(thread_id, task_id, child, request_id) do
+  # The request a wait's `reply` returns to its caller, whichever way the wait ended:
+  # its notice is marked sent before the wait is over, so `request_opened/2` sends
+  # none after it either. One told before the wait began stays told.
+  defp told_by_wait(
+         thread_id,
+         task_id,
+         child,
+         %{"pendingRequest" => %{"requestId" => request_id}} = reply
+       ) do
     request = StreamState.get(stream(child), "runtime-request")[request_id] || %{}
     command_id = "command:delegate-request:" <> request_key(task_id, request)
     receipt = JSON.encode!(%{"ok" => %{"toldByWait" => true}, "threadId" => thread_id})
@@ -1952,7 +1964,11 @@ defmodule HalC2.Orchestration.Delegation do
       end,
       [node()]
     )
+
+    reply
   end
+
+  defp told_by_wait(_thread_id, _task_id, _child, reply), do: reply
 
   # The wait is over: a child that ends from now on wakes the caller. A task that ended
   # meanwhile was acknowledged to this wait, so it is answered with that end instead;
@@ -1964,12 +1980,17 @@ defmodule HalC2.Orchestration.Delegation do
           {[], :ended}
 
         _ ->
+          # A task an earlier wait gave up on already wakes its caller: nothing changes.
           change =
-            Orchestration.upsert(state, "subagent", task_id, fn task ->
-              Map.merge(task, %{"completionWake" => "always", "updatedAt" => Entities.now()})
+            Orchestration.upsert(state, "subagent", task_id, fn
+              %{"completionWake" => "always"} ->
+                nil
+
+              task ->
+                Map.merge(task, %{"completionWake" => "always", "updatedAt" => Entities.now()})
             end)
 
-          {[change], :expired}
+          {List.wrap(change), :expired}
       end
     end)
   end

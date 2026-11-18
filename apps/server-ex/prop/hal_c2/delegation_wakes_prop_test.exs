@@ -19,8 +19,8 @@ defmodule HalC2.DelegationWakesPropTest do
     message mid-turn (Upstream #15892);
   - each request a working child opens reaches the caller in one message, however
     many times, and however concurrently, it is told (`Delegation.request_opened/2`),
-    one opened while the caller waits on the task included: the wait tells it when it
-    is over;
+    one opened while the caller waits on the task included: the wait returns it, or
+    tells it once it is over;
 
   and once the commands are done and the caller has worked through its queue, every
   task that ended was named by exactly one wake, and that wake ran to its end.
@@ -96,7 +96,8 @@ defmodule HalC2.DelegationWakesPropTest do
   # --- model ----------------------------------------------------------------------
 
   # ended: the tasks that ended, in order. asked: the requests the children opened.
-  def initial_state, do: %{ended: [], asked: []}
+  # returned: what each `ask_waiting` returned, the request its wait told, or nil.
+  def initial_state, do: %{ended: [], asked: [], returned: []}
 
   def command(state) do
     working = @tasks -- state.ended
@@ -128,13 +129,15 @@ defmodule HalC2.DelegationWakesPropTest do
   def next_state(state, _result, {:call, _, :finish, [task]}),
     do: %{state | ended: state.ended ++ [task]}
 
-  def next_state(state, _result, {:call, _, call, [task, _kind, n]})
-      when call in [:ask, :ask_waiting],
-      do: %{state | asked: state.asked ++ [request(task, n)]}
+  def next_state(state, _result, {:call, _, :ask, [task, _kind, n]}),
+    do: %{state | asked: state.asked ++ [request(task, n)]}
+
+  def next_state(state, result, {:call, _, :ask_waiting, [task, _kind, n]}),
+    do: %{state | asked: state.asked ++ [request(task, n)], returned: [result | state.returned]}
 
   def next_state(state, _result, _call), do: state
 
-  def postcondition(state, {:call, _, call, args}, _result) do
+  def postcondition(state, {:call, _, call, args}, result) do
     ended = if call == :finish, do: state.ended ++ args, else: state.ended
 
     asked =
@@ -146,21 +149,25 @@ defmodule HalC2.DelegationWakesPropTest do
           state.asked
       end
 
+    returned = if call == :ask_waiting, do: [result | state.returned], else: state.returned
     caller = stream(@parent)
 
     ended?(caller, ended) and never_dropped?(caller) and wakes_agree?(caller) and
-      own_turns?(caller) and told_once?(caller, asked)
+      own_turns?(caller) and told_once?(caller, asked, returned)
   end
 
-  # One message per request the children opened, and none for any other.
-  defp told_once?(caller, asked) do
+  # Each request the children opened reaches the caller once, in a message or in the
+  # wait that returned it, and no message tells of any other.
+  defp told_once?(caller, asked, returned) do
     told =
       for message <- StreamState.list(caller, "message"),
           String.starts_with?(message["id"], "message:delegate-request:"),
           do: message["id"]
 
-    length(told) == length(asked) and
-      Enum.all?(asked, fn request -> Enum.count(told, &(&1 =~ ":#{request}:")) == 1 end)
+    Enum.all?(told, fn id -> Enum.any?(asked, &(id =~ ":#{&1}:")) end) and
+      Enum.all?(asked, fn request ->
+        Enum.count(told, &(&1 =~ ":#{request}:")) + Enum.count(returned, &(&1 == request)) == 1
+      end)
   end
 
   # Each wake the caller is working on, or worked on, started that turn itself.
@@ -338,19 +345,19 @@ defmodule HalC2.DelegationWakesPropTest do
     :ok
   end
 
-  # The caller waits on the task, briefly, and the child opens the request during the
-  # wait, which outlasts it and is told twice meanwhile. A request an earlier `ask`
-  # left pending may end the wait instead.
+  # The caller waits on the task, briefly, and the child opens the request as the wait
+  # gives up, told twice meanwhile. The wait returns it, or a request an earlier `ask`
+  # left pending, and tells the one it did not return once it is over. Returns the
+  # request opened here if the wait returned it.
   def ask_waiting(task, kind, n) do
     Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :during_wait, [task, kind, n]})
 
     try do
-      {:ok, _} = Delegation.wait(@parent, task, 1)
+      {:ok, reply} = Delegation.wait(@parent, task, 1)
+      if get_in(reply, ["pendingRequest", "requestId"]) == request(task, n), do: request(task, n)
     after
       Application.delete_env(:hal_c2, :delegation_hook)
     end
-
-    :ok
   end
 
   @doc false

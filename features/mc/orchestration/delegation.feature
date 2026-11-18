@@ -410,6 +410,17 @@ Feature: Delegating tasks to subagents
     Then "parent" hears once that the subagent's queue is held, and how to resume it
     And the task is still "running"
 
+  # A restart holds a queue behind a turn it ends; with the turn not continued, no run
+  # of the subagent ends to tell its caller.
+  @mc
+  Scenario: A subagent whose queue a restart held tells the agent that delegated it
+    Given the project does not continue threads after an update
+    And the agent in "parent" delegated a task
+    And the subagent has two messages queued behind its turn
+    When the MC restarts
+    Then "parent" hears once that the subagent's queue is held, and how to resume it
+    And the task is still "running"
+
   @mc
   Scenario: A wait gives up before the caller's MCP client would
     Given thread "acp" exists in "demo"
