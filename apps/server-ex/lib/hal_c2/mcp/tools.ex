@@ -956,13 +956,22 @@ defmodule HalC2.Mcp.Tools do
 
   # What a queued message waits on, so its sender can choose another way: its place
   # in the queue, a hold only a resume lifts, the turn ahead of it and how long that
-  # has run, and a request the thread stopped on.
+  # has run, and a request the thread stopped on. Its status and all of these as one
+  # snapshot has them: a message enqueued ahead of it since included, and nothing of
+  # the queue for one that started since.
   defp waiting(thread_id, %{"status" => "queued", "id" => run_id} = run) do
     state = stream(thread_id)
+
+    case StreamState.get(state, "run")[run_id] || run do
+      %{"status" => "queued"} = run -> queued(state, run)
+      run -> %{"status" => run["status"]}
+    end
+  end
+
+  defp waiting(_thread_id, _run), do: %{}
+
+  defp queued(state, run) do
     runs = StreamState.list(state, "run")
-    # Its place among the others as one snapshot has them all, a message enqueued
-    # ahead of it since included.
-    run = StreamState.get(state, "run")[run_id] || run
     queued = runs |> Enum.filter(&(&1["status"] == "queued"))
     active = Enum.find(runs, &(&1["status"] in ~w(preparing starting running waiting)))
 
@@ -981,6 +990,7 @@ defmodule HalC2.Mcp.Tools do
       ) + 1
 
     %{
+      "status" => "queued",
       "queuePosition" => position,
       "queueHeld" => run["queueHeld"] == true,
       "activeRunId" => active && active["id"],
@@ -990,8 +1000,6 @@ defmodule HalC2.Mcp.Tools do
     }
     |> Map.reject(fn {_key, value} -> value == nil end)
   end
-
-  defp waiting(_thread_id, _run), do: %{}
 
   defp queued_next(%{"queueHeld" => true}, _blocked),
     do:
