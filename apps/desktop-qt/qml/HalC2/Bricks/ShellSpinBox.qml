@@ -23,6 +23,9 @@ SpinBox {
     font.pixelSize: Theme.type.body.size
     hoverEnabled: true
     opacity: enabled ? 1 : 0.64
+    // Digits only, never grouped: a value reported while it is typed is shown again
+    // in the field, and "2,000" would take no fifth digit.
+    textFromValue: (value, locale) => String(Math.round(value))
 
     contentItem: TextInput {
         z: 2

@@ -236,9 +236,9 @@ ColumnLayout {
         }
     }
 
-    // A whole number of at least 1. Typed, it is set once the field is left or
-    // Return is pressed; what it cannot be is never set, and `acceptableInput`
-    // says whether the field reads a count at all.
+    // A whole number of at least 1. Typed, it is set as soon as the field reads
+    // one; what it cannot be is never set, and `acceptableInput` says whether the
+    // field reads a count at all.
     component Count: ShellSpinBox {
         id: count
 

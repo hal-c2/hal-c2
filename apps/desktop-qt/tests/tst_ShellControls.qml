@@ -43,6 +43,22 @@ TestCase {
         }
     }
 
+    // As the plugins' settings use it: what is typed is set, and shown from there.
+    Component {
+        id: boundSpinComponent
+        ShellSpinBox {
+            id: bound
+
+            property int saved: 0
+
+            from: 0
+            to: 999999999
+            value: saved
+            editable: true
+            onValueTyped: typed => bound.saved = typed
+        }
+    }
+
     Component {
         id: spyComponent
         SignalSpy {}
@@ -130,5 +146,16 @@ TestCase {
         compare(control.value, 5);
         keyClick(Qt.Key_Return);
         compare(control.value, 7);
+    }
+
+    // A long number typed into a box that shows what it set keeps every digit.
+    function test_spinBoxTakesALongTypedNumber() {
+        const control = createTemporaryObject(boundSpinComponent, testCase);
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        for (const key of [Qt.Key_2, Qt.Key_0, Qt.Key_0, Qt.Key_0, Qt.Key_0])
+            keyClick(key);
+        compare(control.contentItem.text, "20000");
+        compare(control.saved, 20000);
     }
 }
