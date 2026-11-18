@@ -69,7 +69,7 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
       "HalC2.Orchestration.Delegation.request_opened/2" =>
-        "tells the caller its child opened a question or an approval, in a message of its own; no task, run or delivery changes, so no part of how the task ends",
+        "tells the caller its child opened a question or an approval, in a message of its own, and changes no task or delivery; an idle caller starts a run on it, which the model, whose caller is busy and then idle, lacks, as it lacks a user's later message: a task ending in that run is acknowledged and delivered at its end, as in the caller's first turn",
       "HalC2.Orchestration.Delegation.quiet?/1" =>
         "reads whether the child has a run or owed work; changes nothing",
       "HalC2.Orchestration.Delegation.hand_over_pull_requests/1" =>

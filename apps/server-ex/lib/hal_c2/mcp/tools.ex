@@ -957,9 +957,12 @@ defmodule HalC2.Mcp.Tools do
   # What a queued message waits on, so its sender can choose another way: its place
   # in the queue, a hold only a resume lifts, the turn ahead of it and how long that
   # has run, and a request the thread stopped on.
-  defp waiting(thread_id, %{"status" => "queued"} = run) do
+  defp waiting(thread_id, %{"status" => "queued", "id" => run_id} = run) do
     state = stream(thread_id)
     runs = StreamState.list(state, "run")
+    # Its place among the others as one snapshot has them all, a message enqueued
+    # ahead of it since included.
+    run = StreamState.get(state, "run")[run_id] || run
     queued = runs |> Enum.filter(&(&1["status"] == "queued"))
     active = Enum.find(runs, &(&1["status"] in ~w(preparing starting running waiting)))
 
@@ -1000,7 +1003,7 @@ defmodule HalC2.Mcp.Tools do
 
   defp queued_next(_run, _blocked),
     do:
-      "It starts when the working turn ends. If it cannot wait, hal_c2_queue_promote_to_steer joins it to that turn, or send again with mode restart."
+      "It starts when the working turn ends. If it cannot wait, hal_c2_queue_promote_to_steer joins it to that turn."
 
   @doc """
   Interrupts a run of a thread of this MC, or of the MC it moved to, on behalf

@@ -2970,10 +2970,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     end
   end
 
-  # Told by the turn writer as the request opens; telling it again here is a no-op
-  # once told, and returns only after any telling under way has landed.
+  # Told by the turn writer as the request opens, which this waits for; telling it
+  # again after is a no-op.
   step ~r/^"(?<caller>[^"]+)" hears once of the subagent's (?<kind>question|approval), with its task and thread$/,
        %{args: [caller, kind]} = context do
+    await_request_message(context, caller)
     :ok = Delegation.request_opened(World.thread_id(context, "subagent"), context.child_request)
     assert [message] = request_messages(context, caller)
     child = World.thread_id(context, "subagent")
@@ -3015,6 +3016,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "the question notice is steered into the running turn of {string}",
        %{args: [parent]} = context do
+    await_request_message(context, parent)
     :ok = Delegation.request_opened(World.thread_id(context, "subagent"), context.child_request)
     assert [message] = request_messages(context, parent)
     assert [%{"id" => run_id, "status" => "running"}] = World.runs(context, parent)
@@ -3025,9 +3027,10 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   # The notice names no model of its own, so the thread keeps the one it was given.
   step "the model the user picked for {string} is left as it was",
        %{args: [parent]} = context do
-    selection = World.thread(context, parent)["modelSelection"]
-    assert selection["model"] != nil
-    assert context.request_message["modelSelection"] in [nil, selection]
+    picked = context.picked_models[parent]
+    assert picked["model"] != nil
+    assert World.thread(context, parent)["modelSelection"] == picked
+    assert context.request_message["modelSelection"] in [nil, picked]
     context
   end
 
@@ -3089,6 +3092,14 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   step "the task is still {string}", %{args: [status]} = context do
     assert task(context)["status"] == status
     context
+  end
+
+  defp await_request_message(context, thread) do
+    World.await_state(context, thread, fn state ->
+      state
+      |> StreamState.list("message")
+      |> Enum.any?(&String.starts_with?(&1["id"], "message:delegate-request:"))
+    end)
   end
 
   defp request_messages(context, thread) do
@@ -4087,7 +4098,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "the turn of {string} is still running", %{args: [parent]} = context do
     assert Enum.any?(World.runs(context, parent), &(&1["status"] == "running"))
-    context
+    picked = World.thread(context, parent)["modelSelection"]
+    Map.update(context, :picked_models, %{parent => picked}, &Map.put(&1, parent, picked))
   end
 
   step "the turn of {string} has ended", %{args: [parent]} = context do

@@ -1388,6 +1388,21 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert message["text"] =~ "hal_c2_queue_resume (threadId c)"
     end
 
+    test "says why in an adapter's own words when its failure is plain text" do
+      delegate("failed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr", 1, "failed", %{"completedAt" => @at, "failure" => "worktree is gone"}),
+          run("q1", 2, "queued", %{"queueHeld" => true})
+        ])
+
+      Delegation.finished("c", "cr", "failed")
+
+      assert [message] = messages("message:delegate-held:")
+      assert message["text"] =~ "ended failed: worktree is gone"
+    end
+
     test "says nothing while a queued run is not held" do
       delegate("completed")
 

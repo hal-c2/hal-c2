@@ -352,7 +352,14 @@ defmodule HalC2.Orchestration.Delegation do
     why =
       case last do
         %{"status" => status} = run ->
-          failure = get_in(run, ["failure", "message"])
+          # A run's failure is a map with a message, or an adapter's plain text.
+          failure =
+            case run["failure"] do
+              %{"message" => message} when is_binary(message) -> message
+              message when is_binary(message) and message != "" -> message
+              _ -> nil
+            end
+
           " Its last turn ended #{status}" <> if(failure, do: ": #{failure}", else: ".")
 
         _ ->
