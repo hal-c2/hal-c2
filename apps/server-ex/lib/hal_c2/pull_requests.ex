@@ -20,7 +20,7 @@ defmodule HalC2.PullRequests do
   require Logger
 
   alias HalC2.GitHub.Limits
-  alias HalC2.PullRequests.{Branches, GitHub, Held, Hosts, Refreshes}
+  alias HalC2.PullRequests.{Branches, Forgejo, GitHub, Held, Hosts, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
   alias HalC2.SourceControl.Cli
 
@@ -34,6 +34,13 @@ defmodule HalC2.PullRequests do
     missing:
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry."
+  }
+
+  @forgejo_requirements %{
+    "cli-missing" =>
+      "Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`tea` 0.16 or later) is required to read pull requests on this host. Install one and reload.",
+    "cli-unauthenticated" =>
+      "No Forgejo login for this server. Run `fj --host <server-url> auth add-token` (or `tea login add`) and retry."
   }
 
   @action_refusals %{
@@ -146,6 +153,93 @@ defmodule HalC2.PullRequests do
       fun -> apply(__MODULE__, fun, [input])
     end
   end
+
+  @doc """
+  `handle/2` as a plugin asks it (`HalC2.Plugins.Host.pull_requests/3`). A plugin also
+  reads and reviews a Forgejo pull request: `detail`, `activity`, `routing` and
+  `submitReview` answer it in the fields of GitHub's answers a reviewer uses
+  (`HalC2.PullRequests.Forgejo`). The review page does not ask them for Forgejo yet,
+  as they leave out most of what it shows.
+  """
+  def plugin_handle(method, input) when method in ~w(detail activity routing submitReview) do
+    if is_map(input) and ref_kind(input) == "forgejo",
+      do: forgejo(method, input),
+      else: handle(method, input)
+  end
+
+  def plugin_handle(method, input), do: handle(method, input)
+
+  defp forgejo("detail", ref) do
+    read(
+      ref,
+      "detail",
+      fn project, ctx ->
+        with {:ok, detail} <- Forgejo.detail(ctx) do
+          {:ok,
+           Map.merge(detail, %{
+             "provider" => "forgejo",
+             "projectId" => project.id,
+             "projectTitle" => project.title,
+             "workspaceRoot" => project.root,
+             "repository" => project.repository,
+             "observedAt" => System.system_time(:millisecond)
+           })}
+        end
+      end,
+      ["forgejo"]
+    )
+  end
+
+  defp forgejo("activity", ref),
+    do: read(ref, "activity", fn _project, ctx -> Forgejo.activity(ctx) end, ["forgejo"])
+
+  defp forgejo("routing", ref) do
+    read(
+      ref,
+      "routeIdentity",
+      fn project, ctx ->
+        with {:ok, login} <- Forgejo.signed_in(ctx) do
+          {:ok,
+           %{
+             "accountId" => login,
+             "viewer" => login,
+             "host" => project.host,
+             "provider" => "forgejo",
+             "projectTitle" => project.title,
+             "workspaceRoot" => project.root
+           }}
+        end
+      end,
+      ["forgejo"]
+    )
+  end
+
+  defp forgejo("submitReview", input) do
+    review_refusal(input) ||
+      change(
+        input,
+        "submitReview",
+        fn _project, ctx ->
+          verdict = input["verdict"]
+          comments = input["comments"] || []
+
+          if verdict != "approve" and String.trim(input["body"] || "") == "" and comments == [] do
+            refuse("submitReview", "A review needs a summary or at least one comment.")
+          else
+            Forgejo.submit_review(ctx, verdict, input["body"] || "", comments, input["commitId"])
+          end
+        end,
+        ["forgejo"]
+      )
+  end
+
+  @doc """
+  How a plugin's own clone fetches the Forgejo repository of `ref` over HTTP:
+  `%{"url", "username", "token"}` (`HalC2.PullRequests.Forgejo.fetch_access/1`).
+  Not a client method: only `HalC2.Plugins.Host` calls it.
+  """
+  def fetch_access(ref),
+    do: read(ref, "fetchAccess", fn _project, ctx -> Forgejo.fetch_access(ctx) end, ["forgejo"])
 
   # --- listing ----------------------------------------------------------------------
 
@@ -763,10 +857,24 @@ defmodule HalC2.PullRequests do
     wanted =
       for ref <- refs,
           project = by_id[ref["projectId"]],
-          project.kind == "github",
+          project.kind in ["github", "forgejo"],
           same?(project.repository, ref["repository"]),
           uniq: true,
           do: {project, ref["number"]}
+
+    {forgejo, wanted} = Enum.split_with(wanted, fn {project, _} -> project.kind == "forgejo" end)
+
+    forgejo_stats =
+      for {project, number} <- forgejo,
+          {additions, deletions} <- [Forgejo.stats(ctx(project, number))] do
+        %{
+          "projectId" => project.id,
+          "repository" => project.repository,
+          "number" => number,
+          "additions" => additions,
+          "deletions" => deletions
+        }
+      end
 
     stats =
       wanted
@@ -787,7 +895,7 @@ defmodule HalC2.PullRequests do
         end
       end)
 
-    {:ok, %{"stats" => stats}}
+    {:ok, %{"stats" => stats ++ forgejo_stats}}
   end
 
   # --- one pull request ----------------------------------------------------------------
@@ -963,7 +1071,17 @@ defmodule HalC2.PullRequests do
   for a plugin deciding whether to act on it. `ref` may carry the `label` whose last
   adder to read. Not a client method: only `HalC2.Plugins.Host` calls it.
   """
-  def trust(ref), do: read(ref, "trust", fn _project, ctx -> GitHub.trust(ctx, ref["label"]) end)
+  def trust(ref) do
+    read(
+      ref,
+      "trust",
+      fn
+        %{kind: "forgejo"}, ctx -> Forgejo.trust(ctx, ref["label"])
+        _project, ctx -> GitHub.trust(ctx, ref["label"])
+      end,
+      ["github", "forgejo"]
+    )
+  end
 
   def thread_comments(input),
     do:
@@ -1007,18 +1125,66 @@ defmodule HalC2.PullRequests do
   end
 
   @doc "The host-native stack a pull request is in, or nil; `details?` false skips its second read."
-  def stack(ref, details? \\ true),
-    do: read(ref, "stack", fn _project, ctx -> GitHub.stack(ctx, details?) end)
+  def stack(ref, details? \\ true) do
+    # Only GitHub has native stacks; on another host a pull request is in none.
+    if ref_kind(ref) in [nil, "github"],
+      do: read(ref, "stack", fn _project, ctx -> GitHub.stack(ctx, details?) end),
+      else: {:ok, nil}
+  end
 
   @doc """
-  Summaries for pull requests on this MC's GitHub hosts, keyed by the refs asked
-  for (`%{"host", "repository", "number"}`), read in one batch per host through any
-  checkout there. A ref no checkout here can answer for, or GitHub left unanswered, is
-  absent.
+  Summaries for pull requests on this MC's GitHub and Forgejo hosts, keyed by the refs
+  asked for (`%{"host", "repository", "number"}`, with `"projectId"` when known). On
+  GitHub they are read in one batch per host through any checkout there; on Forgejo
+  through the ref's own checkout when it is on that server, else any checkout there
+  (`HalC2.PullRequests.Forgejo`). A ref no checkout here can answer for, or the host
+  left unanswered, is absent.
   """
   def summaries(refs) do
-    checkouts = projects() |> Enum.filter(&(&1.kind == "github")) |> Enum.group_by(& &1.host)
+    all = projects()
+    forgejo = Enum.filter(all, &(&1.kind == "forgejo"))
+    {on_forgejo, rest} = Enum.split_with(refs, &(forgejo_route(&1, forgejo) != nil))
 
+    Map.merge(
+      github_summaries(
+        rest,
+        all |> Enum.filter(&(&1.kind == "github")) |> Enum.group_by(& &1.host)
+      ),
+      forgejo_summaries(on_forgejo, forgejo)
+    )
+  end
+
+  defp forgejo_summaries(refs, projects) do
+    refs
+    |> Enum.group_by(&forgejo_route(&1, projects))
+    |> Enum.flat_map(fn {project, refs} ->
+      found =
+        HalC2.PullRequests.Forgejo.summaries(
+          project.root,
+          Map.get(project, :remote_url),
+          Enum.map(refs, &{&1["repository"], &1["number"]})
+        )
+
+      for ref <- refs,
+          summary = found[{String.downcase(ref["repository"]), ref["number"]}],
+          do: {ref, summary}
+    end)
+    |> Map.new()
+  end
+
+  # The Forgejo checkout a ref is read through: its own project when that is on the
+  # ref's server, else one of the same repository there, else any there. A link's host
+  # keeps the server's port; a project's does not.
+  defp forgejo_route(ref, projects) do
+    host = (ref["host"] || "") |> String.downcase() |> String.split(":") |> hd()
+    on_host = Enum.filter(projects, &(&1.host == host))
+    repository = ref["repository"] || ""
+
+    Enum.find(on_host, &(&1.id == ref["projectId"])) ||
+      Enum.find(on_host, &same?(&1.repository, repository)) || List.first(on_host)
+  end
+
+  defp github_summaries(refs, checkouts) do
     refs
     |> Enum.group_by(&String.downcase(&1["host"] || ""))
     |> Enum.flat_map(fn {host, refs} ->
@@ -1457,7 +1623,8 @@ defmodule HalC2.PullRequests do
   # --- projects -----------------------------------------------------------------------
 
   # This MC's projects whose checkout has a remote, as
-  # `%{id, title, root, host, repository, kind}`.
+  # `%{id, title, root, host, repository, kind, remote_url}`, `remote_url` the remote
+  # they were told by (`origin`, else the first).
   @doc "This MC's projects whose checkout has a remote, with its host and repository."
   def projects do
     for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
@@ -1496,8 +1663,10 @@ defmodule HalC2.PullRequests do
              [name, url | _] <- [String.split(line)],
              do: {name, url}
            ),
-         {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes) do
-      url |> parse_remote() |> resolve_ssh_alias()
+         {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes),
+         %{} = parsed <- url |> parse_remote() |> resolve_ssh_alias() do
+      # The remote the project was told by, which a Forgejo read is pointed at.
+      Map.put(parsed, :remote_url, url)
     else
       _ -> nil
     end
@@ -1677,6 +1846,12 @@ defmodule HalC2.PullRequests do
     end
   end
 
+  @doc "The kind of host `host` is (`\"github\"`, `\"forgejo\"`, …), its port aside."
+  def host_kind(host) when is_binary(host),
+    do: host |> String.trim() |> String.downcase() |> String.split(":") |> hd() |> kind()
+
+  def host_kind(_host), do: nil
+
   defp kind(host) do
     labels = String.split(host, ".")
 
@@ -1753,7 +1928,7 @@ defmodule HalC2.PullRequests do
 
     project =
       cond do
-        own && same?(own.repository, repository) && host in [nil, own.host] ->
+        own && same?(own.repository, repository) && (host == nil or on_host?(own, host)) ->
           {:ok, own}
 
         host == nil and own == nil ->
@@ -1766,7 +1941,7 @@ defmodule HalC2.PullRequests do
           )
 
         true ->
-          on_host = Enum.filter(all, &(&1.host == host))
+          on_host = Enum.filter(all, &on_host?(&1, host))
 
           case Enum.find(on_host, &same?(&1.repository, repository)) || List.first(on_host) do
             nil -> unavailable("provider-unsupported", nil)
@@ -1789,25 +1964,63 @@ defmodule HalC2.PullRequests do
     end
   end
 
-  # A routed operation names the account it expects to act as; anything else is refused.
+  # A routed operation names the account it expects to act as, as `routing` answered
+  # it (GitHub's account id, Forgejo's login); anything else is refused.
   defp verified(project, %{"expectedAccountId" => expected} = ref) when is_binary(expected) do
     host = ref["host"] && String.downcase(ref["host"])
 
-    case host == project.host && identity(project) do
-      {:ok, %{"id" => ^expected}} ->
+    case (is_binary(host) and on_host?(project, host)) && account(project) do
+      {:ok, ^expected} ->
         {:ok, project}
 
       _ ->
         refuse(
           "routeIdentity",
-          "The GitHub account could not be verified before starting the operation."
+          "The #{if project.kind == "forgejo", do: "Forgejo", else: "GitHub"} account could not be verified before starting the operation."
         )
     end
   end
 
   defp verified(project, _ref), do: {:ok, project}
 
+  # Whether `host`, as a reference names it, is the server of `project`. A Forgejo
+  # reference keeps its server's web port, which a project's host does not, so the
+  # host must be an HTTP(S) remote's own authority, port or none alike: two servers
+  # on one hostname stay apart. An SSH remote does not say the web port, so there the
+  # hostname decides, as `forgejo_route/2` reads summaries.
+  defp on_host?(project, host) do
+    [hostname | _] = String.split(host, ":", parts: 2)
+    hostname == project.host and web_authority(project) in [nil, host]
+  end
+
+  defp web_authority(project) do
+    with url when is_binary(url) <- Map.get(project, :remote_url),
+         {:ok, %URI{scheme: scheme, host: host, port: port}}
+         when scheme in ~w(http https) and is_binary(host) <- URI.new(url) do
+      host = String.downcase(host)
+      if port && port != URI.default_port(scheme), do: "#{host}:#{port}", else: host
+    else
+      _ -> nil
+    end
+  end
+
+  defp account(%{kind: "forgejo"} = project), do: Forgejo.signed_in(ctx(project, nil))
+
+  defp account(project) do
+    with {:ok, %{"id" => id}} <- identity(project), do: {:ok, id}
+  end
+
   defp same?(left, right), do: String.downcase(left) == String.downcase(String.trim(right || ""))
+
+  defp ctx(%{kind: "forgejo"} = project, number) do
+    %{
+      cwd: project.root,
+      host: project.host,
+      repository: project.repository,
+      number: number,
+      remote_url: Map.get(project, :remote_url)
+    }
+  end
 
   defp ctx(project, number),
     do: %{cwd: project.root, host: project.host, repository: project.repository, number: number}
@@ -1840,7 +2053,7 @@ defmodule HalC2.PullRequests do
           {:ok, nil}
 
         {:error, {reason, detail}} when is_atom(reason) ->
-          provider_error(operation, {reason, detail})
+          provider_error(operation, {reason, detail}, project.kind)
 
         other ->
           other
@@ -1849,7 +2062,7 @@ defmodule HalC2.PullRequests do
   end
 
   # A change forgets what is held of the pull request, whether or not the host took it.
-  defp change(ref, operation, fun) do
+  defp change(ref, operation, fun, kinds \\ ["github"]) do
     forgetting = fn project, ctx ->
       try do
         fun.(project, ctx)
@@ -1859,7 +2072,7 @@ defmodule HalC2.PullRequests do
       end
     end
 
-    with {:ok, _} = done <- read(ref, operation, forgetting) do
+    with {:ok, _} = done <- read(ref, operation, forgetting, kinds) do
       Refreshes.bump()
       done
     end
@@ -1876,14 +2089,17 @@ defmodule HalC2.PullRequests do
     if String.trim(body || "") == "", do: refuse(operation, detail), else: fun.()
   end
 
-  # The kind of the host a reference names, from its project's checkout (or the
-  # host it names), without asking that host anything.
+  # The kind of the host a reference names, without asking that host anything: its
+  # project's where the ref names that project's host or none, else the named host's
+  # (a Forgejo project's thread can link a GitHub pull request).
   defp ref_kind(ref) do
     project = Enum.find(projects(), &(&1.id == ref["projectId"]))
+    host = if is_binary(ref["host"]), do: ref["host"] |> String.trim() |> String.downcase()
 
     cond do
-      project -> project.kind
-      is_binary(ref["host"]) -> kind(String.downcase(String.trim(ref["host"])))
+      project && host in [nil, ""] -> project.kind
+      project && host |> String.split(":") |> hd() == project.host -> project.kind
+      host not in [nil, ""] -> host_kind(host)
       true -> nil
     end
   end
@@ -1919,20 +2135,37 @@ defmodule HalC2.PullRequests do
     end
   end
 
-  defp provider_error(_operation, {:missing, _}), do: unavailable("cli-missing", "github")
+  # A host's CLI missing or signed out, told in that host's terms: Forgejo's own detail
+  # names `fj` or `tea` and what to run.
+  defp provider_error(operation, failure, provider \\ "github")
 
-  defp provider_error(_operation, {:unauthenticated, _}),
-    do: unavailable("cli-unauthenticated", "github")
+  defp provider_error(_operation, {reason, detail}, "forgejo")
+       when reason in [:missing, :unauthenticated] do
+    reason = if reason == :missing, do: "cli-missing", else: "cli-unauthenticated"
 
-  defp provider_error(operation, {_reason, detail}), do: refuse(operation, detail)
+    unavailable(
+      reason,
+      "forgejo",
+      if(is_binary(detail), do: detail, else: @forgejo_requirements[reason])
+    )
+  end
 
-  defp unavailable(reason, provider) do
+  defp provider_error(_operation, {:missing, _}, provider),
+    do: unavailable("cli-missing", provider)
+
+  defp provider_error(_operation, {:unauthenticated, _}, provider),
+    do: unavailable("cli-unauthenticated", provider)
+
+  defp provider_error(operation, {_reason, detail}, _provider), do: refuse(operation, detail)
+
+  defp unavailable(reason, provider, message \\ nil) do
     message =
-      case reason do
-        "cli-missing" -> @requirements.missing
-        "cli-unauthenticated" -> @requirements.unauthenticated
-        _ -> "Change requests cannot be browsed for this project's host yet."
-      end
+      message ||
+        case reason do
+          "cli-missing" -> @requirements.missing
+          "cli-unauthenticated" -> @requirements.unauthenticated
+          _ -> "Change requests cannot be browsed for this project's host yet."
+        end
 
     {:error,
      %{"_tag" => "PullRequestUnavailableError", "reason" => reason, "message" => message}

@@ -234,6 +234,12 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the MC reads a Forgejo repository
     Then the user is told to install the Forgejo CLI 0.6 or later or the Gitea CLI 0.16 or later
 
+  @mc @priority-high
+  Scenario: Forgejo with fj installed but no login for the server says how to sign in
+    Given the Forgejo CLI is installed with no login for the server and the Gitea CLI is not installed
+    When the MC reads a Forgejo repository
+    Then the user is told "No matching Forgejo login. Use `fj auth login`, `fj auth add-token`, or `tea login add` for this server; choose a default when multiple tea accounts match."
+
   # Legacy: apps/server/src/sourceControl/SourceControlProviderDiscovery.ts (selectRemote)
   @mc @backlog
   Scenario Outline: The host of a checkout is read from the most telling remote

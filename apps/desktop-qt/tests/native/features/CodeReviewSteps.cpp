@@ -564,14 +564,14 @@ const Steps steps([] {
   step(QStringLiteral("GitHub, GitLab, Forgejo, Bitbucket and Azure DevOps are offered as hosts"), [](World& world, const Captures&, const Table&) {
     QQuickItem* hosts = waitShownNamed(world, QStringLiteral("codeReviewHosts"));
     for (const auto& [value, label] : {std::pair{QStringLiteral("github"), QStringLiteral("GitHub")}, std::pair{QStringLiteral("gitlab"), QStringLiteral("GitLab (coming later)")},
-                                       std::pair{QStringLiteral("forgejo"), QStringLiteral("Forgejo (coming later)")},
+                                       std::pair{QStringLiteral("forgejo"), QStringLiteral("Forgejo")},
                                        std::pair{QStringLiteral("bitbucket"), QStringLiteral("Bitbucket (coming later)")},
                                        std::pair{QStringLiteral("azure-devops"), QStringLiteral("Azure DevOps (coming later)")}}) {
       QQuickItem* option = findNamed(hosts, QStringLiteral("choice:") + value);
       expect(option && drawsText(option, label), QStringLiteral("%1 is not offered").arg(label));
     }
   });
-  step(QStringLiteral("only GitHub can be chosen today"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("only GitHub and Forgejo can be chosen today"), [](World& world, const Captures&, const Table&) {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("codeReviewSettings"));
     QQuickItem* hosts = waitShownNamed(world, QStringLiteral("codeReviewHosts"));
     clickItem(world, findNamed(hosts, QStringLiteral("choice:gitlab")));
@@ -579,6 +579,10 @@ const Steps steps([] {
     expect(settings->property("values").toMap().value(QStringLiteral("host")) == QStringLiteral("github") && !settings->property("dirty").toBool(),
            QStringLiteral("GitLab was chosen"));
     expect(findNamed(hosts, QStringLiteral("choice:github"))->property("chosen").toBool(), QStringLiteral("GitHub is not the host"));
+    clickItem(world, findNamed(hosts, QStringLiteral("choice:forgejo")));
+    world.sync();
+    expect(settings->property("values").toMap().value(QStringLiteral("host")) == QStringLiteral("forgejo") && settings->property("dirty").toBool(),
+           QStringLiteral("Forgejo could not be chosen"));
   });
 });
 

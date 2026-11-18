@@ -3,24 +3,106 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   The checkout a review's agent works in: a detached worktree, at the pull request's
   head, of the plugin's own bare clone of the repository. Both live under the plugin's
   data directory, so the user's repository is never fetched into or given a worktree.
-  The clone is fetched over HTTPS with gh's credentials, which a service has where it
-  may have no SSH agent.
+  The clone is fetched over HTTP(S), which a service can where it may have no SSH
+  agent: from GitHub with gh's credentials, from Forgejo with the token the MC reads
+  it with.
   """
 
+  # The attempts whose refs a process holds: `{clone, attempt}` to its pid.
+  @held HalC2Plugins.CodeReview.Checkout.Held
+
   @doc """
-  Fetches pull request `number` and its base branch `base` from `url` into the bare
+  Fetches pull request `number` and its base branch `base` from `remote` into the bare
   clone at `clone`, made on first use, and puts the worktree at `path` on its head.
-  Answers `{:ok, %{"path", "headSha", "mergeBase"}}`.
+  `remote` is `%{"url"}` with how to sign in: `"gh" => true` for gh's credentials, or
+  a `"username"` and `"token"`. Answers `{:ok, %{"path", "headSha", "baseSha",
+  "mergeBase", "headRef", "baseRef"}}`: `baseSha` is the base branch as fetched,
+  `mergeBase` nil when it shares no history with the head, and the two refs hold the
+  head and base in the clone until `release/0`.
   """
-  def prepare(clone, path, url, number, base) do
+  def prepare(clone, path, %{"url" => url} = remote, number, base) do
+    # Each attempt fetches into refs of its own: a stopped review's fetch may still
+    # finish, and must not move the head or base this one reads.
+    attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
+
+    with :ok <- hold(clone, attempt) do
+      case prepare_attempt(clone, path, remote, url, number, base, attempt) do
+        {:ok, checkout} ->
+          {:ok,
+           Map.merge(checkout, %{"headRef" => "#{attempt}/head", "baseRef" => "#{attempt}/base"})}
+
+        error ->
+          release()
+          error
+      end
+    end
+  end
+
+  @doc """
+  Makes the table of the attempts being held, owned by the calling process: the
+  plugin's server, which the runs holding them are linked to. It is this machine's
+  alone, as the clones are: a lookup in it asks no other node.
+  """
+  def start do
+    if :ets.whereis(@held) == :undefined,
+      do: :ets.new(@held, [:named_table, :public, :set, read_concurrency: true])
+
+    :ok
+  end
+
+  # Records this process as the holder of `attempt`'s refs, until `release/0` or its end.
+  defp hold(clone, attempt) do
+    if :ets.insert_new(@held, {{clone, attempt}, self()}) do
+      Process.put(__MODULE__, [{clone, attempt} | Process.get(__MODULE__, [])])
+      :ok
+    else
+      {:error, "Another checkout holds #{attempt}."}
+    end
+  rescue
+    ArgumentError -> {:error, "The code review plugin is not running."}
+  end
+
+  # Whether a process still holds `attempt`, forgetting a holder that ended.
+  defp held?(clone, attempt) do
+    case :ets.lookup(@held, {clone, attempt}) do
+      [{_key, pid}] ->
+        if Process.alive?(pid) do
+          true
+        else
+          :ets.delete(@held, {clone, attempt})
+          false
+        end
+
+      [] ->
+        false
+    end
+  end
+
+  @doc """
+  Drops the refs of the checkouts this process prepared, which hold the head and base
+  they fetched until a sandbox is made from them. Those of a process that ends first
+  are dropped by the next checkout of the pull request.
+  """
+  def release do
+    for {clone, attempt} <- Process.delete(__MODULE__) || [] do
+      drop(clone, attempt)
+      if :ets.whereis(@held) != :undefined, do: :ets.delete(@held, {clone, attempt})
+    end
+
+    :ok
+  end
+
+  defp prepare_attempt(clone, path, remote, url, number, base, attempt) do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
     with :ok <- alone(clone, fn -> init(clone, url) end),
+         :ok <- sweep(clone, number),
+         {:ok, {credentials, env}} <- credentials(clone, remote, url),
          {:ok, _} <-
            git(
              clone,
-             credentials() ++
+             credentials ++
                [
                  "fetch",
                  "-q",
@@ -28,20 +110,69 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                  # Reviews fetch side by side; FETCH_HEAD is the one file they would share.
                  "--no-write-fetch-head",
                  url,
-                 "+refs/pull/#{number}/head:#{head_ref}",
-                 "+refs/heads/#{base}:#{base_ref}"
-               ]
+                 "+refs/pull/#{number}/head:#{attempt}/head",
+                 "+refs/heads/#{base}:#{attempt}/base"
+               ],
+             env
            ),
-         {:ok, head} <- git(clone, ["rev-parse", head_ref]),
+         {:ok, head} <- git(clone, ["rev-parse", "#{attempt}/head"]),
+         {:ok, base_sha} <- git(clone, ["rev-parse", "#{attempt}/base"]),
+         :ok <- publish(clone, [{head_ref, head}, {base_ref, base_sha}]),
          :ok <- alone(clone, fn -> place(clone, path, head) end) do
+      # Nil when the two have no common ancestor, as after the base branch was rewritten:
+      # a merge-base git did not find is not one the sandbox can check its checkout for.
       merge_base =
-        case git(clone, ["merge-base", base_ref, head]) do
-          {:ok, sha} -> sha
-          _ -> base_ref
+        case git(clone, ["merge-base", base_sha, head]) do
+          {:ok, sha} when sha != "" -> sha
+          _ -> nil
         end
 
-      {:ok, %{"path" => path, "headSha" => head, "mergeBase" => merge_base}}
+      {:ok,
+       %{"path" => path, "headSha" => head, "baseSha" => base_sha, "mergeBase" => merge_base}}
     end
+  end
+
+  # The pull request's refs, which keep what the last checkout of it fetched, are set
+  # to what this attempt fetched. A sandbox is made from the attempt's own refs, which
+  # an attempt stopped meanwhile cannot move.
+  defp publish(clone, refs) do
+    Enum.reduce_while(refs, :ok, fn {ref, sha}, :ok ->
+      case git(clone, ["update-ref", ref, sha]) do
+        {:ok, _} -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp drop(clone, attempt) do
+    for side <- ~w(head base), do: git(clone, ["update-ref", "-d", "#{attempt}/#{side}"])
+    :ok
+  end
+
+  # The refs of attempts no process holds any more: a stopped review's fetch that
+  # finished after it was stopped leaves its refs, as nothing is left to drop them. A
+  # live attempt is held in `@held` until it is released.
+  defp sweep(clone, number) do
+    with {:ok, refs} <-
+           git(clone, [
+             "for-each-ref",
+             "--format=%(refname)",
+             "refs/hal-c2/code-review/#{number}/"
+           ]) do
+      refs
+      |> String.split("\n", trim: true)
+      |> Enum.flat_map(fn ref ->
+        case Regex.run(~r{^(.+/attempt-\d+)/(?:head|base)$}, ref) do
+          [_, attempt] -> [attempt]
+          _ -> []
+        end
+      end)
+      |> Enum.uniq()
+      |> Enum.reject(&held?(clone, &1))
+      |> Enum.each(&drop(clone, &1))
+    end
+
+    :ok
   end
 
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."
@@ -129,7 +260,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
           {mark(files, file, {"old", old}, "deleted"), file, old + 1, new, false}
 
         String.starts_with?(text, " ") ->
-          files = files |> mark(file, {"new", new}, "context") |> mark(file, {"old", old}, "context")
+          files =
+            files |> mark(file, {"new", new}, "context") |> mark(file, {"old", old}, "context")
+
           {files, file, old + 1, new + 1, false}
 
         true ->
@@ -153,10 +286,13 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     if String.starts_with?(path, prefix), do: String.replace_prefix(path, prefix, "")
   end
 
-  defp unquote_c(<<?\\, a, b, c, rest::binary>>, acc) when a in ?0..?3 and b in ?0..?7 and c in ?0..?7,
-    do: unquote_c(rest, <<acc::binary, (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)>>)
+  defp unquote_c(<<?\\, a, b, c, rest::binary>>, acc)
+       when a in ?0..?3 and b in ?0..?7 and c in ?0..?7,
+       do: unquote_c(rest, <<acc::binary, (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)>>)
 
-  defp unquote_c(<<?\\, char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, escaped(char)>>)
+  defp unquote_c(<<?\\, char, rest::binary>>, acc),
+    do: unquote_c(rest, <<acc::binary, escaped(char)>>)
+
   defp unquote_c(<<char, rest::binary>>, acc), do: unquote_c(rest, <<acc::binary, char>>)
   defp unquote_c(<<>>, acc), do: acc
 
@@ -184,7 +320,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   # Reviews of one repository share its clone; one at a time makes it or changes its
   # worktrees, or one's prune takes another's worktree while it is being added.
-  defp alone(repository, fun), do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
+  defp alone(repository, fun),
+    do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 
   # Run each time, as `git init` leaves a clone alone and finishes one it was cut short making.
   # `origin` is for the agent's git in a checkout; the plugin fetches `url` itself.
@@ -193,40 +330,134 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
     with {:ok, _} <- git(Path.dirname(clone), ["init", "-q", "--bare", clone]),
          {:ok, _} <- git(clone, ["config", "remote.origin.url", url]),
-         {:ok, _} <- git(clone, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]),
+         {:ok, _} <-
+           git(clone, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]),
          do: :ok
   end
 
-  # gh as git's only credential helper, as `gh auth setup-git` would make it. Git runs
-  # the helper through a shell.
-  defp credentials do
+  # The address git fetches `url` from, after the `insteadOf` rewrites in the config it
+  # is given: the server a token's helper is for.
+  defp fetched_url(clone, url) do
+    case git(clone, ["ls-remote", "--get-url", url]) do
+      {:ok, fetched} when fetched != "" -> fetched
+      _ -> url
+    end
+  end
+
+  # Git's only credential helper for the fetch, with what it reads from the environment,
+  # `{:ok, {args, env}}`. gh's is as `gh auth setup-git` would make it. A token goes in
+  # the environment, never in the command line, where any process could read it. Git
+  # runs a helper through a shell.
+  defp credentials(_clone, %{"gh" => true}, _url) do
     case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
       nil ->
-        []
+        {:ok, {[], []}}
 
       gh ->
         gh = String.replace(gh, "'", "'\\''")
-        ["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"]
+
+        {:ok,
+         {["-c", "credential.helper=", "-c", "credential.helper=!'#{gh}' auth git-credential"],
+          []}}
+    end
+  end
+
+  # A token goes only to the server it was issued for (`server`, else `url`'s), and over
+  # a checked certificate: the configuration the MC's environment hands git
+  # (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`) can rewrite `url` to another server
+  # or turn the check off, and is refused when it does. The helper is configured for
+  # that origin alone (`credential.<url>.helper`), so git asks it about no other: a
+  # fetch redirected elsewhere gets nothing.
+  defp credentials(clone, %{"token" => token} = remote, url)
+       when is_binary(token) and token != "" do
+    helper =
+      ~S|!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$HAL_C2_GIT_USERNAME" "$HAL_C2_GIT_TOKEN"; }; f|
+
+    fetched = fetched_url(clone, url)
+    issuer = origin(remote["server"] || url)
+
+    cond do
+      is_nil(issuer) or origin(fetched) != issuer ->
+        {:error,
+         "git would fetch #{url} from #{origin(fetched) || fetched}, not from the server " <>
+           "its token is for; check the git configuration the MC is started with."}
+
+      git(clone, ["config", "--type=bool", "--get-urlmatch", "http.sslVerify", fetched]) ==
+          {:ok, "false"} ->
+        {:error,
+         "git is configured not to check #{issuer}'s certificate, so its token is not " <>
+           "sent; check the git configuration the MC is started with."}
+
+      true ->
+        {:ok,
+         {["-c", "credential.helper=", "-c", "credential.#{issuer}.helper=" <> helper],
+          [{"HAL_C2_GIT_USERNAME", remote["username"] || "hal-c2"}, {"HAL_C2_GIT_TOKEN", token}]}}
+    end
+  end
+
+  defp credentials(_clone, _remote, _url), do: {:ok, {["-c", "credential.helper="], []}}
+
+  # `scheme://host[:port]` of an HTTP(S) URL, or nil.
+  defp origin(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port}
+      when scheme in ~w(http https) and is_binary(host) and host != "" ->
+        if port && port != URI.default_port(scheme),
+          do: "#{scheme}://#{host}:#{port}",
+          else: "#{scheme}://#{host}"
+
+      _ ->
+        nil
     end
   end
 
   # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
-  # can turn the HTTPS address back into SSH, and its hooks have no business here.
-  defp git(cwd, args) do
+  # can turn the HTTPS address back into SSH, and its hooks have no business here. Nor
+  # does an inherited `GIT_SSL_NO_VERIFY` turn off the server's certificate check, or
+  # `GIT_CONFIG` point `git config` at a file other than the one `git fetch` reads, so
+  # the certificate check is read from what the fetch uses. Tracing is off, as a trace
+  # of the fetch can carry its token into the error a failed one answers; the token is
+  # taken out of that error as well.
+  @untraced ~w(GIT_TRACE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA GIT_CURL_VERBOSE
+               GIT_TRACE_PACKET GIT_TRACE_PACKFILE GIT_TRACE_SETUP GIT_TRACE2
+               GIT_TRACE2_EVENT GIT_TRACE2_PERF)
+
+  defp git(cwd, args, env \\ []) do
     case System.cmd("git", args,
            cd: cwd,
            stderr_to_stdout: true,
-           env: [{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_CONFIG_GLOBAL", "/dev/null"}, {"GIT_CONFIG_NOSYSTEM", "1"}]
+           env:
+             [
+               {"GIT_TERMINAL_PROMPT", "0"},
+               {"GIT_CONFIG_GLOBAL", "/dev/null"},
+               {"GIT_CONFIG_NOSYSTEM", "1"},
+               {"GIT_CONFIG", nil},
+               {"GIT_SSL_NO_VERIFY", nil},
+               {"GIT_TRACE_REDACT", "1"}
+             ] ++ Enum.map(@untraced, &{&1, nil}) ++ env
          ) do
       {out, 0} ->
         {:ok, String.trim(out)}
 
       {out, _} ->
-        said = out |> String.split("\n", trim: true) |> Enum.map_join(" ", &String.trim/1)
+        said =
+          out
+          |> redact(env)
+          |> String.split("\n", trim: true)
+          |> Enum.map_join(" ", &String.trim/1)
+
         {:error, "git #{command(args)} failed: #{said}"}
     end
   rescue
-    e in [ErlangError, File.Error] -> {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+    e in [ErlangError, File.Error] ->
+      {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+  end
+
+  defp redact(out, env) do
+    case List.keyfind(env, "HAL_C2_GIT_TOKEN", 0) do
+      {_, token} when is_binary(token) and token != "" -> String.replace(out, token, "[token]")
+      _ -> out
+    end
   end
 
   defp command(["-c", _ | args]), do: command(args)

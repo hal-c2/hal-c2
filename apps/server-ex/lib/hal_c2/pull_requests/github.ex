@@ -1046,7 +1046,9 @@ defmodule HalC2.PullRequests.GitHub do
   # The newest published review or comment by the repository's owner, a member or a
   # collaborator, or a trusted review bot (`activity`), and the newest by the signed-in
   # account (`ownActivity`), which may be the agent's own, each as
-  # `%{"at", "author", "kind", "state"}` or nil. One without an author is skipped.
+  # `%{"at", "author", "kind", "state"}` or nil; and the newest review and the newest
+  # comment of each (`activities`, `ownActivities`), so a subscriber to one kind still
+  # hears it when the other lands after. One without an author is skipped.
   defp activity(pr, viewer) do
     viewer = String.downcase(viewer || "")
 
@@ -1065,10 +1067,21 @@ defmodule HalC2.PullRequests.GitHub do
       |> Enum.filter(fn {node, at, _, _} -> is_binary(at) and author_login(node) != nil end)
       |> Enum.split_with(fn {node, _, _, _} -> String.downcase(author_login(node)) == viewer end)
 
+    trusted = Enum.filter(others, fn {node, _, _, _} -> trusted?(node) end)
+
     %{
-      "activity" => others |> Enum.filter(fn {node, _, _, _} -> trusted?(node) end) |> newest(),
-      "ownActivity" => newest(own)
+      "activity" => newest(trusted),
+      "ownActivity" => newest(own),
+      "activities" => newest_of_each_kind(trusted),
+      "ownActivities" => newest_of_each_kind(own)
     }
+  end
+
+  defp newest_of_each_kind(activities) do
+    activities
+    |> Enum.group_by(fn {_, _, kind, _} -> kind end)
+    |> Enum.map(fn {_, of_kind} -> newest(of_kind) end)
+    |> Enum.sort_by(&(HalC2.Projection.JS.epoch_ms(&1["at"]) || 0))
   end
 
   defp newest(activities) do

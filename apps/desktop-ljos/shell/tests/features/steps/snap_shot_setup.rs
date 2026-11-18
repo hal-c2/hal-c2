@@ -10,6 +10,7 @@ use hal_c2_shell::controllers::settings::Settings;
 use ljos::prelude::ApplicationState;
 use serde_json::{Value, json};
 
+use super::keybinding;
 use super::snap_shot::{
     self as snap, ALT, CONTROL, KEY_AT, KEY_BACKTAB, KEY_CONTROL, KEY_HOME, KEY_TAB, KEY_UP,
     SECTION, SHIFT, answer_check, capture, ctrl_shift_1, ctrl_shift_2, desktop, environment,
@@ -285,6 +286,8 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step("the user is changing the shortcut", |world, _, _| {
         set_setting(world, "snapShotEnabled", json!(true))?;
+        // A rebound shortcut is checked against the keymap the shell holds.
+        keybinding::await_rules(world)?;
         send(world, "record.start", Value::Null)
     });
     steps.step(

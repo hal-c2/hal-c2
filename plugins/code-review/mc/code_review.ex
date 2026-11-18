@@ -53,6 +53,8 @@ defmodule HalC2Plugins.CodeReview do
   # write access or triage by their permission on it. Everyone else, a fork's author
   # included, is not, unless the settings name them.
   @trusted_associations ~w(OWNER MEMBER COLLABORATOR)
+  # The hosts whose pull requests can be reviewed.
+  @hosts ~w(github forgejo)
   @trusted_roles ~w(admin maintain write triage)
   # What a report may hold. A posted review's body has to stay under GitHub's 65,536
   # characters, with room for the headline, the index and the marker; the rest keeps a
@@ -121,8 +123,9 @@ defmodule HalC2Plugins.CodeReview do
     by_repo = settings["publishingByRepository"] || %{}
 
     cond do
-      settings["host"] != "github" ->
-        {:error, "host: only GitHub can be reviewed so far; #{settings["host"]} is coming later."}
+      settings["host"] not in @hosts ->
+        {:error,
+         "host: only GitHub and Forgejo can be reviewed so far; #{settings["host"]} is coming later."}
 
       bad = Enum.find(repos, &(not repository?(&1))) ->
         {:error, "repositories: #{inspect(bad)} is not owner/name."}
@@ -165,7 +168,7 @@ defmodule HalC2Plugins.CodeReview do
 
       not (is_list(settings["trustedLogins"] || []) and
                Enum.all?(settings["trustedLogins"] || [], &is_binary/1)) ->
-        {:error, "trustedLogins: give them as a list of GitHub logins."}
+        {:error, "trustedLogins: give them as a list of logins on the host."}
 
       key =
           Enum.find(
@@ -418,6 +421,8 @@ defmodule HalC2Plugins.CodeReview do
     # Runs and posts are linked to the server, so stopping the plugin stops them; the
     # server itself only hears that one ended.
     Process.flag(:trap_exit, true)
+    # The checkouts its runs hold, which go when it does.
+    :ok = Checkout.start()
     # A machine leaving gives back the reviews it had queued; they are looked at again.
     :net_kernel.monitor_nodes(true)
     send(self(), :poll)
@@ -529,11 +534,25 @@ defmodule HalC2Plugins.CodeReview do
   # Every setting applies from here on: the next look watches the repositories saved,
   # a new pace re-arms the wait for it, more room starts queued reviews (less lets the
   # running ones finish), and a new display lists the threads there are. Runs and posts
-  # under way finish with the settings they started with.
+  # under way finish with the settings they started with. Another host makes what was
+  # looked at on the old one stale: a look still out is dropped (`apply_look/2` takes
+  # none that started before `looked`), so are the reviews nobody started, and the new
+  # host is looked at now.
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
     old = state.settings
     state = %{state | settings: settings}
+
+    state =
+      if settings["host"] != old["host"] do
+        reviews = Map.reject(state.reviews, fn {_key, review} -> review["status"] == "ready" end)
+
+        %{state | reviews: reviews, looked: System.monotonic_time()}
+        |> look_again()
+      else
+        state
+      end
+
     state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
     state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
     {:reply, :ok, state |> pump() |> changed()}
@@ -571,13 +590,24 @@ defmodule HalC2Plugins.CodeReview do
 
   # The user's ask, with who stands behind the pull request read afresh: what it says
   # now is what the review may start on.
+  # A row of the same name kept from another host (or project) is another pull request:
+  # it takes none of this one's trust, and this one starts from what was read of it.
   def handle_call({:start, pr, trigger}, _from, state) do
+    known = state.reviews[pr["key"]]
+    same? = known != nil and known["projectId"] == pr["projectId"]
+
     review =
-      if known = state.reviews[pr["key"]],
+      if same?,
         do: Map.merge(known, Map.take(pr, ~w(trust seenAt))),
         else: pr
 
     cond do
+      known != nil and not same? and known["status"] in ~w(queued running publishing) ->
+        {:reply,
+         {:error,
+          "A review of #{pr["key"]} on another host is under way. Ask again once it ends."},
+         state}
+
       review["status"] in ~w(queued running) ->
         {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()} |> reply_snapshot()
 
@@ -1306,7 +1336,10 @@ defmodule HalC2Plugins.CodeReview do
         watched =
           for repo <- repos,
               project =
-                Enum.find(projects, &(&1["kind"] == "github" and same?(&1["repository"], repo))),
+                Enum.find(
+                  projects,
+                  &(&1["kind"] == settings["host"] and same?(&1["repository"], repo))
+                ),
               do: project
 
         unwatched =
@@ -1617,7 +1650,7 @@ defmodule HalC2Plugins.CodeReview do
           )
         )
 
-      {:ok, Map.put(pr, "trust", facts(trust, label))}
+      {:ok, Map.merge(pr, %{"projectId" => project["id"], "trust" => facts(trust, label)})}
     else
       {:error, error} -> {:error, message(error)}
     end
@@ -2084,20 +2117,15 @@ defmodule HalC2Plugins.CodeReview do
                project["host"],
                review["repository"] <> ".git"
              ]),
+           {:ok, remote} <- remote(project, review),
            {:ok, checkout} <-
-             Checkout.prepare(
-               clone,
-               path,
-               "https://#{project["host"]}/#{review["repository"]}.git",
-               review["number"],
-               review["baseBranch"]
-             ),
+             Checkout.prepare(clone, path, remote, review["number"], review["baseBranch"]),
            :ok <- approved_head(settings, review, checkout, clone),
            :ok <-
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
                "root" => clone,
-               "mergeBase" => checkout["mergeBase"],
+               "mergeBase" => checkout["mergeBase"] || checkout["baseSha"],
                "reviewedSha" => checkout["headSha"],
                "headSha" => checkout["headSha"],
                "sandboxed" => sandboxed
@@ -2116,8 +2144,12 @@ defmodule HalC2Plugins.CodeReview do
           if server({:run, key, thread_id}) == :over, do: retire(started)
           launched
         else
-          :over -> {:stopped, started}
-          :finished -> {:stopped, started}
+          :over ->
+            {:stopped, started}
+
+          :finished ->
+            {:stopped, started}
+
           # No agent will work in the checkout, so it does not wait for the review's
           # next run, which a stopped or failed review may never get.
           error ->
@@ -2125,6 +2157,9 @@ defmodule HalC2Plugins.CodeReview do
             error
         end
       end
+
+    # The sandbox, if any, is made from the checkout's refs by now.
+    Checkout.release()
 
     case result do
       {:ok, _} ->
@@ -2191,15 +2226,14 @@ defmodule HalC2Plugins.CodeReview do
   # The review's sandbox, with its checkout made from the plugin's clone at the
   # commit checked out here.
   defp open_sandbox(review, settings, model, clone, checkout) do
-    number = review["number"]
     tokens = settings["sandboxTokens"] || 0
 
     with {:ok, _} <-
            Host.open_sandbox(@id, review["threadId"], %{
              instance: model["instanceId"],
              clone: clone,
-             head_ref: "refs/hal-c2/code-review/#{number}/head",
-             base_ref: "refs/hal-c2/code-review/#{number}/base",
+             head_ref: checkout["headRef"],
+             base_ref: checkout["baseRef"],
              head: checkout["headSha"],
              merge_base: checkout["mergeBase"],
              review: review["key"],
@@ -2346,6 +2380,28 @@ defmodule HalC2Plugins.CodeReview do
   defp option?(descriptor, value),
     do: is_binary(value) and Enum.any?(descriptor["options"] || [], &(&1["id"] == value))
 
+  # Where the plugin's clone fetches `review`'s pull request from, and how it signs in
+  # (`Checkout.prepare/5`): GitHub over HTTPS with gh's credentials, Forgejo from the
+  # server and with the token the MC reads it with.
+  defp remote(%{"kind" => "forgejo"} = project, review) do
+    ref = %{
+      "projectId" => project["id"],
+      "repository" => review["repository"],
+      "number" => review["number"]
+    }
+
+    case Host.pull_request_fetch(@id, ref) do
+      {:ok, access} ->
+        {:ok, access}
+
+      {:error, error} ->
+        {:error, "Could not tell where to fetch #{review["key"]}: #{message(error)}"}
+    end
+  end
+
+  defp remote(project, review),
+    do: {:ok, %{"url" => "https://#{project["host"]}/#{review["repository"]}.git", "gh" => true}}
+
   # The pull request beyond its diff, read for the prompt: what its author says
   # it does, the checks already failing, and the review comments already on it,
   # so the agent judges the change against its intent and does not raise what
@@ -2413,7 +2469,7 @@ defmodule HalC2Plugins.CodeReview do
       "pr.base" => review["baseBranch"],
       "pr.head" => review["headBranch"],
       "pr.headSha" => checkout["headSha"],
-      "pr.mergeBase" => checkout["mergeBase"],
+      "pr.mergeBase" => checkout["mergeBase"] || checkout["baseSha"],
       "pr.body" => review["body"],
       "repository" => review["repository"]
     }
@@ -2428,9 +2484,12 @@ defmodule HalC2Plugins.CodeReview do
         if same?(repo, review["repository"]) and String.trim(text) != "", do: text
       end)
 
+    # The base's, not the head's: the pull request under review does not get to say
+    # how it is reviewed.
     review_md =
       if settings["readReviewMd"] do
-        text = Checkout.read(checkout["path"], checkout["headSha"], "REVIEW.md", @review_md_limit)
+        base = checkout["baseSha"] || checkout["mergeBase"]
+        text = Checkout.read(checkout["path"], base, "REVIEW.md", @review_md_limit)
         if text && String.trim(text) != "", do: text
       end
 
@@ -2955,7 +3014,7 @@ defmodule HalC2Plugins.CodeReview do
                "#{unsure["machine"]} did not answer whether it posted this review; try again."}
 
             true ->
-              post_unless_on_github(review, input)
+              post_unless_posted(review, input)
           end
 
         case result do
@@ -3001,8 +3060,8 @@ defmodule HalC2Plugins.CodeReview do
     not match?(%{"status" => "publishing", "threadId" => ^thread_id}, server(:reviews)[key])
   end
 
-  defp post_unless_on_github(review, input) do
-    case on_github(review) do
+  defp post_unless_posted(review, input) do
+    case on_host(review) do
       {:ok, false} ->
         Host.pull_requests(@id, "submitReview", input)
 
@@ -3019,9 +3078,9 @@ defmodule HalC2Plugins.CodeReview do
   # and of which commit. Older MCs post it too.
   defp marker(review), do: "<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->"
 
-  # Whether the pull request has a review carrying the marker under the login gh is
+  # Whether the pull request has a review carrying the marker under the login the host is
   # signed in as: another user's HAL-C2 reviewing the same commit posts the same one.
-  defp on_github(review) do
+  defp on_host(review) do
     ref = Map.take(review, ~w(projectId repository number))
 
     with {:ok, %{"viewer" => viewer}} <- Host.pull_requests(@id, "routing", ref),
@@ -3037,7 +3096,7 @@ defmodule HalC2Plugins.CodeReview do
   defp may_give?(review) do
     case Host.pull_requests(@id, "detail", Map.take(review, ~w(projectId repository number))) do
       {:ok, %{"viewerPermissions" => %{"verdicts" => verdicts}}} -> review["verdict"] in verdicts
-      # Unread, GitHub has the last word on the post.
+      # Unread, the host has the last word on the post.
       _ -> true
     end
   end

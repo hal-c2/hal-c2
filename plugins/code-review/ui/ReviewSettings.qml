@@ -35,7 +35,7 @@ ColumnLayout {
     readonly property var hosts: [
         { value: "github", label: qsTr("GitHub") },
         { value: "gitlab", label: qsTr("GitLab"), disabled: true },
-        { value: "forgejo", label: qsTr("Forgejo"), disabled: true },
+        { value: "forgejo", label: qsTr("Forgejo") },
         { value: "bitbucket", label: qsTr("Bitbucket"), disabled: true },
         { value: "azure-devops", label: qsTr("Azure DevOps"), disabled: true }
     ]
@@ -344,7 +344,7 @@ ColumnLayout {
 
         Field {
             label: qsTr("Host")
-            hint: qsTr("GitHub uses the gh login of this MC's machine.")
+            hint: qsTr("GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login.")
 
             Choice {
                 objectName: "codeReviewHosts"
@@ -455,7 +455,7 @@ ColumnLayout {
             Toggle {
                 key: "reviewRequested"
                 label: qsTr("Review when you are asked to review")
-                hint: qsTr("A review request to the gh user starts a review.")
+                hint: qsTr("A review request to the signed-in account starts a review.")
             }
 
             Field {
@@ -734,7 +734,7 @@ ColumnLayout {
         Toggle {
             key: "readReviewMd"
             label: qsTr("Follow REVIEW.md")
-            hint: qsTr("Add the REVIEW.md at the pull request's head to the prompt.")
+            hint: qsTr("Add the REVIEW.md on the pull request's base branch to the prompt.")
         }
 
         Repeater {

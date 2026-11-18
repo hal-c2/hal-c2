@@ -32,6 +32,9 @@ const QHash<QString, HalC2Tool>& halC2Tools() {
         {"link_pull_request", "link-pr", "Link", "a pull request"},
         {"unlink_pull_request", "unlink-pr", "Unlink", "a pull request"},
         {"list_thread_pull_requests", "list-prs", "Check", "linked pull requests"},
+        {"subscribe_pull_request", "subscribe-pr", "Subscribe to", "pull request news"},
+        {"unsubscribe_pull_request", "unsubscribe-pr", "Unsubscribe from", "pull request news"},
+        {"list_pull_request_subscriptions", "list-pr-subscriptions", "Check", "pull request subscriptions"},
         {"orchestrator_capabilities", "capabilities", "Get", "orchestration capabilities"},
         {"delegate_task", "delegate", "Delegate", "a child task"},
         {"task_status", "task-status", "Get", "delegated task status"},
@@ -400,6 +403,8 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
       {QStringLiteral("thread-merge"), {"Requested", "request", "context merge"}},
       {QStringLiteral("link-pr"), {"Linked", "link", "pull request"}},
       {QStringLiteral("unlink-pr"), {"Unlinked", "unlink", "pull request"}},
+      {QStringLiteral("subscribe-pr"), {"Subscribed to", "subscribe to", "pull request"}},
+      {QStringLiteral("unsubscribe-pr"), {"Unsubscribed from", "unsubscribe from", "pull request"}},
   };
   if (const auto found = counted.constFind(action); found != counted.cend()) {
     return phrase(QLatin1String(found->past), QLatin1String(found->infinitive), quantity(count, QLatin1String(found->noun)));
@@ -412,6 +417,7 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
       {QStringLiteral("thread-configure"), {"Set", "set", "thread model"}},
       {QStringLiteral("thread-search"), {"Searched", "search", "threads"}},
       {QStringLiteral("thread-transfers"), {"Checked", "check", "thread transfers"}},
+      {QStringLiteral("list-pr-subscriptions"), {"Checked", "check", "pull request subscriptions"}},
       {QStringLiteral("thread-organize"), {"Organized", "organize", "threads"}},
       {QStringLiteral("queue-list"), {"Listed", "list", "queued messages"}},
       {QStringLiteral("question-list"), {"Listed", "list", "pending questions"}},

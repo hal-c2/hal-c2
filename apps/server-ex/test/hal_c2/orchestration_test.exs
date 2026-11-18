@@ -1310,6 +1310,77 @@ defmodule HalC2.OrchestrationTest do
     assert [] = StreamState.get(current(thread_id), "thread")[thread_id]["pullRequests"]
   end
 
+  test "a legacy link to the pull request already linked shows the address it gives" do
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    key = %{"host" => "github.com", "repository" => "hal-c2/code", "number" => 7}
+
+    {:ok, _} =
+      Orchestration.dispatch(
+        Map.merge(key, %{
+          "type" => "thread.pull-request.link",
+          "threadId" => thread_id,
+          "url" => "https://github.com/hal-c2/code/pull/7",
+          "source" => "manual",
+          "notify" => ["checks"]
+        })
+      )
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "linkedPullRequest" => %{
+          "number" => 7,
+          "url" => "https://github.com/hal-c2/code/pull/7#moved",
+          "repository" => "hal-c2/code"
+        }
+      })
+
+    assert [%{"url" => "https://github.com/hal-c2/code/pull/7#moved"} = link] =
+             StreamState.get(current(thread_id), "thread")[thread_id]["pullRequests"]
+
+    assert HalC2.PullRequests.Wakes.subscribed(link) == ["checks"]
+  end
+
+  test "a moving thread's pull request subscriptions are left as they were" do
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    key = %{"host" => "github.com", "repository" => "hal-c2/code", "number" => 7}
+
+    {:ok, _} =
+      Orchestration.dispatch(
+        Map.merge(key, %{
+          "type" => "thread.pull-request.link",
+          "threadId" => thread_id,
+          "url" => "https://github.com/hal-c2/code/pull/7",
+          "source" => "manual"
+        })
+      )
+
+    moving = %{"label" => "desktop", "at" => HalC2.Orchestration.Entities.now()}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"thread", thread_id, %{"s" => %{"moving" => moving}}}
+      ])
+
+    before = StreamState.get(current(thread_id), "thread")[thread_id]["pullRequests"]
+
+    assert {:error, message} =
+             Orchestration.dispatch(
+               Map.merge(key, %{
+                 "type" => "thread.pull-request-link.notify",
+                 "threadId" => thread_id,
+                 "notify" => ["checks"]
+               })
+             )
+
+    assert message =~ "is moving to desktop"
+    assert StreamState.get(current(thread_id), "thread")[thread_id]["pullRequests"] == before
+  end
+
   test "threads are found by what was said in them, the user's words first" do
     thread_id = launch("hello there")
     await_statuses(thread_id, ["completed"])

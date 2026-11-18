@@ -612,7 +612,7 @@ defmodule HalC2.Orchestration.Delegation do
     linked =
       Orchestration.dispatch(
         link
-        |> Map.take(~w(host repository number url source heard snapshot stack))
+        |> Map.take(~w(host repository number url source heard snapshot stack notify))
         |> Map.merge(%{
           "type" => "thread.pull-request.link",
           "commandId" => "command:pr-handover:#{HalC2.Environment.uuid4()}",

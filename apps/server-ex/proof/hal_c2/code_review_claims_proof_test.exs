@@ -116,6 +116,10 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
+      "HalC2Plugins.CodeReview.Checkout.start/0" =>
+        "the table of the attempt refs a machine's runs hold, made when its plugin starts; no claim or post goes through it",
+      "HalC2Plugins.CodeReview.Checkout.release/0" =>
+        "a run lets its attempt's refs go once its review has started; the model's checkout has one head and no refs",
       "HalC2.Plugins.Host.publish/3" => @shown,
       "HalC2.Plugins.Host.data_dir/1" => @host,
       "HalC2.Plugins.Host.stop_thread/2" => @agent,
@@ -135,6 +139,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
       "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
       "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
+      "HalC2.Plugins.Host.pull_request_fetch/2" =>
+        "where a Forgejo checkout fetches from and with what token; read before the checkout, it fails the run before any claim as a failed checkout does, which the model has",
       "HalC2.Plugins.Host.left_cluster?/2" =>
         "a machine the user switched off or removed from the cluster stops counting with the others; the model's machines stay in it",
       "HalC2.Plugins.Host.steer/4" => @host,

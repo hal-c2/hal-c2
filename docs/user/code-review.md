@@ -20,14 +20,26 @@ as published.
 1. Put the `code-review` folder in the MC's `plugins` folder, click **Look for
    plugins** in **Settings → Plugins** and turn it on there. It asks to read and comment on pull requests, start
    threads and give the agent a tool to report with.
-2. Sign in to GitHub with `gh auth login` on the MC's machine. Reviews use that
-   login, both to read pull requests and to post reviews.
+2. Sign in on the MC's machine: to GitHub with `gh auth login`, or to a Forgejo
+   (or Gitea) server with `fj auth login` or `tea login add`. Reviews use that
+   login to read pull requests and to post reviews. Pick the host in the plugin's
+   settings.
 3. Open the plugin's settings and add the repositories to watch. A repository is
    watched only if a project on that MC has it as its remote; the settings
    suggest the ones that do.
 
-GitHub is the only host today. GitLab, Forgejo, Bitbucket and Azure DevOps are
+GitHub and Forgejo can be chosen today. GitLab, Bitbucket and Azure DevOps are
 listed, but cannot be chosen yet.
+
+The plugin fetches each pull request into a clone of its own, which leaves your git
+config and credential helpers out. On GitHub it fetches with `gh`'s login. On
+Forgejo it fetches with `fj`'s token, and only from that login's server over
+HTTPS; with `tea` alone it fetches without signing in, so a private repository
+needs `fj` for its reviews to start. On Forgejo with `fj`, a review does not
+start when the git configuration the MC is started with would send the fetch to
+another server or skip the server's certificate check, as the token would go with
+it: turn certificate checks back on, or remove the setting that redirects the
+server, and restart the MC.
 
 ## When a review starts
 
@@ -35,11 +47,14 @@ listed, but cannot be chosen yet.
   Drafts, authors you ignore (bots, by default) and changes over a size you set
   are left out.
 - **Only when asked** waits for you: start a review on the **Reviews** page, or
-  ask on GitHub by requesting a review from the `gh` user, adding a label
+  ask on the host by requesting a review from the account it is signed in as
+  (`gh`'s on GitHub, `fj`'s or `tea`'s on Forgejo), adding a label
   (`agent-review` by default), or commenting a command (`/review` by default).
 
-The plugin looks for pull requests every few minutes; **Look now** on the page
-looks at once. A commit is reviewed once. With **Review new pushes** on, a pull
+The plugin looks for pull requests every five minutes, or as often as you set,
+down to once a minute; **Look now** on the page looks at once. When the host
+limits its requests, the next look waits twice as long, up to eight times the
+interval, until a look goes through. A commit is reviewed once. With **Review new pushes** on, a pull
 request is reviewed again when its head changes; with it off, it is marked as
 changed since its review. A pull request you asked for a review of is followed
 from then on: new pushes to it are picked up in either mode, and even if you
@@ -114,7 +129,7 @@ review's thread stops a running review.
 Pick the agent, its model, what that model offers beside itself (its reasoning
 effort, most of all) and its access in the settings. Each review's agent
 works in a checkout of the pull request's head of its own, made from the plugin's
-own copy of the repository and fetched over HTTPS with your `gh` sign-in. Your
+own copy of the repository and fetched over HTTPS with your `gh` or `fj` sign-in. Your
 repository is not touched, but if it runs commands it runs the pull request's code. Choose its
 access with that in mind. Reviewing a pull request again removes the last
 review's checkout.
@@ -123,7 +138,9 @@ The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and th
 others listed under it are filled in for each pull request. How the agent
 reports what it finds is added after it. **Reset to the plugin's prompt** undoes
 your changes to it. Each repository can have instructions of its own, and with
-**Follow REVIEW.md** the `REVIEW.md` at the pull request's head is added too.
+**Follow REVIEW.md** the `REVIEW.md` on the pull request's base branch is added too; one the pull
+request adds or changes is followed only once that change is on the base branch, by
+merging it or otherwise: what is only on the pull request's head is left out.
 
 ## What happens with the findings
 
@@ -156,7 +173,14 @@ repository:
 With **Post verdicts as comments**, a review is posted as a comment rather than
 an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses
-a review, you are told why and the review keeps waiting with its comments.
+a review, you are told why and the review keeps waiting with its comments. On
+Forgejo, a review is not posted while your account has a pending review of its
+own on the pull request, as its comments would be published into that draft.
+Open the draft in Forgejo first: discard the comments left by a post that
+failed, submit a draft of your own only if you mean to publish it, then publish
+again. Forgejo has no way to keep a draft you save meanwhile out of a review
+being posted, so post reviews from an account that nobody uses to write review
+drafts by hand.
 
 **Publish** posts the review as you see it. On the **Reviews** page it first
 says whether the review goes up with its verdict or as a comment; in a review's
