@@ -215,9 +215,10 @@ wait"#,
 #[test]
 fn everything_a_helper_wrote_comes_before_its_end() {
     let f = Fixture::new("all-of-it");
-    // Far more than the stream (64 chunks) and the pipe (64 KiB) hold, and
-    // under the 1 MiB a run may write (about 780 KB): the helper ends while
-    // most of what it wrote still waits for the UI.
+    // 20 000 lines of 38 bytes (37 characters and a newline) are 760 000
+    // bytes: under the 1 048 576 bytes a run may write (OUTPUT_LIMIT), and
+    // well past the 64 KiB pipe and the 64-chunk stream, so the helper ends
+    // while most of what it wrote still waits for the UI.
     let helper = f.helper(
         "helper.sh",
         r#"yes '{"type":"status","phase":"recording"}' | head -n 20000
