@@ -116,6 +116,10 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
+      "HalC2Plugins.CodeReview.Checkout.start/0" =>
+        "the table of the attempt refs a machine's runs hold, made when its plugin starts; no claim or post goes through it",
+      "HalC2Plugins.CodeReview.Checkout.release/0" =>
+        "a run lets its attempt's refs go once its review has started; the model's checkout has one head and no refs",
       "HalC2.Plugins.Host.publish/3" => @shown,
       "HalC2.Plugins.Host.data_dir/1" => @host,
       "HalC2.Plugins.Host.stop_thread/2" => @agent,
