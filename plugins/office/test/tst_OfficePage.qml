@@ -101,6 +101,7 @@ Item {
         }
 
         function init() {
+            loader.height = Qt.binding(() => test.height);
             stood = {};
             plugin.environments = ["local"];
             plugin.watchers = {};
@@ -455,15 +456,61 @@ Item {
             tryVerify(() => page.worldCols > 0);
             const art = find("officeArt");
             const stage = find("officeStage");
-            page.zoom = 2.5 / page.fitScale;
-            const devicePixels = page.drawScale * page.devicePixelRatio;
+            const ratio = page.devicePixelRatio;
+            page.zoom = 3.5 / ratio / page.fitScale;
+            const devicePixels = page.drawScale * ratio;
             fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
             verify(page.drawScale >= page.pixelScale);
             verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
             fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
-            page.zoom = 3 / page.fitScale;
+            page.zoom = 3 / ratio / page.fitScale;
             verify(!art.layer.enabled, "a whole zoom draws the art directly");
             compare(art.scale, 1);
+        }
+
+        // Zoomed far in, a step of one device pixel is fine enough, so the
+        // scale snaps to whole device pixels and no layer the size of the
+        // whole zoomed office is drawn.
+        function test_zoomed_in_far_the_art_is_drawn_directly() {
+            plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const art = find("officeArt");
+            let steps = 0;
+            while (page.pixelScale < 7.999 && steps < 40) {
+                const before = page.pixelScale;
+                page.zoomBy(1.25);
+                verify(page.pixelScale > before, "each step zooms in");
+                if (art.layer.enabled)
+                    verify(page.drawScale * page.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
+                steps++;
+            }
+            fuzzyCompare(page.pixelScale, 8, 1e-9);
+            verify(!art.layer.enabled, "the most zoomed in office is drawn directly");
+            while (page.pixelScale > 1.001 && steps < 80) {
+                const before = page.pixelScale;
+                page.zoomBy(1 / 1.25);
+                verify(page.pixelScale < before, "each step zooms out");
+                steps++;
+            }
+        }
+
+        // A view smaller than the office still fits all of it, and a zoom step
+        // after the view changes moves the scale from what is shown.
+        function test_a_small_view_fits_the_office_and_zoom_steps_from_what_shows() {
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            while (page.pixelScale > page.minScale + 0.001)
+                page.zoomBy(1 / 1.25);
+            loader.height = 200;
+            tryVerify(() => page.fitScale < 1, 1000, "the office is taller than the view");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows when zoomed out");
+            const shown = page.pixelScale;
+            page.zoomBy(1.25);
+            verify(page.pixelScale > shown, "the first step after the view shrank zooms in");
+            page.zoom = 1;
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows at Fit");
         }
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
