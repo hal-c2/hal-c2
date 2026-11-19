@@ -391,11 +391,12 @@ Rectangle {
                 // The condition shows in words; its expression opens to edit.
                 property bool editingWhen: false
                 // What a screen reader calls this binding: a command can have
-                // several, so its key (as recorded, saved or not) and its
-                // condition tell them apart.
+                // several, so its key and its condition, as edited (saved or
+                // not), tell them apart.
                 readonly property string binding: {
                     const named = labelDraft.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(labelDraft) : modelData.label;
-                    return modelData.when.length > 0 ? qsTr("%1, %2").arg(named).arg(modelData.whenLabel) : named;
+                    const when = rowWhen.text.trim();
+                    return when.length > 0 ? qsTr("%1, %2").arg(named).arg(Keybindings.whenLabel(when)) : named;
                 }
 
                 width: ListView.view.width
