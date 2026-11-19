@@ -476,6 +476,18 @@ Feature: Office
       Then the new worker sits in the review corner with the lead
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer delegated to by a thread that is no reviewer sits in the review corner
+      Given the office has a thread with a worker and a reviewer it delegated to
+      Then the reviewer sits in the review corner
+      And the thread and its other worker sit together on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A planner that turns out to be a reviewer goes to the review whiteboard
+      Given the office has a worker planning whose lead is not in yet
+      When its lead comes in as a reviewer, making the worker one too
+      Then the worker plans at the review corner's whiteboard and keeps its desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Others sit in the review corner only when the floor is full
       Given the office has 40 threads
       Then none of them sits in the review corner

@@ -396,6 +396,31 @@ Item {
             compare(actor("w").goal?.kind, "desk", "the worker stays at its desk");
         }
 
+        // A reviewer whose own parent is no reviewer still sits in the corner,
+        // and the parent and its other workers on the floor.
+        function test_a_reviewer_under_an_ordinary_thread_sits_in_the_corner() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("lw", "Write tests", "working", "typing", "lead"), reviewer("r", "Review #12", "lead")]);
+            const review = corner();
+            compare(page.world.seatOf["r"].pod, review, "the reviewer sits in the review corner");
+            for (const id of ["lead", "lw"])
+                verify(page.world.seatOf[id].pod !== review, id + " sits on the floor");
+            compare(page.world.seatOf["lw"].pod, page.world.seatOf["lead"].pod, "the other worker sits with its lead");
+        }
+
+        // A planner that turns out to be a reviewer goes to the review
+        // whiteboard, and keeps its desk.
+        function test_a_planner_that_becomes_a_reviewer_goes_to_the_review_whiteboard() {
+            const board = key => page.world.boards.find(b => b.key === key);
+            plugin.publish([person("w", "Check tests", "working", "planning", "r")]);
+            verify(!board(actor("w").goal.board).review, "the worker plans at another whiteboard");
+            const seat = page.world.seatOf["w"];
+            plugin.publish([reviewer("r", "Review #12"), Object.assign(reviewer("w", "Check tests", "r"), {
+                    activity: "planning"
+                })]);
+            verify(board(actor("w").goal.board).review, "the reviewer goes to the review whiteboard");
+            verify(page.world.seatOf["w"] === seat, "it keeps its desk");
+        }
+
         // A reviewer plans at the review corner's whiteboard, anyone else at
         // the others.
         function test_reviewers_plan_at_the_review_whiteboard() {

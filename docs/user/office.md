@@ -29,11 +29,10 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
   nobody uses are carried back out. The office has 48 desks; past that,
   threads without a desk wait in the break room.
 - Threads the Code review plugin started to review a pull request, and the
-  workers they delegated to, sit in the review corner under the **REVIEW**
-  sign. When it is full they sit at the desks nearest it; other threads sit
-  there only when the rest of the office is full.
-- Each desk shows its project's icon from the sidebar, on the back of its
-  monitor or chair: the monogram in its colour, the emoji or the logo.
+  workers they delegated to, sit together in the review corner. When it is
+  full they sit at the desks nearest it; other threads sit there only when the
+  rest of the office is full.
+- Each desk shows the icon its project has in the sidebar.
 
 Hover a person, or move to it with Tab, for its thread, project, agent and what
 it is doing; click it or press Return to open the thread.

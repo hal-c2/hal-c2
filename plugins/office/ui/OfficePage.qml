@@ -1372,8 +1372,8 @@ Item {
     // a new team takes a pod with room for all of it, and small teams share.
     // A team bigger than a pod takes as many as it needs. Whoever is left over
     // when every desk is taken has none, and spends the time in the break room.
-    // Reviewers (`kind` "reviewer" in `byId`, their workers too) sit in the
-    // review corner, and at the desks nearest it once it is full; everyone
+    // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
+    // own kind) sit in the review corner, and at the desks nearest it once it is full; everyone
     // else takes a desk there only when the rest of the floor is full.
     function seatTeams(teams, byId) {
         const w = page.world;
@@ -1387,12 +1387,17 @@ Item {
             taken[seat.index] = id;
             seatOf[id] = seat;
         };
+        // Each member goes by its own kind: a team's reviewers and the rest
+        // are chunked apart, though still one team for where they sit.
         const chunks = [], teamOf = [], reviewing = [];
         teams.forEach((team, t) => {
-            for (let i = 0; i < team.length; i += size) {
-                chunks.push(team.slice(i, i + size));
-                teamOf.push(t);
-                reviewing.push(byId?.[team[0]]?.kind === "reviewer");
+            for (const review of [false, true]) {
+                const part = team.filter(id => (byId?.[id]?.kind === "reviewer") === review);
+                for (let i = 0; i < part.length; i += size) {
+                    chunks.push(part.slice(i, i + size));
+                    teamOf.push(t);
+                    reviewing.push(review);
+                }
             }
         });
         // A pod is a chunk's own when it is the review corner exactly when the
@@ -2528,7 +2533,8 @@ Item {
             goal = seatGoal(actor, state === "asking" ? "ask" : "sit");
         } else if (state === "working") {
             const activity = p.activity ?? "";
-            plan = "working:" + activity;
+            // A planner whose kind changes goes to its own kind's whiteboard.
+            plan = "working:" + activity + (activity === "planning" ? ":" + (p.kind ?? "") : "");
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
