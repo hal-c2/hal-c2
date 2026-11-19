@@ -43,16 +43,17 @@ while :; do
   [ -n "$stopping" ] && kill -TERM "$child" 2>/dev/null
   # A trapped signal interrupts `wait`; wait again until the MC itself has exited.
   while :; do
+    if [ -n "$stopping" ]; then
+      # The BEAM drops a TERM that comes before it can handle one, early in its boot, so
+      # tell it again each second until it has exited (a zombie until `wait` reaps it).
+      while case "$(ps -o stat= -p "$child" 2>/dev/null)" in "" | Z*) false ;; *) true ;; esac; do
+        sleep 1
+        kill -TERM "$child" 2>/dev/null
+      done
+    fi
     wait "$child"
     status=$?
     kill -0 "$child" 2>/dev/null || break
-    [ -n "$stopping" ] || continue
-    # The BEAM drops a TERM that comes before it can handle one, early in its boot, so
-    # tell it again each second until it has exited (a zombie until `wait` reaps it).
-    while case "$(ps -o stat= -p "$child" 2>/dev/null)" in "" | Z*) false ;; *) true ;; esac; do
-      sleep 1
-      kill -TERM "$child" 2>/dev/null
-    done
   done
   [ -n "$stopping" ] && exit "$status"
   [ "$status" -eq 75 ] && continue
