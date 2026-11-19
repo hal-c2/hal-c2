@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#MISE description="Build the desktop-ljos release into release/: hal-c2-ljos with the QML, desktop host, Node and MC (release:mc) it runs, laid out as it is installed"
+#MISE dir="{{config_root}}"
+#MISE depends=["release:mc"]
+set -euo pipefail
+
+os="$(uname -s)"
+arch="$(uname -m)"
+arch="${arch/x86_64/x64}"
+arch="${arch/aarch64/arm64}"
+case "$os" in
+  Linux) platform="linux-$arch" ;;
+  Darwin) platform="darwin-$arch" ;;
+  *)
+    echo "release:desktop-ljos builds on Linux and macOS only." >&2
+    exit 1
+    ;;
+esac
+# Cargo runs from apps/desktop-ljos and the helpers' from here: one place for both.
+if [[ -n ${CARGO_TARGET_DIR:-} ]]; then
+  CARGO_TARGET_DIR="$(mkdir -p "$CARGO_TARGET_DIR" && cd "$CARGO_TARGET_DIR" && pwd)"
+  export CARGO_TARGET_DIR
+fi
+target="${CARGO_TARGET_DIR:-$PWD/apps/desktop-ljos/target}/release"
+
+# HAL_C2_RELEASE makes it the installed app (src/main.rs): its own app id, and
+# the QML, host and Node read from beside the executable instead of this checkout.
+(cd apps/desktop-ljos && HAL_C2_RELEASE=1 mise exec -- cargo build --locked --release -q -p hal_c2_shell --bins)
+
+read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
+out="release/hal-c2-ljos-$version-$platform"
+rm -rf "$out"
+if [[ $os == Darwin ]]; then
+  # Its own bundle beside desktop-qt's HAL-C2.app, as the Dock names an app by its bundle.
+  app="$out/HAL-C2 Ljós.app/Contents"
+  bin="$app/MacOS"
+  share="$app/Resources/hal-c2"
+  mkdir -p "$bin" "$app/Resources"
+  cp apps/desktop-ljos/shell/macos/Info.plist "$app/Info.plist"
+  plutil -replace CFBundleName -string "HAL-C2 Ljós" "$app/Info.plist"
+  plutil -replace CFBundleDisplayName -string "HAL-C2 Ljós" "$app/Info.plist"
+  set="$(mktemp -d)/AppIcon.iconset"
+  mkdir "$set"
+  for size in 16 32 128 256 512; do
+    sips -z $size $size assets/prod/black-universal-1024.png --out "$set/icon_${size}x${size}.png" >/dev/null
+    sips -z $((size * 2)) $((size * 2)) assets/prod/black-universal-1024.png --out "$set/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$set" -o "$app/Resources/AppIcon.icns"
+  rm -r "$(dirname "$set")"
+  # CEF loads from a bundle Ljós's ljos-webengine-bundle makes, which this does not
+  # make yet, so browser tabs show no pages (apps/desktop-ljos/README.md).
+  cp "$target/hal-c2-ljos" "$bin/"
+else
+  bin="$out/bin"
+  share="$out/share/hal-c2"
+  mkdir -p "$bin"
+  cp "$target/hal-c2-ljos" "$target/ljos-webengine-helper" "$bin/"
+  # CEF's runtime, which the cef crate copies beside the binaries and they find
+  # through an $ORIGIN rpath (build.rs), with Chromium's notices. Its libraries
+  # differ between CEF versions (156 has no libEGL), so they are globbed.
+  shopt -s nullglob
+  cp "$target"/lib*.so "$target"/lib*.so.* \
+    "$target"/*.pak "$target"/*.dat "$target"/*.bin "$target"/*_icd.json \
+    "$target/chrome-sandbox" "$target/CREDITS.html" "$bin/"
+  shopt -u nullglob
+  cp -R "$target/locales" "$bin/"
+fi
+
+# The host, Node, the MC and the licenses, as desktop-qt's packages stage them.
+node apps/desktop-qt/scripts/stage-runtime.mjs "$share"
+# One directory holding desktop-qt's bricks and this app's entry (qml::Roots::one).
+mkdir -p "$share/qml"
+cp -R apps/desktop-qt/qml/. apps/desktop-ljos/qml/. "$share/qml/"
+
+if [[ $os == Linux ]]; then
+  # Snap Shot: GNOME's extension and the KDE Plasma and Hyprland capture helpers,
+  # where src/snap_shot finds them beside bin/.
+  mise run desktop:helpers
+  mkdir -p "$share/gnome-extension"
+  find native/gnome-snap-shot -maxdepth 1 -type f ! -name '*.test.js' -exec cp -t "$share/gnome-extension" {} +
+  for helper in kde hyprland; do
+    mkdir -p "$share/$helper-capture"
+    cp "${CARGO_TARGET_DIR:-native/$helper-snap-shot/target}/release/hal-c2-$helper-snap-shot" "$share/$helper-capture/"
+  done
+else
+  # Apple silicon runs only signed code; the bundle changed after the linker signed the binary.
+  codesign --force --deep --sign - "$out/HAL-C2 Ljós.app"
+fi
+
+# Fails when what it was given does not compile, read from where the release has it.
+"$bin/hal-c2-ljos" --check
+echo "$out"

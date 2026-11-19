@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Build the release and install it for this user: the MC as the background service and the desktop, on x86_64 Linux as `hal-c2` with a launcher entry, on macOS as ~/Applications/HAL-C2.app"
+#MISE description="Build the Qt desktop (release:linux or release:macos) and install it for this user: on x86_64 Linux as `hal-c2` with a launcher entry, on macOS as ~/Applications/HAL-C2.app"
 #MISE dir="{{config_root}}"
+#MISE depends=["release:{{os()}}"]
 set -euo pipefail
 
-desktop=mc
-case "$(uname -s) $(uname -m)" in
-  "Linux x86_64") desktop=linux ;;
-  Darwin*) desktop=macos ;;
-esac
-mise run "release:$desktop"
-
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
-# The single file, beside its .sha256 and its .tar.gz bundle.
-mc="$(find release -maxdepth 1 -name "hal-c2-mc-$version-*" ! -name '*.sha256' ! -name '*.tar.gz')"
-"$mc" install
 
-# The desktop finds the service's MC by itself, since both use the same files.
-if [[ $desktop == macos ]]; then
+# The desktop finds the service's MC (release:install:mc) by itself, since both use
+# the same files, and starts the one it carries when there is none.
+if [[ $(uname -s) == Darwin ]]; then
   app="$HOME/Applications/HAL-C2.app"
   mkdir -p "$HOME/Applications"
   # Unpacked beside its place and moved in, so the app is never half there.
@@ -26,9 +18,9 @@ if [[ $desktop == macos ]]; then
   mv "$tmp/HAL-C2.app" "$app"
   rmdir "$tmp"
   echo "$app"
+  exit 0
 fi
 
-[[ $desktop == linux ]] || exit 0
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 bin="$HOME/.local/bin/hal-c2"
 icons="$data/icons/hicolor/1024x1024/apps"

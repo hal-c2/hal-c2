@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Build the MC release (release:mc) and install it as this user's background service"
+#MISE dir="{{config_root}}"
+#MISE depends=["release:mc"]
+set -euo pipefail
+
+read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
+# The single file, beside its .sha256 and its .tar.gz bundle.
+mc="$(find release -maxdepth 1 -name "hal-c2-mc-$version-*" ! -name '*.sha256' ! -name '*.tar.gz')"
+"$mc" install
