@@ -33,13 +33,61 @@ Item {
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
 
+    // A host that does not stretch the page gives it this size.
+    implicitWidth: 900
+    implicitHeight: 600
+
     property bool applicationActive: Qt.application.state === Qt.ApplicationActive
     property int actorCount: 0
     readonly property bool animating: visible && applicationActive && actorCount > 0
     property bool walking: false
-    property int zoomStep: 0
-    readonly property int autoScale: Math.max(2, Math.floor((scroller.width - 8) / Math.max(1, worldCols * 16)))
-    readonly property int pixelScale: Math.max(1, autoScale + zoomStep)
+    // The office fits the view at zoom 1, by its width or its height,
+    // whichever runs out first; each zoom button is a quarter more or less.
+    // It can shrink below one device pixel per art pixel only to fit, and
+    // grows no further than topScale, the most zoomed in scale.
+    property real zoom: 1
+    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
+    readonly property real minScale: Math.min(1, fitScale)
+    readonly property real maxScale: 8
+    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
+    // Nearest-neighbour art at a fractional scale draws some art pixels a
+    // device pixel wider than others. So the art is drawn at the next whole
+    // number of device pixels per art pixel, drawScale, into a layer shrunk
+    // smoothly to pixelScale. From `crispFrom` device pixels per art pixel up
+    // a step of one device pixel is under a quarter, so a zoomed scale snaps
+    // to whole device pixels and is drawn directly; the layer is then at most
+    // `crispFrom` times the office's art size, or about the view's size at Fit.
+    readonly property int crispFrom: 4
+    readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
+    readonly property bool resampled: drawScale - pixelScale > 0.001
+
+    // The scale shown for a wanted zoomed scale: kept within bounds, and
+    // rounded to whole device pixels where that is fine enough, never past
+    // the largest whole number of device pixels within maxScale.
+    function snapScale(wanted) {
+        const ratio = devicePixelRatio;
+        const scale = Math.max(minScale, Math.min(maxScale, wanted));
+        const devicePixels = scale * ratio;
+        return devicePixels >= crispFrom ? Math.min(Math.round(devicePixels), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
+    }
+    // The most zoomed in scale shown.
+    readonly property real topScale: snapScale(maxScale)
+
+    // Zooms from the scale shown, so a step always moves it; where the scale
+    // snaps, by at least one device pixel, so in and out take the same path.
+    function zoomBy(factor) {
+        const ratio = devicePixelRatio;
+        let next = pixelScale * factor;
+        if (next * ratio >= crispFrom) {
+            // A scale between whole device pixels (Fit) moves to the next
+            // whole one, a whole one by at least one device pixel.
+            const now = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
+            const step = Math.round(next * ratio);
+            next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
+        }
+        zoom = Math.max(minScale, Math.min(maxScale, next)) / fitScale;
+    }
 
     // The office as drawn: its size in tiles, its furniture, the screens of its
     // computers and its whiteboards. Rebuilt when the desks it needs change.
@@ -1696,6 +1744,7 @@ Item {
             talk: null,
             queue: [],
             blocked: 0,
+            waitingFor: "",
             heldBy: "",
             face: -1,
             faceUntil: 0,
@@ -2218,6 +2267,12 @@ Item {
         page.walking = Object.values(page.actors).some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
+    // The walkable tiles beside a person that nobody holds.
+    function freeSides(actor) {
+        const W = page.world.cols;
+        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
+    }
+
     // Moves a person along its path, two pixels a tick, holding the tile it
     // stands on and the one it steps to so nobody walks through anybody.
     function step(actor, dt) {
@@ -2229,11 +2284,23 @@ Item {
             const there = page.occupied[n];
             if (there && there !== actor.id) {
                 actor.blocked++;
-                if (actor.blocked % 8 === 0 && actor.blocked < 30)
+                actor.waitingFor = there;
+                // Two people walking into each other would both step around the
+                // same way and meet again, so only the first by id gives way.
+                const other = page.actors[there];
+                const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
+                // The first cannot give way with no free tile beside it, so
+                // then the other does.
+                const sides = freeSides(actor);
+                const theirs = headOn && freeSides(other).length > 0;
+                const yields = !headOn || (actor.id < other.id ? sides.length > 0 || !theirs : sides.length > 0 && !theirs);
+                if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
                     route(actor, true);
                 if (actor.blocked >= 30) {
-                    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-                    if (sides.length) {
+                    // Stepping aside makes room for someone waiting on this
+                    // person; anyone else in the way is waited for, not paced
+                    // in front of.
+                    if (headOn && yields && sides.length) {
                         const s = pick(page.rng, sides);
                         actor.path = [s[1] * W + s[0]];
                         actor.sideStep = true;
@@ -2249,6 +2316,7 @@ Item {
             actor.dir = nx < actor.tx ? 1 : nx > actor.tx ? 2 : ny < actor.ty ? 3 : 0;
             actor.offY = 0;
             actor.blocked = 0;
+            actor.waitingFor = "";
         }
         if (actor.next < 0)
             return false;
@@ -2983,15 +3051,23 @@ Item {
             ShellButton {
                 text: "−"
                 toolTip: qsTr("Zoom out")
-                enabled: page.pixelScale > 1
-                onClicked: page.zoomStep -= 1
+                enabled: page.pixelScale > page.minScale + 0.001
+                onClicked: page.zoomBy(1 / 1.25)
             }
 
             ShellButton {
+                text: qsTr("Fit")
+                toolTip: qsTr("Fit the office to the view")
+                enabled: page.zoom !== 1
+                onClicked: page.zoom = 1
+            }
+
+            ShellButton {
+                objectName: "officeZoomIn"
                 text: "+"
                 toolTip: qsTr("Zoom in")
-                enabled: page.pixelScale < 8
-                onClicked: page.zoomStep += 1
+                enabled: page.pixelScale < page.topScale - 0.001
+                onClicked: page.zoomBy(1.25)
             }
         }
 
@@ -3012,230 +3088,242 @@ Item {
             Item {
                 id: stage
 
+                objectName: "officeStage"
                 x: Math.max(0, (scroller.width - width) / 2)
+                y: Math.max(0, (scroller.height - height) / 2)
                 width: page.worldCols * 16 * page.pixelScale
                 height: page.worldRows * 16 * page.pixelScale
 
                 Item {
-                    id: world
-
-                    width: page.worldCols * 16
-                    height: page.worldRows * 16
-                    scale: page.pixelScale
+                    objectName: "officeArt"
+                    width: page.worldCols * 16 * page.drawScale
+                    height: page.worldRows * 16 * page.drawScale
+                    scale: page.pixelScale / page.drawScale
                     transformOrigin: Item.TopLeft
+                    layer.enabled: page.resampled
+                    layer.smooth: true
 
-                    Canvas {
-                        id: floor
+                    Item {
+                        id: world
 
-                        z: -1
-                        width: Math.max(1, page.worldCols * 16)
-                        height: Math.max(1, page.worldRows * 16)
-                        smooth: false
-                        antialiasing: false
-                        onPaint: page.paintFloor(getContext("2d"))
-                    }
+                        width: page.worldCols * 16
+                        height: page.worldRows * 16
+                        scale: page.drawScale
+                        transformOrigin: Item.TopLeft
 
-                    Repeater {
-                        model: page.props
+                        Canvas {
+                            id: floor
 
-                        delegate: Canvas {
-                            required property var modelData
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: modelData.w
-                            height: modelData.h
+                            z: -1
+                            width: Math.max(1, page.worldCols * 16)
+                            height: Math.max(1, page.worldRows * 16)
                             smooth: false
                             antialiasing: false
-                            onPaint: page.paintProp(getContext("2d"), modelData)
+                            onPaint: page.paintFloor(getContext("2d"))
                         }
-                    }
 
-                    // The screens of the computers facing us.
-                    Repeater {
-                        model: page.screens
+                        Repeater {
+                            model: page.props
 
-                        delegate: Rectangle {
-                            id: screen
+                            delegate: Canvas {
+                                required property var modelData
 
-                            required property var modelData
-                            property string mode: "off"
-                            property real phase: 0
-                            readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
-                            readonly property bool terminal: mode === "running" || mode === "testing"
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 8
-                            height: 6
-                            color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                            Component.onCompleted: page.screenViews[modelData.key] = screen
-                            Component.onDestruction: {
-                                if (page.screenViews[modelData.key] === screen)
-                                    delete page.screenViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: 3
-
-                                delegate: Rectangle {
-                                    required property int index
-
-                                    visible: screen.mode !== "off"
-                                    x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
-                                    y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
-                                    height: 1
-                                    width: {
-                                        if (screen.mode === "failed")
-                                            return index === 1 ? 6 : 0;
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
-                                        if (screen.mode === "idle")
-                                            return index === 1 ? 2 : 0;
-                                        return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
-                                    }
-                                    color: {
-                                        if (screen.mode === "failed")
-                                            return "#ffb3b3";
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? "#4a90d9" : "#9aa5b0";
-                                        if (screen.mode === "testing")
-                                            return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
-                                        if (screen.mode === "running")
-                                            return "#5fd38a";
-                                        if (screen.mode === "idle")
-                                            return "#9cc8ff";
-                                        return ["#c792ea", "#82aaff", "#f8c25c"][index];
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // What has been drawn on each whiteboard.
-                    Repeater {
-                        model: page.boards
-
-                        delegate: Item {
-                            id: board
-
-                            required property var modelData
-                            property real progress: 0.15
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 38
-                            height: 18
-                            Component.onCompleted: page.boardViews[modelData.key] = board
-                            Component.onDestruction: {
-                                if (page.boardViews[modelData.key] === board)
-                                    delete page.boardViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
-
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    readonly property real start: index / 9
-
-                                    x: modelData[0]
-                                    y: modelData[1]
-                                    height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
-                                    width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
-                                    color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
-                                    border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
-                                    border.color: modelData[4]
-                                    visible: width > 0
-                                }
-                            }
-                        }
-                    }
-
-                    // The people.
-                    Repeater {
-                        model: actorModel
-
-                        delegate: Item {
-                            id: person
-
-                            required property string actorId
-                            property int frame: 0
-                            property int dir: 0
-                            readonly property var look: page.actors[actorId]?.look ?? null
-
-                            width: 16
-                            height: 24
-                            clip: true
-                            Component.onCompleted: {
-                                page.views[actorId] = person;
-                                const actor = page.actors[actorId];
-                                if (actor)
-                                    page.render(actor);
-                            }
-                            Component.onDestruction: {
-                                if (page.views[actorId] === person)
-                                    delete page.views[actorId];
-                            }
-
-                            Canvas {
-                                x: -person.frame * 18
-                                y: -person.dir * 26
-                                width: 270
-                                height: 104
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
                                 smooth: false
                                 antialiasing: false
-                                onPaint: {
-                                    if (person.look)
-                                        page.paintSheet(getContext("2d"), person.look);
+                                onPaint: page.paintProp(getContext("2d"), modelData)
+                            }
+                        }
+
+                        // The screens of the computers facing us.
+                        Repeater {
+                            model: page.screens
+
+                            delegate: Rectangle {
+                                id: screen
+
+                                required property var modelData
+                                property string mode: "off"
+                                property real phase: 0
+                                readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
+                                readonly property bool terminal: mode === "running" || mode === "testing"
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 8
+                                height: 6
+                                color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                                Component.onCompleted: page.screenViews[modelData.key] = screen
+                                Component.onDestruction: {
+                                    if (page.screenViews[modelData.key] === screen)
+                                        delete page.screenViews[modelData.key];
+                                }
+
+                                Repeater {
+                                    model: 3
+
+                                    delegate: Rectangle {
+                                        required property int index
+
+                                        visible: screen.mode !== "off"
+                                        x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
+                                        y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
+                                        height: 1
+                                        width: {
+                                            if (screen.mode === "failed")
+                                                return index === 1 ? 6 : 0;
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
+                                            if (screen.mode === "idle")
+                                                return index === 1 ? 2 : 0;
+                                            return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
+                                        }
+                                        color: {
+                                            if (screen.mode === "failed")
+                                                return "#ffb3b3";
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? "#4a90d9" : "#9aa5b0";
+                                            if (screen.mode === "testing")
+                                                return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                            if (screen.mode === "running")
+                                                return "#5fd38a";
+                                            if (screen.mode === "idle")
+                                                return "#9cc8ff";
+                                            return ["#c792ea", "#82aaff", "#f8c25c"][index];
+                                        }
+                                    }
                                 }
                             }
+                        }
 
-                            // Tab walks the people; a focused one shows its card as a
-                            // hovered one does, and Return or Space opens its thread.
-                            MouseArea {
-                                id: hit
+                        // What has been drawn on each whiteboard.
+                        Repeater {
+                            model: page.boards
 
-                                objectName: "officePerson:" + person.actorId
-                                Accessible.role: Accessible.Button
-                                Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
-                                Accessible.onPressAction: page.openPerson(person.actorId)
-                                activeFocusOnTab: true
-                                x: 2
-                                y: 2
-                                width: 12
-                                height: 21
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: page.hovered = person.actorId
-                                onExited: {
-                                    if (page.hovered === person.actorId && !activeFocus)
-                                        page.hovered = "";
+                            delegate: Item {
+                                id: board
+
+                                required property var modelData
+                                property real progress: 0.15
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 38
+                                height: 18
+                                Component.onCompleted: page.boardViews[modelData.key] = board
+                                Component.onDestruction: {
+                                    if (page.boardViews[modelData.key] === board)
+                                        delete page.boardViews[modelData.key];
                                 }
-                                onActiveFocusChanged: {
-                                    if (activeFocus) {
-                                        page.hovered = person.actorId;
-                                        page.reveal(hit);
-                                    } else if (page.hovered === person.actorId && !containsMouse)
-                                        page.hovered = "";
+
+                                Repeater {
+                                    model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        required property int index
+                                        readonly property real start: index / 9
+
+                                        x: modelData[0]
+                                        y: modelData[1]
+                                        height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
+                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
+                                        color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
+                                        border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
+                                        border.color: modelData[4]
+                                        visible: width > 0
+                                    }
                                 }
-                                onClicked: page.openPerson(person.actorId)
-                                Keys.onReturnPressed: page.openPerson(person.actorId)
-                                Keys.onEnterPressed: page.openPerson(person.actorId)
-                                Keys.onSpacePressed: page.openPerson(person.actorId)
                             }
+                        }
 
-                            // The focus ring of the person Tab is on.
-                            Rectangle {
-                                visible: hit.activeFocus
-                                anchors.fill: hit
-                                color: "transparent"
-                                border.width: 1
-                                border.color: "#ffd84a"
+                        // The people.
+                        Repeater {
+                            model: actorModel
+
+                            delegate: Item {
+                                id: person
+
+                                required property string actorId
+                                property int frame: 0
+                                property int dir: 0
+                                readonly property var look: page.actors[actorId]?.look ?? null
+
+                                width: 16
+                                height: 24
+                                clip: true
+                                Component.onCompleted: {
+                                    page.views[actorId] = person;
+                                    const actor = page.actors[actorId];
+                                    if (actor)
+                                        page.render(actor);
+                                }
+                                Component.onDestruction: {
+                                    if (page.views[actorId] === person)
+                                        delete page.views[actorId];
+                                }
+
+                                Canvas {
+                                    x: -person.frame * 18
+                                    y: -person.dir * 26
+                                    width: 270
+                                    height: 104
+                                    smooth: false
+                                    antialiasing: false
+                                    onPaint: {
+                                        if (person.look)
+                                            page.paintSheet(getContext("2d"), person.look);
+                                    }
+                                }
+
+                                // Tab walks the people; a focused one shows its card as a
+                                // hovered one does, and Return or Space opens its thread.
+                                MouseArea {
+                                    id: hit
+
+                                    objectName: "officePerson:" + person.actorId
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
+                                    Accessible.onPressAction: page.openPerson(person.actorId)
+                                    activeFocusOnTab: true
+                                    x: 2
+                                    y: 2
+                                    width: 12
+                                    height: 21
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onEntered: page.hovered = person.actorId
+                                    onExited: {
+                                        if (page.hovered === person.actorId && !activeFocus)
+                                            page.hovered = "";
+                                    }
+                                    onActiveFocusChanged: {
+                                        if (activeFocus) {
+                                            page.hovered = person.actorId;
+                                            page.reveal(hit);
+                                        } else if (page.hovered === person.actorId && !containsMouse)
+                                            page.hovered = "";
+                                    }
+                                    onClicked: page.openPerson(person.actorId)
+                                    Keys.onReturnPressed: page.openPerson(person.actorId)
+                                    Keys.onEnterPressed: page.openPerson(person.actorId)
+                                    Keys.onSpacePressed: page.openPerson(person.actorId)
+                                }
+
+                                // The focus ring of the person Tab is on.
+                                Rectangle {
+                                    visible: hit.activeFocus
+                                    anchors.fill: hit
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: "#ffd84a"
+                                }
                             }
                         }
                     }
@@ -3279,24 +3367,33 @@ Item {
                                 visible: over.icon !== ""
                                 x: -5 * page.pixelScale
                                 y: (-11 - over.bob) * page.pixelScale
-                                width: 10
-                                height: 11
-                                scale: page.pixelScale
+                                width: 10 * page.drawScale
+                                height: 11 * page.drawScale
+                                scale: page.pixelScale / page.drawScale
                                 transformOrigin: Item.TopLeft
-                                clip: true
+                                layer.enabled: visible && page.resampled
+                                layer.smooth: true
 
-                                Canvas {
-                                    x: -({
-                                            ask: 0,
-                                            fail: 16,
-                                            think: 32,
-                                            nap: 48
-                                        }[over.icon] ?? 0)
-                                    width: 64
+                                Item {
+                                    width: 10
                                     height: 11
-                                    smooth: false
-                                    antialiasing: false
-                                    onPaint: page.paintIcons(getContext("2d"))
+                                    scale: page.drawScale
+                                    transformOrigin: Item.TopLeft
+                                    clip: true
+
+                                    Canvas {
+                                        x: -({
+                                                ask: 0,
+                                                fail: 16,
+                                                think: 32,
+                                                nap: 48
+                                            }[over.icon] ?? 0)
+                                        width: 64
+                                        height: 11
+                                        smooth: false
+                                        antialiasing: false
+                                        onPaint: page.paintIcons(getContext("2d"))
+                                    }
                                 }
                             }
 

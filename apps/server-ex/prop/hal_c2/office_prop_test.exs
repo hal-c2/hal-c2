@@ -8,8 +8,9 @@ defmodule HalC2.OfficePropTest do
   every step the office is the model's:
 
   - its people are the rows still in it (not archived, moved or deleted; a settled or
-    long idle one only while it works, asks or waits), asking first, then working,
-    waiting and the rest, newest first, no more than `maxPeople`;
+    long idle one only while it works, asks or waits; a worker whose parent left, or
+    has no row, only while it works or waits), asking first, then working, waiting and
+    the rest, newest first, no more than `maxPeople`;
   - an idle or failed thread is long idle `idleHours` after it became so: when its row
     first said its run ended, when the office saw it change state, or when a later run
     ended, or when it was unarchived or made active again; a row touched without
@@ -412,13 +413,24 @@ defmodule HalC2.OfficePropTest do
 
   defp people(s) do
     s.rows
-    |> Enum.filter(fn {_id, r} ->
-      r.flag not in [:archived, :moved] and
-        (r.state in ~w(asking working waiting) or
-           (r.flag != :settled and s.now - r.since < s.idle_hours * 3_600_000))
-    end)
+    |> Enum.filter(fn {id, _r} -> here?(s, id, []) end)
     |> Enum.sort_by(fn {id, r} -> {@ranks[r.state], -r.at, id} end)
     |> Enum.take(s.max)
+  end
+
+  # A thread is here unless archived or moved; working or waiting it always is, and
+  # otherwise only while its parent is (a parent with no row is not), then asking, or
+  # recently idle and not settled. A lineage that loops stops where it does.
+  defp here?(s, id, seen) do
+    r = s.rows[id]
+    seen = [id | seen]
+
+    r.flag not in [:archived, :moved] and
+      (r.state in ~w(working waiting) or
+         ((r.parent == nil or r.parent in seen or
+             (Map.has_key?(s.rows, r.parent) and here?(s, r.parent, seen))) and
+            (r.state == "asking" or
+               (r.flag != :settled and s.now - r.since < s.idle_hours * 3_600_000))))
   end
 
   defp person?(s, {person, {id, r}}) do

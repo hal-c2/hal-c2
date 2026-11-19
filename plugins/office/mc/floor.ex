@@ -10,6 +10,10 @@ defmodule HalC2Plugins.Office.Floor do
                        "model", "state", "activity", "question", "since"}],
         "talks" => [%{"id", "from", "to", "kind", "text", "at"}]}
 
+  A thread is in the office while it works, waits or asks, or was idle less than
+  `idleHours` and is not settled; never once archived, deleted or moved to another
+  machine. A worker is in it only while the thread it was delegated from is, unless it
+  works or waits itself: a parent's row that changes changes its workers too.
   A person's `state` comes from its row alone (`state_of/1`); its `activity` from the
   last tool call heard in the turn under way, shown only while it is working. Talks are
   kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
@@ -426,13 +430,36 @@ defmodule HalC2Plugins.Office.Floor do
     %{"people" => people, "talks" => talks}
   end
 
-  # An idle or failed thread stays `idleHours` from when it became so: its row changes for
-  # other reasons too (a provider session stopped for sitting idle, say), and those do not
-  # make it any less quiet.
-  defp in?(floor, row, state, now) do
-    row["archivedAt"] == nil and not is_map(row["movedTo"]) and
-      (state in ~w(asking working waiting) or
-         (not settled?(row) and quiet_for(floor, row, now) < floor.idle_hours * 3_600_000))
+  # Whether a thread is in the office: not archived or moved away, and working, waiting,
+  # or else asking or recently idle while not settled. A worker that is not working or
+  # waiting leaves with the thread it was delegated from (`parent_here?/4`), asking or
+  # not: putting the parent away puts its work away. An idle or failed thread stays
+  # `idleHours` from when it became so: its row changes for other reasons too (a
+  # provider session stopped for sitting idle, say), and those do not make it any less
+  # quiet.
+  defp in?(floor, row, state, now, seen \\ []) do
+    cond do
+      row["archivedAt"] != nil or is_map(row["movedTo"]) -> false
+      state in ~w(working waiting) -> true
+      not parent_here?(floor, row, now, [row["id"] | seen]) -> false
+      state == "asking" -> true
+      true -> not settled?(row) and quiet_for(floor, row, now) < floor.idle_hours * 3_600_000
+    end
+  end
+
+  # Whether the thread `row` was delegated from is in the office, walking up its lineage:
+  # a parent this MC has no row for (deleted, or never here) is not. A lineage that loops
+  # back stops where it does, as if it ended there.
+  defp parent_here?(floor, row, now, seen) do
+    with parent when is_binary(parent) <- parent_of(row),
+         false <- parent in seen do
+      case {floor.rows[parent], floor.states[parent]} do
+        {%{} = parent_row, {state, _since}} -> in?(floor, parent_row, state, now, seen)
+        _ -> false
+      end
+    else
+      _ -> true
+    end
   end
 
   defp settled?(row),
