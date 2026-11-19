@@ -178,12 +178,18 @@ Feature: Keybindings settings
       And an empty condition reads "Always"
 
     @desktop @backlog-desktop
-    Scenario: A screen reader tells a command's bindings apart
-      Given "Chat: New" is bound to mod+n and to mod+shift+o, both outside the terminal
-      Then their shortcut fields are named "Shortcut for Chat: New (Ctrl+N), Outside the terminal" and "Shortcut for Chat: New (Ctrl+Shift+O), Outside the terminal"
+    Scenario Outline: A screen reader tells a command's bindings apart
+      Given the user is on <platform>
+      And "Chat: New" is bound to mod+n and to mod+shift+o, both outside the terminal
+      Then their shortcut fields are named "Shortcut for Chat: New (<first>), Outside the terminal" and "Shortcut for Chat: New (<second>), Outside the terminal"
       And their condition buttons are named "Edit condition for" the same
       When the user records a new shortcut or edits the condition without saving
       Then the row's names say the shortcut and condition as edited
+
+      Examples:
+        | platform | first  | second       |
+        | Linux    | Ctrl+N | Ctrl+Shift+O |
+        | macOS    | ⌘N     | ⇧⌘O          |
 
     @desktop
     Scenario: A malformed condition is explained
