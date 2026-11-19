@@ -97,7 +97,20 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
 
   step "the user deletes the instance {string} in Settings → Providers",
        %{args: [id]} = context do
-    write(context, &Map.update!(&1, "providerInstances", fn all -> Map.delete(all, id) end))
+    delete(context, id)
+  end
+
+  step "the user deleted the instance {string} in Settings → Providers",
+       %{args: [id]} = context do
+    delete(context, id)
+  end
+
+  step "the user added an instance of their own as {string}", %{args: [id]} = context do
+    add(context, id)
+  end
+
+  step "the user adds an instance of their own as {string}", %{args: [id]} = context do
+    add(context, id)
   end
 
   # --- checks ----------------------------------------------------------------------------
@@ -204,7 +217,15 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
 
   defp instance(id), do: (HalC2.Settings.settings()["providerInstances"] || %{})[id]
 
-  # As a client saves settings: the document it read, changed, with that version.
+  defp delete(context, id),
+    do: write(context, &Map.update!(&1, "providerInstances", fn all -> Map.delete(all, id) end))
+
+  defp add(context, id),
+    do: write(context, &put_in(&1, [Access.key("providerInstances", %{}), id], @users))
+
+  # As a client saves settings: the document it read, changed, with that version. The
+  # host hears of the save before the client is answered, so the call after it answers
+  # once the host has taken in the change.
   defp write(context, fun) do
     {%{"settings" => settings, "version" => version}, context} =
       World.call!(context, "hal-c2.readSettings", %{})
@@ -215,6 +236,7 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
         "version" => version
       })
 
+    {_, context} = World.call!(context, "plugins.list", %{})
     context
   end
 end

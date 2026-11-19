@@ -7,14 +7,16 @@ defmodule HalC2.PluginProvidersPropTest do
   each time, so an update that drops it is revoked and one that adds it waits for
   consent), remove it from disk, turn it on accepting what it asks for, turn it off, put
   and remove instances from its code (as a plugin that has not stopped yet would, too),
-  list them, and delete one as the user does in Settings → Providers.
+  list them, and add or delete one as the user does in Settings → Providers, the user's
+  under the very ids the plugins use too (`plugin_alpha_claude`, `plugin_x_y`).
 
   After every step, once the host has heard the settings change:
 
-  - the settings document's `plugin_*` instances are exactly the model's, each belonging
-    to a plugin that is installed, on and granted `providers:configure`, and the user's
-    own instance is as it was;
-  - a plugin lists only its own instances, and is refused without the permission.
+  - the settings document's instances are exactly the model's: the plugins', each
+    belonging to a plugin that is installed, on and granted `providers:configure`, and
+    the user's, as the user left them;
+  - a plugin lists only the instances it added, is refused a put under an id the user
+    has, and is refused everything without the permission.
   """
 
   use ExUnit.Case, async: false
@@ -32,6 +34,8 @@ defmodule HalC2.PluginProvidersPropTest do
   @labels ["Via the proxy", "Via the proxy, again"]
   @permission "providers:configure"
   @user_id "claude-work"
+  @user_ids [@user_id, "plugin_x_y"] ++
+              for(id <- @ids, name <- @names, do: "plugin_#{id}_#{name}")
   @users %{"driver" => "claudeAgent", "displayName" => "Claude at work", "enabled" => true}
 
   setup do
@@ -50,7 +54,7 @@ defmodule HalC2.PluginProvidersPropTest do
   end
 
   property "a plugin's provider instances are its own, and leave with it",
-    numtests: HalC2.Prop.numtests(100),
+    numtests: HalC2.Prop.numtests(500),
     max_size: 40 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
@@ -90,13 +94,14 @@ defmodule HalC2.PluginProvidersPropTest do
 
   # plugins: per id `%{installed, asks, enabled, granted}` (`enabled` and `granted` are
   # its `plugins.<id>` of the settings document, which outlives the package on disk).
-  # instances: the `plugin_*` instances the settings document holds. version: the next
-  # package version.
+  # instances: the plugins' instances the settings document holds, by `{id, name}`.
+  # users: the user's, by instance id. version: the next package version.
   def initial_state do
     %{
       plugins:
         Map.new(@ids, &{&1, %{installed: false, asks: false, enabled: false, granted: false}}),
       instances: %{},
+      users: %{@user_id => @users},
       version: 1
     }
   end
@@ -112,17 +117,22 @@ defmodule HalC2.PluginProvidersPropTest do
       {2, {:call, __MODULE__, :disable, [id]}},
       {5, {:call, __MODULE__, :put, [id, name, elements(@labels)]}},
       {2, {:call, __MODULE__, :remove, [id, name]}},
-      {2, {:call, __MODULE__, :list, [id]}}
+      {2, {:call, __MODULE__, :list, [id]}},
+      {2, {:call, __MODULE__, :user_add, [elements(@user_ids)]}}
       | for(
-          instance_id <- [Map.keys(state.instances)],
+          instance_id <- [held(state)],
           instance_id != [],
           do: {6, {:call, __MODULE__, :user_delete, [elements(instance_id)]}}
         )
     ])
   end
 
+  # The user adds an instance under an id nothing holds.
+  def precondition(state, {:call, _, :user_add, [instance_id]}),
+    do: instance_id not in held(state)
+
   def precondition(state, {:call, _, :user_delete, [instance_id]}),
-    do: Map.has_key?(state.instances, instance_id)
+    do: instance_id in held(state)
 
   def precondition(_state, _call), do: true
 
@@ -151,29 +161,42 @@ defmodule HalC2.PluginProvidersPropTest do
   end
 
   def next_state(state, _result, {:call, _, :put, [id, name, label]}) do
-    if state.plugins[id].granted,
-      do: put_in(state.instances[instance_id(id, name)], instance(label)) |> settle(),
+    if state.plugins[id].granted and not users?(state, id, name),
+      do: put_in(state.instances[{id, name}], instance(label)) |> settle(),
       else: state
   end
 
   def next_state(state, _result, {:call, _, :remove, [id, name]}) do
     if state.plugins[id].granted,
-      do: %{state | instances: Map.delete(state.instances, instance_id(id, name))},
+      do: %{state | instances: Map.delete(state.instances, {id, name})},
       else: state
   end
 
-  def next_state(state, _result, {:call, _, :user_delete, [instance_id]}),
-    do: %{state | instances: Map.delete(state.instances, instance_id)}
+  def next_state(state, _result, {:call, _, :user_add, [instance_id]}),
+    do: put_in(state.users[instance_id], @users)
+
+  def next_state(state, _result, {:call, _, :user_delete, [instance_id]}) do
+    %{
+      state
+      | instances:
+          Map.reject(state.instances, fn {key, _} -> instance_id(key) == instance_id end),
+        users: Map.delete(state.users, instance_id)
+    }
+  end
 
   def next_state(state, _result, {:call, _, :list, _}), do: state
 
   def postcondition(state, {:call, _, :put, [id, name, _label]} = call, result) do
-    answered(state, id, result, &(&1 == {:ok, %{"instanceId" => instance_id(id, name)}})) and
-      agrees(next_state(state, result, call))
+    answer =
+      if users?(state, id, name),
+        do: &match?({:error, "plugin_" <> _}, &1),
+        else: &(&1 == {:ok, %{"instanceId" => instance_id({id, name})}})
+
+    answered(state, id, result, answer) and agrees(next_state(state, result, call))
   end
 
   def postcondition(state, {:call, _, :remove, [id, name]} = call, result) do
-    removed = Map.has_key?(state.instances, instance_id(id, name))
+    removed = Map.has_key?(state.instances, {id, name})
 
     answered(state, id, result, &(&1 == {:ok, %{"removed" => removed}})) and
       agrees(next_state(state, result, call))
@@ -181,9 +204,8 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def postcondition(state, {:call, _, :list, [id]}, result) do
     own =
-      for {instance_id, instance} <- Enum.sort(state.instances),
-          {^id, name} <- [Host.instance_owner(instance_id)],
-          do: %{"name" => name, "instanceId" => instance_id, "instance" => instance}
+      for {{^id, name} = key, instance} <- Enum.sort(state.instances),
+          do: %{"name" => name, "instanceId" => instance_id(key), "instance" => instance}
 
     answered(state, id, result, &(&1 == {:ok, %{"instances" => own}})) and agrees(state)
   end
@@ -260,6 +282,14 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def list(id), do: Host.provider_instances(id, "list", %{})
 
+  def user_add(instance_id) do
+    HalC2.Settings.update(
+      &put_in(&1, [Access.key("providerInstances", %{}), instance_id], @users)
+    )
+
+    sync()
+  end
+
   def user_delete(instance_id) do
     HalC2.Settings.update(fn settings ->
       Map.update!(settings, "providerInstances", &Map.delete(&1, instance_id))
@@ -280,13 +310,11 @@ defmodule HalC2.PluginProvidersPropTest do
 
   defp agrees(state) do
     all = HalC2.Settings.settings()["providerInstances"] || %{}
-    {theirs, users} = Map.split_with(all, fn {id, _} -> Host.instance_owner(id) != nil end)
+    theirs = Map.new(state.instances, fn {key, instance} -> {instance_id(key), instance} end)
 
-    cond do
-      theirs != state.instances -> mismatch({:instances, theirs, state.instances})
-      users != %{@user_id => @users} -> mismatch({:users, users})
-      true -> true
-    end
+    if all == Map.merge(state.users, theirs),
+      do: true,
+      else: mismatch({:instances, all, theirs, state.users})
   end
 
   defp refusal(id, {:error, message}), do: {:error, String.replace_prefix(message, id <> " ", "")}
@@ -303,16 +331,15 @@ defmodule HalC2.PluginProvidersPropTest do
   defp settle(state) do
     allowed = for {id, p} <- state.plugins, p.installed and p.enabled and p.granted, do: id
 
-    instances =
-      Map.filter(state.instances, fn {instance_id, _} ->
-        elem(Host.instance_owner(instance_id), 0) in allowed
-      end)
-
-    %{state | instances: instances}
+    %{state | instances: Map.filter(state.instances, fn {{id, _}, _} -> id in allowed end)}
   end
 
+  defp held(state),
+    do: Map.keys(state.users) ++ Enum.map(Map.keys(state.instances), &instance_id/1)
+
+  defp users?(state, id, name), do: Map.has_key?(state.users, instance_id({id, name}))
   defp update_plugin(state, id, fun), do: update_in(state.plugins[id], fun)
-  defp instance_id(id, name), do: "plugin_#{id}_#{name}"
+  defp instance_id({id, name}), do: "plugin_#{id}_#{name}"
   defp instance(label), do: %{"driver" => "claudeAgent", "displayName" => label}
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
 

@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.provider_instances/3 and instance_owner/1, gated by providers:configure)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.provider_instances/3 and the record of what each plugin added, gated by providers:configure)
 #   apps/server-ex/lib/hal_c2/plugins.ex (a plugin's instances leave settings once it is off, removed or stops asking)
 #   apps/server-ex/lib/hal_c2/plugins/package.ex (permission ids and their labels)
 #   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables sealed on every settings write)
@@ -14,9 +14,10 @@ Feature: Provider instances a plugin adds
   A plugin that routes agents somewhere of its own, a proxy it runs, say, adds provider
   instances for them to Settings → Providers and keeps them set up as it changes: an
   ordinary instance the user can rename, switch off or delete like any other. It needs
-  `providers:configure`. A plugin reaches only the instances it added, each under the
-  instance id `plugin_<plugin id>_<name>`, and they last only while it is installed, on
-  and granted the permission.
+  `providers:configure`. Each goes under the instance id `plugin_<plugin id>_<name>`, and
+  the MC records which ones the plugin added: that record, not the id, is what the plugin
+  reaches, so an instance of the user's is never its, whatever it is called. They last
+  only while the plugin is installed, on and granted the permission.
 
   Background:
     Given an MC with the user's own provider instance "claude-work"
@@ -57,6 +58,17 @@ Feature: Provider instances a plugin adds
     Then "claude-work" is not among them
     When it removes the instance "claude-work"
     Then the user's instance "claude-work" is as it was
+
+  @mc
+  Scenario: An instance of the user's under the id a plugin would use stays the user's
+    Given the user added an instance of their own as "plugin_host-probe_claude"
+    And a plugin granted "providers:configure"
+    When it puts the instance "claude" for Claude named "Claude via the proxy"
+    Then the MC refuses the call saying it "is a provider instance of the user's"
+    And the user's instance "plugin_host-probe_claude" is as it was
+    And the plugin lists no instances
+    When it removes the instance "claude"
+    Then the user's instance "plugin_host-probe_claude" is as it was
 
   @mc
   Scenario Outline: A name that cannot be an instance id of the plugin's is refused
@@ -119,6 +131,27 @@ Feature: Provider instances a plugin adds
       When the user deletes the instance "plugin_host-probe_claude" in Settings → Providers
       Then Settings → Providers has no instance "plugin_host-probe_claude"
       And the plugin lists no instances
+
+    @mc
+    Scenario Outline: An instance of the user's named like a plugin's never leaves with one
+      Given the user added an instance of their own as <id>
+      And a plugin granted "providers:configure"
+      When the user turns the plugin off
+      Then the user's instance <id> is as it was
+
+      Examples:
+        | id                         |
+        | "plugin_host-probe_work"   |
+        | "plugin_x_y"               |
+
+    @mc
+    Scenario: An instance the user adds where they deleted the plugin's is theirs
+      Given a plugin granted "providers:configure"
+      And it put the instance "claude" for Claude named "Claude via the proxy"
+      And the user deleted the instance "plugin_host-probe_claude" in Settings → Providers
+      When the user adds an instance of their own as "plugin_host-probe_claude"
+      And the user turns the plugin off
+      Then the user's instance "plugin_host-probe_claude" is as it was
 
   Rule: Settings → Providers shows whose an instance is
 

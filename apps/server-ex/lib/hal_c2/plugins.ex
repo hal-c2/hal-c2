@@ -1608,8 +1608,10 @@ defmodule HalC2.Plugins do
 
   # A plugin's provider instances (`HalC2.Plugins.Host.provider_instances/3`) last only
   # while it is installed, on and granted `providers:configure`: once it is turned off,
-  # removed or updated to stop asking, they leave the settings document, and the plugin
-  # adds them again when it is back on. Every settings change comes back here, so one
+  # removed or updated to stop asking, the ones its record names leave the settings
+  # document with the record, and the plugin adds them again when it is back on. An id
+  # whose instance is gone (the user deleted it) leaves the record, so an instance the
+  # user adds under it later is theirs. Every settings change comes back here, so one
   # an instance's own save raced past is taken out by the next.
   defp release_instances(state) do
     keep =
@@ -1619,22 +1621,31 @@ defmodule HalC2.Plugins do
           into: MapSet.new(),
           do: id
 
-    gone? = fn instance_id ->
-      case HalC2.Plugins.Host.instance_owner(instance_id) do
-        {id, _name} -> not MapSet.member?(keep, id)
-        nil -> false
-      end
-    end
+    release = fn settings ->
+      instances = settings["providerInstances"] || %{}
 
-    instances = HalC2.Settings.settings()["providerInstances"] || %{}
+      Enum.reduce(settings["plugins"] || %{}, settings, fn {id, _config}, settings ->
+        case HalC2.Plugins.Host.added_instances(settings, id) do
+          [] ->
+            settings
 
-    if not HalC2.Settings.unreadable?() and Enum.any?(Map.keys(instances), gone?) do
-      HalC2.Settings.update(fn settings ->
-        Map.update(settings, "providerInstances", %{}, fn all ->
-          Map.reject(all, fn {instance_id, _} -> gone?.(instance_id) end)
-        end)
+          ids ->
+            {gone, kept} =
+              if MapSet.member?(keep, id),
+                do: {[], Enum.filter(ids, &Map.has_key?(instances, &1))},
+                else: {ids, []}
+
+            settings
+            |> Map.update("providerInstances", %{}, &Map.drop(&1, gone))
+            |> put_in(["plugins", id, "providerInstances"], kept)
+        end
       end)
     end
+
+    settings = HalC2.Settings.settings()
+
+    if not HalC2.Settings.unreadable?() and release.(settings) != settings,
+      do: HalC2.Settings.update(release)
 
     state
   end

@@ -113,8 +113,10 @@ defmodule HalC2.Plugins.Host do
   @doc """
   The provider instances plugin `id` added, each an ordinary `providerInstances` entry
   of the settings document (`ProviderInstanceConfig`) under the instance id
-  `plugin_<id>_<name>`. That id is the mark of the plugin's: the plugin reaches only
-  instances under its own, and clients can tell whose an instance is from it. Needs
+  `plugin_<id>_<name>`. The host records the ids it added for the plugin in the
+  plugin's own config (`plugins.<id>.providerInstances`), in the same save as the
+  instance, and that record, not the id's shape, is what the plugin reaches: an
+  instance of the user's is never listed, replaced or removed, whatever its id. Needs
   `providers:configure`.
 
     * `"list"` → `%{"instances" => [%{"name", "instanceId", "instance"}]}`, sorted by
@@ -122,7 +124,8 @@ defmodule HalC2.Plugins.Host do
       sealed: `""` with `"valueRedacted": true`, which kept as it is in a `"put"`
       keeps the stored value).
     * `"put"` `%{"name", "instance"}` → `%{"instanceId"}`: adds the instance or
-      replaces it whole. A plugin that keeps what the user changed reads it first.
+      replaces it whole, and refuses when the user has an instance of that id. A
+      plugin that keeps what the user changed reads it first.
     * `"remove"` `%{"name"}` → `%{"removed" => boolean}`.
 
   A `name` is lowercase letters, digits and dashes. The instances last only while the
@@ -132,11 +135,17 @@ defmodule HalC2.Plugins.Host do
   """
   def provider_instances(id, "list", _input) do
     with :ok <- permit(id, "providers:configure") do
+      settings = HalC2.Settings.settings()
+      all = settings["providerInstances"] || %{}
+
       instances =
-        for {instance_id, %{} = instance} <-
-              Enum.sort(HalC2.Settings.settings()["providerInstances"] || %{}),
-            {^id, name} <- [instance_owner(instance_id)],
-            do: %{"name" => name, "instanceId" => instance_id, "instance" => instance}
+        for instance_id <- Enum.sort(added_instances(settings, id)),
+            %{} = instance <- [all[instance_id]],
+            do: %{
+              "name" => String.replace_prefix(instance_id, "plugin_#{id}_", ""),
+              "instanceId" => instance_id,
+              "instance" => instance
+            }
 
       {:ok, %{"instances" => instances}}
     end
@@ -146,23 +155,28 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, "providers:configure"),
          {:ok, instance_id} <- instance_id(id, name),
          :ok <- driver(instance),
-         put =
-           &Map.put(
-             &1,
-             "providerInstances",
-             Map.put(&1["providerInstances"] || %{}, instance_id, instance)
-           ),
+         :ok <- not_users(HalC2.Settings.settings(), id, instance_id),
+         put = &put_instance(&1, id, instance_id, instance),
          :ok <- valid(HalC2.Settings.validate(put.(HalC2.Settings.settings()))),
          :ok <- saved(HalC2.Settings.update(put)),
+         # An instance of the user's that came in before the save is kept by it.
+         :ok <- not_users(HalC2.Settings.settings(), id, instance_id),
          do: {:ok, %{"instanceId" => instance_id}}
   end
 
   def provider_instances(id, "remove", %{"name" => name}) do
     with :ok <- permit(id, "providers:configure"),
          {:ok, instance_id} <- instance_id(id, name) do
-      if Map.has_key?(HalC2.Settings.settings()["providerInstances"] || %{}, instance_id) do
-        drop =
-          &Map.update(&1, "providerInstances", %{}, fn all -> Map.delete(all, instance_id) end)
+      if instance_id in added_instances(HalC2.Settings.settings(), id) do
+        drop = fn settings ->
+          if instance_id in added_instances(settings, id) do
+            settings
+            |> Map.update("providerInstances", %{}, &Map.delete(&1, instance_id))
+            |> record(id, &List.delete(&1, instance_id))
+          else
+            settings
+          end
+        end
 
         with :ok <- saved(HalC2.Settings.update(drop)), do: {:ok, %{"removed" => true}}
       else
@@ -175,27 +189,62 @@ defmodule HalC2.Plugins.Host do
     do: {:error, "providerInstances has no method #{inspect(method)} taking that input."}
 
   @doc """
-  `{plugin_id, name}` for a provider instance id a plugin added
-  (`provider_instances/3`), or nil for any other.
+  The ids of the provider instances the host recorded adding for plugin `id` in
+  `settings` (`provider_instances/3`). `HalC2.Plugins` drops an id from the record
+  once its instance is gone, so one the user adds later under that id is theirs.
   """
-  def instance_owner("plugin_" <> rest) do
-    case Regex.run(~r/^([a-z][a-z0-9-]*)_([a-z0-9][a-z0-9-]*)$/, rest) do
-      [_, id, name] -> {id, name}
-      nil -> nil
+  def added_instances(settings, id) do
+    case get_in(settings, ["plugins", id, "providerInstances"]) do
+      ids when is_list(ids) -> Enum.filter(ids, &is_binary/1)
+      _ -> []
     end
   end
 
-  def instance_owner(_instance_id), do: nil
+  defp record(settings, id, fun) do
+    plugins = settings["plugins"] || %{}
+    config = plugins[id] || %{}
+    ids = fun.(added_instances(settings, id))
+    Map.put(settings, "plugins", Map.put(plugins, id, Map.put(config, "providerInstances", ids)))
+  end
 
-  # Instance ids are slugs of at most 64 characters (`ProviderInstanceId`).
+  defp put_instance(settings, id, instance_id, instance) do
+    if users?(settings, id, instance_id) do
+      settings
+    else
+      settings
+      |> Map.put(
+        "providerInstances",
+        Map.put(settings["providerInstances"] || %{}, instance_id, instance)
+      )
+      |> record(id, &Enum.uniq(&1 ++ [instance_id]))
+    end
+  end
+
+  # Whether `settings` holds an instance under that id the plugin did not add.
+  defp users?(settings, id, instance_id),
+    do:
+      Map.has_key?(settings["providerInstances"] || %{}, instance_id) and
+        instance_id not in added_instances(settings, id)
+
+  defp not_users(settings, id, instance_id) do
+    if users?(settings, id, instance_id),
+      do:
+        {:error,
+         "#{instance_id} is a provider instance of the user's: a plugin reaches only the ones it added."},
+      else: :ok
+  end
+
+  # Instance ids are slugs of at most 64 characters (`ProviderInstanceId`); the
+  # plugin's id is part of it, so an id a slug cannot hold is refused too.
   defp instance_id(id, name) when is_binary(name) do
     instance_id = "plugin_#{id}_#{name}"
 
-    if name =~ ~r/^[a-z0-9][a-z0-9-]*$/ and String.length(instance_id) <= 64,
-      do: {:ok, instance_id},
-      else:
-        {:error,
-         "#{inspect(name)} cannot name a provider instance: use lowercase letters, digits and dashes, and keep plugin_#{id}_<name> to 64 characters."}
+    if name =~ ~r/^[a-z0-9][a-z0-9-]*$/ and instance_id =~ ~r/^[a-zA-Z][a-zA-Z0-9_-]*$/ and
+         String.length(instance_id) <= 64,
+       do: {:ok, instance_id},
+       else:
+         {:error,
+          "#{inspect(name)} cannot name a provider instance: use lowercase letters, digits and dashes, and keep plugin_#{id}_<name> to 64 letters, digits, dashes and underscores."}
   end
 
   defp instance_id(_id, name), do: {:error, "#{inspect(name)} cannot name a provider instance."}

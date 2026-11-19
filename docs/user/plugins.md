@@ -125,7 +125,9 @@ What a running plugin adds reaches every app connected to that machine:
 - **Provider instances** appear in **Settings → Providers** when it asks to
   **add provider instances of its own and keep them set up**, to route agents
   through a proxy it runs, say. Rename, switch off or delete them like your own; it
-  reaches only the ones it added, and they leave while it is off or removed.
+  reaches only the ones it added, never yours, whatever they are called. Turn the
+  plugin off or remove it and they leave, your changes to them too; turn it on and
+  it adds them afresh.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
