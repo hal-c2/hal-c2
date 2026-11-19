@@ -76,6 +76,24 @@ defmodule HalC2.PluginsTest do
     refute_received {:hal_c2_plugin_topic, _, "notes", "t", _}
   end
 
+  # Found by the plugin host's property: the model forgot nothing while an update held it.
+  test "what a plugin published is forgotten once an update holds it for permissions" do
+    running("notes")
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    # The same version, asking for a permission it was not granted: held, not running.
+    package("notes", "1", ["slack:read"])
+    Plugins.handle("rescan", %{})
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+
+    # Accepted, it runs again with nothing published.
+    assert {:ok, _} =
+             Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => ["slack:read"]})
+
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+  end
+
   test "a plugin that was removed publishes nothing, and what it published is forgotten" do
     running("notes")
     Plugins.publish("notes", "t", 1)
@@ -767,8 +785,9 @@ defmodule HalC2.PluginsTest do
     assert {:ok, _} = Plugins.handle("enable", %{"id" => id, "acceptPermissions" => []})
   end
 
-  # A package of UI parts only, with a number and a secret among its settings.
-  defp package(id, version) do
+  # A package of UI parts only, with a number and a secret among its settings, asking
+  # for `permissions`.
+  defp package(id, version, permissions \\ []) do
     dir = Path.join(plugins_dir(), id)
     File.mkdir_p!(Path.join(dir, "ui"))
     File.write!(Path.join(dir, "ui/main.qml"), "#{id} #{version}")
@@ -781,6 +800,7 @@ defmodule HalC2.PluginsTest do
         "version" => version,
         "description" => "A package of UI parts only.",
         "apiVersion" => 1,
+        "permissions" => for(p <- permissions, do: %{"id" => p, "reason" => "The test."}),
         "settings" => [
           %{"key" => "count", "label" => "Count", "type" => "number", "default" => 1},
           %{"key" => "token", "label" => "Token", "type" => "secret"}
