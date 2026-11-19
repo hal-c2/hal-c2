@@ -226,14 +226,41 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office keeps its size as people come and go
+    Scenario: The office keeps its size as people come
       Given the office has 4 threads
       When it has 50 threads
       Then the office is the same size, with room for 48 desks
-      And 48 of them have a desk and the other 2 take a break in the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office keeps its size as people go
+      Given the office has 50 threads
       When it has 2 threads
-      Then the office is the same size
-      And nothing in it is drawn again
+      Then the office is the same size, with room for 48 desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Workers past the 48th desk wait in the break room
+      Given the office has 50 threads working, typing
+      Then 48 of them have a desk and the other 2 take a break in the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A worker without a desk sits down once a desk is free
+      Given the office has 50 threads working, typing, 2 of them without a desk
+      When a thread with a desk leaves
+      Then one of the 2 walks from the break room to that desk and sits down
+      And a thread with a desk that is taking a break stays on its break
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A worker without a desk waits in the break room whatever it does
+      Given the office has 48 threads with a desk
+      When it has another thread working, planning
+      Then the new person waits in the break room, not at a whiteboard
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People coming and going do not redraw the office
+      Given the office has 4 threads
+      When it has 12 threads
+      And then it has 2 threads
+      Then nothing in the office is drawn again
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The people there when the office opens are already at their desks
@@ -244,7 +271,7 @@ Feature: Office
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Movers carry in the desk of a new worker, who walks in and waits for it
       Given the office has 4 threads
-      When it has 5 threads
+      When it has a 5th thread working, typing
       Then the new person walks in through the door
       And a mover walks in carrying a desk, a chair and a computer to the new person's place
       And the new person waits beside the desks until the mover sets them down
@@ -274,14 +301,43 @@ Feature: Office
       And no person, mover or desk being carried overlaps another
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk being carried never covers the person just north of it
+      Given a mover carries a desk along open floor
+      And someone stands just north of its way
+      When the mover walks right past them
+      Then the desk it holds in front of it never covers them
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: People and movers get through the door without a jam
       Given the office has 2 threads
       When it has 8 threads
       Then the new people come in one at a time, each once the doorway and the floor beside it are clear
       And nobody stands waiting in the doorway
-      When a person and a mover meet head-on and only one of them has room to step aside
-      Then that one steps aside and both get where they are going
       And every desk is carried in and every mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person and a mover that meet head-on get past each other
+      Given a person and a mover meet head-on and only one of them has room to step aside
+      Then that one steps aside and both get where they are going
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk to someone still outside waits for them to come in
+      Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
+      When the office has a "message" talk from "Lead" to "Newcomer"
+      Then "Lead" waits until "Newcomer" has come in, however long that takes
+      And then walks up to "Newcomer" and says it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Newcomers waiting for their desks each wait in a place of their own
+      Given the office has no threads
+      When it has 16 threads working, typing
+      Then each new person waits beside its group of desks, or as near it as there is room, where nobody else waits
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Another machine's office starts with clean whiteboards
+      Given the office has a thread working, planning, that has drawn on a whiteboard
+      When the user picks another machine
+      Then every whiteboard in its office is clean
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view

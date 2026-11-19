@@ -520,16 +520,14 @@ Item {
         if (top === "dress" && !S)
             m(side ? 5 : 4, 15, side ? 7 : 8, 3, L.shirt);
 
-        // Arms and what the hands hold. A mover's hands are up, holding a desk
-        // over its head (see paintLoad()).
+        // Arms and what the hands hold. A mover holds a desk in front of it
+        // (see paintLoad()).
         if (L.carry && !side) {
-            arm(1, 5, 6);
-            arm(13, 5, 6);
-            m(1, 4, 2, 1, skin);
-            m(13, 4, 2, 1, skin);
+            arm(3, 11, 5);
+            arm(11, 11, 5);
         } else if (L.carry) {
-            sideArm(3, 5, 2, 7);
-            m(3, 4, 2, 1, skin);
+            sideArm(7, 11, 3, 3);
+            m(4, 13, 4, 2, short ? skin : sleeveShade);
         } else if (!side) {
             const right = f === 6 || f === 7 || f === 8 || f === 9 || f === 10 || f === 11;
             const left = f === 13;
@@ -1262,25 +1260,26 @@ Item {
         }
     }
 
-    // The desk a mover carries: a monitor and a chair on it, legs down to the
-    // mover's hands.
+    // The desk a mover carries in front of it: a monitor and a chair on it,
+    // legs down to the floor. It fits the mover's own figure, so it never
+    // covers anyone around it.
     function paintLoad(ctx, chair) {
-        ctx.clearRect(0, 0, 20, 14);
+        ctx.clearRect(0, 0, 16, 14);
         const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
         const O = page.outline;
-        R(O, 2, 9, 4, 5);
-        R(O, 14, 9, 4, 5);
-        R("#7a5530", 3, 10, 2, 4);
-        R("#7a5530", 15, 10, 2, 4);
-        R(O, 0, 6, 20, 5);
-        R("#c99a64", 1, 7, 18, 2);
-        R("#8f6538", 1, 9, 18, 1);
-        R(O, 2, 0, 10, 7);
-        R("#2b2f39", 3, 1, 8, 5);
-        R("#141a24", 4, 2, 6, 3);
-        R(O, 13, 1, 6, 6);
-        R(chair, 14, 2, 4, 4);
-        R(shade(chair, 0.18), 14, 2, 4, 1);
+        R(O, 1, 9, 4, 5);
+        R(O, 11, 9, 4, 5);
+        R("#7a5530", 2, 10, 2, 4);
+        R("#7a5530", 12, 10, 2, 4);
+        R(O, 0, 6, 16, 5);
+        R("#c99a64", 1, 7, 14, 2);
+        R("#8f6538", 1, 9, 14, 1);
+        R(O, 1, 0, 9, 7);
+        R("#2b2f39", 2, 1, 7, 5);
+        R("#141a24", 3, 2, 5, 3);
+        R(O, 10, 1, 6, 6);
+        R(chair, 11, 2, 4, 4);
+        R(shade(chair, 0.18), 11, 2, 4, 1);
     }
 
     function paintCell(ctx, parts, ox, oy, mirror) {
@@ -1731,7 +1730,8 @@ Item {
     // ── Who is in the office ────────────────────────────────────────────────
 
     // Another machine's office: everyone leaves at once and its people come
-    // in where they belong, at desks that are simply there. The room stays.
+    // in where they belong, at desks that are simply there. The room stays,
+    // its whiteboards wiped.
     function reset() {
         for (const id of Object.keys(page.actors))
             removeActor(id);
@@ -1746,6 +1746,8 @@ Item {
                 setDesk(seat, false);
             }
         }
+        for (const board of Object.values(page.boardViews))
+            board.progress = board.blank;
         countMoves();
         page.seen = {};
         page.arrival = {};
@@ -1825,10 +1827,16 @@ Item {
         w.seatOf = seatOf;
         furnish();
         // Seats move between people as people come and go; whoever was headed
-        // for a desk, or waiting for one, that is no longer theirs plans again.
+        // for a desk, or waiting for one, that is no longer theirs plans again,
+        // and so does whoever waited in the break room for want of a desk and
+        // now has one.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
             const goal = actor.goal;
+            if (goal?.deskless && seatOf[id]) {
+                actor.goal = null;
+                continue;
+            }
             if (goal?.kind !== "desk" && goal?.kind !== "wait")
                 continue;
             const seat = seatOf[id];
@@ -2146,7 +2154,9 @@ Item {
         page.occupied[y * w.cols + x] = actor.id;
     }
 
-    function nearestFree(x, y, self) {
+    // The nearest floor tile nobody stands on, nor, when `unclaimed`, is headed
+    // for; with `unclaimed` and no such tile, null.
+    function nearestFree(x, y, self, unclaimed) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
         const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
@@ -2154,7 +2164,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self))
+            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self) && (!unclaimed || !page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;
@@ -2164,7 +2174,7 @@ Item {
                 }
             }
         }
-        return [w.entrance[0], w.entrance[1]];
+        return unclaimed ? null : [w.entrance[0], w.entrance[1]];
     }
 
     function removeActor(id) {
@@ -2219,8 +2229,12 @@ Item {
 
     function seatGoal(actor, pose) {
         const seat = page.world.seatOf[actor.id];
-        if (!seat)
-            return breakGoal(actor, true);
+        if (!seat) {
+            // No desk yet: it waits in the break room, until it gets one.
+            const goal = breakGoal(actor, true);
+            goal.deskless = true;
+            return goal;
+        }
         if (seat.state !== "in")
             return waitGoal(actor, seat);
         release(actor);
@@ -2252,7 +2266,12 @@ Item {
         }
         const far = ([x, y]) => Math.abs(x - seat.x) + Math.abs(y - seat.y);
         options.sort((a, b) => far(a) - far(b));
-        const spot = options[0] ?? nearestFree(pod.x - 1, pod.y + 1, actor.id);
+        const spot = options[0] ?? nearestFree(pod.x - 1, pod.y + 1, actor.id, true);
+        // With nowhere to wait, it plans again in a moment (see tick()).
+        if (!spot) {
+            release(actor);
+            return null;
+        }
         const goal = {
             x: spot[0],
             y: spot[1],
@@ -2359,9 +2378,11 @@ Item {
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
-            if (activity === "planning")
+            // Without a desk it waits in the break room whatever it does.
+            const seated = !!page.world.seatOf[actor.id];
+            if (seated && activity === "planning")
                 goal = spotGoal(actor, "board");
-            else if (activity === "reading")
+            else if (seated && activity === "reading")
                 goal = spotGoal(actor, "shelf");
             if (!goal)
                 goal = seatGoal(actor, activity === "typing" || activity === "running" || activity === "testing" || activity === "browsing" ? "type" : "sit");
@@ -2632,10 +2653,12 @@ Item {
         let moving = false;
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
-            if (!actor.talk && actor.queue.length && actor.tx >= 0 && !held(actor))
+            if (!actor.talk && actor.queue.length && actor.tx >= 0 && !held(actor) && !(page.actors[actor.queue[0].to]?.tx < 0))
                 startTalk(actor);
             if (actor.talk)
                 stepTalk(actor);
+            else if (!actor.goal && actor.tx >= 0 && page.ticks % 8 === 0)
+                decide(actor, true);
             else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity) {
                     actor.until = page.now + actor.stay;
@@ -3636,7 +3659,8 @@ Item {
                                 id: board
 
                                 required property var modelData
-                                property real progress: 0.15
+                                readonly property real blank: 0.15
+                                property real progress: blank
 
                                 x: modelData.x
                                 y: modelData.y
@@ -3716,10 +3740,12 @@ Item {
                                 }
 
                                 Canvas {
+                                    objectName: "officeLoad:" + mover.moverId
                                     visible: mover.carrying
-                                    x: -2
-                                    y: -10
-                                    width: 20
+                                    // Seen from behind, the mover's back hides it.
+                                    z: mover.dir === 3 ? -1 : 0
+                                    y: 8
+                                    width: 16
                                     height: 14
                                     smooth: false
                                     antialiasing: false
