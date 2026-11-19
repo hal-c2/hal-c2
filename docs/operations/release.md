@@ -38,6 +38,25 @@ The installed MC's cluster is managed through
 Once the service runs, `mise run mc:reload --release` builds this checkout and moves the service to
 it, in place when the change allows and through a restart when it does not.
 
+### In a container
+
+`mise run mc:container` builds this checkout's MC into an image (`apps/server-ex/rel/Containerfile`,
+on Ubuntu 24.04 like the published bundles, so it can still update itself) and runs it as the
+container `hal-c2-mc` under Podman, or Docker with `--engine docker`. It publishes on
+`127.0.0.1:3790` (`--host`, `--port`) and keeps everything on the `hal-c2-mc` volume: the MC's
+files, and a home for provider CLIs and their logins, which the image does not carry. Install a
+provider with `podman exec -it hal-c2-mc npm install -g <package>` (or its own installer) and log
+in the same way. The container sees only directories named with `--workspace <dir>`, mounted at
+the same path, so projects outside them must be cloned into the MC. It runs as you, and rootless
+Podman keeps mounted files yours; under Podman it comes back after a reboot only with
+`systemctl --user enable podman-restart.service`.
+
+Running the task again rebuilds and replaces the container, keeping the volume. `pair` prints a
+link for the published address, and `cluster`, `threads` and `doctor` run the MC's own commands
+inside it (`mise run mc:container pair -- --ttl 1h`). `status`, `logs`, `restart` and `uninstall` manage the
+container; uninstall leaves the volume, which `podman volume rm hal-c2-mc` deletes. Cluster traffic
+is not published, so a containerised MC does not cluster yet.
+
 ## MC
 
 `.github/workflows/release-mc.yml` publishes the bundles MCs update from (`HalC2.Upgrade`):
