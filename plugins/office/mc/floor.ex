@@ -68,8 +68,9 @@ defmodule HalC2Plugins.Office.Floor do
   def load(floor, rows, now), do: Enum.reduce(rows, floor, &put_row(&2, &1, now, false))
 
   @doc """
-  Rows that changed: a state that changed began `now`, a deleted row leaves, and a
-  worker just created is a `delegate` talk from its parent.
+  Rows that changed: a state that changed began `now`, a row first seen began when it
+  says it did (as `load/3` takes it), a deleted row leaves, and a worker just created is
+  a `delegate` talk from its parent.
   """
   def rows(floor, rows, now), do: Enum.reduce(rows, floor, &put_row(&2, &1, now, true))
 
@@ -82,8 +83,8 @@ defmodule HalC2Plugins.Office.Floor do
 
       since =
         case floor.states[id] do
-          {^state, since} -> since
-          _ when changed? -> iso(now)
+          {^state, since} -> later_run(since, row, state)
+          {_other, _since} when changed? -> iso(now)
           _ -> began(row, state, now)
         end
 
@@ -135,7 +136,17 @@ defmodule HalC2Plugins.Office.Floor do
     }
   end
 
-  # When a row read at start says its state began.
+  # A thread idle or failed before and after a change, whose latest run ended after
+  # `since`, ran in between, and the shell's batching folded that run into the one
+  # change: it has been quiet since that run ended.
+  defp later_run(since, row, state) when state in ~w(idle failed) do
+    ended = row["latestRunCompletedAt"]
+    if (ms(ended) || 0) > (ms(since) || 0), do: ended, else: since
+  end
+
+  defp later_run(since, _row, _state), do: since
+
+  # When a row read at start, or first seen, says its state began.
   defp began(row, "asking", now),
     do: get_in(row, ["pendingRuntimeRequest", "createdAt"]) || row["updatedAt"] || iso(now)
 
@@ -404,10 +415,13 @@ defmodule HalC2Plugins.Office.Floor do
     %{"people" => people, "talks" => talks}
   end
 
+  # An idle or failed thread stays `idleHours` from when it became so: its row changes for
+  # other reasons too (a provider session stopped for sitting idle, say), and those do not
+  # make it any less quiet.
   defp in?(floor, row, state, now) do
     row["archivedAt"] == nil and not is_map(row["movedTo"]) and
       (state in ~w(asking working waiting) or
-         (not settled?(row) and quiet_for(row, now) < floor.idle_hours * 3_600_000))
+         (not settled?(row) and quiet_for(floor, row, now) < floor.idle_hours * 3_600_000))
   end
 
   defp settled?(row),
@@ -415,7 +429,9 @@ defmodule HalC2Plugins.Office.Floor do
       row["settledOverride"] == "settled" or
         (row["settledAt"] != nil and row["settledOverride"] != "active")
 
-  defp quiet_for(row, now), do: now - (ms(row["updatedAt"]) || now)
+  defp quiet_for(floor, row, now), do: now - (ms(since(floor, row)) || now)
+
+  defp since(floor, row), do: elem(floor.states[row["id"]], 1)
 
   defp person(floor, row, state) do
     id = row["id"]
@@ -433,7 +449,7 @@ defmodule HalC2Plugins.Office.Floor do
       "activity" => if(state == "working", do: floor.activity[id]),
       "question" =>
         if(state == "asking", do: %{"kind" => request["kind"], "since" => request["createdAt"]}),
-      "since" => elem(floor.states[id], 1)
+      "since" => since(floor, row)
     }
   end
 
@@ -448,7 +464,7 @@ defmodule HalC2Plugins.Office.Floor do
           {state, _} = floor.states[id],
           state in ~w(idle failed),
           in?(floor, row, state, now),
-          at = ms(row["updatedAt"]),
+          at = ms(since(floor, row)),
           do: at + ceil(floor.idle_hours * 3_600_000)
 
     talks = for talk <- floor.talks, at = ms(talk["at"]), at + @talk_ms > now, do: at + @talk_ms

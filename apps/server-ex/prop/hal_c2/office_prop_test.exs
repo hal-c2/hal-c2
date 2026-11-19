@@ -10,6 +10,9 @@ defmodule HalC2.OfficePropTest do
   - its people are the rows still in it (not archived, moved or deleted; a settled or
     long idle one only while it works, asks or waits), asking first, then working,
     waiting and the rest, newest first, no more than `maxPeople`;
+  - an idle or failed thread is long idle `idleHours` after it became so: when its row
+    first said its run ended, when the office saw it change state, or when a later run
+    ended; a row touched without changing its state (`touch`) is no less quiet;
   - each is in its row's state, shows what its agent last did only while working,
     and has a question exactly while asking;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
@@ -33,6 +36,8 @@ defmodule HalC2.OfficePropTest do
   @start 1_800_000_000_000
   @talk_ms 600_000
   @born_ms 120_000
+  # How long before its row last changed a row's run ended, for the states that ran.
+  @ran_ms 600_000
   @ranks %{"asking" => 0, "working" => 1, "waiting" => 2, "idle" => 3, "failed" => 3}
   @tools %{
     "Read" => "reading",
@@ -107,6 +112,7 @@ defmodule HalC2.OfficePropTest do
          elements([0, 60_000, 30 * 60_000, 2 * 3_600_000])
        ]},
       {:call, __MODULE__, :delete_row, [elements(@ids)]},
+      {:call, __MODULE__, :touch, [elements(@ids)]},
       {:call, __MODULE__, :start_turn, [elements(@ids)]},
       {:call, __MODULE__, :call_tool, [elements(@ids), elements(Map.keys(@tools))]},
       {:call, __MODULE__, :say, [elements(@ids), elements(["Done.\nAll green.", "  ", "Fixed"])]},
@@ -125,6 +131,19 @@ defmodule HalC2.OfficePropTest do
   def put_row(id, state, flag, parent, age) do
     now = Process.get(:now)
     step(&Floor.rows(&1, [row(id, state, flag, parent, now - age)], now))
+  end
+
+  # The row changed now and nothing it says of its state did: a provider session
+  # stopped for sitting idle, say.
+  def touch(id) do
+    now = Process.get(:now)
+
+    step(fn floor ->
+      case floor.rows[id] do
+        nil -> floor
+        row -> Floor.rows(floor, [%{row | "updatedAt" => Floor.iso(now)}], now)
+      end
+    end)
   end
 
   def delete_row(id) do
@@ -214,6 +233,7 @@ defmodule HalC2.OfficePropTest do
   end
 
   defp row(id, state, flag, parent, at) do
+    ran = if state in ~w(waiting idle failed), do: Floor.iso(at - @ran_ms)
     at = Floor.iso(at)
 
     %{
@@ -225,6 +245,7 @@ defmodule HalC2.OfficePropTest do
       "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
       "createdAt" => at,
       "updatedAt" => at,
+      "latestRunCompletedAt" => ran,
       "deletedAt" => nil,
       "archivedAt" => if(flag == :archived, do: at),
       "movedTo" => if(flag == :moved, do: %{"mc" => "elsewhere"}),
@@ -253,7 +274,18 @@ defmodule HalC2.OfficePropTest do
 
   def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age]}) do
     parent = if parent != id, do: parent
-    entry = %{state: state, flag: flag, parent: parent, at: s.now - age}
+    at = s.now - age
+    ran = if state in ~w(waiting idle failed), do: at - @ran_ms
+
+    since =
+      case s.rows[id] do
+        nil -> ran || at
+        %{state: ^state, since: since} when state in ~w(idle failed) -> max(since, ran)
+        %{state: ^state, since: since} -> since
+        _ -> s.now
+      end
+
+    entry = %{state: state, flag: flag, parent: parent, at: at, since: since}
 
     s =
       if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
@@ -261,6 +293,13 @@ defmodule HalC2.OfficePropTest do
         else: s
 
     put_in(s, [:rows, id], entry)
+  end
+
+  def next_state(s, _result, {:call, _, :touch, [id]}) do
+    case s.rows[id] do
+      nil -> s
+      _ -> put_in(s, [:rows, id, :at], s.now)
+    end
   end
 
   def next_state(s, _result, {:call, _, :delete_row, [id]}) do
@@ -357,7 +396,7 @@ defmodule HalC2.OfficePropTest do
     |> Enum.filter(fn {_id, r} ->
       r.flag not in [:archived, :moved] and
         (r.state in ~w(asking working waiting) or
-           (r.flag != :settled and s.now - r.at < s.idle_hours * 3_600_000))
+           (r.flag != :settled and s.now - r.since < s.idle_hours * 3_600_000))
     end)
     |> Enum.sort_by(fn {id, r} -> {@ranks[r.state], -r.at, id} end)
     |> Enum.take(s.max)
