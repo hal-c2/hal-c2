@@ -245,6 +245,52 @@ fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
     assert!(drafts::draft(&hub.engine, &after).is_some());
 }
 
+#[test]
+fn a_late_answer_keeps_text_rewritten_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy, then tag it");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Written in since the removal was asked: kept.
+    assert_eq!(
+        drafts::draft(&hub.engine, &draft).map(|d| d.text),
+        Some("roll back the deploy, then tag it".to_owned())
+    );
+}
+
+#[test]
+fn a_member_named_before_its_rows_keeps_its_drafts() {
+    let hub = listing();
+    let written = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &written, "roll back the deploy");
+    // A snapshot sent before a member's rows have come names it without a
+    // version and with no rows: its projects may only not have come yet.
+    let mcs = json!([
+        {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "env-1", "label": "Laptop"}},
+        {"mc": "b", "online": true, "epoch": null, "rev": 0, "reset": true,
+            "environment": {"environmentId": "id-b", "label": "box"}},
+    ]);
+    let snapshot = json!({"t": "shell", "mcs": mcs, "rows": [project("a", "p1")]});
+    hub.mc.frame(&hub.engine, "shell", "", snapshot);
+    hub.advance(0);
+    assert!(store::with(&hub.engine, |s| s.serves_environment("id-b")));
+    assert_eq!(
+        drafts::draft(&hub.engine, &written).map(|d| d.text),
+        Some("roll back the deploy".to_owned())
+    );
+}
+
 /// This machine runs 2.0 and is clustered with `studio`, connected on 1.3.
 fn behind() -> serde_json::Value {
     json!({"clustered": true, "version": "2.0", "members": [

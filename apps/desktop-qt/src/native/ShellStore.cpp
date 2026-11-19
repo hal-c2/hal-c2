@@ -123,7 +123,7 @@ void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
     Mc& entry = m_mcs[mc.mc];
     entry.epoch = mc.epoch;
     entry.rev = mc.rev;
-    entry.listed = true;
+    entry.listed = !mc.epoch.isEmpty();
     for (const cache::ShellRow& row : mc.rows) {
       if (auto* rows = rowsOf(entry, row.kind)) rows->insert(row.id, row.fields);
     }
@@ -480,8 +480,9 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
       setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
       m_mcs[name].trying = mc.value(QLatin1String("trying")).toBool(true);
-      m_mcs[name].listed = true;
       setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
+      // A member described before its rows came is sent without a version.
+      m_mcs[name].listed = !m_mcs[name].epoch.isEmpty();
     }
     // Only the MCs this client speaks for: another link's are its own.
     for (const QString& name : m_mcs.keys()) {

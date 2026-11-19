@@ -191,13 +191,13 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
   ++m_generation;
   set(QStringLiteral("busy"), true);
   // The drafts of the machine being removed, as they are now: one written
-  // after it joins again outlives a late answer.
-  QStringList doomed;
+  // after it joins again outlives a late answer, in the same draft or a new one.
+  QHash<QString, QString> doomed;
   auto* drafts = NativeShell::of(this)->controller<DraftController>();
   if (drafts && method == QLatin1String("cluster.remove")) {
     const QString removed = payload.value(QLatin1String("id")).toString();
     for (const DraftController::Draft& draft : drafts->drafts()) {
-      if (draft.environmentId == removed) doomed.append(draft.id);
+      if (draft.environmentId == removed) doomed.insert(draft.id, draft.text);
     }
   }
   call(method, payload, [this, doomed, success, failure](const QJsonValue& result, const std::optional<QString>& error) {
@@ -211,8 +211,9 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
     // drafts here. One a window lands on before the rows go is empty and goes
     // with them (DraftController::reconcile).
     if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-      for (const QString& id : doomed) {
-        if (drafts->draft(id)) drafts->remove(id);
+      for (auto it = doomed.cbegin(); it != doomed.cend(); ++it) {
+        const auto draft = drafts->draft(it.key());
+        if (draft && draft->text == it.value()) drafts->remove(it.key());
       }
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());

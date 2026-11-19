@@ -182,6 +182,53 @@ private slots:
     QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("deploy again")});
   }
 
+  // The answer comes after the machine is back and the user wrote again in the
+  // draft it had when the removal was asked: what was written since is kept.
+  void aLateAnswerKeepsTextRewrittenAfterARejoin() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.join();
+    QCOMPARE(shell.drafts()->start(kBox, QStringLiteral("ops")), draft);
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy, then tag it"));
+
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy, then tag it")});
+  }
+
+  // A snapshot sent before a member's rows have come names it without a
+  // version and with no rows: its projects may only not have come yet, and
+  // what was written for them is kept.
+  void aMemberNamedBeforeItsRowsKeepsItsDrafts() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    QJsonObject snapshot = shell.mc.shellFrames.last();
+    QJsonArray mcs = snapshot.value(QLatin1String("mcs")).toArray();
+    mcs.append(QJsonObject{{QStringLiteral("mc"), shell.mc.peers.value(kBox)},
+                           {QStringLiteral("online"), true},
+                           {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), kBox}}},
+                           {QStringLiteral("reset"), true}});
+    snapshot.insert(QStringLiteral("mcs"), mcs);
+    shell.mc.send(snapshot);
+    shell.barrier();
+    QVERIFY(shell.native->store()->servesEnvironment(kBox));
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+  }
+
   // A machine the shell never listed has no rows to wait for: the answer
   // drops what was kept for it.
   void anUnlistedMachinesDraftsGoOnTheAnswer() {

@@ -174,7 +174,7 @@ private:
     QJsonObject environment;
     bool online = false;
     bool trying = true;
-    // Its rows have come: in a snapshot, a `shell.rows` or the cache.
+    // Its rows have come: in a `shell.rows`, or a snapshot or the cache with a version.
     bool listed = false;
     // The version of its rows; no epoch when the MC gave none.
     QString epoch;

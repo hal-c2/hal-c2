@@ -64,7 +64,8 @@ struct McRows {
     /// The version of its rows; no epoch when the MC gave none.
     epoch: String,
     rev: i64,
-    /// Its rows have come: in a snapshot, a `shell.rows` or the cache.
+    /// Its rows have come: in a `shell.rows`, or a snapshot or the cache with
+    /// a version.
     listed: bool,
     threads: BTreeMap<String, Row>,
     projects: BTreeMap<String, Row>,
@@ -330,9 +331,9 @@ impl ShellStore {
         self.rows_changed();
         self.set_environment(&mc.mc, mc.environment);
         let entry = self.mcs.entry(mc.mc).or_default();
+        entry.listed = !mc.epoch.is_empty();
         entry.epoch = mc.epoch;
         entry.rev = mc.rev;
-        entry.listed = true;
         for row in mc.rows {
             if let Some(rows) = entry.rows(&row.kind) {
                 rows.insert(row.id, row.fields);
@@ -597,8 +598,11 @@ impl ShellStore {
                     let entry = self.mcs.entry(name.clone()).or_default();
                     entry.online = mc.get("online").and_then(Value::as_bool).unwrap_or(false);
                     entry.given_up = mc.get("trying").and_then(Value::as_bool) == Some(false);
-                    entry.listed = true;
                     self.set_version(&name, mc.get("epoch"), mc.get("rev"));
+                    // A member described before its rows came is sent
+                    // without a version.
+                    let entry = self.mcs.entry(name.clone()).or_default();
+                    entry.listed = !entry.epoch.is_empty();
                 }
                 // Only the MCs this client speaks for: another link's are its own.
                 let gone: Vec<String> = self

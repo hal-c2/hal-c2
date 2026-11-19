@@ -4,8 +4,8 @@
 // lands on the most recent project's draft) and removes the machine in Cluster
 // settings, the MC holding each answer to give it before or after it says the
 // machine went. After every step the drafts the user wrote are kept until an
-// answer drops the ones its removal was asked with, and no empty draft is kept
-// for a machine that went (hal-c2#1589).
+// answer drops the ones its removal was asked with, unless written in since,
+// and no empty draft is kept for a machine that went (hal-c2#1589).
 
 #include "Prop.h"
 
@@ -58,11 +58,13 @@ struct Shell {
   ShellBridge bridge;
   NativeShell native{&bridge};
   QList<FakeMc::Rpc> removals;
-  // The machine's drafts as each held removal was asked.
-  QList<QSet<QString>> asked;
+  // The machine's drafts, with their texts, as each held removal was asked.
+  QList<QMap<QString, QString>> asked;
   // The machine's drafts the user wrote, by id, with their text.
   QMap<QString, QString> written;
   QSet<QString> reached;
+  // Each write is new text, told apart from what a removal was asked with.
+  int writes = 0;
 
   Shell() {
     mc.projects.insert(QStringLiteral("shop"), project(QStringLiteral("shop"), kAt));
@@ -162,8 +164,9 @@ struct Write : Command {
     const QString id = box ? shell.drafts()->start(kBox, QStringLiteral("ops"))
                            : shell.drafts()->start(shell.mc.environmentId, QStringLiteral("shop"));
     RC_ASSERT(!id.isEmpty());
-    shell.drafts()->setText(id, QStringLiteral("roll back the deploy"));
-    if (box) shell.written.insert(id, QStringLiteral("roll back the deploy"));
+    const QString text = QStringLiteral("roll back the deploy %1").arg(++shell.writes);
+    shell.drafts()->setText(id, text);
+    if (box) shell.written.insert(id, text);
     shell.check(next);
   }
   void show(std::ostream& os) const override { os << "Write(" << (box ? "Build box" : "here") << ")"; }
@@ -186,8 +189,7 @@ struct Remove : Command {
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
     apply(next);
-    const QMap<QString, QString> before = shell.kept(kBox, false);
-    shell.asked.append(QSet<QString>(before.keyBegin(), before.keyEnd()));
+    shell.asked.append(shell.kept(kBox, false));
     shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
     RC_ASSERT(prop::until([&] { return int(shell.removals.size()) == next.asked; }));
     shell.check(next);
@@ -196,7 +198,7 @@ struct Remove : Command {
 };
 
 // The MC answers the oldest removal, and the drafts the machine had when it
-// was asked go; one started since stays.
+// was asked go; one started or written in since stays.
 struct Answer : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.asked > 0); }
   void apply(Model& model) const override { --model.asked; }
@@ -205,11 +207,18 @@ struct Answer : Command {
     apply(next);
     if (model.joined) shell.reached.insert(QStringLiteral("answered first"));
     else shell.reached.insert(QStringLiteral("answered after"));
-    const QSet<QString> doomed = shell.asked.takeFirst();
+    const QMap<QString, QString> doomed = shell.asked.takeFirst();
     shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
-    for (const QString& id : doomed) shell.written.remove(id);
+    for (auto it = doomed.cbegin(); it != doomed.cend(); ++it) {
+      if (shell.written.value(it.key()) == it.value()) shell.written.remove(it.key());
+    }
     shell.check(next);
-    for (const QString& id : doomed) RC_ASSERT(!shell.drafts()->draft(id));
+    for (auto it = doomed.cbegin(); it != doomed.cend(); ++it) {
+      const auto draft = shell.drafts()->draft(it.key());
+      // RC_ASSERT takes its expression apart, so `||` would not short-circuit.
+      const bool kept = draft && draft->text == it.value();
+      RC_ASSERT(!kept);
+    }
   }
   void show(std::ostream& os) const override { os << "Answer"; }
 };
