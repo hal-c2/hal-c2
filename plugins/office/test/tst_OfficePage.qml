@@ -409,6 +409,58 @@ Item {
             meet(left + 1, row, left + 2, left + 1);
         }
 
+        // The first by id gives way in a head-on meeting, but one boxed in at a
+        // dead end cannot, so the other steps aside instead.
+        function test_a_person_boxed_in_is_given_way() {
+            const ids = ["a", "b", "c", "d", "e"];
+            plugin.publish(ids.map(id => person(id, id.toUpperCase(), "working", "typing")));
+            const w = page.world;
+            const [left, row] = openFloor(6);
+            for (const id of ids) {
+                const who = actor(id);
+                page.occupied[who.ty * w.cols + who.tx] = "";
+                who.goal = null;
+                who.path = [];
+            }
+            const at = (who, x, y) => {
+                page.place(who, x, y, true);
+                page.setGoal(who, {
+                    x: x,
+                    y: y,
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "floor"
+                });
+            };
+            const a = actor("a"), b = actor("b");
+            // A stands with C, D and E on its other three sides, facing B.
+            at(a, left + 1, row);
+            at(actor("c"), left, row);
+            at(actor("d"), left + 1, row - 1);
+            at(actor("e"), left + 1, row + 1);
+            at(b, left + 2, row);
+            page.setGoal(a, {
+                x: left + 4,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            });
+            page.setGoal(b, {
+                x: left + 1,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            });
+            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+                walk(1);
+            compare([a.tx, a.ty, b.tx, b.ty], [left + 4, row, left + 1, row], "both get where they are going");
+        }
+
         function test_what_a_person_does_follows_its_agent() {
             const lead = person("lead", "Lead", "working", "typing");
             plugin.publish([lead]);
@@ -535,13 +587,42 @@ Item {
             plugin.publish(many(1, "t", "working", "typing"));
             tryVerify(() => page.worldCols > 0);
             page.zoom = 4 / page.devicePixelRatio / page.fitScale;
-            for (let i = 0; i < 6 && page.pixelScale < 7.999; i++) {
+            for (let i = 0; i < 12 && page.pixelScale < page.topScale - 0.001; i++) {
                 const before = page.pixelScale;
                 page.zoomBy(1.25);
+                // A step held back by the most zoomed in scale is not undone.
+                if (page.pixelScale >= page.topScale - 0.001)
+                    break;
+                const after = page.pixelScale;
                 page.zoomBy(1 / 1.25);
                 fuzzyCompare(page.pixelScale, before, 1e-9, "out undoes in");
                 page.zoomBy(1.25);
+                fuzzyCompare(page.pixelScale, after, 1e-9, "in again goes as far");
             }
+        }
+
+        // The most zoomed in scale is a whole number of device pixels within
+        // the most zoom allows, and the zoom-in button stops there.
+        function test_the_most_zoomed_in_scale_is_whole_device_pixels() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const ratio = page.devicePixelRatio;
+            fuzzyCompare(page.topScale * ratio, Math.round(page.topScale * ratio), 1e-9);
+            verify(page.topScale <= page.maxScale + 1e-9 && page.topScale > page.maxScale - 1 / ratio, "as far in as whole device pixels go");
+            page.zoom = page.maxScale / page.fitScale;
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            verify(!find("officeZoomIn").enabled, "zooming in further is off");
+        }
+
+        // Fit can sit between whole device pixels; the step from there goes to
+        // the next whole one, not one past it.
+        function test_a_step_from_between_whole_pixels_goes_to_the_next() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const ratio = page.devicePixelRatio;
+            page.zoom = 3.55 / ratio / page.fitScale;
+            page.zoomBy(1.25);
+            fuzzyCompare(page.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
         }
 
         // At a zoom between whole pixels the art is drawn at a whole number of
@@ -572,7 +653,7 @@ Item {
             tryVerify(() => page.worldCols > 0);
             const art = find("officeArt");
             let steps = 0;
-            while (page.pixelScale < 7.999 && steps < 40) {
+            while (page.pixelScale < page.topScale - 0.001 && steps < 40) {
                 const before = page.pixelScale;
                 page.zoomBy(1.25);
                 verify(page.pixelScale > before, "each step zooms in");
@@ -580,7 +661,7 @@ Item {
                     verify(page.drawScale * page.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
                 steps++;
             }
-            fuzzyCompare(page.pixelScale, 8, 1e-9);
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
             verify(!art.layer.enabled, "the most zoomed in office is drawn directly");
             while (page.pixelScale > 1.001 && steps < 80) {
                 const before = page.pixelScale;
@@ -611,13 +692,14 @@ Item {
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
-            page.zoom = 8 / page.fitScale;
+            page.zoom = page.maxScale / page.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
             const hit = find("officePerson:" + far.id);
             const inView = () => {
                 const r = hit.mapToItem(scroller, 0, 0, hit.width, hit.height);
-                return r.x >= 0 && r.y >= 0 && r.x + r.width <= scroller.width && r.y + r.height <= scroller.height;
+                // Half a pixel either way is rounding, not out of view.
+                return r.x >= -0.5 && r.y >= -0.5 && r.x + r.width <= scroller.width + 0.5 && r.y + r.height <= scroller.height + 0.5;
             };
             verify(!inView(), "the person starts out of view");
             hit.forceActiveFocus();

@@ -62,12 +62,16 @@ Item {
     readonly property bool resampled: drawScale - pixelScale > 0.001
 
     // The scale shown for a wanted zoomed scale: kept within bounds, and
-    // rounded to whole device pixels where that is fine enough.
+    // rounded to whole device pixels where that is fine enough, never past
+    // the largest whole number of device pixels within maxScale.
     function snapScale(wanted) {
+        const ratio = devicePixelRatio;
         const scale = Math.max(minScale, Math.min(maxScale, wanted));
-        const devicePixels = scale * devicePixelRatio;
-        return devicePixels >= crispFrom ? Math.round(devicePixels) / devicePixelRatio : scale;
+        const devicePixels = scale * ratio;
+        return devicePixels >= crispFrom ? Math.min(Math.round(devicePixels), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
     }
+    // The most zoomed in scale shown.
+    readonly property real topScale: snapScale(maxScale)
 
     // Zooms from the scale shown, so a step always moves it; where the scale
     // snaps, by at least one device pixel, so in and out take the same path.
@@ -75,7 +79,9 @@ Item {
         const ratio = devicePixelRatio;
         let next = pixelScale * factor;
         if (next * ratio >= crispFrom) {
-            const now = Math.round(pixelScale * ratio);
+            // A scale between whole device pixels (Fit) moves to the next
+            // whole one, a whole one by at least one device pixel.
+            const now = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
             const step = Math.round(next * ratio);
             next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
         }
@@ -2260,6 +2266,12 @@ Item {
         page.walking = Object.values(page.actors).some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
+    // The walkable tiles beside a person that nobody holds.
+    function freeSides(actor) {
+        const W = page.world.cols;
+        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
+    }
+
     // Moves a person along its path, two pixels a tick, holding the tile it
     // stands on and the one it steps to so nobody walks through anybody.
     function step(actor, dt) {
@@ -2276,14 +2288,17 @@ Item {
                 // same way and meet again, so only the first by id gives way.
                 const other = page.actors[there];
                 const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
-                const yields = !headOn || actor.id < other.id;
+                // The first cannot give way with no free tile beside it, so
+                // then the other does.
+                const sides = freeSides(actor);
+                const theirs = headOn && freeSides(other).length > 0;
+                const yields = !headOn || (actor.id < other.id ? sides.length > 0 || !theirs : sides.length > 0 && !theirs);
                 if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
                     route(actor, true);
                 if (actor.blocked >= 30) {
                     // Stepping aside makes room for someone waiting on this
                     // person; anyone else in the way is waited for, not paced
                     // in front of.
-                    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
                     if (headOn && yields && sides.length) {
                         const s = pick(page.rng, sides);
                         actor.path = [s[1] * W + s[0]];
@@ -3047,9 +3062,10 @@ Item {
             }
 
             ShellButton {
+                objectName: "officeZoomIn"
                 text: "+"
                 toolTip: qsTr("Zoom in")
-                enabled: page.pixelScale < page.maxScale - 0.001
+                enabled: page.pixelScale < page.topScale - 0.001
                 onClicked: page.zoomBy(1.25)
             }
         }
