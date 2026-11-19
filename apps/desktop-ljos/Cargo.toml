@@ -20,6 +20,9 @@ ljos_secrets = { git = "https://github.com/hal-c2/ljos-ui", rev = "cff777c39b6fe
 # The side streams' own inbox where no ljos::Setup runs them (`--render`, the
 # tests): streams::Pump. Ljós's facade hands out a Setup's streams only.
 ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "cff777c39b6fe0a618a8227de6d59205f22123a2" }
+# `--audit`: Ljós's design audit (`ljos audit`) of the shell as it shows,
+# which needs HalC2.Shell's native types the plain `ljos` command lacks.
+ljos_audit = { git = "https://github.com/hal-c2/ljos-ui", rev = "cff777c39b6fe0a618a8227de6d59205f22123a2" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

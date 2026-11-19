@@ -2470,6 +2470,7 @@ dependencies = [
  "interprocess",
  "libc",
  "ljos",
+ "ljos_audit",
  "ljos_quick3d",
  "ljos_runtime",
  "ljos_secrets",

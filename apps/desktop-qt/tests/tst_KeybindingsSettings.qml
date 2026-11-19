@@ -149,6 +149,25 @@ Item {
             compare(findChild(first, "whenWords").text, "words: terminalOpen");
         }
 
+        // Scenario: A screen reader tells a command's bindings apart
+        function test_bindingsHaveNamesOfTheirOwn() {
+            const always = binding("chat.new", "mod+n", "");
+            always.id += "\nalways";
+            Keybindings.bindings = [binding("chat.new", "mod+n", "!terminalFocus"), binding("chat.new", "mod+shift+o", "!terminalFocus"), always];
+            const settings = page();
+            const name = (index, child) => findChild(row(settings, index), child).Accessible.name;
+            compare(name(0, "keyField"), "Shortcut for chat.new (mod+n), words: !terminalFocus");
+            compare(name(1, "keyField"), "Shortcut for chat.new (mod+shift+o), words: !terminalFocus");
+            compare(name(2, "keyField"), "Shortcut for chat.new (mod+n)");
+            compare(name(0, "editWhen"), "Edit condition for chat.new (mod+n), words: !terminalFocus");
+            // An unsaved key and condition name the row as edited.
+            const first = row(settings, 0);
+            first.keyDraft = "mod+j";
+            first.labelDraft = "mod+j";
+            findChild(first, "whenField").text = "terminalOpen";
+            compare(name(0, "keyField"), "Shortcut for chat.new (mod+j), words: terminalOpen");
+        }
+
         // Scenario: Adding a binding can be cancelled
         function test_addCancelled() {
             const settings = page();

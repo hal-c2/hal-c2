@@ -23,6 +23,7 @@ on:
       - "features/**"
       - "plugins/**"
       - "native/syntax/**"
+      - "mise-tasks/desktop-ljos/audit"
       - ".github/workflows/desktop-ljos.yml"
   pull_request:
     paths: *paths
@@ -217,6 +218,12 @@ jobs:
       # Compiles desktop-qt's bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
       - run: cargo run --release -q -p hal_c2_shell -- --check
+
+      # Ljós's design audit (`ljos audit`) of the shell at each place in
+      # audit/places, on the binary --check built: fails on an error finding
+      # audit/allow does not name.
+      - name: Design audit
+        run: ../../mise-tasks/desktop-ljos/audit
 
       - *cef-strip
       - *cef-save

@@ -67,7 +67,7 @@ Flickable {
             wrapMode: Text.Wrap
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(14 * Theme.fontScale)
-            text: qsTr("Pair this device with a machine that runs HAL-C2. On that machine, create a pairing link in the desktop app under Settings → Connections, or run `hal-c2 pair --tailscale`. Then scan its QR code, or enter the link here.")
+            text: qsTr("Pair this device with a machine that runs HAL-C2. On that machine, create a pairing link in the desktop app under Settings → Connections, or run hal-c2 pair --tailscale. Then scan its QR code, or enter the link here.")
         }
 
         // What pairing does on a device that already has an environment.
@@ -96,6 +96,8 @@ Flickable {
             objectName: "pairingLink"
             Layout.fillWidth: true
             placeholderText: qsTr("Pairing link")
+            // Material's hint colour is too faint to read on the theme's fields.
+            placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
             text: screen.published
             enabled: !screen.busy
             inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
