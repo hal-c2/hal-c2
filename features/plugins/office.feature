@@ -23,7 +23,8 @@ Feature: Office
   workers are cats and dogs. They walk between desks, the whiteboard, the bookshelves
   and the break room, around the furniture and through each other, doing what their
   agents do. When one agent hands work to another or messages it, the two walk up to each
-  other and talk. One whose agent asks the user something shows a question mark.
+  other and talk. One whose agent asks the user something shows a question mark. The
+  office grows with the people in it, so everyone has a desk.
 
   Background:
     Given an MC running the office plugin
@@ -267,8 +268,8 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Two people headed for the same spot never both stop there
-      Given the office has 16 working threads
-      When they all start waiting
+      Given the office has 16 waiting threads
+      When they all take a break at once
       Then each heads for a spot of its own in the break room
 
     @desktop @mobile @backlog-desktop @backlog-mobile
@@ -281,12 +282,27 @@ Feature: Office
       Then its person walks to a bookshelf and reads
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Waiting and idle people take a break in the break room
+    Scenario: Waiting and idle people stay at their desks and now and then take a break
       Given the office has a thread working, typing
       When the thread is waiting
-      Then its person walks to the break room and drinks coffee, sits on the couch or chats there
-      When the thread is working again
-      Then its person walks back to its desk
+      Then its person sits back at its desk
+      And now and then, at random, it walks to the break room for a short while
+      And drinks coffee, plays the arcade, sits on the couch or chats there
+      And then walks back to its desk, sometimes with a cup
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The break room never holds more than its cap
+      Given the office has 70 threads waiting
+      When the office runs for a while
+      Then most of them sit at their desks
+      And never more than 8 of them are on a break at once
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Some people take breaks more often than others
+      Given the office has 40 threads idle
+      When the office runs for a while
+      Then some of them never leave their desks and some take several breaks
+      And the breaks go to different places in the break room
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Two agents that talk walk up to each other
@@ -310,38 +326,33 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office keeps its size as people come
-      Given the office has 4 threads
-      When it has 50 threads
-      Then the office is the same size, with room for 48 desks
+    Scenario: The office grows a row of pods when people outnumber its desks
+      Given the office has 48 threads, at its 48 desks
+      When it has 49 threads
+      Then the office has another row of three pods at the bottom, 72 desks
+      And the 49th person has a desk in it
+      And everyone else keeps their desk
+      And the office is drawn again once, for its new size
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office keeps its size as people go
-      Given the office has 50 threads
+    Scenario: The office shrinks a row once a pod's worth of desks would still be free
+      Given the office has 75 threads, in four rows of pods
+      When it has 65 threads
+      Then the office keeps its four rows
+      When it has 64 threads
+      Then the people in the last row move to desks in the other rows
+      And the movers carry the last row's desks out
+      And then the office loses that row
+      And nobody is left standing where the office ended
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office is never smaller than two rows of pods
+      Given the office has 75 threads
       When it has 2 threads
-      Then the office is the same size, with room for 48 desks
+      Then the office shrinks back to two rows of pods, 48 desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Workers past the 48th desk wait in the break room
-      Given the office has 50 threads working, typing
-      Then 48 of them have a desk and the other 2 take a break in the break room
-
-    @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: A worker without a desk sits down once a desk is free
-      Given the office has 50 threads working, typing, 2 of them without a desk
-      And one of the threads with a desk is waiting, and takes a break
-      When another thread with a desk leaves
-      Then one of the 2 walks from the break room to that desk and sits down
-      And the thread with a desk on its break stays on its break
-
-    @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: A worker without a desk waits in the break room whatever it does
-      Given the office has 48 threads with a desk
-      When it has another thread working, planning
-      Then the new person waits in the break room, not at a whiteboard
-
-    @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: People coming and going do not redraw the office
+    Scenario: People coming and going within the office's size do not redraw it
       Given the office has 4 threads
       When it has 12 threads
       And then it has 2 threads

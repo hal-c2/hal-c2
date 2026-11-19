@@ -9,8 +9,8 @@ import HalC2.Bricks
 // thread sits at a desk with the workers it delegated to in the same group of
 // desks; some workers are cats and dogs. What a person does follows its agent:
 // typing, running and testing at the computer, planning at a whiteboard, reading
-// at a bookshelf, and waiting or idling in the break room. A talk in the
-// `office` topic walks the speaker up to the other person with a speech bubble.
+// at a bookshelf, and waiting or idling at the desk, with a short break now
+// and then. A talk in the `office` topic walks the speaker up to the other person with a speech bubble.
 // Hover a person for who it is; click it to open its thread.
 //
 // Everything is drawn once into canvases (the floor, each piece of furniture,
@@ -131,6 +131,11 @@ Item {
     // doorOpensAt on.
     property var outside: []
     property real doorOpensAt: 0
+    // The rows of pods the office is closing down to, while their desks are
+    // carried out of the rest; 0 when it is not (see closeRows()).
+    property int closeTo: 0
+    // The most people on a break at once.
+    readonly property int breakRoomCap: 8
     property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
@@ -1342,10 +1347,17 @@ Item {
     // Rows 0–2 are the wall, row 3 the furniture along it, then groups of desks
     // ("pods") from row 6: a pod is chairs, two rows of desks, chairs. Teams (a
     // thread and the workers under it) share pods of 4×2 desks; a bigger team
-    // takes several. The office keeps one size, so adding a person never
-    // repaints it: movers carry desks in through the entrance at the bottom
+    // takes several. Movers carry desks in through the entrance at the bottom
     // left and back out again. The break room is behind a wall with a door on
     // the right.
+    //
+    // The office is two rows of pods, room for 48, and a row of three more
+    // pods longer for each 24 people past that, so everyone has a desk. It
+    // changes size only when that count of rows does, and is painted again
+    // only then: it grows as soon as people outnumber its desks, and shrinks
+    // once a pod's worth of desks would still be free in the smaller office,
+    // after the desks in the rows it loses are carried out (see closeRows()).
+    // Rows are added at the bottom, so every tile keeps its place.
 
     function teamsOf(ids, byId) {
         const rootOf = id => {
@@ -1375,18 +1387,24 @@ Item {
     // when someone else comes or goes. A newcomer takes a free
     // seat in its team's pod, or the nearest pod with room when that is full;
     // a new team takes a pod with room for all of it, and small teams share.
-    // A team bigger than a pod takes as many as it needs. Whoever is left over
-    // when every desk is taken has none, and spends the time in the break room.
+    // A team bigger than a pod takes as many as it needs; the office has a desk
+    // for everyone (see buildWorld()). While the office is closing rows, their
+    // pods take nobody, and whoever sat there moves to a desk in the rest.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
     // own kind) sit in the review corner, and at the desks nearest it once it is full; everyone
     // else takes a desk there only when the rest of the floor is full.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
-        const before = w.seatOf ?? {};
+        const open = pod => !page.closeTo || pod < page.closeTo * w.across;
+        const before = {};
+        for (const id of Object.keys(w.seatOf ?? {})) {
+            if (open(w.seatOf[id].pod))
+                before[id] = w.seatOf[id];
+        }
         const seatOf = {};
         const taken = {};
-        const room = pod => w.pods[pod].seats.filter(seat => !taken[seat.index]).length;
+        const room = pod => open(pod) ? w.pods[pod].seats.filter(seat => !taken[seat.index]).length : 0;
         const sit = (id, pod) => {
             const seat = w.pods[pod].seats.find(seat => !taken[seat.index]);
             taken[seat.index] = id;
@@ -1471,13 +1489,13 @@ Item {
         return seatOf;
     }
 
-    // The office: six pods of 4×2 desks, three across and two down, the walls,
-    // the furniture along them and the break room. The top pod by the break
-    // room is the review corner, on a carpet of its own under a review sign
-    // and the whiteboard where reviews are worked through. Every desk starts
-    // out carried away (see furnish()).
-    function buildWorld() {
-        const podCols = 4, across = 3, down = 2;
+    // The office: pods of 4×2 desks, three across and `down` rows of them, the
+    // walls, the furniture along them and the break room. The top pod by the
+    // break room is the review corner, on a carpet of its own under a review
+    // sign and the whiteboard where reviews are worked through. Every desk
+    // starts out carried away (see furnish()).
+    function buildWorld(down) {
+        const podCols = 4, across = 3;
         const workW = across * podCols + 2 * (across - 1);
         const xd = 3 + workW + 2;
         const bx = xd + 1;
@@ -1776,6 +1794,8 @@ Item {
         return {
             cols: cols,
             rows: rows,
+            down: down,
+            across: across,
             grid: grid,
             xd: xd,
             bx: bx,
@@ -1821,6 +1841,7 @@ Item {
         page.jobs = [];
         page.outside = [];
         page.doorOpensAt = 0;
+        page.closeTo = 0;
         if (page.world) {
             page.world.seatOf = {};
             for (const seat of page.world.seats) {
@@ -1846,9 +1867,21 @@ Item {
         updateWalking();
     }
 
+    // Rows of pods for `count` people: room for them all, or, with
+    // `spare`, a pod's worth of desks more.
+    function podRows(count, spare) {
+        return Math.max(2, Math.ceil((count + (spare ? 8 : 0)) / 24));
+    }
+
     function sync(people) {
-        if (!page.world)
-            build();
+        const grow = podRows(people.length, false);
+        const shrink = podRows(people.length, true);
+        if (!page.world || grow > page.world.down || !page.primed && grow < page.world.down) {
+            page.closeTo = 0;
+            build(grow);
+        } else {
+            page.closeTo = shrink < page.world.down ? shrink : 0;
+        }
         const byId = {};
         for (const person of people)
             byId[person.id] = person;
@@ -1885,18 +1918,84 @@ Item {
         updateMarks();
     }
 
-    function build() {
-        const w = buildWorld();
+    // Builds the office with `down` rows of pods, taking over what goes on in
+    // the one before, if any. The whiteboards are the same at every size and
+    // keep what is drawn on them.
+    function build(down) {
+        const old = page.world;
+        const w = buildWorld(down);
         page.world = w;
+        if (old)
+            carry(old, w);
         page.worldCols = w.cols;
         page.worldRows = w.rows;
         page.props = w.props;
         page.units = w.units;
         page.screens = w.screens;
-        page.boards = w.boards;
+        if (!old)
+            page.boards = w.boards;
         page.deskMarks = w.marks;
-        page.deskCount = 0;
+        page.deskCount = w.seats.filter(deskShown).length;
         floor.requestPaint();
+    }
+
+    // Moves the desks, who has them and everyone in the office over from
+    // `old` to the bigger or smaller `w`. Tiles keep their places; whoever
+    // stands, steps or is headed where the smaller office ends goes on from
+    // the nearest floor, and movers on their way out head for the new
+    // entrance.
+    function carry(old, w) {
+        for (const seat of w.seats) {
+            const was = old.seats[seat.index];
+            if (was) {
+                seat.state = was.state;
+                seat.mover = was.mover;
+            }
+        }
+        for (const id of Object.keys(old.seatOf)) {
+            const seat = w.seats[old.seatOf[id].index];
+            if (seat)
+                w.seatOf[id] = seat;
+        }
+        page.jobs = page.jobs.filter(i => i < w.seats.length);
+        const n = w.cols * w.rows;
+        const lost = i => i >= n || w.grid[i] === 1;
+        for (const a of everyone()) {
+            if (a.tx < 0)
+                continue;
+            const leaving = a.goal?.kind === "leave";
+            if (a.goal && !leaving && lost(a.goal.y * w.cols + a.goal.x)) {
+                release(a);
+                a.goal = null;
+                a.path = [];
+            }
+            const moved = lost(a.ty * w.cols + a.tx) || a.next >= 0 && lost(a.next);
+            // A mover on its way out where the office ends has left.
+            if (moved && leaving) {
+                removeMover(a.id);
+                continue;
+            }
+            if (moved)
+                place(a, a.tx, a.ty, true);
+            if (leaving)
+                leave(a);
+            else if (a.goal && (moved || a.path.some(lost)))
+                route(a);
+        }
+    }
+
+    // Once the desks in the rows the office is closing are all carried out,
+    // the office shrinks to the rest.
+    function closeRows() {
+        const w = page.world;
+        const first = page.closeTo * w.across * w.pods[0].seats.length;
+        for (let i = first; i < w.seats.length; i++) {
+            if (w.seats[i].state !== "out" || w.seats[i].mover)
+                return;
+        }
+        const down = page.closeTo;
+        page.closeTo = 0;
+        build(down);
     }
 
     function layout(teams, byId) {
@@ -1910,16 +2009,10 @@ Item {
         w.seatOf = seatOf;
         furnish();
         // Seats move between people as people come and go; whoever was headed
-        // for a desk, or waiting for one, that is no longer theirs plans again,
-        // and so does whoever waited in the break room for want of a desk and
-        // now has one.
+        // for a desk, or waiting for one, that is no longer theirs plans again.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
             const goal = actor.goal;
-            if (goal?.deskless && seatOf[id]) {
-                actor.goal = null;
-                continue;
-            }
             if (goal?.kind !== "desk" && goal?.kind !== "wait")
                 continue;
             const seat = seatOf[id];
@@ -2151,6 +2244,11 @@ Item {
             }
         }
         const moving = step(mover, dt);
+        // Out through the entrance, it is gone at once.
+        if (!seat && mover.goal && mover.tx === mover.goal.x && mover.ty === mover.goal.y && mover.next < 0) {
+            removeMover(mover.id);
+            return false;
+        }
         mover.frame = mover.next >= 0 ? [1, 0, 2, 0][Math.floor(mover.dist / 5) % 4] : 0;
         renderMover(mover);
         return moving || mover.path.length > 0;
@@ -2239,6 +2337,9 @@ Item {
             dist: 0,
             goal: null,
             plan: "",
+            // The chance it gets up for a break each time it thinks of one,
+            // its own (see restless()).
+            restless: between(page.rng, 0.15, 0.5),
             claim: -1,
             until: 0,
             stay: 0,
@@ -2379,11 +2480,11 @@ Item {
 
     function seatGoal(actor, pose) {
         const seat = page.world.seatOf[actor.id];
+        // Everyone has a desk (see buildWorld()); one not yet seated plans
+        // again in a moment (see tick()).
         if (!seat) {
-            // No desk yet: it waits in the break room, until it gets one.
-            const goal = breakGoal(actor, true);
-            goal.deskless = true;
-            return goal;
+            release(actor);
+            return null;
         }
         if (seat.state !== "in")
             return waitGoal(actor, seat);
@@ -2537,27 +2638,54 @@ Item {
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
-            // Without a desk it waits in the break room whatever it does.
-            const seated = !!page.world.seatOf[actor.id];
-            if (seated && activity === "planning")
+            if (activity === "planning")
                 goal = spotGoal(actor, "board");
-            else if (seated && activity === "reading")
+            else if (activity === "reading")
                 goal = spotGoal(actor, "shelf");
             if (!goal)
                 goal = seatGoal(actor, activity === "typing" || activity === "running" || activity === "testing" || activity === "browsing" ? "type" : "sit");
         } else {
-            plan = "break";
-            if (!force && actor.plan === plan && actor.goal && page.now < actor.until)
+            // Waiting and idle people sit at their desks, and now and then get
+            // up for a short break (see restless()).
+            if (!force && (actor.plan === "rest" || actor.plan === "break") && actor.goal)
                 return;
-            goal = breakGoal(actor, state === "idle");
-            const stage = goal.pose === "machine";
-            // The stay starts once the person gets there (see tick()).
-            actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 10000, 20000) : between(page.rng, 15000, 40000);
-            actor.until = Infinity;
-            if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
-                actor.cup = false;
+            plan = "rest";
+            goal = seatGoal(actor, "sit");
+            actor.until = page.now + between(page.rng, 15000, 45000);
         }
         actor.plan = plan;
+        setGoal(actor, goal);
+    }
+
+    // A person sitting at its desk with nothing to do decides, every so often,
+    // whether to take a break: each by its own restlessness, and only while
+    // the break room has room. A cup brought back from the break room is
+    // finished by then.
+    function restless(actor) {
+        actor.cup = false;
+        actor.until = page.now + between(page.rng, 15000, 45000);
+        if (page.rng() >= actor.restless)
+            return;
+        let away = 0;
+        for (const id of Object.keys(page.actors)) {
+            if (page.actors[id].plan === "break")
+                away++;
+        }
+        if (away < page.breakRoomCap)
+            takeBreak(actor);
+    }
+
+    // Sends a person to the break room for a while: a few seconds at a
+    // machine, longer at the arcade or sitting down. The stay starts once it
+    // gets there (see tick()).
+    function takeBreak(actor) {
+        const goal = breakGoal(actor, actor.person.state === "idle");
+        const stage = goal.pose === "machine";
+        actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 8000, 15000) : between(page.rng, 10000, 25000);
+        actor.until = Infinity;
+        if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
+            actor.cup = false;
+        actor.plan = "break";
         setGoal(actor, goal);
     }
 
@@ -2824,13 +2952,21 @@ Item {
                 stepTalk(actor);
             else if (!actor.goal && actor.tx >= 0 && page.ticks % 8 === 0)
                 decide(actor, true);
+            else if (actor.plan === "rest" && page.now >= actor.until && actor.next < 0 && actor.path.length === 0)
+                restless(actor);
             else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity) {
                     actor.until = page.now + actor.stay;
                 } else if (page.now >= actor.until) {
-                    if (actor.goal?.pose === "machine" && actor.goal.cup)
+                    // With a cup from the machine it sits down with it in
+                    // the break room, or takes it back to its desk.
+                    const cup = actor.goal?.pose === "machine" && actor.goal.cup;
+                    if (cup)
                         actor.cup = true;
-                    decide(actor, true);
+                    if (cup && page.rng() < 0.5)
+                        takeBreak(actor);
+                    else
+                        decide(actor, true);
                 }
             }
             if (actor.bubble && page.now >= actor.bubbleUntil && !(actor.talk && actor.talk.phase === "say"))
@@ -2848,6 +2984,8 @@ Item {
         }
         if (page.ticks % 6 === 0)
             updateScreens();
+        if (page.closeTo && page.ticks % 25 === 0)
+            closeRows();
         page.walking = moving || page.jobs.length > 0 || page.outside.length > 0;
     }
 
