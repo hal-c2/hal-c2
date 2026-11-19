@@ -1061,6 +1061,39 @@ Item {
             compare(actor("t0").talk.to, "t4");
         }
 
+        // A talk waiting for its listener to come in does not hold up the
+        // speaker's talks to people already inside.
+        function test_a_talk_to_someone_outside_lets_the_next_talk_go_first() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const w = page.world;
+            const door = w.entrance[1] * w.cols + w.entrance[0];
+            page.occupied[door] = "someone";
+            const at = new Date().toISOString();
+            plugin.publish(many(5, "t", "working", "typing"), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "t4",
+                    kind: "message",
+                    text: "Welcome",
+                    at: at
+                },
+                {
+                    id: "talk-2",
+                    from: "t0",
+                    to: "t1",
+                    kind: "message",
+                    text: "Please look at the diff",
+                    at: at
+                }
+            ]);
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while t4 waits outside");
+            compare(actor("t0").talk.to, "t1");
+            compare(actor("t4").tx, -1, "t4 is still outside");
+            compare(actor("t0").queue.map(t => t.to), ["t4"], "the talk to t4 waits its turn");
+            page.occupied[door] = "";
+        }
+
         // Another machine's office starts with clean whiteboards.
         function test_another_machine_wipes_the_whiteboards() {
             plugin.publish([person("lead", "Lead", "working", "planning")]);

@@ -2525,8 +2525,13 @@ Item {
         }
     }
 
+    // Starts the speaker's first talk whose listener is inside. One to someone
+    // still outside the door waits its turn without holding up the rest.
     function startTalk(actor) {
-        const talk = actor.queue.shift();
+        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0));
+        if (next < 0)
+            return;
+        const talk = actor.queue.splice(next, 1)[0];
         if (!page.actors[talk.to])
             return;
         actor.talk = {
@@ -2653,7 +2658,7 @@ Item {
         let moving = false;
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
-            if (!actor.talk && actor.queue.length && actor.tx >= 0 && !held(actor) && !(page.actors[actor.queue[0].to]?.tx < 0))
+            if (!actor.talk && actor.queue.length && actor.tx >= 0 && !held(actor))
                 startTalk(actor);
             if (actor.talk)
                 stepTalk(actor);

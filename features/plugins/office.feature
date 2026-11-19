@@ -328,6 +328,13 @@ Feature: Office
       And then walks up to "Newcomer" and says it
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk waiting for someone outside lets the speaker's other talks go first
+      Given the office has threads "Lead", "Reviewer" and "Newcomer", with "Newcomer" still outside the door
+      When the office has a "message" talk from "Lead" to "Newcomer" and then one from "Lead" to "Reviewer"
+      Then "Lead" walks up to "Reviewer" and says it while "Newcomer" is still outside
+      And the talk to "Newcomer" waits until "Newcomer" has come in
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Newcomers waiting for their desks each wait in a place of their own
       Given the office has no threads
       When it has 16 threads working, typing
