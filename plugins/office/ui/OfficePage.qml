@@ -1405,12 +1405,15 @@ Item {
         const own = (pod, c) => !!w.pods[pod].review === reviewing[c];
         // Everyone seated keeps their seat, wherever it is; a chunk's pod is
         // where its first seated member sat, and a team's is its first
-        // chunk's with one.
+        // chunk's with one, kept apart for its reviewers and for the rest.
         const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        const kindOf = c => teamOf[c] + (reviewing[c] ? ":review" : "");
         const teamHome = {};
         homes.forEach((home, c) => {
-            if (home >= 0 && teamHome[teamOf[c]] === undefined)
-                teamHome[teamOf[c]] = home;
+            for (const key of [kindOf(c), teamOf[c]]) {
+                if (home >= 0 && teamHome[key] === undefined)
+                    teamHome[key] = home;
+            }
         });
         // The pod with room for `need` nearest pod `near` (or the first with
         // room when there is no `near`), one of chunk `c`'s own kind first, or
@@ -1435,9 +1438,10 @@ Item {
         const corner = w.pods.findIndex(pod => pod.review);
         chunks.forEach((chunk, c) => {
             const home = homes[c] >= 0 && own(homes[c], c) ? homes[c] : -1;
-            // Reviewers go nearest the corner, even under an ordinary lead
-            // seated on the floor; a chunk already seated keeps to its own pod.
-            const near = reviewing[c] ? corner : teamHome[teamOf[c]] ?? -1;
+            // Near the team's own kind: reviewers under an ordinary lead seated
+            // on the floor start from the corner, not from their lead; the
+            // rest start from wherever their team sits.
+            const near = teamHome[kindOf(c)] ?? (reviewing[c] ? corner : teamHome[teamOf[c]] ?? -1);
             let pod = home >= 0 ? home : nearest(near, chunk.length, c, true);
             // Reviewers who do not all fit in the corner still fill it first.
             if (pod < 0 && reviewing[c] && room(corner) > 0)

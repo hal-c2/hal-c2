@@ -463,6 +463,8 @@ Feature: Office
       When the reviewer delegates to another worker
       Then the new worker sits at the pod under the corner with its team
       And everyone else keeps their desks
+      When the team grows past that pod's desks
+      Then its newcomers who do not fit sit at the pod beside it, not the one beside the corner
 
     # A worker can come in before the row of the reviewer that delegated to it, and is
     # no reviewer until then. Seats already taken stay put, so nobody moves while they
@@ -486,6 +488,12 @@ Feature: Office
       Given the review corner is full and a thread with a worker sits across the office from it
       When the thread delegates to a reviewer
       Then the reviewer sits at the pod next to the review corner, not by the thread
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Workers who are no reviewers under a reviewer spill from their own pod
+      Given a reviewer sits in the review corner and 8 workers it delegated to, no reviewers, fill a pod on the floor
+      When it delegates to 2 more such workers
+      Then they sit at the pod nearest their teammates' pod, not the one nearest the corner
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A planner that turns out to be a reviewer goes to the review whiteboard

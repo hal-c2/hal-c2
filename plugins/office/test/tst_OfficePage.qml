@@ -373,6 +373,16 @@ Item {
             for (const id of Object.keys(seats))
                 verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
             compare(page.world.seatOf["sw1"].pod, pod, "the newcomer sits by its team's desks");
+            // Past its pod's desks too, its newcomers sit at the pod nearest
+            // its own, not the one nearest the corner.
+            const big = [reviewer("s", "Review #20")].concat([0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => reviewer("sw" + i, "Check " + i, "s")));
+            plugin.publish([].concat(team("x", 8), reviewers, big));
+            for (const id of ["s", "sw0", "sw1"])
+                compare(page.world.seatOf[id].pod, pod, id + " keeps its pod");
+            for (const id of ["sw2", "sw3", "sw4", "sw5", "sw6"])
+                compare(page.world.seatOf[id].pod, pod, id + " fills its team's pod");
+            for (const id of ["sw7", "sw8"])
+                compare(page.world.seatOf[id].pod, 4, id + " sits at the pod beside its team's");
         }
 
         // A team's kind can change once it is seated: a worker in the office
@@ -427,6 +437,22 @@ Item {
             const seat = page.world.seatOf["lr"];
             verify(seat.pod !== pod, "the reviewer does not sit by its lead");
             compare(away(seat.pod), nearest, "the reviewer sits next to the corner");
+        }
+
+        // Ordinary workers under a reviewer lead who do not fit their pod sit
+        // at the pod nearest the one their ordinary teammates hold, not the
+        // one nearest their lead's corner.
+        function test_ordinary_workers_under_a_reviewer_spill_from_their_own_pod() {
+            const x = [person("x", "X", "working", "typing")].concat(many(7, "xw", "working", "typing", "x"));
+            const team = n => [reviewer("r", "Review #12")].concat(many(n, "o", "working", "typing", "r"));
+            plugin.publish(x.concat(team(8)));
+            compare(page.world.seatOf["x"].pod, 0, "team x fills pod 0");
+            compare(page.world.seatOf["r"].pod, corner(), "the lead sits in the corner");
+            for (let i = 0; i < 8; i++)
+                compare(page.world.seatOf["o" + i].pod, 1, "o" + i + " sits at pod 1");
+            plugin.publish(x.concat(team(10)));
+            for (const id of ["o8", "o9"])
+                compare(page.world.seatOf[id].pod, 4, id + " sits at the pod under its teammates'");
         }
 
         // A planner that turns out to be a reviewer goes to the review
