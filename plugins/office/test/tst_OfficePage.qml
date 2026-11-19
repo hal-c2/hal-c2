@@ -349,6 +349,39 @@ Item {
             compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id] === aside), ["aw6"]);
         }
 
+        // A team that outgrows its pod with nobody of the new lot seated yet
+        // sits at the free pod nearest its own, not the first free one.
+        function test_a_team_that_outgrows_its_pod_goes_to_the_nearest_free_pod() {
+            const team = (id, n) => [person(id, id, "working", "typing")].concat(many(n - 1, id + "w", "working", "typing", id));
+            const all = ["x", "y", "z", "u", "v", "a"].map(id => team(id, 8));
+            plugin.publish([].concat(...all));
+            compare(page.world.seatOf["a"].pod, 5, "team a fills the last pod");
+            const seats = {};
+            for (const p of all[5])
+                seats[p.id] = page.world.seatOf[p.id];
+            // Pods 0 and 2 empty out; pod 2 is next to pod 5, pod 0 is across the office.
+            plugin.publish([].concat(all[1], all[3], all[4], all[5], [person("aw7", "aw 7", "working", "typing", "a")]));
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            compare(page.world.seatOf["aw7"].pod, 2, "the newcomer sits at the free pod nearest its team");
+        }
+
+        // A worker without a desk that asks or fails keeps the break room spot
+        // it heads for, so nobody else is sent there.
+        function test_a_worker_without_a_desk_keeps_its_spot_while_it_asks() {
+            for (const state of ["asking", "failed"]) {
+                init();
+                plugin.publish(many(48, "t", "working", "typing").concat([person("q", "Q", state)]));
+                const q = actor("q");
+                verify(page.world.seatOf["q"] === undefined, "q has no desk");
+                for (let i = 0; i < 20; i++) {
+                    page.decide(q, false);
+                    compare(q.claim, q.goal.y * page.world.cols + q.goal.x, state + ": q holds the spot it heads for");
+                    compare(page.claims[q.claim], "q", state + ": the spot is q's");
+                }
+            }
+        }
+
         // The office holds 48 desks whoever is in it; anyone past that takes
         // a break.
         function test_the_office_keeps_its_size_as_people_come_and_go() {
