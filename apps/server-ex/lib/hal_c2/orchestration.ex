@@ -614,6 +614,47 @@ defmodule HalC2.Orchestration do
     end)
   end
 
+  # Which kinds of a link's news wake its thread (`HalC2.PullRequests.Wakes.events/0`);
+  # nil is every kind, [] none; `drop` takes kinds out of what the link has, read in
+  # this write, so two calls dropping different kinds both hold. News of a newly enabled kind already in the snapshot is
+  # heard without telling (`Wakes.resubscribe/2`); news of a kind already subscribed to
+  # stays to be told.
+  def dispatch(%{"type" => "thread.pull-request-link.notify", "threadId" => thread_id} = command) do
+    alias HalC2.PullRequests.Wakes
+
+    with {:ok, notify} <- Wakes.notify(command["notify"]),
+         {:ok, drop} <- Wakes.notify(command["drop"]) do
+      quiet_update(thread_id, fn thread ->
+        links = PullRequests.of(thread)
+        key = PullRequests.key(command)
+        link = Enum.find(PullRequests.visible(links), &(PullRequests.key(&1) == key))
+
+        cond do
+          refusal = settled_refusal(thread) ->
+            refusal
+
+          link == nil ->
+            {:error, "Thread #{thread_id} does not link #{key}."}
+
+          true ->
+            changed =
+              if Map.has_key?(command, "drop"),
+                do: Wakes.resubscribe(link, Wakes.subscribed(link) -- (drop || Wakes.events())),
+                else: Wakes.resubscribe(link, notify)
+
+            fields =
+              links
+              |> Enum.map(&if(PullRequests.key(&1) == key, do: changed, else: &1))
+              |> then(&pull_request_fields(thread, &1))
+
+            # What it woke for before this write and after it, read in the write.
+            {:reply, fields,
+             %{"was" => Wakes.subscribed(link), "events" => Wakes.subscribed(changed)}}
+        end
+      end)
+    end
+  end
+
   # The branch's pull request, from `HalC2.PullRequests.Discovery`, refused when what it
   # was decided from (`expected`) no longer holds.
   def dispatch(%{"type" => "thread.pull-request.sync", "threadId" => thread_id} = command) do
@@ -3999,7 +4040,8 @@ defmodule HalC2.Orchestration do
   # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`, a finished
   # task's child handing its links to its caller) never does. A link handed over arrives
   # with what its last owner heard and read of it. A first manual link keeps the
-  # branch's pull request beside it.
+  # branch's pull request beside it. A command with `notify` (`subscribe_pull_request`)
+  # subscribes the new link in the same write.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.key(command)
@@ -4019,10 +4061,18 @@ defmodule HalC2.Orchestration do
             |> new_link(command["url"], source, at)
             |> Map.merge(
               if(command["automatic"] == true,
-                do: Map.take(command, ~w(heard snapshot stack)),
+                do: Map.take(command, ~w(heard snapshot stack notify)),
                 else: %{}
               )
             )
+
+      link =
+        case Map.has_key?(command, "notify") and
+               HalC2.PullRequests.Wakes.notify(command["notify"]) do
+          {:ok, nil} -> Map.delete(link, "notify")
+          {:ok, notify} -> Map.put(link, "notify", notify)
+          _ -> link
+        end
 
       branch = JS.json(JS.get(thread, "branchPullRequest"))
       branch_key = branch && PullRequests.legacy_key(branch)
@@ -4044,8 +4094,8 @@ defmodule HalC2.Orchestration do
 
   # A layer of a native stack, a pull request the thread created, or one it hands
   # over (`"tombstone"`), stays as a tombstone, so the sync or discovery
-  # (`HalC2.PullRequests.Opened`) does not link it again. It forgets what the thread heard of it, so a link back starts from a new
-  # baseline.
+  # (`HalC2.PullRequests.Opened`) does not link it again. It forgets what the thread heard of it and
+  # what it subscribed to, so a link back starts from a new baseline with every kind of news.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
@@ -4068,7 +4118,7 @@ defmodule HalC2.Orchestration do
         links
         |> Enum.map(fn link ->
           if link == existing,
-            do: link |> Map.put("source", "stack-dismissed") |> Map.delete("heard"),
+            do: link |> Map.put("source", "stack-dismissed") |> Map.drop(~w(heard notify)),
             else: link
         end)
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))
@@ -4574,18 +4624,35 @@ defmodule HalC2.Orchestration do
        else: %{"pullRequests" => pull_requests, "linkedPullRequest" => nil}
   end
 
+  # A legacy update that names a pull request the thread already shows keeps that link,
+  # with what it heard and what it is subscribed to, at the update's URL; a new one
+  # starts from a baseline.
   defp replace_linked(thread, linked, at) do
     replaced =
       for l <- [JS.json(JS.get(thread, "linkedPullRequest")), linked],
           l,
           do: PullRequests.key(PullRequests.legacy_key(l))
 
-    kept = Enum.reject(PullRequests.of(thread), &(PullRequests.key(&1) in replaced))
+    links = PullRequests.of(thread)
+    kept = Enum.reject(links, &(PullRequests.key(&1) in replaced))
 
     added =
-      if linked,
-        do: [new_link(PullRequests.legacy_key(linked), linked["url"], "manual", at)],
-        else: []
+      if linked do
+        key = PullRequests.key(PullRequests.legacy_key(linked))
+
+        case Enum.find(PullRequests.visible(links), &(PullRequests.key(&1) == key)) do
+          nil ->
+            [new_link(PullRequests.legacy_key(linked), linked["url"], "manual", at)]
+
+          # It shows the address the update gave, as `linkedPullRequest` does.
+          existing ->
+            if is_binary(linked["url"]),
+              do: [Map.put(existing, "url", linked["url"])],
+              else: [existing]
+        end
+      else
+        []
+      end
 
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
@@ -4604,6 +4671,16 @@ defmodule HalC2.Orchestration do
 
   defp quiet_read_state(change, _type), do: change
 
+  # A thread that is moving or has moved takes no change here: the move carries what it
+  # had, and a change made after it would not reach the destination.
+  defp settled_refusal(%{"moving" => %{"label" => to}} = thread),
+    do: {:error, "#{thread["title"]} is moving to #{to}. Try again once it has arrived."}
+
+  defp settled_refusal(%{"movedTo" => %{} = moved} = thread),
+    do: {:error, "#{thread["title"]} has moved to #{moved["label"]}."}
+
+  defp settled_refusal(_thread), do: nil
+
   # Host state and branch discovery are not activity: they leave `updatedAt` where it is.
   defp quiet_update(thread_id, decide) do
     result =
@@ -4613,20 +4690,30 @@ defmodule HalC2.Orchestration do
             {[], {:error, "unknown thread #{thread_id}"}}
 
           thread ->
-            case decide.(thread) do
-              {:error, _} = error ->
-                {[], error}
+            {fields, answer} =
+              case decide.(thread) do
+                {:error, _} = error -> {nil, error}
+                {:reply, fields, reply} -> {fields, {:ok, reply}}
+                fields -> {fields, {:ok, %{}}}
+              end
 
-              fields ->
-                case upsert(state, "thread", thread_id, &Map.merge(&1, fields)) do
-                  nil -> {[], :ok}
-                  {kind, id, patch} -> {[{kind, id, Map.put(patch, "q", true)}], :ok}
-                end
+            cond do
+              fields == nil ->
+                {[], answer}
+
+              change = upsert(state, "thread", thread_id, &Map.merge(&1, fields)) ->
+                {kind, id, patch} = change
+                {[{kind, id, Map.put(patch, "q", true)}], answer}
+
+              true ->
+                {[], answer}
             end
         end
       end)
 
-    with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
+    # `decide` answers fields to write, `{:reply, fields, reply}` to answer `reply` as
+    # well, or an error.
+    with {:ok, reply} <- result, do: {:ok, Map.put(reply, "sequence", sequence(thread_id))}
   end
 
   # Changes to queued runs; positions are renumbered 1.. after each one. A thread

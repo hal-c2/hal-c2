@@ -296,7 +296,8 @@ export function makeClusterClient(
       const { client, projectId } = projectOwner(input.projectId);
       return client.createThread({ ...input, projectId: projectId as ProjectId });
     },
-    interrupt: (threadId) => clientForThread(threadId).interrupt(threadId),
+    interrupt: (threadId, runId) => clientForThread(threadId).interrupt(threadId, runId),
+    interruptibleRun: (threadId) => clientForThread(threadId).interruptibleRun(threadId),
     resumeQueue: (threadId) => clientForThread(threadId).resumeQueue(threadId),
     approve: (threadId, ...rest) => clientForThread(threadId).approve(threadId, ...rest),
     respondUserInput: (threadId, ...rest) =>

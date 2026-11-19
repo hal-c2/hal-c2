@@ -14,10 +14,19 @@ ShellWindow {
     // The detail panel fills `layout.rightPanel` by its kind: source control.
     rightPanelComponent: Shell.state.layout.rightPanel.kind === "sourceControl"
         ? sourceControlPanel
-        : null
+        : Shell.state.layout.rightPanel.kind === "agents" ? agentsPanel : null
     Component {
         id: sourceControlPanel
         RightPanel {
+            flexGrow: 1
+            width: Shell.state.layout.rightPanel.asMain
+                ? Shell.state.layout.mainWidth
+                : Shell.state.layout.rightPanel.width
+        }
+    }
+    Component {
+        id: agentsPanel
+        AgentsPanel {
             flexGrow: 1
             width: Shell.state.layout.rightPanel.asMain
                 ? Shell.state.layout.mainWidth

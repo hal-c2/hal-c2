@@ -218,6 +218,13 @@ Feature: Colour, icons, mouse and images in the terminal
     And the timeline is at the same scroll position as before
 
   @tui
+  Scenario: The agents panel shown from the command palette takes the full-size image's place
+    Given an image is open full size
+    When the user takes the prompt and shows the agents panel from the command palette
+    Then the image closes
+    And the agents panel has the keys
+
+  @tui
   Scenario: A full-size image takes the conversation pane's place
     Given an inline image in the timeline
     And the terminal is 120 columns wide

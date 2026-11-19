@@ -3,38 +3,79 @@ defmodule HalC2.Mcp.Tools.PullRequests do
   MCP tools that link the pull requests an agent opens to its own thread, so HAL-C2
   tracks them beside it (`HalC2.Mcp.Tools`). A pull request is named by its URL, or
   by repository and number on the project's host.
+
+  A subscription is a link and the kinds of its news that wake the thread
+  (`HalC2.PullRequests.Wakes.events/0`, kept as the link's `notify`):
+  `subscribe_pull_request` links a pull request if it is not yet and chooses them,
+  `unsubscribe_pull_request` drops some or all of them and keeps the link (its status
+  and settling stay), and `list_pull_request_subscriptions` lists them.
   """
 
   import HalC2.Mcp.Tools, only: [command_id: 0, orchestration: 1, project_row: 1, thread: 1]
 
   alias HalC2.Orchestration
   alias HalC2.Projection.PullRequests
+  alias HalC2.PullRequests.Wakes
 
-  @tools ~w(link_pull_request unlink_pull_request list_thread_pull_requests)
+  @tools ~w(link_pull_request unlink_pull_request list_thread_pull_requests
+            subscribe_pull_request unsubscribe_pull_request list_pull_request_subscriptions)
 
   def tools, do: @tools
 
   def run("link_pull_request", args, %{row: me}) do
-    with {:ok, target} <- target(args, me) do
-      existing = Enum.find(links(me["id"]), &same?(&1, target))
+    with {:ok, target} <- target(args, me),
+         {:ok, already?} <- link(target, me),
+         do: {:ok, Map.put(target, "alreadyLinked", already?)}
+  end
 
-      if existing && existing["source"] != "stack-dismissed" do
-        {:ok, Map.put(target, "alreadyLinked", true)}
+  # Links the pull request (as link_pull_request would) and sets which of its news
+  # wakes this thread: `events`, or every kind when it is omitted. They are set on the
+  # link after it is made, so they hold even when another call linked it first.
+  def run("subscribe_pull_request", args, %{row: me}) do
+    with {:ok, target} <- target(args, me),
+         {:ok, notify} <- events(args["events"]),
+         {:ok, already?} <- link(target, me, %{"notify" => notify}),
+         {:ok, %{"events" => events}} <- set_notify(target, me, %{"notify" => notify}) do
+      {:ok,
+       target
+       |> Map.put("events", events)
+       |> Map.put("alreadyLinked", already?)}
+    end
+  end
+
+  # Drops `events` from what wakes this thread, or all of them; the link stays. What
+  # it woke for before and after are the write's own, which reads the link it changes.
+  def run("unsubscribe_pull_request", args, %{row: me}) do
+    with {:ok, target} <- target(args, me),
+         {:ok, dropped} <- events(args["events"]) do
+      if Enum.any?(PullRequests.visible(links(me["id"])), &same?(&1, target)) do
+        with {:ok, %{"was" => was, "events" => left}} <-
+               set_notify(target, me, %{"drop" => dropped}) do
+          {:ok, target |> Map.put("events", left) |> Map.put("wasSubscribed", was != [])}
+        end
       else
-        with {:ok, _} <-
-               orchestration(
-                 Orchestration.dispatch(
-                   Map.merge(target, %{
-                     "type" => "thread.pull-request.link",
-                     "commandId" => command_id(),
-                     "threadId" => me["id"],
-                     "source" => "agent"
-                   })
-                 )
-               ),
-             do: {:ok, Map.put(target, "alreadyLinked", false)}
+        {:ok, target |> Map.put("events", []) |> Map.put("wasSubscribed", false)}
       end
     end
+  end
+
+  def run("list_pull_request_subscriptions", _args, %{row: me}) do
+    {:ok,
+     %{
+       "subscriptions" =>
+         for link <- PullRequests.visible(links(me["id"])),
+             events = Wakes.subscribed(link),
+             events != [] do
+           %{
+             "host" => PullRequests.normalize(link)["host"],
+             "repository" => link["repository"],
+             "number" => link["number"],
+             "url" => link["url"],
+             "state" => (link["snapshot"] || %{})["state"],
+             "events" => events
+           }
+         end
+     }}
   end
 
   def run("unlink_pull_request", args, %{row: me}) do
@@ -76,6 +117,57 @@ defmodule HalC2.Mcp.Tools.PullRequests do
 
   # --- helpers ----------------------------------------------------------------------------
 
+  # `{:ok, already linked?}` once `target` is linked to the caller's thread; a link the
+  # caller dismissed from a stack is linked again. `extra` joins the link command (a
+  # new link's `notify`, so it is subscribed in the same write).
+  defp link(target, me, extra \\ %{}) do
+    existing = Enum.find(links(me["id"]), &same?(&1, target))
+
+    if existing && existing["source"] != "stack-dismissed" do
+      {:ok, true}
+    else
+      with {:ok, _} <-
+             orchestration(
+               Orchestration.dispatch(
+                 target
+                 |> Map.merge(extra)
+                 |> Map.merge(%{
+                   "type" => "thread.pull-request.link",
+                   "commandId" => command_id(),
+                   "threadId" => me["id"],
+                   "source" => "agent"
+                 })
+               )
+             ),
+           do: {:ok, false}
+    end
+  end
+
+  # `change` is `%{"notify" => events}` or `%{"drop" => events}`.
+  defp set_notify(target, me, change) do
+    orchestration(
+      Orchestration.dispatch(
+        target
+        |> Map.take(~w(host repository number url))
+        |> Map.merge(change)
+        |> Map.merge(%{
+          "type" => "thread.pull-request-link.notify",
+          "commandId" => command_id(),
+          "threadId" => me["id"]
+        })
+      )
+    )
+  end
+
+  defp events(nil), do: {:ok, nil}
+
+  defp events(events) do
+    case Wakes.notify(events) do
+      {:ok, notify} -> {:ok, notify}
+      {:error, message} -> {:error, "invalid_request", message}
+    end
+  end
+
   defp links(thread_id), do: PullRequests.of(thread(thread_id) || %{})
 
   # Links are compared by their normalized identity (`HalC2.Projection.
@@ -115,7 +207,13 @@ defmodule HalC2.Mcp.Tools.PullRequests do
        when is_binary(repository) and is_integer(number) do
     project = project_host(me["projectId"])
 
-    case args["host"] || (project && project.host) do
+    # Only an absent (or null) host falls back to the project's; `false` is refused.
+    host = if is_nil(args["host"]), do: project && project.host, else: args["host"]
+
+    case host do
+      host when not is_nil(host) and not is_binary(host) ->
+        {:error, "invalid_request", "host must be a string."}
+
       nil ->
         {:error, "invalid_request",
          "This thread's project has no recognised remote. Pass host or url."}

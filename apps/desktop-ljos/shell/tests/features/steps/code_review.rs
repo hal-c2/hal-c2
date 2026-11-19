@@ -1037,7 +1037,7 @@ pub fn register(steps: &mut Steps) {
             for (value, label) in [
                 ("github", "GitHub"),
                 ("gitlab", "GitLab (coming later)"),
-                ("forgejo", "Forgejo (coming later)"),
+                ("forgejo", "Forgejo"),
                 ("bitbucket", "Bitbucket (coming later)"),
                 ("azure-devops", "Azure DevOps (coming later)"),
             ] {
@@ -1053,28 +1053,40 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("only GitHub can be chosen today", |world, _, _| {
-        let brick = shell(world)?;
-        let settings = shown_named(world, "codeReviewSettings")?;
-        let hosts = shown_named(world, "codeReviewHosts")?;
-        // The other hosts are offered but disabled: a click on one does nothing.
-        let gitlab = part_of(world, hosts, "choice:gitlab")?;
-        expect!(
-            !brick.flag(world, gitlab, "enabled"),
-            "GitLab can be chosen"
-        );
-        let values = json::from_value(world.engine(), &brick.read(world, settings, "values"));
-        expect!(
-            values["host"] == json!("github") && !brick.flag(world, settings, "dirty"),
-            "GitLab was chosen"
-        );
-        let github = part_of(world, hosts, "choice:github")?;
-        expect!(
-            brick.flag(world, github, "chosen"),
-            "GitHub is not the host"
-        );
-        Ok(())
-    });
+    steps.step(
+        "only GitHub and Forgejo can be chosen today",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let settings = shown_named(world, "codeReviewSettings")?;
+            let hosts = shown_named(world, "codeReviewHosts")?;
+            // The other hosts are offered but disabled: a click on one does nothing.
+            let gitlab = part_of(world, hosts, "choice:gitlab")?;
+            expect!(
+                !brick.flag(world, gitlab, "enabled"),
+                "GitLab can be chosen"
+            );
+            let values = json::from_value(world.engine(), &brick.read(world, settings, "values"));
+            expect!(
+                values["host"] == json!("github") && !brick.flag(world, settings, "dirty"),
+                "GitLab was chosen"
+            );
+            let github = part_of(world, hosts, "choice:github")?;
+            expect!(
+                brick.flag(world, github, "chosen"),
+                "GitHub is not the host"
+            );
+            let forgejo = part_of(world, hosts, "choice:forgejo")?;
+            click_item(world, forgejo)?;
+            world.sync()?;
+            let values = json::from_value(world.engine(), &brick.read(world, settings, "values"));
+            expect!(
+                values["host"] == json!("forgejo") && brick.flag(world, settings, "dirty"),
+                "Forgejo could not be chosen, the host is {}",
+                values["host"]
+            );
+            Ok(())
+        },
+    );
 }
 
 fn shown_named_now(w: &World, brick: crate::brick::Brick, name: &str) -> Option<ObjectId> {

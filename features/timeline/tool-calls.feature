@@ -288,6 +288,7 @@ Feature: Tool calls and file changes
       | hal_c2_thread_interrupt | Interrupt a HAL-C2 thread              |
       | task_cancel             | Cancel delegated task                  |
       | link_pull_request       | Link a pull request                    |
+      | subscribe_pull_request  | Subscribe to pull request news         |
       | preview_open            | Open a page in the preview browser     |
       | device_screenshot       | Take a screenshot of the device        |
 

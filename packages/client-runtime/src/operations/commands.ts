@@ -778,36 +778,44 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   });
 });
 
-export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
-  input: InterruptThreadTurnInput,
-) {
-  let runId = input.runId ?? (input.turnId as RunId | undefined);
-  if (runId === undefined) {
-    const projection = yield* getProjection(input.threadId);
-    runId = projection.runs.findLast(
+/**
+ * The run `interruptThreadTurn` stops when it is given no run: the thread's
+ * active run, else the latest run whose background work is still pending.
+ * `undefined` when the thread has nothing to interrupt.
+ */
+export const interruptibleThreadRun = Effect.fn("EnvironmentCommands.interruptibleThreadRun")(
+  function* (threadId: ThreadId) {
+    const projection = yield* getProjection(threadId);
+    const active = projection.runs.findLast(
       (run) =>
         run.status === "preparing" ||
         run.status === "starting" ||
         run.status === "running" ||
         run.status === "waiting",
     )?.id;
-    if (runId === undefined) {
-      // Ordinal order, not creation order: a held run that a newer run passed is
-      // renumbered above it, so the last-created run need not be the latest.
-      const latestRun = latestUnheldRun(projection);
-      if (
-        derivePendingBackgroundWork({
-          latestRun,
-          providerThreads: projection.providerThreads,
-          turnItems: projection.turnItems,
-          activeProviderThreadId: projection.thread.activeProviderThreadId,
-          runs: projection.runs,
-        }).length > 0
-      ) {
-        runId = latestRun?.id;
-      }
-    }
-  }
+    if (active !== undefined) return active;
+    // Ordinal order, not creation order: a held run that a newer run passed is
+    // renumbered above it, so the last-created run need not be the latest.
+    const latestRun = latestUnheldRun(projection);
+    return derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0
+      ? latestRun?.id
+      : undefined;
+  },
+);
+
+export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
+  input: InterruptThreadTurnInput,
+) {
+  const runId =
+    input.runId ??
+    (input.turnId as RunId | undefined) ??
+    (yield* interruptibleThreadRun(input.threadId));
   if (runId === undefined) return { sequence: 0 };
   return yield* dispatch({
     type: "run.interrupt",

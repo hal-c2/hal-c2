@@ -16,6 +16,9 @@ defmodule HalC2.PullRequests.Wakes do
   (`changes/2`). A link's first snapshot is its baseline. A settled or archived thread
   hears nothing, and what it heard stays as it was, so bringing it back tells it what
   changed meanwhile in one message. Unlinking drops the link and what it heard.
+  A link's `notify` (`subscribed/1`) names the kinds of news that wake its thread;
+  news of another kind is heard without telling, so subscribing again later does
+  not bring it back.
 
   News is delivered only when the thread is idle: while it has a run working or
   queued, nothing new is marked heard, so everything that lands meanwhile shares the
@@ -208,13 +211,100 @@ defmodule HalC2.PullRequests.Wakes do
         {link, []}
 
       true ->
-        case changes(heard, snapshot, runs) do
-          [] -> {Map.put(link, "heard", advance(heard, snapshot, [])), []}
+        changes = changes(heard, snapshot, runs)
+
+        # News of a kind the thread is not subscribed to is heard without telling.
+        case Enum.filter(changes, &(event(&1) in subscribed(link))) do
+          [] -> {Map.put(link, "heard", advance(heard, snapshot, changes)), []}
           _ when not idle? -> {link, []}
-          changes -> {Map.put(link, "heard", advance(heard, snapshot, changes)), changes}
+          told -> {Map.put(link, "heard", advance(heard, snapshot, changes)), told}
         end
     end
   end
+
+  @events ~w(reviews comments checks conflicts merge_queue merged closed)
+
+  @doc """
+  The kinds of news a link can wake its thread with, the `notify` a subscription
+  keeps (`subscribed/1`): a review or a comment from someone the repository trusts,
+  checks that start failing (or pass again after failing), a conflict with the base
+  branch, leaving the merge queue, a merge and a close.
+  """
+  def events, do: @events
+
+  @doc "The kinds of news `link` wakes its thread with: its `notify`, or every kind."
+  def subscribed(%{"notify" => notify}) when is_list(notify), do: notify
+  def subscribed(_link), do: @events
+
+  # What `advance/3` moves past for each kind of news.
+  @heard_fields %{
+    "merged" => ~w(state),
+    "closed" => ~w(state),
+    "checks" => ~w(checksState checksFailed),
+    "conflicts" => ~w(mergeability),
+    "merge_queue" => ~w(mergeQueueRemovalAt),
+    "reviews" => ~w(reviewActivityAt),
+    "comments" => ~w(commentActivityAt)
+  }
+
+  # A link heard before the kinds were kept apart holds only `activityAt`.
+  defp held(heard, key) when key in ~w(reviewActivityAt commentActivityAt),
+    do: Map.get(heard, key, heard["activityAt"])
+
+  defp held(heard, key), do: heard[key]
+
+  @doc """
+  `link` subscribed to `notify` (nil is every kind) in place of what it was. News of a
+  kind it now hears for the first time, already in its snapshot, is heard without
+  telling: it arrived while that kind was muted. News of a kind it was already
+  subscribed to stays to be told.
+  """
+  def resubscribe(link, notify) do
+    before = subscribed(link)
+    link = if notify == nil, do: Map.delete(link, "notify"), else: Map.put(link, "notify", notify)
+    heard = link["heard"]
+    snapshot = link["snapshot"]
+    enabled = subscribed(link) -- before
+
+    if is_map(heard) and is_map(snapshot) and enabled != [] do
+      {consumed, pending} = Enum.split_with(changes(heard, snapshot), &(event(&1) in enabled))
+
+      kept =
+        pending
+        |> Enum.flat_map(&Map.fetch!(@heard_fields, event(&1)))
+        |> Map.new(&{&1, held(heard, &1)})
+
+      next = heard |> advance(snapshot, consumed) |> Map.merge(kept)
+      Map.put(link, "heard", next)
+    else
+      link
+    end
+  end
+
+  @doc "`{:ok, notify}` for a list of `events/0` (nil is every kind), or `{:error, message}`."
+  def notify(nil), do: {:ok, nil}
+
+  def notify(events) when is_list(events) do
+    case Enum.reject(events, &(&1 in @events)) do
+      [] ->
+        {:ok, Enum.filter(@events, &(&1 in events))}
+
+      unknown ->
+        {:error, "Unknown events #{Enum.join(unknown, ", ")}; use #{Enum.join(@events, ", ")}."}
+    end
+  end
+
+  def notify(_events), do: {:error, "events must be a list of #{Enum.join(@events, ", ")}."}
+
+  @doc "The kind of news (`events/0`) a change from `changes/3` is."
+  def event(:merged), do: "merged"
+  def event(:closed), do: "closed"
+  def event(:checks_failing), do: "checks"
+  def event(:checks_passing), do: "checks"
+  def event(:conflicting), do: "conflicts"
+  def event({:left_merge_queue, _reason}), do: "merge_queue"
+  def event({:activity, %{"kind" => "review"}}), do: "reviews"
+  def event({:activity, _comment}), do: "comments"
 
   # The link list as the thread keeps it; host state is not activity.
   defp heard(state, thread_id, links) do
@@ -258,24 +348,54 @@ defmodule HalC2.PullRequests.Wakes do
     |> advance_removal(heard, snapshot)
   end
 
+  # `activityAt` is the newest review or comment heard; `reviewActivityAt` and
+  # `commentActivityAt` the newest of each kind, so news of one kind heard without
+  # telling (a subscription to the other) never hides the other's. A link heard
+  # before the kinds were kept apart starts both at `activityAt`.
   defp advance_activity(next, heard, snapshot) do
     cond do
-      Map.has_key?(snapshot, "activity") ->
-        Map.put(
-          next,
-          "activityAt",
-          heard["activityAt"]
-          |> latest(get_in(snapshot, ["activity", "at"]))
-          |> latest(get_in(snapshot, ["ownActivity", "at"]))
+      Map.has_key?(snapshot, "activity") or Map.has_key?(snapshot, "activities") ->
+        all = activities(snapshot)
+        newest = fn activities, from -> Enum.reduce(activities, from, &latest(&2, &1["at"])) end
+
+        Enum.reduce(
+          ~w(review comment),
+          Map.put(next, "activityAt", newest.(all, heard["activityAt"])),
+          fn kind, next ->
+            key = kind_key(kind)
+            of_kind = Enum.filter(all, &(kind_key(&1) == key))
+            Map.put(next, key, newest.(of_kind, Map.get(heard, key, heard["activityAt"])))
+          end
         )
 
       Map.has_key?(heard, "activityAt") ->
-        Map.put(next, "activityAt", heard["activityAt"])
+        Map.merge(next, Map.take(heard, ~w(activityAt reviewActivityAt commentActivityAt)))
 
       true ->
         next
     end
   end
+
+  # The newest trusted review and comment, then the signed-in account's own; a snapshot
+  # synced before the kinds were kept apart carries only the newest of either.
+  defp activities(snapshot), do: trusted_activities(snapshot) ++ own_activities(snapshot)
+  defp trusted_activities(snapshot), do: activities(snapshot, "activities", "activity")
+  defp own_activities(snapshot), do: activities(snapshot, "ownActivities", "ownActivity")
+
+  defp activities(snapshot, key, fallback) do
+    case snapshot[key] do
+      list when is_list(list) -> list
+      _ -> List.wrap(snapshot[fallback])
+    end
+    |> Enum.filter(&is_map/1)
+    |> Enum.sort_by(&(JS.epoch_ms(&1["at"]) || 0))
+  end
+
+  defp kind_key(%{"kind" => kind}), do: kind_key(kind)
+  defp kind_key("review"), do: "reviewActivityAt"
+  defp kind_key(_comment), do: "commentActivityAt"
+
+  defp heard_at(heard, activity), do: Map.get(heard, kind_key(activity), heard["activityAt"])
 
   defp advance_removal(next, heard, snapshot) do
     cond do
@@ -298,17 +418,15 @@ defmodule HalC2.PullRequests.Wakes do
   The news in `snapshot` for a thread that heard `heard`, oldest kind first: a merge
   or a close; while open, checks that went to failing, checks that pass again after
   the thread heard they failed, a conflict with the base branch, and leaving the
-  merge queue (`{:left_merge_queue, reason}`) later than any removal it heard; and a
-  review or comment newer than any it heard (`{:activity, activity}`). One by the
-  signed-in account counts only when none of the thread's `runs` was going as it was
-  posted: that one is the agent's own. A removal is open-only news, so one whose pull
+  merge queue (`{:left_merge_queue, reason}`) later than any removal it heard; and the
+  newest review and the newest comment each newer than any of its kind it heard
+  (`{:activity, activity}`). One by the signed-in account counts only when none of the
+  thread's `runs` was going as it was posted: that one is the agent's own. A removal is open-only news, so one whose pull
   request then merged or closed is told as that, not as a queue failure.
   """
   def changes(heard, snapshot, runs \\ []) do
     state = snapshot["state"]
     open? = state == "open"
-    new? = &(is_map(&1) and later?(&1["at"], heard["activityAt"]))
-    own = snapshot["ownActivity"]
     removal = snapshot["mergeQueueRemoval"]
 
     [
@@ -322,13 +440,24 @@ defmodule HalC2.PullRequests.Wakes do
         heard["mergeability"] != "conflicting" and :conflicting,
       open? and Map.has_key?(heard, "mergeQueueRemovalAt") and is_map(removal) and
         later?(removal["at"], heard["mergeQueueRemovalAt"]) and
-        {:left_merge_queue, removal["reason"]},
-      Map.has_key?(heard, "activityAt") and new?.(snapshot["activity"]) and
-        {:activity, snapshot["activity"]},
-      Map.has_key?(heard, "activityAt") and new?.(own) and not during_run?(own["at"], runs) and
-        {:activity, own}
+        {:left_merge_queue, removal["reason"]}
     ]
     |> Enum.filter(& &1)
+    |> Kernel.++(activity_changes(heard, snapshot, runs))
+  end
+
+  defp activity_changes(heard, snapshot, runs) do
+    if Map.has_key?(heard, "activityAt") do
+      new? = &later?(&1["at"], heard_at(heard, &1))
+      others = Enum.filter(trusted_activities(snapshot), new?)
+
+      own =
+        Enum.filter(own_activities(snapshot), &(new?.(&1) and not during_run?(&1["at"], runs)))
+
+      Enum.map(others ++ own, &{:activity, &1})
+    else
+      []
+    end
   end
 
   defp during_run?(at, runs) do
@@ -358,7 +487,8 @@ defmodule HalC2.PullRequests.Wakes do
     text =
       Enum.map_join(news, "\n\n", fn {link, changes} -> describe(link, changes) end) <>
         "\n\nlist_thread_pull_requests lists every pull request this thread owns. " <>
-        "Unlinking one (unlink_pull_request) or settling the thread stops these messages."
+        "unsubscribe_pull_request stops some or all of these messages for one; " <>
+        "unlinking it (unlink_pull_request) or settling the thread stops them all."
 
     id = HalC2.Environment.uuid4()
 
@@ -385,8 +515,20 @@ defmodule HalC2.PullRequests.Wakes do
 
   defp describe(link, changes) do
     %{"host" => host, "repository" => repository, "number" => number} = Links.normalize(link)
-    api = if host == "github.com", do: "gh api", else: "gh api --hostname #{host}"
     url = link["url"]
+
+    if forgejo?(host, url),
+      do: describe_forgejo(link, changes),
+      else: describe_github(link, changes, host, repository, number, url)
+  end
+
+  defp forgejo?(host, url),
+    do:
+      HalC2.PullRequests.host_kind(host) == "forgejo" or
+        String.match?(url || "", ~r{/pulls/\d+(?:[/?#]|$)})
+
+  defp describe_github(link, changes, host, repository, number, url) do
+    api = if host == "github.com", do: "gh api", else: "gh api --hostname #{host}"
 
     lines =
       Enum.map(changes, fn
@@ -406,6 +548,52 @@ defmodule HalC2.PullRequests.Wakes do
     `#{api} repos/#{repository}/pulls/#{number}/comments` and \
     `#{api} repos/#{repository}/issues/#{number}/comments`, and its checks with \
     `gh pr checks #{url}`.\
+    """
+  end
+
+  # Forgejo has no `gh`. The pull request's page shows it all to anyone; its API answers
+  # a request carrying fj's token. Every path names the link's server: `tea api` would
+  # ask whichever server tea's active login is for, which may hold another pull request
+  # of the same repository and number (fj has no `api` command).
+  defp describe_forgejo(link, changes) do
+    %{"host" => host, "repository" => repository, "number" => number} = Links.normalize(link)
+    pull = "repos/#{repository}/pulls/#{number}"
+    api = "https://#{host}/api/v1"
+
+    lines =
+      Enum.map(changes, fn
+        :checks_failing ->
+          "- Checks are failing. Each failing status's `target_url` links its job's log."
+
+        :checks_passing ->
+          "- Checks pass again."
+
+        :conflicting ->
+          "- It conflicts with its base branch."
+
+        :merged ->
+          "- It was merged."
+
+        :closed ->
+          "- It was closed without merging."
+
+        {:left_merge_queue, _reason} ->
+          "- It left the merge queue."
+
+        {:activity, activity} ->
+          "- " <> said(activity)
+      end)
+
+    """
+    Pull request #{name(link)} #{link["url"]} needs your attention:
+    #{Enum.join(lines, "\n")}
+    Its page #{link["url"]} shows them. Over its API, with the token `fj` signs in \
+    to #{host} with as `Authorization: token <token>`, read its reviews at \
+    `#{api}/#{pull}/reviews` (a review's inline comments at \
+    `#{api}/#{pull}/reviews/<id>/comments`), its comments at \
+    `#{api}/repos/#{repository}/issues/#{number}/comments`, and its checks at \
+    `#{api}/repos/#{repository}/commits/<head sha>/status`, the head sha being `head.sha` \
+    in `#{api}/#{pull}`.\
     """
   end
 

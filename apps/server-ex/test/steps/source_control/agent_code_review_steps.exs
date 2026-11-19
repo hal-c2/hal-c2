@@ -792,34 +792,30 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     put_in(context, [:heads, number], head)
   end
 
-  step "the head of \#{int} has a REVIEW.md that links to a file outside its repository",
-       %{args: [number]} = context do
-    outside = Path.join(context.mc.home, "outside.md")
+  step "the base branch has a REVIEW.md saying {string}", %{args: [text]} = context do
+    push_base(context, %{"REVIEW.md" => text <> "\n"})
+  end
+
+  step "the base branch has a REVIEW.md that links to a file outside its repository",
+       context do
+    # Its name says it too, so neither the link's target nor what it holds gets in.
+    outside = Path.join(context.mc.home, "outside the checkout.md")
     File.write!(outside, "outside the checkout\n")
-    source = context.source
-    World.git!(source, ~w(fetch -q origin))
-    World.git!(source, ~w(checkout -q --detach origin/main))
+    source = base_checkout(context)
     File.ln_s!(outside, Path.join(source, "REVIEW.md"))
-    File.mkdir_p!(Path.join(source, "src"))
-    File.write!(Path.join(source, "src/limits.ts"), @limits)
-    World.git!(source, ~w(add REVIEW.md src/limits.ts))
-    World.git!(source, ["commit", "-q", "-m", "Pull request #{number}"])
-    World.git!(source, ["push", "-q", "--force", "origin", "HEAD:refs/pull/#{number}/head"])
-    put_in(context, [:heads, number], World.git!(source, ~w(rev-parse HEAD)))
+    World.git!(source, ~w(add REVIEW.md))
+    World.git!(source, ["commit", "-q", "-m", "Review rules"])
+    World.git!(source, ~w(push -q origin HEAD:refs/heads/main))
+    context
   end
 
-  step "the head of \#{int} has a REVIEW.md that is longer than a prompt takes",
-       %{args: [number]} = context do
+  step "the base branch has a REVIEW.md that is longer than a prompt takes", context do
     text = "a very long REVIEW.md\n" <> String.duplicate("Check everything.\n", 4000)
-    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
-    put_in(context, [:heads, number], head)
+    push_base(context, %{"REVIEW.md" => text})
   end
 
-  step "the head of \#{int} has a REVIEW.md that is not UTF-8 text",
-       %{args: [number]} = context do
-    text = "not UTF-8 text\n" <> <<0xFF, 0xFE>>
-    head = push_head(context, number, %{"src/limits.ts" => @limits, "REVIEW.md" => text})
-    put_in(context, [:heads, number], head)
+  step "the base branch has a REVIEW.md that is not UTF-8 text", context do
+    push_base(context, %{"REVIEW.md" => "not UTF-8 text\n" <> <<0xFF, 0xFE>>})
   end
 
   step "the agent's prompt does not include {string}", %{args: [text]} = context do
@@ -851,6 +847,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     {review, context} = await_review(context, number, & &1["checkout"])
     assert thread(context.thread)["worktreePath"] == review["checkout"]
     assert World.git!(review["checkout"], ~w(rev-parse HEAD)) == context.heads[number]
+
+    # The plugin's clone keeps the pull request's refs at what this review fetched, and
+    # none of the attempt's own once its run started.
+    clone = World.git!(review["checkout"], ~w(rev-parse --path-format=absolute --git-common-dir))
+    prefix = "refs/hal-c2/code-review/#{number}"
+
+    assert World.git!(clone, ["for-each-ref", "--format=%(refname)", prefix]) ==
+             "#{prefix}/base\n#{prefix}/head"
+
+    assert World.git!(clone, ["rev-parse", "#{prefix}/head"]) == context.heads[number]
+
+    assert World.git!(clone, ["merge-base", "#{prefix}/base", "#{prefix}/head"]) ==
+             review["mergeBase"]
+
     context
   end
 
@@ -1561,6 +1571,36 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the review of \#{int} failed", %{args: [number]} = context do
     context = context |> running(number) |> end_turns()
     await_review!(context, number, &(&1["status"] == "failed"))
+  end
+
+  step "the user sets {string} to look for pull requests every {int} minute(s)",
+       %{args: [@id, minutes]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"pollMinutes" => minutes}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
+  step "{string} looks for pull requests again within a minute", %{args: [@id]} = context do
+    # The timer of the next look, once the plugin armed it (a look under way arms it
+    # when it ends): set for a minute at the pace saved, and the same timer still once a
+    # setting was refused. The delay is the one it was set with, not what is left of it,
+    # which depends on how long the test took to get here.
+    %{timer: timer} = state = await_poll_timer(System.monotonic_time(:millisecond) + 15_000)
+    assert state.settings["pollMinutes"] == 1
+    assert trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff) == 60_000
+    assert is_integer(Process.read_timer(timer))
+    if context[:poll_timer], do: assert(timer == context.poll_timer)
+    Map.put(context, :poll_timer, timer)
+  end
+
+  step "the setting is refused saying {string}", %{args: [message]} = context do
+    assert {:error, refusal, _} = context.saved
+    assert refusal =~ message
+    context
   end
 
   step "the plugin looks at the pull requests again", context do
@@ -2769,6 +2809,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     end
   end
 
+  defp await_poll_timer(deadline) do
+    case :sys.get_state(HalC2Plugins.CodeReview) do
+      %{timer: timer} = state when timer != nil ->
+        state
+
+      _ ->
+        if System.monotonic_time(:millisecond) > deadline,
+          do: flunk("code-review never armed its next look")
+
+        Process.sleep(20)
+        await_poll_timer(deadline)
+    end
+  end
+
   defp key(context, number), do: "#{context.repository}##{number}"
 
   # Lists pull request `number` (opened with a head commit if it is new) with `fields`
@@ -2907,6 +2961,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # A commit off main with `files` at `refs/pull/<number>/head` of the fake GitHub.
+  # The source checked out at the remote's main, to commit the base branch from.
+  defp base_checkout(context) do
+    source = context.source
+    World.git!(source, ~w(fetch -q origin))
+    World.git!(source, ~w(checkout -q --detach origin/main))
+    source
+  end
+
+  # Commits `files` onto the remote's main, the base a pull request is reviewed against.
+  defp push_base(context, files) do
+    source = base_checkout(context)
+    World.commit!(source, files, "Review rules")
+    World.git!(source, ~w(push -q origin HEAD:refs/heads/main))
+    context
+  end
+
   defp push_head(context, number, files) do
     source = context.source
     World.git!(source, ~w(fetch -q origin))

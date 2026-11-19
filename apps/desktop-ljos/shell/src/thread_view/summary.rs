@@ -76,6 +76,24 @@ const HAL_C2_TOOLS: &[[&str; 4]] = &[
         "linked pull requests",
     ],
     [
+        "subscribe_pull_request",
+        "subscribe-pr",
+        "Subscribe to",
+        "pull request news",
+    ],
+    [
+        "unsubscribe_pull_request",
+        "unsubscribe-pr",
+        "Unsubscribe from",
+        "pull request news",
+    ],
+    [
+        "list_pull_request_subscriptions",
+        "list-pr-subscriptions",
+        "Check",
+        "pull request subscriptions",
+    ],
+    [
         "orchestrator_capabilities",
         "capabilities",
         "Get",
@@ -821,6 +839,8 @@ fn orchestration_label(action: &str, calls: &[Call]) -> String {
         "thread-merge" => Some(("Requested", "request", "context merge")),
         "link-pr" => Some(("Linked", "link", "pull request")),
         "unlink-pr" => Some(("Unlinked", "unlink", "pull request")),
+        "subscribe-pr" => Some(("Subscribed to", "subscribe to", "pull request")),
+        "unsubscribe-pr" => Some(("Unsubscribed from", "unsubscribe from", "pull request")),
         _ => None,
     };
     if let Some((past, infinitive, noun)) = counted {
@@ -845,6 +865,7 @@ fn orchestration_label(action: &str, calls: &[Call]) -> String {
         "browser" => ("Used", "use", "browser"),
         "device" => ("Used", "use", "device controls"),
         "capabilities" => ("Checked", "check", "orchestration capabilities"),
+        "list-pr-subscriptions" => ("Checked", "check", "pull request subscriptions"),
         _ => ("Used", "use", "HAL-C2 tools"),
     };
     phrase(past, infinitive, &format!("{noun} {times}"))

@@ -4079,6 +4079,165 @@
     }
   },
   {
+    "name": "subscribe_pull_request",
+    "description": "Get woken in this thread when a pull request on GitHub or Forgejo needs attention: a review or comment from someone the repository trusts (reviews, comments), checks that start failing or pass again after failing (checks), a conflict with its base branch (conflicts), leaving the merge queue (merge_queue), a merge (merged) or a close (closed). Links the pull request to this thread if it is not linked yet, as link_pull_request does. Pass the URL, or repository plus number, and the events to be woken for; omit events for all of them. Subscribing again replaces the events. A message arrives only while this thread is idle, with everything that happened since the last one; news of an event left out is not told later.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Pull request number. Required with repository when url is omitted."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "reviews",
+                  "comments",
+                  "checks",
+                  "conflicts",
+                  "merge_queue",
+                  "merged",
+                  "closed"
+                ]
+              },
+              "description": "Which news wakes this thread. Omit for all of them."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "unsubscribe_pull_request",
+    "description": "Stop being woken in this thread for some or all of a pull request's news. The pull request stays linked, so its status still shows beside the thread and its merge still settles the thread; use unlink_pull_request to drop it. Pass the URL, or repository plus number, and the events to stop; omit events to stop all of them. Answers the events still subscribed and wasSubscribed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Pull request number. Required with repository when url is omitted."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "reviews",
+                  "comments",
+                  "checks",
+                  "conflicts",
+                  "merge_queue",
+                  "merged",
+                  "closed"
+                ]
+              },
+              "description": "Which news stops waking this thread. Omit for all of it."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "list_pull_request_subscriptions",
+    "description": "List the pull requests whose news wakes this thread, with the events each is subscribed to and its last known state. Every linked pull request is subscribed to every event until unsubscribe_pull_request or subscribe_pull_request narrows it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    }
+  },
+  {
     "name": "update_scheduled_task",
     "description": "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run.",
     "inputSchema": {

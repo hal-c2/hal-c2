@@ -56,6 +56,7 @@ import {
   type VcsStatusResult,
   type VcsSwitchRefResult,
   McSettingsDocument,
+  RunId,
   WS_METHODS,
 } from "@hal-c2/contracts";
 import {
@@ -69,6 +70,7 @@ import {
   createProject as createProjectOp,
   deleteThread as deleteThreadOp,
   interruptThreadTurn,
+  interruptibleThreadRun,
   respondToThreadApproval,
   respondToThreadUserInput,
   resumeThreadQueue,
@@ -670,7 +672,13 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     thread: Pick<OrchestrationThread, "id" | "runtimeMode">,
     planId: string,
   ) => Promise<void>;
-  readonly interrupt: (threadId: ThreadId) => Promise<void>;
+  /**
+   * Stop a thread's run and what it delegated (`run.interrupt`, `stopDelegated`):
+   * `runId`, else the one `interruptibleRun` names; nothing is sent when there is none.
+   */
+  readonly interrupt: (threadId: ThreadId, runId?: string) => Promise<void>;
+  /** The run an interrupt would stop now: the active run, or one with background work. */
+  readonly interruptibleRun: (threadId: ThreadId) => Promise<string | null>;
   /** Starts a held queue again (`queue.resume`). */
   readonly resumeQueue: (threadId: ThreadId) => Promise<void>;
   readonly approve: (
@@ -1216,8 +1224,18 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
         }),
       ),
 
-    interrupt: (threadId) =>
-      runtime.runPromise(interruptThreadTurn({ threadId }).pipe(Effect.asVoid)),
+    interrupt: (threadId, runId) =>
+      runtime.runPromise(
+        interruptThreadTurn({
+          threadId,
+          ...(runId === undefined ? {} : { runId: RunId.make(runId) }),
+        }).pipe(Effect.asVoid),
+      ),
+
+    interruptibleRun: (threadId) =>
+      runtime.runPromise(
+        interruptibleThreadRun(threadId).pipe(Effect.map((runId) => runId ?? null)),
+      ),
 
     resumeQueue: (threadId) =>
       runtime.runPromise(resumeThreadQueue({ threadId }).pipe(Effect.asVoid)),

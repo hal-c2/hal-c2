@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ThreadId,
 } from "@hal-c2/contracts";
 import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
@@ -68,6 +69,7 @@ import {
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
+import { AGENTS_PANEL, createAgentsPanel } from "./agentsPanel.ts";
 import { buildStatusRow } from "./statusState.ts";
 import {
   createTerminalController,
@@ -317,6 +319,8 @@ export function createHost(options: HostOptions): Host {
   let filesOpen = false;
   // So do the Spaces and their pages (SpaceView).
   let spaceOpen = false;
+  // Requests an action started outside the composer (a worker's interrupt): `idle()` waits on them.
+  const requests = new Set<Promise<unknown>>();
   // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
   let editorRows: number | undefined;
   let popoverRows = 0;
@@ -490,6 +494,7 @@ export function createHost(options: HostOptions): Host {
       sections?.relayout();
     }
     sourceControl.resize();
+    agents.resize();
     // The footer's compact form follows the conversation width.
     composer?.relayout();
     // The palette and the add-project list window to the rows they were given.
@@ -626,6 +631,7 @@ export function createHost(options: HostOptions): Host {
     }
     threadView.sync(next, prev);
     sourceControl.publish(prev, next);
+    agents.publish(prev, next);
     if (!prev || prev.detail !== next.detail || prev.vcsStatus !== next.vcsStatus) {
       publishSettings();
     }
@@ -675,20 +681,43 @@ export function createHost(options: HostOptions): Host {
 
   /** The mode a focused detail panel of `kind` takes. */
   const panelMode = (kind: string | null): TuiMode | null =>
-    kind === SOURCE_CONTROL_PANEL ? sourceControl.focusMode() : null;
+    kind === SOURCE_CONTROL_PANEL
+      ? sourceControl.focusMode()
+      : kind === AGENTS_PANEL
+        ? "agents"
+        : null;
 
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
+    // The file browser hides the panel; asking for the agents panel's keys closes it,
+    // so the keys never go to a panel the user cannot see. An edit not saved yet keeps
+    // it open: closing would drop the text if the save it starts failed too.
+    if (kind === AGENTS_PANEL && focused && filesOpen) {
+      const unsaved = files.unsaved();
+      if (unsaved !== null) {
+        store.setStatus(
+          files.mode() === "fileEdit"
+            ? `Save ${unsaved} before opening the agents panel.`
+            : `${unsaved} was not saved: copy the edit or close the file before opening the agents panel.`,
+          "error",
+        );
+        return;
+      }
+      files.close();
+    }
     const previous = rightPanel;
     rightPanel = kind;
     rightPanelFocused = kind !== null && focused;
     const wasSourceControl = previous === SOURCE_CONTROL_PANEL;
     const isSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
     if (isSourceControl !== wasSourceControl) sourceControl.panelChanged(isSourceControl);
+    if ((previous === AGENTS_PANEL) !== (rightPanel === AGENTS_PANEL)) {
+      agents.panelChanged(rightPanel === AGENTS_PANEL);
+    }
     publishLayout();
     const focusMode = rightPanelFocused ? panelMode(rightPanel) : null;
     if (focusMode) setMode(focusMode);
-    else if (mode === "panel" || mode === "commit") setMode(restingMode());
+    else if (mode === "panel" || mode === "commit" || mode === "agents") setMode(restingMode());
   };
   const sourceControl = createSourceControl({
     store,
@@ -702,6 +731,35 @@ export function createHost(options: HostOptions): Host {
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
     menu: (spec) => composer!.pick(spec),
     copyToClipboard: options.copyToClipboard,
+  });
+  const agents = createAgentsPanel({
+    store,
+    state,
+    panel: () => ({
+      open: rightPanel === AGENTS_PANEL && (layout?.rightPanel.visible ?? false),
+      focused: rightPanel === AGENTS_PANEL && rightPanelFocused,
+    }),
+    size: () => ({
+      width: layout ? layout.rightPanel.width : 0,
+      height: layout ? layout.panesRows : 0,
+    }),
+    nowMs: () => Date.parse(now()),
+    menu: (spec) => composer!.pick(spec),
+    openThread: (threadId, open) => {
+      const focused = rightPanelFocused && open?.keepFocus === true;
+      dispatch("thread.open", { key: threadKey(threadId) });
+      // A panel standing in for the conversation closes, so the opened thread is
+      // what the user sees; ^X a brings it back, with its way to the parent.
+      if (layout?.rightPanel.asMain) setRightPanel(null, false);
+      else setRightPanel(AGENTS_PANEL, focused);
+    },
+    interrupt: (threadId, runId) => client.interrupt(ThreadId.make(threadId), runId),
+    interruptibleRun: (threadId) => client.interruptibleRun(ThreadId.make(threadId)),
+    track: (request) => {
+      const done = () => void requests.delete(request);
+      requests.add(request);
+      request.then(done, done);
+    },
   });
 
   /** The selected thread's terminal and file workspace: its worktree, else the project root. */
@@ -1081,6 +1139,8 @@ export function createHost(options: HostOptions): Host {
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
+        // A panel the file browser or a page hides is offered to show, not to hide.
+        agentsOpen: rightPanel === AGENTS_PANEL && layout.rightPanel.visible,
         hasCheckpoints:
           revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
       }),
@@ -1250,6 +1310,8 @@ export function createHost(options: HostOptions): Host {
       case "composer.focus":
         palette.dispatch("palette.close");
         composer!.dispatch("select.close");
+        // A focused panel gives the keys up with it, so ^X a focuses it again.
+        if (rightPanelFocused) setRightPanel(rightPanel, false);
         setMode("compose");
         return true;
       case "thread.open": {
@@ -1329,6 +1391,31 @@ export function createHost(options: HostOptions): Host {
         else setRightPanel(next, true);
         return true;
       }
+      // Opens the agents panel with the keys, gives them to it while it shows without, then closes it.
+      case "agents.toggle":
+        if (rightPanel === AGENTS_PANEL && !rightPanelFocused && layout.rightPanel.visible) {
+          setRightPanel(AGENTS_PANEL, true);
+          return true;
+        }
+        return handle("rightPanel.toggle", { kind: AGENTS_PANEL });
+      case "agents.close":
+        if (rightPanel === AGENTS_PANEL) setRightPanel(null, false);
+        return true;
+      // Shows the agents panel with the keys, giving it back the pane that hid it.
+      case "agents.show":
+        if (files.unsaved() === null) {
+          space.close();
+          sections!.close();
+          if (settingsOpen) dispatch("settings.close");
+          // A diff or an image in the conversation pane gives it back, whatever has the keys:
+          // the palette this came from leaves the mode at "compose".
+          if (threadView.paneReplaced()) {
+            dispatch("diff.close");
+            dispatch("image.close");
+          }
+        }
+        setRightPanel(AGENTS_PANEL, true);
+        return true;
       case "rightPanel.open": {
         const kind = payloadField(payload, "kind");
         setRightPanel(typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL, true);
@@ -1552,6 +1639,7 @@ export function createHost(options: HostOptions): Host {
         if (ask.dispatch(action, payload) || features.dispatch(action, payload)) return true;
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
+        if (agents.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (space.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
@@ -1745,7 +1833,13 @@ export function createHost(options: HostOptions): Host {
     state,
     dispatch,
     setMode,
-    idle: () => composer!.idle(),
+    idle: async () => {
+      for (;;) {
+        await composer!.idle();
+        if (requests.size === 0) return;
+        await Promise.allSettled(requests);
+      }
+    },
     resize: (next) => {
       if (next.columns === size.columns && next.rows === size.rows) return;
       size = next;

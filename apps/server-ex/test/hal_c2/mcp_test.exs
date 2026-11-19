@@ -294,6 +294,102 @@ defmodule HalC2.McpTest do
     assert {:ok, %{"pullRequests" => []}} = tool.("list_thread_pull_requests", %{})
   end
 
+  test "an agent subscribes to some of a pull request's news, on GitHub or Forgejo" do
+    {caller, tool} = caller("wait for it")
+    forgejo = "https://codeberg.org/acme/shop/pulls/3"
+    github = "https://github.com/acme/app/pull/7"
+
+    assert {:ok, %{"alreadyLinked" => false, "events" => ["reviews", "checks", "merged"]}} =
+             tool.("subscribe_pull_request", %{
+               "url" => forgejo,
+               "events" => ["merged", "checks", "reviews"]
+             })
+
+    {:ok, _} = tool.("link_pull_request", %{"url" => github})
+
+    assert {:ok, %{"subscriptions" => [shop, app]}} =
+             tool.("list_pull_request_subscriptions", %{})
+
+    assert %{"host" => "codeberg.org", "number" => 3, "events" => ["reviews", "checks", "merged"]} =
+             shop
+
+    assert app["events"] == HalC2.PullRequests.Wakes.events()
+
+    assert {:ok, %{"events" => ["reviews", "merged"], "wasSubscribed" => true}} =
+             tool.("unsubscribe_pull_request", %{"url" => forgejo, "events" => ["checks"]})
+
+    assert {:ok, %{"events" => [], "wasSubscribed" => true}} =
+             tool.("unsubscribe_pull_request", %{"url" => github})
+
+    # Unsubscribed, the pull request is still linked.
+    assert {:ok, %{"subscriptions" => [%{"number" => 3}]}} =
+             tool.("list_pull_request_subscriptions", %{})
+
+    assert {:ok, %{"pullRequests" => [_, _]}} = tool.("list_thread_pull_requests", %{})
+
+    links = HalC2.Projection.PullRequests.of(StreamState.get(current(caller), "thread")[caller])
+    assert Enum.map(links, & &1["notify"]) == [["reviews", "merged"], []]
+
+    # Subscribing again without events is every kind.
+    assert {:ok, %{"alreadyLinked" => true}} = tool.("subscribe_pull_request", %{"url" => github})
+    links = HalC2.Projection.PullRequests.of(StreamState.get(current(caller), "thread")[caller])
+    refute Map.has_key?(List.last(links), "notify")
+
+    assert {:error, text} =
+             tool.("subscribe_pull_request", %{"url" => github, "events" => ["pushes"]})
+
+    assert text =~ "Unknown events pushes"
+
+    assert {:ok, %{"wasSubscribed" => false}} =
+             tool.("unsubscribe_pull_request", %{"url" => "https://github.com/acme/app/pull/99"})
+
+    for host <- [42, false] do
+      assert {:error, text} =
+               tool.("subscribe_pull_request", %{
+                 "repository" => "acme/app",
+                 "number" => 8,
+                 "host" => host
+               })
+
+      assert text =~ "host must be a string"
+    end
+  end
+
+  test "a new subscription is one write, and drops are made from what the link has then" do
+    {caller, tool} = caller("wait for it")
+    forgejo = "https://codeberg.org/acme/shop/pulls/3"
+    sequence = fn -> HalC2.Streams.sequence(caller) end
+
+    before = sequence.()
+
+    {:ok, _} =
+      tool.("subscribe_pull_request", %{
+        "url" => forgejo,
+        "events" => ["reviews", "checks", "merged"]
+      })
+
+    assert sequence.() == before + 1
+
+    # Two drops, each from the same view of the link: both hold.
+    drop = fn events ->
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.pull-request-link.notify",
+        "commandId" => "cmd-drop-#{System.unique_integer([:positive])}",
+        "threadId" => caller,
+        "host" => "codeberg.org",
+        "repository" => "acme/shop",
+        "number" => 3,
+        "drop" => events
+      })
+    end
+
+    {:ok, _} = drop.(["reviews"])
+    {:ok, _} = drop.(["checks"])
+
+    assert {:ok, %{"subscriptions" => [%{"events" => ["merged"]}]}} =
+             tool.("list_pull_request_subscriptions", %{})
+  end
+
   test "a plan-mode caller cannot hand off to a worktree", %{work: work} do
     {_caller, tool} = caller("wait for it", %{"interactionMode" => "plan"})
 

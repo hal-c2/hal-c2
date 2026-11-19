@@ -300,6 +300,11 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   // The newest by the account the MC reads the host as, kept apart because it may be the
   // agent's own.
   ownActivity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
+  // The newest trusted review and the newest trusted comment, oldest first, so a wake
+  // subscribed to one kind hears it even when the other landed after.
+  activities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
+  // The same, by the account the MC reads the host as.
+  ownActivities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
   // In the host's merge queue now, and where; null when it is not (or the host has none).
   mergeQueue: Schema.optional(
     Schema.NullOr(Schema.Struct({ state: Schema.String, position: NonNegativeInt })),
@@ -343,6 +348,18 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/** A kind of pull request news that wakes a thread (HalC2.PullRequests.Wakes.events/0). */
+export const ThreadPullRequestNotifyEvent = Schema.Literals([
+  "reviews",
+  "comments",
+  "checks",
+  "conflicts",
+  "merge_queue",
+  "merged",
+  "closed",
+]);
+export type ThreadPullRequestNotifyEvent = typeof ThreadPullRequestNotifyEvent.Type;
+
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
@@ -350,8 +367,10 @@ export const ThreadPullRequestLink = Schema.Struct({
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
-  // What the thread's agent was last told of the pull request, so the MC wakes it only
-  // for news (HalC2.PullRequests.Wakes). Absent until the first snapshot.
+  // The pull request as the wakes have accounted for it, so the MC wakes the thread only
+  // for news (HalC2.PullRequests.Wakes): what its agent was told, and news `notify`
+  // left untold, which a later subscription does not replay. Absent until the first
+  // snapshot.
   heard: Schema.optional(
     Schema.Struct({
       state: Schema.optional(PullRequestState),
@@ -359,9 +378,14 @@ export const ThreadPullRequestLink = Schema.Struct({
       mergeability: Schema.optional(Schema.NullOr(PullRequestMergeability)),
       checksFailed: Schema.optional(Schema.Boolean),
       activityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      reviewActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      commentActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
       mergeQueueRemovalAt: Schema.optional(Schema.NullOr(IsoDateTime)),
     }),
   ),
+  // The kinds of news that wake the thread (subscribe_pull_request); absent is every
+  // kind, empty none.
+  notify: Schema.optional(Schema.Array(ThreadPullRequestNotifyEvent)),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
@@ -1168,10 +1192,19 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
   stack: Schema.NullOr(ThreadPullRequestStack),
 });
 
+const ThreadPullRequestLinkNotifyCommand = Schema.Struct({
+  type: Schema.Literal("thread.pull-request-link.notify"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  ...ThreadPullRequestKey.fields,
+  notify: Schema.NullOr(Schema.Array(ThreadPullRequestNotifyEvent)),
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
+  ThreadPullRequestLinkNotifyCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,

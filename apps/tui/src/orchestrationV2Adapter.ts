@@ -609,6 +609,25 @@ export interface TuiThreadExtras {
    * it, provider wakes included: it starts again on `queue.resume` or the user's next message.
    */
   readonly queueHeld?: true;
+  /** The thread's workers (delegated tasks and provider subagents), for the agents panel. */
+  readonly subagents?: ReadonlyArray<TuiSubagent>;
+}
+
+/** One of a thread's workers, as the agents panel reads it. */
+export interface TuiSubagent {
+  readonly id: string;
+  /** The worker's own thread (delegated tasks); null for a provider's in-process subagent. */
+  readonly childThreadId: string | null;
+  readonly title: string | null;
+  readonly prompt: string;
+  readonly driver: string;
+  readonly model: string | null;
+  readonly status: OrchestrationV2ThreadProjection["subagents"][number]["status"];
+  readonly progress: string | null;
+  readonly result: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly updatedAt: string;
 }
 
 /** A queued run's place in line, on its user message. */
@@ -895,6 +914,24 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
         : []),
     ],
     ...(pendingBackgroundTasks.length > 0 ? { pendingBackgroundTasks } : {}),
+    ...(projection.subagents.length > 0
+      ? {
+          subagents: projection.subagents.map((entry): TuiSubagent => ({
+            id: entry.id,
+            childThreadId: entry.childThreadId,
+            title: entry.title,
+            prompt: entry.prompt,
+            driver: entry.driver,
+            model: entry.model,
+            status: entry.status,
+            progress: entry.progress ?? null,
+            result: entry.result,
+            startedAt: nullableIso(entry.startedAt),
+            completedAt: nullableIso(entry.completedAt),
+            updatedAt: iso(entry.updatedAt),
+          })),
+        }
+      : {}),
     ...([...queuedRuns.values()].some((run) => run.queueHeld === true)
       ? { queueHeld: true as const }
       : {}),

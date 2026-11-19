@@ -20,6 +20,13 @@ defmodule HalC2.ClaudeSubagentTest do
       |> World.launch_on(@thread, "claudeAgent", "wait for the survey")
 
     World.await_running(context, @thread)
+    # The fake's own init for that prompt lands when it lands; wait for its receipt,
+    # the session it names on the provider thread, so it never arrives between the
+    # turns a test plays and waits with a wake there.
+    World.await_value(context, @thread, fn state ->
+      Enum.find(StreamState.list(state, "provider-thread"), & &1["nativeThreadRef"])
+    end)
+
     {:ok, context: context}
   end
 

@@ -35,7 +35,7 @@ ColumnLayout {
     readonly property var hosts: [
         { value: "github", label: qsTr("GitHub") },
         { value: "gitlab", label: qsTr("%1 (coming later)").arg(qsTr("GitLab")), disabled: true },
-        { value: "forgejo", label: qsTr("%1 (coming later)").arg(qsTr("Forgejo")), disabled: true },
+        { value: "forgejo", label: qsTr("Forgejo") },
         { value: "bitbucket", label: qsTr("%1 (coming later)").arg(qsTr("Bitbucket")), disabled: true },
         { value: "azure-devops", label: qsTr("%1 (coming later)").arg(qsTr("Azure DevOps")), disabled: true }
     ]
@@ -202,7 +202,7 @@ ColumnLayout {
 
         SettingsField {
             title: qsTr("Host")
-            description: qsTr("GitHub uses the gh login of this MC's machine.")
+            description: qsTr("GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login.")
 
             ShellChoice {
                 objectName: "codeReviewHosts"
@@ -316,7 +316,7 @@ ColumnLayout {
             Toggle {
                 key: "reviewRequested"
                 title: qsTr("Review when you are asked to review")
-                description: qsTr("A review request to the gh user starts a review.")
+                description: qsTr("A review request to the signed-in account starts a review.")
             }
 
             SettingsField {
@@ -598,7 +598,7 @@ ColumnLayout {
         Toggle {
             key: "readReviewMd"
             title: qsTr("Follow REVIEW.md")
-            description: qsTr("Add the REVIEW.md at the pull request's head to the prompt.")
+            description: qsTr("Add the REVIEW.md on the pull request's base branch to the prompt.")
         }
 
         Repeater {

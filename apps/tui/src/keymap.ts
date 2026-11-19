@@ -29,8 +29,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       {
         keys: "^X …",
         description:
-          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces · q resume queue",
-        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p", "q"],
+          "Leader: n new · k commands · f filter · l panel · a agents · e terminal · s settings · b files · p Spaces · q resume queue",
+        chords: ["ctrl+x", "n", "k", "f", "l", "a", "e", "s", "b", "p", "q"],
       },
     ],
   },
@@ -119,6 +119,21 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         description: "Commit message: let the writer model write it",
         chords: ["tab"],
       },
+    ],
+  },
+  {
+    title: "Agents",
+    bindings: [
+      { keys: "^X a", description: "Show / hide the agents panel", chords: ["ctrl+x", "a"] },
+      {
+        keys: "panel",
+        description: "! needs you (an approval or a question) · ● working · ✓ done · ✗ failed",
+      },
+      { keys: "↑/↓ · k/j", description: "Move between workers", chords: ["up", "down", "k", "j"] },
+      { keys: "Enter", description: "Open the worker's thread", chords: ["return"] },
+      { keys: "c", description: "Interrupt the worker's run (asks first)", chords: ["c"] },
+      { keys: "u", description: "Back to the thread that started this one", chords: ["u"] },
+      { keys: "Esc / ^P", description: "Return to the conversation", chords: ["escape", "ctrl+p"] },
     ],
   },
   {
@@ -259,6 +274,7 @@ export const LEADER_ACTIONS: ReadonlyArray<{
   { key: "k", title: "Command palette", action: "palette.open" },
   { key: "f", title: "Filter threads", action: "sidebar.filter.focus" },
   { key: "l", title: "Source-control panel", action: "rightPanel.toggle" },
+  { key: "a", title: "Agents panel", action: "agents.toggle" },
   { key: "e", title: "Terminal", action: "terminal.toggle" },
   { key: "s", title: "Settings", action: "settings.open" },
   { key: "b", title: "Browse files", action: "files.open" },
@@ -493,6 +509,14 @@ export const KEYMAP_LAYERS = {
     "ctrl+l": "rightPanel.toggle",
     x: "git.log.dismiss",
   },
+  agents: {
+    "up, k": "agents.previous",
+    "down, j": "agents.next",
+    return: "agents.open",
+    c: "agents.stop",
+    u: "agents.parent",
+    "escape, ctrl+p": "rightPanel.blur",
+  },
   commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur", tab: "git.commit.generate" },
   project: {
     up: "project.add.previous",
@@ -568,6 +592,7 @@ export function chordLabel(chords: string): string {
 const MODE_GROUP: Record<string, string> = {
   terminal: "Terminal",
   panel: "Source control",
+  agents: "Agents",
   commit: "Source control",
   compose: "Conversation",
   newThread: "Conversation",
