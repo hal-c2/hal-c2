@@ -1387,19 +1387,36 @@ Item {
             taken[seat.index] = id;
             seatOf[id] = seat;
         };
-        const chunks = [], reviewing = [];
-        for (const team of teams) {
+        const chunks = [], teamOf = [], reviewing = [];
+        teams.forEach((team, t) => {
             for (let i = 0; i < team.length; i += size) {
                 chunks.push(team.slice(i, i + size));
+                teamOf.push(t);
                 reviewing.push(byId?.[team[0]]?.kind === "reviewer");
             }
-        }
+        });
         // A pod is a chunk's own when it is the review corner exactly when the
         // chunk reviews.
         const own = (pod, c) => !!w.pods[pod].review === reviewing[c];
         // Everyone seated keeps their seat, wherever it is; a chunk's pod is
-        // where its first seated member sat.
+        // where its first seated member sat, and a team's is its first
+        // chunk's with one.
         const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        const teamHome = {};
+        homes.forEach((home, c) => {
+            if (home >= 0 && teamHome[teamOf[c]] === undefined)
+                teamHome[teamOf[c]] = home;
+        });
+        // The pod with room for `need` nearest pod `near` (or the first with
+        // room when there is no `near`), one of chunk `c`'s own kind first, or
+        // only those when `only`; -1 when none has room. Ties go by index,
+        // since sort() need not be stable.
+        const away = (i, near) => near < 0 ? 0 : Math.abs(w.pods[i].x - w.pods[near].x) + Math.abs(w.pods[i].y - w.pods[near].y);
+        const nearest = (near, need, c, only) => {
+            const open = w.pods.map((_, i) => i).filter(i => room(i) >= need && (!only || own(i, c)));
+            open.sort((a, b) => (own(b, c) - own(a, c)) || away(a, near) - away(b, near) || a - b);
+            return open.length ? open[0] : -1;
+        };
         chunks.forEach(chunk => {
             for (const id of chunk) {
                 const seat = before[id];
@@ -1413,7 +1430,8 @@ Item {
         const corner = w.pods.findIndex(pod => pod.review);
         chunks.forEach((chunk, c) => {
             const home = homes[c] >= 0 && own(homes[c], c) ? homes[c] : -1;
-            let pod = home >= 0 ? home : w.pods.findIndex((_, i) => own(i, c) && room(i) >= chunk.length);
+            const near = teamHome[teamOf[c]] ?? (reviewing[c] ? corner : -1);
+            let pod = home >= 0 ? home : nearest(near, chunk.length, c, true);
             // Reviewers who do not all fit in the corner still fill it first.
             if (pod < 0 && reviewing[c] && room(corner) > 0)
                 pod = corner;
@@ -1423,18 +1441,16 @@ Item {
                 if (pod >= 0 && room(pod) > 0)
                     sit(id, pod);
                 else
-                    spill.push([id, home >= 0 ? home : homes[c] >= 0 ? homes[c] : reviewing[c] ? corner : -1, c]);
+                    spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
         // Those who did not fit sit at the nearest pod with a free desk, a pod
         // of their own kind first.
-        const away = (i, near) => near < 0 ? 0 : Math.abs(w.pods[i].x - w.pods[near].x) + Math.abs(w.pods[i].y - w.pods[near].y);
         for (const [id, near, c] of spill) {
-            const open = w.pods.map((_, i) => i).filter(i => room(i) > 0);
-            if (!open.length)
+            const pod = nearest(near, 1, c, false);
+            if (pod < 0)
                 break;
-            open.sort((a, b) => (own(b, c) - own(a, c)) || away(a, near) - away(b, near));
-            sit(id, open[0]);
+            sit(id, pod);
         }
         return seatOf;
     }
@@ -2504,10 +2520,12 @@ Item {
         let plan = state;
         let goal = null;
         actor.icon = state === "asking" ? "ask" : state === "failed" ? "fail" : state === "working" && (p.activity === "thinking" || p.activity === "delegating") ? "think" : "";
-        if (state === "asking") {
-            goal = seatGoal(actor, "ask");
-        } else if (state === "failed") {
-            goal = seatGoal(actor, "sit");
+        if (state === "asking" || state === "failed") {
+            actor.cup = false;
+            // Plans again only when it changed: a new goal claims a new spot.
+            if (!force && actor.plan === plan && actor.goal)
+                return;
+            goal = seatGoal(actor, state === "asking" ? "ask" : "sit");
         } else if (state === "working") {
             const activity = p.activity ?? "";
             plan = "working:" + activity;
@@ -2533,11 +2551,6 @@ Item {
             actor.until = Infinity;
             if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
                 actor.cup = false;
-        }
-        if (state !== "working" && plan !== "break") {
-            actor.cup = false;
-            if (!force && actor.plan === plan && actor.goal)
-                return;
         }
         actor.plan = plan;
         setGoal(actor, goal);

@@ -270,9 +270,10 @@ Feature: Office
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A worker without a desk sits down once a desk is free
       Given the office has 50 threads working, typing, 2 of them without a desk
-      When a thread with a desk leaves
+      And one of the threads with a desk is waiting, and takes a break
+      When another thread with a desk leaves
       Then one of the 2 walks from the break room to that desk and sits down
-      And a thread with a desk that is taking a break stays on its break
+      And the thread with a desk on its break stays on its break
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A worker without a desk waits in the break room whatever it does
