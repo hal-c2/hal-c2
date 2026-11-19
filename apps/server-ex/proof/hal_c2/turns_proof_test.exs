@@ -126,6 +126,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.warn_prepared/4" => @items,
       # Cancels a thread's open message questions (a delegated task's end): request items only.
       "HalC2.Orchestration.dismiss_questions/1" => @items,
+      "HalC2.Orchestration.close_stale_questions/2" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,

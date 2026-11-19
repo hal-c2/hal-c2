@@ -554,6 +554,55 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  # --- questions a message the user writes closes ------------------------------------
+
+  step "another thread's agent sends a message to {string}", %{args: [thread]} = context do
+    context =
+      World.command(
+        context,
+        World.message_command(context, thread, "Status?", %{
+          "senderThreadId" => "thread-elsewhere",
+          "createdBy" => "agent",
+          "creationSource" => "mcp"
+        })
+      )
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the provider then asked {string} without waiting on it", %{args: [question]} = context do
+    context |> Map.put(:older_request, context.request) |> ask_async([question])
+  end
+
+  step "the user answers the newer question with {string}", %{args: [answer]} = context do
+    respond(context, %{"answers" => %{"0" => answer}})
+  end
+
+  step "the newer question is closed as answered", context do
+    assert %{"status" => "resolved", "answers" => %{"0" => "5432"}} = request(context, "t1")
+    assert answer_message(context, "t1")["text"] == "Which port?\n5432"
+    context
+  end
+
+  step "the older question is closed by the message rather than answered", context do
+    context
+    |> Map.put(:request, context.older_request)
+    |> assert_closed_by_message()
+  end
+
+  step "the question is closed by the message rather than answered", context do
+    assert_closed_by_message(context)
+  end
+
+  # Written as an MC from before the fix wrote it: kept beside the question, closing nothing.
+  step "the user wrote to {string} after it, before a message closed such questions",
+       %{args: [thread]} = context do
+    context = World.add_message(context, thread, "user", "Use Postgres", World.iso_from_now(1))
+    assert request(context, "t1")["status"] == "pending"
+    context
+  end
+
   # --- requests and the end of their turn or server ------------------------------------
 
   step "the request is cancelled and marked not resumable", context do
@@ -867,6 +916,15 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
       "requestId" => context.request,
       "answers" => answers
     })
+  end
+
+  # Closed as a dismissed question is, saying the message closed it, with no answers.
+  defp assert_closed_by_message(context) do
+    request = request(context, "t1")
+    assert %{"status" => "cancelled", "closedBy" => "message"} = request
+    refute Map.has_key?(request, "answers")
+    assert request_item(context)["status"] == "cancelled"
+    context
   end
 
   defp answer_id(context), do: "async-answer:" <> context.request

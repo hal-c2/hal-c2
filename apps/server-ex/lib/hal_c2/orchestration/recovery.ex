@@ -59,7 +59,9 @@ defmodule HalC2.Orchestration.Recovery do
     leaving(false)
     survivors = reattachable()
     :persistent_term.put({__MODULE__, :survivors}, survivors)
-    threads = active_threads(Map.keys(survivors))
+    rows = own_rows()
+
+    threads = active_threads(rows, Map.keys(survivors))
 
     # Before any run is interrupted: a child still running when the MC stopped is not
     # one that ended, and `continue/0` may resume it to report as it should.
@@ -97,14 +99,46 @@ defmodule HalC2.Orchestration.Recovery do
     )
 
     if settled != [], do: Logger.info("settled interrupted turns in #{length(settled)} threads")
+    close_stale_questions(rows)
     Enum.map(settled, &elem(&1, 0))
   end
 
-  # This MC's threads whose sidebar row shows an active run or background work, but those
-  # in `except`.
-  defp active_threads(except) do
-    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+  # The threads whose questions asked in the background stayed open after the user wrote
+  # to them, from before a message closed them, close them now
+  # (`Orchestration.close_stale_questions/2`). Only a row showing a pending request and a
+  # message the user wrote can have one, so no other stream is read.
+  defp close_stale_questions(rows) do
+    closed =
+      for {thread_id, row} <- rows,
+          is_map(row["pendingRuntimeRequest"]) and
+            is_binary(row["latestUserAuthoredMessageAt"]),
+          count =
+            HalC2.Streams.transact(thread_id, :thread, fn state ->
+              changes = HalC2.Orchestration.close_stale_questions(state, thread_id)
+              {changes, length(changes)}
+            end),
+          count > 0 do
+        HalC2.Streams.flush_shell(thread_id)
+        thread_id
+      end
+
+    if closed != [],
+      do: Logger.info("closed questions answered by a later message in #{length(closed)} threads")
+  end
+
+  # This MC's sidebar rows of threads, by thread id.
+  defp own_rows,
+    do:
+      for(
+        {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
         mc == node(),
+        do: {thread_id, row}
+      )
+
+  # This MC's threads (of `rows`) whose sidebar row shows an active run or background
+  # work, but those in `except`.
+  defp active_threads(rows, except) do
+    for {thread_id, row} <- rows,
         thread_id not in except,
         # `status` is the latest run's, so a cancelled queued run can hide a running
         # one behind it; `activityRunStatus` is the latest active run's. A row stored
@@ -126,7 +160,7 @@ defmodule HalC2.Orchestration.Recovery do
         do: HalC2.Streams.flush_shell(stream_id)
 
     settled =
-      for thread_id <- active_threads(going_on),
+      for thread_id <- active_threads(own_rows(), going_on),
           # One still up (a service an update added stops before them) ends its own.
           not HalC2.Orchestration.IdleSessions.live?(thread_id),
           {count, what} = settle(thread_id, :shutdown),

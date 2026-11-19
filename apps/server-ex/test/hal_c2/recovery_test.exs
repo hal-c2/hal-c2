@@ -320,4 +320,96 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert %{"status" => "running"} = StreamState.get(state, "node")["s1"]
     assert %{"status" => "running"} = StreamState.get(state, "turn-item")["i1"]
   end
+
+  # Before a message the user writes closed them, a question asked in the background
+  # stayed open after the user moved on. The boot closes those the user wrote after.
+  test "a question the user wrote over before it closed is closed at boot" do
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+    message = %{"type" => "message"}
+
+    question = fn id, asked ->
+      [
+        {"runtime-request", id,
+         %{
+           "s" => %{
+             "id" => id,
+             "status" => "pending",
+             "kind" => "user-input",
+             "nodeId" => "node:" <> id,
+             "createdAt" => asked,
+             "responseCapability" => message
+           }
+         }},
+        {"turn-item", "turn-item:" <> id,
+         %{
+           "s" => %{
+             "id" => "turn-item:" <> id,
+             "type" => "user_input_request",
+             "requestId" => id,
+             "status" => "waiting",
+             "ordinal" => 0
+           }
+         }}
+      ]
+    end
+
+    written = fn id, written, fields ->
+      {"message", id,
+       %{
+         "s" =>
+           Map.merge(
+             %{
+               "id" => id,
+               "role" => "user",
+               "text" => id,
+               "createdAt" => written,
+               "createdBy" => "user"
+             },
+             fields
+           )
+       }}
+    end
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        "t5",
+        :thread,
+        [
+          {"thread", "t5",
+           %{"s" => %{"id" => "t5", "title" => "Asked", "createdAt" => at, "updatedAt" => at}}},
+          {"run", "r1",
+           %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}}
+        ] ++
+          question.("q1", "2026-09-23T10:00:01.000Z") ++
+          [written.("m1", "2026-09-23T10:00:02.000Z", %{})] ++
+          question.("q2", "2026-09-23T10:00:03.000Z") ++
+          [
+            # Neither another thread's agent nor the MC writes as the user.
+            written.("m2", "2026-09-23T10:00:04.000Z", %{
+              "createdBy" => "agent",
+              "senderThreadId" => "t9"
+            }),
+            written.("m3", "2026-09-23T10:00:05.000Z", %{"usageLimitContinuationOfRunId" => "r1"})
+          ]
+      )
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t5", {"thread", %{"pendingRuntimeRequest" => %{}}}}]}},
+                   1_000
+
+    assert Recovery.run() == []
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t5"))
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} =
+             StreamState.get(state, "runtime-request")["q1"]
+
+    assert %{"status" => "cancelled"} = StreamState.get(state, "turn-item")["turn-item:q1"]
+    # Asked after the user last wrote, so still the question the thread asks.
+    assert %{"status" => "pending"} = StreamState.get(state, "runtime-request")["q2"]
+    assert %{"status" => "waiting"} = StreamState.get(state, "turn-item")["turn-item:q2"]
+
+    assert {"thread", %{"pendingRuntimeRequest" => %{"id" => "q2"}}} =
+             HalC2.Shell.row(node(), "t5")
+  end
 end

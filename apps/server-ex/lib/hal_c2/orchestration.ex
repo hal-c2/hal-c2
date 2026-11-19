@@ -1366,7 +1366,58 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  defp resolve_message_request(state, request, status, answer) do
+  # Whether the user wrote `message` (a stored message, or a `message.dispatch` command):
+  # typed (`HalC2.Search.typed?/2`), and not one the MC sent as the user, such as the
+  # continuation after a usage limit.
+  defp user_wrote?(message, thread) do
+    HalC2.Search.typed?(Map.put_new(message, "role", "user"), thread) and
+      message["createdBy"] in [nil, :null, "user"] and
+      message["usageLimitContinuationOfRunId"] in [nil, :null]
+  end
+
+  # The changes that close the questions the agent asked in the background (answered with
+  # a message) still open from before the user wrote to the thread at `written` (unix ms,
+  # or `:now` for a message being sent). The agent reads what the user wrote, so that is
+  # the answer. They close as a dismissed question does, saying so (`closedBy`), never as
+  # answered with answers nobody gave.
+  defp close_written_over(state, written) do
+    for request <- StreamState.list(state, "runtime-request"),
+        request["status"] == "pending",
+        HalC2.Orchestration.TurnWriter.message_request?(request),
+        written == :now or asked_before?(request, written),
+        change <-
+          resolve_message_request(state, request, "cancelled", nil, %{"closedBy" => "message"}),
+        do: change
+  end
+
+  defp asked_before?(request, written) do
+    case HalC2.Projection.JS.epoch_ms(request["createdAt"]) do
+      asked when is_integer(asked) -> asked < written
+      nil -> false
+    end
+  end
+
+  @doc """
+  The changes that close what a message the user writes closes, for a thread whose
+  questions asked in the background stayed open while the user wrote to it, as they did
+  before a message closed them: those asked before the newest message the user wrote,
+  read from memory (a cold message is older than every hot one).
+  """
+  def close_stale_questions(state, thread_id) do
+    thread = StreamState.get(state, "thread")[thread_id] || %{}
+
+    written =
+      for message <- StreamState.list(state, "message"),
+          user_wrote?(message, thread),
+          ms = HalC2.Projection.JS.epoch_ms(message["createdAt"]),
+          is_integer(ms),
+          reduce: nil,
+          do: (latest -> max(latest || ms, ms))
+
+    if written, do: close_written_over(state, written), else: []
+  end
+
+  defp resolve_message_request(state, request, status, answer, closed \\ %{}) do
     at = Entities.now()
     item_status = if status == "resolved", do: "completed", else: "cancelled"
 
@@ -1374,6 +1425,7 @@ defmodule HalC2.Orchestration do
       upsert(state, "runtime-request", request["id"], fn request ->
         request
         |> Map.merge(%{"status" => status, "resolvedAt" => at})
+        |> Map.merge(closed)
         |> then(&if(answer, do: Map.put(&1, "answers", answer["answers"]), else: &1))
       end),
       upsert(state, "turn-item", question_item(request), fn
@@ -3153,7 +3205,14 @@ defmodule HalC2.Orchestration do
 
       {changes, {:ok, decided} = result} ->
         saved = if steered?(command, decided), do: steered_selection(state, thread_id, command)
-        {Enum.reject([woken(state, thread_id) | changes] ++ [saved], &is_nil/1), result}
+        # A steer closes them once its provider takes it (`steer_taken/2`); a message
+        # being sent now is no fork's copy, so it needs no thread to tell.
+        closed =
+          if user_wrote?(command, %{}) and not match?({:steer, _, _}, decided),
+            do: close_written_over(state, :now),
+            else: []
+
+        {Enum.reject([woken(state, thread_id) | changes] ++ [saved | closed], &is_nil/1), result}
 
       refused ->
         refused
@@ -3763,14 +3822,21 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # The steer the provider took answers the questions asked in the background, as any
+  # message the user writes does (`decide_dispatch/3`).
   defp steer_taken(state, message_id) do
+    message = StreamState.fetch(state, "message", message_id)
+
     taken =
       upsert(state, "message", message_id, fn
         nil -> nil
         message -> Map.delete(message, "steer")
       end)
 
-    {List.wrap(taken), :ok}
+    closed =
+      if message && user_wrote?(message, %{}), do: close_written_over(state, :now), else: []
+
+    {List.wrap(taken) ++ closed, :ok}
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,

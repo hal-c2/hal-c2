@@ -31,7 +31,9 @@ defmodule HalC2.OrchestrationPropTest do
   asked in ends however it ends, and expires at a restart, after which an answer hears
   the reason; one answered by message outlives both, and its answer reaches the agent
   as the user's message, steering the running turn or starting the next. A closed
-  question refuses an answer and a dismissal.
+  question refuses an answer and a dismissal. A message the user writes, an answer by
+  message too, closes the questions still open for a message (the agent reads it
+  instead); the MC's own message and a steer Codex refuses do not.
 
   A thread can hold a proposed plan, which a message to it or to the other thread
   implements (the composer's "Implement it" and "Implement in a new thread"): the plan
@@ -1404,6 +1406,18 @@ defmodule HalC2.OrchestrationPropTest do
     %{state | threads: threads}
   end
 
+  # The questions a message the user writes closes: those still open for a message. One
+  # the message answers is resolved already (`answered/4`).
+  defp close_written_over(thread) do
+    requests =
+      Map.new(thread.requests, fn
+        {rid, %{kind: :message, status: "pending"} = r} -> {rid, %{r | status: "cancelled"}}
+        other -> other
+      end)
+
+    %{thread | requests: requests}
+  end
+
   # A deleted thread's questions are all closed, those answered by message too.
   defp cancel_pending(requests),
     do:
@@ -1632,6 +1646,9 @@ defmodule HalC2.OrchestrationPropTest do
     # A message the user sends resumes a held queue; a restart, or the agent's own
     # result (`:notice`), does not. A steer into the running turn starts no run.
     by_user? = mode in [:queue, :limit, :auto]
+    # Any message the user writes, a restart too, answers the questions still open for
+    # a message, which close; the MC's own does not.
+    thread = if mode == :notice, do: thread, else: close_written_over(thread)
 
     cond do
       active == nil ->
