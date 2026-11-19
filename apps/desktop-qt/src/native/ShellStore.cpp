@@ -302,7 +302,13 @@ void ShellStore::removeMc(const QString& mc) {
   change.reset = true;
   // Its threads go with it, unless another MC serves the environment now
   // (an MC's name changes when it joins a cluster).
-  if (m_cache && !environmentId.isEmpty() && !servesEnvironment(environmentId)) m_cache->forgetEnvironment(environmentId);
+  if (environmentId.isEmpty() || servesEnvironment(environmentId)) return;
+  m_removed.insert(environmentId);
+  if (m_cache) m_cache->forgetEnvironment(environmentId);
+}
+
+bool ShellStore::environmentRemoved(const QString& environmentId) const {
+  return m_removed.contains(environmentId) && !servesEnvironment(environmentId);
 }
 
 void ShellStore::forgetThreads(const QSet<QString>& threads) {
@@ -427,6 +433,7 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
   entry.environment = environment;
+  m_removed.remove(entry.environmentId);
   ++m_roster;
   unsaved(mc);
 }

@@ -512,8 +512,9 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
     changed(engine);
 }
 
-/// Drops drafts whose thread now exists (promoted) or whose project is gone
-/// from an environment the shell still serves.
+/// Drops drafts whose thread now exists (promoted), whose environment was
+/// removed, or whose project is gone from an environment the shell still
+/// serves.
 fn reconcile(engine: &Engine) {
     if !store::with(engine, |s| s.synchronized()) {
         return;
@@ -537,6 +538,10 @@ fn reconcile(engine: &Engine) {
         for draft in kept(engine).drafts.borrow().iter() {
             if s.thread(&draft.thread_key()).is_some() {
                 promoted.push(draft.thread_key());
+            } else if s.environment_removed(&draft.environment_id) {
+                // Its machine left the cluster, whichever client removed it,
+                // and took the project with it.
+                orphaned.push(draft.id.clone());
             } else if s.serves_environment(&draft.environment_id)
                 && s.project(&format!("{}:{}", draft.environment_id, draft.project_id))
                     .is_none()

@@ -422,6 +422,10 @@ void DraftController::reconcile() {
   for (const Draft& draft : std::as_const(m_drafts)) {
     if (m_store->thread(draft.threadKey())) {
       promoted.append(draft.threadKey());
+    } else if (m_store->environmentRemoved(draft.environmentId)) {
+      // Its machine left the cluster, whichever client removed it, and took
+      // the project with it.
+      orphaned.append(draft.id);
     } else if (m_store->servesEnvironment(draft.environmentId) &&
                !m_store->project(draft.environmentId + QLatin1Char(':') + draft.projectId)) {
       // The project was removed, here or on another client.

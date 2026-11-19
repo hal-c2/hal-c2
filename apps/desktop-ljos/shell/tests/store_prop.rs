@@ -199,6 +199,7 @@ fn agrees(store: &ShellStore, machines: &[Machine]) -> Result<(), TestCaseError>
         let env = format!("env-{index}");
         prop_assert_eq!(store.mc_serving(&env), MCS[index]);
         prop_assert_eq!(store.environment_online(&env), machine.online);
+        prop_assert!(!store.environment_removed(&env));
         for (&(kind, id), &(n, _)) in &machine.rows {
             let row = match KINDS[kind] {
                 "thread" => store.thread_row(&format!("{env}:{}", row_id(kind, id))),
@@ -269,6 +270,11 @@ proptest! {
         store.apply(&snapshot(&machines, &store.have()));
         let mut epochs = 0;
         for op in ops {
+            // The machine leaving the cluster now, its rows with it.
+            let leaving = match op {
+                Op::Leave { mc } if machines[mc].listed => Some(mc),
+                _ => None,
+            };
             // What the MC sends now, if anything reaches the store.
             let sent: Vec<Frame> = match op {
                 Op::Put { mc, kind, id, n } => {
@@ -355,6 +361,11 @@ proptest! {
                 }
                 prop_assert!(store.synchronized());
                 agrees(&store, &machines)?;
+                // What the client kept for it goes too (drafts::reconcile).
+                if let Some(mc) = leaving {
+                    let env = format!("env-{mc}");
+                    prop_assert!(store.environment_removed(&env));
+                }
             }
         }
         if !connected {

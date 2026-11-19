@@ -161,6 +161,9 @@ pub struct ShellStore {
     mcs: BTreeMap<String, McRows>,
     /// The saved environments linked to ([`ShellStore::add_link`]).
     links: BTreeSet<String>,
+    /// The environments whose MC went with none left serving them, until one
+    /// serves them again ([`ShellStore::environment_removed`]).
+    removed: BTreeSet<String>,
     /// The links whose snapshot has come since the store last held another
     /// MC's rows: what they list stands, as the shell's own does once
     /// `synchronized`.
@@ -678,6 +681,7 @@ impl ShellStore {
         entry.environment_id = text(environment.get("environmentId"));
         entry.capabilities = object(environment.get("capabilities"));
         entry.environment = environment;
+        self.removed.remove(&entry.environment_id);
         self.roster += 1;
         self.unsaved(mc);
     }
@@ -773,12 +777,13 @@ impl ShellStore {
         };
         // Its threads go with it, unless another MC serves the environment
         // now (an MC's name changes when it joins a cluster).
-        if !environment_id.is_empty()
-            && !self.serves_environment(&environment_id)
-            && let Some(cache) = &self.cache
-        {
+        if environment_id.is_empty() || self.serves_environment(&environment_id) {
+            return;
+        }
+        if let Some(cache) = &self.cache {
             cache.forget_environment(&environment_id);
         }
+        self.removed.insert(environment_id);
     }
 
     /// Forgets the cached copies of `threads` (keys) that are no longer listed.
@@ -1049,6 +1054,13 @@ impl ShellStore {
     /// Whether an MC of the cluster serves this environment.
     pub fn serves_environment(&self, environment_id: &str) -> bool {
         self.serving(environment_id).is_some()
+    }
+
+    /// Whether the environment was removed: the MC that served it went,
+    /// taking its rows, and none serves it now. What the client kept for it
+    /// goes too.
+    pub fn environment_removed(&self, environment_id: &str) -> bool {
+        self.removed.contains(environment_id) && !self.serves_environment(environment_id)
     }
 
     /// Whether the MC whose row lists this thread is online; false while none

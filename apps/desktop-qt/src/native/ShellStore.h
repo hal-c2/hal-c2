@@ -105,6 +105,9 @@ public:
   bool supports(const QString& environmentId, const QString& capability) const;
   // Whether an MC of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
+  // Whether the environment was removed: the MC that served it went, taking
+  // its rows, and none serves it now. What the client kept for it goes too.
+  bool environmentRemoved(const QString& environmentId) const;
   // The environment the cluster's `mc` serves, empty until its descriptor arrives.
   QString environmentOf(const QString& mc) const { return m_mcs.value(mc).environmentId; }
   // Whether the MC whose row lists this thread ("environmentId:threadId") is
@@ -187,6 +190,9 @@ private:
   void hold(const cache::Shell& kept, const QString& origin);
 
   QHash<QString, Mc> m_mcs;
+  // The environments whose MC went with none left serving them, until one
+  // serves them again (environmentRemoved).
+  QSet<QString> m_removed;
   // threads() as of the rows held; unset once they change.
   mutable std::optional<QList<sidebar::Thread>> m_threads;
   McClient* m_client;
