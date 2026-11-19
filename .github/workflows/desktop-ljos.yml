@@ -141,9 +141,8 @@ jobs:
       # own CI installs the same two).
       - &packages
         name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh pkg-config libfontconfig1-dev libasound2-dev'
 
       # A cache here is 1 to 2 GB and a new Cargo.lock makes a new set of them,
       # against the repo's 10 GB: only main saves, and the rest restore from it.
@@ -239,8 +238,8 @@ jobs:
       # fonts-dejavu-core: the runner's text needs a font to lay out.
       # fonts-liberation: the theme test's fixed-pitch and proportional pair.
       - name: Install test packages
-        run: |
-          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh dbus mesa-vulkan-drivers fonts-dejavu-core fonts-liberation'
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -294,8 +293,8 @@ jobs:
       - *packages
 
       - name: Install test packages
-        run: |
-          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh dbus mesa-vulkan-drivers fonts-dejavu-core'
 
       - uses: Swatinem/rust-cache@v2
         with:
