@@ -96,6 +96,11 @@ pub struct Draft {
     /// The model and mode came with a new thread from the thread it was
     /// started on, not from a pick here; the next new thread replaces them.
     pub carried: bool,
+    /// The model alone came with that carry: a pick of anything else
+    /// (the interaction mode is the one that clears `carried`) leaves it
+    /// set, so the model still gives way where a project names the model
+    /// a new thread starts on (`drop_carried_models`).
+    pub model_carried: bool,
     /// The thread's selectionRevision the model pick was made against: it
     /// gives way to any change the thread takes after it but this client's
     /// own (`pick_own`, `Composer::next_pick`). None from an MC that counts
@@ -140,6 +145,7 @@ impl Draft {
     /// Drops the model pick, which the thread has moved past.
     pub fn drop_picks(&mut self) {
         self.model_selection = None;
+        self.model_carried = false;
         self.pick_base = None;
         self.pick_own.clear();
     }
@@ -624,6 +630,8 @@ pub fn load(engine: &Engine, path: Option<PathBuf>) {
                 .unwrap_or_default()
                 .to_owned();
             kept.carried = entry["carried"].as_bool().unwrap_or(false);
+            // Kept by an older build: `carried` then covered the model too.
+            kept.model_carried = entry["modelCarried"].as_bool().unwrap_or(kept.carried);
         }
         let mut unsent_images = Map::new();
         if let Some(images) = &images {
@@ -739,6 +747,9 @@ pub fn saved(engine: &Engine) -> bool {
             }
             if kept.carried {
                 entry.insert("carried".into(), json!(true));
+            }
+            if kept.model_carried {
+                entry.insert("modelCarried".into(), json!(true));
             }
             if !entry.is_empty() {
                 targets.insert(key.clone(), Json::Object(entry));

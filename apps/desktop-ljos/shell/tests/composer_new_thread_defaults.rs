@@ -123,9 +123,14 @@ fn start(cache: &Path) -> (Engine, Rc<FakeMc>) {
         .source(source)
         .build_engine();
     let mc = Rc::new(FakeMc::default());
+    // A config dir of the test's own, so this device's preferences
+    // (plan mode, say) have somewhere to be kept.
+    let config = cache.join("config");
+    std::fs::create_dir_all(&config).unwrap();
     let launch = Launch {
         mc_origin: Some(ORIGIN.into()),
         cache_dir: Some(cache.to_owned()),
+        config_dir: Some(config),
         ..Launch::default()
     };
     hal_c2_shell::start(&engine, &launch, mc.clone());
@@ -348,5 +353,97 @@ fn a_routed_draft_takes_the_launch_machines_defaults() {
     let state = composer(&engine);
     assert_eq!(state["selectedModel"], json!("claude-opus"), "{state}");
     assert_eq!(state["runtimeMode"], json!("approval-required"), "{state}");
+    store::flush(&engine);
+}
+
+#[test]
+fn a_carried_model_gives_way_after_a_plan_pick_when_routed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, mc) = start(dir.path());
+    // Two machines with the same project; only env-b's row names defaults.
+    let mut row_b = project_row(true);
+    row_b["title"] = json!("Shop (Studio)");
+    mc.send(
+        &engine,
+        "shell",
+        json!({
+            "t": "shell",
+            "mcs": [
+                {"mc": "mc-a", "environment": {"environmentId": "env-a", "capabilities": {}},
+                 "online": true, "epoch": "e1", "rev": 1},
+                {"mc": "mc-b", "environment": {"environmentId": "env-b", "label": "Studio", "capabilities": {}},
+                 "online": true, "epoch": "e1", "rev": 1},
+            ],
+            "rows": [
+                ["mc-a", "p1", "project", project_row(false)],
+                ["mc-b", "p1", "project", row_b],
+                ["mc-a", "t1", "thread", thread_row()],
+            ],
+        }),
+    );
+    mc.send(
+        &engine,
+        "config",
+        json!({"t": "config", "config": {"providers": providers()}}),
+    );
+    mc.answer(
+        &engine,
+        "hal-c2.readSettings",
+        json!({
+            "settings": {
+                "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"},
+                "defaultRuntimeMode": "full-access",
+            },
+            "version": 1,
+        }),
+    );
+    assert!(
+        hal_c2_shell::controllers::settings::Settings::of(&engine).write_device(
+            &engine,
+            "planModeEnabled",
+            json!(true)
+        ),
+        "plan mode is on for this device"
+    );
+
+    // The open thread's gpt-5 carries into its new thread.
+    Bridge::of(&engine).dispatch(&engine, "thread.open", json!({"key": "env-a:t1"}));
+    let draft = drafts::start_carrying(&engine, "env-a", "p1", true).expect("a draft");
+    let kept = kept::draft_of(&engine, &draft);
+    assert!(kept.carried && kept.model_carried, "{kept:?}");
+    assert_eq!(composer(&engine)["selectedModel"], json!("gpt-5"));
+
+    // Picking Plan mode picks the mode, not the carried model.
+    Bridge::of(&engine).dispatch(
+        &engine,
+        "composer.interactionMode.set",
+        json!({"mode": "plan"}),
+    );
+    let kept = kept::draft_of(&engine, &draft);
+    assert_eq!(kept.interaction_mode, "plan", "{kept:?}");
+    assert!(!kept.carried && kept.model_carried, "{kept:?}");
+    assert_eq!(composer(&engine)["selectedModel"], json!("gpt-5"));
+
+    // Routed to Studio, whose row names claude-opus: the carried model
+    // gives way and the Plan pick stays.
+    workspace::set_checkout(
+        &engine,
+        &draft,
+        Checkout {
+            environment_id: "env-b".into(),
+            project_id: "p1".into(),
+            manual: true,
+            ..Checkout::default()
+        },
+    );
+    let kept = kept::draft_of(&engine, &draft);
+    assert_eq!(kept.model_selection, None, "the carried model is dropped");
+    assert!(!kept.model_carried, "{kept:?}");
+    assert_eq!(kept.interaction_mode, "plan", "{kept:?}");
+    // The published mode reads "default" here only because this harness
+    // gives env-b no provider catalogue to offer Plan on; the pick the
+    // draft keeps (asserted above) is what a send there would carry.
+    let state = composer(&engine);
+    assert_eq!(state["selectedModel"], json!("claude-opus"), "{state}");
     store::flush(&engine);
 }

@@ -975,8 +975,10 @@ impl Composer {
             }
         }
         draft.carried = true;
+        draft.model_carried = draft.model_selection.is_some();
         if draft.interaction_mode == before.interaction_mode
             && draft.model_selection == before.model_selection
+            && draft.model_carried == before.model_carried
             && before.carried
         {
             return;
@@ -991,12 +993,13 @@ impl Composer {
     /// only a stand-in from before the row arrived (or before the draft
     /// was routed there), and the stored pick is what `selection` reads
     /// first, so it would keep shadowing the named default. A model the
-    /// user picked (`carried == false`) stays.
+    /// user picked (`model_carried == false`) stays; a pick of anything
+    /// else, the interaction mode say, does not make the model picked.
     fn drop_carried_models(&mut self, engine: &Engine) {
         let carried: Vec<String> = kept::read(engine, |d| {
             d.drafts
                 .iter()
-                .filter(|(_, kept)| kept.carried && kept.model_selection.is_some())
+                .filter(|(_, kept)| kept.model_carried && kept.model_selection.is_some())
                 .map(|(key, _)| key.clone())
                 .collect()
         });
@@ -1009,7 +1012,10 @@ impl Composer {
             if named_new_thread_selection(engine, &environment_id, &project_id).is_empty() {
                 continue;
             }
-            kept::edit_draft(engine, &key, |kept| kept.model_selection = None);
+            kept::edit_draft(engine, &key, |kept| {
+                kept.model_selection = None;
+                kept.model_carried = false;
+            });
             dropped = true;
         }
         if dropped {
