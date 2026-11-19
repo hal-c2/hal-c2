@@ -38,6 +38,9 @@ fn answer_import(mc: &mut FakeMc, rpc: &Rpc) {
     mc.reply(rpc, json!({"importedCount": 2, "skippedCount": 0}));
 }
 
+/// The whole window, as the built-in shell draws it.
+const SHELL: &str = "import HalC2.Bricks\nDefaultShell { width: 1200; height: 800 }\n";
+
 fn onboarding(world: &World) -> Value {
     world.state("onboarding")
 }
@@ -425,6 +428,55 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step("the user opens HAL-C2", |world, _, _| open_hal_c2(world));
+    steps.step("the user opens HAL-C2 in its window", |world, _, _| {
+        open_hal_c2(world)?;
+        crate::brick::Brick::show(world, SHELL, 1200.0, 800.0)
+    });
+    steps.step("the wizard covers the window", |world, _, _| {
+        let brick = crate::brick::shown(world)?;
+        world.wait_for_with(
+            move |w| {
+                brick
+                    .find_visible(w, "welcomeWizard")
+                    .is_ok_and(|f| f.is_some())
+                    && brick.shows(w, "Set up HAL-C2").unwrap_or(false)
+            },
+            |w| format!("the wizard; the gate is {}", show(&onboarding(w))),
+        )?;
+        let body = brick.item(world, "shellBody")?;
+        expect!(
+            !brick.flag(world, body, "visible"),
+            "the layout shows under the wizard"
+        );
+        Ok(())
+    });
+    steps.step(
+        "one set of window controls ends at the window's top right corner, over the wizard",
+        |world, _, _| {
+            let brick = crate::brick::shown(world)?;
+            let mut shown = Vec::new();
+            while let Some(item) = brick.find_visible_nth(world, "windowButtons", shown.len())? {
+                shown.push(item);
+            }
+            expect!(
+                shown.len() == 1,
+                "{} sets of window controls show",
+                shown.len()
+            );
+            let wizard = brick.item(world, "welcomeWizard")?;
+            expect!(
+                brick.find_in(world, wizard, "windowButtons")? == Some(shown[0]),
+                "the window controls that show are not the wizard's"
+            );
+            let (right, top) = brick.at(world, shown[0], 1.0, 0.0)?;
+            let (width, _) = brick.size(world);
+            expect!(
+                (width - 8.0..=width).contains(&right) && (0.0..=8.0).contains(&top),
+                "the window controls end at ({right}, {top}) in a window {width} wide"
+            );
+            Ok(())
+        },
+    );
     steps.step("the app opens without the wizard", |world, _, _| {
         app_opens(world)?;
         // Saved quietly, so the next start decides without the MC.

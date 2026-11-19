@@ -957,4 +957,18 @@ Item {
             }
         }
     }
+
+    // A frameless window's buttons. The wizard covers the layout that draws
+    // them (ShellWindow hides its body under the wizard), so it draws its own
+    // in the same corner, over its cover; macOS draws its own.
+    WindowControls {
+        objectName: "windowButtons"
+        visible: Theme.frameless && Qt.platform.os !== "osx"
+        window: wizard.Window.window
+        buttonWidth: 32
+        buttonHeight: 28
+        anchors.right: parent.right
+        anchors.rightMargin: 4
+        y: 4
+    }
 }
