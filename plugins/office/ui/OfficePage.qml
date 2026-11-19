@@ -2520,6 +2520,12 @@ Item {
             const from = page.actors[talk.from];
             if (!from || !page.actors[talk.to] || talk.from === talk.to)
                 continue;
+            // A speaker keeps at most three talks waiting. When they are full, a
+            // talk to someone inside takes the place of the oldest one to
+            // someone still outside the door.
+            const outside = from.queue.findIndex(t => page.actors[t.to]?.tx < 0);
+            if (from.queue.length >= 3 && outside >= 0 && !(page.actors[talk.to].tx < 0))
+                from.queue.splice(outside, 1);
             if (from.queue.length < 3)
                 from.queue.push(talk);
         }

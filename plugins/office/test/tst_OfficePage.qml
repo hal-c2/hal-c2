@@ -1094,6 +1094,28 @@ Item {
             page.occupied[door] = "";
         }
 
+        // Talks to people outside do not fill a speaker's queue so that a talk
+        // to someone inside is lost.
+        function test_talks_to_people_outside_never_crowd_out_one_inside() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const w = page.world;
+            const door = w.entrance[1] * w.cols + w.entrance[0];
+            page.occupied[door] = "someone";
+            const at = new Date().toISOString();
+            const talk = (id, to) => ({
+                    id: id,
+                    from: "t0",
+                    to: to,
+                    kind: "message",
+                    text: id,
+                    at: at
+                });
+            plugin.publish(many(8, "t", "working", "typing"), [talk("o1", "t4"), talk("o2", "t5"), talk("o3", "t6"), talk("in", "t1")]);
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while the others wait outside");
+            compare(actor("t0").talk.to, "t1");
+            page.occupied[door] = "";
+        }
+
         // Another machine's office starts with clean whiteboards.
         function test_another_machine_wipes_the_whiteboards() {
             plugin.publish([person("lead", "Lead", "working", "planning")]);
