@@ -457,6 +457,25 @@ Feature: Office
       Then the others keep their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer team out of a full corner seats its newcomers by its own desks
+      Given the review corner is full and a reviewer with a worker sits at the pod under it
+      And the pod beside the corner empties
+      When the reviewer delegates to another worker
+      Then the new worker sits at the pod under the corner with its team
+      And everyone else keeps their desks
+
+    # A worker can come in before the row of the reviewer that delegated to it, and is
+    # no reviewer until then. Seats already taken stay put, so nobody moves while they
+    # stay; the team sits split until the worker leaves.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A team that turns out to be reviewers keeps its seats on the floor
+      Given the office has 2 threads and a worker on the floor whose lead is not in yet
+      When its lead comes in as a reviewer, making the worker one too
+      Then the worker keeps its desk on the floor and the lead sits in the review corner
+      When the lead delegates to another worker
+      Then the new worker sits in the review corner with the lead
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Others sit in the review corner only when the floor is full
       Given the office has 40 threads
       Then none of them sits in the review corner

@@ -346,6 +346,56 @@ Item {
                 verify(page.world.seatOf[r.id] === seats[r.id], r.id + " keeps its seat when a corner desk frees up");
         }
 
+        // A reviewer team that did not fit in the full corner seats its
+        // newcomers next to its own desks on the floor, not at whichever pod
+        // is nearest the corner.
+        function test_a_reviewer_team_out_of_the_corner_seats_newcomers_by_its_desks() {
+            const team = (id, n) => [person(id, id, "working", "typing")].concat(many(n - 1, id + "w", "working", "typing", id));
+            const reviewers = [];
+            for (let i = 0; i < 8; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const s = n => [reviewer("s", "Review #20")].concat([0, 1, 2].slice(0, n - 1).map(i => reviewer("sw" + i, "Check " + i, "s")));
+            // Teams x and y fill pods 0 and 1, the reviewers the corner (pod
+            // 2), so s sits at pod 5, the one under the corner.
+            plugin.publish([].concat(team("x", 8), team("y", 8), reviewers, s(2)));
+            const review = corner();
+            compare(review, 2);
+            for (const r of reviewers)
+                compare(page.world.seatOf[r.id].pod, review, r.id + " sits in the corner");
+            const pod = page.world.seatOf["s"].pod;
+            compare(pod, 5, "s sits at the pod under the corner");
+            compare(page.world.seatOf["sw0"].pod, pod, "s's worker sits with it");
+            const seats = {};
+            for (const p of reviewers.concat(s(2)))
+                seats[p.id] = page.world.seatOf[p.id];
+            // Pod 1 empties; it is as near the corner as pod 5, and first.
+            plugin.publish([].concat(team("x", 8), reviewers, s(3)));
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            compare(page.world.seatOf["sw1"].pod, pod, "the newcomer sits by its team's desks");
+        }
+
+        // A team's kind can change once it is seated: a worker in the office
+        // before its reviewer lead is no reviewer until the lead's row comes.
+        // Seated members keep their seats, so nobody moves while they stay,
+        // and the team sits split: the worker on the floor, the lead and
+        // whoever joins it later in the corner.
+        function test_a_team_that_becomes_reviewers_keeps_its_seats() {
+            const worker = person("w", "Check tests", "working", "typing", "r");
+            plugin.publish(many(2, "t", "working", "typing").concat([worker]));
+            const review = corner();
+            const seat = page.world.seatOf["w"];
+            verify(seat.pod !== review, "the worker sits on the floor");
+            plugin.publish(many(2, "t", "working", "typing").concat([reviewer("r", "Review #12"), reviewer("w", "Check tests", "r")]));
+            verify(page.world.seatOf["w"] === seat, "the worker keeps its seat");
+            compare(page.world.seatOf["r"].pod, review, "the lead sits in the review corner");
+            runUntil(() => page.moves === 0, 3000, "the lead's desk is carried in");
+            plugin.publish(many(2, "t", "working", "typing").concat([reviewer("r", "Review #12"), reviewer("w", "Check tests", "r"), reviewer("w2", "Check docs", "r")]));
+            verify(page.world.seatOf["w"] === seat, "the worker still keeps its seat");
+            compare(page.world.seatOf["w2"].pod, review, "a newcomer sits with the lead");
+            compare(actor("w").goal?.kind, "desk", "the worker stays at its desk");
+        }
+
         // A reviewer plans at the review corner's whiteboard, anyone else at
         // the others.
         function test_reviewers_plan_at_the_review_whiteboard() {
