@@ -1603,6 +1603,40 @@ defmodule HalC2.Plugins do
       end
     end)
     |> sync()
+    |> release_instances()
+  end
+
+  # A plugin's provider instances (`HalC2.Plugins.Host.provider_instances/3`) last only
+  # while it is installed, on and granted `providers:configure`: once it is turned off,
+  # removed or updated to stop asking, they leave the settings document, and the plugin
+  # adds them again when it is back on. Every settings change comes back here, so one
+  # an instance's own save raced past is taken out by the next.
+  defp release_instances(state) do
+    keep =
+      for {id, plugin} <- state.plugins,
+          enabled?(plugin),
+          "providers:configure" in granted(id),
+          into: MapSet.new(),
+          do: id
+
+    gone? = fn instance_id ->
+      case HalC2.Plugins.Host.instance_owner(instance_id) do
+        {id, _name} -> not MapSet.member?(keep, id)
+        nil -> false
+      end
+    end
+
+    instances = HalC2.Settings.settings()["providerInstances"] || %{}
+
+    if not HalC2.Settings.unreadable?() and Enum.any?(Map.keys(instances), gone?) do
+      HalC2.Settings.update(fn settings ->
+        Map.update(settings, "providerInstances", %{}, fn all ->
+          Map.reject(all, fn {instance_id, _} -> gone?.(instance_id) end)
+        end)
+      end)
+    end
+
+    state
   end
 
   # The running provider adapters, by the driver they serve, for `provider/1`, and the

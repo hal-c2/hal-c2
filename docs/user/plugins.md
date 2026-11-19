@@ -122,6 +122,10 @@ What a running plugin adds reaches every app connected to that machine:
   The threads it starts from then on cannot be moved or exported, even once the
   plugin is off or removed. The ones it started before stay too, but only while
   the plugin is installed.
+- **Provider instances** appear in **Settings → Providers** when it asks to
+  **add provider instances of its own and keep them set up**, to route agents
+  through a proxy it runs, say. Rename, switch off or delete them like your own; it
+  reaches only the ones it added, and they leave while it is off or removed.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.

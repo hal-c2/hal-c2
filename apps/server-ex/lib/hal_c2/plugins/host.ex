@@ -111,6 +111,112 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  The provider instances plugin `id` added, each an ordinary `providerInstances` entry
+  of the settings document (`ProviderInstanceConfig`) under the instance id
+  `plugin_<id>_<name>`. That id is the mark of the plugin's: the plugin reaches only
+  instances under its own, and clients can tell whose an instance is from it. Needs
+  `providers:configure`.
+
+    * `"list"` → `%{"instances" => [%{"name", "instanceId", "instance"}]}`, sorted by
+      name, each entry as the document holds it (a sensitive variable's value is
+      sealed: `""` with `"valueRedacted": true`, which kept as it is in a `"put"`
+      keeps the stored value).
+    * `"put"` `%{"name", "instance"}` → `%{"instanceId"}`: adds the instance or
+      replaces it whole. A plugin that keeps what the user changed reads it first.
+    * `"remove"` `%{"name"}` → `%{"removed" => boolean}`.
+
+  A `name` is lowercase letters, digits and dashes. The instances last only while the
+  plugin is installed, on and granted `providers:configure`: the plugin host takes
+  them out of the document when it is turned off, removed, or updated to stop asking
+  (`HalC2.Plugins`), and the plugin adds them again once it is back on.
+  """
+  def provider_instances(id, "list", _input) do
+    with :ok <- permit(id, "providers:configure") do
+      instances =
+        for {instance_id, %{} = instance} <-
+              Enum.sort(HalC2.Settings.settings()["providerInstances"] || %{}),
+            {^id, name} <- [instance_owner(instance_id)],
+            do: %{"name" => name, "instanceId" => instance_id, "instance" => instance}
+
+      {:ok, %{"instances" => instances}}
+    end
+  end
+
+  def provider_instances(id, "put", %{"name" => name, "instance" => %{} = instance}) do
+    with :ok <- permit(id, "providers:configure"),
+         {:ok, instance_id} <- instance_id(id, name),
+         :ok <- driver(instance),
+         put =
+           &Map.put(
+             &1,
+             "providerInstances",
+             Map.put(&1["providerInstances"] || %{}, instance_id, instance)
+           ),
+         :ok <- valid(HalC2.Settings.validate(put.(HalC2.Settings.settings()))),
+         :ok <- saved(HalC2.Settings.update(put)),
+         do: {:ok, %{"instanceId" => instance_id}}
+  end
+
+  def provider_instances(id, "remove", %{"name" => name}) do
+    with :ok <- permit(id, "providers:configure"),
+         {:ok, instance_id} <- instance_id(id, name) do
+      if Map.has_key?(HalC2.Settings.settings()["providerInstances"] || %{}, instance_id) do
+        drop =
+          &Map.update(&1, "providerInstances", %{}, fn all -> Map.delete(all, instance_id) end)
+
+        with :ok <- saved(HalC2.Settings.update(drop)), do: {:ok, %{"removed" => true}}
+      else
+        {:ok, %{"removed" => false}}
+      end
+    end
+  end
+
+  def provider_instances(_id, method, _input),
+    do: {:error, "providerInstances has no method #{inspect(method)} taking that input."}
+
+  @doc """
+  `{plugin_id, name}` for a provider instance id a plugin added
+  (`provider_instances/3`), or nil for any other.
+  """
+  def instance_owner("plugin_" <> rest) do
+    case Regex.run(~r/^([a-z][a-z0-9-]*)_([a-z0-9][a-z0-9-]*)$/, rest) do
+      [_, id, name] -> {id, name}
+      nil -> nil
+    end
+  end
+
+  def instance_owner(_instance_id), do: nil
+
+  # Instance ids are slugs of at most 64 characters (`ProviderInstanceId`).
+  defp instance_id(id, name) when is_binary(name) do
+    instance_id = "plugin_#{id}_#{name}"
+
+    if name =~ ~r/^[a-z0-9][a-z0-9-]*$/ and String.length(instance_id) <= 64,
+      do: {:ok, instance_id},
+      else:
+        {:error,
+         "#{inspect(name)} cannot name a provider instance: use lowercase letters, digits and dashes, and keep plugin_#{id}_<name> to 64 characters."}
+  end
+
+  defp instance_id(_id, name), do: {:error, "#{inspect(name)} cannot name a provider instance."}
+
+  defp driver(%{"driver" => driver}) when is_binary(driver) do
+    if driver =~ ~r/^[a-zA-Z][a-zA-Z0-9_-]*$/,
+      do: :ok,
+      else: {:error, "#{inspect(driver)} is not a provider driver."}
+  end
+
+  defp driver(_instance), do: {:error, "A provider instance names its driver (\"driver\")."}
+
+  defp valid(:ok), do: :ok
+  defp valid({:error, %{"message" => message}}), do: {:error, message}
+
+  # Without a running settings server `HalC2.Settings.update/1` edits the file and says `:ok`.
+  defp saved({:ok, _version}), do: :ok
+  defp saved(:ok), do: :ok
+  defp saved({:error, message}), do: {:error, message}
+
+  @doc """
   `pullRequests.<method>` as a client calls it (`HalC2.PullRequests.handle/2`), and on
   Forgejo the reads and the review post a reviewer needs
   (`HalC2.PullRequests.plugin_handle/2`).
