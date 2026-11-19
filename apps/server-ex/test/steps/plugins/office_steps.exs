@@ -92,8 +92,78 @@ defmodule HalC2.Steps.Plugins.Office do
     context
     |> thread(old)
     |> thread(recent)
-    |> quiet(old, hours * 3_600_000)
-    |> quiet(recent, 60_000)
+    |> idle_for(old, hours * 3_600_000)
+    |> idle_for(recent, 60_000)
+  end
+
+  # What `HalC2.Orchestration.IdleSessions` does to a session idle half an hour: an event
+  # on the thread's stream, which moves its row's `updatedAt` and nothing else. The
+  # thread made after is the receipt: the office hears rows in order, so the office that
+  # has it has heard the session stop.
+  step ~r/^the agent session of "(?<old>[^"]+)" is stopped for sitting idle, and then a thread "(?<new>[^"]+)" is made$/,
+       %{args: [old, new]} = context do
+    id = World.thread_id(context, old)
+    session = "provider-session:codex:" <> id
+
+    context
+    |> World.put_entity(old, "provider-session", session, %{
+      "s" => %{
+        "id" => session,
+        "threadId" => id,
+        "providerInstanceId" => "codex",
+        "status" => "stopped",
+        "updatedAt" => now()
+      }
+    })
+    |> thread(new)
+  end
+
+  # A thread moved here from another machine of the cluster: a row the office has not
+  # seen, changed as it arrived, whose last run ended long before. The thread made after
+  # is the receipt, as above.
+  step ~r/^a thread "(?<title>[^"]+)" whose last turn ended (?<hours>\d+) hours ago comes to this machine, and then a thread "(?<new>[^"]+)" is made$/,
+       %{args: [title, hours, new]} = context do
+    id = "moved-#{System.unique_integer([:positive])}"
+    hours = String.to_integer(hours)
+
+    row = %{
+      "id" => id,
+      "title" => title,
+      "projectId" => World.project(context, @project).id,
+      "status" => "completed",
+      "createdAt" => World.iso_from_now(-(hours + 1) * 3_600_000),
+      "updatedAt" => now(),
+      "latestRunCompletedAt" => World.iso_from_now(-hours * 3_600_000),
+      "deletedAt" => nil,
+      "archivedAt" => nil,
+      "pendingBackgroundTasks" => []
+    }
+
+    HalC2.Shell.put_row(id, {"thread", row})
+    World.await_row(id, &(&1["title"] == title))
+    thread(context, new)
+  end
+
+  # Put away after it has left for sitting idle. The thread made after is the receipt that
+  # the office has heard it put away, so bringing it back is a change of its own.
+  step ~r/^a thread "(?<title>[^"]+)" idle for (?<hours>\d+) hours that is (?<how>archived|settled)$/,
+       %{args: [title, hours, how]} = context do
+    context
+    |> thread(title)
+    |> idle_for(title, String.to_integer(hours) * 3_600_000)
+    |> put_away(title, how)
+    |> thread("After " <> title)
+    |> await_person("After " <> title, &(&1["state"] == "idle"))
+  end
+
+  step ~r/^the user (?<how>unarchives|unsettles) "(?<title>[^"]+)"$/,
+       %{args: [how, title]} = context do
+    patch =
+      if how == "unarchives",
+        do: %{"archivedAt" => nil},
+        else: %{"settledOverride" => "active"}
+
+    World.patch_thread(context, title, patch)
   end
 
   step "a thread {string} moved to another machine", %{args: [title]} = context do
@@ -448,6 +518,11 @@ defmodule HalC2.Steps.Plugins.Office do
     Map.merge(context, %{thread: lead, lead: lead, worker: title})
   end
 
+  defp put_away(context, title, "archived"),
+    do: World.patch_thread(context, title, %{"archivedAt" => now()})
+
+  defp put_away(context, title, "settled"), do: settle(context, title)
+
   defp settle(context, title),
     do:
       World.patch_thread(context, title, %{"settledAt" => now(), "settledOverride" => "settled"})
@@ -486,14 +561,19 @@ defmodule HalC2.Steps.Plugins.Office do
     |> Map.put(:request, request)
   end
 
-  # Sets a thread's row to have last changed `ms` ago, as a thread quiet that long shows.
-  defp quiet(context, title, ms) do
+  # A thread the office has seen idle `ms` ago, as if that long had passed since: its
+  # idleness began then, and the office looks again, as its timer would.
+  defp idle_for(context, title, ms) do
     id = World.thread_id(context, title)
-    :ok = HalC2.Streams.flush_shell(id)
     at = World.iso_from_now(-ms)
-    row = World.row(context, title)
-    HalC2.Shell.put_row(id, {"thread", %{row | "updatedAt" => at, "createdAt" => at}})
-    World.await_row(id, &(&1["updatedAt"] == at))
+    office = Process.whereis(HalC2Plugins.Office)
+
+    :sys.replace_state(office, fn state ->
+      {"idle", _since} = state.floor.states[id]
+      %{state | floor: %{state.floor | states: Map.put(state.floor.states, id, {"idle", at})}}
+    end)
+
+    send(office, :expire)
     context
   end
 

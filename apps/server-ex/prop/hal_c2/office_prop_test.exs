@@ -11,11 +11,17 @@ defmodule HalC2.OfficePropTest do
     long idle one only while it works, asks or waits; a worker whose parent left, or
     has no row, only while it works or waits), asking first, then working, waiting and
     the rest, newest first, no more than `maxPeople`;
-  - each is in its row's state, shows what its agent last did only while working,
-    and has a question exactly while asking;
+  - an idle or failed thread is long idle `idleHours` after it became so: when its row
+    first said its run ended, when the office saw it change state, or when a later run
+    ended, or when it was unarchived or made active again; a row touched without
+    changing its state (`touch`) is no less quiet;
+  - each is in its row's state since that time, shows what its agent last did only
+    while working, and has a question exactly while asking;
   - each is a reviewer exactly when code-review started its thread to review, or one
     of its parents, however far up and wherever they are, was (a lineage that loops
     included);
+  - the next change it names is the first of those: an idle thread in it going long
+    idle, or a talk growing too old;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
     keeps its place, time, who said it to whom and its kind), those under ten minutes
     old, each from, to and of the kind it was said; once the timer fires, the office
@@ -37,6 +43,9 @@ defmodule HalC2.OfficePropTest do
   @start 1_800_000_000_000
   @talk_ms 600_000
   @born_ms 120_000
+  # How long before its row last changed a row's run ended, for the states that ran.
+  @ran_ms 600_000
+  @put_away [:archived, :settled]
   @ranks %{"asking" => 0, "working" => 1, "waiting" => 2, "idle" => 3, "failed" => 3}
   @tools %{
     "Read" => "reading",
@@ -86,7 +95,12 @@ defmodule HalC2.OfficePropTest do
         elements([1, 0.5, 1.0e-7, 24])
       ])
 
-  defp put_idle(floor, at), do: Floor.load(floor, [row("t1", "idle", :none, nil, at)], at)
+  # Its run ended `at`, so a deadline of a few milliseconds is still ahead.
+  defp put_idle(floor, at) do
+    row = %{row("t1", "idle", :none, nil, at) | "latestRunCompletedAt" => Floor.iso(at)}
+    Floor.load(floor, [row], at)
+  end
+
   defp in_office?(floor, now), do: Floor.view(floor, now)["people"] != []
 
   def initial_state,
@@ -100,18 +114,12 @@ defmodule HalC2.OfficePropTest do
       talks: []
     }
 
-  def command(_state) do
+  def command(s) do
     oneof([
-      {:call, __MODULE__, :put_row,
-       [
-         elements(@ids),
-         elements(~w(asking working waiting failed idle)),
-         elements([:none, :archived, :moved, :settled, :unsettled]),
-         elements([nil, "t1", "t2"]),
-         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000]),
-         elements([nil, :review, :other])
-       ]},
+      put_row(elements(@ids), elements(~w(asking working waiting failed idle))),
+      again(s),
       {:call, __MODULE__, :delete_row, [elements(@ids)]},
+      {:call, __MODULE__, :touch, [quiet_id(s)]},
       {:call, __MODULE__, :start_turn, [elements(@ids)]},
       {:call, __MODULE__, :call_tool, [elements(@ids), elements(Map.keys(@tools))]},
       {:call, __MODULE__, :say, [elements(@ids), elements(["Done.\nAll green.", "  ", "Fixed"])]},
@@ -123,6 +131,38 @@ defmodule HalC2.OfficePropTest do
     ])
   end
 
+  defp put_row(id, state, mark \\ elements([nil, :review, :other])),
+    do:
+      {:call, __MODULE__, :put_row,
+       [
+         id,
+         state,
+         elements([:none, :archived, :moved, :settled, :unsettled]),
+         elements([nil, "t1", "t2"]),
+         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000]),
+         mark
+       ]}
+
+  # A row the office has, changed without changing its state: archived, settled or
+  # back, or a later run ended. Mostly an idle or failed one, whose quiet time is what
+  # such a change moves or must not move.
+  defp again(s) do
+    case for {id, %{state: state, mark: mark}} <- s.rows,
+             do: {state in ~w(idle failed), put_row(id, state, mark)} do
+      [] -> put_row(elements(@ids), elements(~w(failed idle)))
+      rows -> frequency(for {quiet?, call} <- rows, do: {if(quiet?, do: 4, else: 1), call})
+    end
+  end
+
+  # Mostly a thread idle or failed now: touched long after it went idle, it is still as
+  # quiet as it was.
+  defp quiet_id(s) do
+    case for {id, %{state: state}} <- s.rows, state in ~w(idle failed), do: id do
+      [] -> elements(@ids)
+      quiet -> frequency([{4, elements(quiet)}, {1, elements(@ids)}])
+    end
+  end
+
   def precondition(_state, _call), do: true
 
   # --- the system: the floor and the time, in the case's process ----------------------
@@ -130,6 +170,19 @@ defmodule HalC2.OfficePropTest do
   def put_row(id, state, flag, parent, age, mark) do
     now = Process.get(:now)
     step(&Floor.rows(&1, [row(id, state, flag, parent, now - age, mark)], now))
+  end
+
+  # The row changed now and nothing it says of its state did: a provider session
+  # stopped for sitting idle, say.
+  def touch(id) do
+    now = Process.get(:now)
+
+    step(fn floor ->
+      case floor.rows[id] do
+        nil -> floor
+        row -> Floor.rows(floor, [%{row | "updatedAt" => Floor.iso(now)}], now)
+      end
+    end)
   end
 
   def delete_row(id) do
@@ -186,9 +239,10 @@ defmodule HalC2.OfficePropTest do
   defp event(event), do: step(&Floor.observe(&1, event, Process.get(:now)))
 
   defp step(fun) do
+    now = Process.get(:now)
     floor = fun.(Process.get(:floor))
     Process.put(:floor, floor)
-    Floor.view(floor, Process.get(:now))
+    floor |> Floor.view(now) |> Map.put("next", Floor.next_change(floor, now))
   end
 
   defp item(id, tool) when tool in ["mix test", "ls -la"],
@@ -219,6 +273,7 @@ defmodule HalC2.OfficePropTest do
   end
 
   defp row(id, state, flag, parent, at, mark \\ nil) do
+    ran = if state in ~w(waiting idle failed), do: Floor.iso(at - @ran_ms)
     at = Floor.iso(at)
 
     %{
@@ -236,6 +291,7 @@ defmodule HalC2.OfficePropTest do
       "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
       "createdAt" => at,
       "updatedAt" => at,
+      "latestRunCompletedAt" => ran,
       "deletedAt" => nil,
       "archivedAt" => if(flag == :archived, do: at),
       "movedTo" => if(flag == :moved, do: %{"mc" => "elsewhere"}),
@@ -264,7 +320,30 @@ defmodule HalC2.OfficePropTest do
 
   def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age, mark]}) do
     parent = if parent != id, do: parent
-    entry = %{state: state, flag: flag, parent: parent, at: s.now - age, review: mark == :review}
+    at = s.now - age
+    ran = if state in ~w(waiting idle failed), do: at - @ran_ms
+
+    since =
+      case s.rows[id] do
+        nil ->
+          ran || at
+
+        # Unarchived or made active again: back for `idleHours` more.
+        %{state: ^state, flag: old}
+        when state in ~w(idle failed) and old in @put_away and flag not in @put_away ->
+          s.now
+
+        %{state: ^state, since: since} when state in ~w(idle failed) ->
+          max(since, ran)
+
+        %{state: ^state, since: since} ->
+          since
+
+        _ ->
+          s.now
+      end
+
+    entry = %{state: state, flag: flag, parent: parent, at: at, since: since, mark: mark}
 
     s =
       if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
@@ -272,6 +351,13 @@ defmodule HalC2.OfficePropTest do
         else: s
 
     put_in(s, [:rows, id], entry)
+  end
+
+  def next_state(s, _result, {:call, _, :touch, [id]}) do
+    case s.rows[id] do
+      nil -> s
+      _ -> put_in(s, [:rows, id, :at], s.now)
+    end
   end
 
   def next_state(s, _result, {:call, _, :delete_row, [id]}) do
@@ -354,7 +440,22 @@ defmodule HalC2.OfficePropTest do
       Enum.all?(Enum.zip(view["people"], expected), &person?(s, &1)) and
       Enum.map(view["talks"], &talk/1) ==
         Enum.map(talks, &{&1.id, &1.from, &1.to, &1.kind, &1.text, &1.at}) and
-      kept?(call, view, talks)
+      view["next"] == next_change(s, talks) and kept?(call, view, talks)
+  end
+
+  # The next time the office changes by itself: an idle thread in it goes long idle, or
+  # its oldest talk grows too old.
+  defp next_change(s, talks) do
+    idle =
+      for {id, r} <- s.rows,
+          r.state in ~w(idle failed),
+          here?(s, id, []),
+          do: r.since + ceil(s.idle_hours * 3_600_000)
+
+    case Enum.filter(idle ++ Enum.map(talks, &(&1.at + @talk_ms)), &(&1 > s.now)) do
+      [] -> nil
+      times -> Enum.min(times)
+    end
   end
 
   defp talk(t), do: {t["id"], t["from"], t["to"], t["kind"], t["text"], Floor.ms(t["at"])}
@@ -373,7 +474,7 @@ defmodule HalC2.OfficePropTest do
   defp reviewer?(s, id, seen) do
     case s.rows[id] do
       nil -> false
-      r -> r.review or (id not in seen and reviewer?(s, r.parent, [id | seen]))
+      r -> r.mark == :review or (id not in seen and reviewer?(s, r.parent, [id | seen]))
     end
   end
 
@@ -389,15 +490,16 @@ defmodule HalC2.OfficePropTest do
          ((r.parent == nil or r.parent in seen or
              (Map.has_key?(s.rows, r.parent) and here?(s, r.parent, seen))) and
             (r.state == "asking" or
-               (r.flag != :settled and s.now - r.at < s.idle_hours * 3_600_000))))
+               (r.flag != :settled and s.now - r.since < s.idle_hours * 3_600_000))))
   end
 
   defp person?(s, {person, {id, r}}) do
     person["state"] == r.state and person["parentId"] == r.parent and
+      Floor.ms(person["since"]) == r.since and
       person["activity"] == if(r.state == "working", do: s.activity[id]) and
       person["question"] != nil == (r.state == "asking") and
       person["kind"] == if(reviewer?(s, id, []), do: "reviewer") and
-      person["provider"] in ["claudeAgent", "codex"] and is_binary(person["since"]) and
+      person["provider"] in ["claudeAgent", "codex"] and
       person["project"] == "api" and person["model"] == "gpt-5.4"
   end
 end

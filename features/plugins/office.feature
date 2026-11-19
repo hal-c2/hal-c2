@@ -157,6 +157,31 @@ Feature: Office
       Then the office has "Recent" and not "Old"
 
     @mc
+    Scenario: A thread idle for longer than the office keeps idle threads has left, even if its row changed since
+      Given the office plugin keeps idle threads for 1 hour
+      And a thread "Old" idle for 2 hours and a thread "Recent" idle for a minute
+      When the agent session of "Old" is stopped for sitting idle, and then a thread "New" is made
+      Then the office has "New" and "Recent" and not "Old"
+
+    @mc
+    Scenario: A thread that comes to this machine long idle is not in the office
+      Given the office plugin keeps idle threads for 1 hour
+      When a thread "Moved in" whose last turn ended 2 hours ago comes to this machine, and then a thread "New" is made
+      Then the office has "New" and not "Moved in"
+
+    @mc
+    Scenario Outline: A long-idle thread brought back is in the office for as long again
+      Given the office plugin keeps idle threads for 1 hour
+      And a thread "Old" idle for 2 hours that is <put away>
+      When the user <brings back> "Old"
+      Then the office has "Old" idle
+
+      Examples:
+        | put away | brings back |
+        | archived | unarchives  |
+        | settled  | unsettles   |
+
+    @mc
     Scenario: A renamed project is renamed in the office
       Given a thread "Fix the parser" in the project "api"
       When the project "api" is renamed "billing"
