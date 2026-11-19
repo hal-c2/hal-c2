@@ -33,6 +33,10 @@ Item {
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
 
+    // A host that does not stretch the page gives it this size.
+    implicitWidth: 900
+    implicitHeight: 600
+
     property bool applicationActive: Qt.application.state === Qt.ApplicationActive
     property int actorCount: 0
     readonly property bool animating: visible && applicationActive && actorCount > 0

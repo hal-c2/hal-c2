@@ -190,6 +190,31 @@ Item {
             compare(people.map(p => JSON.stringify(actor(p.id).look)), looks);
         }
 
+        // A host that makes the page without giving it a size still shows the
+        // office, with the zoom buttons beside the summary, not over it.
+        function test_a_page_given_no_size_shows_the_office() {
+            const made = Qt.createComponent(Qt.resolvedUrl("../ui/OfficePage.qml")).createObject(test, {
+                plugin: plugin
+            });
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => made.worldCols > 0);
+            wait(50);
+            const summary = findChild(made, "officeSummary");
+            const scroller = findChild(made, "officeScroller");
+            const row = summary.parent;
+            let buttons = 0;
+            for (let i = 0; i < row.children.length; i++) {
+                const button = row.children[i];
+                if (button === summary || !button.visible)
+                    continue;
+                verify(button.x >= summary.x + summary.implicitWidth, "a zoom button sits clear of the summary");
+                buttons++;
+            }
+            compare(buttons, 2);
+            verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
+            made.destroy();
+        }
+
         function test_some_workers_are_cats_and_dogs() {
             const lead = person("lead", "Lead", "working", "typing");
             const workers = many(20, "w", "working", "typing", "lead");
