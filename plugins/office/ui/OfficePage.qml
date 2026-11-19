@@ -1374,12 +1374,13 @@ Item {
             for (let i = 0; i < team.length; i += size)
                 chunks.push(team.slice(i, i + size));
         }
-        // A chunk's pod is where its first seated member sat.
+        // Everyone seated keeps their seat, wherever it is; a chunk's pod is
+        // where its first seated member sat.
         const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
-        chunks.forEach((chunk, c) => {
+        chunks.forEach(chunk => {
             for (const id of chunk) {
                 const seat = before[id];
-                if (seat && seat.pod === homes[c] && !taken[seat.index]) {
+                if (seat && !taken[seat.index]) {
                     taken[seat.index] = id;
                     seatOf[id] = seat;
                 }

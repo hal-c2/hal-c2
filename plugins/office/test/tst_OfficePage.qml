@@ -314,6 +314,11 @@ Item {
                 verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
             verify(page.world.seatOf["aw6"].pod !== pod, "the newcomer sits at another pod");
             compare(page.jobs.length, 1, "one desk comes in");
+            // Someone who sat down at another pod keeps that seat too.
+            const aside = page.world.seatOf["aw6"];
+            plugin.publish([person("x", "X", "working", "typing"), person("y", "Y", "working", "typing")].concat(team(7)));
+            verify(page.world.seatOf["aw6"] === aside, "aw6 keeps its seat");
+            verify(page.world.seatOf["y"] !== aside, "Y sits elsewhere");
         }
 
         // The office holds 48 desks whoever is in it; anyone past that takes
