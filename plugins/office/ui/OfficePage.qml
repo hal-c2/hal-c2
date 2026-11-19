@@ -2627,7 +2627,7 @@ Item {
                 actor.waitingFor = there;
                 // Two people walking into each other would both step around the
                 // same way and meet again, so only the first by id gives way.
-                const other = page.actors[there];
+                const other = page.actors[there] ?? page.movers[there];
                 const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
                 const yields = !headOn || actor.id < other.id;
                 if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
