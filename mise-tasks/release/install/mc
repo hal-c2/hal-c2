@@ -5,6 +5,10 @@
 set -euo pipefail
 
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
-# The single file, beside its .sha256 and its .tar.gz bundle.
-mc="$(find release -maxdepth 1 -name "hal-c2-mc-$version-*" ! -name '*.sha256' ! -name '*.tar.gz')"
+# The single file, beside its .sha256 and its .tar.gz bundle, named for the platform
+# the release's manifest gives (mix hal_c2.bundle names it so).
+platform="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platform' \
+  "apps/server-ex/_build/prod/rel/hal_c2/releases/$version/upgrade.json")"
+mc="release/hal-c2-mc-$version-$platform"
+[[ -x $mc ]] || { echo "release:install:mc: no $mc to install" >&2; exit 1; }
 "$mc" install

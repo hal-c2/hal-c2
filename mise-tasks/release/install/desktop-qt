@@ -30,11 +30,14 @@ cp "release/hal-c2-qt-$version-linux-x64.AppImage" "$bin.new"
 mv "$bin.new" "$bin"
 cp assets/prod/black-universal-1024.png "$icons/hal-c2.png"
 # Named after the shell's app id (hal-c2), so the compositor matches its windows to the entry.
+# Quoted and escaped as a desktop entry's Exec wants (a space in HOME splits it otherwise):
+# \ " ` $ take a backslash inside the quotes, the file doubles every backslash, % is %%.
+exec="\"$(printf '%s' "$bin" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g')\""
 cat >"$data/applications/hal-c2.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=HAL-C2
-Exec=$bin
+Exec=$exec
 Icon=hal-c2
 Categories=Development;
 StartupWMClass=hal-c2

@@ -87,6 +87,7 @@ else
   codesign --force --deep --sign - "$out/HAL-C2 Ljós.app"
 fi
 
-# Fails when what it was given does not compile, read from where the release has it.
-"$bin/hal-c2-ljos" --check
+# Fails when what it was given does not compile, read from where the release has it
+# (HAL_C2_QML_DIR would name another tree).
+env -u HAL_C2_QML_DIR "$bin/hal-c2-ljos" --check
 echo "$out"
