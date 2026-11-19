@@ -2667,11 +2667,6 @@ Item {
         page.walking = page.jobs.length > 0 || page.outside.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
-    function freeSides(actor) {
-        const W = page.world.cols;
-        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-    }
-
     // The walkable tiles beside a person that nobody holds.
     function freeSides(actor) {
         const W = page.world.cols;
