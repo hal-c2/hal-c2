@@ -34,6 +34,8 @@ it is doing; click it or press Return to open the thread.
 - **Most people in the office**: threads asking you something come first, then
   working, waiting and idle ones.
 - **Keep idle threads for (hours)**: an idle thread leaves once it has been
-  quiet this long. Archived and settled threads leave at once.
+  quiet this long. Archived and settled threads leave at once. Workers leave
+  with the thread that delegated to them, unless they are still working or
+  waiting on work of their own.
 
 The page stands still while it is hidden or the app is in the background.

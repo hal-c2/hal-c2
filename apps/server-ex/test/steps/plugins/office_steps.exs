@@ -110,6 +110,24 @@ defmodule HalC2.Steps.Plugins.Office do
     |> worker(lead, worker)
   end
 
+  step "a thread {string} with a worker {string}, a working worker {string} and an asking worker {string}",
+       %{args: [lead, idle, busy, asks]} = context do
+    context
+    |> thread(lead)
+    |> worker(lead, idle)
+    |> worker(lead, busy)
+    |> start_turn(busy)
+    |> worker(lead, asks)
+    |> start_turn(asks)
+    |> ask(asks)
+    |> await_person(busy, &(&1["state"] == "working"))
+    |> await_person(asks, &(&1["state"] == "asking"))
+  end
+
+  step "the worker {string} has a worker {string}", %{args: [parent, title]} = context do
+    worker(context, parent, title)
+  end
+
   step ~r/^"(?<a>[^"]+)" is archived, "(?<b>[^"]+)" is deleted and "(?<c>[^"]+)" is settled$/,
        %{args: [archived, deleted, settled]} = context do
     context
@@ -321,6 +339,10 @@ defmodule HalC2.Steps.Plugins.Office do
   step "the office has {string} and {string} and not {string}",
        %{args: [a, b, gone]} = context do
     await_people(context, &(Enum.sort(&1) == Enum.sort([a, b]) and gone not in &1))
+  end
+
+  step "the office has {string} and {string}", %{args: [a, b]} = context do
+    await_people(context, &(a in &1 and b in &1))
   end
 
   step "the office has {string} and not {string}", %{args: [kept, gone]} = context do
