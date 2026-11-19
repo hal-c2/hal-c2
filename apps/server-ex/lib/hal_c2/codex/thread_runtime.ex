@@ -1188,7 +1188,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         ),
         # Codex answering `turn/start` took the prompt.
         confirmed(stream, ids)
-      ]
+      ] ++ Orchestration.run_taken(stream, ids.run)
     end)
     |> case do
       :ok ->
@@ -3216,7 +3216,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           ids.thread,
           &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
         )
-      ]
+      ] ++ Orchestration.run_taken(stream, ids.run)
     end)
     |> case do
       :ok ->

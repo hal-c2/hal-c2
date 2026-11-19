@@ -269,6 +269,14 @@ Feature: Approvals, questions and plans
     When the running turn of "t1" completes
     Then the question is still pending
 
+  # Codex answering `turn/start` with an error: the agent never got the message.
+  @mc
+  Scenario: A queued message Codex refuses to start leaves the question open
+    Given the provider asked a question the user can answer with a message
+    And the user queued "refuse to start" behind the running turn of "t1"
+    When the running turn of "t1" completes and Codex refuses to start the next
+    Then the question is still pending
+
   @mc @priority-high
   Scenario: Cancelling a queued message leaves the question open
     Given the provider asked a question the user can answer with a message

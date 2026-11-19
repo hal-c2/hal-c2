@@ -594,6 +594,13 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  step "the running turn of {string} completes and Codex refuses to start the next",
+       %{args: [thread]} = context do
+    World.complete_codex_turn(context, thread)
+    World.await_runs(context, thread, ["completed", "failed"])
+    context
+  end
+
   step "the user cancels the queued message", context do
     context =
       World.command(context, %{
@@ -984,7 +991,9 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
   end
 
   # Closed as a dismissed question is, saying the message closed it, with no answers.
+  # The message closes it once its provider takes the run, after the dispatch returns.
   defp assert_closed_by_message(context) do
+    await_request(context, &(&1["status"] == "cancelled"))
     request = request(context, "t1")
     assert %{"status" => "cancelled", "closedBy" => "message"} = request
     refute Map.has_key?(request, "answers")

@@ -390,7 +390,19 @@ defmodule HalC2.Orchestration.RecoveryTest do
               "createdBy" => "agent",
               "senderThreadId" => "t9"
             }),
-            written.("m3", "2026-09-23T10:00:05.000Z", %{"usageLimitContinuationOfRunId" => "r1"})
+            written.("m3", "2026-09-23T10:00:05.000Z", %{"usageLimitContinuationOfRunId" => "r1"}),
+            # Nor does one the agent never got: its run failed before its provider took it.
+            written.("m4", "2026-09-23T10:00:06.000Z", %{}),
+            {"run", "r2",
+             %{
+               "s" => %{
+                 "id" => "r2",
+                 "ordinal" => 2,
+                 "status" => "failed",
+                 "userMessageId" => "m4",
+                 "startedAt" => nil
+               }
+             }}
           ]
       )
 
