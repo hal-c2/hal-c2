@@ -134,21 +134,12 @@ Dialog {
             }
 
             Caption { text: qsTr("Prompt") }
-            TextArea {
+            ShellTextArea {
                 objectName: "prompt"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 96
                 text: dialog.draft.prompt ?? ""
-                wrapMode: TextEdit.Wrap
-                color: dialog.foreground
-                font.pixelSize: Theme.type.body.size
                 placeholderText: qsTr("What should the agent do each run?")
-                placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
-                background: Rectangle {
-                    radius: Theme.radiusMd
-                    color: Theme.palette.color("input", "#18181b")
-                    border.color: Theme.palette.color("border", "#27272a")
-                }
                 onTextChanged: if (text !== (dialog.draft.prompt ?? "")) dialog.set("prompt", text)
             }
 

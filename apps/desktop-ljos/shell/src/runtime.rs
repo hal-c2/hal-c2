@@ -311,6 +311,12 @@ pub fn deliver(engine: &Engine) {
     state.debounce.hold(engine, look);
 }
 
+/// Why the config dir's `shell.qml` did not load, when the built-in shell
+/// stands in for it.
+pub fn user_shell_failed(engine: &Engine) -> Option<String> {
+    Some(last_error(engine)).filter(|e| !e.is_empty())
+}
+
 fn last_error(engine: &Engine) -> String {
     let cx = Cx::new(engine, runtime(engine));
     cx.get(ShellRuntime::LAST_ERROR)

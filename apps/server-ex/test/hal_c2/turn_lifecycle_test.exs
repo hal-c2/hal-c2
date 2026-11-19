@@ -257,6 +257,38 @@ defmodule HalC2.TurnLifecycleTest do
     assert ["failed", "running"] = statuses(thread_id)
   end
 
+  # Codex took the prompt of a run that ended while it started the turn, so the agent
+  # read the message: it closes the questions it answers, as the boot repair would.
+  test "a message whose run ended as Codex took it closes the questions it answers",
+       %{thread_id: thread_id} do
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"runtime-request", "q1",
+         %{
+           "s" => %{
+             "id" => "q1",
+             "status" => "pending",
+             "kind" => "user-input",
+             "nodeId" => "node:q1",
+             "createdAt" => HalC2.Orchestration.Entities.now(),
+             "responseCapability" => %{"type" => "message"}
+           }
+         }}
+      ])
+
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, send_message(thread_id, "m1")}) end)
+    _runtime = await_claim(watch)
+    [run] = await_statuses(thread_id, ["starting"])
+    TurnWriter.abandon(thread_id, run["id"], "failed", TurnWriter.start_failure(nil, :closed))
+    :ok = :sys.resume(watch)
+    assert_receive {:sent, {:ok, _}}, 5_000
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} = await_request(thread_id, "q1")
+    assert ["failed"] = statuses(thread_id)
+  end
+
   # Before each instance had its own, a run on another instance of the driver named the
   # driver's provider thread, and so the driver's session.
   test "a run from before instances had their own sessions fails into the session it ran in",
@@ -1002,6 +1034,21 @@ defmodule HalC2.TurnLifecycleTest do
     |> StreamState.list("run")
     |> Enum.sort_by(& &1["ordinal"])
     |> Enum.map(& &1["status"])
+  end
+
+  # Waits until the thread's request `id` is no longer pending; returns it.
+  defp await_request(thread_id, id) do
+    case StreamState.get(current(thread_id), "runtime-request")[id] do
+      %{"status" => "pending"} ->
+        receive do
+          {:hal_c2_stream, ^thread_id, _} -> await_request(thread_id, id)
+        after
+          5_000 -> flunk("request #{id} stayed pending")
+        end
+
+      request ->
+        request
+    end
   end
 
   # Waits until the thread's runs, in order, have these statuses; returns the runs.

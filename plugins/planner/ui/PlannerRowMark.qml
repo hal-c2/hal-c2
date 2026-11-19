@@ -1,11 +1,11 @@
 import QtQuick
-import HalC2.Shell
+import HalC2.Bricks
 
 // Beside a planner thread's row in the thread list: where its run is, or what it
 // proposes. A thread whose run is gone, discarded or pruned, still came from the
 // planner, so its mark stays with the kind's name ("Planner" or "Task"). Follows the
 // plugin's `threads` topic, which every row's mark shares.
-Rectangle {
+ShellBadge {
     id: mark
 
     property var plugin
@@ -16,22 +16,6 @@ Rectangle {
     // The thread keeps its kind once its run is gone.
     readonly property bool work: (run?.kind ?? thread?.plugin?.kind) === "work"
     readonly property int changes: run?.changes ?? 0
-    readonly property color tone: {
-        switch (status) {
-        case "failed":
-            return Theme.palette.color("error", "#ef4444");
-        case "queued":
-        case "running":
-            return Theme.palette.color("info", "#3b82f6");
-        case "proposed":
-            return Theme.palette.color("warning", "#f59e0b");
-        case "applied":
-        case "done":
-            return Theme.palette.color("success", "#22c55e");
-        default:
-            return Theme.palette.color("textMuted", "#a1a1aa");
-        }
-    }
     readonly property string label: {
         switch (status) {
         case "queued":
@@ -68,23 +52,26 @@ Rectangle {
     }
 
     objectName: "plannerRowMark"
-    implicitWidth: text.implicitWidth + 10
-    implicitHeight: text.implicitHeight + 2
-    radius: height / 2
-    color: Qt.alpha(tone, 0.14)
-    border.color: Qt.alpha(tone, status === "proposed" ? 0.7 : 0.3)
+    text: mark.label
+    tone: {
+        switch (status) {
+        case "failed":
+            return "error";
+        case "queued":
+        case "running":
+            return "info";
+        case "proposed":
+            return "warning";
+        case "applied":
+        case "done":
+            return "success";
+        default:
+            return "neutral";
+        }
+    }
+    emphasised: status === "proposed"
     Accessible.role: Accessible.StaticText
     Accessible.name: qsTr("%1: %2").arg(run?.label ?? qsTr("Planner")).arg(label)
     onThreadChanged: follow()
     Component.onCompleted: follow()
-
-    Text {
-        id: text
-
-        anchors.centerIn: parent
-        text: mark.label
-        color: mark.tone
-        font.pixelSize: Math.round(10 * Theme.fontScale)
-        font.weight: Font.Medium
-    }
 }

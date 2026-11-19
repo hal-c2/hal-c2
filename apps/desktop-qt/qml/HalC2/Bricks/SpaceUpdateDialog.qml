@@ -79,23 +79,14 @@ Dialog {
         spacing: 8
 
         Caption { text: qsTr("Instruction") }
-        TextArea {
+        ShellTextArea {
             id: instruction
 
             objectName: "spaceUpdateInstruction"
             Layout.fillWidth: true
             Layout.preferredHeight: 96
-            wrapMode: TextEdit.Wrap
-            color: dialog.foreground
-            font.pixelSize: Theme.type.body.size
             placeholderText: qsTr("Summarise yesterday's threads")
-            placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
             Accessible.name: qsTr("Instruction")
-            background: Rectangle {
-                radius: Theme.radiusMd
-                color: Theme.palette.color("input", "#18181b")
-                border.color: Theme.palette.color("border", "#27272a")
-            }
         }
 
         Caption { text: qsTr("When") }

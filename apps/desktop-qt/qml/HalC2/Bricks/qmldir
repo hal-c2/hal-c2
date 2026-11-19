@@ -36,6 +36,8 @@ ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ServerUpdateAction 1.0 ServerUpdateAction.qml
 ServerUpdatesList 1.0 ServerUpdatesList.qml
 ShellTextField 1.0 ShellTextField.qml
+ShellTextArea 1.0 ShellTextArea.qml
+ShellChoice 1.0 ShellChoice.qml
 ShellSwitch 1.0 ShellSwitch.qml
 ShellSpinBox 1.0 ShellSpinBox.qml
 ShellCheckBox 1.0 ShellCheckBox.qml
@@ -44,6 +46,7 @@ ShellMenuItem 1.0 ShellMenuItem.qml
 ShellMenu 1.0 ShellMenu.qml
 ShellMenuSeparator 1.0 ShellMenuSeparator.qml
 ShellComboBox 1.0 ShellComboBox.qml
+ShellBadge 1.0 ShellBadge.qml
 ShellButton 1.0 ShellButton.qml
 ShellCard 1.0 ShellCard.qml
 ShellIcon 1.0 ShellIcon.qml
@@ -71,6 +74,7 @@ SettingsHost 1.0 SettingsHost.qml
 SettingsPage 1.0 SettingsPage.qml
 SettingsRow 1.0 SettingsRow.qml
 SettingsHeading 1.0 SettingsHeading.qml
+SettingsField 1.0 SettingsField.qml
 BackgroundActivityRow 1.0 BackgroundActivityRow.qml
 TextGenerationRow 1.0 TextGenerationRow.qml
 ProjectActionsSettings 1.0 ProjectActionsSettings.qml

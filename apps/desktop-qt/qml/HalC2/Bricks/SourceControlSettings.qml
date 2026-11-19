@@ -459,7 +459,7 @@ SettingsPage {
         onClicked: page.writingForAll = true
     }
 
-    TextArea {
+    ShellTextArea {
         id: instructions
 
         objectName: "instructions"
@@ -469,18 +469,9 @@ SettingsPage {
         visible: forAll ? page.writingForAll : page.settings?.writingStyle?.mode === "custom"
         enabled: page.editable
         text: forAll ? "" : (page.settings?.writingStyle?.instructions ?? "")
-        wrapMode: TextEdit.Wrap
-        color: page.foreground
-        font.pixelSize: Theme.type.body.size
         placeholderText: forAll ? qsTr("Write the instructions each selected environment should use.")
                                 : qsTr("Keep titles concise. Use short bullet points in descriptions.")
-        placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
         Accessible.name: qsTr("Custom source control writing instructions")
-        background: Rectangle {
-            radius: Theme.radiusMd
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
         // Instructions save when the field is left.
         onActiveFocusChanged: {
             if (activeFocus || forAll) return;

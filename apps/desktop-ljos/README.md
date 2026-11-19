@@ -30,6 +30,7 @@ Ljós needs rustc 1.98; `mise.toml` here pins it.
 mise run desktop-ljos                                   # the window; --mc-origin URL --mc-token TOKEN
 mise run desktop-ljos:check                             # compile the QML; fails when a file does not
 mise run desktop-ljos:render                            # .hal-c2/desktop-ljos.png without a window
+mise run desktop-ljos:audit                             # Ljós's design audit at each place in audit/places
 mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mode":"dark"}'
 ```
 

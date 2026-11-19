@@ -67,6 +67,9 @@ Rectangle {
 
         property string key: ""
         property string label: ""
+        // The binding it edits, for its accessible name. Not `command`: the
+        // file's `id: command` would win over it under Qt.
+        property string bindingName: ""
         property bool recording: false
         signal recorded(string key)
 
@@ -78,7 +81,7 @@ Rectangle {
         border.color: recording || activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: qsTr("Shortcut")
+        Accessible.name: bindingName.length > 0 ? qsTr("Shortcut for %1").arg(bindingName) : qsTr("Shortcut")
 
         onActiveFocusChanged: if (!activeFocus)
             recording = false
@@ -388,6 +391,14 @@ Rectangle {
                 readonly property var conflicts: dirty ? Keybindings.conflicts(modelData.id, keyDraft, rowWhen.text) : modelData.conflicts
                 // The condition shows in words; its expression opens to edit.
                 property bool editingWhen: false
+                // What a screen reader calls this binding: a command can have
+                // several, so its key and its condition, as edited (saved or
+                // not), tell them apart.
+                readonly property string binding: {
+                    const named = labelDraft.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(labelDraft) : modelData.label;
+                    const when = rowWhen.text.trim();
+                    return when.length > 0 ? qsTr("%1, %2").arg(named).arg(Keybindings.whenLabel(when)) : named;
+                }
 
                 width: ListView.view.width
                 implicitHeight: rowColumn.implicitHeight + 2 * Theme.space.md
@@ -460,6 +471,7 @@ Rectangle {
 
                         KeyRecorder {
                             objectName: "keyField"
+                            bindingName: row.binding
                             key: row.keyDraft
                             label: row.labelDraft
                             onRecorded: next => {
@@ -515,6 +527,7 @@ Rectangle {
                             visible: !rowWhen.visible
                             subtle: true
                             text: qsTr("Edit condition")
+                            Accessible.name: qsTr("Edit condition for %1").arg(row.binding)
                             onClicked: {
                                 row.editingWhen = true;
                                 rowWhen.edit();

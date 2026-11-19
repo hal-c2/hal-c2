@@ -1,0 +1,17 @@
+# Error findings of `hal-c2-ljos --audit` the guard lets through, one per
+# line: RULE PATH  # the ljos-ui issue that makes it a false positive.
+# PATH, relative to the checkout, is the QML file the finding is at or one
+# its message names (what covers a control, for layout-occluded), with the
+# line of the one element the issue is about: an edit that moves it fails the
+# audit until the line here moves too, and nothing else in the file is let
+# through.
+
+# The tooltip layer (ShellToolTip, declared in ShellWindow) spans the window to
+# watch presses through a PointHandler, which takes no press from what is
+# under it: https://github.com/hal-c2/ljos-ui/issues/569
+layout-occluded apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:115
+
+# The sidebar's resize edge is 6 px like every splitter in the shell; the
+# audit holds it to 24 only because it has an accessible press action (the
+# arrows move it too): https://github.com/hal-c2/ljos-ui/issues/570
+a11y-target-size apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144

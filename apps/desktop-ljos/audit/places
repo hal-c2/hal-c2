@@ -1,0 +1,16 @@
+# The places `mise run desktop-ljos:audit` audits the shell at, one per line:
+# the hal-c2-ljos options that reach it (`--settle 500` is the shell as it
+# opens). The shell runs with no MC, past the first-run wizard but for a
+# place with `--first-run`.
+--first-run --settle 500
+--settle 500
+--action settings.navigate={"to":"/settings/general"}
+--action settings.navigate={"to":"/settings/appearance"}
+--action settings.navigate={"to":"/settings/diagnostics"}
+--action settings.navigate={"to":"/settings/open-source-licenses"}
+--action settings.navigate={"to":"/settings/snap-shot"}
+--action keybindings.open
+--action connections.open
+--action usage.open
+--action pullRequests.open
+--action commandPalette.toggle

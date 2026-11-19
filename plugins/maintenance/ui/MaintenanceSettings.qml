@@ -27,9 +27,8 @@ ColumnLayout {
     property string refusal: ""
     property string problem: ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color border: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // Picked repositories that are no project here stay listed, so they can be
     // unticked rather than silently kept.
     readonly property var followed: values.repositories ?? []
@@ -107,175 +106,17 @@ ColumnLayout {
 
     objectName: "maintenanceSettings"
     width: parent ? parent.width : implicitWidth
-    spacing: 22
+    spacing: Theme.space.xl
     Component.onCompleted: load()
 
-    component Heading: Label {
-        Layout.fillWidth: true
-        Layout.topMargin: 6
-        color: settings.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
-
-    component Hint: Label {
-        Layout.fillWidth: true
-        visible: text.length > 0
-        color: settings.muted
-        wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-    }
-
-    // A setting: its label, what it means, and its control below.
-    component Field: ColumnLayout {
-        id: field
-
-        property string label
-        property string hint
-        default property alias content: controls.data
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Label {
-            text: field.label
-            color: settings.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-
-        Hint {
-            text: field.hint
-        }
-
-        ColumnLayout {
-            id: controls
-
-            Layout.fillWidth: true
-            spacing: 6
-        }
-    }
-
-    // One of a few values, side by side.
-    component Choice: Flow {
-        id: choice
-
-        property var options: []
-        property var value
-        signal picked(var value)
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: choice.options
-
-            delegate: Rectangle {
-                id: option
-
-                required property var modelData
-                readonly property bool chosen: modelData.value === choice.value
-
-                objectName: "choice:" + modelData.value
-                implicitWidth: optionText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                activeFocusOnTab: true
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        choice.picked(modelData.value);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.RadioButton
-                Accessible.name: optionText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: choice.picked(modelData.value)
-
-                Text {
-                    id: optionText
-
-                    anchors.centerIn: parent
-                    text: option.modelData.label
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: choice.picked(option.modelData.value)
-                }
-            }
-        }
-    }
-
     // Any number of repositories, side by side.
-    component Repositories: Flow {
+    component Repositories: ShellChoice {
         Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: settings.choices
-
-            delegate: Rectangle {
-                id: pick
-
-                required property string modelData
-                readonly property bool chosen: settings.followed.includes(modelData)
-
-                objectName: "maintenanceSetting:repository:" + modelData
-                implicitWidth: pickText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                activeFocusOnTab: true
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        settings.toggleRepository(pick.modelData);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: pickText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: settings.toggleRepository(pick.modelData)
-
-                Text {
-                    id: pickText
-
-                    anchors.centerIn: parent
-                    text: pick.modelData
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: settings.toggleRepository(pick.modelData)
-                }
-            }
-        }
-    }
-
-    component Area: TextArea {
-        Layout.fillWidth: true
-        wrapMode: TextEdit.Wrap
-        color: settings.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
+        multiple: true
+        optionName: "maintenanceSetting:repository:"
+        options: settings.choices
+        value: settings.followed
+        onPicked: value => settings.toggleRepository(value)
     }
 
     Label {
@@ -284,7 +125,7 @@ ColumnLayout {
         text: settings.problem.length > 0 ? qsTr("The settings could not be read: %1").arg(settings.problem) : qsTr("Loading…")
         color: settings.problem.length > 0 ? settings.errorColor : settings.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     ColumnLayout {
@@ -297,101 +138,63 @@ ColumnLayout {
 
         Layout.fillWidth: true
         visible: settings.loaded
-        spacing: 22
+        spacing: Theme.space.xl
 
-        Heading {
+        SettingsHeading {
             text: qsTr("What it maintains")
         }
 
-        Field {
-            label: qsTr("Repositories")
-            hint: qsTr("A run works in the repository's own project on this MC.")
+        SettingsField {
+            title: qsTr("Repositories")
+            description: qsTr("A run works in the repository's own project on this MC.")
 
             Repositories {}
 
-            Hint {
+            Label {
+                Layout.fillWidth: true
+                color: settings.muted
+                wrapMode: Text.Wrap
+                font.pixelSize: Theme.type.meta.size
                 visible: settings.choices.length === 0
                 text: qsTr("No GitHub project is on this MC yet.")
             }
         }
 
-        Field {
-            label: qsTr("Categories")
+        SettingsField {
+            title: qsTr("Categories")
 
-            Flow {
+            ShellChoice {
                 Layout.fillWidth: true
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        {
-                            value: "deps",
-                            label: qsTr("Dependencies")
-                        },
-                        {
-                            value: "security-alerts",
-                            label: qsTr("Security alerts")
-                        },
-                        {
-                            value: "docs-drift",
-                            label: qsTr("Docs drift")
-                        },
-                        {
-                            value: "coverage-gaps",
-                            label: qsTr("Coverage gaps")
-                        }
-                    ]
-
-                    delegate: Rectangle {
-                        id: category
-
-                        required property var modelData
-                        readonly property bool chosen: (settings.values.categories ?? []).includes(modelData.value)
-
-                        objectName: "maintenanceSetting:category:" + modelData.value
-                        implicitWidth: categoryText.implicitWidth + 20
-                        implicitHeight: 28
-                        radius: Math.min(Theme.radius, 8)
-                        color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                        border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                        border.width: activeFocus ? 2 : 1
-                        activeFocusOnTab: true
-                        Keys.onPressed: event => {
-                            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                settings.toggleCategory(category.modelData.value);
-                                event.accepted = true;
-                            }
-                        }
-                        Accessible.role: Accessible.CheckBox
-                        Accessible.name: categoryText.text
-                        Accessible.checkable: true
-                        Accessible.checked: chosen
-                        Accessible.onPressAction: settings.toggleCategory(category.modelData.value)
-
-                        Text {
-                            id: categoryText
-
-                            anchors.centerIn: parent
-                            text: category.modelData.label
-                            color: settings.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: settings.toggleCategory(category.modelData.value)
-                        }
+                multiple: true
+                optionName: "maintenanceSetting:category:"
+                options: [
+                    {
+                        value: "deps",
+                        label: qsTr("Dependencies")
+                    },
+                    {
+                        value: "security-alerts",
+                        label: qsTr("Security alerts")
+                    },
+                    {
+                        value: "docs-drift",
+                        label: qsTr("Docs drift")
+                    },
+                    {
+                        value: "coverage-gaps",
+                        label: qsTr("Coverage gaps")
                     }
-                }
+                ]
+                value: settings.values.categories ?? []
+                onPicked: value => settings.toggleCategory(value)
             }
         }
 
-        Field {
-            label: qsTr("Security advisories only")
-            hint: qsTr("Only fix open security advisories, each with the smallest safe upgrade, and leave the rest.")
+        SettingsField {
+            title: qsTr("Security advisories only")
+            description: qsTr("Only fix open security advisories, each with the smallest safe upgrade, and leave the rest.")
 
-            Switch {
+            control: ShellSwitch {
                 objectName: "maintenanceSetting:securityOnly"
                 checked: settings.values.securityOnly === true
                 Accessible.name: qsTr("Security advisories only")
@@ -399,12 +202,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Mode")
-            hint: qsTr("Report only changes nothing and says what it would do. Fix works on a maintenance/<date> branch in a new worktree, never on the default branch.")
+        SettingsField {
+            title: qsTr("Mode")
+            description: qsTr("Report only changes nothing and says what it would do. Fix works on a maintenance/<date> branch in a new worktree, never on the default branch.")
 
-            Choice {
+            ShellChoice {
                 objectName: "maintenanceSetting:mode"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "fix",
@@ -420,16 +224,17 @@ ColumnLayout {
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("When it runs")
         }
 
-        Field {
-            label: qsTr("Run")
-            hint: qsTr("A run missed while the MC was off starts once when it is back.")
+        SettingsField {
+            title: qsTr("Run")
+            description: qsTr("A run missed while the MC was off starts once when it is back.")
 
-            Choice {
+            ShellChoice {
                 objectName: "maintenanceSetting:schedule"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "manual",
@@ -449,12 +254,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Day of the week")
+        SettingsField {
+            title: qsTr("Day of the week")
             visible: settings.values.schedule === "weekly"
 
-            Choice {
+            ShellChoice {
                 objectName: "maintenanceSetting:weekday"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "monday",
@@ -490,9 +296,9 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("At")
-            hint: qsTr("HH:MM, in this MC's local time.")
+        SettingsField {
+            title: qsTr("At")
+            description: qsTr("HH:MM, in this MC's local time.")
             visible: settings.values.schedule !== "manual"
 
             ShellTextField {
@@ -503,31 +309,30 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Runs at once")
+        SettingsField {
+            title: qsTr("Runs at once")
 
-            ShellTextField {
+            ShellSpinBox {
                 objectName: "maintenanceSetting:concurrency"
-                implicitWidth: 100
-                inputMethodHints: Qt.ImhDigitsOnly
-                validator: IntValidator {
-                    bottom: 1
-                }
-                text: String(settings.values.concurrency ?? "")
-                onTextEdited: if (acceptableInput)
-                    settings.set("concurrency", Number(text))
+                editable: true
+                from: 1
+                to: 999999999
+                value: settings.values.concurrency ?? 1
+                Accessible.name: qsTr("Runs at once")
+                onValueModified: settings.set("concurrency", value)
+                onValueTyped: typed => settings.set("concurrency", typed)
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("The agent")
         }
 
-        Field {
-            label: qsTr("Agent and model")
+        SettingsField {
+            title: qsTr("Agent and model")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     objectName: "maintenanceSetting:provider"
@@ -564,7 +369,7 @@ ColumnLayout {
         Repeater {
             model: form.modelEntry?.options ?? []
 
-            delegate: Field {
+            delegate: SettingsField {
                 id: option
 
                 required property var modelData
@@ -580,9 +385,10 @@ ColumnLayout {
                 }
 
                 objectName: "maintenanceSetting:modelOption:" + modelData.id
-                label: modelData.label ?? modelData.id
+                title: modelData.label ?? modelData.id
 
-                Choice {
+                ShellChoice {
+                    Layout.fillWidth: true
                     visible: option.modelData.type !== "boolean"
                     options: [
                         {
@@ -597,21 +403,22 @@ ColumnLayout {
                     onPicked: value => option.pick(value === "" ? undefined : value)
                 }
 
-                Switch {
+                control: ShellSwitch {
                     visible: option.modelData.type === "boolean"
                     checked: option.chosen[option.modelData.id] === true
-                    Accessible.name: option.label
+                    Accessible.name: option.title
                     onToggled: option.pick(checked)
                 }
             }
         }
 
-        Field {
-            label: qsTr("Access")
-            hint: qsTr("A fix run edits and commits in its own worktree; it never pushes.")
+        SettingsField {
+            title: qsTr("Access")
+            description: qsTr("A fix run edits and commits in its own worktree; it never pushes.")
 
-            Choice {
+            ShellChoice {
                 objectName: "maintenanceSetting:runtimeMode"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "approval-required",
@@ -635,12 +442,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Prompt")
-            hint: qsTr("{{repository}}, {{mode}}, {{categories}}, {{branch}}, {{base}}, {{date}} and {{skill}} are filled in. The rules every run keeps, and how to report, are added after it.")
+        SettingsField {
+            title: qsTr("Prompt")
+            description: qsTr("{{repository}}, {{mode}}, {{categories}}, {{branch}}, {{base}}, {{date}} and {{skill}} are filled in. The rules every run keeps, and how to report, are added after it.")
 
-            Area {
+            ShellTextArea {
                 objectName: "maintenanceSetting:prompt"
+                Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(120, implicitHeight)
                 text: settings.values.prompt ?? ""
                 Accessible.name: qsTr("Prompt")
@@ -649,9 +457,9 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Per-repository instructions")
-            hint: qsTr("Added to that repository's prompt, such as which checks to run or what to leave alone.")
+        SettingsField {
+            title: qsTr("Per-repository instructions")
+            description: qsTr("Added to that repository's prompt, such as which checks to run or what to leave alone.")
             visible: settings.followed.length > 0
 
             Repeater {
@@ -663,14 +471,19 @@ ColumnLayout {
                     required property string modelData
 
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.space.xs
 
-                    Hint {
+                    Label {
+                        Layout.fillWidth: true
+                        color: settings.muted
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Theme.type.meta.size
                         text: own.modelData
                     }
 
-                    Area {
+                    ShellTextArea {
                         objectName: "maintenanceSetting:instructions:" + own.modelData
+                        Layout.fillWidth: true
                         Layout.preferredHeight: Math.max(60, implicitHeight)
                         text: (settings.values.instructions ?? {})[own.modelData] ?? ""
                         Accessible.name: qsTr("Instructions for %1").arg(own.modelData)
@@ -681,16 +494,17 @@ ColumnLayout {
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("What becomes of a run")
         }
 
-        Field {
-            label: qsTr("Publishing")
-            hint: qsTr("What happens to a fix run's branch once its agent reports.")
+        SettingsField {
+            title: qsTr("Publishing")
+            description: qsTr("What happens to a fix run's branch once its agent reports.")
 
-            Choice {
+            ShellChoice {
                 objectName: "maintenanceSetting:publishing"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "local",
@@ -717,12 +531,12 @@ ColumnLayout {
             text: qsTr("Not saved: %1").arg(settings.refusal)
             color: settings.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             Item {
                 Layout.fillWidth: true

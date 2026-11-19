@@ -139,7 +139,8 @@ Rectangle {
     // A review that changes while its confirmation is open is read again, so what is
     // confirmed is what is posted.
     onVersionChanged: {
-        if (confirmation.opened)
+        // Visible, not opened: a change while it fades in counts too.
+        if (confirmation.visible)
             readPreview();
     }
     onThreadChanged: follow()
@@ -174,7 +175,7 @@ Rectangle {
                 text: header.review ? qsTr("Review of #%1 %2").arg(header.review.number).arg(header.review.title ?? "") : ""
                 color: header.foreground
                 elide: Text.ElideRight
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -183,7 +184,7 @@ Rectangle {
                 visible: text.length > 0
                 text: header.verdictText(header.verdict)
                 color: header.tone
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
             }
 
@@ -225,7 +226,7 @@ Rectangle {
             }
             color: header.muted
             elide: Text.ElideRight
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -236,10 +237,10 @@ Rectangle {
             text: header.refusal || header.review?.publishError || (header.status === "failed" ? header.review?.error ?? "" : "")
             color: header.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
-    Popup {
+    ShellPopover {
         id: confirmation
 
         objectName: "codeReviewConfirmPublish"
@@ -248,14 +249,10 @@ Rectangle {
         modal: true
         // Takes the keyboard, so Escape closes it; focus goes back where it was.
         focus: true
-        padding: 16
+        padding: Theme.space.lg
         width: Math.min(560, (parent?.width ?? 592) - 32)
         height: Math.min(implicitHeight, (parent?.height ?? 600) - 64)
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 10)
-            color: Theme.palette.color("surface", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
+        Overlay.modal: ShellScrim {}
 
         ColumnLayout {
             anchors.fill: parent
@@ -267,7 +264,7 @@ Rectangle {
                 text: header.review ? qsTr("Publish the review of #%1 on GitHub?").arg(header.review.number) : ""
                 color: header.foreground
                 wrapMode: Text.Wrap
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.prose.size
                 font.weight: Font.DemiBold
             }
 
@@ -277,7 +274,7 @@ Rectangle {
                 textFormat: Text.PlainText
                 text: header.preview ? qsTr("Posted as: %1").arg(header.verdictText(header.preview.verdict)) : qsTr("Reading what will be posted…")
                 color: header.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ScrollView {
@@ -300,7 +297,7 @@ Rectangle {
                         text: header.preview?.body ?? ""
                         color: header.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Repeater {
@@ -320,7 +317,7 @@ Rectangle {
                                 text: modelData.line ? "%1:%2".arg(modelData.path).arg(modelData.line) : modelData.path
                                 color: header.muted
                                 elide: Text.ElideMiddle
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
 
                             Text {
@@ -329,7 +326,7 @@ Rectangle {
                                 text: modelData.body
                                 color: header.foreground
                                 wrapMode: Text.Wrap
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
                     }

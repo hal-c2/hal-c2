@@ -3,7 +3,8 @@
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, runtime-request.updated,
 #     thread.user-input.dismiss, plan.updated, turn-item.updated, node.updated)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (runtime-request.respond, thread.user-input.dismiss,
-#     implemented_plan)
+#     implemented_plan, a run start or a taken steer closing background questions)
+#   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (background questions left open at start)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (open_request, open_question,
 #     resolve_request, plans)
 #   apps/server/src/orchestration-v2/ (runtime request lifecycle)
@@ -236,6 +237,79 @@ Feature: Approvals, questions and plans
     When the MC restarts
     Then the question is still pending
     And the user can still answer it
+
+  # The agent reads the message, so it is the answer; the question closes as dismissed
+  # rather than as answered, as nobody gave its answers.
+  @mc @priority-high
+  Scenario: A question asked in the background closes when the user writes to the thread
+    Given the provider asked a question the user can answer with a message
+    When the user sends "Use Postgres" to "t1"
+    Then the question is closed by the message rather than answered
+
+  @mc
+  Scenario: A message another thread's agent sends leaves the question open
+    Given the provider asked a question the user can answer with a message
+    When another thread's agent sends a message to "t1"
+    Then the question is still pending
+
+  # The agent has not read a queued message yet, and the user can still take it back.
+  @mc @priority-high
+  Scenario: A message queued behind the running turn closes the question once it starts
+    Given the provider asked a question the user can answer with a message
+    When the user queues "Use Postgres" behind the running turn of "t1"
+    Then the question is still pending
+    When the running turn of "t1" completes
+    Then the question is closed by the message rather than answered
+
+  # The user did not see a question asked after they wrote.
+  @mc
+  Scenario: A question asked after the user queued a message stays open when it starts
+    Given the user queued "Use Postgres" behind the running turn of "t1"
+    And the provider asked a question the user can answer with a message
+    When the running turn of "t1" completes
+    Then the question is still pending
+
+  # Codex answering `turn/start` with an error: the agent never got the message.
+  @mc
+  Scenario: A queued message Codex refuses to start leaves the question open
+    Given the provider asked a question the user can answer with a message
+    And the user queued "refuse to start" behind the running turn of "t1"
+    When the running turn of "t1" completes and Codex refuses to start the next
+    Then the question is still pending
+
+  @mc @priority-high
+  Scenario: Cancelling a queued message leaves the question open
+    Given the provider asked a question the user can answer with a message
+    And the user queued "Use Postgres" behind the running turn of "t1"
+    When the user cancels the queued message
+    Then the question is still pending
+
+  @mc @priority-high
+  Scenario Outline: A steer closes the question only when the provider takes it
+    Given the provider asked a question the user can answer with a message
+    And Codex <takes> messages into the running turn of "t1"
+    When the user steers the running turn of "t1" with "Use Postgres"
+    Then the question <ends>
+
+    Examples:
+      | takes   | ends                                         |
+      | takes   | is closed by the message rather than answered |
+      | refuses | is still pending                             |
+
+  @mc @priority-high
+  Scenario: Answering a question closes the older ones the thread still has open
+    Given the provider asked a question the user can answer with a message
+    And the provider then asked "Which port?" without waiting on it
+    When the user answers the newer question with "5432"
+    Then the newer question is closed as answered
+    And the older question is closed by the message rather than answered
+
+  @mc @priority-high
+  Scenario: A question left open from before closes at start
+    Given the provider asked a question the user can answer with a message
+    And the user wrote to "t1" after it, before a message closed such questions
+    When the MC restarts
+    Then the question is closed by the message rather than answered
 
   @backlog @mc
   Scenario Outline: A request left pending when its provider session closes says why
