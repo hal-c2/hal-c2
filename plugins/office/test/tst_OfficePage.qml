@@ -101,6 +101,7 @@ Item {
         }
 
         function init() {
+            loader.width = Qt.binding(() => test.width);
             loader.height = Qt.binding(() => test.height);
             stood = {};
             plugin.environments = ["local"];
@@ -446,6 +447,35 @@ Item {
             verify(page.pixelScale > fitted && page.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
             page.zoom = 1;
             compare(page.pixelScale, fitted);
+        }
+
+        // A large view fits the office at a scale where zoomed steps snap to
+        // whole device pixels; the fit itself does not snap, so the office
+        // still fills one side of the view.
+        function test_a_large_fit_fills_the_view() {
+            loader.width = 2600;
+            loader.height = 1600;
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0 && page.fitScale * page.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows");
+            verify(scroller.width - stage.width <= 8.5 || scroller.height - stage.height <= 8.5, "it fills one side of the view");
+        }
+
+        // Where zoom snaps to whole device pixels, zooming in and back out
+        // returns to the same scale.
+        function test_zooming_in_and_out_returns_to_the_same_scale() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            page.zoom = 4 / page.devicePixelRatio / page.fitScale;
+            for (let i = 0; i < 6 && page.pixelScale < 7.999; i++) {
+                const before = page.pixelScale;
+                page.zoomBy(1.25);
+                page.zoomBy(1 / 1.25);
+                fuzzyCompare(page.pixelScale, before, 1e-9, "out undoes in");
+                page.zoomBy(1.25);
+            }
         }
 
         // At a zoom between whole pixels the art is drawn at a whole number of

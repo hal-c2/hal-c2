@@ -49,29 +49,37 @@ Item {
     readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
     readonly property real minScale: Math.min(1, fitScale)
     readonly property real maxScale: 8
-    readonly property real pixelScale: snapScale(fitScale * zoom)
+    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(maxScale, fitScale)) : snapScale(fitScale * zoom)
     // Nearest-neighbour art at a fractional scale draws some art pixels a
-    // device pixel wider than others. Below `crispFrom` device pixels per art
-    // pixel the art is drawn at the next whole number, drawScale, into a layer
-    // shrunk smoothly to pixelScale; the layer is then at most `crispFrom`
-    // times the office's art size. From `crispFrom` up a step of one device
-    // pixel is under a quarter, so the scale snaps to whole device pixels and
-    // the art is drawn directly.
+    // device pixel wider than others. So the art is drawn at the next whole
+    // number of device pixels per art pixel, drawScale, into a layer shrunk
+    // smoothly to pixelScale. From `crispFrom` device pixels per art pixel up
+    // a step of one device pixel is under a quarter, so a zoomed scale snaps
+    // to whole device pixels and is drawn directly; the layer is then at most
+    // `crispFrom` times the office's art size, or about the view's size at Fit.
     readonly property int crispFrom: 4
     readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
     readonly property bool resampled: drawScale - pixelScale > 0.001
 
-    // The scale shown for a wanted scale: kept within bounds, and snapped
-    // down to whole device pixels where that is fine enough.
+    // The scale shown for a wanted zoomed scale: kept within bounds, and
+    // rounded to whole device pixels where that is fine enough.
     function snapScale(wanted) {
         const scale = Math.max(minScale, Math.min(maxScale, wanted));
         const devicePixels = scale * devicePixelRatio;
-        return devicePixels >= crispFrom ? Math.floor(devicePixels + 0.001) / devicePixelRatio : scale;
+        return devicePixels >= crispFrom ? Math.round(devicePixels) / devicePixelRatio : scale;
     }
 
-    // Zooms from the scale shown, so a step always moves it.
+    // Zooms from the scale shown, so a step always moves it; where the scale
+    // snaps, by at least one device pixel, so in and out take the same path.
     function zoomBy(factor) {
-        zoom = Math.max(minScale, Math.min(maxScale, pixelScale * factor)) / fitScale;
+        const ratio = devicePixelRatio;
+        let next = pixelScale * factor;
+        if (next * ratio >= crispFrom) {
+            const now = Math.round(pixelScale * ratio);
+            const step = Math.round(next * ratio);
+            next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
+        }
+        zoom = Math.max(minScale, Math.min(maxScale, next)) / fitScale;
     }
 
     // The office as drawn: its size in tiles, its furniture, the screens of its
