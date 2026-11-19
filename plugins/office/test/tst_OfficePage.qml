@@ -1,8 +1,9 @@
 // Run from a hal-c2 checkout:
 //   ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
 //     plugins/office/test/tst_OfficePage.qml
-// and with Qt, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+// and with Qt 6, with QT_QPA_PLATFORM=offscreen (a bare qmltestrunner may be Qt 5's,
+// which prints nothing and exits 1):
+//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
 //     -input plugins/office/test/tst_OfficePage.qml
 import QtQuick
 import QtTest
