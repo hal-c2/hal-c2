@@ -384,11 +384,13 @@ Item {
                     }
                 }
 
+                // An empty list says why: not heard from yet, still looking, or nothing open.
                 Text {
+                    objectName: "issueTrackerListEmpty"
                     anchors.centerIn: parent
                     width: parent.width - 48
-                    visible: page.issues.length === 0 && page.tracker !== null && !page.tracker.looking
-                    text: qsTr("No open issues here. Pick the repositories to follow in the tracker's settings if that is a surprise.")
+                    visible: page.issues.length === 0
+                    text: page.tracker === null ? qsTr("Waiting for the tracker…") : page.tracker.looking ? qsTr("Looking at GitHub…") : qsTr("No open issues here. Pick the repositories to follow in the tracker's settings if that is a surprise.")
                     color: page.muted
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
