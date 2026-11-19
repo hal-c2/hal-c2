@@ -1429,16 +1429,28 @@ defmodule HalC2.Orchestration do
           into: MapSet.new(),
           do: run["userMessageId"]
 
-    written =
+    delivered =
       for message <- StreamState.all(state, "message"),
           not MapSet.member?(unstarted, message["id"]),
           user_wrote?(message, thread),
-          ms = HalC2.Projection.JS.epoch_ms(message["createdAt"]),
-          is_integer(ms),
-          reduce: nil,
-          do: (latest -> max(latest || ms, ms))
+          do: message
 
-    if written, do: close_written_over(state, written), else: []
+    # Ordered as the live close orders them, by when each entered the stream, while the
+    # newest is in memory (the window keeps the newest); by the clock otherwise, which
+    # cannot tell a question asked in the same millisecond apart.
+    written =
+      case Enum.flat_map(delivered, &List.wrap(written(state, &1))) do
+        [] ->
+          delivered
+          |> Enum.map(&HalC2.Projection.JS.epoch_ms(&1["createdAt"]))
+          |> Enum.filter(&is_integer/1)
+          |> Enum.max(fn -> nil end)
+
+        seqs ->
+          Enum.max_by(seqs, fn {:created, seq} -> seq end)
+      end
+
+    close_written_over(state, written)
   end
 
   defp resolve_message_request(state, request, status, answer, closed \\ %{}) do

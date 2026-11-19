@@ -375,6 +375,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
       HalC2.Streams.commit(
         "t5",
         :thread,
+        # Asked in the millisecond the user wrote, but before.
         [
           {"thread", "t5",
            %{"s" => %{"id" => "t5", "title" => "Asked", "createdAt" => at, "updatedAt" => at}}},
@@ -382,6 +383,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
            %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}}
         ] ++
           question.("q1", "2026-09-23T10:00:01.000Z") ++
+          question.("q0", "2026-09-23T10:00:02.000Z") ++
           [written.("m1", "2026-09-23T10:00:02.000Z", %{})] ++
           question.("q2", "2026-09-23T10:00:03.000Z") ++
           [
@@ -417,6 +419,10 @@ defmodule HalC2.Orchestration.RecoveryTest do
              StreamState.get(state, "runtime-request")["q1"]
 
     assert %{"status" => "cancelled"} = StreamState.get(state, "turn-item")["turn-item:q1"]
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} =
+             StreamState.get(state, "runtime-request")["q0"]
+
     # Asked after the user last wrote, so still the question the thread asks.
     assert %{"status" => "pending"} = StreamState.get(state, "runtime-request")["q2"]
     assert %{"status" => "waiting"} = StreamState.get(state, "turn-item")["turn-item:q2"]
