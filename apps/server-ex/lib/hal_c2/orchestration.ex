@@ -1380,11 +1380,11 @@ defmodule HalC2.Orchestration do
 
   # The changes that close the questions the agent asked in the background (answered with
   # a message) still open from before the user wrote to the thread. `written` says when:
-  # `{:created, seq}` for a message in the stream (`written/2`), unix ms for one read back
-  # at start, nil for none. A question
-  # asked after the message stays open: the user did not see it. The agent reads what
-  # the user wrote, so that is the answer. They close as a dismissed question does,
-  # saying so (`closedBy`), never as answered with answers nobody gave.
+  # `{:created, seq, ms}` for a message in the stream (`written/2`), unix ms for one
+  # read back at start, nil for none. A question asked after the message stays open:
+  # the user did not see it. The agent reads what the user wrote, so that is the answer.
+  # They close as a dismissed question does, saying so (`closedBy`), never as answered
+  # with answers nobody gave.
   defp close_written_over(_state, nil), do: []
 
   defp close_written_over(state, written) do
@@ -1397,19 +1397,29 @@ defmodule HalC2.Orchestration do
         do: change
   end
 
-  defp asked_before?(state, request, {:created, written}),
-    do: (StreamState.created(state, "runtime-request", request["id"]) || written) < written
+  # A question with no seq of its own (one from before a stream's v1 migration) goes
+  # by the clock.
+  defp asked_before?(state, request, {:created, written, ms}) do
+    case StreamState.created(state, "runtime-request", request["id"]) do
+      nil -> asked_before?(state, request, ms)
+      asked -> asked < written
+    end
+  end
 
-  defp asked_before?(_state, request, written) do
+  defp asked_before?(_state, request, written) when is_integer(written) do
     case HalC2.Projection.JS.epoch_ms(request["createdAt"]) do
       asked when is_integer(asked) -> asked < written
       nil -> false
     end
   end
 
-  # When the user wrote `message`, a message of the stream, for `close_written_over/2`.
+  defp asked_before?(_state, _request, nil), do: false
+
+  # When the user wrote `message`, a message of the stream, for `close_written_over/2`:
+  # its seq, and its time for a question with no seq.
   defp written(state, message) do
-    if seq = StreamState.created(state, "message", message["id"]), do: {:created, seq}
+    if seq = StreamState.created(state, "message", message["id"]),
+      do: {:created, seq, HalC2.Projection.JS.epoch_ms(message["createdAt"])}
   end
 
   @doc """
@@ -1447,7 +1457,7 @@ defmodule HalC2.Orchestration do
           |> Enum.max(fn -> nil end)
 
         seqs ->
-          Enum.max_by(seqs, fn {:created, seq} -> seq end)
+          Enum.max_by(seqs, fn {:created, seq, _ms} -> seq end)
       end
 
     close_written_over(state, written)

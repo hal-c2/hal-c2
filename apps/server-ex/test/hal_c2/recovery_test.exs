@@ -375,7 +375,6 @@ defmodule HalC2.Orchestration.RecoveryTest do
       HalC2.Streams.commit(
         "t5",
         :thread,
-        # Asked in the millisecond the user wrote, but before.
         [
           {"thread", "t5",
            %{"s" => %{"id" => "t5", "title" => "Asked", "createdAt" => at, "updatedAt" => at}}},
@@ -383,8 +382,13 @@ defmodule HalC2.Orchestration.RecoveryTest do
            %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}}
         ] ++
           question.("q1", "2026-09-23T10:00:01.000Z") ++
+          question.("q9", "2026-09-23T10:00:00.500Z") ++
           question.("q0", "2026-09-23T10:00:02.000Z") ++
-          [written.("m1", "2026-09-23T10:00:02.000Z", %{})] ++
+          [
+            # q0 was asked in the millisecond the user wrote, but before; q9 loses its
+            # seq below, as one from before the stream's v1 migration has none.
+            written.("m1", "2026-09-23T10:00:02.000Z", %{})
+          ] ++
           question.("q2", "2026-09-23T10:00:03.000Z") ++
           [
             # Neither another thread's agent nor the MC writes as the user.
@@ -412,11 +416,18 @@ defmodule HalC2.Orchestration.RecoveryTest do
                     {:rows, _, [{"t5", {"thread", %{"pendingRuntimeRequest" => %{}}}}]}},
                    1_000
 
+    :sys.replace_state(HalC2.Streams.ensure("t5"), fn server ->
+      update_in(server.stream.created, &Map.delete(&1, {"runtime-request", "q9"}))
+    end)
+
     assert Recovery.run() == []
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t5"))
 
     assert %{"status" => "cancelled", "closedBy" => "message"} =
              StreamState.get(state, "runtime-request")["q1"]
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} =
+             StreamState.get(state, "runtime-request")["q9"]
 
     assert %{"status" => "cancelled"} = StreamState.get(state, "turn-item")["turn-item:q1"]
 
