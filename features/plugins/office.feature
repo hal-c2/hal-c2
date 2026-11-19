@@ -243,6 +243,16 @@ Feature: Office
       And then sits at the new desk, and the mover leaves
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People keep their desks as others come and go
+      Given the office has a thread "A" with a worker and a thread "B" with 2 workers, sharing a group of desks
+      When "A" delegates to another worker
+      Then the new worker sits with "A" and everyone else stays at their desk
+      When the first worker of "A" leaves
+      Then only its desk is carried out and everyone else stays at their desk
+      When a team has outgrown its group of desks and gains another worker
+      Then the team stays where it is and only the new worker sits at the nearest free desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Movers carry out the desks nobody sits at
       Given the office has threads "A" and "B", each with 5 workers
       When "B" and its workers leave the office

@@ -1350,43 +1350,64 @@ Item {
         return roots.map(root => teams[root]);
     }
 
-    // Seats the teams at the office's pods. A team keeps the pod it sat at
-    // while it still fits there, a team bigger than a pod takes as many as it
-    // needs, and small teams share. Whoever is left over when every desk is
-    // taken has none, and spends the time in the break room.
+    // Seats the teams at the office's pods, as id → seat. Everyone keeps the
+    // seat they had while their part of the team stays in that pod, so nobody
+    // moves along when someone else comes or goes. A newcomer takes a free
+    // seat in its team's pod, or the nearest pod with room when that is full;
+    // a new team takes a pod with room for all of it, and small teams share.
+    // A team bigger than a pod takes as many as it needs. Whoever is left over
+    // when every desk is taken has none, and spends the time in the break room.
     function seatTeams(teams) {
         const w = page.world;
         const size = w.pods[0].seats.length;
-        const members = w.pods.map(() => []);
-        const room = i => size - members[i].length;
+        const before = w.seatOf ?? {};
+        const seatOf = {};
+        const taken = {};
+        const room = pod => w.pods[pod].seats.filter(seat => !taken[seat.index]).length;
+        const sit = (id, pod) => {
+            const seat = w.pods[pod].seats.find(seat => !taken[seat.index]);
+            taken[seat.index] = id;
+            seatOf[id] = seat;
+        };
         const chunks = [];
         for (const team of teams) {
             for (let i = 0; i < team.length; i += size)
                 chunks.push(team.slice(i, i + size));
         }
-        const fresh = [];
-        for (const chunk of chunks) {
-            const was = w.seatOf?.[chunk[0]]?.pod ?? -1;
-            if (was >= 0 && room(was) >= chunk.length)
-                members[was].push(...chunk);
-            else
-                fresh.push(chunk);
-        }
+        // A chunk's pod is where its first seated member sat.
+        const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        chunks.forEach((chunk, c) => {
+            for (const id of chunk) {
+                const seat = before[id];
+                if (seat && seat.pod === homes[c] && !taken[seat.index]) {
+                    taken[seat.index] = id;
+                    seatOf[id] = seat;
+                }
+            }
+        });
         const spill = [];
-        for (const chunk of fresh) {
-            const pod = members.findIndex((_, i) => room(i) >= chunk.length);
-            if (pod >= 0)
-                members[pod].push(...chunk);
-            else
-                spill.push(...chunk);
-        }
-        for (const id of spill) {
-            const pod = members.findIndex((_, i) => room(i) > 0);
-            if (pod < 0)
+        chunks.forEach((chunk, c) => {
+            const home = homes[c];
+            const pod = home >= 0 ? home : w.pods.findIndex((_, i) => room(i) >= chunk.length);
+            for (const id of chunk) {
+                if (seatOf[id])
+                    continue;
+                if (pod >= 0 && room(pod) > 0)
+                    sit(id, pod);
+                else
+                    spill.push([id, pod]);
+            }
+        });
+        // Those who did not fit sit at the nearest pod with a free desk.
+        const away = (i, near) => near < 0 ? 0 : Math.abs(w.pods[i].x - w.pods[near].x) + Math.abs(w.pods[i].y - w.pods[near].y);
+        for (const [id, near] of spill) {
+            const open = w.pods.map((_, i) => i).filter(i => room(i) > 0);
+            if (!open.length)
                 break;
-            members[pod].push(id);
+            open.sort((a, b) => away(a, near) - away(b, near));
+            sit(id, open[0]);
         }
-        return members;
+        return seatOf;
     }
 
     // The office: six pods of 4×2 desks, three across and two down, the walls,
@@ -1785,11 +1806,12 @@ Item {
 
     function layout(teams) {
         const w = page.world;
-        const seatOf = {};
-        seatTeams(teams).forEach((ids, i) => {
-            w.pods[i].members = ids;
-            ids.forEach((id, k) => seatOf[id] = w.pods[i].seats[k]);
-        });
+        const seatOf = seatTeams(teams);
+        const at = {};
+        for (const id of Object.keys(seatOf))
+            at[seatOf[id].index] = id;
+        for (const pod of w.pods)
+            pod.members = pod.seats.filter(seat => at[seat.index]).map(seat => at[seat.index]);
         w.seatOf = seatOf;
         furnish();
         // Seats move between people as people come and go; whoever was headed

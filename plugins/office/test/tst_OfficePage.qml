@@ -259,20 +259,61 @@ Item {
             }
         }
 
-        function test_desks_that_change_hands_are_walked_to() {
+        // Someone leaving leaves its desk to whoever comes next; everyone
+        // else stays where they are.
+        function test_a_desk_left_behind_is_taken_by_whoever_comes_next() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
             const world = page.world;
-            const before = page.world.seatOf["b"];
-            // A leaves and C comes in: B takes A's desk and C takes B's.
+            const a = page.world.seatOf["a"], b = page.world.seatOf["b"];
             plugin.publish([person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
             verify(page.world === world, "the same office");
+            verify(page.world.seatOf["b"] === b, "B keeps its desk");
+            verify(page.world.seatOf["c"] === a, "C takes A's desk");
             compare(page.moves, 0, "nobody carries a desk");
-            verify(page.world.seatOf["b"] !== before, "B was given another desk");
-            runUntil(() => arrived(actor("b")) && arrived(actor("c")), 1500, "both reach their desks");
-            for (const id of ["b", "c"]) {
-                const seat = page.world.seatOf[id];
-                compare([actor(id).tx, actor(id).ty], [seat.x, seat.y], id + " sits at its own desk");
-            }
+            runUntil(() => arrived(actor("c")), 1500, "C reaches its desk");
+            compare([actor("c").tx, actor("c").ty], [a.x, a.y]);
+            compare([actor("b").tx, actor("b").ty], [b.x, b.y], "B never got up");
+        }
+
+        // People sharing a pod keep their seats when a teammate joins a team
+        // seated before theirs, or someone between them leaves.
+        function test_people_keep_their_seats_as_others_come_and_go() {
+            const a = [person("a", "A", "working", "typing"), person("aw0", "AW 0", "working", "typing", "a")];
+            const b = [person("b", "B", "working", "typing")].concat(many(2, "bw", "working", "typing", "b"));
+            plugin.publish(a.concat(b));
+            const pod = page.world.seatOf["a"].pod;
+            compare(page.world.seatOf["b"].pod, pod, "the teams share a pod");
+            const seats = {};
+            for (const p of a.concat(b))
+                seats[p.id] = page.world.seatOf[p.id];
+            plugin.publish(a.concat([person("aw1", "AW 1", "working", "typing", "a")], b));
+            compare(page.world.seatOf["aw1"].pod, pod, "the new worker sits with its lead");
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            runUntil(() => page.moves === 0, 1500, "aw1's desk is carried in");
+            plugin.publish([a[0]].concat([person("aw1", "AW 1", "working", "typing", "a")], b));
+            for (const id of ["a", "b", "bw0", "bw1"])
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat after aw0 leaves");
+            compare(page.jobs.length, 1, "only aw0's desk goes");
+            for (const id of ["a", "b", "bw0", "bw1"])
+                compare(actor(id).goal?.kind, "desk", id + " stays at its desk");
+        }
+
+        // A team that outgrows its pod keeps it, and only the newcomers who do
+        // not fit sit at the nearest pod with room.
+        function test_a_team_that_outgrows_its_pod_stays_put() {
+            const lead = person("a", "A", "working", "typing");
+            const team = n => [lead].concat(many(n, "aw", "working", "typing", "a"));
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(6)));
+            const seats = {};
+            for (const p of team(6))
+                seats[p.id] = page.world.seatOf[p.id];
+            const pod = seats["a"].pod;
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(7)));
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            verify(page.world.seatOf["aw6"].pod !== pod, "the newcomer sits at another pod");
+            compare(page.jobs.length, 1, "one desk comes in");
         }
 
         // The office holds 48 desks whoever is in it; anyone past that takes
