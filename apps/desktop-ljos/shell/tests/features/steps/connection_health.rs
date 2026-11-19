@@ -3687,6 +3687,17 @@ fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
         }
         world.connect()?;
         world.sync()?;
+    } else if world.mc.projects.is_empty() {
+        // Connected already (a Background), to an MC with nothing in it. A
+        // window decides its first-run gate on the rows it opens to, so the
+        // project is sent before it opens, or the wizard covers it for good.
+        let project =
+            json!({"id": "p1", "title": "p1", "workspaceRoot": "/work/p1", "scripts": []});
+        world.mc.projects.insert("p1".to_owned(), project.clone());
+        world.mc.send_row_of("p1", &project, "project");
+        world.wait_for("the shell to list the project", |w| {
+            hal_c2_shell::store::with(w.engine(), |s| !s.projects().is_empty())
+        })?;
     }
     Brick::show(world, qml, 1200.0, 800.0)?;
     crate::brick::shown(world)
@@ -3717,10 +3728,22 @@ fn reconnecting_notice(world: &mut World, brick: Brick) -> Outcome<ObjectId> {
             field(w, "state") == "retrying"
                 && shown_named(w, brick, "connectionNotice").is_ok_and(|f| !f.is_empty())
         },
-        |w| {
+        move |w| {
+            let onboarding = w.state("onboarding");
             format!(
-                "the notice of a reconnect; the connection is {}",
-                show(&connection(w))
+                "the notice of a reconnect; the connection is {}, the onboarding gate {} \
+                 (recovery {}) with the wizard {}",
+                show(&connection(w)),
+                onboarding["gate"],
+                onboarding["recovery"],
+                if brick
+                    .find_visible(w, "welcomeWizard")
+                    .is_ok_and(|f| f.is_some())
+                {
+                    "shown"
+                } else {
+                    "hidden"
+                }
             )
         },
     )?;
