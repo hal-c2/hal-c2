@@ -760,14 +760,14 @@ defmodule HalC2.PluginsTest do
   defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
 
-  # A package of UI parts only, with a number and a secret among its settings.
-  # A package of UI parts only, installed and turned on.
+  # A package of UI parts only (`package/2`), installed and turned on.
   defp running(id) do
     package(id, "1")
     Plugins.handle("rescan", %{})
     assert {:ok, _} = Plugins.handle("enable", %{"id" => id, "acceptPermissions" => []})
   end
 
+  # A package of UI parts only, with a number and a secret among its settings.
   defp package(id, version) do
     dir = Path.join(plugins_dir(), id)
     File.mkdir_p!(Path.join(dir, "ui"))
