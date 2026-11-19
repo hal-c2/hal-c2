@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" shape-rendering="crispEdges">
+  <rect width="64" height="64" rx="14" fill="#d97706"/>
+  <!-- A pixel person at a desk. -->
+  <path d="M26 12h12v4h2v8h-2v2H26v-2h-2v-8h2z" fill="#fff"/>
+  <path d="M22 28h20v4h2v8H20v-8h2z" fill="#fff"/>
+  <path d="M12 42h40v4h-4v8h-4v-8H20v8h-4v-8h-4z" fill="#fff"/>
+  <path d="M29 18h2v2h-2zm4 0h2v2h-2z" fill="#d97706"/>
+</svg>

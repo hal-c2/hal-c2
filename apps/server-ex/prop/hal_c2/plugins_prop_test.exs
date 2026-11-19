@@ -13,7 +13,9 @@ defmodule HalC2.PluginsPropTest do
   settings (version 2 of a package takes them live, so its process stays; version 1
   is restarted with them), call the running plugin (whose process must run with the
   settings saved last, after a crash too), read its files, follow, publish and drop topics,
-  kill a client, crash a plugin's process once or until its supervisor gives up, crash
+  kill a client (what a plugin published is forgotten once it does not run, held or
+  removed, and only a running plugin publishes), crash a plugin's process once or until its
+  supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   hand the running plugins a turn (`observe/1`: every package hears turns, and only
   those granted `turns:observe` may, with the settings saved last) and ask them to shape
@@ -363,9 +365,16 @@ defmodule HalC2.PluginsPropTest do
     problems == []
   end
 
-  # A step, then the events of runs it stopped or replaced dropped.
+  # A step, then the events of runs it stopped or replaced dropped, and what a plugin it
+  # left not running (held and stopped, or not held at all) last published forgotten.
   defp step(s, call) do
     {next, expect} = act(s, call)
+
+    next = %{
+      next
+      | last:
+          Map.filter(next.last, fn {{id, _}, _} -> match?(%{running: true}, next.held[id]) end)
+    }
 
     queue =
       next.queue
@@ -638,15 +647,21 @@ defmodule HalC2.PluginsPropTest do
   defp act(s, {:call, _, :unsubscribe, [c, id, topic]}),
     do: {update_in(s.subs[c], &MapSet.delete(&1, {id, topic})), :ok}
 
+  # Only a running plugin publishes: one held and not running (sent as it stopped) or
+  # not held at all (sent after it was removed) is not passed on.
   defp act(s, {:call, _, :publish, [id, topic, value]}) do
-    inbox =
-      Map.new(s.inbox, fn {c, messages} ->
-        if MapSet.member?(s.subs[c], {id, topic}),
-          do: {c, messages ++ [{id, topic, value}]},
-          else: {c, messages}
-      end)
+    if not match?(%{running: true}, s.held[id]) do
+      {s, :ok}
+    else
+      inbox =
+        Map.new(s.inbox, fn {c, messages} ->
+          if MapSet.member?(s.subs[c], {id, topic}),
+            do: {c, messages ++ [{id, topic, value}]},
+            else: {c, messages}
+        end)
 
-    {%{s | last: Map.put(s.last, {id, topic}, value), inbox: inbox}, :ok}
+      {%{s | last: Map.put(s.last, {id, topic}, value), inbox: inbox}, :ok}
+    end
   end
 
   defp act(s, {:call, _, :inbox, [c]}),

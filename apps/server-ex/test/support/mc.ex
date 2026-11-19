@@ -1032,10 +1032,13 @@ defmodule HalC2.Test.Mc.World do
     put_entity(context, title, "message", id, %{"s" => message})
   end
 
-  @doc "Adds a run in `status` to a thread (`requestedAt`/`startedAt`/`completedAt` from `at`)."
+  @doc """
+  Adds a run in `status` to a thread (`requestedAt`/`startedAt`/`completedAt` from `at`).
+  An `"id"` in `extra` names the run, so adding it again moves that run on.
+  """
   def add_run(context, title, status, at \\ nil, extra \\ %{}) do
     at = at || iso_from_now(0)
-    id = "run-#{System.unique_integer([:positive])}"
+    id = extra["id"] || "run-#{System.unique_integer([:positive])}"
     done? = status in ~w(completed failed interrupted cancelled)
 
     run =

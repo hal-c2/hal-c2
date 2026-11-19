@@ -37,6 +37,7 @@ defmodule HalC2.PluginsTest do
   end
 
   test "followers of a topic, and what it last carried, outlive a restart of the host" do
+    running("alpha")
     other = follower()
     assert {:ok, nil} = Plugins.subscribe_topic(self(), "alpha", "t")
     assert {:ok, nil} = Plugins.subscribe_topic(other, "alpha", "t")
@@ -50,12 +51,56 @@ defmodule HalC2.PluginsTest do
     assert_receive {:hal_c2_plugin_topic, _, "alpha", "t", 2}
     assert {:ok, 2} = Plugins.subscribe_topic(follower(), "alpha", "t")
 
-    # The new server watches them too: one that goes away is dropped.
-    assert monitors() == 3
+    # The new server watches them too (and the plugin it started): one that goes away
+    # is dropped.
+    assert monitors() == 3 + 1
     ref = Process.monitor(other)
     Process.exit(other, :kill)
     assert_receive {:DOWN, ^ref, _, _, _}
-    assert monitors() == 2
+    assert monitors() == 2 + 1
+  end
+
+  test "what a plugin published is forgotten once it is turned off, and it publishes nothing then" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    assert {:ok, _} = Plugins.handle("disable", %{"id" => "notes"})
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+
+    # As it stopped: not said to those following, nor kept.
+    Plugins.publish("notes", "t", 2)
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+    refute_received {:hal_c2_plugin_topic, _, "notes", "t", _}
+  end
+
+  test "a plugin that was removed publishes nothing, and what it published is forgotten" do
+    running("notes")
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    File.rm_rf!(Path.join(plugins_dir(), "notes"))
+    Plugins.handle("rescan", %{})
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+
+    # As it was removed: not said to those following, nor kept.
+    Plugins.publish("notes", "t", 2)
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+    refute_received {:hal_c2_plugin_topic, _, "notes", "t", _}
+  end
+
+  test "what a plugin removed while the host was down published is forgotten as it starts" do
+    running("notes")
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+    File.rm_rf!(Path.join(plugins_dir(), "notes"))
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, Plugins)
+
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
   end
 
   test "a busy plugin host counts its plugins as running, a stopped one does not" do
@@ -714,6 +759,13 @@ defmodule HalC2.PluginsTest do
   defp listed(id), do: Plugins |> GenServer.call(:list) |> Enum.find(&(&1["id"] == id))
   defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
+
+  # A package of UI parts only (`package/2`), installed and turned on.
+  defp running(id) do
+    package(id, "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => id, "acceptPermissions" => []})
+  end
 
   # A package of UI parts only, with a number and a secret among its settings.
   defp package(id, version) do

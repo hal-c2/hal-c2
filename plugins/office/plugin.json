@@ -1,0 +1,40 @@
+{
+  "id": "office",
+  "name": "Office",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "Your agents as people in a pixel-art office. Each thread sits at a desk with the workers it delegated to beside it, some of them cats and dogs. They type at their computers, plan at the whiteboard, read at the bookshelves and take breaks in the break room while they wait, walking around the furniture and each other. When one agent hands work to another or messages it, the two walk over and talk; one whose agent asks you something raises a question mark. Click anyone to open their thread.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/office",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "threads:read",
+      "reason": "To seat each of this machine's threads in the office, with its title, project and agent, and to see when one works, waits or asks you something."
+    },
+    {
+      "id": "turns:observe",
+      "reason": "To show what each agent does (editing, testing, reading, planning) and when one hands work or a message to another. Only the kind of each tool call and a short line of what was said are kept, in memory."
+    }
+  ],
+  "settings": [
+    {
+      "key": "maxPeople",
+      "label": "Most people in the office",
+      "type": "number",
+      "default": 24,
+      "description": "Threads asking you something come first, then those working, waiting and idle."
+    },
+    {
+      "key": "idleHours",
+      "label": "Keep idle threads for (hours)",
+      "type": "number",
+      "default": 24,
+      "description": "An idle thread leaves the office once it has been quiet this long."
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "office", "title": "Office", "qml": "ui/OfficePage.qml" }]
+  }
+}

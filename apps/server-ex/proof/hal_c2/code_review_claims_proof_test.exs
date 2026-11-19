@@ -19,6 +19,13 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   @agent "the review thread and its agent; the model's runs end when they claim or step back"
   @host "a host function no claim or post goes through"
   @trust "who stands behind a pull request and the user's approval of one; the model's pull request is trusted"
+  # Not a protocol between processes, so no model of its own: one machine's rows, read
+  # once and then forwarded one way from HalC2.Shell's broadcasts to the linked caller,
+  # deciding nothing. A change between the read and the watch is not lost because the
+  # caller watches first and then reads, and one that comes twice is the same row; the
+  # relay dies with the caller (linked and monitoring it), so a pending delivery has
+  # nowhere to go and nothing to undo.
+  @rows "this machine's thread rows for the office plugin, read or relayed one way from HalC2.Shell to the linked caller (watch first, then read: a change in between comes again); no claim or post goes through them"
 
   use HalC2.Proof,
     model: "code_review_claims.maude",
@@ -128,6 +135,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.issues/3" => @host,
       "HalC2.Plugins.Host.open_pull_request/3" => @host,
       "HalC2.Plugins.Host.thread/2" => @agent,
+      "HalC2.Plugins.Host.threads/1" => @rows,
+      "HalC2.Plugins.Host.watch_threads/1" => @rows,
       "HalC2Plugins.CodeReview handle_call {:run, _, _}" => @agent,
       "HalC2.Plugins.Host.launch_thread/4" => @agent,
       "HalC2.Plugins.Host.organize_thread/3" => @shown,

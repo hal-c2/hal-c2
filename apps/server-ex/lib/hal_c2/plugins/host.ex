@@ -9,6 +9,7 @@ defmodule HalC2.Plugins.Host do
   """
 
   alias HalC2.Plugins
+  alias HalC2.Plugins.Host.ThreadRelay
 
   # Pull request methods that change something on the host.
   @writes ~w(runAction update comment updateComment submitReview replyToThread
@@ -186,6 +187,39 @@ defmodule HalC2.Plugins.Host do
         {"thread", row} -> {:ok, row}
         _ -> {:ok, nil}
       end
+    end
+  end
+
+  @doc """
+  This MC's thread sidebar rows (`OrchestrationV2ThreadShell`), deleted ones left out,
+  each with its project's title as `"projectTitle"` (nil when the project is unknown).
+  Threads on other machines of the cluster are theirs to show.
+  """
+  def threads(id) do
+    with :ok <- permit(id, "threads:read") do
+      {:ok,
+       for(
+         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+         mc == node() and row["deletedAt"] == nil,
+         do: row
+       )
+       |> ThreadRelay.with_project_titles()}
+    end
+  end
+
+  @doc """
+  Sends the caller `{:hal_c2_threads, rows}` whenever rows of this MC's threads change:
+  the changed rows only, shaped as `threads/1`'s, a deleted one with its `"deletedAt"`
+  so the plugin can let it go. A project whose row changes sends its threads again,
+  so a renamed project's `"projectTitle"` follows. Watch first, then read `threads/1`:
+  a change in between comes again. The rows come from a process of the host's
+  (`ThreadRelay`, returned as `{:ok, pid}`), linked to the caller and gone with it.
+  """
+  def watch_threads(id) do
+    with :ok <- permit(id, "threads:read") do
+      relay = ThreadRelay.start_link(self())
+      :ok = HalC2.Shell.subscribe(relay)
+      {:ok, relay}
     end
   end
 
