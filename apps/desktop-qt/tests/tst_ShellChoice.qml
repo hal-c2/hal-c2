@@ -39,6 +39,27 @@ Item {
             }
         }
 
+        // Two choices sharing labels, as a settings page has them.
+        Component {
+            id: pairComponent
+            Column {
+                ShellChoice {
+                    objectName: "access"
+                    width: 500
+                    optionName: "access:"
+                    options: [{ value: "", label: "Its default" }, "auto"]
+                    Accessible.name: "Access"
+                }
+                ShellChoice {
+                    objectName: "effort"
+                    width: 500
+                    optionName: "effort:"
+                    options: [{ value: "", label: "Its default" }, "high"]
+                    Accessible.name: "Effort"
+                }
+            }
+        }
+
         function init() {
             Theme.colors = {
                 text: "#111111",
@@ -95,6 +116,18 @@ Item {
             tryCompare(web, "y", api.y);
             verify(web.x > api.x);
             compare(choice.naturalWidth, api.implicitWidth + web.implicitWidth + choice.spacing);
+        }
+    
+        // Each choice is a named group, and an option says which one it is in,
+        // so the same label in two choices is told apart.
+        function test_optionsSayWhichChoiceTheyAreIn() {
+            const pair = createTemporaryObject(pairComponent, root);
+            const access = findChild(pair, "access");
+            compare(access.Accessible.role, Accessible.Grouping);
+            compare(findChild(pair, "access:").Accessible.description, "Access");
+            compare(findChild(pair, "effort:").Accessible.description, "Effort");
+            access.Accessible.name = "Runtime access";
+            compare(findChild(pair, "access:").Accessible.description, "Runtime access");
         }
     }
 }

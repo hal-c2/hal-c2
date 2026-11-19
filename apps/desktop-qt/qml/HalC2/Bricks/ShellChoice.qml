@@ -11,6 +11,9 @@ import HalC2.Shell
 // Each option is named `optionName` + its value, and says whether it is
 // `chosen`. `picked` says which value was clicked; the owner sets `value`.
 // `naturalWidth` is its width on one line, for a Flow or Row to size it by.
+// It is a group named by its `Accessible.name` (a SettingsField gives it its
+// title), and each option says in its description which group it is in, so
+// two choices sharing labels ("Its default") are told apart by ear.
 Flow {
     id: choice
 
@@ -28,6 +31,7 @@ Flow {
     signal picked(var value)
 
     spacing: Theme.space.sm
+    Accessible.role: Accessible.Grouping
 
     Repeater {
         model: choice.options
@@ -49,6 +53,7 @@ Flow {
             Accessible.role: choice.multiple ? Accessible.CheckBox : Accessible.RadioButton
             Accessible.checkable: true
             Accessible.checked: chosen
+            Accessible.description: choice.Accessible.name
             Keys.onReturnPressed: choice.picked(optionValue)
             Keys.onEnterPressed: choice.picked(optionValue)
             onClicked: choice.picked(optionValue)

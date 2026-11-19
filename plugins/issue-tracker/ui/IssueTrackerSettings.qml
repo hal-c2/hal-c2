@@ -142,7 +142,7 @@ ColumnLayout {
                     model: settings.providers.map(each => each.name)
                     currentIndex: settings.providers.findIndex(each => each.instanceId === section.agent.provider)
                     displayText: currentIndex >= 0 ? currentText : (section.agent.provider ?? "")
-                    Accessible.name: qsTr("Agent")
+                    Accessible.name: qsTr("%1 agent").arg(section.title)
                     onActivated: index => {
                         const agent = Object.assign({}, section.agent, {
                             provider: settings.providers[index].instanceId,
@@ -160,7 +160,7 @@ ColumnLayout {
                     model: [qsTr("Its default model")].concat(section.models.map(each => each.name || each.slug))
                     currentIndex: (section.agent.model ?? "") === "" ? 0 : section.models.findIndex(each => each.slug === section.agent.model) + 1
                     displayText: currentIndex >= 0 ? currentText : section.agent.model
-                    Accessible.name: qsTr("Model")
+                    Accessible.name: qsTr("%1 model").arg(section.title)
                     onActivated: index => {
                         const agent = Object.assign({}, section.agent, {
                             model: index === 0 ? "" : section.models[index - 1].slug,

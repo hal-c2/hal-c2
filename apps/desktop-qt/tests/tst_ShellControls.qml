@@ -64,6 +64,11 @@ TestCase {
         SignalSpy {}
     }
 
+    Component {
+        id: fieldComponent
+        ShellTextField {}
+    }
+
     function init() {
         Theme.appearance = "dark";
         Theme.colors = dark;
@@ -157,5 +162,35 @@ TestCase {
             keyClick(key);
         compare(control.contentItem.text, "20000");
         compare(control.saved, 20000);
+    }
+
+    // An emptied box keeps the number it held when the keyboard leaves it or
+    // Return is pressed, where the stock box falls to `from`: nothing is saved.
+    function test_spinBoxKeepsItsValueWhenEmptied() {
+        const control = createTemporaryObject(spinComponent, testCase, {
+            from: 1,
+            value: 7
+        });
+        const elsewhere = createTemporaryObject(fieldComponent, testCase, {
+            y: 80
+        });
+        const modified = createTemporaryObject(spyComponent, testCase, {
+            target: control,
+            signalName: "valueModified"
+        });
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Backspace);
+        compare(control.contentItem.text, "");
+        elsewhere.forceActiveFocus();
+        compare(control.value, 7);
+        compare(control.contentItem.text, "7");
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Minus);
+        keyClick(Qt.Key_Return);
+        compare(control.value, 7);
+        compare(control.contentItem.text, "7");
+        compare(modified.count, 0);
     }
 }

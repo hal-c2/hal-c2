@@ -26,6 +26,12 @@ SpinBox {
     // Digits only, never grouped: a value reported while it is typed is shown again
     // in the field, and "2,000" would take no fifth digit.
     textFromValue: (value, locale) => String(Math.round(value))
+    // What reads no number (an emptied field, a lone minus) keeps the value it
+    // held, where the stock box would fall to `from`.
+    valueFromText: (text, locale) => {
+        const typed = text.trim().length > 0 ? Number(text) : NaN;
+        return Number.isFinite(typed) ? Math.round(typed) : control.value;
+    }
 
     contentItem: TextInput {
         z: 2

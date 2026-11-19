@@ -453,6 +453,7 @@ ColumnLayout {
                 id: card
 
                 required property string modelData
+                required property int index
                 readonly property var action: settings.actions[modelData] ?? {}
                 readonly property bool builtin: settings.defaultActions[modelData] !== undefined
 
@@ -478,7 +479,7 @@ ColumnLayout {
                             Layout.fillWidth: true
                             text: card.action.label ?? ""
                             placeholderText: qsTr("Label")
-                            Accessible.name: qsTr("Label of the action")
+                            Accessible.name: qsTr("Label of action %1").arg(card.index + 1)
                             onTextEdited: settings.setAction(card.modelData, "label", text)
                         }
 
@@ -505,6 +506,7 @@ ColumnLayout {
                                 { value: "plan", label: qsTr("On the plan") }
                             ]
                             value: card.action.scope
+                            Accessible.name: qsTr("What %1 acts on").arg(card.action.label ?? card.modelData)
                             onPicked: value => settings.setAction(card.modelData, "scope", value)
                         }
 
@@ -516,6 +518,7 @@ ColumnLayout {
                                 { value: "apply", label: qsTr("Applies changes") }
                             ]
                             value: card.action.apply
+                            Accessible.name: qsTr("What %1 does with its changes").arg(card.action.label ?? card.modelData)
                             onPicked: value => settings.setAction(card.modelData, "apply", value)
                         }
                     }
@@ -553,6 +556,7 @@ ColumnLayout {
                             iconName: "undo-2"
                             enabled: card.action.prompt !== settings.defaultActions[card.modelData]?.prompt
                             text: qsTr("Reset to the plugin's prompt")
+                            Accessible.name: qsTr("Reset %1 to the plugin's prompt").arg(card.action.label ?? card.modelData)
                             onClicked: settings.resetPrompt(card.modelData)
                         }
                     }
