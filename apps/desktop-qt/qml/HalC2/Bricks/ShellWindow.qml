@@ -105,6 +105,9 @@ Window {
         readonly property Item overlay: T.Overlay.overlay
 
         objectName: "shellBody"
+        // Not there while the first-run wizard covers the window: its
+        // controls would still take Tab and be read out from under it.
+        visible: !welcomeWizard.visible
         width: root.width / root.zoom
         height: root.height / root.zoom
         scale: root.zoom
