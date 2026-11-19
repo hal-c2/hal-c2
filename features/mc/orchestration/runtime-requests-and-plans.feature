@@ -261,6 +261,14 @@ Feature: Approvals, questions and plans
     When the running turn of "t1" completes
     Then the question is closed by the message rather than answered
 
+  # The user did not see a question asked after they wrote.
+  @mc
+  Scenario: A question asked after the user queued a message stays open when it starts
+    Given the user queued "Use Postgres" behind the running turn of "t1"
+    And the provider asked a question the user can answer with a message
+    When the running turn of "t1" completes
+    Then the question is still pending
+
   @mc @priority-high
   Scenario: Cancelling a queued message leaves the question open
     Given the provider asked a question the user can answer with a message

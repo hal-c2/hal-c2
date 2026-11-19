@@ -412,4 +412,85 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert {"thread", %{"pendingRuntimeRequest" => %{"id" => "q2"}}} =
              HalC2.Shell.row(node(), "t5")
   end
+
+  # A run of messages the user did not write (delegated results, say) can push the one
+  # the user wrote out of memory.
+  test "a question the user wrote over is closed at boot when that message has gone cold" do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 1)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+
+    {:ok, _} =
+      HalC2.Streams.commit("t6", :thread, [
+        {"thread", "t6",
+         %{"s" => %{"id" => "t6", "title" => "Cold", "createdAt" => at, "updatedAt" => at}}},
+        {"runtime-request", "q1",
+         %{
+           "s" => %{
+             "id" => "q1",
+             "status" => "pending",
+             "kind" => "user-input",
+             "createdAt" => "2026-09-23T10:00:01.000Z",
+             "responseCapability" => %{"type" => "message"}
+           }
+         }}
+      ])
+
+    for i <- 1..6 do
+      run = "r#{i}"
+      written = "2026-09-23T10:00:#{10 + i}.000Z"
+
+      # The user wrote the first; another thread's agent the rest.
+      fields =
+        if i == 1,
+          do: %{"createdBy" => "user"},
+          else: %{"createdBy" => "agent", "senderThreadId" => "t9"}
+
+      {:ok, _} =
+        HalC2.Streams.commit("t6", :thread, [
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+          {"message", "m#{i}",
+           %{
+             "s" =>
+               Map.merge(
+                 %{"id" => "m#{i}", "runId" => run, "role" => "user", "text" => "m#{i}"},
+                 Map.put(fields, "createdAt", written)
+               )
+           }}
+          | for(
+              j <- 1..3,
+              do:
+                {"turn-item", "#{run}-i#{j}",
+                 %{"s" => %{"id" => "#{run}-i#{j}", "runId" => run, "ordinal" => 10 * i + j}}}
+            )
+        ])
+
+      {:ok, _} =
+        HalC2.Streams.commit("t6", :thread, [
+          {"run", run, %{"s" => %{"status" => "completed", "completedAt" => written}}}
+        ])
+    end
+
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t6"))
+    refute Map.has_key?(StreamState.get(state, "message"), "m1")
+    assert %{"createdBy" => "user"} = StreamState.fetch(state, "message", "m1")
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t6", {"thread", %{"pendingRuntimeRequest" => %{}}}}]}},
+                   1_000
+
+    Recovery.run()
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t6"))
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} =
+             StreamState.get(state, "runtime-request")["q1"]
+  end
 end

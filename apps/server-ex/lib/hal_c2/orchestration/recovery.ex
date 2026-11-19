@@ -105,13 +105,13 @@ defmodule HalC2.Orchestration.Recovery do
 
   # The threads whose questions asked in the background stayed open after the user wrote
   # to them, from before a message closed them, close them now
-  # (`Orchestration.close_stale_questions/2`). Only a row showing a pending request and a
-  # message the user wrote can have one, so no other stream is read.
+  # (`Orchestration.close_stale_questions/2`). Only a row showing a pending request can
+  # have one, so no other stream is read. Its `latestUserAuthoredMessageAt` is not asked
+  # for: it is read from memory, and the message the user wrote may have gone cold.
   defp close_stale_questions(rows) do
     closed =
       for {thread_id, row} <- rows,
-          is_map(row["pendingRuntimeRequest"]) and
-            is_binary(row["latestUserAuthoredMessageAt"]),
+          is_map(row["pendingRuntimeRequest"]),
           count =
             HalC2.Streams.transact(thread_id, :thread, fn state ->
               changes = HalC2.Orchestration.close_stale_questions(state, thread_id)

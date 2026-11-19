@@ -1379,38 +1379,52 @@ defmodule HalC2.Orchestration do
   end
 
   # The changes that close the questions the agent asked in the background (answered with
-  # a message) still open from before the user wrote to the thread at `written` (unix ms,
-  # or `:now` for a message the agent gets now). The agent reads what the user wrote, so that is
-  # the answer. They close as a dismissed question does, saying so (`closedBy`), never as
-  # answered with answers nobody gave.
+  # a message) still open from before the user wrote to the thread. `written` says when:
+  # `:now` for a message written in this transaction, `{:created, seq}` for one in the
+  # stream (`written/2`), unix ms for one read back at start, nil for none. A question
+  # asked after the message stays open: the user did not see it. The agent reads what
+  # the user wrote, so that is the answer. They close as a dismissed question does,
+  # saying so (`closedBy`), never as answered with answers nobody gave.
+  defp close_written_over(_state, nil), do: []
+
   defp close_written_over(state, written) do
     for request <- StreamState.list(state, "runtime-request"),
         request["status"] == "pending",
         HalC2.Orchestration.TurnWriter.message_request?(request),
-        written == :now or asked_before?(request, written),
+        asked_before?(state, request, written),
         change <-
           resolve_message_request(state, request, "cancelled", nil, %{"closedBy" => "message"}),
         do: change
   end
 
-  defp asked_before?(request, written) do
+  defp asked_before?(_state, _request, :now), do: true
+
+  defp asked_before?(state, request, {:created, written}),
+    do: (StreamState.created(state, "runtime-request", request["id"]) || written) < written
+
+  defp asked_before?(_state, request, written) do
     case HalC2.Projection.JS.epoch_ms(request["createdAt"]) do
       asked when is_integer(asked) -> asked < written
       nil -> false
     end
   end
 
+  # When the user wrote `message`, a message of the stream, for `close_written_over/2`.
+  defp written(state, message) do
+    if seq = StreamState.created(state, "message", message["id"]), do: {:created, seq}
+  end
+
   @doc """
   The changes that close what a message the user writes closes, for a thread whose
   questions asked in the background stayed open while the user wrote to it, as they did
   before a message closed them: those asked before the newest message the user wrote,
-  read from memory (a cold message is older than every hot one).
+  cold ones included (a run of the MC's own messages can push it out of memory).
   """
   def close_stale_questions(state, thread_id) do
     thread = StreamState.get(state, "thread")[thread_id] || %{}
 
     written =
-      for message <- StreamState.list(state, "message"),
+      for message <- StreamState.all(state, "message"),
           user_wrote?(message, thread),
           ms = HalC2.Projection.JS.epoch_ms(message["createdAt"]),
           is_integer(ms),
@@ -3834,8 +3848,12 @@ defmodule HalC2.Orchestration do
 
   # The changes that close the questions `message`, which the provider took into its
   # running turn (a steer, a promoted queued message), answers, when the user wrote it.
+  # Those asked after it was written stay open: the provider call runs outside the
+  # transaction that wrote it.
   defp written_over(state, message) do
-    if message && user_wrote?(message, %{}), do: close_written_over(state, :now), else: []
+    if message && user_wrote?(message, %{}),
+      do: close_written_over(state, written(state, message)),
+      else: []
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
@@ -6020,16 +6038,17 @@ defmodule HalC2.Orchestration do
 
     turn = HalC2.Orchestration.Handoff.ahead(turn, handoff.context)
 
-    # A message the user wrote answers the questions asked in the background once the
-    # agent gets it: as its run starts, not while it waits in the queue, where the user
-    # can still take it back. A run refused before it reaches the provider
+    # A message the user wrote answers the questions asked in the background before it
+    # once the agent gets it: as its run starts, not while it waits in the queue, where
+    # the user can still take it back. A queued one (`command` is its message) closes
+    # those asked before it was queued. A run refused before it reaches the provider
     # (`begin_turn_now/2`) gets nothing. A steer closes them once its provider takes it
     # (`steer_taken/2`).
     closed =
       if handoff.refusal == nil and turn.command_refusal == nil and
            HalC2.Settings.provider_off(thread["projectId"], instance) == nil and
            user_wrote?(command, %{}),
-         do: close_written_over(state, :now),
+         do: close_written_over(state, if(queued, do: written(state, command), else: :now)),
          else: []
 
     # A refused run consumes nothing it would have handed over.

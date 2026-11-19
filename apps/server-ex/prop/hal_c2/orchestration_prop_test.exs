@@ -32,9 +32,9 @@ defmodule HalC2.OrchestrationPropTest do
   the reason; one answered by message outlives both, and its answer reaches the agent
   as the user's message, steering the running turn or starting the next. A closed
   question refuses an answer and a dismissal. A message the user writes, an answer by
-  message too, closes the questions still open for a message once the agent gets it
-  (its run starts, or the running turn takes it): the agent reads it instead. A message
-  still queued, the MC's own and a steer Codex refuses close none.
+  message too, closes the questions asked before it and still open for a message once
+  the agent gets it (its run starts, or the running turn takes it): the agent reads it
+  instead. A message still queued, the MC's own and a steer Codex refuses close none.
 
   A thread can hold a proposed plan, which a message to it or to the other thread
   implements (the composer's "Implement it" and "Implement in a new thread"): the plan
@@ -588,7 +588,11 @@ defmodule HalC2.OrchestrationPropTest do
     run = running(state.threads[tid])
 
     %{state | next: state.next + 1}
-    |> update(tid, &put_in(&1.requests[rid], %{kind: kind, status: "pending", run: run.msg}))
+    |> update(tid, fn thread ->
+      # The messages written before it, which do not answer it (`close_written_over/2`).
+      seen = MapSet.new(Map.keys(thread.messages))
+      put_in(thread.requests[rid], %{kind: kind, status: "pending", run: run.msg, seen: seen})
+    end)
   end
 
   # An answer by message goes to the agent as the user's message: into the running
@@ -1408,17 +1412,24 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The questions a message the user wrote closes as the agent gets it (its run starts,
-  # or the running turn takes it): those still open for a message. One the message
-  # answers is resolved already (`answered/4`). The MC's own message closes none.
+  # or the running turn takes it): those still open for a message and asked before it
+  # was written; the user did not see a later one. One the message answers is resolved
+  # already (`answered/4`). The MC's own message closes none.
   defp close_written_over(thread, msg) do
-    if thread.messages[msg].notice, do: thread, else: close_written_over(thread)
+    if thread.messages[msg].notice, do: thread, else: close_asked_before(thread, msg)
   end
 
-  defp close_written_over(thread) do
+  # A steer is written and taken in one step, after every question asked.
+  defp close_written_over(thread), do: close_asked_before(thread, nil)
+
+  defp close_asked_before(thread, msg) do
     requests =
       Map.new(thread.requests, fn
-        {rid, %{kind: :message, status: "pending"} = r} -> {rid, %{r | status: "cancelled"}}
-        other -> other
+        {rid, %{kind: :message, status: "pending", seen: seen} = r} ->
+          if MapSet.member?(seen, msg), do: {rid, r}, else: {rid, %{r | status: "cancelled"}}
+
+        other ->
+          other
       end)
 
     %{thread | requests: requests}
