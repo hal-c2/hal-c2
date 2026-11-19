@@ -527,6 +527,49 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  step "the MC under the service wrapper is starting and misses a stop", context do
+    bin = Path.join(Mc.tmp_dir(context.mc, "release"), "bin")
+    File.mkdir_p!(bin)
+    wrapper = Path.join(bin, "hal-c2-service")
+    File.cp!(Path.join(project_dir(), "rel/overlays/bin/hal-c2-service"), wrapper)
+    File.chmod!(wrapper, 0o755)
+    log = Path.join(bin, "stops.log")
+    ready = Path.join(bin, "ready")
+    {_, 0} = System.cmd("mkfifo", [ready])
+
+    # A stand-in for bin/hal_c2 that drops the first TERM, as a booting BEAM does, and
+    # stops on the next.
+    File.write!(Path.join(bin, "hal_c2"), """
+    #!/bin/sh
+    trap 'echo missed >> "#{log}"; trap "echo stopped >> \\"#{log}\\"; exit 0" TERM' TERM
+    echo up > "#{ready}"
+    while :; do sleep 1 & wait $!; done
+    """)
+
+    File.chmod!(Path.join(bin, "hal_c2"), 0o755)
+    Map.put(context, :wrapper, %{path: wrapper, log: log, ready: ready})
+  end
+
+  step "the service manager stops the wrapper while the MC starts",
+       %{wrapper: wrapper} = context do
+    script = """
+    "$0" & pid=$!
+    read _ < "$1"
+    kill -TERM "$pid"
+    wait "$pid"
+    echo "$?"
+    """
+
+    {out, 0} = System.cmd("sh", ["-c", script, wrapper.path, wrapper.ready])
+    Map.put(context, :wrapper_stop, String.trim(out))
+  end
+
+  step "the wrapper tells the MC again until it stops", context do
+    assert context.wrapper_stop == "0"
+    assert File.read!(context.wrapper.log) == "missed\nstopped\n"
+    context
+  end
+
   step "a user asks to install the background service", context do
     Mc.release(context.mc, service: false)
     user_home = Mc.tmp_dir(context.mc, "user-home")
