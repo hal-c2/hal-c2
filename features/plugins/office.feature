@@ -1,6 +1,8 @@
 # Sources:
 #   plugins/office/plugin.json (permissions, settings, the page)
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
+#   plugins/office/mc/floor.ex (the office topic's people, reviewers among them, and talks)
+#   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
 #   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md
@@ -75,6 +77,27 @@ Feature: Office
       Given a thread "Lead" in the project "api"
       When its agent delegates "Write the tests" to a worker
       Then the office has the worker "Write the tests" whose parent is "Lead"
+
+    @mc
+    Scenario: A thread the code-review plugin started to review a pull request is a reviewer
+      Given a review thread "Review #12 Fix login" the code-review plugin started
+      Then the office has "Review #12 Fix login" as a reviewer
+
+    @mc
+    Scenario: A worker a reviewer delegated to is a reviewer too
+      Given a review thread "Review #12 Fix login" the code-review plugin started
+      When its agent delegates "Check the tests" to a worker
+      Then the office has "Check the tests" as a reviewer
+
+    @mc
+    Scenario: A thread titled like a review that no review started is not a reviewer
+      Given a thread "Review #12 Fix login" in the project "api"
+      Then the office has "Review #12 Fix login", not as a reviewer
+
+    @mc
+    Scenario: A thread another plugin started is not a reviewer
+      Given a thread "Implement #7" the issue-tracker plugin started to implement an issue
+      Then the office has "Implement #7", not as a reviewer
 
     @mc
     Scenario: Archived, deleted and settled threads have left the office

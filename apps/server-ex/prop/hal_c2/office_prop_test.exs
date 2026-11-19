@@ -12,6 +12,9 @@ defmodule HalC2.OfficePropTest do
     waiting and the rest, newest first, no more than `maxPeople`;
   - each is in its row's state, shows what its agent last did only while working,
     and has a question exactly while asking;
+  - each is a reviewer exactly when code-review started its thread to review, or one
+    of its parents, however far up and wherever they are, was (a lineage that loops
+    included);
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
     keeps its place, time, who said it to whom and its kind), those under ten minutes
     old, each from, to and of the kind it was said; once the timer fires, the office
@@ -104,7 +107,8 @@ defmodule HalC2.OfficePropTest do
          elements(~w(asking working waiting failed idle)),
          elements([:none, :archived, :moved, :settled, :unsettled]),
          elements([nil, "t1", "t2"]),
-         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000])
+         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000]),
+         elements([nil, :review, :other])
        ]},
       {:call, __MODULE__, :delete_row, [elements(@ids)]},
       {:call, __MODULE__, :start_turn, [elements(@ids)]},
@@ -122,9 +126,9 @@ defmodule HalC2.OfficePropTest do
 
   # --- the system: the floor and the time, in the case's process ----------------------
 
-  def put_row(id, state, flag, parent, age) do
+  def put_row(id, state, flag, parent, age, mark) do
     now = Process.get(:now)
-    step(&Floor.rows(&1, [row(id, state, flag, parent, now - age)], now))
+    step(&Floor.rows(&1, [row(id, state, flag, parent, now - age, mark)], now))
   end
 
   def delete_row(id) do
@@ -213,10 +217,16 @@ defmodule HalC2.OfficePropTest do
     }
   end
 
-  defp row(id, state, flag, parent, at) do
+  defp row(id, state, flag, parent, at, mark \\ nil) do
     at = Floor.iso(at)
 
     %{
+      "plugin" =>
+        case mark do
+          :review -> %{"id" => "code-review", "kind" => "review", "listed" => false}
+          :other -> %{"id" => "issue-tracker", "kind" => "implement", "listed" => true}
+          nil -> nil
+        end,
       "id" => id,
       "title" => "Thread #{id}",
       "projectId" => "p",
@@ -251,9 +261,9 @@ defmodule HalC2.OfficePropTest do
 
   # --- the model --------------------------------------------------------------------------
 
-  def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age]}) do
+  def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age, mark]}) do
     parent = if parent != id, do: parent
-    entry = %{state: state, flag: flag, parent: parent, at: s.now - age}
+    entry = %{state: state, flag: flag, parent: parent, at: s.now - age, review: mark == :review}
 
     s =
       if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
@@ -363,10 +373,18 @@ defmodule HalC2.OfficePropTest do
     |> Enum.take(s.max)
   end
 
+  defp reviewer?(s, id, seen) do
+    case s.rows[id] do
+      nil -> false
+      r -> r.review or (id not in seen and reviewer?(s, r.parent, [id | seen]))
+    end
+  end
+
   defp person?(s, {person, {id, r}}) do
     person["state"] == r.state and person["parentId"] == r.parent and
       person["activity"] == if(r.state == "working", do: s.activity[id]) and
       person["question"] != nil == (r.state == "asking") and
+      person["kind"] == if(reviewer?(s, id, []), do: "reviewer") and
       person["provider"] in ["claudeAgent", "codex"] and is_binary(person["since"]) and
       person["project"] == "api" and person["model"] == "gpt-5.4"
   end
