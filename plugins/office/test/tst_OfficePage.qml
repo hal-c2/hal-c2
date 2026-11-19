@@ -439,10 +439,12 @@ Item {
             compare(away(seat.pod), nearest, "the reviewer sits next to the corner");
         }
 
-        // Ordinary workers under a reviewer lead who do not fit their pod sit
-        // at the pod nearest the one their ordinary teammates hold, not the
-        // one nearest their lead's corner.
-        function test_ordinary_workers_under_a_reviewer_spill_from_their_own_pod() {
+        // A defensive test of an inconsistent snapshot, not ledger behaviour:
+        // the MC makes every worker under a reviewer one too, so it never
+        // sends this. Should one come, ordinary workers under a reviewer lead
+        // who do not fit their pod sit at the pod nearest the one their
+        // ordinary teammates hold, not the one nearest their lead's corner.
+        function test_an_inconsistent_snapshot_spills_ordinary_workers_from_their_own_pod() {
             const x = [person("x", "X", "working", "typing")].concat(many(7, "xw", "working", "typing", "x"));
             const team = n => [reviewer("r", "Review #12")].concat(many(n, "o", "working", "typing", "r"));
             plugin.publish(x.concat(team(8)));

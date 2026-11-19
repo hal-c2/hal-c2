@@ -490,12 +490,6 @@ Feature: Office
       Then the reviewer sits at the pod next to the review corner, not by the thread
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Workers who are no reviewers under a reviewer spill from their own pod
-      Given a reviewer sits in the review corner and 8 workers it delegated to, no reviewers, fill a pod on the floor
-      When it delegates to 2 more such workers
-      Then they sit at the pod nearest their teammates' pod, not the one nearest the corner
-
-    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A planner that turns out to be a reviewer goes to the review whiteboard
       Given the office has a worker planning whose lead is not in yet
       When its lead comes in as a reviewer, making the worker one too
