@@ -46,6 +46,13 @@ Item {
     property real zoom: 1
     readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(1, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
     readonly property real pixelScale: Math.max(1, Math.min(8, fitScale * zoom))
+    // Nearest-neighbour art at a fractional scale draws some art pixels a
+    // device pixel wider than others. So the art is drawn at the next whole
+    // number of device pixels per art pixel, drawScale, and that picture is
+    // shrunk smoothly to pixelScale.
+    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
+    readonly property bool resampled: drawScale - pixelScale > 0.001
 
     function zoomBy(factor) {
         zoom = Math.max(1 / fitScale, Math.min(8 / fitScale, zoom * factor));
@@ -3036,225 +3043,235 @@ Item {
                 height: page.worldRows * 16 * page.pixelScale
 
                 Item {
-                    id: world
-
-                    width: page.worldCols * 16
-                    height: page.worldRows * 16
-                    scale: page.pixelScale
+                    objectName: "officeArt"
+                    width: page.worldCols * 16 * page.drawScale
+                    height: page.worldRows * 16 * page.drawScale
+                    scale: page.pixelScale / page.drawScale
                     transformOrigin: Item.TopLeft
+                    layer.enabled: page.resampled
+                    layer.smooth: true
 
-                    Canvas {
-                        id: floor
+                    Item {
+                        id: world
 
-                        z: -1
-                        width: Math.max(1, page.worldCols * 16)
-                        height: Math.max(1, page.worldRows * 16)
-                        smooth: false
-                        antialiasing: false
-                        onPaint: page.paintFloor(getContext("2d"))
-                    }
+                        width: page.worldCols * 16
+                        height: page.worldRows * 16
+                        scale: page.drawScale
+                        transformOrigin: Item.TopLeft
 
-                    Repeater {
-                        model: page.props
+                        Canvas {
+                            id: floor
 
-                        delegate: Canvas {
-                            required property var modelData
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: modelData.w
-                            height: modelData.h
+                            z: -1
+                            width: Math.max(1, page.worldCols * 16)
+                            height: Math.max(1, page.worldRows * 16)
                             smooth: false
                             antialiasing: false
-                            onPaint: page.paintProp(getContext("2d"), modelData)
+                            onPaint: page.paintFloor(getContext("2d"))
                         }
-                    }
 
-                    // The screens of the computers facing us.
-                    Repeater {
-                        model: page.screens
+                        Repeater {
+                            model: page.props
 
-                        delegate: Rectangle {
-                            id: screen
+                            delegate: Canvas {
+                                required property var modelData
 
-                            required property var modelData
-                            property string mode: "off"
-                            property real phase: 0
-                            readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
-                            readonly property bool terminal: mode === "running" || mode === "testing"
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 8
-                            height: 6
-                            color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                            Component.onCompleted: page.screenViews[modelData.key] = screen
-                            Component.onDestruction: {
-                                if (page.screenViews[modelData.key] === screen)
-                                    delete page.screenViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: 3
-
-                                delegate: Rectangle {
-                                    required property int index
-
-                                    visible: screen.mode !== "off"
-                                    x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
-                                    y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
-                                    height: 1
-                                    width: {
-                                        if (screen.mode === "failed")
-                                            return index === 1 ? 6 : 0;
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
-                                        if (screen.mode === "idle")
-                                            return index === 1 ? 2 : 0;
-                                        return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
-                                    }
-                                    color: {
-                                        if (screen.mode === "failed")
-                                            return "#ffb3b3";
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? "#4a90d9" : "#9aa5b0";
-                                        if (screen.mode === "testing")
-                                            return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
-                                        if (screen.mode === "running")
-                                            return "#5fd38a";
-                                        if (screen.mode === "idle")
-                                            return "#9cc8ff";
-                                        return ["#c792ea", "#82aaff", "#f8c25c"][index];
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // What has been drawn on each whiteboard.
-                    Repeater {
-                        model: page.boards
-
-                        delegate: Item {
-                            id: board
-
-                            required property var modelData
-                            property real progress: 0.15
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 38
-                            height: 18
-                            Component.onCompleted: page.boardViews[modelData.key] = board
-                            Component.onDestruction: {
-                                if (page.boardViews[modelData.key] === board)
-                                    delete page.boardViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
-
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    readonly property real start: index / 9
-
-                                    x: modelData[0]
-                                    y: modelData[1]
-                                    height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
-                                    width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
-                                    color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
-                                    border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
-                                    border.color: modelData[4]
-                                    visible: width > 0
-                                }
-                            }
-                        }
-                    }
-
-                    // The people.
-                    Repeater {
-                        model: actorModel
-
-                        delegate: Item {
-                            id: person
-
-                            required property string actorId
-                            property int frame: 0
-                            property int dir: 0
-                            readonly property var look: page.actors[actorId]?.look ?? null
-
-                            width: 16
-                            height: 24
-                            clip: true
-                            Component.onCompleted: {
-                                page.views[actorId] = person;
-                                const actor = page.actors[actorId];
-                                if (actor)
-                                    page.render(actor);
-                            }
-                            Component.onDestruction: {
-                                if (page.views[actorId] === person)
-                                    delete page.views[actorId];
-                            }
-
-                            Canvas {
-                                x: -person.frame * 18
-                                y: -person.dir * 26
-                                width: 270
-                                height: 104
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
                                 smooth: false
                                 antialiasing: false
-                                onPaint: {
-                                    if (person.look)
-                                        page.paintSheet(getContext("2d"), person.look);
+                                onPaint: page.paintProp(getContext("2d"), modelData)
+                            }
+                        }
+
+                        // The screens of the computers facing us.
+                        Repeater {
+                            model: page.screens
+
+                            delegate: Rectangle {
+                                id: screen
+
+                                required property var modelData
+                                property string mode: "off"
+                                property real phase: 0
+                                readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
+                                readonly property bool terminal: mode === "running" || mode === "testing"
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 8
+                                height: 6
+                                color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                                Component.onCompleted: page.screenViews[modelData.key] = screen
+                                Component.onDestruction: {
+                                    if (page.screenViews[modelData.key] === screen)
+                                        delete page.screenViews[modelData.key];
+                                }
+
+                                Repeater {
+                                    model: 3
+
+                                    delegate: Rectangle {
+                                        required property int index
+
+                                        visible: screen.mode !== "off"
+                                        x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
+                                        y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
+                                        height: 1
+                                        width: {
+                                            if (screen.mode === "failed")
+                                                return index === 1 ? 6 : 0;
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
+                                            if (screen.mode === "idle")
+                                                return index === 1 ? 2 : 0;
+                                            return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
+                                        }
+                                        color: {
+                                            if (screen.mode === "failed")
+                                                return "#ffb3b3";
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? "#4a90d9" : "#9aa5b0";
+                                            if (screen.mode === "testing")
+                                                return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                            if (screen.mode === "running")
+                                                return "#5fd38a";
+                                            if (screen.mode === "idle")
+                                                return "#9cc8ff";
+                                            return ["#c792ea", "#82aaff", "#f8c25c"][index];
+                                        }
+                                    }
                                 }
                             }
+                        }
 
-                            // Tab walks the people; a focused one shows its card as a
-                            // hovered one does, and Return or Space opens its thread.
-                            MouseArea {
-                                id: hit
+                        // What has been drawn on each whiteboard.
+                        Repeater {
+                            model: page.boards
 
-                                objectName: "officePerson:" + person.actorId
-                                Accessible.role: Accessible.Button
-                                Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
-                                Accessible.onPressAction: page.openPerson(person.actorId)
-                                activeFocusOnTab: true
-                                x: 2
-                                y: 2
-                                width: 12
-                                height: 21
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: page.hovered = person.actorId
-                                onExited: {
-                                    if (page.hovered === person.actorId && !activeFocus)
-                                        page.hovered = "";
+                            delegate: Item {
+                                id: board
+
+                                required property var modelData
+                                property real progress: 0.15
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 38
+                                height: 18
+                                Component.onCompleted: page.boardViews[modelData.key] = board
+                                Component.onDestruction: {
+                                    if (page.boardViews[modelData.key] === board)
+                                        delete page.boardViews[modelData.key];
                                 }
-                                onActiveFocusChanged: {
-                                    if (activeFocus) {
-                                        page.hovered = person.actorId;
-                                        page.reveal(hit);
-                                    } else if (page.hovered === person.actorId && !containsMouse)
-                                        page.hovered = "";
+
+                                Repeater {
+                                    model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        required property int index
+                                        readonly property real start: index / 9
+
+                                        x: modelData[0]
+                                        y: modelData[1]
+                                        height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
+                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
+                                        color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
+                                        border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
+                                        border.color: modelData[4]
+                                        visible: width > 0
+                                    }
                                 }
-                                onClicked: page.openPerson(person.actorId)
-                                Keys.onReturnPressed: page.openPerson(person.actorId)
-                                Keys.onEnterPressed: page.openPerson(person.actorId)
-                                Keys.onSpacePressed: page.openPerson(person.actorId)
                             }
+                        }
 
-                            // The focus ring of the person Tab is on.
-                            Rectangle {
-                                visible: hit.activeFocus
-                                anchors.fill: hit
-                                color: "transparent"
-                                border.width: 1
-                                border.color: "#ffd84a"
+                        // The people.
+                        Repeater {
+                            model: actorModel
+
+                            delegate: Item {
+                                id: person
+
+                                required property string actorId
+                                property int frame: 0
+                                property int dir: 0
+                                readonly property var look: page.actors[actorId]?.look ?? null
+
+                                width: 16
+                                height: 24
+                                clip: true
+                                Component.onCompleted: {
+                                    page.views[actorId] = person;
+                                    const actor = page.actors[actorId];
+                                    if (actor)
+                                        page.render(actor);
+                                }
+                                Component.onDestruction: {
+                                    if (page.views[actorId] === person)
+                                        delete page.views[actorId];
+                                }
+
+                                Canvas {
+                                    x: -person.frame * 18
+                                    y: -person.dir * 26
+                                    width: 270
+                                    height: 104
+                                    smooth: false
+                                    antialiasing: false
+                                    onPaint: {
+                                        if (person.look)
+                                            page.paintSheet(getContext("2d"), person.look);
+                                    }
+                                }
+
+                                // Tab walks the people; a focused one shows its card as a
+                                // hovered one does, and Return or Space opens its thread.
+                                MouseArea {
+                                    id: hit
+
+                                    objectName: "officePerson:" + person.actorId
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
+                                    Accessible.onPressAction: page.openPerson(person.actorId)
+                                    activeFocusOnTab: true
+                                    x: 2
+                                    y: 2
+                                    width: 12
+                                    height: 21
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onEntered: page.hovered = person.actorId
+                                    onExited: {
+                                        if (page.hovered === person.actorId && !activeFocus)
+                                            page.hovered = "";
+                                    }
+                                    onActiveFocusChanged: {
+                                        if (activeFocus) {
+                                            page.hovered = person.actorId;
+                                            page.reveal(hit);
+                                        } else if (page.hovered === person.actorId && !containsMouse)
+                                            page.hovered = "";
+                                    }
+                                    onClicked: page.openPerson(person.actorId)
+                                    Keys.onReturnPressed: page.openPerson(person.actorId)
+                                    Keys.onEnterPressed: page.openPerson(person.actorId)
+                                    Keys.onSpacePressed: page.openPerson(person.actorId)
+                                }
+
+                                // The focus ring of the person Tab is on.
+                                Rectangle {
+                                    visible: hit.activeFocus
+                                    anchors.fill: hit
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: "#ffd84a"
+                                }
                             }
                         }
                     }
@@ -3298,24 +3315,33 @@ Item {
                                 visible: over.icon !== ""
                                 x: -5 * page.pixelScale
                                 y: (-11 - over.bob) * page.pixelScale
-                                width: 10
-                                height: 11
-                                scale: page.pixelScale
+                                width: 10 * page.drawScale
+                                height: 11 * page.drawScale
+                                scale: page.pixelScale / page.drawScale
                                 transformOrigin: Item.TopLeft
-                                clip: true
+                                layer.enabled: visible && page.resampled
+                                layer.smooth: true
 
-                                Canvas {
-                                    x: -({
-                                            ask: 0,
-                                            fail: 16,
-                                            think: 32,
-                                            nap: 48
-                                        }[over.icon] ?? 0)
-                                    width: 64
+                                Item {
+                                    width: 10
                                     height: 11
-                                    smooth: false
-                                    antialiasing: false
-                                    onPaint: page.paintIcons(getContext("2d"))
+                                    scale: page.drawScale
+                                    transformOrigin: Item.TopLeft
+                                    clip: true
+
+                                    Canvas {
+                                        x: -({
+                                                ask: 0,
+                                                fail: 16,
+                                                think: 32,
+                                                nap: 48
+                                            }[over.icon] ?? 0)
+                                        width: 64
+                                        height: 11
+                                        smooth: false
+                                        antialiasing: false
+                                        onPaint: page.paintIcons(getContext("2d"))
+                                    }
                                 }
                             }
 

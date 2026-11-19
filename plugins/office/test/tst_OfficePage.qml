@@ -447,6 +447,25 @@ Item {
             compare(page.pixelScale, fitted);
         }
 
+        // At a zoom between whole pixels the art is drawn at a whole number of
+        // device pixels per art pixel and shrunk smoothly, so no art pixel is
+        // drawn wider than another; at a whole zoom it is drawn as it is.
+        function test_art_at_a_fractional_zoom_keeps_its_pixels_even() {
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const art = find("officeArt");
+            const stage = find("officeStage");
+            page.zoom = 2.5 / page.fitScale;
+            const devicePixels = page.drawScale * page.devicePixelRatio;
+            fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
+            verify(page.drawScale >= page.pixelScale);
+            verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
+            fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
+            page.zoom = 3 / page.fitScale;
+            verify(!art.layer.enabled, "a whole zoom draws the art directly");
+            compare(art.scale, 1);
+        }
+
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
             page.zoom = 8 / page.fitScale;
