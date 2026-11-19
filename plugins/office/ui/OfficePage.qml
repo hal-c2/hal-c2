@@ -111,6 +111,8 @@ Item {
     property var claims: ({})
     property var movers: ({})
     property var jobs: []
+    // People who came in while the doorway was busy wait outside, in order.
+    property var outside: []
     property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
@@ -1568,11 +1570,10 @@ Item {
             wx += w + 1;
         }
 
-        // Corners of the work area.
-        for (const x of [1, xd - 1]) {
-            block(x, rows - 2, 1, 1);
-            prop("plant", x * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
-        }
+        // The far corner of the work area; the doorway and the floor around it
+        // stay clear so people and movers meeting there can step aside.
+        block(xd - 1, rows - 2, 1, 1);
+        prop("plant", (xd - 1) * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
 
         // The break room.
         block(bx, 3, 10, 1);
@@ -1730,6 +1731,7 @@ Item {
         for (const id of Object.keys(page.movers))
             removeMover(id);
         page.jobs = [];
+        page.outside = [];
         if (page.world) {
             page.world.seatOf = {};
             for (const seat of page.world.seats) {
@@ -1913,12 +1915,12 @@ Item {
         page.moves = page.jobs.length + Object.keys(page.movers).length;
     }
 
-    // Someone to carry a desk walks in when the entrance is clear; four work
+    // Someone to carry a desk walks in when the doorway is clear; four work
     // at once.
     function hire() {
         const w = page.world;
         const e = w.entrance;
-        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || page.occupied[e[1] * w.cols + e[0]])
+        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !doorClear())
             return;
         const seat = w.seats[page.jobs.shift()];
         const id = "mover:" + page.moversHired++;
@@ -2083,8 +2085,8 @@ Item {
         };
     }
 
-    // A new person walks in through the door; the first people on the page are
-    // already where they belong.
+    // A new person walks in through the door, waiting outside while someone is
+    // in the doorway; the first people on the page are already where they belong.
     function arrive(actor) {
         if (!page.primed) {
             decide(actor, true);
@@ -2095,8 +2097,29 @@ Item {
                 return;
             }
         }
+        if (!page.outside.includes(actor.id))
+            page.outside.push(actor.id);
+    }
+
+    // Whether nobody stands in the doorway or on the floor next to it, so
+    // whoever comes in can step off it.
+    function doorClear() {
+        const w = page.world;
+        const [x, y] = w.entrance;
+        return [[0, 0], [1, 0], [-1, 0], [0, -1]].every(([dx, dy]) => !walkable(x + dx, y + dy) || !page.occupied[(y + dy) * w.cols + x + dx]);
+    }
+
+    // The next person waiting outside walks in once the doorway is clear.
+    function letIn() {
+        while (page.outside.length && !page.actors[page.outside[0]])
+            page.outside.shift();
+        if (!page.outside.length || !doorClear())
+            return;
+        const actor = page.actors[page.outside.shift()];
         const e = page.world.entrance;
-        place(actor, e[0], e[1], true);
+        place(actor, e[0], e[1], false);
+        decide(actor, true);
+        page.walking = true;
     }
 
     function place(actor, x, y, snap) {
@@ -2622,6 +2645,7 @@ Item {
             pose(actor);
             render(actor);
         }
+        letIn();
         hire();
         for (const id of Object.keys(page.movers)) {
             if (stepMover(page.movers[id], dt))
@@ -2629,11 +2653,16 @@ Item {
         }
         if (page.ticks % 6 === 0)
             updateScreens();
-        page.walking = moving || page.jobs.length > 0;
+        page.walking = moving || page.jobs.length > 0 || page.outside.length > 0;
     }
 
     function updateWalking() {
-        page.walking = page.jobs.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
+        page.walking = page.jobs.length > 0 || page.outside.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
+    }
+
+    function freeSides(actor) {
+        const W = page.world.cols;
+        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
     }
 
     // Moves a person along its path, two pixels a tick, holding the tile it
@@ -2649,18 +2678,19 @@ Item {
                 actor.blocked++;
                 actor.waitingFor = there;
                 // Two people walking into each other would both step around the
-                // same way and meet again, so only the first by id gives way.
+                // same way and meet again, so only one gives way: the one with
+                // room to step aside, the first by id when both have it.
                 const other = page.actors[there] ?? page.movers[there];
                 const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
-                const yields = !headOn || actor.id < other.id;
+                const sides = freeSides(actor);
+                const yields = !headOn || sides.length > 0 && (actor.id < other.id || freeSides(other).length === 0);
                 if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
                     route(actor, true);
                 if (actor.blocked >= 30) {
                     // Stepping aside makes room for someone waiting on this
                     // person; anyone else in the way is waited for, not paced
                     // in front of.
-                    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-                    if (headOn && yields && sides.length) {
+                    if (headOn && yields) {
                         const s = pick(page.rng, sides);
                         actor.path = [s[1] * W + s[0]];
                         actor.sideStep = true;
@@ -2778,8 +2808,10 @@ Item {
     }
 
     function render(actor) {
+        const inside = actor.tx >= 0;
         const v = page.views[actor.id];
         if (v) {
+            v.visible = inside;
             v.x = actor.px;
             v.y = actor.py - 8 + actor.offY;
             v.z = actor.py + 16;
@@ -2788,6 +2820,7 @@ Item {
         }
         const o = page.overlays[actor.id];
         if (o) {
+            o.visible = inside;
             o.anchorX = actor.px + 8;
             o.anchorY = actor.py - 8 + actor.offY + (page.seated(actor.frame) ? 2 : 0);
             o.icon = actor.bubble ? "" : iconOf(actor);

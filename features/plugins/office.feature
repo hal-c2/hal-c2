@@ -266,6 +266,16 @@ Feature: Office
       And no person, mover or desk being carried overlaps another
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People and movers get through the door without a jam
+      Given the office has 2 threads
+      When it has 8 threads
+      Then the new people come in one at a time, each once the doorway and the floor beside it are clear
+      And nobody stands waiting in the doorway
+      When a person and a mover meet head-on and only one of them has room to step aside
+      Then that one steps aside and both get where they are going
+      And every desk is carried in and every mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown
       Given the office page is open
       When the user switches to the Threads tab

@@ -144,6 +144,8 @@ Item {
             const everyone = Object.assign({}, page.actors, page.movers);
             for (const id of Object.keys(everyone)) {
                 const a = everyone[id];
+                if (page.outside.includes(id))
+                    continue;
                 verify(a.tx >= 0 && a.ty >= 0 && a.tx < w.cols && a.ty < w.rows, id + " is off the floor at " + a.tx + "," + a.ty);
                 const here = a.ty * w.cols + a.tx;
                 const tiles = [here];
@@ -748,6 +750,7 @@ Item {
             plugin.publish(many(5, "t", "working", "typing"));
             const seat = page.world.seatOf["t4"];
             compare(seat.state, "coming");
+            page.advance(1);
             compare([actor("t4").tx, actor("t4").ty], page.world.entrance, "t4 walks in through the door");
             compare(page.deskCount, 4);
             let carried = false;
@@ -800,6 +803,40 @@ Item {
             compare(page.moves, 0, "the desks are all in");
             verify(carrying > 1, "movers carried desks at once");
             compare(page.deskCount, 16);
+        }
+
+        // People walking in while movers carry several desks in and out all get
+        // through the door, and nobody stands waiting in the doorway.
+        function test_people_and_movers_get_through_the_door() {
+            const activities = ["typing", "planning", "reading", "testing"];
+            const office = n => many(n, "t", "working", "typing").map((p, i) => Object.assign(p, {
+                        activity: activities[i % 4]
+                    }));
+            for (const [before, after] of [[2, 8], [12, 16], [10, 2], [2, 14]]) {
+                open();
+                stood = {};
+                const w = page.world;
+                const e = w.entrance;
+                plugin.publish(office(before));
+                page.advance(40);
+                plugin.publish(office(after));
+                let inDoor = "", since = 0, ticks = 0;
+                while ((page.moves || page.outside.length) && ticks < 2000) {
+                    page.advance(1);
+                    ticks++;
+                    const there = page.occupied[e[1] * w.cols + e[0]];
+                    since = there && there === inDoor ? since + 1 : 0;
+                    inDoor = there;
+                    verify(since < 40, there + " stands in the doorway");
+                    checkFloor();
+                }
+                verify(ticks < 2000, before + " to " + after + ": everyone gets through, " + page.moves + " moves are left");
+                page.advance(300);
+                for (const id of Object.keys(page.actors)) {
+                    const a = page.actors[id];
+                    verify(a.tx >= 0 && a.goal && a.tx === a.goal.x && a.ty === a.goal.y, id + " gets where it is going");
+                }
+            }
         }
 
         // People coming in do not repaint the floor or the furniture.
