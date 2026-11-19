@@ -177,6 +177,14 @@ Feature: Keybindings settings
       And the condition "sidebarFocus" reads "sidebarFocus"
       And an empty condition reads "Always"
 
+    @desktop @backlog-desktop
+    Scenario: A screen reader tells a command's bindings apart
+      Given "Chat: New" is bound to mod+n and to mod+shift+o, both outside the terminal
+      Then their shortcut fields are named "Shortcut for Chat: New (Ctrl+N), Outside the terminal" and "Shortcut for Chat: New (Ctrl+Shift+O), Outside the terminal"
+      And their condition buttons are named "Edit condition for" the same
+      When the user records a new shortcut or edits the condition without saving
+      Then the row's names say the shortcut and condition as edited
+
     @desktop
     Scenario: A malformed condition is explained
       When the user types the condition "terminalFocus &&"

@@ -67,8 +67,9 @@ Rectangle {
 
         property string key: ""
         property string label: ""
-        // The command it binds, for its accessible name.
-        property string command: ""
+        // The binding it edits, for its accessible name. Not `command`: the
+        // file's `id: command` would win over it under Qt.
+        property string bindingName: ""
         property bool recording: false
         signal recorded(string key)
 
@@ -80,7 +81,7 @@ Rectangle {
         border.color: recording || activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: command.length > 0 ? qsTr("Shortcut for %1").arg(command) : qsTr("Shortcut")
+        Accessible.name: bindingName.length > 0 ? qsTr("Shortcut for %1").arg(bindingName) : qsTr("Shortcut")
 
         onActiveFocusChanged: if (!activeFocus)
             recording = false
@@ -470,7 +471,7 @@ Rectangle {
 
                         KeyRecorder {
                             objectName: "keyField"
-                            command: row.binding
+                            bindingName: row.binding
                             key: row.keyDraft
                             label: row.labelDraft
                             onRecorded: next => {
