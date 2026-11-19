@@ -46,6 +46,7 @@ ShellMenuItem 1.0 ShellMenuItem.qml
 ShellMenu 1.0 ShellMenu.qml
 ShellMenuSeparator 1.0 ShellMenuSeparator.qml
 ShellComboBox 1.0 ShellComboBox.qml
+ShellBadge 1.0 ShellBadge.qml
 ShellButton 1.0 ShellButton.qml
 ShellCard 1.0 ShellCard.qml
 ShellIcon 1.0 ShellIcon.qml

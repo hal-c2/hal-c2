@@ -38,6 +38,7 @@ set(hal_c2_bricks_qml_files
     ConnectionStatusRow.qml
     ServerUpdateAction.qml
     ServerUpdatesList.qml
+    ShellBadge.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml

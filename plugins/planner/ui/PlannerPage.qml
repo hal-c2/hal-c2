@@ -325,14 +325,15 @@ Item {
         return "";
     }
 
-    function healthColor(health) {
+    // A health's ShellBadge tone.
+    function healthTone(health) {
         if (health === "on-track")
-            return page.successColor;
+            return "success";
         if (health === "at-risk")
-            return page.warningColor;
+            return "warning";
         if (health === "off-track")
-            return page.errorColor;
-        return page.muted;
+            return "error";
+        return "neutral";
     }
 
     // A run in the run list: what a proposal still holds once dismissed changes are left
@@ -694,27 +695,10 @@ Item {
     }
 
     // A small coloured label.
-    component Chip: Rectangle {
-        id: chip
-
-        property string text
-        property color tone: page.muted
-
-        implicitWidth: chipText.implicitWidth + 12
-        implicitHeight: chipText.implicitHeight + 4
-        radius: height / 2
-        color: Qt.alpha(tone, 0.14)
-        border.color: Qt.alpha(tone, 0.4)
-
-        Text {
-            id: chipText
-
-            anchors.centerIn: parent
-            text: chip.text
-            color: chip.tone
-            font.pixelSize: Theme.type.caption.size
-            font.weight: Font.Medium
-        }
+    component Chip: ShellBadge {
+        horizontalPadding: 6
+        verticalPadding: 2
+        font.pixelSize: Theme.type.caption.size
     }
 
     component Caption: Text {
@@ -1168,7 +1152,7 @@ Item {
                             objectName: "plannerViewChanged"
                             visible: page.changed
                             text: qsTr("Changed")
-                            tone: page.warningColor
+                            tone: "warning"
                         }
 
                         ShellButton {
@@ -1263,7 +1247,7 @@ Item {
                         objectName: "plannerHealth"
                         visible: page.latest !== null
                         text: page.healthLabel(page.latest?.health)
-                        tone: page.healthColor(page.latest?.health)
+                        tone: page.healthTone(page.latest?.health)
                     }
 
                     Text {
@@ -2064,7 +2048,7 @@ Item {
                             Chip {
                                 visible: (runsColumn.run?.health ?? "").length > 0
                                 text: page.healthLabel(runsColumn.run?.health)
-                                tone: page.healthColor(runsColumn.run?.health)
+                                tone: page.healthTone(runsColumn.run?.health)
                             }
                         }
 
