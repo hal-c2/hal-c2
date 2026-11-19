@@ -891,14 +891,20 @@ fn audited(
     Ok(report.count(Severity::Error) > 0)
 }
 
-/// `--allow`'s lines: a rule and the end of a QML file's path, each error of
-/// that rule in that file, or naming a place in it, let through.
+/// `--allow`'s lines: a rule and the end of a QML file's path, optionally
+/// with a line (`Bricks/DefaultLayout.qml:144`). Each error of that rule at
+/// that place, or whose message names it, is let through.
 #[derive(Default)]
 struct Allowed(Vec<(String, String)>);
 
 impl Allowed {
     fn read(file: &Path) -> Result<Allowed, String> {
         let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        Allowed::parse(&text).map_err(|n| format!("{}:{n}: not `RULE PATH`", file.display()))
+    }
+
+    /// The lines of `text`, or the number of the first that is not `RULE PATH`.
+    fn parse(text: &str) -> Result<Allowed, usize> {
         let mut lines = Vec::new();
         for (n, line) in text.lines().enumerate() {
             let line = line.split('#').next().unwrap_or("").trim();
@@ -908,7 +914,7 @@ impl Allowed {
             let mut words = line.split_whitespace();
             match (words.next(), words.next(), words.next()) {
                 (Some(rule), Some(path), None) => lines.push((rule.to_owned(), path.to_owned())),
-                _ => return Err(format!("{}:{}: not `RULE PATH`", file.display(), n + 1)),
+                _ => return Err(n + 1),
             }
         }
         Ok(Allowed(lines))
@@ -916,17 +922,24 @@ impl Allowed {
 
     /// The line that lets `finding` through, if one does.
     fn which(&self, finding: &ljos_audit::Finding) -> Option<usize> {
-        // `file:///…/File.qml:12:5`: the path, without the line and column.
-        let file = finding
-            .place
-            .as_deref()
-            .map(|p| p.trim_end_matches(|c: char| c.is_ascii_digit() || c == ':'))
-            .unwrap_or("");
+        self.lets_through(finding.code, finding.place.as_deref(), &finding.message)
+    }
+
+    /// The line that lets through a finding of rule `code` at `place`
+    /// (`file:///…/File.qml:12:5`) saying `message`, if one does.
+    fn lets_through(&self, code: &str, place: Option<&str>, message: &str) -> Option<usize> {
+        // The place without its column (`…/File.qml:12`), and without its line.
+        let line = place
+            .and_then(|p| p.rsplit_once(':'))
+            .map_or("", |(rest, _)| rest);
+        let file = line.rsplit_once(':').map_or("", |(rest, _)| rest);
         self.0.iter().position(|(rule, path)| {
-            rule == finding.code
-                && (file.ends_with(path.as_str())
+            let at = format!("/{path}");
+            rule == code
+                && (line.ends_with(&at)
+                    || file.ends_with(&at)
                     // A place the message names: `(file:///…/File.qml:115:5)`.
-                    || finding.message.contains(&format!("/{path}:")))
+                    || message.contains(&format!("{at}:")))
         })
     }
 }
@@ -1183,7 +1196,76 @@ fn install_dev_desktop_entry() {
 
 #[cfg(test)]
 mod tests {
-    use super::offscreen;
+    use super::{Allowed, offscreen};
+
+    const LAYOUT: &str = "file:///ci/apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
+
+    #[test]
+    fn allow_reads_rule_and_path_skipping_comments() {
+        let allowed =
+            Allowed::parse("# a comment\n\na11y-target-size Bricks/DefaultLayout.qml:144  # why\n")
+                .unwrap();
+        assert_eq!(
+            allowed.0,
+            [(
+                "a11y-target-size".to_owned(),
+                "Bricks/DefaultLayout.qml:144".to_owned()
+            )]
+        );
+        assert_eq!(Allowed::parse("ok a.qml\nlone-rule\n").err(), Some(2));
+        assert_eq!(Allowed::parse("rule a.qml extra").err(), Some(1));
+    }
+
+    #[test]
+    fn allow_with_a_line_lets_through_that_line_only() {
+        let allowed = Allowed::parse("a11y-target-size Bricks/DefaultLayout.qml:144").unwrap();
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            Some(0)
+        );
+        let other = LAYOUT.replace(":144:", ":14:");
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(&other), ""),
+            None
+        );
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), ""),
+            None
+        );
+    }
+
+    #[test]
+    fn allow_without_a_line_takes_the_whole_file_on_a_path_boundary() {
+        let allowed = Allowed::parse("a11y-target-size DefaultLayout.qml").unwrap();
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            Some(0)
+        );
+        let suffix = Allowed::parse("a11y-target-size Layout.qml").unwrap();
+        assert_eq!(
+            suffix.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            None
+        );
+        assert_eq!(allowed.lets_through("a11y-target-size", None, ""), None);
+    }
+
+    #[test]
+    fn allow_matches_the_place_a_message_names() {
+        let allowed = Allowed::parse("layout-occluded Bricks/ShellWindow.qml:115").unwrap();
+        let by = |line: u32| {
+            format!(
+                "the button is covered by the item (file:///ci/apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
+            )
+        };
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), &by(115)),
+            Some(0)
+        );
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), &by(146)),
+            None
+        );
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {
