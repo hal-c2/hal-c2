@@ -391,8 +391,12 @@ Rectangle {
                 // The condition shows in words; its expression opens to edit.
                 property bool editingWhen: false
                 // What a screen reader calls this binding: a command can have
-                // several, so its saved key tells them apart.
-                readonly property string binding: modelData.keyLabel.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(modelData.keyLabel) : modelData.label
+                // several, so its key (as recorded, saved or not) and its
+                // condition tell them apart.
+                readonly property string binding: {
+                    const named = labelDraft.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(labelDraft) : modelData.label;
+                    return modelData.when.length > 0 ? qsTr("%1, %2").arg(named).arg(modelData.whenLabel) : named;
+                }
 
                 width: ListView.view.width
                 implicitHeight: rowColumn.implicitHeight + 2 * Theme.space.md

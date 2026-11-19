@@ -22,7 +22,8 @@ audit() {
     mkdir -p "$home/config/shell"
     echo '{"onboardingCompletedAt":"2026-01-01T00:00:00.000Z"}' >"$home/config/shell/preferences.json"
   fi
-  "${cargo[@]}" run --release -q -p hal_c2_shell -- \
+  # No MC but one named by --mc-origin: not the one the caller's env names.
+  env -u HAL_C2_MC_ORIGIN -u HAL_C2_MC_TOKEN "${cargo[@]}" run --release -q -p hal_c2_shell -- \
     --audit --home-dir "$home" --allow audit/allow "${args[@]}"
 }
 if [[ " $* " == *" --action"* || " $* " == *" --config-dir"* ]]; then
