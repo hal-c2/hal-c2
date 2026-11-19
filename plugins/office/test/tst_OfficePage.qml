@@ -567,6 +567,19 @@ Item {
             compare(page.pixelScale, fitted);
         }
 
+        // A view wide enough to fit the office past the most zoomed in scale
+        // shows it at that scale, drawn directly rather than through a layer
+        // of the whole office at more device pixels than that.
+        function test_a_huge_view_fits_at_most_the_top_scale() {
+            loader.width = 16000;
+            loader.height = 10000;
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0 && page.fitScale > page.maxScale, 1000, "the view fits the office past the most zoomed in scale");
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            verify(!find("officeArt").layer.enabled, "the art is drawn directly");
+            verify(!find("officeZoomIn").enabled, "zooming in further is off");
+        }
+
         // A large view fits the office at a scale where zoomed steps snap to
         // whole device pixels; the fit itself does not snap, so the office
         // still fills one side of the view.

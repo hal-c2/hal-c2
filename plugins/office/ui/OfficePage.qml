@@ -43,13 +43,14 @@ Item {
     property bool walking: false
     // The office fits the view at zoom 1, by its width or its height,
     // whichever runs out first; each zoom button is a quarter more or less.
-    // It can shrink below one device pixel per art pixel only to fit.
+    // It can shrink below one device pixel per art pixel only to fit, and
+    // grows no further than topScale, the most zoomed in scale.
     property real zoom: 1
     readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
     readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
     readonly property real minScale: Math.min(1, fitScale)
     readonly property real maxScale: 8
-    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(maxScale, fitScale)) : snapScale(fitScale * zoom)
+    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
     // Nearest-neighbour art at a fractional scale draws some art pixels a
     // device pixel wider than others. So the art is drawn at the next whole
     // number of device pixels per art pixel, drawScale, into a layer shrunk
