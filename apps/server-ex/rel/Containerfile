@@ -55,6 +55,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /out/node /opt/node
 COPY --from=build /out/hal-c2-mc /usr/local/bin/hal-c2-mc
 
+# An account for the uid the task runs the container as, homed on the volume: ssh
+# finds ~/.ssh through the passwd entry, not $HOME, and refuses a uid with none.
+# The image's own ubuntu user would otherwise claim uid 1000.
+ARG HAL_C2_UID=1000
+ARG HAL_C2_GID=1000
+RUN set -eu; \
+    userdel ubuntu; \
+    if [ "$HAL_C2_UID" != 0 ]; then \
+      getent group "$HAL_C2_GID" >/dev/null || groupadd -g "$HAL_C2_GID" hal-c2; \
+      useradd -o -u "$HAL_C2_UID" -g "$HAL_C2_GID" -d /data/home -M -s /bin/bash hal-c2; \
+    fi
+
 # Everything the MC and its agents keep lives on the /data volume: the MC's files
 # (HAL_C2_HOME), and a home for provider logins and CLIs. World-writable, as the
 # container runs as whoever runs the task; a new volume copies this mode.

@@ -45,20 +45,21 @@ on Ubuntu 24.04 like the published bundles, so it can still update itself) and r
 container `hal-c2-mc` under Podman, or Docker with `--engine docker`. It publishes on
 `127.0.0.1:3790` (`--host`, `--port`) and keeps everything on the `hal-c2-mc` volume: the MC's
 files, and a home for provider CLIs and their logins, which the image does not carry. Install a
-provider with `podman exec -it hal-c2-mc npm install -g <package>` (or its own installer) and log
-in the same way. The container sees only directories named with `--workspace <dir>`, mounted at
-the same path, so projects outside them must be cloned into the MC. It runs as you, and rootless
-Podman keeps mounted files yours; under Podman it comes back after a reboot only with
-`systemctl --user enable podman-restart.service`.
+provider with `podman exec -it hal-c2-mc npm install -g <package>` (or its own installer) and log in
+the same way; SSH keys for git remotes go in the container's `~/.ssh`. The container sees only
+directories named with `--workspace <dir>`, mounted at the same path, so projects outside them must
+be cloned into the MC; it runs without SELinux separation, so they need no relabelling. It runs as
+you, under an account the image gives your uid, and rootless Podman keeps mounted files yours; under
+Podman it comes back after a reboot only with `systemctl --user enable podman-restart.service`.
 
-Running the task again rebuilds and replaces the container, keeping the volume. `pair` prints a
-link for the published address (on `--host 0.0.0.0`, name the address another machine reaches:
-`mise run mc:container pair http://<address>:3790`), and other commands such as `cluster` run the
-MC's own command inside it (`mise run mc:container pair -- --ttl 1h`). `doctor` stops the MC, checks
-its store from a container of its own and starts it again. Importing threads finds nothing, since
-the container has no T3 Code or older HAL-C2 install to read. `status`, `logs`, `restart` and `uninstall` manage the
-container; uninstall leaves the volume, which `podman volume rm hal-c2-mc` deletes. Cluster traffic
-is not published, so a containerised MC does not cluster yet.
+Running the task again rebuilds and replaces the container, keeping the volume. `pair` prints a link
+for the published address (on `--host 0.0.0.0`, name the address another machine reaches: `mise run
+mc:container pair http://<address>:3790`), and other commands such as `cluster` run the MC's own
+command inside it (`mise run mc:container pair -- --ttl 1h`). `doctor` stops the MC, checks its
+store from a container of its own and starts it again. Importing threads finds nothing, since the
+container has no T3 Code or older HAL-C2 install to read. `status`, `logs`, `restart` and
+`uninstall` manage the container; uninstall leaves the volume, which `podman volume rm hal-c2-mc`
+deletes. Cluster traffic is not published, so a containerised MC does not cluster yet.
 
 ## MC
 
