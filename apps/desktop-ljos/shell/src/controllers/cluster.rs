@@ -357,6 +357,18 @@ impl Cluster {
         self.generation += 1;
         self.set(engine, "busy", json!(true));
         let sent = payload.clone();
+        // The drafts of the machine being removed, as they are now: one
+        // written after it joins again outlives a late answer.
+        let doomed: Vec<String> = if method == "cluster.remove" {
+            let removed = settings_page::text(&sent, "id");
+            drafts::all(engine)
+                .into_iter()
+                .filter(|d| d.environment_id == removed)
+                .map(|d| d.id)
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.call(engine, method, payload, move |c, engine, result| {
             c.state.insert("busy".into(), json!(false));
             let status = match result {
@@ -369,14 +381,19 @@ impl Cluster {
                 Ok(status) => status,
             };
             // Nothing written for a removed machine is kept: its rows go
-            // with it, its drafts here.
+            // with it, its drafts here. One a window lands on before the rows
+            // go is empty and goes with them (drafts' reconcile).
             if method == "cluster.remove" {
                 let removed = settings_page::text(&sent, "id").to_owned();
                 // A draft that is shown leaves the route, which this
                 // controller follows: removed once it has returned.
-                let gone = removed.clone();
+                let doomed = doomed.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
-                    drafts::forget_environment(engine, &gone);
+                    for id in &doomed {
+                        if drafts::draft(engine, id).is_some() {
+                            drafts::remove(engine, id);
+                        }
+                    }
                 });
                 for hook in c.removed.clone() {
                     hook(engine, &removed);

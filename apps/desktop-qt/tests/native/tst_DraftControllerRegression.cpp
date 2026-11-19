@@ -92,9 +92,9 @@ private slots:
     QTRY_COMPARE(shell.removals.size(), 1);
     shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
     shell.barrier();
-    // The draft goes, and the window, home again, lands on none of the
-    // machine's while its rows are still listed.
-    QCOMPARE(shell.draftsFor(kBox), QStringList());
+    // The draft goes. The window, home again, lands on an empty one for the
+    // machine while its rows are still listed, and that goes with them.
+    QVERIFY(!shell.draftsFor(kBox).contains(QStringLiteral("roll back the deploy")));
 
     shell.mc.remove(kBox);
     QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
@@ -102,8 +102,8 @@ private slots:
     QCOMPARE(shell.draftsFor(kBox), QStringList());
   }
 
-  // The other way round, the machine gone before the answer: its drafts go
-  // with its rows, and the answer finds nothing left.
+  // The other way round, the machine gone before the answer: what was
+  // written waits for the answer, which drops it.
   void aRemovedMachineKeepsNoDraftWhenItGoesFirst() {
     QTemporaryDir home;
     Shell shell(home.path());
@@ -116,7 +116,8 @@ private slots:
     QTRY_COMPARE(shell.removals.size(), 1);
     shell.mc.remove(kBox);
     QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
-    QCOMPARE(shell.draftsFor(kBox), QStringList());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
     shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
     shell.barrier();
     QCOMPARE(shell.draftsFor(kBox), QStringList());
@@ -137,6 +138,48 @@ private slots:
     QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
     shell.barrier();
     QCOMPARE(shell.draftsFor(kBox), QStringList());
+  }
+
+  // A machine that goes without this client removing it may only be
+  // switched off, or not back yet: what the user wrote for it stays, and is
+  // there when it comes back.
+  void aWrittenDraftOutlivesAMachineThatOnlyWent() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+
+    shell.join();
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+  }
+
+  // The answer drops the drafts the machine had when it was asked to go. One
+  // written after it joined again, before a late answer, stays.
+  void aLateAnswerKeepsADraftWrittenAfterARejoin() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("deploy again"));
+
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("deploy again")});
   }
 
   // A machine the shell never listed has no rows to wait for: the answer

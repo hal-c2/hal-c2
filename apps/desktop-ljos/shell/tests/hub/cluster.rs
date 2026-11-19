@@ -8,6 +8,7 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::cluster::Cluster;
 use hal_c2_shell::controllers::drafts;
+use hal_c2_shell::store;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -151,6 +152,97 @@ fn a_removed_machines_drafts_go_with_it_once_the_mc_agrees() {
     answer(&hub, "env-1", "cluster.remove", Ok(members(&[])));
     assert_eq!(environments(), ["env-1"]);
     assert!(drafts::draft(&hub.engine, &kept).is_some());
+}
+
+const AT: &str = "2026-03-01T00:00:00Z";
+
+/// The shell's rows: this machine (`env-1`) and `box` (MC `b`, environment
+/// `id-b`), each with its projects.
+fn listing() -> Hub {
+    let hub = Hub::clustered();
+    hub.mc.set_ready(&hub.engine, true);
+    let mcs = json!([
+        {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "env-1", "label": "Laptop"}},
+        {"mc": "b", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "id-b", "label": "box"}},
+    ]);
+    let rows = [("a", "p1"), ("b", "p1"), ("b", "p2")].map(|(mc, id)| project(mc, id));
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": mcs, "rows": rows}),
+    );
+    hub.dispatch("cluster.open", json!({}));
+    hub.advance(0);
+    hub
+}
+
+fn project(mc: &str, id: &str) -> serde_json::Value {
+    json!([mc, id, "project", {"id": id, "title": id, "workspaceRoot": format!("/w/{id}"),
+        "scripts": [], "createdAt": AT, "updatedAt": AT}])
+}
+
+/// The MC says `box` went, removed by any client or switched off.
+fn box_goes(hub: &Hub) {
+    let gone = json!({"t": "shell.mc", "mc": "b", "online": false, "removed": true});
+    hub.mc.frame(&hub.engine, "shell", "", gone);
+    hub.advance(0);
+}
+
+/// `box` joins again, with its projects.
+fn box_comes_back(hub: &Hub) {
+    let environment = json!({"t": "shell.environment", "mc": "b",
+        "environment": {"environmentId": "id-b", "label": "box"}});
+    hub.mc.frame(&hub.engine, "shell", "", environment);
+    // Described before its rows come: its projects may only not have come yet.
+    hub.advance(0);
+    // `shell.rows` carries each row as [id, kind, fields], without its MC.
+    let rows = ["p1", "p2"].map(|id| json!(project("b", id).as_array().unwrap()[1..]));
+    let rows = json!({"t": "shell.rows", "mc": "b", "rows": rows});
+    hub.mc.frame(&hub.engine, "shell", "", rows);
+    hub.advance(0);
+    let listed = store::with(&hub.engine, |s| s.project("id-b:p2").is_some());
+    assert!(listed, "box is listed again");
+}
+
+#[test]
+fn a_machine_that_went_without_this_client_removing_it_takes_only_its_empty_drafts() {
+    let hub = listing();
+    let empty = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    let written = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &written, "roll back the deploy");
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &empty).is_none());
+    // It may only be switched off: what the user wrote waits for it.
+    assert_eq!(
+        drafts::draft(&hub.engine, &written).map(|d| d.text),
+        Some("roll back the deploy".to_owned())
+    );
+    box_comes_back(&hub);
+    assert!(drafts::draft(&hub.engine, &written).is_some());
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
+    let hub = listing();
+    let before = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &before, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    let after = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &after, "deploy again");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // The answer takes the drafts the machine had when it was asked to go.
+    assert!(drafts::draft(&hub.engine, &before).is_none());
+    assert!(drafts::draft(&hub.engine, &after).is_some());
 }
 
 /// This machine runs 2.0 and is clustered with `studio`, connected on 1.3.

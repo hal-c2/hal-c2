@@ -29,7 +29,6 @@
 //! composer read them without waiting on it.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -114,9 +113,6 @@ struct Kept {
     /// The thread or draft a window last showed: what a new thread carries
     /// from when none is shown (the phone starts threads from home).
     last_shown: RefCell<String>,
-    /// Environments removed while the shell still has their rows: no window
-    /// lands on their projects, and their drafts go until the rows do.
-    forgotten: RefCell<BTreeSet<String>>,
 }
 
 fn kept(engine: &Engine) -> Rc<Kept> {
@@ -376,27 +372,6 @@ pub fn remove(engine: &Engine, id: &str) {
     leave(engine, &Route::Draft(id.to_owned()), Route::Home);
 }
 
-/// Deletes the drafts of an environment removed from the cluster. Until the
-/// shell drops its rows, no window lands on a draft there either.
-pub fn forget_environment(engine: &Engine, environment_id: &str) {
-    if store::with(engine, |s| s.serves_environment(environment_id)) {
-        kept(engine)
-            .forgotten
-            .borrow_mut()
-            .insert(environment_id.to_owned());
-    }
-    remove_environment(engine, environment_id);
-}
-
-fn remove_environment(engine: &Engine, environment_id: &str) {
-    for draft in all(engine)
-        .into_iter()
-        .filter(|d| d.environment_id == environment_id)
-    {
-        remove(engine, &draft.id);
-    }
-}
-
 /// The draft's first turn was sent as the thread `thread_key`: the draft is
 /// done and the window that showed it shows the thread instead.
 pub fn promote(engine: &Engine, thread_key: &str) {
@@ -512,37 +487,23 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
     changed(engine);
 }
 
-/// Drops drafts whose thread now exists (promoted), whose environment was
-/// removed, or whose project is gone from an environment the shell still
-/// serves.
+/// Drops drafts whose thread now exists (promoted), empty drafts of an
+/// environment no MC serves, and drafts whose project is gone from an
+/// environment whose rows the shell holds.
 fn reconcile(engine: &Engine) {
     if !store::with(engine, |s| s.synchronized()) {
         return;
     }
-    // A removed environment whose rows have now gone takes any draft
-    // started for it meanwhile.
-    let gone: Vec<String> = kept(engine)
-        .forgotten
-        .borrow()
-        .iter()
-        .filter(|id| !store::with(engine, |s| s.serves_environment(id)))
-        .cloned()
-        .collect();
-    for id in gone {
-        kept(engine).forgotten.borrow_mut().remove(&id);
-        remove_environment(engine, &id);
-    }
-    let (promoted, orphaned) = store::with(engine, |s| {
+    let (promoted, mut orphaned, unserved) = store::with(engine, |s| {
         let mut promoted = Vec::new();
         let mut orphaned = Vec::new();
+        let mut unserved = Vec::new();
         for draft in kept(engine).drafts.borrow().iter() {
             if s.thread(&draft.thread_key()).is_some() {
                 promoted.push(draft.thread_key());
-            } else if s.environment_removed(&draft.environment_id) {
-                // Its machine left the cluster, whichever client removed it,
-                // and took the project with it.
-                orphaned.push(draft.id.clone());
-            } else if s.serves_environment(&draft.environment_id)
+            } else if !s.serves_environment(&draft.environment_id) {
+                unserved.push(draft.id.clone());
+            } else if s.lists_environment(&draft.environment_id)
                 && s.project(&format!("{}:{}", draft.environment_id, draft.project_id))
                     .is_none()
             {
@@ -550,8 +511,16 @@ fn reconcile(engine: &Engine) {
                 orphaned.push(draft.id.clone());
             }
         }
-        (promoted, orphaned)
+        (promoted, orphaned, unserved)
     });
+    // No MC serves its machine now: removed, here or on another client,
+    // switched off, or not back yet. A draft with nothing in it goes (one a
+    // window landed on before the rows went); one the user wrote waits.
+    orphaned.extend(
+        unserved
+            .into_iter()
+            .filter(|id| preview(engine, id).is_none() && !launching(engine, id)),
+    );
     for key in promoted {
         promote(engine, &key);
     }
@@ -696,14 +665,8 @@ impl DraftController {
         if self.landing_failed {
             return;
         }
-        let forgotten = kept(engine).forgotten.borrow().clone();
         let project = store::with(engine, |s| {
-            let projects: Vec<_> = s
-                .projects()
-                .into_iter()
-                .filter(|p| !forgotten.contains(&p.environment_id))
-                .collect();
-            model::most_recent_project(&projects, &s.threads())
+            model::most_recent_project(&s.projects(), &s.threads())
         });
         if let Some(project) = project
             && start(engine, &project.environment_id, &project.id).is_none()

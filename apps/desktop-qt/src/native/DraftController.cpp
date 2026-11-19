@@ -289,9 +289,7 @@ void DraftController::land() {
     return;
   }
   if (m_landingFailed) return;
-  QList<sidebar::Project> projects = m_store->projects();
-  projects.removeIf([this](const sidebar::Project& p) { return m_kept.forgotten.contains(p.environmentId); });
-  const auto project = sidebar::mostRecentProject(projects, m_store->threads());
+  const auto project = sidebar::mostRecentProject(m_store->projects(), m_store->threads());
   if (project && start(project->environmentId, project->id).isEmpty()) setLandingFailed(true);
 }
 
@@ -310,19 +308,6 @@ void DraftController::remove(const QString& id) {
     auto* navigation = NativeShell::of(drafts)->controller<NavigationController>();
     if (navigation->route() == NavigationController::Route::draft(id)) navigation->replace(NavigationController::Route());
   }
-}
-
-void DraftController::forgetEnvironment(const QString& environmentId) {
-  if (m_store->servesEnvironment(environmentId)) m_kept.forgotten.insert(environmentId);
-  removeEnvironment(environmentId);
-}
-
-void DraftController::removeEnvironment(const QString& environmentId) {
-  QStringList ids;
-  for (const Draft& draft : std::as_const(m_drafts)) {
-    if (draft.environmentId == environmentId) ids.append(draft.id);
-  }
-  for (const QString& id : std::as_const(ids)) remove(id);
 }
 
 void DraftController::promote(const QString& threadKey) {
@@ -409,24 +394,17 @@ void DraftController::moveTo(const QString& from, const QString& projectKey) {
 
 void DraftController::reconcile() {
   if (!m_active || !m_store->synchronized()) return;
-  // A removed environment whose rows have now gone takes any draft started
-  // for it meanwhile.
-  const QSet<QString> forgotten = m_kept.forgotten;
-  for (const QString& environmentId : forgotten) {
-    if (m_store->servesEnvironment(environmentId)) continue;
-    m_kept.forgotten.remove(environmentId);
-    removeEnvironment(environmentId);
-  }
   QStringList promoted;
   QStringList orphaned;
   for (const Draft& draft : std::as_const(m_drafts)) {
     if (m_store->thread(draft.threadKey())) {
       promoted.append(draft.threadKey());
-    } else if (m_store->environmentRemoved(draft.environmentId)) {
-      // Its machine left the cluster, whichever client removed it, and took
-      // the project with it.
-      orphaned.append(draft.id);
-    } else if (m_store->servesEnvironment(draft.environmentId) &&
+    } else if (!m_store->servesEnvironment(draft.environmentId)) {
+      // No MC serves its machine now: removed, here or on another client,
+      // switched off, or not back yet. A draft with nothing in it goes (one a
+      // window landed on before the rows went); one the user wrote waits.
+      if (!holdsAnything(draft.id) && !launching(draft.id)) orphaned.append(draft.id);
+    } else if (m_store->listsEnvironment(draft.environmentId) &&
                !m_store->project(draft.environmentId + QLatin1Char(':') + draft.projectId)) {
       // The project was removed, here or on another client.
       orphaned.append(draft.id);
@@ -450,6 +428,12 @@ bool DraftController::launching(const QString& id) const {
     const auto* composer = NativeShell::of(drafts)->controller<ComposerController>();
     return composer && composer->launching(id);
   });
+}
+
+bool DraftController::holdsAnything(const QString& id) const {
+  // What the sidebar lists the draft for: its text, else its attachments.
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  return composer ? composer->draftPreview(id).has_value() : !draft(id).value_or(Draft{}).text.trimmed().isEmpty();
 }
 
 void DraftController::changedEverywhere() {

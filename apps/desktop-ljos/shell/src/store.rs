@@ -64,6 +64,8 @@ struct McRows {
     /// The version of its rows; no epoch when the MC gave none.
     epoch: String,
     rev: i64,
+    /// Its rows have come: in a snapshot, a `shell.rows` or the cache.
+    listed: bool,
     threads: BTreeMap<String, Row>,
     projects: BTreeMap<String, Row>,
 }
@@ -161,9 +163,6 @@ pub struct ShellStore {
     mcs: BTreeMap<String, McRows>,
     /// The saved environments linked to ([`ShellStore::add_link`]).
     links: BTreeSet<String>,
-    /// The environments whose MC went with none left serving them, until one
-    /// serves them again ([`ShellStore::environment_removed`]).
-    removed: BTreeSet<String>,
     /// The links whose snapshot has come since the store last held another
     /// MC's rows: what they list stands, as the shell's own does once
     /// `synchronized`.
@@ -333,6 +332,7 @@ impl ShellStore {
         let entry = self.mcs.entry(mc.mc).or_default();
         entry.epoch = mc.epoch;
         entry.rev = mc.rev;
+        entry.listed = true;
         for row in mc.rows {
             if let Some(rows) = entry.rows(&row.kind) {
                 rows.insert(row.id, row.fields);
@@ -597,6 +597,7 @@ impl ShellStore {
                     let entry = self.mcs.entry(name.clone()).or_default();
                     entry.online = mc.get("online").and_then(Value::as_bool).unwrap_or(false);
                     entry.given_up = mc.get("trying").and_then(Value::as_bool) == Some(false);
+                    entry.listed = true;
                     self.set_version(&name, mc.get("epoch"), mc.get("rev"));
                 }
                 // Only the MCs this client speaks for: another link's are its own.
@@ -665,6 +666,7 @@ impl ShellStore {
                     let at = |i: usize| row.get(i);
                     self.put_row(&mc, &text(at(0)), &text(at(1)), object(at(2)));
                 }
+                self.mcs.entry(mc.clone()).or_default().listed = true;
                 // They bring the MC's rows to this version; a frame without
                 // one leaves none to resume from.
                 self.set_version(&mc, frame.get("epoch"), frame.get("rev"));
@@ -681,7 +683,6 @@ impl ShellStore {
         entry.environment_id = text(environment.get("environmentId"));
         entry.capabilities = object(environment.get("capabilities"));
         entry.environment = environment;
-        self.removed.remove(&entry.environment_id);
         self.roster += 1;
         self.unsaved(mc);
     }
@@ -777,13 +778,12 @@ impl ShellStore {
         };
         // Its threads go with it, unless another MC serves the environment
         // now (an MC's name changes when it joins a cluster).
-        if environment_id.is_empty() || self.serves_environment(&environment_id) {
-            return;
-        }
-        if let Some(cache) = &self.cache {
+        if !environment_id.is_empty()
+            && !self.serves_environment(&environment_id)
+            && let Some(cache) = &self.cache
+        {
             cache.forget_environment(&environment_id);
         }
-        self.removed.insert(environment_id);
     }
 
     /// Forgets the cached copies of `threads` (keys) that are no longer listed.
@@ -1056,11 +1056,12 @@ impl ShellStore {
         self.serving(environment_id).is_some()
     }
 
-    /// Whether the environment was removed: the MC that served it went,
-    /// taking its rows, and none serves it now. What the client kept for it
-    /// goes too.
-    pub fn environment_removed(&self, environment_id: &str) -> bool {
-        self.removed.contains(environment_id) && !self.serves_environment(environment_id)
+    /// Whether the MC serving the environment has sent its rows. A member
+    /// that joins (or comes back) is described before its rows come, and
+    /// until they do, a project it does not list may only not have come yet.
+    pub fn lists_environment(&self, environment_id: &str) -> bool {
+        self.serving(environment_id)
+            .is_some_and(|(_, mc)| mc.listed)
     }
 
     /// Whether the MC whose row lists this thread is online; false while none

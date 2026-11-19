@@ -123,6 +123,7 @@ void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
     Mc& entry = m_mcs[mc.mc];
     entry.epoch = mc.epoch;
     entry.rev = mc.rev;
+    entry.listed = true;
     for (const cache::ShellRow& row : mc.rows) {
       if (auto* rows = rowsOf(entry, row.kind)) rows->insert(row.id, row.fields);
     }
@@ -247,6 +248,13 @@ bool ShellStore::servesEnvironment(const QString& environmentId) const {
   return false;
 }
 
+bool ShellStore::listsEnvironment(const QString& environmentId) const {
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId == environmentId) return mc.listed;
+  }
+  return false;
+}
+
 // Rows as `shell.rows` carries them: each [id, kind, fields].
 void ShellStore::putRows(const QString& mc, const QJsonArray& rows) {
   for (const QJsonValue& value : rows) {
@@ -302,13 +310,7 @@ void ShellStore::removeMc(const QString& mc) {
   change.reset = true;
   // Its threads go with it, unless another MC serves the environment now
   // (an MC's name changes when it joins a cluster).
-  if (environmentId.isEmpty() || servesEnvironment(environmentId)) return;
-  m_removed.insert(environmentId);
-  if (m_cache) m_cache->forgetEnvironment(environmentId);
-}
-
-bool ShellStore::environmentRemoved(const QString& environmentId) const {
-  return m_removed.contains(environmentId) && !servesEnvironment(environmentId);
+  if (m_cache && !environmentId.isEmpty() && !servesEnvironment(environmentId)) m_cache->forgetEnvironment(environmentId);
 }
 
 void ShellStore::forgetThreads(const QSet<QString>& threads) {
@@ -433,7 +435,6 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
   entry.environment = environment;
-  m_removed.remove(entry.environmentId);
   ++m_roster;
   unsaved(mc);
 }
@@ -479,6 +480,7 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
       setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
       m_mcs[name].trying = mc.value(QLatin1String("trying")).toBool(true);
+      m_mcs[name].listed = true;
       setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
     }
     // Only the MCs this client speaks for: another link's are its own.
@@ -520,6 +522,7 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
     QSet<QString> replaced;
     if (frame.value(QLatin1String("reset")).toBool()) resetRows(mc, replaced);
     putRows(mc, frame.value(QLatin1String("rows")).toArray());
+    m_mcs[mc].listed = true;
     // They bring the MC's rows to this version; a frame without one leaves none to resume from.
     setVersion(mc, frame.value(QLatin1String("epoch")), frame.value(QLatin1String("rev")));
     forgetThreads(replaced);

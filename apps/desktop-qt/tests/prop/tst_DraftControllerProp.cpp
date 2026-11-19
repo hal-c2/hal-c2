@@ -3,12 +3,14 @@
 // client; the user writes drafts for it and for this machine, goes home (which
 // lands on the most recent project's draft) and removes the machine in Cluster
 // settings, the MC holding each answer to give it before or after it says the
-// machine went. After every step the drafts the user wrote are kept until
-// their machine is removed, and nothing at all is kept for a machine that went
-// (hal-c2#1589).
+// machine went. After every step the drafts the user wrote are kept until an
+// answer drops the ones its removal was asked with, and no empty draft is kept
+// for a machine that went (hal-c2#1589).
 
 #include "Prop.h"
 
+#include <QMap>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <utility>
@@ -44,9 +46,9 @@ struct Model {
   bool joined = false;
   // The removals the MC has not answered yet.
   int asked = 0;
-  // The drafts the user wrote, per machine.
+  // Whether the user wrote a draft on this machine. Those on the other are
+  // tracked by their ids (Shell::written).
   int local = 0;
-  int box = 0;
 };
 
 // The app on a fake MC with a project of its own, on a home of its own.
@@ -56,6 +58,10 @@ struct Shell {
   ShellBridge bridge;
   NativeShell native{&bridge};
   QList<FakeMc::Rpc> removals;
+  // The machine's drafts as each held removal was asked.
+  QList<QSet<QString>> asked;
+  // The machine's drafts the user wrote, by id, with their text.
+  QMap<QString, QString> written;
   QSet<QString> reached;
 
   Shell() {
@@ -84,36 +90,38 @@ struct Shell {
     RC_ASSERT(prop::until([&done] { return done; }));
   }
 
-  // The drafts kept for the environment, and how many of them the user wrote in.
-  std::pair<int, int> kept(const QString& environment) const {
-    int all = 0;
-    int written = 0;
+  // The drafts kept for the environment: their ids, and the texts written in them.
+  QMap<QString, QString> kept(const QString& environment, bool writtenOnly = true) const {
+    QMap<QString, QString> found;
     for (const DraftController::Draft& draft : drafts()->drafts()) {
-      if (draft.environmentId != environment) continue;
-      ++all;
-      if (!draft.text.isEmpty()) ++written;
+      if (draft.environmentId == environment && (!writtenOnly || !draft.text.isEmpty())) found.insert(draft.id, draft.text);
     }
-    return {all, written};
+    return found;
   }
 
   void check(const Model& model) {
     barrier();
     RC_ASSERT(store()->servesEnvironment(kBox) == model.joined);
     RC_ASSERT(int(removals.size()) == model.asked);
-    const auto [box, boxWritten] = kept(kBox);
-    RC_ASSERT(kept(mc.environmentId).second == model.local);
-    RC_ASSERT(boxWritten == model.box);
-    // Not even an empty draft is kept for a machine that went.
-    if (!model.joined) RC_ASSERT(box == 0);
+    RC_ASSERT(int(asked.size()) == model.asked);
+    RC_ASSERT(int(kept(mc.environmentId).size()) == model.local);
+    // What the user wrote for the machine is kept, as written.
+    RC_ASSERT(kept(kBox) == written);
+    // No empty draft is kept for a machine that went.
+    if (!model.joined) RC_ASSERT(kept(kBox, false) == written);
   }
 
   // Nothing held, the machine gone, no drafts, and the window home.
   Model reset() {
     for (const FakeMc::Rpc& rpc : std::exchange(removals, {})) mc.reply(rpc, QJsonObject());
+    asked.clear();
+    written.clear();
     if (mc.peers.contains(kBox)) mc.remove(kBox);
     barrier();
     RC_ASSERT(prop::until([this] { return !store()->servesEnvironment(kBox); }));
-    for (const DraftController::Draft& draft : drafts()->drafts()) drafts()->remove(draft.id);
+    // A copy: removing one changes the list.
+    const QList<DraftController::Draft> all = drafts()->drafts();
+    for (const DraftController::Draft& draft : all) drafts()->remove(draft.id);
     native.controller<NavigationController>()->open(NavigationController::Route());
     Model model;
     check(model);
@@ -145,9 +153,8 @@ struct Write : Command {
 
   void checkPreconditions(const Model& model) const override { RC_PRE(!box || model.joined); }
   void apply(Model& model) const override {
-    int& written = box ? model.box : model.local;
     // One draft per project, written in again.
-    written = 1;
+    if (!box) model.local = 1;
   }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
@@ -156,6 +163,7 @@ struct Write : Command {
                            : shell.drafts()->start(shell.mc.environmentId, QStringLiteral("shop"));
     RC_ASSERT(!id.isEmpty());
     shell.drafts()->setText(id, QStringLiteral("roll back the deploy"));
+    if (box) shell.written.insert(id, QStringLiteral("roll back the deploy"));
     shell.check(next);
   }
   void show(std::ostream& os) const override { os << "Write(" << (box ? "Build box" : "here") << ")"; }
@@ -178,6 +186,8 @@ struct Remove : Command {
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
     apply(next);
+    const QMap<QString, QString> before = shell.kept(kBox, false);
+    shell.asked.append(QSet<QString>(before.keyBegin(), before.keyEnd()));
     shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
     RC_ASSERT(prop::until([&] { return int(shell.removals.size()) == next.asked; }));
     shell.check(next);
@@ -185,32 +195,30 @@ struct Remove : Command {
   void show(std::ostream& os) const override { os << "Remove"; }
 };
 
-// The MC answers the oldest removal, and the machine's drafts go.
+// The MC answers the oldest removal, and the drafts the machine had when it
+// was asked go; one started since stays.
 struct Answer : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.asked > 0); }
-  void apply(Model& model) const override {
-    --model.asked;
-    model.box = 0;
-  }
+  void apply(Model& model) const override { --model.asked; }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
     apply(next);
     if (model.joined) shell.reached.insert(QStringLiteral("answered first"));
     else shell.reached.insert(QStringLiteral("answered after"));
+    const QSet<QString> doomed = shell.asked.takeFirst();
     shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    for (const QString& id : doomed) shell.written.remove(id);
     shell.check(next);
+    for (const QString& id : doomed) RC_ASSERT(!shell.drafts()->draft(id));
   }
   void show(std::ostream& os) const override { os << "Answer"; }
 };
 
-// The MC says the machine went, removed here or from another client, its rows
-// and everything kept for it going with it.
+// The MC says the machine went, removed here or from another client, or only
+// switched off: its rows go, and its empty drafts with them.
 struct Leave : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.joined); }
-  void apply(Model& model) const override {
-    model.joined = false;
-    model.box = 0;
-  }
+  void apply(Model& model) const override { model.joined = false; }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
     apply(next);
@@ -229,7 +237,7 @@ class DraftControllerProp : public QObject {
 private slots:
   void drafts() {
     Shell shell;
-    QVERIFY(rc::check("nothing is kept for a machine that went, whichever comes first of the answer and its going", [&shell] {
+    QVERIFY(rc::check("what was written for a machine stays until the answer to its removal, and nothing empty outlives it", [&shell] {
       const Model initial = shell.reset();
       shell.reached.clear();
       rc::state::check(initial, shell,
