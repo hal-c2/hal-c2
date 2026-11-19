@@ -571,6 +571,71 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  step ~r/^the user (?:queues|queued) "(?<text>[^"]+)" behind the running turn of "(?<thread>[^"]+)"$/,
+       %{args: [text, thread]} = context do
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    assert {:ok, _} = context.reply
+
+    assert [%{"status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, thread)
+
+    Map.merge(context, %{thread: thread, queued_run: queued["id"]})
+  end
+
+  step "the running turn of {string} completes", %{args: [thread]} = context do
+    World.complete_codex_turn(context, thread)
+    World.await_runs(context, thread, ["completed", "completed"])
+    context
+  end
+
+  step "the user cancels the queued message", context do
+    context =
+      World.command(context, %{
+        "type" => "queued-run.cancel",
+        "threadId" => World.thread_id(context, context.thread),
+        "runId" => context.queued_run
+      })
+
+    assert {:ok, _} = context.reply
+    assert [%{"status" => "running"} | _] = World.runs(context, context.thread)
+    context
+  end
+
+  # A refused steer names a turn the fake app-server does not have; its own turn keeps
+  # running.
+  step ~r/^Codex (?<takes>takes|refuses) messages into the running turn of "(?<thread>[^"]+)"$/,
+       %{args: [takes, thread]} = context do
+    if takes == "refuses" do
+      {pid, _} = World.codex_runtime(context, thread)
+      :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-elsewhere"))
+    end
+
+    Map.put(context, :steer_taken, takes == "takes")
+  end
+
+  step "the user steers the running turn of {string} with {string}",
+       %{args: [thread, text]} = context do
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    if context.steer_taken,
+      do: assert({:ok, _} = context.reply),
+      else: assert({:error, _, _} = context.reply)
+
+    context
+  end
+
   step "the provider then asked {string} without waiting on it", %{args: [question]} = context do
     context |> Map.put(:older_request, context.request) |> ask_async([question])
   end

@@ -1077,6 +1077,9 @@ defmodule HalC2.Orchestration do
 
         case ask_steer(instance, thread_id, target["id"], steer_input(message)) do
           answer when answer in [:ok, :held] ->
+            :ok =
+              HalC2.Streams.transact(thread_id, :thread, &{written_over(&1, message), :ok})
+
             {:ok,
              Map.merge(
                %{"sequence" => sequence(thread_id), "confirmed" => answer == :ok},
@@ -1377,7 +1380,7 @@ defmodule HalC2.Orchestration do
 
   # The changes that close the questions the agent asked in the background (answered with
   # a message) still open from before the user wrote to the thread at `written` (unix ms,
-  # or `:now` for a message being sent). The agent reads what the user wrote, so that is
+  # or `:now` for a message the agent gets now). The agent reads what the user wrote, so that is
   # the answer. They close as a dismissed question does, saying so (`closedBy`), never as
   # answered with answers nobody gave.
   defp close_written_over(state, written) do
@@ -3205,14 +3208,7 @@ defmodule HalC2.Orchestration do
 
       {changes, {:ok, decided} = result} ->
         saved = if steered?(command, decided), do: steered_selection(state, thread_id, command)
-        # A steer closes them once its provider takes it (`steer_taken/2`); a message
-        # being sent now is no fork's copy, so it needs no thread to tell.
-        closed =
-          if user_wrote?(command, %{}) and not match?({:steer, _, _}, decided),
-            do: close_written_over(state, :now),
-            else: []
-
-        {Enum.reject([woken(state, thread_id) | changes] ++ [saved | closed], &is_nil/1), result}
+        {Enum.reject([woken(state, thread_id) | changes] ++ [saved], &is_nil/1), result}
 
       refused ->
         refused
@@ -3823,7 +3819,7 @@ defmodule HalC2.Orchestration do
   end
 
   # The steer the provider took answers the questions asked in the background, as any
-  # message the user writes does (`decide_dispatch/3`).
+  # message the user writes does as its run starts (`new_run/5`).
   defp steer_taken(state, message_id) do
     message = StreamState.fetch(state, "message", message_id)
 
@@ -3833,10 +3829,13 @@ defmodule HalC2.Orchestration do
         message -> Map.delete(message, "steer")
       end)
 
-    closed =
-      if message && user_wrote?(message, %{}), do: close_written_over(state, :now), else: []
+    {List.wrap(taken) ++ written_over(state, message), :ok}
+  end
 
-    {List.wrap(taken) ++ closed, :ok}
+  # The changes that close the questions `message`, which the provider took into its
+  # running turn (a steer, a promoted queued message), answers, when the user wrote it.
+  defp written_over(state, message) do
+    if message && user_wrote?(message, %{}), do: close_written_over(state, :now), else: []
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
@@ -6021,8 +6020,20 @@ defmodule HalC2.Orchestration do
 
     turn = HalC2.Orchestration.Handoff.ahead(turn, handoff.context)
 
+    # A message the user wrote answers the questions asked in the background once the
+    # agent gets it: as its run starts, not while it waits in the queue, where the user
+    # can still take it back. A run refused before it reaches the provider
+    # (`begin_turn_now/2`) gets nothing. A steer closes them once its provider takes it
+    # (`steer_taken/2`).
+    closed =
+      if handoff.refusal == nil and turn.command_refusal == nil and
+           HalC2.Settings.provider_off(thread["projectId"], instance) == nil and
+           user_wrote?(command, %{}),
+         do: close_written_over(state, :now),
+         else: []
+
     # A refused run consumes nothing it would have handed over.
-    {changes ++ if(handoff.refusal, do: [], else: handoff.changes), {:ok, turn}}
+    {changes ++ if(handoff.refusal, do: [], else: handoff.changes) ++ closed, {:ok, turn}}
   end
 
   # Runs are numbered in the order they leave the queue, which is what checkpoints (ref

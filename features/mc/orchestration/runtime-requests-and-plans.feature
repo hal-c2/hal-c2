@@ -247,10 +247,38 @@ Feature: Approvals, questions and plans
     Then the question is closed by the message rather than answered
 
   @mc
-  Scenario: A message the MC sends as the user leaves the question open
+  Scenario: A message another thread's agent sends leaves the question open
     Given the provider asked a question the user can answer with a message
     When another thread's agent sends a message to "t1"
     Then the question is still pending
+
+  # The agent has not read a queued message yet, and the user can still take it back.
+  @mc @priority-high
+  Scenario: A message queued behind the running turn closes the question once it starts
+    Given the provider asked a question the user can answer with a message
+    When the user queues "Use Postgres" behind the running turn of "t1"
+    Then the question is still pending
+    When the running turn of "t1" completes
+    Then the question is closed by the message rather than answered
+
+  @mc @priority-high
+  Scenario: Cancelling a queued message leaves the question open
+    Given the provider asked a question the user can answer with a message
+    And the user queued "Use Postgres" behind the running turn of "t1"
+    When the user cancels the queued message
+    Then the question is still pending
+
+  @mc @priority-high
+  Scenario Outline: A steer closes the question only when the provider takes it
+    Given the provider asked a question the user can answer with a message
+    And Codex <takes> messages into the running turn of "t1"
+    When the user steers the running turn of "t1" with "Use Postgres"
+    Then the question <ends>
+
+    Examples:
+      | takes   | ends                                         |
+      | takes   | is closed by the message rather than answered |
+      | refuses | is still pending                             |
 
   @mc @priority-high
   Scenario: Answering a question closes the older ones the thread still has open

@@ -32,8 +32,9 @@ defmodule HalC2.OrchestrationPropTest do
   the reason; one answered by message outlives both, and its answer reaches the agent
   as the user's message, steering the running turn or starting the next. A closed
   question refuses an answer and a dismissal. A message the user writes, an answer by
-  message too, closes the questions still open for a message (the agent reads it
-  instead); the MC's own message and a steer Codex refuses do not.
+  message too, closes the questions still open for a message once the agent gets it
+  (its run starts, or the running turn takes it): the agent reads it instead. A message
+  still queued, the MC's own and a steer Codex refuses close none.
 
   A thread can hold a proposed plan, which a message to it or to the other thread
   implements (the composer's "Implement it" and "Implement in a new thread"): the plan
@@ -1406,8 +1407,13 @@ defmodule HalC2.OrchestrationPropTest do
     %{state | threads: threads}
   end
 
-  # The questions a message the user writes closes: those still open for a message. One
-  # the message answers is resolved already (`answered/4`).
+  # The questions a message the user wrote closes as the agent gets it (its run starts,
+  # or the running turn takes it): those still open for a message. One the message
+  # answers is resolved already (`answered/4`). The MC's own message closes none.
+  defp close_written_over(thread, msg) do
+    if thread.messages[msg].notice, do: thread, else: close_written_over(thread)
+  end
+
   defp close_written_over(thread) do
     requests =
       Map.new(thread.requests, fn
@@ -1535,9 +1541,11 @@ defmodule HalC2.OrchestrationPropTest do
   # A run on an instance the project turned off fails as it starts, and the queue goes on.
   defp started(thread, msg) do
     thread = in_start_order(thread, msg)
+    off = off_refusal(thread, instance_of(thread, msg))
+    thread = if off, do: thread, else: close_written_over(thread, msg)
 
     cond do
-      off_refusal(thread, instance_of(thread, msg)) ->
+      off ->
         thread
         |> set_runs(
           &if(&1.msg == msg, do: Map.merge(&1, %{status: :failed, off: true}), else: &1)
@@ -1646,9 +1654,6 @@ defmodule HalC2.OrchestrationPropTest do
     # A message the user sends resumes a held queue; a restart, or the agent's own
     # result (`:notice`), does not. A steer into the running turn starts no run.
     by_user? = mode in [:queue, :limit, :auto]
-    # Any message the user writes, a restart too, answers the questions still open for
-    # a message, which close; the MC's own does not.
-    thread = if mode == :notice, do: thread, else: close_written_over(thread)
 
     cond do
       active == nil ->
@@ -1663,6 +1668,7 @@ defmodule HalC2.OrchestrationPropTest do
       mode == :auto and active.instance == instance ->
         # The fake ends a turn it is steered into.
         thread
+        |> close_written_over()
         |> put_in([:messages, msg], %{message | run: active.msg, shown: true})
         |> end_running(:completed)
         |> start_next()
@@ -1724,6 +1730,7 @@ defmodule HalC2.OrchestrationPropTest do
 
       active ->
         %{thread | queue: List.delete(thread.queue, msg)}
+        |> close_written_over(msg)
         |> set_runs(&if(&1.msg == msg, do: %{&1 | status: :cancelled}, else: &1))
         |> update_in([:messages, msg], &%{&1 | run: active.msg, shown: true})
         |> end_running(:completed)
