@@ -45,13 +45,14 @@ Item {
     property bool walking: false
     // The office fits the view at zoom 1, by its width or its height,
     // whichever runs out first; each zoom button is a quarter more or less.
-    // It can shrink below one device pixel per art pixel only to fit.
+    // It can shrink below one device pixel per art pixel only to fit, and
+    // grows no further than topScale, the most zoomed in scale.
     property real zoom: 1
     readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
     readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
     readonly property real minScale: Math.min(1, fitScale)
     readonly property real maxScale: 8
-    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(maxScale, fitScale)) : snapScale(fitScale * zoom)
+    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
     // Nearest-neighbour art at a fractional scale draws some art pixels a
     // device pixel wider than others. So the art is drawn at the next whole
     // number of device pixels per art pixel, drawScale, into a layer shrunk
@@ -64,12 +65,16 @@ Item {
     readonly property bool resampled: drawScale - pixelScale > 0.001
 
     // The scale shown for a wanted zoomed scale: kept within bounds, and
-    // rounded to whole device pixels where that is fine enough.
+    // rounded to whole device pixels where that is fine enough, never past
+    // the largest whole number of device pixels within maxScale.
     function snapScale(wanted) {
+        const ratio = devicePixelRatio;
         const scale = Math.max(minScale, Math.min(maxScale, wanted));
-        const devicePixels = scale * devicePixelRatio;
-        return devicePixels >= crispFrom ? Math.round(devicePixels) / devicePixelRatio : scale;
+        const devicePixels = scale * ratio;
+        return devicePixels >= crispFrom ? Math.min(Math.round(devicePixels), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
     }
+    // The most zoomed in scale shown.
+    readonly property real topScale: snapScale(maxScale)
 
     // Zooms from the scale shown, so a step always moves it; where the scale
     // snaps, by at least one device pixel, so in and out take the same path.
@@ -77,7 +82,9 @@ Item {
         const ratio = devicePixelRatio;
         let next = pixelScale * factor;
         if (next * ratio >= crispFrom) {
-            const now = Math.round(pixelScale * ratio);
+            // A scale between whole device pixels (Fit) moves to the next
+            // whole one, a whole one by at least one device pixel.
+            const now = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
             const step = Math.round(next * ratio);
             next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
         }
@@ -2665,6 +2672,12 @@ Item {
         return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
     }
 
+    // The walkable tiles beside a person that nobody holds.
+    function freeSides(actor) {
+        const W = page.world.cols;
+        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
+    }
+
     // Moves a person along its path, two pixels a tick, holding the tile it
     // stands on and the one it steps to so nobody walks through anybody.
     function step(actor, dt) {
@@ -3448,9 +3461,10 @@ Item {
             }
 
             ShellButton {
+                objectName: "officeZoomIn"
                 text: "+"
                 toolTip: qsTr("Zoom in")
-                enabled: page.pixelScale < page.maxScale - 0.001
+                enabled: page.pixelScale < page.topScale - 0.001
                 onClicked: page.zoomBy(1.25)
             }
         }

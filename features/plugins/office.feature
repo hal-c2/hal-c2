@@ -173,10 +173,18 @@ Feature: Office
       And no two people overlap
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: People in each other's way get past without pacing
+    Scenario: Two people walking into each other get past
       Given two people walk into each other on open floor
       Then one of them steps around the other and both get where they are going
-      When a person's way is blocked by someone standing still
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person boxed in is given way
+      Given a person with no free floor beside it walks into another person
+      Then the other steps aside and both get where they are going
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person blocked by someone standing still waits
+      Given a person's way is blocked by someone standing still
       Then it waits where it is instead of stepping back and forth
 
     @desktop @mobile @backlog-desktop @backlog-mobile
@@ -274,6 +282,21 @@ Feature: Office
       When a person and a mover meet head-on and only one of them has room to step aside
       Then that one steps aside and both get where they are going
       And every desk is carried in and every mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office fits its view
+      Given the office page is open
+      Then the whole office shows and fills the view's width or its height
+      When the user zooms in and then picks Fit
+      Then the whole office shows again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Zooming goes in small steps up to a largest size
+      Given the office page is open
+      When the user zooms in
+      Then the office grows by about a quarter, with every art pixel the same size
+      When the user zooms in until it can grow no more
+      Then zooming in is off
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown
