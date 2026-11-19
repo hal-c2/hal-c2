@@ -314,11 +314,13 @@ Item {
                 verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
             verify(page.world.seatOf["aw6"].pod !== pod, "the newcomer sits at another pod");
             compare(page.jobs.length, 1, "one desk comes in");
-            // Someone who sat down at another pod keeps that seat too.
+            // Someone who sat down at another pod keeps that seat, even when
+            // newcomers fill every other pod near it.
             const aside = page.world.seatOf["aw6"];
-            plugin.publish([person("x", "X", "working", "typing"), person("y", "Y", "working", "typing")].concat(team(7)));
+            const z = [person("z", "Z", "working", "typing")].concat(many(31, "zw", "working", "typing", "z"));
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(7), z));
             verify(page.world.seatOf["aw6"] === aside, "aw6 keeps its seat");
-            verify(page.world.seatOf["y"] !== aside, "Y sits elsewhere");
+            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id] === aside), ["aw6"]);
         }
 
         // The office holds 48 desks whoever is in it; anyone past that takes

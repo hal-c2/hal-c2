@@ -1351,8 +1351,8 @@ Item {
     }
 
     // Seats the teams at the office's pods, as id → seat. Everyone keeps the
-    // seat they had while their part of the team stays in that pod, so nobody
-    // moves along when someone else comes or goes. A newcomer takes a free
+    // seat they had while they stay, wherever it is, so nobody moves along
+    // when someone else comes or goes. A newcomer takes a free
     // seat in its team's pod, or the nearest pod with room when that is full;
     // a new team takes a pod with room for all of it, and small teams share.
     // A team bigger than a pod takes as many as it needs. Whoever is left over
