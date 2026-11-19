@@ -3,7 +3,7 @@
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, runtime-request.updated,
 #     thread.user-input.dismiss, plan.updated, turn-item.updated, node.updated)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (runtime-request.respond, thread.user-input.dismiss,
-#     implemented_plan, message.dispatch closing background questions)
+#     implemented_plan, a run start or a taken steer closing background questions)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (background questions left open at start)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (open_request, open_question,
 #     resolve_request, plans)
