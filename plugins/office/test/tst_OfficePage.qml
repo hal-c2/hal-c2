@@ -1,8 +1,9 @@
 // Run from a hal-c2 checkout:
 //   ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
 //     plugins/office/test/tst_OfficePage.qml
-// and with Qt, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+// and with Qt 6, with QT_QPA_PLATFORM=offscreen (a bare qmltestrunner may be Qt 5's,
+// which prints nothing and exits 1):
+//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
 //     -input plugins/office/test/tst_OfficePage.qml
 import QtQuick
 import QtTest
@@ -101,6 +102,8 @@ Item {
         }
 
         function init() {
+            loader.width = Qt.binding(() => test.width);
+            loader.height = Qt.binding(() => test.height);
             stood = {};
             plugin.environments = ["local"];
             plugin.watchers = {};
@@ -129,17 +132,22 @@ Item {
         // The tiles each person held when the floor was last checked.
         property var stood: ({})
 
-        // Nobody stands on a wall or furniture or off the floor, a seat is only
+        // Nobody, people or movers, stands on a wall or furniture or off the
+        // floor, a seat is only
         // stepped onto as where a person is going (a step already begun ends
         // there, and the person leaves again), a step goes
         // to a tile next to the person, each person holds the tiles it stands
-        // on and steps to, and no two people hold the same tile.
+        // on and steps to, and no two people hold the same tile. A carried desk
+        // is drawn within its mover's figure.
         function checkFloor() {
             const w = page.world;
             const held = {};
             const stood = {};
-            for (const id of Object.keys(page.actors)) {
-                const a = page.actors[id];
+            const everyone = Object.assign({}, page.actors, page.movers);
+            for (const id of Object.keys(everyone)) {
+                const a = everyone[id];
+                if (page.outside.includes(id))
+                    continue;
                 verify(a.tx >= 0 && a.ty >= 0 && a.tx < w.cols && a.ty < w.rows, id + " is off the floor at " + a.tx + "," + a.ty);
                 const here = a.ty * w.cols + a.tx;
                 const tiles = [here];
@@ -164,6 +172,28 @@ Item {
             const taken = page.occupied.filter(owner => owner).length;
             compare(taken, Object.keys(held).length, "only people's tiles are held");
             this.stood = stood;
+            for (const m of Object.values(page.movers)) {
+                if (!m.carrying)
+                    continue;
+                const r = load(m);
+                verify(r[0] >= m.px && r[1] >= m.py - 8 && r[0] + r[2] <= m.px + 16 && r[1] + r[3] <= m.py + 16, m.id + "'s desk is drawn within its figure");
+            }
+        }
+
+        // Where a person is drawn, from the top of its head to its shoes (its
+        // shadow below them is see-through), and where a carried desk is.
+        function body(a) {
+            return [a.px, a.py - 8 + a.offY, 16, 21];
+        }
+
+        function load(m) {
+            const v = find("officeLoad:" + m.id);
+            verify(v, m.id + "'s desk is drawn");
+            return [m.px + v.x, m.py - 8 + v.y, v.width, v.height];
+        }
+
+        function crosses(r, q) {
+            return r[0] < q[0] + q[2] && q[0] < r[0] + r[2] && r[1] < q[1] + q[3] && q[1] < r[1] + r[3];
         }
 
         // Runs the office n ticks, checking the floor after each.
@@ -188,6 +218,32 @@ Item {
             open();
             plugin.publish(people);
             compare(people.map(p => JSON.stringify(actor(p.id).look)), looks);
+        }
+
+        // A host that makes the page without giving it a size still shows the
+        // office, with the zoom buttons beside the summary, not over it.
+        function test_a_page_given_no_size_shows_the_office() {
+            const made = createTemporaryObject(Qt.createComponent(Qt.resolvedUrl("../ui/OfficePage.qml")), test, {
+                plugin: plugin
+            });
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => made.worldCols > 0);
+            wait(50);
+            const summary = findChild(made, "officeSummary");
+            const scroller = findChild(made, "officeScroller");
+            const row = summary.parent;
+            let needed = summary.implicitWidth;
+            let buttons = 0;
+            for (let i = 0; i < row.children.length; i++) {
+                const button = row.children[i];
+                if (button === summary || !button.visible)
+                    continue;
+                needed += row.spacing + button.width;
+                buttons++;
+            }
+            compare(buttons, 3);
+            verify(row.width >= needed, "the summary and the zoom buttons fit side by side");
+            verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
         }
 
         function test_some_workers_are_cats_and_dogs() {
@@ -229,39 +285,122 @@ Item {
             }
         }
 
-        function test_desks_that_change_hands_are_walked_to() {
+        // Someone leaving leaves its desk to whoever comes next; everyone
+        // else stays where they are.
+        function test_a_desk_left_behind_is_taken_by_whoever_comes_next() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const signature = page.world.signature;
-            const before = page.world.seatOf["b"];
-            // A leaves and C comes in: B takes A's desk and C takes B's.
+            const world = page.world;
+            const a = page.world.seatOf["a"], b = page.world.seatOf["b"];
             plugin.publish([person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
-            compare(page.world.signature, signature, "the same desks");
-            verify(page.world.seatOf["b"] !== before, "B was given another desk");
-            runUntil(() => arrived(actor("b")) && arrived(actor("c")), 1500, "both reach their desks");
-            for (const id of ["b", "c"]) {
-                const seat = page.world.seatOf[id];
-                compare([actor(id).tx, actor(id).ty], [seat.x, seat.y], id + " sits at its own desk");
+            verify(page.world === world, "the same office");
+            verify(page.world.seatOf["b"] === b, "B keeps its desk");
+            verify(page.world.seatOf["c"] === a, "C takes A's desk");
+            compare(page.moves, 0, "nobody carries a desk");
+            runUntil(() => arrived(actor("c")), 1500, "C reaches its desk");
+            compare([actor("c").tx, actor("c").ty], [a.x, a.y]);
+            compare([actor("b").tx, actor("b").ty], [b.x, b.y], "B never got up");
+        }
+
+        // People sharing a pod keep their seats when a teammate joins a team
+        // seated before theirs, or someone between them leaves.
+        function test_people_keep_their_seats_as_others_come_and_go() {
+            const a = [person("a", "A", "working", "typing"), person("aw0", "AW 0", "working", "typing", "a")];
+            const b = [person("b", "B", "working", "typing")].concat(many(2, "bw", "working", "typing", "b"));
+            plugin.publish(a.concat(b));
+            const pod = page.world.seatOf["a"].pod;
+            compare(page.world.seatOf["b"].pod, pod, "the teams share a pod");
+            const seats = {};
+            for (const p of a.concat(b))
+                seats[p.id] = page.world.seatOf[p.id];
+            plugin.publish(a.concat([person("aw1", "AW 1", "working", "typing", "a")], b));
+            compare(page.world.seatOf["aw1"].pod, pod, "the new worker sits with its lead");
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            runUntil(() => page.moves === 0, 1500, "aw1's desk is carried in");
+            plugin.publish([a[0]].concat([person("aw1", "AW 1", "working", "typing", "a")], b));
+            for (const id of ["a", "b", "bw0", "bw1"])
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat after aw0 leaves");
+            compare(page.jobs.length, 1, "only aw0's desk goes");
+            for (const id of ["a", "b", "bw0", "bw1"])
+                compare(actor(id).goal?.kind, "desk", id + " stays at its desk");
+        }
+
+        // A team that outgrows its pod keeps it, and only the newcomers who do
+        // not fit sit at the nearest pod with room.
+        function test_a_team_that_outgrows_its_pod_stays_put() {
+            const lead = person("a", "A", "working", "typing");
+            const team = n => [lead].concat(many(n, "aw", "working", "typing", "a"));
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(6)));
+            const seats = {};
+            for (const p of team(6))
+                seats[p.id] = page.world.seatOf[p.id];
+            const pod = seats["a"].pod;
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(7)));
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            verify(page.world.seatOf["aw6"].pod !== pod, "the newcomer sits at another pod");
+            compare(page.jobs.length, 1, "one desk comes in");
+            // Someone who sat down at another pod keeps that seat, even when
+            // newcomers fill every other pod near it.
+            const aside = page.world.seatOf["aw6"];
+            const z = [person("z", "Z", "working", "typing")].concat(many(31, "zw", "working", "typing", "z"));
+            plugin.publish([person("x", "X", "working", "typing")].concat(team(7), z));
+            verify(page.world.seatOf["aw6"] === aside, "aw6 keeps its seat");
+            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id] === aside), ["aw6"]);
+        }
+
+        // A team that outgrows its pod with nobody of the new lot seated yet
+        // sits at the free pod nearest its own, not the first free one.
+        function test_a_team_that_outgrows_its_pod_goes_to_the_nearest_free_pod() {
+            const team = (id, n) => [person(id, id, "working", "typing")].concat(many(n - 1, id + "w", "working", "typing", id));
+            const all = ["x", "y", "z", "u", "v", "a"].map(id => team(id, 8));
+            plugin.publish([].concat(...all));
+            compare(page.world.seatOf["a"].pod, 5, "team a fills the last pod");
+            const seats = {};
+            for (const p of all[5])
+                seats[p.id] = page.world.seatOf[p.id];
+            // Pods 0 and 2 empty out; pod 2 is next to pod 5, pod 0 is across the office.
+            plugin.publish([].concat(all[1], all[3], all[4], all[5], [person("aw7", "aw 7", "working", "typing", "a")]));
+            for (const id of Object.keys(seats))
+                verify(page.world.seatOf[id] === seats[id], id + " keeps its seat");
+            compare(page.world.seatOf["aw7"].pod, 2, "the newcomer sits at the free pod nearest its team");
+        }
+
+        // A worker without a desk that asks or fails keeps the break room spot
+        // it heads for, so nobody else is sent there.
+        function test_a_worker_without_a_desk_keeps_its_spot_while_it_asks() {
+            for (const state of ["asking", "failed"]) {
+                init();
+                plugin.publish(many(48, "t", "working", "typing").concat([person("q", "Q", state)]));
+                const q = actor("q");
+                verify(page.world.seatOf["q"] === undefined, "q has no desk");
+                for (let i = 0; i < 20; i++) {
+                    page.decide(q, false);
+                    compare(q.claim, q.goal.y * page.world.cols + q.goal.x, state + ": q holds the spot it heads for");
+                    compare(page.claims[q.claim], "q", state + ": the spot is q's");
+                }
             }
         }
 
-        function test_people_stay_on_the_floor_when_the_office_shrinks() {
-            const a = [person("a", "A", "working", "typing")].concat(many(19, "aw", "working", "typing", "a"));
-            const b = [person("b", "B", "working", "typing")].concat(many(19, "bw", "working", "typing", "b"));
-            plugin.publish(a.concat(b));
-            const resting = a.map(p => person(p.id, p.title, "waiting", null, p.parentId));
-            const byId = {};
-            for (const p of resting)
-                byId[p.id] = p;
-            const narrow = page.buildWorld(page.podsFor(page.teamsOf(resting.map(p => p.id), byId))).cols;
-            verify(narrow < page.world.cols, "one team needs a narrower office");
-            plugin.publish(resting.concat(b));
-            // Someone in the break room stands past where the narrower office
-            // ends, by more than a tile so its old place there wraps onto floor.
-            runUntil(() => resting.some(p => actor(p.id).tx > narrow), 3000, "a person reaches the far side of the break room");
-            plugin.publish(resting);
-            compare(page.world.cols, narrow);
+        // The office holds 48 desks whoever is in it; anyone past that takes
+        // a break.
+        function test_the_office_keeps_its_size_as_people_come_and_go() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const cols = page.worldCols, rows = page.worldRows;
+            const world = page.world;
+            plugin.publish(many(50, "t", "working", "typing"));
+            compare([page.worldCols, page.worldRows], [cols, rows]);
+            verify(page.world === world, "the same office");
+            compare(Object.keys(page.world.seatOf).length, 48);
+            compare(page.world.seats.length, 48);
+            for (const id of ["t48", "t49"]) {
+                verify(page.world.seatOf[id] === undefined, id + " has no desk");
+                verify(actor(id).goal && actor(id).goal.x > page.world.xd, id + " takes a break");
+            }
+            walk(100);
+            plugin.publish(many(2, "t", "working", "typing"));
+            compare([page.worldCols, page.worldRows], [cols, rows]);
             checkFloor();
-            walk(50);
         }
 
         function test_a_break_lasts_from_when_the_person_gets_there() {
@@ -299,11 +438,13 @@ Item {
             compare([actor("lead").tx, actor("lead").ty], [desk.x, desk.y]);
         }
 
-        function test_a_blocked_person_steps_aside() {
+        // A person standing still in the way is waited for: the person behind
+        // it once stepped aside and back every second, pacing on the spot.
+        function test_a_person_blocked_by_someone_standing_still_waits() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const b = actor("b");
+            const a = actor("a"), b = actor("b");
             // A heads for B's desk, which B never leaves.
-            page.setGoal(actor("a"), {
+            page.setGoal(a, {
                 x: b.tx,
                 y: b.ty,
                 face: 0,
@@ -312,7 +453,123 @@ Item {
                 kind: "desk",
                 seat: true
             });
-            runUntil(() => actor("a").sideStep, 400, "the blocked person steps aside");
+            runUntil(() => a.blocked > 0, 1500, "A walks up to B");
+            const spot = [a.tx, a.ty];
+            for (let i = 0; i < 200; i++) {
+                walk(1);
+                compare([a.tx, a.ty, a.next], spot.concat([-1]), "A waits where it is");
+            }
+        }
+
+        // Where a row of open floor with open rows above and below it starts.
+        function openFloor(length) {
+            const w = page.world;
+            for (let y = 1; y < w.rows - 1; y++) {
+                for (let x = 0; x + length <= w.cols; x++) {
+                    let open = true;
+                    for (let dx = 0; dx < length && open; dx++) {
+                        for (let dy = -1; dy <= 1; dy++)
+                            open = open && page.walkable(x + dx, y + dy) && !page.occupied[(y + dy) * w.cols + x + dx];
+                    }
+                    if (open)
+                        return [x, y];
+                }
+            }
+            fail("the office has open floor");
+        }
+
+        // Stands A and B side by side and sends each to its own tile of the row.
+        function meet(left, row, aTo, bTo) {
+            const w = page.world;
+            const a = actor("a"), b = actor("b");
+            for (const who of [a, b]) {
+                page.occupied[who.ty * w.cols + who.tx] = "";
+                who.goal = null;
+                who.path = [];
+            }
+            page.place(a, left, row, true);
+            page.place(b, left + 1, row, true);
+            const goal = x => ({
+                    x: x,
+                    y: row,
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "floor"
+                });
+            page.setGoal(a, goal(aTo));
+            page.setGoal(b, goal(bTo));
+            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+                walk(1);
+            compare([a.tx, a.ty, b.tx, b.ty], [aTo, row, bTo, row], "both get where they are going");
+        }
+
+        // Two people walking into each other once both stepped around the same
+        // way, met again, and stepped back, over and over.
+        function test_two_people_walking_into_each_other_get_past() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const [left, row] = openFloor(8);
+            meet(left + 3, row, left + 7, left);
+        }
+
+        // Two people headed for each other's tile cannot go around: one steps
+        // aside to let the other through.
+        function test_two_people_swapping_places_get_there() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const [left, row] = openFloor(4);
+            meet(left + 1, row, left + 2, left + 1);
+        }
+
+        // The first by id gives way in a head-on meeting, but one boxed in at a
+        // dead end cannot, so the other steps aside instead.
+        function test_a_person_boxed_in_is_given_way() {
+            const ids = ["a", "b", "c", "d", "e"];
+            plugin.publish(ids.map(id => person(id, id.toUpperCase(), "working", "typing")));
+            const w = page.world;
+            const [left, row] = openFloor(6);
+            for (const id of ids) {
+                const who = actor(id);
+                page.occupied[who.ty * w.cols + who.tx] = "";
+                who.goal = null;
+                who.path = [];
+            }
+            const at = (who, x, y) => {
+                page.place(who, x, y, true);
+                page.setGoal(who, {
+                    x: x,
+                    y: y,
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "floor"
+                });
+            };
+            const a = actor("a"), b = actor("b");
+            // A stands with C, D and E on its other three sides, facing B.
+            at(a, left + 1, row);
+            at(actor("c"), left, row);
+            at(actor("d"), left + 1, row - 1);
+            at(actor("e"), left + 1, row + 1);
+            at(b, left + 2, row);
+            page.setGoal(a, {
+                x: left + 4,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            });
+            page.setGoal(b, {
+                x: left + 1,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            });
+            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+                walk(1);
+            compare([a.tx, a.ty, b.tx, b.ty], [left + 4, row, left + 1, row], "both get where they are going");
         }
 
         function test_what_a_person_does_follows_its_agent() {
@@ -405,15 +662,168 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // The office fills the view by its width or its height, whichever runs
+        // out first, and the zoom buttons step it a little at a time.
+        function test_the_office_fits_the_view_and_zooms_in_small_steps() {
+            plugin.publish(many(9, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            verify(stage.width <= scroller.width && stage.height <= scroller.height, "the whole office shows");
+            verify(scroller.width - stage.width <= 8 || scroller.height - stage.height <= 8, "it fills one side of the view");
+            const fitted = page.pixelScale;
+            page.zoomBy(1.25);
+            verify(page.pixelScale > fitted && page.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
+            page.zoom = 1;
+            compare(page.pixelScale, fitted);
+        }
+
+        // A view wide enough to fit the office past the most zoomed in scale
+        // shows it at that scale, drawn directly rather than through a layer
+        // of the whole office at more device pixels than that.
+        function test_a_huge_view_fits_at_most_the_top_scale() {
+            loader.width = 16000;
+            loader.height = 10000;
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0 && page.fitScale > page.maxScale, 1000, "the view fits the office past the most zoomed in scale");
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            verify(!find("officeArt").layer.enabled, "the art is drawn directly");
+            verify(!find("officeZoomIn").enabled, "zooming in further is off");
+        }
+
+        // A large view fits the office at a scale where zoomed steps snap to
+        // whole device pixels; the fit itself does not snap, so the office
+        // still fills one side of the view.
+        function test_a_large_fit_fills_the_view() {
+            loader.width = 2600;
+            loader.height = 1600;
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0 && page.fitScale * page.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows");
+            verify(scroller.width - stage.width <= 8.5 || scroller.height - stage.height <= 8.5, "it fills one side of the view");
+        }
+
+        // Where zoom snaps to whole device pixels, zooming in and back out
+        // returns to the same scale.
+        function test_zooming_in_and_out_returns_to_the_same_scale() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            page.zoom = 4 / page.devicePixelRatio / page.fitScale;
+            for (let i = 0; i < 12 && page.pixelScale < page.topScale - 0.001; i++) {
+                const before = page.pixelScale;
+                page.zoomBy(1.25);
+                // A step held back by the most zoomed in scale is not undone.
+                if (page.pixelScale >= page.topScale - 0.001)
+                    break;
+                const after = page.pixelScale;
+                page.zoomBy(1 / 1.25);
+                fuzzyCompare(page.pixelScale, before, 1e-9, "out undoes in");
+                page.zoomBy(1.25);
+                fuzzyCompare(page.pixelScale, after, 1e-9, "in again goes as far");
+            }
+        }
+
+        // The most zoomed in scale is a whole number of device pixels within
+        // the most zoom allows, and the zoom-in button stops there.
+        function test_the_most_zoomed_in_scale_is_whole_device_pixels() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const ratio = page.devicePixelRatio;
+            fuzzyCompare(page.topScale * ratio, Math.round(page.topScale * ratio), 1e-9);
+            verify(page.topScale <= page.maxScale + 1e-9 && page.topScale > page.maxScale - 1 / ratio, "as far in as whole device pixels go");
+            page.zoom = page.maxScale / page.fitScale;
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            verify(!find("officeZoomIn").enabled, "zooming in further is off");
+        }
+
+        // Fit can sit between whole device pixels; the step from there goes to
+        // the next whole one, not one past it.
+        function test_a_step_from_between_whole_pixels_goes_to_the_next() {
+            plugin.publish(many(1, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const ratio = page.devicePixelRatio;
+            page.zoom = 3.55 / ratio / page.fitScale;
+            page.zoomBy(1.25);
+            fuzzyCompare(page.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
+        }
+
+        // At a zoom between whole pixels the art is drawn at a whole number of
+        // device pixels per art pixel and shrunk smoothly, so no art pixel is
+        // drawn wider than another; at a whole zoom it is drawn as it is.
+        function test_art_at_a_fractional_zoom_keeps_its_pixels_even() {
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const art = find("officeArt");
+            const stage = find("officeStage");
+            const ratio = page.devicePixelRatio;
+            page.zoom = 3.5 / ratio / page.fitScale;
+            const devicePixels = page.drawScale * ratio;
+            fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
+            verify(page.drawScale >= page.pixelScale);
+            verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
+            fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
+            page.zoom = 3 / ratio / page.fitScale;
+            verify(!art.layer.enabled, "a whole zoom draws the art directly");
+            compare(art.scale, 1);
+        }
+
+        // Zoomed far in, a step of one device pixel is fine enough, so the
+        // scale snaps to whole device pixels and no layer the size of the
+        // whole zoomed office is drawn.
+        function test_zoomed_in_far_the_art_is_drawn_directly() {
+            plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const art = find("officeArt");
+            let steps = 0;
+            while (page.pixelScale < page.topScale - 0.001 && steps < 40) {
+                const before = page.pixelScale;
+                page.zoomBy(1.25);
+                verify(page.pixelScale > before, "each step zooms in");
+                if (art.layer.enabled)
+                    verify(page.drawScale * page.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
+                steps++;
+            }
+            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            verify(!art.layer.enabled, "the most zoomed in office is drawn directly");
+            while (page.pixelScale > 1.001 && steps < 80) {
+                const before = page.pixelScale;
+                page.zoomBy(1 / 1.25);
+                verify(page.pixelScale < before, "each step zooms out");
+                steps++;
+            }
+        }
+
+        // A view smaller than the office still fits all of it, and a zoom step
+        // after the view changes moves the scale from what is shown.
+        function test_a_small_view_fits_the_office_and_zoom_steps_from_what_shows() {
+            plugin.publish(many(3, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            while (page.pixelScale > page.minScale + 0.001)
+                page.zoomBy(1 / 1.25);
+            loader.height = 200;
+            tryVerify(() => page.fitScale < 1, 1000, "the office is taller than the view");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows when zoomed out");
+            const shown = page.pixelScale;
+            page.zoomBy(1.25);
+            verify(page.pixelScale > shown, "the first step after the view shrank zooms in");
+            page.zoom = 1;
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows at Fit");
+        }
+
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
-            page.zoomStep = 8 - page.autoScale;
+            page.zoom = page.maxScale / page.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
             const hit = find("officePerson:" + far.id);
             const inView = () => {
                 const r = hit.mapToItem(scroller, 0, 0, hit.width, hit.height);
-                return r.x >= 0 && r.y >= 0 && r.x + r.width <= scroller.width && r.y + r.height <= scroller.height;
+                // Half a pixel either way is rounding, not out of view.
+                return r.x >= -0.5 && r.y >= -0.5 && r.x + r.width <= scroller.width + 0.5 && r.y + r.height <= scroller.height + 0.5;
             };
             verify(!inView(), "the person starts out of view");
             hit.forceActiveFocus();
@@ -475,15 +885,331 @@ Item {
             compare(plugin.opened, ["local/ask"]);
         }
 
-        function test_the_office_grows_with_the_people_in_it() {
+        function test_the_first_people_sit_at_desks_already_there() {
             plugin.publish(many(4, "t", "working", "typing"));
-            const small = page.deskCount;
-            verify(small >= 4);
-            plugin.publish(many(20, "t", "working", "typing"));
-            verify(page.deskCount >= 20, "a desk for each of 20 threads, has " + page.deskCount);
-            for (let i = 0; i < 20; i++)
-                verify(page.world.seatOf["t" + i] !== undefined, "t" + i + " has a desk");
+            compare(page.deskCount, 4);
+            compare(page.moves, 0, "nobody carries a desk");
+            for (let i = 0; i < 4; i++) {
+                const seat = page.world.seatOf["t" + i];
+                compare([actor("t" + i).tx, actor("t" + i).ty], [seat.x, seat.y], "t" + i + " is at its desk");
+            }
+        }
+
+        // A worker who comes in walks in through the door and waits, and a
+        // mover carries its desk in before it sits down.
+        function test_a_desk_is_carried_in_before_its_worker_sits() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"));
+            const seat = page.world.seatOf["t4"];
+            compare(seat.state, "coming");
+            page.advance(1);
+            compare([actor("t4").tx, actor("t4").ty], page.world.entrance, "t4 walks in through the door");
+            compare(page.deskCount, 4);
+            let carried = false;
+            runUntil(() => {
+                carried = carried || Object.values(page.movers).some(m => m.carrying);
+                if (seat.state !== "in")
+                    verify(actor("t4").tx !== seat.x || actor("t4").ty !== seat.y, "t4 does not sit before its desk is there");
+                return seat.state === "in";
+            }, 1500, "the desk is set down");
+            verify(carried, "a mover carried it");
+            compare(page.deskCount, 5);
+            runUntil(() => arrived(actor("t4")), 1500, "t4 reaches its desk");
+            compare([actor("t4").tx, actor("t4").ty], [seat.x, seat.y]);
+            runUntil(() => page.moves === 0, 1500, "the mover leaves");
+            compare(Object.keys(page.movers).length, 0);
+        }
+
+        // When a team leaves, movers carry its desks out and leave.
+        function test_a_desk_is_carried_out_after_its_pod_empties() {
+            const a = [person("a", "A", "working", "typing")].concat(many(5, "aw", "working", "typing", "a"));
+            const b = [person("b", "B", "working", "typing")].concat(many(5, "bw", "working", "typing", "b"));
+            plugin.publish(a.concat(b));
+            compare(page.deskCount, 12);
+            const pod = page.world.pods.find(p => p.members.includes("b"));
+            const used = b.map(p => page.world.seatOf[p.id]);
+            plugin.publish(a);
+            compare(pod.members.length, 0);
+            for (const seat of used)
+                compare(seat.state, "leaving");
+            runUntil(() => used.every(seat => seat.state === "out"), 3000, "the desks are picked up");
+            compare(page.deskCount, 6);
+            runUntil(() => page.moves === 0, 1500, "the movers leave");
+        }
+
+        // People walk around movers and the desks they carry, as around anyone.
+        function test_nobody_walks_through_a_carried_desk() {
+            plugin.publish(many(4, "t", "working", "typing"));
             checkFloor();
+            const activities = ["typing", "planning", "reading", "testing"];
+            const people = [];
+            for (let i = 0; i < 16; i++)
+                people.push(person("t" + i, "Thread " + i, "working", activities[i % 4]));
+            plugin.publish(people);
+            let carrying = 0;
+            for (let i = 0; i < 3000 && page.moves > 0; i++) {
+                page.advance(1);
+                checkFloor();
+                carrying = Math.max(carrying, Object.values(page.movers).filter(m => m.carrying).length);
+            }
+            compare(page.moves, 0, "the desks are all in");
+            verify(carrying > 1, "movers carried desks at once");
+            compare(page.deskCount, 16);
+        }
+
+        // A mover carrying a desk right past someone standing just north of its
+        // way never covers them with the desk.
+        function test_a_carried_desk_never_covers_the_person_north_of_it() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"));
+            runUntil(() => Object.keys(page.movers).length > 0, 400, "a mover comes in");
+            const w = page.world;
+            const m = Object.values(page.movers)[0];
+            verify(m.carrying, "it carries a desk");
+            // It carries the desk along open floor instead of to its seat, past
+            // t0 standing just north of the way.
+            w.seats[m.job].mover = "";
+            m.job = -1;
+            for (const t of [m.ty * w.cols + m.tx, m.next]) {
+                if (t >= 0 && page.occupied[t] === m.id)
+                    page.occupied[t] = "";
+            }
+            m.path = [];
+            const t0 = actor("t0");
+            page.occupied[t0.ty * w.cols + t0.tx] = "";
+            t0.path = [];
+            const [left, row] = openFloor(5);
+            page.place(t0, left + 2, row - 1, true);
+            page.setGoal(t0, {
+                x: left + 2,
+                y: row - 1,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            });
+            page.place(m, left, row, true);
+            m.goal = {
+                x: left + 4,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "leave"
+            };
+            page.route(m, false);
+            stood = {};
+            let under = false;
+            for (let i = 0; i < 600 && page.movers[m.id]; i++) {
+                walk(1);
+                if (!page.movers[m.id])
+                    break;
+                under = under || m.tx === left + 2 && m.ty === row;
+                verify(!crosses(load(m), body(t0)), "the desk covers t0");
+            }
+            verify(under, "the mover passes just south of t0");
+            verify(!page.movers[m.id], "the mover gets where it is going");
+            compare([t0.tx, t0.ty], [left + 2, row - 1], "t0 stays where it stands");
+        }
+
+        // A newcomer waiting for its desk while every pod side is taken waits
+        // on a tile nobody else is headed for.
+        function test_newcomers_waiting_for_desks_never_share_a_tile() {
+            plugin.publish([]);
+            plugin.publish(many(16, "t", "working", "typing"));
+            const check = () => {
+                const at = {};
+                for (const id of Object.keys(page.actors)) {
+                    const goal = actor(id).goal;
+                    if (goal?.kind !== "wait")
+                        continue;
+                    const key = goal.x + "," + goal.y;
+                    verify(at[key] === undefined, id + " and " + at[key] + " both wait at " + key);
+                    at[key] = id;
+                    compare(page.claims[goal.y * page.world.cols + goal.x], id, id + " holds its claim");
+                }
+            };
+            check();
+            for (let i = 0; i < 400; i++) {
+                page.advance(1);
+                check();
+            }
+        }
+
+        // A worker who came in when every desk was taken waits in the break
+        // room and sits down once a desk is free; one on a break stays on it.
+        function test_a_worker_without_a_desk_sits_down_once_it_gets_one() {
+            const office = many(50, "t", "working", "typing");
+            office[1] = person("t1", "t 1", "waiting");
+            plugin.publish(office);
+            verify(page.world.seatOf["t48"] === undefined, "t48 has no desk");
+            verify(actor("t48").goal.x > page.world.xd, "t48 waits in the break room");
+            const resting = actor("t1").goal;
+            verify(resting.x > page.world.xd, "t1 takes a break");
+            plugin.publish(office.filter(p => p.id !== "t0"));
+            const seat = page.world.seatOf["t48"];
+            verify(seat !== undefined, "t48 gets the desk t0 left");
+            compare(actor("t48").goal.kind, "desk", "t48 heads for its desk");
+            verify(actor("t1").goal === resting, "t1 stays on its break");
+            runUntil(() => arrived(actor("t48")), 1500, "t48 reaches its desk");
+            compare([actor("t48").tx, actor("t48").ty], [seat.x, seat.y]);
+        }
+
+        // Without a desk, a worker that plans or reads waits in the break room
+        // too, rather than at a whiteboard or a bookshelf.
+        function test_a_planner_without_a_desk_waits_in_the_break_room() {
+            plugin.publish(many(48, "t", "working", "typing").concat([person("p", "Planner", "working", "planning"), person("r", "Reader", "working", "reading")]));
+            for (const id of ["p", "r"]) {
+                verify(page.world.seatOf[id] === undefined, id + " has no desk");
+                verify(actor(id).goal.x > page.world.xd, id + " waits in the break room, not at a " + actor(id).goal.kind);
+            }
+        }
+
+        // A talk to someone still outside the door waits for it to come in:
+        // the speaker's time to find its listener starts only then.
+        function test_a_talk_waits_for_its_listener_to_come_in() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const w = page.world;
+            const door = w.entrance[1] * w.cols + w.entrance[0];
+            // Someone stands in the doorway for longer than a speaker looks for
+            // its listener.
+            page.occupied[door] = "someone";
+            plugin.publish(many(5, "t", "working", "typing"), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "t4",
+                    kind: "message",
+                    text: "Welcome",
+                    at: new Date().toISOString()
+                }
+            ]);
+            for (let i = 0; i < 800; i++) {
+                page.advance(1);
+                compare(actor("t4").tx, -1, "t4 waits outside");
+                compare(actor("t0").talk, null, "t0 waits for t4 to come in");
+            }
+            page.occupied[door] = "";
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t4 once it is in");
+            compare(actor("t0").talk.to, "t4");
+        }
+
+        // A talk waiting for its listener to come in does not hold up the
+        // speaker's talks to people already inside.
+        function test_a_talk_to_someone_outside_lets_the_next_talk_go_first() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const w = page.world;
+            const door = w.entrance[1] * w.cols + w.entrance[0];
+            page.occupied[door] = "someone";
+            const at = new Date().toISOString();
+            plugin.publish(many(5, "t", "working", "typing"), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "t4",
+                    kind: "message",
+                    text: "Welcome",
+                    at: at
+                },
+                {
+                    id: "talk-2",
+                    from: "t0",
+                    to: "t1",
+                    kind: "message",
+                    text: "Please look at the diff",
+                    at: at
+                }
+            ]);
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while t4 waits outside");
+            compare(actor("t0").talk.to, "t1");
+            compare(actor("t4").tx, -1, "t4 is still outside");
+            compare(actor("t0").queue.map(t => t.to), ["t4"], "the talk to t4 waits its turn");
+            page.occupied[door] = "";
+        }
+
+        // Talks to people outside do not fill a speaker's queue so that a talk
+        // to someone inside is lost.
+        function test_talks_to_people_outside_never_crowd_out_one_inside() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const w = page.world;
+            const door = w.entrance[1] * w.cols + w.entrance[0];
+            page.occupied[door] = "someone";
+            const at = new Date().toISOString();
+            const talk = (id, to) => ({
+                    id: id,
+                    from: "t0",
+                    to: to,
+                    kind: "message",
+                    text: id,
+                    at: at
+                });
+            plugin.publish(many(8, "t", "working", "typing"), [talk("o1", "t4"), talk("o2", "t5"), talk("o3", "t6"), talk("in", "t1")]);
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while the others wait outside");
+            compare(actor("t0").talk.to, "t1");
+            page.occupied[door] = "";
+        }
+
+        // Another machine's office starts with clean whiteboards.
+        function test_another_machine_wipes_the_whiteboards() {
+            plugin.publish([person("lead", "Lead", "working", "planning")]);
+            runUntil(() => arrived(actor("lead")));
+            const key = actor("lead").goal.board;
+            const board = page.boardViews[key];
+            const blank = board.progress;
+            runUntil(() => board.progress > blank, 200, "the planner draws");
+            plugin.environments = ["local", "lab"];
+            page.environment = "lab";
+            verify(page.boardViews[key] === board, "the same whiteboard");
+            compare(board.progress, blank, "wiped");
+        }
+
+        // People walking in while movers carry several desks in and out all get
+        // through the door, and nobody stands waiting in the doorway.
+        function test_people_and_movers_get_through_the_door() {
+            const activities = ["typing", "planning", "reading", "testing"];
+            const office = n => many(n, "t", "working", "typing").map((p, i) => Object.assign(p, {
+                        activity: activities[i % 4]
+                    }));
+            for (const [before, after] of [[2, 8], [12, 16], [10, 2], [2, 14]]) {
+                open();
+                stood = {};
+                const w = page.world;
+                const e = w.entrance;
+                plugin.publish(office(before));
+                page.advance(40);
+                plugin.publish(office(after));
+                let inDoor = "", since = 0, ticks = 0;
+                while ((page.moves || page.outside.length) && ticks < 2000) {
+                    page.advance(1);
+                    ticks++;
+                    const there = page.occupied[e[1] * w.cols + e[0]];
+                    since = there && there === inDoor ? since + 1 : 0;
+                    inDoor = there;
+                    verify(since < 40, there + " stands in the doorway");
+                    checkFloor();
+                }
+                verify(ticks < 2000, before + " to " + after + ": everyone gets through, " + page.moves + " moves are left");
+                page.advance(300);
+                for (const id of Object.keys(page.actors)) {
+                    const a = page.actors[id];
+                    verify(a.tx >= 0 && a.goal && a.tx === a.goal.x && a.ty === a.goal.y, id + " gets where it is going");
+                }
+            }
+        }
+
+        // People coming in do not repaint the floor or the furniture.
+        function test_people_coming_in_do_not_repaint_the_floor() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            tryVerify(() => page.floorPaints > 0);
+            const paints = page.floorPaints;
+            const props = page.props, units = page.units;
+            plugin.publish(many(12, "t", "working", "typing"));
+            page.advance(200);
+            plugin.publish(many(2, "t", "working", "typing"));
+            page.advance(200);
+            wait(50);
+            compare(page.floorPaints, paints);
+            verify(page.props === props && page.units === units, "the furniture is the same");
         }
 
         function test_the_office_holds_still_while_it_is_not_shown() {
