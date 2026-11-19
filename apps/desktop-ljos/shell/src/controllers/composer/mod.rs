@@ -259,6 +259,51 @@ fn project_selection(engine: &Engine, environment_id: &str, project_id: &str) ->
     })
 }
 
+/// The model the project's MC names for a new thread there, on the project
+/// row; empty from an MC that does not name one (or has not read its
+/// providers yet).
+fn named_new_thread_selection(engine: &Engine, environment_id: &str, project_id: &str) -> Obj {
+    if project_id.is_empty() {
+        return Obj::new();
+    }
+    store::with(engine, |s| {
+        s.project_row(environment_id, project_id)
+            .map(|row| as_object(row.get("newThreadModelSelection").unwrap_or(&Json::Null)).clone())
+            .unwrap_or_default()
+    })
+}
+
+/// The permissions a new thread in the project starts in: the ones its MC
+/// names on the project row; from an MC that does not, the project's
+/// override in the settings this client's MC holds, then the default for
+/// new threads, then full access.
+fn new_thread_runtime_mode(engine: &Engine, environment_id: &str, project_id: &str) -> String {
+    if !project_id.is_empty() {
+        let named = store::with(engine, |s| {
+            s.project_row(environment_id, project_id)
+                .and_then(|row| row.get("newThreadRuntimeMode"))
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        });
+        if !named.is_empty() {
+            return named;
+        }
+    }
+    let settings = Settings::of(engine);
+    for path in [
+        format!("projectSettingsOverrides.{project_id}.defaultRuntimeMode"),
+        "defaultRuntimeMode".to_owned(),
+    ] {
+        if let Some(mode) = settings.value(&path).as_ref().and_then(Json::as_str)
+            && !mode.is_empty()
+        {
+            return mode.to_owned();
+        }
+    }
+    "full-access".into()
+}
+
 /// A hook that runs `f` on the composer, deferred as [`later`].
 fn hook(me: &Me<Composer>, f: fn(&mut Composer, &Engine)) -> impl Fn(&Engine) + 'static {
     let me = me.clone();
@@ -621,26 +666,68 @@ impl Composer {
         self.set_text(engine, target, text, end, &Json::Null);
     }
 
-    /// A thread's own model; for a draft the project's default: this
-    /// device's project override, the project's, then the default for new
-    /// threads, then the model last sent with while its provider can run
-    /// it. Empty lets the MC choose.
+    /// A thread's own model; for a draft, or a page's ask, what a new
+    /// thread in its project starts on ([`Composer::new_thread_selection`]).
+    /// Empty lets the MC choose.
     fn base_selection(&self, engine: &Engine, key: &str) -> Obj {
-        if let Some(selection) = self.page_base_selection(engine, key) {
-            return selection;
-        }
         if let Some(thread) = thread_of(engine, key) {
             return thread.model_selection;
+        }
+        // A page's ask starts as a new thread in its project would.
+        if self.on_page() && key == page::page_key(&self.page_id) {
+            return self.new_thread_selection(
+                engine,
+                &self.mc.environment(),
+                &self.page_project(engine),
+            );
         }
         let Some(draft) = drafts::draft(engine, key) else {
             return Obj::new();
         };
-        let mut selection = project_selection(engine, &draft.environment_id, &draft.project_id);
+        self.new_thread_selection(engine, &draft.environment_id, &draft.project_id)
+    }
+
+    /// What a new thread in the project starts on: the model its MC names
+    /// on the project row, resolved from its own settings and providers;
+    /// for an MC that does not, this device's project override, the
+    /// project's own, then the default for new threads; a page's ask then
+    /// takes the model of the user's latest thread in the project whose
+    /// provider can run it; then the model last sent with from this
+    /// device, while its provider can still run it.
+    fn new_thread_selection(&self, engine: &Engine, environment_id: &str, project_id: &str) -> Obj {
+        let named = named_new_thread_selection(engine, environment_id, project_id);
+        if !named.is_empty() {
+            return named;
+        }
+        let mut selection = project_selection(engine, environment_id, project_id);
         if selection.is_empty() {
             selection = Settings::of(engine)
                 .value("defaultModelSelection")
                 .map(|v| as_object(&v).clone())
                 .unwrap_or_default();
+        }
+        if selection.is_empty()
+            && self.on_page()
+            && !project_id.is_empty()
+            && project_id == self.page_project(engine)
+        {
+            let mut latest = String::new();
+            for thread in store::with(engine, |s| s.threads()).iter() {
+                if thread.environment_id != environment_id
+                    || thread.project_id != project_id
+                    || thread.updated_at < latest
+                {
+                    continue;
+                }
+                if !self
+                    .instance_of(&thread.model_selection)
+                    .is_some_and(|i| i.ready())
+                {
+                    continue;
+                }
+                latest = thread.updated_at.clone();
+                selection = thread.model_selection.clone();
+            }
         }
         if selection.is_empty() {
             let last = kept::read(engine, |d| {
@@ -785,31 +872,22 @@ impl Composer {
         if !own.is_empty() {
             return own;
         }
-        if let Some(mode) = self.page_runtime_mode(engine, target) {
-            return mode;
-        }
         if let Some(thread) = thread_of(engine, target)
             && !thread.runtime_mode.is_empty()
         {
             return thread.runtime_mode;
         }
-        // A new thread: its project's default permissions, else the default
-        // for new threads (Settings, Project defaults).
+        // A new thread, or a page's ask: the permissions a new thread of
+        // its project starts in.
+        if self.on_page() && target == page::page_key(&self.page_id) {
+            return new_thread_runtime_mode(
+                engine,
+                &self.mc.environment(),
+                &self.page_project(engine),
+            );
+        }
         if let Some(draft) = drafts::draft(engine, target) {
-            let settings = Settings::of(engine);
-            for path in [
-                format!(
-                    "projectSettingsOverrides.{}.defaultRuntimeMode",
-                    draft.project_id
-                ),
-                "defaultRuntimeMode".to_owned(),
-            ] {
-                if let Some(mode) = settings.value(&path).as_ref().and_then(Json::as_str)
-                    && !mode.is_empty()
-                {
-                    return mode.to_owned();
-                }
-            }
+            return new_thread_runtime_mode(engine, &draft.environment_id, &draft.project_id);
         }
         "full-access".into()
     }
@@ -817,25 +895,20 @@ impl Composer {
     /// The permissions a new thread of the target's project starts in: the
     /// composer names a thread's own only when they differ from these.
     fn default_runtime_mode_of(&self, engine: &Engine, target: &str) -> String {
-        if let Some(mode) = self.page_runtime_mode(engine, target) {
-            return mode;
+        if self.on_page() && target == page::page_key(&self.page_id) {
+            return new_thread_runtime_mode(
+                engine,
+                &self.mc.environment(),
+                &self.page_project(engine),
+            );
         }
-        let project = thread_of(engine, target)
-            .map(|thread| thread.project_id)
-            .or_else(|| drafts::draft(engine, target).map(|draft| draft.project_id))
-            .unwrap_or_default();
-        let settings = Settings::of(engine);
-        for path in [
-            format!("projectSettingsOverrides.{project}.defaultRuntimeMode"),
-            "defaultRuntimeMode".to_owned(),
-        ] {
-            if let Some(mode) = settings.value(&path).as_ref().and_then(Json::as_str)
-                && !mode.is_empty()
-            {
-                return mode.to_owned();
-            }
+        if let Some(thread) = thread_of(engine, target) {
+            return new_thread_runtime_mode(engine, &thread.environment_id, &thread.project_id);
         }
-        "full-access".into()
+        if let Some(draft) = drafts::draft(engine, target) {
+            return new_thread_runtime_mode(engine, &draft.environment_id, &draft.project_id);
+        }
+        new_thread_runtime_mode(engine, "", "")
     }
 
     /// A new thread (`drafts::start_carrying` names `from` only then)
@@ -865,7 +938,12 @@ impl Composer {
         // The mode the composer showed there.
         draft.interaction_mode = self.interaction_mode_of(engine, from);
         draft.model_selection = None;
-        if project_selection(engine, &started.environment_id, &started.project_id).is_empty() {
+        // A project whose MC names the model a new thread there starts on
+        // has a default of its own: the carried model does not override it.
+        if project_selection(engine, &started.environment_id, &started.project_id).is_empty()
+            && named_new_thread_selection(engine, &started.environment_id, &started.project_id)
+                .is_empty()
+        {
             let model = kept::draft_of(engine, from)
                 .model_selection
                 .or_else(|| thread_of(engine, from).map(|t| t.model_selection))
