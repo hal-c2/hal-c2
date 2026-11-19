@@ -1373,8 +1373,9 @@ Item {
     // A team bigger than a pod takes as many as it needs. Whoever is left over
     // when every desk is taken has none, and spends the time in the break room.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
-    // own kind) sit in the review corner, and at the desks nearest it once it is full; everyone
-    // else takes a desk there only when the rest of the floor is full.
+    // own kind) sit in the review corner, and at the desks nearest it once it
+    // is full. The corner is theirs alone: nobody else ever takes a desk
+    // there, and whoever sits there and is no reviewer leaves it.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
@@ -1403,10 +1404,12 @@ Item {
         // A pod is a chunk's own when it is the review corner exactly when the
         // chunk reviews.
         const own = (pod, c) => !!w.pods[pod].review === reviewing[c];
-        // Everyone seated keeps their seat, wherever it is; a chunk's pod is
-        // where its first seated member sat, and a team's home for each kind
-        // is its first chunk of that kind with one.
-        const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        // Everyone seated keeps their seat, but for an ordinary person in the
+        // corner; a chunk's pod is where its first member keeping a seat sat,
+        // and a team's home for each kind is its first chunk of that kind with
+        // one.
+        const keeps = (id, c) => !!before[id] && (reviewing[c] || !w.pods[before[id].pod].review);
+        const homes = chunks.map((chunk, c) => before[chunk.find(id => keeps(id, c))]?.pod ?? -1);
         const kindOf = c => teamOf[c] + (reviewing[c] ? ":review" : ":floor");
         const teamHome = {};
         homes.forEach((home, c) => {
@@ -1425,10 +1428,10 @@ Item {
             open.sort((a, b) => (own(b, c) - own(a, c)) || away(a, near) - away(b, near) || a - b);
             return open.length ? open[0] : -1;
         };
-        chunks.forEach(chunk => {
+        chunks.forEach((chunk, c) => {
             for (const id of chunk) {
                 const seat = before[id];
-                if (seat && !taken[seat.index]) {
+                if (keeps(id, c) && !taken[seat.index]) {
                     taken[seat.index] = id;
                     seatOf[id] = seat;
                 }
@@ -1455,13 +1458,13 @@ Item {
                     spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
-        // Those who did not fit sit at the nearest pod with a free desk, a pod
-        // of their own kind first.
+        // Those who did not fit sit at the nearest pod with a free desk:
+        // reviewers at one of their own kind first, the rest never in the
+        // corner.
         for (const [id, near, c] of spill) {
-            const pod = nearest(near, 1, c, false);
-            if (pod < 0)
-                break;
-            sit(id, pod);
+            const pod = nearest(near, 1, c, !reviewing[c]);
+            if (pod >= 0)
+                sit(id, pod);
         }
         return seatOf;
     }
@@ -2017,7 +2020,8 @@ Item {
     }
 
     // Shows the project of whoever has the desk, while it is in the office.
-    // A mark is painted again only when its project's look changes.
+    // Reviewers hot-desk, so the corner's desks and any desk a reviewer has
+    // show none. A mark is painted again only when its project's look changes.
     function updateMark(mark, owner) {
         const view = page.markViews[mark.key];
         if (!view)
@@ -2026,7 +2030,8 @@ Item {
         const seat = w.seats[mark.seat];
         const id = owner ?? Object.keys(w.seatOf).find(each => w.seatOf[each] === seat) ?? "";
         const person = id ? page.actors[id]?.person : null;
-        const sign = person ? signOf(person) : null;
+        const hot = person?.kind === "reviewer" || !!w.pods[seat.pod]?.review;
+        const sign = person && !hot ? signOf(person) : null;
         view.visible = !!sign?.kind && deskShown(seat);
         if (!sign)
             return;

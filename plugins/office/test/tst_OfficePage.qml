@@ -482,16 +482,69 @@ Item {
             verify(!board(actor("t").goal.board).review, "the other goes to another whiteboard");
         }
 
-        // The corner's desks go to anyone else only once the floor is full.
-        function test_others_sit_in_the_review_corner_only_when_the_floor_is_full() {
-            plugin.publish(many(40, "t", "working", "typing"));
+        // The corner's desks are reviewers' alone: with the rest of the floor
+        // full, anyone else goes without a desk rather than sit there.
+        function test_a_full_floor_never_seats_others_in_the_review_corner() {
+            plugin.publish(many(46, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
             const review = corner();
-            for (let i = 0; i < 40; i++)
-                verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
-            plugin.publish(many(42, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
-            compare(page.world.seatOf["t40"].pod, review);
-            compare(page.world.seatOf["t41"].pod, review);
-            compare(page.world.seatOf["r"].pod, review, "a reviewer still has a corner desk");
+            const seated = Object.keys(page.world.seatOf).filter(id => id !== "r");
+            compare(seated.length, 40, "the floor's 40 desks are taken");
+            for (const id of seated)
+                verify(page.world.seatOf[id].pod !== review, id + " sits on the floor");
+            compare(page.world.seatOf["r"].pod, review, "the reviewer has a corner desk");
+            for (let i = 40; i < 46; i++)
+                verify(!page.world.seatOf["t" + i], "t" + i + " has no desk");
+            compare(page.world.pods[review].members, ["r"], "nobody else sits in the corner");
+        }
+
+        // Someone in the corner who is no reviewer leaves it at the next
+        // seating, for a desk on the floor or none when the floor is full.
+        function test_someone_in_the_corner_who_is_no_reviewer_leaves_it() {
+            const review = corner();
+            plugin.publish([reviewer("a", "Review #12"), reviewer("b", "Review #13")]);
+            compare(page.world.seatOf["a"].pod, review);
+            compare(page.world.seatOf["b"].pod, review);
+            plugin.publish([person("a", "Review #12", "working", "typing"), reviewer("b", "Review #13")]);
+            verify(page.world.seatOf["a"].pod !== review, "a sits on the floor");
+            compare(page.world.seatOf["b"].pod, review, "b keeps its corner desk");
+            open();
+            plugin.publish(many(40, "t", "working", "typing").concat([reviewer("a", "Review #12")]));
+            compare(page.world.seatOf["a"].pod, review);
+            plugin.publish(many(40, "t", "working", "typing").concat([person("a", "Review #12", "working", "typing")]));
+            verify(!page.world.seatOf["a"], "with the floor full, a has no desk");
+            compare(page.world.pods[review].members, [], "the corner is empty");
+        }
+
+        // Reviewers hot-desk: no desk of theirs shows a project, in the corner
+        // or on the floor.
+        function test_reviewers_desks_show_no_project() {
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AP",
+                    tint: "#4A90D9"
+                }
+            });
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish([person("t", "T", "working", "typing")].concat(reviewers));
+            const review = corner();
+            verify(markOf("t").visible, "an ordinary desk shows its project");
+            const spilt = reviewers.filter(r => page.world.seatOf[r.id].pod !== review);
+            compare(spilt.length, 1, "one reviewer sits on the floor");
+            for (const r of reviewers)
+                verify(!markOf(r.id).visible, r.id + "'s desk shows no project");
+            // Nor once the project's look changes.
+            icons({
+                "local:p-api": {
+                    kind: "emoji",
+                    emoji: "🎉"
+                }
+            });
+            for (const r of reviewers)
+                verify(!markOf(r.id).visible, r.id + "'s desk still shows no project");
+            verify(markOf("t").visible);
         }
 
         function test_a_desk_shows_its_project_as_the_sidebar_does() {
@@ -685,7 +738,7 @@ Item {
         function test_a_worker_without_a_desk_keeps_its_spot_while_it_asks() {
             for (const state of ["asking", "failed"]) {
                 init();
-                plugin.publish(many(48, "t", "working", "typing").concat([person("q", "Q", state)]));
+                plugin.publish(many(40, "t", "working", "typing").concat([person("q", "Q", state)]));
                 const q = actor("q");
                 verify(page.world.seatOf["q"] === undefined, "q has no desk");
                 for (let i = 0; i < 20; i++) {
@@ -696,18 +749,19 @@ Item {
             }
         }
 
-        // The office holds 48 desks whoever is in it; anyone past that takes
-        // a break.
+        // The office holds 48 desks whoever is in it, 8 of them the review
+        // corner's; anyone past that takes a break.
         function test_the_office_keeps_its_size_as_people_come_and_go() {
             plugin.publish(many(4, "t", "working", "typing"));
             const cols = page.worldCols, rows = page.worldRows;
             const world = page.world;
-            plugin.publish(many(50, "t", "working", "typing"));
+            const reviewers = [0, 1, 2, 3, 4, 5, 6, 7].map(i => reviewer("r" + i, "Review #" + i));
+            plugin.publish(many(42, "t", "working", "typing").concat(reviewers));
             compare([page.worldCols, page.worldRows], [cols, rows]);
             verify(page.world === world, "the same office");
             compare(Object.keys(page.world.seatOf).length, 48);
             compare(page.world.seats.length, 48);
-            for (const id of ["t48", "t49"]) {
+            for (const id of ["t40", "t41"]) {
                 verify(page.world.seatOf[id] === undefined, id + " has no desk");
                 verify(actor(id).goal && actor(id).goal.x > page.world.xd, id + " takes a break");
             }
@@ -1350,29 +1404,30 @@ Item {
             }
         }
 
-        // A worker who came in when every desk was taken waits in the break
-        // room and sits down once a desk is free; one on a break stays on it.
+        // A worker who came in when every desk it may take was taken waits in
+        // the break room and sits down once a desk is free; one on a break
+        // stays on it.
         function test_a_worker_without_a_desk_sits_down_once_it_gets_one() {
-            const office = many(50, "t", "working", "typing");
+            const office = many(42, "t", "working", "typing");
             office[1] = person("t1", "t 1", "waiting");
             plugin.publish(office);
-            verify(page.world.seatOf["t48"] === undefined, "t48 has no desk");
-            verify(actor("t48").goal.x > page.world.xd, "t48 waits in the break room");
+            verify(page.world.seatOf["t40"] === undefined, "t40 has no desk");
+            verify(actor("t40").goal.x > page.world.xd, "t40 waits in the break room");
             const resting = actor("t1").goal;
             verify(resting.x > page.world.xd, "t1 takes a break");
             plugin.publish(office.filter(p => p.id !== "t0"));
-            const seat = page.world.seatOf["t48"];
-            verify(seat !== undefined, "t48 gets the desk t0 left");
-            compare(actor("t48").goal.kind, "desk", "t48 heads for its desk");
+            const seat = page.world.seatOf["t40"];
+            verify(seat !== undefined, "t40 gets the desk t0 left");
+            compare(actor("t40").goal.kind, "desk", "t40 heads for its desk");
             verify(actor("t1").goal === resting, "t1 stays on its break");
-            runUntil(() => arrived(actor("t48")), 1500, "t48 reaches its desk");
-            compare([actor("t48").tx, actor("t48").ty], [seat.x, seat.y]);
+            runUntil(() => arrived(actor("t40")), 1500, "t40 reaches its desk");
+            compare([actor("t40").tx, actor("t40").ty], [seat.x, seat.y]);
         }
 
         // Without a desk, a worker that plans or reads waits in the break room
         // too, rather than at a whiteboard or a bookshelf.
         function test_a_planner_without_a_desk_waits_in_the_break_room() {
-            plugin.publish(many(48, "t", "working", "typing").concat([person("p", "Planner", "working", "planning"), person("r", "Reader", "working", "reading")]));
+            plugin.publish(many(40, "t", "working", "typing").concat([person("p", "Planner", "working", "planning"), person("r", "Reader", "working", "reading")]));
             for (const id of ["p", "r"]) {
                 verify(page.world.seatOf[id] === undefined, id + " has no desk");
                 verify(actor(id).goal.x > page.world.xd, id + " waits in the break room, not at a " + actor(id).goal.kind);
