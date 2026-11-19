@@ -379,7 +379,26 @@ defmodule HalC2.Orchestration.RecoveryTest do
           {"thread", "t5",
            %{"s" => %{"id" => "t5", "title" => "Asked", "createdAt" => at, "updatedAt" => at}}},
           {"run", "r1",
-           %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}}
+           %{
+             "s" => %{
+               "id" => "r1",
+               "ordinal" => 1,
+               "status" => "completed",
+               "startedAt" => at,
+               "completedAt" => at
+             }
+           }},
+          # m1 was queued as r0 and promoted into r1's running turn.
+          {"run", "r0",
+           %{
+             "s" => %{
+               "id" => "r0",
+               "ordinal" => 2,
+               "status" => "cancelled",
+               "userMessageId" => "m1",
+               "startedAt" => nil
+             }
+           }}
         ] ++
           question.("q1", "2026-09-23T10:00:01.000Z") ++
           question.("q9", "2026-09-23T10:00:00.500Z") ++
@@ -387,7 +406,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
           [
             # q0 was asked in the millisecond the user wrote, but before; q9 loses its
             # seq below, as one from before the stream's v1 migration has none.
-            written.("m1", "2026-09-23T10:00:02.000Z", %{})
+            written.("m1", "2026-09-23T10:00:02.000Z", %{"runId" => "r1"})
           ] ++
           question.("q2", "2026-09-23T10:00:03.000Z") ++
           [
@@ -398,12 +417,12 @@ defmodule HalC2.Orchestration.RecoveryTest do
             }),
             written.("m3", "2026-09-23T10:00:05.000Z", %{"usageLimitContinuationOfRunId" => "r1"}),
             # Nor does one the agent never got: its run failed before its provider took it.
-            written.("m4", "2026-09-23T10:00:06.000Z", %{}),
+            written.("m4", "2026-09-23T10:00:06.000Z", %{"runId" => "r2"}),
             {"run", "r2",
              %{
                "s" => %{
                  "id" => "r2",
-                 "ordinal" => 2,
+                 "ordinal" => 3,
                  "status" => "failed",
                  "userMessageId" => "m4",
                  "startedAt" => nil
@@ -485,7 +504,8 @@ defmodule HalC2.Orchestration.RecoveryTest do
 
       {:ok, _} =
         HalC2.Streams.commit("t6", :thread, [
-          {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+          {"run", run,
+           %{"s" => %{"id" => run, "ordinal" => i, "status" => "running", "startedAt" => written}}},
           {"message", "m#{i}",
            %{
              "s" =>

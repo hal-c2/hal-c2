@@ -1433,15 +1433,17 @@ defmodule HalC2.Orchestration do
   def close_stale_questions(state, thread_id) do
     thread = StreamState.get(state, "thread")[thread_id] || %{}
 
+    # A message is in the run it went to last: a queued one promoted into the running
+    # turn is in that turn, though the run it was queued as never started.
     unstarted =
       for run <- StreamState.all(state, "run"),
           run["startedAt"] in [nil, :null],
           into: MapSet.new(),
-          do: run["userMessageId"]
+          do: run["id"]
 
     delivered =
       for message <- StreamState.all(state, "message"),
-          not MapSet.member?(unstarted, message["id"]),
+          not MapSet.member?(unstarted, message["runId"]),
           user_wrote?(message, thread),
           do: message
 
