@@ -10,7 +10,7 @@ Put the `office` folder from this repository's `plugins/` into your MC's
 `plugins` folder. With the MC running, select **Look for plugins** beside the
 machine's name in **Settings → Plugins**, then turn Office on there. The **Office** page
 shows the machine's office; with more than one machine running the plugin, pick
-the machine at the top. **+** and **−** zoom.
+the machine at the top. **+** and **−** zoom, and **Fit** shows the whole office again.
 
 ## What you see
 
