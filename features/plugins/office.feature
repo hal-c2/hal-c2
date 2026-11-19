@@ -234,7 +234,7 @@ Feature: Office
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view
       Given the office page is open
-      Then the whole office shows and fills the view's width or its height
+      Then the whole office shows and fills the view's width or its height, unless the largest zoom comes first
       When the user zooms in and then picks Fit
       Then the whole office shows again
 
