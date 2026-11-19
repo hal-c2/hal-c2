@@ -7,6 +7,8 @@ set -euo pipefail
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
 # release:desktop-ljos's output; only it is named for this version.
 out="$(find release -maxdepth 1 -type d -name "hal-c2-ljos-$version-*")"
+# Exactly one, or an empty out would copy "/." below.
+[[ -n $out && -d $out ]] || { echo "release:install:desktop-ljos: no single release/hal-c2-ljos-$version-* to install" >&2; exit 1; }
 
 # As desktop-qt, it finds the service's MC (release:install:mc) by itself, and
 # starts the one it carries when there is none.
