@@ -122,7 +122,7 @@ Feature: Provider instances a plugin adds
 
   Rule: Settings → Providers shows whose an instance is
 
-    # The instance id carries the plugin's id; the clients do not show it apart yet.
+    # The instance id carries the plugin's id; the clients do not show it apart yet (hal-c2/hal-c2#1645).
     @desktop @mobile @tui @backlog
     Scenario: An instance a plugin added is marked as the plugin's
       Given the plugin "CLIProxyAPI" added the instance "Claude via CLIProxyAPI"
