@@ -1435,7 +1435,9 @@ Item {
         const corner = w.pods.findIndex(pod => pod.review);
         chunks.forEach((chunk, c) => {
             const home = homes[c] >= 0 && own(homes[c], c) ? homes[c] : -1;
-            const near = teamHome[teamOf[c]] ?? (reviewing[c] ? corner : -1);
+            // Reviewers go nearest the corner, even under an ordinary lead
+            // seated on the floor; a chunk already seated keeps to its own pod.
+            const near = reviewing[c] ? corner : teamHome[teamOf[c]] ?? -1;
             let pod = home >= 0 ? home : nearest(near, chunk.length, c, true);
             // Reviewers who do not all fit in the corner still fill it first.
             if (pod < 0 && reviewing[c] && room(corner) > 0)

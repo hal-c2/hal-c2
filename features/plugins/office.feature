@@ -482,6 +482,12 @@ Feature: Office
       And the thread and its other worker sit together on the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer delegated to by a thread that is no reviewer sits next to a full corner
+      Given the review corner is full and a thread with a worker sits across the office from it
+      When the thread delegates to a reviewer
+      Then the reviewer sits at the pod next to the review corner, not by the thread
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A planner that turns out to be a reviewer goes to the review whiteboard
       Given the office has a worker planning whose lead is not in yet
       When its lead comes in as a reviewer, making the worker one too

@@ -407,6 +407,28 @@ Item {
             compare(page.world.seatOf["lw"].pod, page.world.seatOf["lead"].pod, "the other worker sits with its lead");
         }
 
+        // With the corner full, a reviewer under an ordinary lead sits at the
+        // desks nearest the corner, not by its lead.
+        function test_a_reviewer_under_an_ordinary_lead_spills_next_to_the_corner() {
+            const reviewers = [];
+            for (let i = 0; i < 8; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const team = [person("lead", "Lead", "working", "typing"), person("lw", "Write tests", "working", "typing", "lead")];
+            plugin.publish(team.concat(reviewers));
+            const review = corner();
+            const pod = page.world.seatOf["lead"].pod;
+            compare(pod, 0, "the lead sits at the pod across from the corner");
+            for (const r of reviewers)
+                compare(page.world.seatOf[r.id].pod, review, r.id + " sits in the corner");
+            plugin.publish(team.concat([reviewer("lr", "Review the tests", "lead")], reviewers));
+            const at = i => page.world.pods[i];
+            const away = i => Math.abs(at(i).x - at(review).x) + Math.abs(at(i).y - at(review).y);
+            const nearest = Math.min(...page.world.pods.map((_, i) => i).filter(i => i !== review).map(away));
+            const seat = page.world.seatOf["lr"];
+            verify(seat.pod !== pod, "the reviewer does not sit by its lead");
+            compare(away(seat.pod), nearest, "the reviewer sits next to the corner");
+        }
+
         // A planner that turns out to be a reviewer goes to the review
         // whiteboard, and keeps its desk.
         function test_a_planner_that_becomes_a_reviewer_goes_to_the_review_whiteboard() {
