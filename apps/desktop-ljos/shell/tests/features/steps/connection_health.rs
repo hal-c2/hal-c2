@@ -3673,7 +3673,8 @@ fn register_kept(steps: &mut Steps) {
 }
 
 /// The whole window as the user's shell draws it, `qml` being that shell;
-/// connected, with a project so the welcome wizard stays away.
+/// connected and set up (a project, or setup finished), so the welcome
+/// wizard stays away.
 fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
     if let Some(brick) = world.part::<crate::brick::Shown>().0 {
         return Ok(brick);
@@ -3687,17 +3688,19 @@ fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
         }
         world.connect()?;
         world.sync()?;
-    } else if world.mc.projects.is_empty() {
-        // Connected already (a Background), to an MC with nothing in it. A
-        // window decides its first-run gate on the rows it opens to, so the
-        // project is sent before it opens, or the wizard covers it for good.
-        let project =
-            json!({"id": "p1", "title": "p1", "workspaceRoot": "/work/p1", "scripts": []});
-        world.mc.projects.insert("p1".to_owned(), project.clone());
-        world.mc.send_row_of("p1", &project, "project");
-        world.wait_for("the shell to list the project", |w| {
-            hal_c2_shell::store::with(w.engine(), |s| !s.projects().is_empty())
+    } else {
+        // Connected already (a Background), to an MC with nothing in it: the
+        // first-run gate settled on the wizard, which covers the window and
+        // stays until setup finishes. This window is a desktop already set
+        // up, so its user has finished setup, skipping the rest.
+        let gate = |w: &World| text(&w.state("onboarding")["gate"]);
+        world.wait_for("the first-run gate to settle", move |w| {
+            gate(w) != "pending"
         })?;
+        if gate(world) == "wizard" {
+            world.dispatch("onboarding.skip", json!(null))?;
+            world.wait_for("setup to finish", move |w| gate(w) == "app")?;
+        }
     }
     Brick::show(world, qml, 1200.0, 800.0)?;
     crate::brick::shown(world)
