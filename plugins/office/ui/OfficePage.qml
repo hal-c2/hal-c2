@@ -92,8 +92,9 @@ Item {
     }
 
     // The office as drawn: its size in tiles, its furniture, each desk and
-    // chair, the screens of its computers and its whiteboards. Built once; the
-    // movers bring desks in and take them out.
+    // chair, the screens of its computers and its whiteboards. Built again
+    // only when the office changes size; the movers bring desks in and take
+    // them out.
     property int worldCols: 0
     property int worldRows: 0
     property var props: []
@@ -1351,10 +1352,11 @@ Item {
     // left and back out again. The break room is behind a wall with a door on
     // the right.
     //
-    // The office is two rows of pods, room for 48, and a row of three more
-    // pods longer for each 24 people past that, so everyone has a desk. It
-    // changes size only when that count of rows does, and is painted again
-    // only then: it grows as soon as people outnumber its desks, and shrinks
+    // The office is two rows of pods, 48 desks of which the review corner's 8
+    // are for reviewers only, and a row of three more pods longer for each 24
+    // people past that, so everyone has a desk. It changes size only when
+    // that count of rows does, and is painted again only then: it grows as
+    // soon as people outnumber the desks they may take, and shrinks
     // once a pod's worth of desks would still be free in the smaller office,
     // after the desks in the rows it loses are carried out (see closeRows()).
     // Rows are added at the bottom, so every tile keeps its place.
@@ -1391,8 +1393,8 @@ Item {
     // for everyone (see buildWorld()). While the office is closing rows, their
     // pods take nobody, and whoever sat there moves to a desk in the rest.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
-    // own kind) sit in the review corner, and at the desks nearest it once it is full; everyone
-    // else takes a desk there only when the rest of the floor is full.
+    // own kind) sit in the review corner, and at the desks nearest it once it is full; nobody
+    // else needs a desk there, since the office grows first (see sync()).
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
@@ -1867,15 +1869,19 @@ Item {
         updateWalking();
     }
 
-    // Rows of pods for `count` people: room for them all, or, with
-    // `spare`, a pod's worth of desks more.
+    // Rows of pods for `count` desks, the review corner's among them: room
+    // for them all, or, with `spare`, a pod's worth of desks more.
     function podRows(count, spare) {
         return Math.max(2, Math.ceil((count + (spare ? 8 : 0)) / 24));
     }
 
     function sync(people) {
-        const grow = podRows(people.length, false);
-        const shrink = podRows(people.length, true);
+        // The review corner's eight desks are only for reviewers, and the
+        // reviewers it has no room for take ordinary desks.
+        const reviewers = people.filter(p => p.kind === "reviewer").length;
+        const desks = people.length - reviewers + Math.max(8, reviewers);
+        const grow = podRows(desks, false);
+        const shrink = podRows(desks, true);
         if (!page.world || grow > page.world.down || !page.primed && grow < page.world.down) {
             page.closeTo = 0;
             build(grow);

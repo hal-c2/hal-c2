@@ -504,16 +504,19 @@ Item {
             verify(!board(actor("t").goal.board).review, "the other goes to another whiteboard");
         }
 
-        // The corner's desks go to anyone else only once the floor is full.
-        function test_others_sit_in_the_review_corner_only_when_the_floor_is_full() {
+        // The corner's desks are for reviewers only: past the floor's desks,
+        // the office grows instead.
+        function test_others_never_sit_in_the_review_corner() {
             plugin.publish(many(40, "t", "working", "typing"));
             const review = corner();
+            const rows = page.worldRows;
             for (let i = 0; i < 40; i++)
                 verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
             plugin.publish(many(42, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
-            compare(page.world.seatOf["t40"].pod, review);
-            compare(page.world.seatOf["t41"].pod, review);
-            compare(page.world.seatOf["r"].pod, review, "a reviewer still has a corner desk");
+            compare(page.worldRows, rows + 6, "the office grows");
+            for (let i = 0; i < 42; i++)
+                verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
+            compare(page.world.seatOf["r"].pod, review, "the reviewer has a corner desk");
         }
 
         function test_a_desk_shows_its_project_as_the_sidebar_does() {
@@ -675,11 +678,11 @@ Item {
             compare(page.jobs.length, 1, "one desk comes in");
             // Someone who sat down at another pod keeps that seat, even when
             // newcomers fill every other pod near it.
-            const aside = page.world.seatOf["aw6"];
+            const aside = page.world.seatOf["aw6"].index;
             const z = [person("z", "Z", "working", "typing")].concat(many(31, "zw", "working", "typing", "z"));
             plugin.publish([person("x", "X", "working", "typing")].concat(team(7), z));
-            verify(page.world.seatOf["aw6"] === aside, "aw6 keeps its seat");
-            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id] === aside), ["aw6"]);
+            compare(page.world.seatOf["aw6"].index, aside, "aw6 keeps its seat");
+            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id].index === aside), ["aw6"]);
         }
 
         // A team that outgrows its pod with nobody of the new lot seated yet
@@ -712,61 +715,80 @@ Item {
                 for (let i = 0; i < n; i++)
                     verify(page.world.seatOf["t" + i] !== undefined, "t" + i + " has a desk");
             };
-            plugin.publish(many(48, "t", "working", "typing"));
+            // Two rows hold 40 people; the review corner's 8 desks are for
+            // reviewers only.
+            plugin.publish(many(40, "t", "working", "typing"));
             const cols = page.worldCols, rows = page.worldRows;
             compare(page.world.seats.length, 48);
-            seated(48);
+            seated(40);
             const seats = {};
-            for (let i = 0; i < 48; i++)
+            for (let i = 0; i < 40; i++)
                 seats["t" + i] = page.world.seatOf["t" + i].index;
             walk(50);
             wait(50);
             const paints = page.floorPaints;
 
-            plugin.publish(many(49, "t", "working", "typing"));
+            plugin.publish(many(41, "t", "working", "typing"));
             compare([page.worldCols, page.worldRows], [cols, rows + 6], "one more row of pods");
             compare(page.world.seats.length, 72);
-            seated(49);
+            seated(41);
             for (const id of Object.keys(seats))
                 compare(page.world.seatOf[id].index, seats[id], id + " keeps its seat");
-            compare(page.world.seatOf["t48"].pod >= 6, true, "the newcomer sits in the new row");
+            compare(page.world.seatOf["t40"].pod >= 6, true, "the newcomer sits in the new row");
             compare(page.world.entrance, [2, rows + 4], "the entrance moves down with the wall");
             wait(50);
             compare(page.floorPaints, paints + 1, "the floor is painted once for the new size");
             walk(300);
-            plugin.publish(many(72, "t", "working", "typing"));
-            compare(page.worldRows, rows + 6, "72 people fit");
-            plugin.publish(many(75, "t", "working", "typing"));
+            plugin.publish(many(64, "t", "working", "typing"));
+            compare(page.worldRows, rows + 6, "64 people fit");
+            plugin.publish(many(70, "t", "working", "typing"));
             compare(page.worldRows, rows + 12);
-            seated(75);
+            seated(70);
             walk(300);
             wait(50);
             compare(page.floorPaints, paints + 2, "painted only when the size changed");
 
-            // 65 people would leave less than a pod free in three rows, 64 a
+            // 57 people would leave less than a pod free in three rows, 56 a
             // pod: the last row's desks are carried out, then it shrinks.
-            plugin.publish(many(65, "t", "working", "typing"));
-            compare(page.closeTo, 0, "65 people keep four rows");
-            plugin.publish(many(64, "t", "working", "typing"));
+            plugin.publish(many(57, "t", "working", "typing"));
+            compare(page.closeTo, 0, "57 people keep four rows");
+            plugin.publish(many(56, "t", "working", "typing"));
             compare(page.worldRows, rows + 12, "the office waits for the desks to go");
             compare(page.closeTo, 3);
             for (const id of Object.keys(page.world.seatOf))
                 verify(page.world.seatOf[id].pod < 9, id + " moves out of the closing row");
             runUntil(() => page.worldRows === rows + 6, 6000, "the office shrinks");
-            seated(64);
+            seated(56);
             walk(600);
-            // 41 people would leave less than a pod free in two rows: it stays.
-            plugin.publish(many(41, "t", "working", "typing"));
-            compare(page.closeTo, 0, "41 people keep three rows");
-            plugin.publish(many(40, "t", "working", "typing"));
-            compare(page.closeTo, 2, "40 people leave a pod free in two rows");
+            // 33 people would leave less than a pod free in two rows: it stays.
+            plugin.publish(many(33, "t", "working", "typing"));
+            compare(page.closeTo, 0, "33 people keep three rows");
+            plugin.publish(many(32, "t", "working", "typing"));
+            compare(page.closeTo, 2, "32 people leave a pod free in two rows");
             runUntil(() => page.worldRows === rows, 6000, "the office shrinks back to its first size");
-            seated(40);
+            seated(32);
             walk(400);
-            // Past 48 people again, it grows at once.
-            plugin.publish(many(49, "t", "working", "typing"));
+            // Past 40 people again, it grows at once.
+            plugin.publish(many(41, "t", "working", "typing"));
             compare(page.worldRows, rows + 6);
             walk(200);
+        }
+
+        // Reviewers fill the review corner without the office growing; those
+        // past its eight desks need ordinary ones.
+        function test_the_office_grows_for_reviewers_only_past_the_corner() {
+            const reviewers = n => {
+                const list = [];
+                for (let i = 0; i < n; i++)
+                    list.push(reviewer("r" + i, "Review " + i));
+                return list;
+            };
+            plugin.publish(many(40, "t", "working", "typing").concat(reviewers(8)));
+            const rows = page.worldRows;
+            compare(page.world.seats.length, 48, "40 people and 8 reviewers fit in two rows");
+            plugin.publish(many(40, "t", "working", "typing").concat(reviewers(9)));
+            compare(page.worldRows, rows + 6, "a ninth reviewer takes an ordinary desk");
+            walk(100);
         }
 
         // People going in and out of the rows an office is closing keep to

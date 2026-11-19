@@ -26,12 +26,12 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
 - When one agent hands work to another or sends it a message, the two walk up
   to each other and the message shows in a speech bubble.
 - New threads walk in through the door, and movers carry their desks in. Desks
-  nobody uses are carried back out. The office starts with 48 desks and grows
-  by a row of desks when more threads come, so every thread has a desk.
+  nobody uses are carried back out. The office starts with 48 desks, 8 of them
+  in the review corner, and grows by a row of desks when more threads come, so
+  every thread has a desk.
 - Threads the Code review plugin started to review a pull request, and the
   workers they delegated to, sit together in the review corner. When it is
-  full they sit at the desks nearest it; other threads sit there only when the
-  rest of the office is full.
+  full they sit at the desks nearest it; other threads never sit there.
 - Each desk shows the icon its project has in the sidebar.
 
 Hover a person, or move to it with Tab, for its thread, project, agent and what

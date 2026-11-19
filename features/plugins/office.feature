@@ -327,23 +327,29 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office grows a row of pods when people outnumber its desks
-      Given the office has 48 threads, at its 48 desks
-      When it has 49 threads
+      Given the office has 40 threads, at its 40 desks outside the review corner
+      When it has 41 threads
       Then the office has another row of three pods at the bottom, 72 desks
-      And the 49th person has a desk in it
+      And the 41st person has a desk in it
       And everyone else keeps their desk
       And the office is drawn again once, for its new size
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office shrinks a row once a pod's worth of desks would still be free
-      Given the office has 75 threads, in four rows of pods
-      When it has 65 threads
+      Given the office has 70 threads, in four rows of pods
+      When it has 57 threads
       Then the office keeps its four rows
-      When it has 64 threads
+      When it has 56 threads
       Then the people in the last row move to desks in the other rows
       And the movers carry the last row's desks out
       And then the office loses that row
       And nobody is left standing where the office ended
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office grows for reviewers only once the review corner is full
+      Given the office has 40 threads and 8 reviewers, in two rows of pods
+      When a ninth reviewer comes in
+      Then the office has another row of three pods
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office is never smaller than two rows of pods
@@ -530,11 +536,13 @@ Feature: Office
       Then the worker plans at the review corner's whiteboard and keeps its desk
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Others sit in the review corner only when the floor is full
+    Scenario: Nobody but reviewers sits in the review corner
       Given the office has 40 threads
       Then none of them sits in the review corner
       When it has 42 threads and a reviewer
-      Then 2 of the threads and the reviewer sit in the review corner
+      Then the office grows a row of pods
+      And none of the threads sits in the review corner
+      And the reviewer sits in the review corner
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The review whiteboard shows a checklist beside a diff
