@@ -21,8 +21,8 @@ Feature: Office
   The Office plugin shows a machine's threads as people in a pixel-art office. Each
   thread is a person at a desk, and the workers it delegated to sit near it; some
   workers are cats and dogs. They walk between desks, the whiteboard, the bookshelves
-  and the break room, around the furniture and each other, doing what their agents
-  do. When one agent hands work to another or messages it, the two walk up to each
+  and the break room, around the furniture and through each other, doing what their
+  agents do. When one agent hands work to another or messages it, the two walk up to each
   other and talk. One whose agent asks the user something shows a question mark.
 
   Background:
@@ -247,26 +247,29 @@ Feature: Office
       Then each worker's desk is in the same group of desks as the desk of "Lead"
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: People walk around the furniture and never through each other
+    Scenario: People walk around the furniture and never stop on one spot
       Given the office has 16 working threads
       When the office runs for a while
       Then nobody stands on a desk, a wall or any other furniture
-      And no two people overlap
+      And no two people stop on the same spot
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Two people walking into each other get past
-      Given two people walk into each other on open floor
-      Then one of them steps around the other and both get where they are going
+    Scenario: A person walks through someone standing in its way
+      Given a person's way is crossed by someone standing still
+      Then it walks straight through them without stopping
+      And the one standing never moves
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: A person boxed in is given way
-      Given a person with no free floor beside it walks into another person
-      Then the other steps aside and both get where they are going
+    Scenario: Two people walking into each other walk through each other
+      Given two people walk into each other on open floor, or swap places
+      Then they walk straight through each other and both get where they are going
+      And neither steps aside, waits or goes around
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: A person blocked by someone standing still waits
-      Given a person's way is blocked by someone standing still
-      Then it waits where it is instead of stepping back and forth
+    Scenario: Two people headed for the same spot never both stop there
+      Given the office has 16 working threads
+      When they all start waiting
+      Then each heads for a spot of its own in the break room
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: What a person does follows what its agent does
@@ -376,11 +379,11 @@ Feature: Office
       Then movers walk in, pick up their desks, carry them out through the door and leave
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Nobody walks through a mover or the desk it carries
+    Scenario: Movers carry several desks in at once among the people
       Given the office has 4 working threads
       When it has 16 working threads
       Then several movers carry desks in at once
-      And no person, mover or desk being carried overlaps another
+      And people and movers walk past each other, never stopping on the same spot
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A desk being carried never covers the person just north of it
@@ -393,14 +396,9 @@ Feature: Office
     Scenario: People and movers get through the door without a jam
       Given the office has 2 threads
       When it has 8 threads
-      Then the new people come in one at a time, each once the doorway and the floor beside it are clear
+      Then the new people come in one at a time, a step apart
       And nobody stands waiting in the doorway
       And every desk is carried in and every mover leaves
-
-    @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: A person and a mover that meet head-on get past each other
-      Given a person and a mover meet head-on and only one of them has room to step aside
-      Then that one steps aside and both get where they are going
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in

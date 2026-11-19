@@ -5,10 +5,10 @@ with the workers it delegated to in the same group of desks; about a third of th
 workers are cats and dogs. What a person does follows its agent: typing, running
 and testing at the computer, planning at a whiteboard, reading at a bookshelf,
 and drinking coffee, napping on the couch or chatting in the break room while it
-waits. They walk around the furniture and each other. When one agent hands work
-to another or messages it, the two walk up to each other and talk; one whose
-agent asks the user something raises a question mark. Hover a person for who it
-is; click it to open its thread. How to use it is in
+waits. They walk around the furniture and through each other. When one agent
+hands work to another or messages it, the two walk up to each other and talk;
+one whose agent asks the user something raises a question mark. Hover a person
+for who it is; click it to open its thread. How to use it is in
 [docs/user/office.md](../../docs/user/office.md); what it does, scenario by
 scenario, is in [features/plugins/office.feature](../../features/plugins/office.feature).
 
