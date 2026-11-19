@@ -31,7 +31,7 @@
       "label": "Keep idle threads for (hours)",
       "type": "number",
       "default": 24,
-      "description": "An idle thread leaves the office once it has been quiet this long."
+      "description": "An idle thread leaves the office this long after its agent stopped working."
     }
   ],
   "contributes": {
