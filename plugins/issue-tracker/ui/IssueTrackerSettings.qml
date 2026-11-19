@@ -26,9 +26,8 @@ ColumnLayout {
     property string refusal: ""
     property string problem: ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color border: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // Picked repositories that are no project here stay listed, so they can be
     // unticked rather than silently kept.
     readonly property var followed: values.repositories ?? []
@@ -93,175 +92,17 @@ ColumnLayout {
 
     objectName: "issueTrackerSettings"
     width: parent ? parent.width : implicitWidth
-    spacing: 22
+    spacing: Theme.space.xl
     Component.onCompleted: load()
 
-    component Heading: Label {
-        Layout.fillWidth: true
-        Layout.topMargin: 6
-        color: settings.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
-
-    component Hint: Label {
-        Layout.fillWidth: true
-        visible: text.length > 0
-        color: settings.muted
-        wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-    }
-
-    // A setting: its label, what it means, and its control below.
-    component Field: ColumnLayout {
-        id: field
-
-        property string label
-        property string hint
-        default property alias content: controls.data
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Label {
-            text: field.label
-            color: settings.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-
-        Hint {
-            text: field.hint
-        }
-
-        ColumnLayout {
-            id: controls
-
-            Layout.fillWidth: true
-            spacing: 6
-        }
-    }
-
-    // One of a few values, side by side.
-    component Choice: Flow {
-        id: choice
-
-        property var options: []
-        property var value
-        signal picked(var value)
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: choice.options
-
-            delegate: Rectangle {
-                id: option
-
-                required property var modelData
-                readonly property bool chosen: modelData.value === choice.value
-
-                objectName: "choice:" + modelData.value
-                implicitWidth: optionText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                activeFocusOnTab: true
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        choice.picked(modelData.value);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.RadioButton
-                Accessible.name: optionText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: choice.picked(modelData.value)
-
-                Text {
-                    id: optionText
-
-                    anchors.centerIn: parent
-                    text: option.modelData.label
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: choice.picked(option.modelData.value)
-                }
-            }
-        }
-    }
-
     // Any number of repositories, side by side; none picked follows them all.
-    component Repositories: Flow {
+    component Repositories: ShellChoice {
         Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: settings.choices
-
-            delegate: Rectangle {
-                id: pick
-
-                required property string modelData
-                readonly property bool chosen: settings.followed.includes(modelData)
-
-                objectName: "issueTrackerSetting:repository:" + modelData
-                implicitWidth: pickText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                activeFocusOnTab: true
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        settings.toggleRepository(pick.modelData);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: pickText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: settings.toggleRepository(pick.modelData)
-
-                Text {
-                    id: pickText
-
-                    anchors.centerIn: parent
-                    text: pick.modelData
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: settings.toggleRepository(pick.modelData)
-                }
-            }
-        }
-    }
-
-    component Area: TextArea {
-        Layout.fillWidth: true
-        wrapMode: TextEdit.Wrap
-        color: settings.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
+        multiple: true
+        optionName: "issueTrackerSetting:repository:"
+        options: settings.choices
+        value: settings.followed
+        onPicked: value => settings.toggleRepository(value)
     }
 
     // An agent setting and its prompt: which agent, which of its models, the
@@ -282,17 +123,17 @@ ColumnLayout {
 
         objectName: "issueTrackerAgent:" + role
         Layout.fillWidth: true
-        spacing: 16
+        spacing: Theme.space.lg
 
-        Heading {
+        SettingsHeading {
             text: section.title
         }
 
-        Field {
-            label: qsTr("Agent and model")
+        SettingsField {
+            title: qsTr("Agent and model")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     objectName: "issueTrackerSetting:" + section.role + ":provider"
@@ -301,7 +142,7 @@ ColumnLayout {
                     model: settings.providers.map(each => each.name)
                     currentIndex: settings.providers.findIndex(each => each.instanceId === section.agent.provider)
                     displayText: currentIndex >= 0 ? currentText : (section.agent.provider ?? "")
-                    Accessible.name: qsTr("Agent")
+                    Accessible.name: qsTr("%1 agent").arg(section.title)
                     onActivated: index => {
                         const agent = Object.assign({}, section.agent, {
                             provider: settings.providers[index].instanceId,
@@ -319,7 +160,7 @@ ColumnLayout {
                     model: [qsTr("Its default model")].concat(section.models.map(each => each.name || each.slug))
                     currentIndex: (section.agent.model ?? "") === "" ? 0 : section.models.findIndex(each => each.slug === section.agent.model) + 1
                     displayText: currentIndex >= 0 ? currentText : section.agent.model
-                    Accessible.name: qsTr("Model")
+                    Accessible.name: qsTr("%1 model").arg(section.title)
                     onActivated: index => {
                         const agent = Object.assign({}, section.agent, {
                             model: index === 0 ? "" : section.models[index - 1].slug,
@@ -335,7 +176,7 @@ ColumnLayout {
         Repeater {
             model: section.modelEntry?.options ?? []
 
-            delegate: Field {
+            delegate: SettingsField {
                 id: option
 
                 required property var modelData
@@ -351,9 +192,10 @@ ColumnLayout {
                 }
 
                 objectName: "issueTrackerSetting:" + section.role + ":modelOption:" + modelData.id
-                label: modelData.label ?? modelData.id
+                title: modelData.label ?? modelData.id
 
-                Choice {
+                ShellChoice {
+                    Layout.fillWidth: true
                     visible: option.modelData.type !== "boolean"
                     options: [
                         {
@@ -368,21 +210,22 @@ ColumnLayout {
                     onPicked: value => option.pick(value === "" ? undefined : value)
                 }
 
-                Switch {
+                control: ShellSwitch {
                     visible: option.modelData.type === "boolean"
                     checked: option.chosen[option.modelData.id] === true
-                    Accessible.name: option.label
+                    Accessible.name: option.title
                     onToggled: option.pick(checked)
                 }
             }
         }
 
-        Field {
-            label: qsTr("Access")
-            hint: section.accessHint
+        SettingsField {
+            title: qsTr("Access")
+            description: section.accessHint
 
-            Choice {
+            ShellChoice {
                 objectName: "issueTrackerSetting:" + section.role + ":runtimeMode"
+                Layout.fillWidth: true
                 options: [
                     {
                         value: "approval-required",
@@ -406,12 +249,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Prompt")
-            hint: section.promptHint
+        SettingsField {
+            title: qsTr("Prompt")
+            description: section.promptHint
 
-            Area {
+            ShellTextArea {
                 objectName: "issueTrackerSetting:" + section.promptKey
+                Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(120, implicitHeight)
                 text: settings.values[section.promptKey] ?? ""
                 Accessible.name: qsTr("%1 prompt").arg(section.title)
@@ -427,33 +271,37 @@ ColumnLayout {
         text: settings.problem.length > 0 ? qsTr("The settings could not be read: %1").arg(settings.problem) : qsTr("Loading…")
         color: settings.problem.length > 0 ? settings.errorColor : settings.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     ColumnLayout {
         Layout.fillWidth: true
         visible: settings.loaded
-        spacing: 22
+        spacing: Theme.space.xl
 
-        Heading {
+        SettingsHeading {
             text: qsTr("What it follows")
         }
 
-        Field {
-            label: qsTr("Repositories")
-            hint: qsTr("The queue is the open issues of these. None picked follows every GitHub project on this MC. Its agents run in a repository's own project, and implementing needs its checkout.")
+        SettingsField {
+            title: qsTr("Repositories")
+            description: qsTr("The queue is the open issues of these. None picked follows every GitHub project on this MC. Its agents run in a repository's own project, and implementing needs its checkout.")
 
             Repositories {}
 
-            Hint {
+            Label {
+                Layout.fillWidth: true
+                color: settings.muted
+                wrapMode: Text.Wrap
+                font.pixelSize: Theme.type.meta.size
                 visible: settings.choices.length === 0
                 text: qsTr("No GitHub project is on this MC yet.")
             }
         }
 
-        Field {
-            label: qsTr("Only issues labelled")
-            hint: qsTr("Empty to follow every open issue.")
+        SettingsField {
+            title: qsTr("Only issues labelled")
+            description: qsTr("Empty to follow every open issue.")
 
             ShellTextField {
                 objectName: "issueTrackerSetting:issueLabel"
@@ -463,19 +311,18 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Look at GitHub every (minutes)")
+        SettingsField {
+            title: qsTr("Look at GitHub every (minutes)")
 
-            ShellTextField {
+            ShellSpinBox {
                 objectName: "issueTrackerSetting:pollMinutes"
-                implicitWidth: 100
-                inputMethodHints: Qt.ImhDigitsOnly
-                validator: IntValidator {
-                    bottom: 1
-                }
-                text: String(settings.values.pollMinutes ?? "")
-                onTextEdited: if (acceptableInput)
-                    settings.set("pollMinutes", Number(text))
+                editable: true
+                from: 1
+                to: 999999999
+                value: settings.values.pollMinutes ?? 10
+                Accessible.name: qsTr("Look at GitHub every (minutes)")
+                onValueModified: settings.set("pollMinutes", value)
+                onValueTyped: typed => settings.set("pollMinutes", typed)
             }
         }
 
@@ -518,12 +365,12 @@ ColumnLayout {
             text: qsTr("Not saved: %1").arg(settings.refusal)
             color: settings.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             Item {
                 Layout.fillWidth: true

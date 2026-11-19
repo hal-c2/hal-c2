@@ -574,8 +574,8 @@ const Steps steps([] {
   step(QStringLiteral("only GitHub and Forgejo can be chosen today"), [](World& world, const Captures&, const Table&) {
     QQuickItem* settings = waitShownNamed(world, QStringLiteral("codeReviewSettings"));
     QQuickItem* hosts = waitShownNamed(world, QStringLiteral("codeReviewHosts"));
-    clickItem(world, findNamed(hosts, QStringLiteral("choice:gitlab")));
-    world.sync();
+    // The other hosts are offered but disabled: a click on one does nothing.
+    expect(!findNamed(hosts, QStringLiteral("choice:gitlab"))->isEnabled(), QStringLiteral("GitLab can be chosen"));
     expect(settings->property("values").toMap().value(QStringLiteral("host")) == QStringLiteral("github") && !settings->property("dirty").toBool(),
            QStringLiteral("GitLab was chosen"));
     expect(findNamed(hosts, QStringLiteral("choice:github"))->property("chosen").toBool(), QStringLiteral("GitHub is not the host"));

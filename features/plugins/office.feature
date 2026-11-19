@@ -107,6 +107,37 @@ Feature: Office
       When "Archived" is archived, "Deleted" is deleted and "Settled" is settled
       Then the office has "Kept" and none of the others
 
+    # Settling or archiving a thread leaves its workers' own threads as they are
+    # (delegation.feature: a subagent keeps its replies after its parent settles), so
+    # the office walks up the lineage itself. A worker asking under a parent the user
+    # put away leaves too: putting the parent away puts its work away, and such a
+    # question is most often one nobody waits on any more.
+    @mc
+    Scenario Outline: Workers leave the office with the thread that delegated to them, unless they work
+      Given a thread "Lead" with a worker "Tests", a working worker "Build" and an asking worker "Review"
+      And the worker "Tests" has a worker "Fixtures"
+      When <put away>
+      Then the office has "Build" and none of the others
+
+      Examples:
+        | put away                 |
+        | a client settles "Lead"  |
+        | a client archives "Lead" |
+        | "Lead" is deleted        |
+
+    @mc
+    Scenario Outline: Workers come back with the thread that delegated to them
+      Given a thread "Lead" with a worker "Write the tests"
+      And <put away>
+      And the office does not have "Write the tests"
+      When <brought back>
+      Then the office has "Lead" and "Write the tests"
+
+      Examples:
+        | put away                 | brought back               |
+        | a client settles "Lead"  | a client unsettles "Lead"  |
+        | a client archives "Lead" | a client unarchives "Lead" |
+
     @mc
     Scenario: A settled thread whose agent starts working again comes back
       Given a settled thread "Settled" in the project "api"

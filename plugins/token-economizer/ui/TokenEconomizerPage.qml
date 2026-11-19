@@ -284,20 +284,12 @@ Item {
         }
     }
 
-    component Heading: Text {
-        Layout.fillWidth: true
-        Layout.topMargin: 8
-        color: page.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
-
     component Line: Text {
         Layout.fillWidth: true
         visible: text.length > 0
         color: page.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     component Rule: Rectangle {
@@ -348,7 +340,7 @@ Item {
             }
 
             // --- loop guard ---------------------------------------------------------
-            Heading {
+            SettingsHeading {
                 text: qsTr("Loop guard")
             }
 
@@ -400,7 +392,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 8
 
-                Heading {
+                SettingsHeading {
                     text: qsTr("Micro-skills")
                 }
 
@@ -461,7 +453,7 @@ Item {
                         color: page.muted
                         selectionColor: page.border
                         font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
 
@@ -519,7 +511,7 @@ Item {
                             text: fact.modelData.claim
                             color: page.foreground
                             wrapMode: Text.Wrap
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
 
                         Line {
@@ -569,7 +561,7 @@ Item {
             Rule {}
 
             // --- tool pruning -------------------------------------------------------
-            Heading {
+            SettingsHeading {
                 text: qsTr("Tool pruning")
             }
 
@@ -620,7 +612,7 @@ Item {
                                 text: qsTr("%1, %2").arg(page.projectName(prune.modelData.projectId)).arg(page.providerLabel(prune.modelData.provider))
                                 color: page.foreground
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 font.weight: Font.Medium
                             }
 
@@ -718,7 +710,7 @@ Item {
                                     text: qsTr("%1 · %2").arg(tool.modelData).arg(page.toolStateLabel(tool.evidence.state))
                                     color: page.foreground
                                     elide: Text.ElideRight
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
 
                                 Line {

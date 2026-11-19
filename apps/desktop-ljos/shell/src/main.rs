@@ -8,6 +8,8 @@
 //!               [--render PNG [--size WxH] [--settle MS]]
 //!               [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...
 //!   hal-c2-ljos --check [--qml-dir DIR]
+//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
+//!               [--json] [--allow FILE] [--render options]...
 //!
 //! As desktop-qt's main.cpp, the shell runs the desktop host
 //! (`apps/desktop-qt/host/main.ts`, `--host-entry`, under `--node`, else
@@ -45,6 +47,18 @@
 //! before the snapshot wait, for a render of a given place, and settles for
 //! `--settle` ms. `--check` only compiles the QML, and fails when a file
 //! does not compile.
+//!
+//! `--audit` runs Ljós's design audit (`ljos audit`, which cannot load the
+//! bricks: they need HalC2.Shell's native types) on what `--render` would
+//! draw, at the points of `--matrix` (`current` by default; `full`, or
+//! points as `ljos audit` takes them), and prints the report by rule, or
+//! with `--json` as JSON. A `<config>/shell.qml` (`--config-dir`) is audited
+//! instead of the shell, which is how a brick is audited on its own. It
+//! exits 1 when an error is found that `--allow` does not name: a file of
+//! lines `RULE PATH  # why`, PATH the end of the path of the QML file the
+//! finding is in, or of one it names (what covers a control, for
+//! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
+//! toggles, popups) from running the shell's handlers.
 //!
 //! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
 //! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
@@ -99,6 +113,7 @@ struct Options {
     check: bool,
     render: Option<PathBuf>,
     screenshot: Option<PathBuf>,
+    audit: Audit,
     size: (u32, u32),
     settle_ms: u64,
     home_dir: Option<PathBuf>,
@@ -125,7 +140,9 @@ fn usage() -> ExitCode {
          \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
-         \x20      hal-c2-ljos --check [--qml-dir DIR]"
+         \x20      hal-c2-ljos --check [--qml-dir DIR]\n\
+         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]\n\
+         \x20                  [--json] [--allow FILE] [--render options]..."
     );
     ExitCode::from(2)
 }
@@ -148,6 +165,7 @@ fn parse() -> Result<Options, String> {
         check: false,
         render: None,
         screenshot: None,
+        audit: Audit::default(),
         size: (1280, 800),
         settle_ms: 1500,
         home_dir: None,
@@ -218,6 +236,25 @@ fn parse() -> Result<Options, String> {
                 o.steps.push(Step::Key(chord));
             }
             "--check" => o.check = true,
+            "--audit" => o.audit.on = true,
+            "--matrix" => {
+                let v = value()?;
+                o.audit.matrix = v.parse().map_err(|e| format!("--matrix {v}: {e}"))?;
+            }
+            "--rules" => o
+                .audit
+                .rules
+                .extend(value()?.split(',').map(str::trim).map(str::to_owned)),
+            "--touch" => o.audit.touch = true,
+            "--act" => {
+                o.audit.act = match value()?.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    v => return Err(format!("--act takes true or false, not {v:?}")),
+                }
+            }
+            "--json" => o.audit.json = true,
+            "--allow" => o.audit.allow = Some(value()?.into()),
             "--render" => o.render = Some(value()?.into()),
             "--screenshot" => o.screenshot = Some(value()?.into()),
             "--size" => {
@@ -261,7 +298,15 @@ fn parse() -> Result<Options, String> {
     if o.render.is_some() && o.screenshot.is_some() {
         return Err("--render and --screenshot are two ways to take a picture; use one".into());
     }
-    if o.render.is_some() && o.steps.iter().any(|s| matches!(s, Step::Key(_))) {
+    if o.audit.on && (o.render.is_some() || o.screenshot.is_some()) {
+        return Err("--audit reads the scene --render would draw; it takes no picture".into());
+    }
+    // The checks that act run the shell's handlers, which write settings and
+    // drafts: never into the user's own files.
+    if o.audit.on && o.home_dir.is_none() {
+        return Err("--audit runs the shell's handlers: give it a --home-dir of its own".into());
+    }
+    if (o.render.is_some() || o.audit.on) && o.steps.iter().any(|s| matches!(s, Step::Key(_))) {
         return Err("--key needs the shell running: use --screenshot, not --render".into());
     }
     Ok(o)
@@ -293,7 +338,7 @@ fn main() -> ExitCode {
     // `--pair` link is left unspent (main.cpp pairs later, in the host).
     // A launch asked for a picture draws its own window instead, of the MC
     // as it is: it adds no projects and starts no threads.
-    let picture = options.screenshot.is_some() || options.render.is_some();
+    let picture = options.screenshot.is_some() || options.render.is_some() || options.audit.on;
     if picture && !options.folders.is_empty() {
         eprintln!(
             "hal-c2-ljos: a picture opens no folders, so not {}",
@@ -341,6 +386,7 @@ fn main() -> ExitCode {
     if let Some(out) = &options.screenshot {
         // ScriptedRun's codes: 0 for a picture, 2 for none, or for the
         // picture of a start that failed.
+        let out = Output::Png(out);
         return match render_to(app, &options, out, Capture::scripted(&options, failure)) {
             Ok(false) => ExitCode::SUCCESS,
             Ok(true) => ExitCode::from(2),
@@ -350,8 +396,21 @@ fn main() -> ExitCode {
             }
         };
     }
+    if options.audit.on {
+        let out = Output::Audit(&options.audit);
+        return match render_to(app, &options, out, Capture::render(&options)) {
+            Ok(false) => ExitCode::SUCCESS,
+            Ok(true) => ExitCode::FAILURE,
+            Err(e) => {
+                eprintln!("hal-c2-ljos: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let result = match &options.render {
-        Some(out) => render_to(app, &options, out, Capture::render(&options)).map(drop),
+        Some(out) => {
+            render_to(app, &options, Output::Png(out), Capture::render(&options)).map(drop)
+        }
         None => run(app, options),
     };
     match result {
@@ -585,15 +644,47 @@ impl Capture {
     }
 }
 
+/// `--audit` and the options only it reads.
+struct Audit {
+    on: bool,
+    matrix: ljos_audit::Matrix,
+    rules: Vec<String>,
+    touch: bool,
+    act: bool,
+    json: bool,
+    allow: Option<PathBuf>,
+}
+
+impl Default for Audit {
+    fn default() -> Audit {
+        Audit {
+            on: false,
+            matrix: ljos_audit::Matrix::Current,
+            rules: Vec::new(),
+            touch: false,
+            act: true,
+            json: false,
+            allow: None,
+        }
+    }
+}
+
+/// What [`render_to`] makes of the scene once it settles.
+enum Output<'a> {
+    Png(&'a PathBuf),
+    Audit(&'a Audit),
+}
+
 /// A picture without a window: the shell once its MC's first snapshot is in
 /// (what the cache kept, when the MC does not answer in time), or as it
-/// shows disconnected. True when it is the picture of a start that failed
-/// (`capture.failure`, or the MC refusing the connection here), which
-/// ScriptedRun's `captureFailure` takes for exit code 2.
+/// shows disconnected; or `--audit`'s report of that scene. True when it is
+/// the picture of a start that failed (`capture.failure`, or the MC refusing
+/// the connection here), which ScriptedRun's `captureFailure` takes for
+/// exit code 2; for an audit, when it found an error `--allow` does not name.
 fn render_to(
     app: App,
     options: &Options,
-    out: &PathBuf,
+    out: Output<'_>,
     mut capture: Capture,
 ) -> Result<bool, String> {
     // The bundled font: the same picture on every machine.
@@ -710,6 +801,18 @@ fn render_to(
         // On the picture's virtual clock: they all run while it settles.
         scripted_run::play(&engine, capture.steps.clone());
     }
+    let out = match out {
+        Output::Png(out) => out,
+        Output::Audit(audit) => {
+            // A harness that does not load would pass as the built-in shell.
+            if let Some(e) = hal_c2_shell::runtime::user_shell_failed(&engine) {
+                return Err(format!("shell.qml did not load: {e}"));
+            }
+            let failed = audited(&engine, &picture, root, audit)?;
+            store::flush(&engine);
+            return Ok(failed);
+        }
+    };
     let png = picture.png(&engine, root).map_err(|e| e.to_string())?;
     store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -718,6 +821,127 @@ fn render_to(
     std::fs::write(out, png).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("hal-c2-ljos: wrote {}", out.display());
     Ok(capture.failure.is_some())
+}
+
+/// `--audit`'s report of `root` as `picture` would draw it, on stdout; true
+/// when it has an error `audit.allow` does not name.
+fn audited(
+    engine: &Engine,
+    picture: &Picture,
+    root: ljos::ObjectId,
+    audit: &Audit,
+) -> Result<bool, String> {
+    use ljos_audit::Severity;
+    let allow = match &audit.allow {
+        Some(file) => Allowed::read(file)?,
+        None => Allowed::default(),
+    };
+    let mut options = if audit.touch {
+        ljos_audit::Options::mobile()
+    } else {
+        ljos_audit::Options::desktop()
+    };
+    options.matrix = audit.matrix.clone();
+    options.act = audit.act;
+    let options = options.only(&audit.rules).map_err(|e| e.to_string())?;
+    let mut before = None;
+    let mut scene = picture
+        .scene_seen(engine, root, |e, s| {
+            before = Some(Arc::new(ljos_audit::Placement::of(e, s)));
+        })
+        .map_err(|e| e.to_string())?;
+    let options = ljos_audit::Options { before, ..options };
+    let mut report = ljos_audit::audit(engine, &mut scene, picture.now(), &options);
+    // What `--allow` names is said apart, so the report shows what it hides.
+    let (allowed, findings): (Vec<_>, Vec<_>) = std::mem::take(&mut report.findings)
+        .into_iter()
+        .partition(|f| f.severity() == Severity::Error && allow.which(f).is_some());
+    report.findings = findings;
+    if audit.json {
+        let mut json = report.json();
+        json["allowed"] = allowed.iter().map(ljos_audit::Finding::json).collect();
+        println!("{json}");
+    } else {
+        // Places from the checkout's root.
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .map(|p| format!("file://{}", p.display()))
+            .unwrap_or_default();
+        print!("{}", report.by_rule(&checkout));
+        // How many each line let through; `--json` lists them.
+        let mut counts = vec![0; allow.0.len()];
+        for i in allowed.iter().filter_map(|f| allow.which(f)) {
+            counts[i] += 1;
+        }
+        for ((rule, path), n) in allow.0.iter().zip(counts).filter(|(_, n)| *n > 0) {
+            println!("allowed: {n} {rule} {path}");
+        }
+        let points: Vec<String> = report.points.iter().map(ToString::to_string).collect();
+        println!(
+            "{} error(s), {} warning(s), {} hint(s), {} allowed, at {} point(s): {}",
+            report.count(Severity::Error),
+            report.count(Severity::Warning),
+            report.count(Severity::Hint),
+            allowed.len(),
+            points.len(),
+            points.join("; ")
+        );
+    }
+    Ok(report.count(Severity::Error) > 0)
+}
+
+/// `--allow`'s lines: a rule and the end of a QML file's path, optionally
+/// with a line (`Bricks/DefaultLayout.qml:144`). Each error of that rule at
+/// that place, or whose message names it, is let through.
+#[derive(Default)]
+struct Allowed(Vec<(String, String)>);
+
+impl Allowed {
+    fn read(file: &Path) -> Result<Allowed, String> {
+        let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        Allowed::parse(&text).map_err(|n| format!("{}:{n}: not `RULE PATH`", file.display()))
+    }
+
+    /// The lines of `text`, or the number of the first that is not `RULE PATH`.
+    fn parse(text: &str) -> Result<Allowed, usize> {
+        let mut lines = Vec::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut words = line.split_whitespace();
+            match (words.next(), words.next(), words.next()) {
+                (Some(rule), Some(path), None) => lines.push((rule.to_owned(), path.to_owned())),
+                _ => return Err(n + 1),
+            }
+        }
+        Ok(Allowed(lines))
+    }
+
+    /// The line that lets `finding` through, if one does.
+    fn which(&self, finding: &ljos_audit::Finding) -> Option<usize> {
+        self.lets_through(finding.code, finding.place.as_deref(), &finding.message)
+    }
+
+    /// The line that lets through a finding of rule `code` at `place`
+    /// (`file:///…/File.qml:12:5`) saying `message`, if one does.
+    fn lets_through(&self, code: &str, place: Option<&str>, message: &str) -> Option<usize> {
+        // The place without its column (`…/File.qml:12`), and without its line.
+        let line = place
+            .and_then(|p| p.rsplit_once(':'))
+            .map_or("", |(rest, _)| rest);
+        let file = line.rsplit_once(':').map_or("", |(rest, _)| rest);
+        self.0.iter().position(|(rule, path)| {
+            let at = format!("/{path}");
+            rule == code
+                && (line.ends_with(&at)
+                    || file.ends_with(&at)
+                    // A place the message names: `(file:///…/File.qml:115:5)`.
+                    || message.contains(&format!("{at}:")))
+        })
+    }
 }
 
 /// What other threads tell the window's.
@@ -972,7 +1196,76 @@ fn install_dev_desktop_entry() {
 
 #[cfg(test)]
 mod tests {
-    use super::offscreen;
+    use super::{Allowed, offscreen};
+
+    const LAYOUT: &str = "file:///ci/apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
+
+    #[test]
+    fn allow_reads_rule_and_path_skipping_comments() {
+        let allowed =
+            Allowed::parse("# a comment\n\na11y-target-size Bricks/DefaultLayout.qml:144  # why\n")
+                .unwrap();
+        assert_eq!(
+            allowed.0,
+            [(
+                "a11y-target-size".to_owned(),
+                "Bricks/DefaultLayout.qml:144".to_owned()
+            )]
+        );
+        assert_eq!(Allowed::parse("ok a.qml\nlone-rule\n").err(), Some(2));
+        assert_eq!(Allowed::parse("rule a.qml extra").err(), Some(1));
+    }
+
+    #[test]
+    fn allow_with_a_line_lets_through_that_line_only() {
+        let allowed = Allowed::parse("a11y-target-size Bricks/DefaultLayout.qml:144").unwrap();
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            Some(0)
+        );
+        let other = LAYOUT.replace(":144:", ":14:");
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(&other), ""),
+            None
+        );
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), ""),
+            None
+        );
+    }
+
+    #[test]
+    fn allow_without_a_line_takes_the_whole_file_on_a_path_boundary() {
+        let allowed = Allowed::parse("a11y-target-size DefaultLayout.qml").unwrap();
+        assert_eq!(
+            allowed.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            Some(0)
+        );
+        let suffix = Allowed::parse("a11y-target-size Layout.qml").unwrap();
+        assert_eq!(
+            suffix.lets_through("a11y-target-size", Some(LAYOUT), ""),
+            None
+        );
+        assert_eq!(allowed.lets_through("a11y-target-size", None, ""), None);
+    }
+
+    #[test]
+    fn allow_matches_the_place_a_message_names() {
+        let allowed = Allowed::parse("layout-occluded Bricks/ShellWindow.qml:115").unwrap();
+        let by = |line: u32| {
+            format!(
+                "the button is covered by the item (file:///ci/apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
+            )
+        };
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), &by(115)),
+            Some(0)
+        );
+        assert_eq!(
+            allowed.lets_through("layout-occluded", Some(LAYOUT), &by(146)),
+            None
+        );
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {

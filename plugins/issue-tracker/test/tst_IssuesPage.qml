@@ -241,6 +241,23 @@ Item {
             ]);
         }
 
+        function test_an_empty_list_says_why() {
+            const empty = find("issueTrackerListEmpty");
+            verify(!empty.visible);
+            plugin.publish(null);
+            verify(empty.visible);
+            compare(empty.text, "Waiting for the tracker…");
+            plugin.publish(Object.assign({}, test.tracker, {
+                issues: [],
+                looking: true
+            }));
+            compare(empty.text, "Looking at GitHub…");
+            plugin.publish(Object.assign({}, test.tracker, {
+                issues: []
+            }));
+            verify(empty.text.startsWith("No open issues here."));
+        }
+
         function test_a_problem_and_a_refusal_show() {
             plugin.publish(Object.assign({}, test.tracker, {
                 problem: "acme/api could not be read: gh is not signed in."

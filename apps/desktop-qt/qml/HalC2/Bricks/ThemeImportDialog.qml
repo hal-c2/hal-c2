@@ -58,26 +58,19 @@ Popup {
             onClicked: picker.open()
         }
 
-        TextArea {
+        ShellTextArea {
             id: json
 
             objectName: "json"
             Layout.fillWidth: true
             Layout.preferredHeight: 160
             placeholderText: qsTr("Or paste a theme's JSON")
-            color: dialog.foreground
-            wrapMode: TextEdit.Wrap
             Accessible.name: qsTr("Theme JSON")
             // Tab and Shift+Tab leave the field for the buttons rather than indenting the JSON.
             Keys.onTabPressed: nextItemInFocusChain().forceActiveFocus(Qt.TabFocusReason)
             Keys.onBacktabPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason)
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
             font.pixelSize: Theme.type.meta.size
-            background: Rectangle {
-                radius: Theme.radiusMd
-                color: Theme.palette.color("input", "#18181b")
-                border.color: Theme.palette.color("border", "#27272a")
-            }
         }
 
         Label {

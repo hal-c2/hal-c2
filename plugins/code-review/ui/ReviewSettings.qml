@@ -29,15 +29,15 @@ ColumnLayout {
     // The model reviews will run on: the picked one, else the agent's default.
     readonly property var modelEntry: (provider?.models ?? []).find(each => each.slug === values.model) ?? (provider?.models ?? []).find(each => each.isDefault) ?? (provider?.models ?? [])[0] ?? null
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color border: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
+    // Shown and not yet chosen: the hosts it will review on later.
     readonly property var hosts: [
         { value: "github", label: qsTr("GitHub") },
-        { value: "gitlab", label: qsTr("GitLab"), disabled: true },
+        { value: "gitlab", label: qsTr("%1 (coming later)").arg(qsTr("GitLab")), disabled: true },
         { value: "forgejo", label: qsTr("Forgejo") },
-        { value: "bitbucket", label: qsTr("Bitbucket"), disabled: true },
-        { value: "azure-devops", label: qsTr("Azure DevOps"), disabled: true }
+        { value: "bitbucket", label: qsTr("%1 (coming later)").arg(qsTr("Bitbucket")), disabled: true },
+        { value: "azure-devops", label: qsTr("%1 (coming later)").arg(qsTr("Azure DevOps")), disabled: true }
     ]
     readonly property var modes: [
         { value: "local", label: qsTr("Keep in HAL-C2") },
@@ -124,166 +124,36 @@ ColumnLayout {
 
     objectName: "codeReviewSettings"
     width: parent ? parent.width : implicitWidth
-    spacing: 22
+    spacing: Theme.space.xl
     Component.onCompleted: load()
 
-    component Heading: Label {
-        Layout.fillWidth: true
-        Layout.topMargin: 6
-        color: settings.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
-
-    component Hint: Label {
-        Layout.fillWidth: true
-        visible: text.length > 0
-        color: settings.muted
-        wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-    }
-
-    // A setting: its label, what it means, and its control below.
-    component Field: ColumnLayout {
-        id: field
-
-        property string label
-        property string hint
-        default property alias content: controls.data
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Label {
-            text: field.label
-            color: settings.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-
-        Hint {
-            text: field.hint
-        }
-
-        ColumnLayout {
-            id: controls
-
-            Layout.fillWidth: true
-            spacing: 6
-        }
-    }
-
     // A setting that is on or off, its switch beside it.
-    component Toggle: RowLayout {
+    component Toggle: SettingsField {
         id: toggle
 
         property string key
-        property string label
-        property string hint
 
         objectName: "codeReviewSetting:" + key
-        Layout.fillWidth: true
-        spacing: 12
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
-
-            Label {
-                text: toggle.label
-                color: settings.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-                font.weight: Font.Medium
-            }
-
-            Hint {
-                text: toggle.hint
-            }
-        }
-
-        Switch {
+        control: ShellSwitch {
             checked: settings.values[toggle.key] === true
-            Accessible.name: toggle.label
+            Accessible.name: toggle.title
             onToggled: settings.set(toggle.key, checked)
         }
     }
 
-    // One of a few values, side by side; an option can be shown and not chosen.
-    component Choice: Flow {
-        id: choice
-
-        property var options: []
-        property var value
-        signal picked(var value)
-
-        Layout.fillWidth: true
-        spacing: 6
-
-        Repeater {
-            model: choice.options
-
-            delegate: Rectangle {
-                id: option
-
-                required property var modelData
-                readonly property bool chosen: modelData.value === choice.value
-                readonly property bool open: modelData.disabled !== true
-
-                objectName: "choice:" + modelData.value
-                implicitWidth: optionText.implicitWidth + 20
-                implicitHeight: 28
-                radius: Math.min(Theme.radius, 8)
-                color: chosen ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
-                border.color: chosen || activeFocus ? Theme.palette.color("focus", "#3b82f6") : settings.border
-                border.width: activeFocus ? 2 : 1
-                opacity: open ? 1 : 0.5
-                activeFocusOnTab: open
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        choice.picked(modelData.value);
-                        event.accepted = true;
-                    }
-                }
-                Accessible.role: Accessible.RadioButton
-                Accessible.name: optionText.text
-                Accessible.checkable: true
-                Accessible.checked: chosen
-                Accessible.onPressAction: if (open)
-                    choice.picked(modelData.value)
-
-                Text {
-                    id: optionText
-
-                    anchors.centerIn: parent
-                    text: option.open ? option.modelData.label : qsTr("%1 (coming later)").arg(option.modelData.label)
-                    color: settings.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: option.open
-                    cursorShape: option.open ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: choice.picked(option.modelData.value)
-                }
-            }
-        }
-    }
-
-    component Count: ShellTextField {
+    // A whole number, 0 or more.
+    component Count: ShellSpinBox {
         id: count
 
         property string key
 
         objectName: "codeReviewSetting:" + key
-        implicitWidth: 100
-        inputMethodHints: Qt.ImhDigitsOnly
-        validator: IntValidator {
-            bottom: 0
-        }
-        text: String(settings.values[count.key] ?? "")
-        onTextEdited: if (acceptableInput)
-            settings.set(count.key, Number(text))
+        editable: true
+        from: 0
+        to: 999999999
+        value: settings.values[count.key] ?? 0
+        onValueModified: settings.set(count.key, value)
+        onValueTyped: typed => settings.set(count.key, typed)
     }
 
     // Logins separated by commas. The text stays as typed while it is edited, with
@@ -312,56 +182,45 @@ ColumnLayout {
         onEditingFinished: show()
     }
 
-    component Area: TextArea {
-        Layout.fillWidth: true
-        wrapMode: TextEdit.Wrap
-        color: settings.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
-    }
-
     Label {
         Layout.fillWidth: true
         visible: !settings.loaded || settings.problem.length > 0
         text: settings.problem.length > 0 ? qsTr("The settings could not be read: %1").arg(settings.problem) : qsTr("Loading…")
         color: settings.problem.length > 0 ? settings.errorColor : settings.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     ColumnLayout {
         Layout.fillWidth: true
         visible: settings.loaded
-        spacing: 22
+        spacing: Theme.space.xl
 
-        Heading {
+        SettingsHeading {
             text: qsTr("Source control")
         }
 
-        Field {
-            label: qsTr("Host")
-            hint: qsTr("GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login.")
+        SettingsField {
+            title: qsTr("Host")
+            description: qsTr("GitHub uses the gh login of this MC's machine; Forgejo, its fj or tea login.")
 
-            Choice {
+            ShellChoice {
                 objectName: "codeReviewHosts"
+                Layout.fillWidth: true
                 options: settings.hosts
                 value: settings.values.host
                 onPicked: value => settings.set("host", value)
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("What is reviewed")
         }
 
-        Field {
+        SettingsField {
             objectName: "codeReviewRepositories"
-            label: qsTr("Repositories")
-            hint: qsTr("owner/name of each repository to watch. Each needs a project on this MC.")
+            title: qsTr("Repositories")
+            description: qsTr("owner/name of each repository to watch. Each needs a project on this MC.")
 
             Repeater {
                 model: settings.watched
@@ -372,7 +231,7 @@ ColumnLayout {
                     required property string modelData
 
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Label {
                         Layout.fillWidth: true
@@ -380,12 +239,13 @@ ColumnLayout {
                         color: settings.foreground
                         elide: Text.ElideRight
                         font.family: Theme.fontMono
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ShellButton {
-                        subtle: true
+                        iconName: "x"
                         text: qsTr("Stop watching")
+                        Accessible.name: qsTr("Stop watching %1").arg(repository.modelData)
                         onClicked: settings.unwatch(repository.modelData)
                     }
                 }
@@ -393,7 +253,7 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     id: addRepository
@@ -416,7 +276,7 @@ ColumnLayout {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Repeater {
                     model: settings.offered.filter(each => !settings.watched.some(watched => watched.toLowerCase() === each.toLowerCase()))
@@ -424,8 +284,8 @@ ColumnLayout {
                     delegate: ShellButton {
                         required property string modelData
 
-                        subtle: true
-                        text: qsTr("+ %1").arg(modelData)
+                        iconName: "plus"
+                        text: modelData
                         Accessible.name: qsTr("Watch %1").arg(modelData)
                         onClicked: settings.watch(modelData)
                     }
@@ -433,11 +293,12 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("When a review starts")
+        SettingsField {
+            title: qsTr("When a review starts")
 
-            Choice {
+            ShellChoice {
                 objectName: "codeReviewActivation"
+                Layout.fillWidth: true
                 options: [
                     { value: "automatic", label: qsTr("Every new pull request") },
                     { value: "selective", label: qsTr("Only when asked") }
@@ -450,17 +311,17 @@ ColumnLayout {
         ColumnLayout {
             Layout.fillWidth: true
             visible: settings.values.activation !== "automatic"
-            spacing: 16
+            spacing: Theme.space.lg
 
             Toggle {
                 key: "reviewRequested"
-                label: qsTr("Review when you are asked to review")
-                hint: qsTr("A review request to the signed-in account starts a review.")
+                title: qsTr("Review when you are asked to review")
+                description: qsTr("A review request to the signed-in account starts a review.")
             }
 
-            Field {
-                label: qsTr("Label that asks for a review")
-                hint: qsTr("Leave empty to turn off.")
+            SettingsField {
+                title: qsTr("Label that asks for a review")
+                description: qsTr("Leave empty to turn off.")
 
                 ShellTextField {
                     objectName: "codeReviewSetting:label"
@@ -472,9 +333,9 @@ ColumnLayout {
                 }
             }
 
-            Field {
-                label: qsTr("Comment that asks for a review")
-                hint: qsTr("A comment starting with this starts a review. Leave empty to turn off.")
+            SettingsField {
+                title: qsTr("Comment that asks for a review")
+                description: qsTr("A comment starting with this starts a review. Leave empty to turn off.")
 
                 ShellTextField {
                     objectName: "codeReviewSetting:command"
@@ -490,16 +351,16 @@ ColumnLayout {
         ColumnLayout {
             Layout.fillWidth: true
             visible: settings.values.activation === "automatic"
-            spacing: 16
+            spacing: Theme.space.lg
 
             Toggle {
                 key: "skipDrafts"
-                label: qsTr("Skip draft pull requests")
+                title: qsTr("Skip draft pull requests")
             }
 
-            Field {
-                label: qsTr("Ignored authors")
-                hint: qsTr("Logins, separated by commas.")
+            SettingsField {
+                title: qsTr("Ignored authors")
+                description: qsTr("Logins, separated by commas.")
 
                 Logins {
                     key: "ignoredAuthors"
@@ -508,9 +369,9 @@ ColumnLayout {
                 }
             }
 
-            Field {
-                label: qsTr("Largest change reviewed automatically")
-                hint: qsTr("Lines added and removed. 0 for no limit.")
+            SettingsField {
+                title: qsTr("Largest change reviewed automatically")
+                description: qsTr("Lines added and removed. 0 for no limit.")
 
                 Count {
                     key: "maxChangedLines"
@@ -522,13 +383,13 @@ ColumnLayout {
 
         Toggle {
             key: "reviewNewPushes"
-            label: qsTr("Review new pushes")
-            hint: qsTr("Review a pull request again when its head changes after a review.")
+            title: qsTr("Review new pushes")
+            description: qsTr("Review a pull request again when its head changes after a review.")
         }
 
-        Field {
-            label: qsTr("Trusted logins")
-            hint: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
+        SettingsField {
+            title: qsTr("Trusted logins")
+            description: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
 
             Logins {
                 key: "trustedLogins"
@@ -540,11 +401,11 @@ ColumnLayout {
         // Side by side where they fit, one under the other on a narrow screen.
         Flow {
             Layout.fillWidth: true
-            spacing: 24
+            spacing: Theme.space.xl
 
-            Field {
-                label: qsTr("Reviews per author a day")
-                hint: qsTr("Across your machines. 0 for no limit.")
+            SettingsField {
+                title: qsTr("Reviews per author a day")
+                description: qsTr("Across your machines. 0 for no limit.")
 
                 Count {
                     key: "reviewsPerAuthorPerDay"
@@ -553,9 +414,9 @@ ColumnLayout {
                 }
             }
 
-            Field {
-                label: qsTr("Reviews per repository a day")
-                hint: qsTr("Reviews you start yourself are never held back.")
+            SettingsField {
+                title: qsTr("Reviews per repository a day")
+                description: qsTr("Reviews you start yourself are never held back.")
 
                 Count {
                     key: "reviewsPerRepositoryPerDay"
@@ -565,15 +426,15 @@ ColumnLayout {
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("The agent")
         }
 
-        Field {
-            label: qsTr("Agent and model")
+        SettingsField {
+            title: qsTr("Agent and model")
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     objectName: "codeReviewSetting:provider"
@@ -612,36 +473,38 @@ ColumnLayout {
         Repeater {
             model: settings.modelEntry?.options ?? []
 
-            delegate: Field {
+            delegate: SettingsField {
                 id: option
 
                 required property var modelData
 
                 objectName: "codeReviewSetting:modelOption:" + modelData.id
-                label: modelData.label ?? modelData.id
+                title: modelData.label ?? modelData.id
 
-                Choice {
+                control: ShellSwitch {
+                    visible: option.modelData.type === "boolean"
+                    checked: (settings.values.modelOptions ?? {})[option.modelData.id] === true
+                    Accessible.name: option.title
+                    onToggled: settings.setFor("modelOptions", option.modelData.id, checked)
+                }
+
+                ShellChoice {
+                    Layout.fillWidth: true
                     visible: option.modelData.type !== "boolean"
                     options: [{ value: "", label: qsTr("Its default") }].concat((option.modelData.options ?? []).map(each => ({ value: each.id, label: each.label ?? each.id })))
                     value: (settings.values.modelOptions ?? {})[option.modelData.id] ?? ""
                     onPicked: value => settings.setFor("modelOptions", option.modelData.id, value === "" ? undefined : value)
                 }
-
-                Switch {
-                    visible: option.modelData.type === "boolean"
-                    checked: (settings.values.modelOptions ?? {})[option.modelData.id] === true
-                    Accessible.name: option.label
-                    onToggled: settings.setFor("modelOptions", option.modelData.id, checked)
-                }
             }
         }
 
-        Field {
-            label: qsTr("Access")
-            hint: qsTr("The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands.")
+        SettingsField {
+            title: qsTr("Access")
+            description: qsTr("The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands.")
 
-            Choice {
+            ShellChoice {
                 objectName: "codeReviewSetting:runtimeMode"
+                Layout.fillWidth: true
                 options: [
                     { value: "approval-required", label: qsTr("Ask before acting") },
                     { value: "auto-accept-edits", label: qsTr("Accept edits") },
@@ -655,17 +518,17 @@ ColumnLayout {
 
         Toggle {
             key: "sandboxEveryReview"
-            label: qsTr("Sandbox every review")
-            hint: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+            title: qsTr("Sandbox every review")
+            description: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
         }
 
         // Side by side where they fit, one under the other on a narrow screen.
         Flow {
             Layout.fillWidth: true
-            spacing: 24
+            spacing: Theme.space.xl
 
-            Field {
-                label: qsTr("Sandboxed review time limit (minutes)")
+            SettingsField {
+                title: qsTr("Sandboxed review time limit (minutes)")
 
                 Count {
                     key: "sandboxMinutes"
@@ -673,9 +536,9 @@ ColumnLayout {
                 }
             }
 
-            Field {
-                label: qsTr("Sandboxed review token budget")
-                hint: qsTr("0 for no limit.")
+            SettingsField {
+                title: qsTr("Sandboxed review token budget")
+                description: qsTr("0 for no limit.")
 
                 Count {
                     key: "sandboxTokens"
@@ -688,10 +551,10 @@ ColumnLayout {
         // Side by side where they fit, one under the other on a narrow screen.
         Flow {
             Layout.fillWidth: true
-            spacing: 24
+            spacing: Theme.space.xl
 
-            Field {
-                label: qsTr("Reviews at once")
+            SettingsField {
+                title: qsTr("Reviews at once")
 
                 Count {
                     key: "concurrency"
@@ -699,8 +562,8 @@ ColumnLayout {
                 }
             }
 
-            Field {
-                label: qsTr("Look for pull requests every (minutes)")
+            SettingsField {
+                title: qsTr("Look for pull requests every (minutes)")
 
                 Count {
                     key: "pollMinutes"
@@ -709,12 +572,13 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Review prompt")
-            hint: qsTr("{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}}, {{pr.body}} and {{repository}} are filled in. The description, failing checks, comments already on the pull request and your previous review of it are added after it, then how to report the findings.")
+        SettingsField {
+            title: qsTr("Review prompt")
+            description: qsTr("{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}}, {{pr.body}} and {{repository}} are filled in. The description, failing checks, comments already on the pull request and your previous review of it are added after it, then how to report the findings.")
 
-            Area {
+            ShellTextArea {
                 objectName: "codeReviewSetting:prompt"
+                Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(160, implicitHeight)
                 text: settings.values.prompt ?? ""
                 Accessible.name: qsTr("Review prompt")
@@ -724,7 +588,7 @@ ColumnLayout {
 
             ShellButton {
                 objectName: "codeReviewResetPrompt"
-                subtle: true
+                iconName: "undo-2"
                 enabled: !settings.saving
                 text: qsTr("Reset to the plugin's prompt")
                 onClicked: settings.resetPrompt()
@@ -733,41 +597,43 @@ ColumnLayout {
 
         Toggle {
             key: "readReviewMd"
-            label: qsTr("Follow REVIEW.md")
-            hint: qsTr("Add the REVIEW.md on the pull request's base branch to the prompt.")
+            title: qsTr("Follow REVIEW.md")
+            description: qsTr("Add the REVIEW.md on the pull request's base branch to the prompt.")
         }
 
         Repeater {
             model: settings.watched
 
-            delegate: Field {
+            delegate: SettingsField {
                 id: instructions
 
                 required property string modelData
 
-                label: qsTr("Instructions for %1").arg(modelData)
-                hint: qsTr("Added to the prompt for this repository.")
+                title: qsTr("Instructions for %1").arg(modelData)
+                description: qsTr("Added to the prompt for this repository.")
 
-                Area {
+                ShellTextArea {
+                    Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(64, implicitHeight)
                     text: (settings.values.instructions ?? {})[instructions.modelData] ?? ""
-                    Accessible.name: instructions.label
+                    Accessible.name: instructions.title
                     onTextChanged: if (activeFocus)
                         settings.setFor("instructions", instructions.modelData, text.trim().length > 0 ? text : undefined)
                 }
             }
         }
 
-        Heading {
+        SettingsHeading {
             text: qsTr("The findings")
         }
 
-        Field {
-            label: qsTr("Show reviews")
-            hint: qsTr("On the Reviews page only, review threads stay out of the thread list.")
+        SettingsField {
+            title: qsTr("Show reviews")
+            description: qsTr("On the Reviews page only, review threads stay out of the thread list.")
 
-            Choice {
+            ShellChoice {
                 objectName: "codeReviewSetting:display"
+                Layout.fillWidth: true
                 options: [
                     { value: "page", label: qsTr("On the Reviews page") },
                     { value: "threads", label: qsTr("As threads") },
@@ -778,11 +644,12 @@ ColumnLayout {
             }
         }
 
-        Field {
-            label: qsTr("Publishing")
+        SettingsField {
+            title: qsTr("Publishing")
 
-            Choice {
+            ShellChoice {
                 objectName: "codeReviewSetting:publishing"
+                Layout.fillWidth: true
                 options: settings.modes
                 value: settings.values.publishing
                 onPicked: value => settings.set("publishing", value)
@@ -792,14 +659,15 @@ ColumnLayout {
         Repeater {
             model: settings.watched
 
-            delegate: Field {
+            delegate: SettingsField {
                 id: publishing
 
                 required property string modelData
 
-                label: qsTr("Publishing for %1").arg(modelData)
+                title: qsTr("Publishing for %1").arg(modelData)
 
-                Choice {
+                ShellChoice {
+                    Layout.fillWidth: true
                     options: [{ value: "", label: qsTr("As above") }].concat(settings.modes)
                     value: (settings.values.publishingByRepository ?? {})[publishing.modelData] ?? ""
                     onPicked: value => settings.setFor("publishingByRepository", publishing.modelData, value === "" ? undefined : value)
@@ -809,8 +677,8 @@ ColumnLayout {
 
         Toggle {
             key: "verdictAsComment"
-            label: qsTr("Post verdicts as comments")
-            hint: qsTr("Post reviews as comments rather than approvals or change requests.")
+            title: qsTr("Post verdicts as comments")
+            description: qsTr("Post reviews as comments rather than approvals or change requests.")
         }
 
         Label {
@@ -820,12 +688,12 @@ ColumnLayout {
             text: qsTr("Not saved: %1").arg(settings.refusal)
             color: settings.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             Item {
                 Layout.fillWidth: true

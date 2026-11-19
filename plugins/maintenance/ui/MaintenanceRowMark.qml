@@ -1,9 +1,9 @@
 import QtQuick
-import HalC2.Shell
+import HalC2.Bricks
 
 // Beside a maintenance thread's row in the thread list: where its run is. Follows
 // the plugin's `threads` topic, which every row's mark shares.
-Rectangle {
+ShellBadge {
     id: mark
 
     property var plugin
@@ -11,17 +11,6 @@ Rectangle {
     property var threads: ({})
     readonly property var run: thread !== null ? (threads[thread.id] ?? null) : null
     readonly property string status: run?.status ?? ""
-    readonly property color tone: {
-        if (status === "failed")
-            return Theme.palette.color("error", "#ef4444");
-        if (status === "running" || status === "publishing")
-            return Theme.palette.color("info", "#3b82f6");
-        if (status === "waiting")
-            return Theme.palette.color("warning", "#f59e0b");
-        if (status === "published")
-            return Theme.palette.color("success", "#22c55e");
-        return Theme.palette.color("textMuted", "#a1a1aa");
-    }
     readonly property string label: {
         switch (status) {
         case "running":
@@ -57,23 +46,21 @@ Rectangle {
     }
 
     objectName: "maintenanceRowMark"
-    implicitWidth: text.implicitWidth + 10
-    implicitHeight: text.implicitHeight + 2
-    radius: height / 2
-    color: Qt.alpha(tone, 0.14)
-    border.color: Qt.alpha(tone, status === "waiting" ? 0.7 : 0.3)
+    text: mark.label
+    tone: {
+        if (status === "failed")
+            return "error";
+        if (status === "running" || status === "publishing")
+            return "info";
+        if (status === "waiting")
+            return "warning";
+        if (status === "published")
+            return "success";
+        return "neutral";
+    }
+    emphasised: status === "waiting"
     Accessible.role: Accessible.StaticText
     Accessible.name: qsTr("Maintenance: %1").arg(label)
     onThreadChanged: follow()
     Component.onCompleted: follow()
-
-    Text {
-        id: text
-
-        anchors.centerIn: parent
-        text: mark.label
-        color: mark.tone
-        font.pixelSize: Math.round(10 * Theme.fontScale)
-        font.weight: Font.Medium
-    }
 }
