@@ -39,7 +39,9 @@ Item {
 
     property bool applicationActive: Qt.application.state === Qt.ApplicationActive
     property int actorCount: 0
-    readonly property bool animating: visible && applicationActive && actorCount > 0
+    // Movers at work and desks waiting for one.
+    property int moves: 0
+    readonly property bool animating: visible && applicationActive && (actorCount > 0 || moves > 0)
     property bool walking: false
     // The office fits the view at zoom 1, by its width or its height,
     // whichever runs out first; each zoom button is a quarter more or less.
@@ -82,14 +84,18 @@ Item {
         zoom = Math.max(minScale, Math.min(maxScale, next)) / fitScale;
     }
 
-    // The office as drawn: its size in tiles, its furniture, the screens of its
-    // computers and its whiteboards. Rebuilt when the desks it needs change.
+    // The office as drawn: its size in tiles, its furniture, each desk and
+    // chair, the screens of its computers and its whiteboards. Built once; the
+    // movers bring desks in and take them out.
     property int worldCols: 0
     property int worldRows: 0
     property var props: []
+    property var units: []
     property var screens: []
     property var boards: []
     property int deskCount: 0
+    // How many times the floor has been painted.
+    property int floorPaints: 0
     property string hovered: ""
 
     // The simulation, mutated in place each tick; nothing binds to these.
@@ -98,9 +104,14 @@ Item {
     property var views: ({})
     property var overlays: ({})
     property var screenViews: ({})
+    property var unitViews: ({})
+    property var moverViews: ({})
     property var boardViews: ({})
     property var occupied: []
     property var claims: ({})
+    property var movers: ({})
+    property var jobs: []
+    property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
     property int arrivals: 0
@@ -500,8 +511,17 @@ Item {
         if (top === "dress" && !S)
             m(side ? 5 : 4, 15, side ? 7 : 8, 3, L.shirt);
 
-        // Arms and what the hands hold.
-        if (!side) {
+        // Arms and what the hands hold. A mover's hands are up, holding a desk
+        // over its head (see paintLoad()).
+        if (L.carry && !side) {
+            arm(1, 5, 6);
+            arm(13, 5, 6);
+            m(1, 4, 2, 1, skin);
+            m(13, 4, 2, 1, skin);
+        } else if (L.carry) {
+            sideArm(3, 5, 2, 7);
+            m(3, 4, 2, 1, skin);
+        } else if (!side) {
             const right = f === 6 || f === 7 || f === 8 || f === 9 || f === 10 || f === 11;
             const left = f === 13;
             if (f === 4 || f === 5) {
@@ -1216,6 +1236,44 @@ Item {
         }
     }
 
+    // A mover's sheet: standing and two walking frames, empty-handed and then
+    // carrying, in the four directions.
+    function paintMoverSheet(ctx, look) {
+        ctx.clearRect(0, 0, 108, 104);
+        const carrying = Object.assign({}, look, {
+            carry: true
+        });
+        for (const d of [0, 1, 3]) {
+            for (let f = 0; f < 6; f++) {
+                const parts = humanFrame(f < 3 ? look : carrying, f % 3, d);
+                paintCell(ctx, parts, f * 18, d * 26, false);
+                if (d === 1)
+                    paintCell(ctx, parts, f * 18, 52, true);
+            }
+        }
+    }
+
+    // The desk a mover carries: a monitor and a chair on it, legs down to the
+    // mover's hands.
+    function paintLoad(ctx, chair) {
+        ctx.clearRect(0, 0, 20, 14);
+        const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
+        const O = page.outline;
+        R(O, 2, 9, 4, 5);
+        R(O, 14, 9, 4, 5);
+        R("#7a5530", 3, 10, 2, 4);
+        R("#7a5530", 15, 10, 2, 4);
+        R(O, 0, 6, 20, 5);
+        R("#c99a64", 1, 7, 18, 2);
+        R("#8f6538", 1, 9, 18, 1);
+        R(O, 2, 0, 10, 7);
+        R("#2b2f39", 3, 1, 8, 5);
+        R("#141a24", 4, 2, 6, 3);
+        R(O, 13, 1, 6, 6);
+        R(chair, 14, 2, 4, 4);
+        R(shade(chair, 0.18), 14, 2, 4, 1);
+    }
+
     function paintCell(ctx, parts, ox, oy, mirror) {
         let style = null;
         const fill = (x, y, w, h, c) => {
@@ -1263,8 +1321,11 @@ Item {
     //
     // Rows 0–2 are the wall, row 3 the furniture along it, then groups of desks
     // ("pods") from row 6: a pod is chairs, two rows of desks, chairs. Teams (a
-    // thread and the workers under it) share pods of 4×2 desks; a bigger team gets
-    // its own. The break room is behind a wall with a door on the right.
+    // thread and the workers under it) share pods of 4×2 desks; a bigger team
+    // takes several. The office keeps one size, so adding a person never
+    // repaints it: movers carry desks in through the entrance at the bottom
+    // left and back out again. The break room is behind a wall with a door on
+    // the right.
 
     function teamsOf(ids, byId) {
         const rootOf = id => {
@@ -1289,46 +1350,55 @@ Item {
         return roots.map(root => teams[root]);
     }
 
-    function podsFor(teams) {
-        const pods = [];
+    // Seats the teams at the office's pods. A team keeps the pod it sat at
+    // while it still fits there, a team bigger than a pod takes as many as it
+    // needs, and small teams share. Whoever is left over when every desk is
+    // taken has none, and spends the time in the break room.
+    function seatTeams(teams) {
+        const w = page.world;
+        const size = w.pods[0].seats.length;
+        const members = w.pods.map(() => []);
+        const room = i => size - members[i].length;
+        const chunks = [];
         for (const team of teams) {
-            if (team.length > 8) {
-                for (let i = 0; i < team.length; i += 20) {
-                    const chunk = team.slice(i, i + 20);
-                    pods.push({
-                        cols: Math.max(4, Math.min(10, Math.ceil(chunk.length / 2))),
-                        members: chunk,
-                        shared: false
-                    });
-                }
-            } else {
-                let pod = pods.find(p => p.shared && p.members.length + team.length <= 8);
-                if (!pod) {
-                    pod = {
-                        cols: 4,
-                        members: [],
-                        shared: true
-                    };
-                    pods.push(pod);
-                }
-                pod.members = pod.members.concat(team);
-            }
+            for (let i = 0; i < team.length; i += size)
+                chunks.push(team.slice(i, i + size));
         }
-        return pods;
+        const fresh = [];
+        for (const chunk of chunks) {
+            const was = w.seatOf?.[chunk[0]]?.pod ?? -1;
+            if (was >= 0 && room(was) >= chunk.length)
+                members[was].push(...chunk);
+            else
+                fresh.push(chunk);
+        }
+        const spill = [];
+        for (const chunk of fresh) {
+            const pod = members.findIndex((_, i) => room(i) >= chunk.length);
+            if (pod >= 0)
+                members[pod].push(...chunk);
+            else
+                spill.push(...chunk);
+        }
+        for (const id of spill) {
+            const pod = members.findIndex((_, i) => room(i) > 0);
+            if (pod < 0)
+                break;
+            members[pod].push(id);
+        }
+        return members;
     }
 
-    function buildWorld(pods) {
-        const n = pods.length;
-        const perRow = n <= 2 ? Math.max(1, n) : n <= 6 ? 3 : n <= 12 ? 4 : 5;
-        const podRows = [];
-        for (let i = 0; i < n; i += perRow)
-            podRows.push(pods.slice(i, i + perRow));
-        const rowWidth = row => row.reduce((sum, pod) => sum + pod.cols, 0) + 2 * (row.length - 1);
-        const workW = Math.max(16, ...podRows.map(rowWidth));
+    // The office: six pods of 4×2 desks, three across and two down, the walls,
+    // the furniture along them and the break room. Every desk starts out
+    // carried away (see furnish()).
+    function buildWorld() {
+        const podCols = 4, across = 3, down = 2;
+        const workW = across * podCols + 2 * (across - 1);
         const xd = 3 + workW + 2;
         const bx = xd + 1;
         const cols = bx + 11;
-        const rows = Math.max(17, 6 + 6 * Math.max(1, podRows.length) + 1);
+        const rows = 6 + 6 * down + 1;
         const grid = new Array(cols * rows).fill(0);
         const at = (x, y) => y * cols + x;
         const block = (x, y, w, h) => {
@@ -1344,7 +1414,7 @@ Item {
         grid[at(xd, 5)] = 0;
         grid[at(xd, 6)] = 0;
 
-        const props = [], screens = [], boards = [], seats = [], spots = [];
+        const props = [], units = [], screens = [], boards = [], seats = [], spots = [];
         const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
             key: kind + ":" + x + ":" + y,
             kind: kind,
@@ -1356,62 +1426,80 @@ Item {
             seed: hash(kind + x + "," + y)
         }, extra ?? {}));
 
-        // Pods.
+        // Pods: a row of chairs, two rows of desks, a row of chairs. Each seat
+        // has its own desk and chair, which come and go together. A desk's
+        // place is kept for it while it is out, so the way around the pods
+        // never changes; a seat is stepped onto only by whoever is going there.
         const placed = [];
-        podRows.forEach((row, k) => {
+        for (let k = 0; k < down; k++) {
             const y0 = 6 + 6 * k;
-            let x = 3 + Math.floor((workW - rowWidth(row)) / 2);
-            for (const pod of row) {
+            for (let c = 0; c < across; c++) {
+                const x = 3 + c * (podCols + 2);
                 const index = placed.length;
                 const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
-                block(x, y0 + 1, pod.cols, 2);
                 const podSeats = [];
-                for (let i = 0; i < pod.cols; i++) {
-                    podSeats.push({
-                        x: x + i,
-                        y: y0,
-                        face: 0,
-                        offY: 5,
-                        pod: index
-                    });
-                    podSeats.push({
-                        x: x + i,
-                        y: y0 + 3,
-                        face: 3,
-                        offY: -3,
-                        pod: index
-                    });
-                    grid[at(x + i, y0)] = 2;
-                    grid[at(x + i, y0 + 3)] = 2;
-                    screens.push({
-                        key: index + ":" + i,
-                        seat: seats.length + podSeats.length - 1,
-                        x: (x + i) * 16 + 4,
-                        y: (y0 + 1) * 16 + 16,
-                        z: (y0 + 3) * 16 + 1
-                    });
+                for (let i = 0; i < podCols; i++) {
+                    for (const north of [true, false]) {
+                        const seat = {
+                            index: seats.length + podSeats.length,
+                            x: x + i,
+                            y: north ? y0 : y0 + 3,
+                            deskY: north ? y0 + 1 : y0 + 2,
+                            face: north ? 0 : 3,
+                            offY: north ? 5 : -3,
+                            pod: index,
+                            chair: chair,
+                            screen: north ? "" : index + ":" + i,
+                            state: "out",
+                            mover: ""
+                        };
+                        podSeats.push(seat);
+                        grid[at(seat.x, seat.deskY)] = 1;
+                        grid[at(seat.x, seat.y)] = 2;
+                        units.push({
+                            key: "desk:" + seat.index,
+                            kind: north ? "deskN" : "deskS",
+                            seat: seat.index,
+                            x: seat.x * 16,
+                            y: seat.deskY * 16,
+                            w: 16,
+                            h: 16,
+                            z: (y0 + 3) * 16,
+                            seed: hash("desk" + seat.index)
+                        });
+                        units.push({
+                            key: "chair:" + seat.index,
+                            kind: north ? "chairsN" : "chairsS",
+                            seat: seat.index,
+                            x: seat.x * 16,
+                            y: seat.y * 16,
+                            w: 16,
+                            h: 16,
+                            z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
+                            color: chair,
+                            seed: hash("chair" + seat.index)
+                        });
+                        if (!north)
+                            screens.push({
+                                key: seat.screen,
+                                seat: seat.index,
+                                x: seat.x * 16 + 4,
+                                y: seat.deskY * 16 + 1,
+                                z: (y0 + 3) * 16 + 1
+                            });
+                    }
                 }
-                prop("chairsN", x * 16, y0 * 16, pod.cols * 16, 16, (y0 + 1) * 16 - 2, {
-                    color: chair
-                });
-                prop("desks", x * 16, (y0 + 1) * 16, pod.cols * 16, 32, (y0 + 3) * 16, {
-                    cols: pod.cols
-                });
-                prop("chairsS", x * 16, (y0 + 3) * 16, pod.cols * 16, 16, (y0 + 4) * 16 + 1, {
-                    color: chair
-                });
                 placed.push({
                     x: x,
                     y: y0,
-                    cols: pod.cols,
-                    members: pod.members,
+                    cols: podCols,
+                    members: [],
                     seats: podSeats
                 });
                 for (const seat of podSeats)
                     seats.push(seat);
-                x += pod.cols + 2;
             }
-        });
+        }
 
         // Along the top wall: bookshelves, whiteboards and plants.
         const sequence = ["plant", "shelf", "board", "shelf", "board", "plant", "shelf", "board"];
@@ -1592,13 +1680,14 @@ Item {
             bx: bx,
             pods: placed,
             seats: seats,
+            seatOf: {},
             spots: spots,
             props: props,
+            units: units,
             screens: screens,
             boards: boards,
             door: [xd, 5],
-            entrance: [2, rows - 2],
-            signature: JSON.stringify([cols, rows, placed.map(p => [p.x, p.y, p.cols])])
+            entrance: [2, rows - 2]
         };
     }
 
@@ -1611,14 +1700,26 @@ Item {
 
     // ── Who is in the office ────────────────────────────────────────────────
 
+    // Another machine's office: everyone leaves at once and its people come
+    // in where they belong, at desks that are simply there. The room stays.
     function reset() {
         for (const id of Object.keys(page.actors))
             removeActor(id);
+        for (const id of Object.keys(page.movers))
+            removeMover(id);
+        page.jobs = [];
+        if (page.world) {
+            page.world.seatOf = {};
+            for (const seat of page.world.seats) {
+                seat.mover = "";
+                setDesk(seat, false);
+            }
+        }
+        countMoves();
         page.seen = {};
         page.arrival = {};
         page.claims = {};
         page.primed = false;
-        page.world = null;
         take(page.office);
     }
 
@@ -1631,6 +1732,8 @@ Item {
     }
 
     function sync(people) {
+        if (!page.world)
+            build();
         const byId = {};
         for (const person of people)
             byId[person.id] = person;
@@ -1643,7 +1746,7 @@ Item {
                 page.arrival[person.id] = page.arrivals++;
         }
         const order = people.map(p => p.id).sort((a, b) => page.arrival[a] - page.arrival[b]);
-        layout(podsFor(teamsOf(order, byId)));
+        layout(teamsOf(order, byId));
         for (const person of people) {
             let actor = page.actors[person.id];
             if (!actor) {
@@ -1666,48 +1769,260 @@ Item {
         }
     }
 
-    function layout(pods) {
-        const next = buildWorld(pods);
-        const changed = !page.world || page.world.signature !== next.signature;
-        if (changed) {
-            for (const id of Object.keys(page.claims))
-                delete page.claims[id];
-            page.world = next;
-            page.occupied = new Array(next.cols * next.rows).fill("");
-            page.worldCols = next.cols;
-            page.worldRows = next.rows;
-            page.props = next.props;
-            page.screens = next.screens;
-            page.boards = next.boards;
-            page.deskCount = next.seats.length;
-            floor.requestPaint();
-            for (const id of Object.keys(page.actors)) {
-                const actor = page.actors[id];
-                actor.goal = null;
-                actor.path = [];
-                actor.next = -1;
-                actor.claim = -1;
-                if (actor.tx >= 0)
-                    place(actor, actor.tx, actor.ty, true);
-            }
-        }
-        // Seats by team, in order: the lead first.
-        page.world.seatOf = {};
-        next.pods.forEach((pod, i) => {
-            const seats = page.world.pods[i].seats;
-            pod.members.forEach((id, k) => {
-                if (k < seats.length)
-                    page.world.seatOf[id] = seats[k];
-            });
+    function build() {
+        const w = buildWorld();
+        page.world = w;
+        page.occupied = new Array(w.cols * w.rows).fill("");
+        page.worldCols = w.cols;
+        page.worldRows = w.rows;
+        page.props = w.props;
+        page.units = w.units;
+        page.screens = w.screens;
+        page.boards = w.boards;
+        page.deskCount = 0;
+        floor.requestPaint();
+    }
+
+    function layout(teams) {
+        const w = page.world;
+        const seatOf = {};
+        seatTeams(teams).forEach((ids, i) => {
+            w.pods[i].members = ids;
+            ids.forEach((id, k) => seatOf[id] = w.pods[i].seats[k]);
         });
-        // Seats move between people even when the floor stays the same; whoever
-        // was headed for a desk that is no longer theirs plans again.
+        w.seatOf = seatOf;
+        furnish();
+        // Seats move between people as people come and go; whoever was headed
+        // for a desk, or waiting for one, that is no longer theirs plans again.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
-            const seat = page.world.seatOf[id];
-            if (actor.goal?.kind === "desk" && (!seat || seat.x !== actor.goal.x || seat.y !== actor.goal.y))
+            const goal = actor.goal;
+            if (goal?.kind !== "desk" && goal?.kind !== "wait")
+                continue;
+            const seat = seatOf[id];
+            if (!seat || seat.index !== goal.desk || (goal.kind === "wait") !== (seat.state !== "in"))
                 actor.goal = null;
         }
+    }
+
+    // ── Desks and the movers who carry them ─────────────────────────────────
+
+    // Brings in the desks people have been given and takes out the ones nobody
+    // has. Before the office is first shown the desks are simply there.
+    function furnish() {
+        const w = page.world;
+        const needed = {};
+        for (const seat of Object.values(w.seatOf))
+            needed[seat.index] = true;
+        for (const seat of w.seats) {
+            const need = !!needed[seat.index];
+            if (!page.primed) {
+                setDesk(seat, need);
+            } else if (need && seat.state === "out") {
+                seat.state = "coming";
+                page.jobs.push(seat.index);
+            } else if (need && seat.state === "leaving") {
+                seat.state = "in";
+                callOff(seat);
+            } else if (!need && seat.state === "in") {
+                seat.state = "leaving";
+                page.jobs.push(seat.index);
+            } else if (!need && seat.state === "coming") {
+                // A mover already carrying it takes it back out.
+                seat.state = "out";
+                callOff(seat);
+            }
+        }
+        countMoves();
+        if (page.jobs.length)
+            page.walking = true;
+    }
+
+    // A move that is no longer wanted: not started, or its mover heads out.
+    function callOff(seat) {
+        page.jobs = page.jobs.filter(i => i !== seat.index);
+        const mover = page.movers[seat.mover];
+        seat.mover = "";
+        if (mover) {
+            mover.job = -1;
+            leave(mover);
+        }
+    }
+
+    // Sets a desk down at its seat or takes it away; its owner, if waiting for
+    // it, sits down.
+    function setDesk(seat, on) {
+        const w = page.world;
+        const was = deskShown(seat);
+        seat.state = on ? "in" : "out";
+        if (on !== was)
+            page.deskCount += on ? 1 : -1;
+        showDesk(seat);
+        if (!on)
+            return;
+        const owner = Object.keys(w.seatOf).find(id => w.seatOf[id] === seat);
+        const actor = owner ? page.actors[owner] : null;
+        if (actor && actor.goal?.kind === "wait")
+            decide(actor, true);
+    }
+
+    function deskShown(seat) {
+        return seat.state === "in" || seat.state === "leaving";
+    }
+
+    function showDesk(seat) {
+        const shown = deskShown(seat);
+        for (const key of ["desk:" + seat.index, "chair:" + seat.index]) {
+            const view = page.unitViews[key];
+            if (view)
+                view.visible = shown;
+        }
+        const screen = seat.screen ? page.screenViews[seat.screen] : null;
+        if (screen)
+            screen.visible = shown;
+    }
+
+    function everyone() {
+        return Object.values(page.actors).concat(Object.values(page.movers));
+    }
+
+    function countMoves() {
+        page.moves = page.jobs.length + Object.keys(page.movers).length;
+    }
+
+    // Someone to carry a desk walks in when the entrance is clear; four work
+    // at once.
+    function hire() {
+        const w = page.world;
+        const e = w.entrance;
+        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || page.occupied[e[1] * w.cols + e[0]])
+            return;
+        const seat = w.seats[page.jobs.shift()];
+        const id = "mover:" + page.moversHired++;
+        const mover = newActor({
+            id: id
+        });
+        mover.look = moverLook(id);
+        mover.job = seat.index;
+        mover.carrying = seat.state === "coming";
+        mover.chair = seat.chair;
+        seat.mover = id;
+        page.movers[id] = mover;
+        place(mover, e[0], e[1], false);
+        mover.goal = {
+            x: seat.x,
+            y: seat.y,
+            face: seat.face,
+            offY: 0,
+            pose: "stand",
+            kind: "move"
+        };
+        route(mover, false);
+        moverModel.append({
+            moverId: id
+        });
+        countMoves();
+    }
+
+    // A mover walks to the desk's seat, waits for the desk's place to be clear,
+    // sets the desk down or picks it up, and walks out again.
+    function stepMover(mover, dt) {
+        const w = page.world;
+        const seat = mover.job >= 0 ? w.seats[mover.job] : null;
+        const there = mover.goal && mover.tx === mover.goal.x && mover.ty === mover.goal.y && mover.next < 0;
+        if (there && !seat) {
+            removeMover(mover.id);
+            return false;
+        }
+        if (there) {
+            mover.path = [];
+            mover.dir = seat.face;
+            if (seat.state === "coming") {
+                mover.carrying = false;
+                finish(mover, seat);
+                setDesk(seat, true);
+            } else {
+                setDesk(seat, false);
+                mover.carrying = true;
+                finish(mover, seat);
+            }
+        } else if (mover.next < 0 && mover.path.length === 0 && page.ticks % 8 === 0) {
+            route(mover, true);
+        }
+        const moving = step(mover, dt);
+        mover.frame = mover.next >= 0 ? [1, 0, 2, 0][Math.floor(mover.dist / 5) % 4] : 0;
+        renderMover(mover);
+        return moving || mover.path.length > 0;
+    }
+
+    function finish(mover, seat) {
+        seat.mover = "";
+        mover.job = -1;
+        leave(mover);
+    }
+
+    function leave(mover) {
+        const e = page.world.entrance;
+        mover.goal = {
+            x: e[0],
+            y: e[1],
+            face: 0,
+            offY: 0,
+            pose: "stand",
+            kind: "leave"
+        };
+        route(mover, false);
+    }
+
+    function removeMover(id) {
+        const mover = page.movers[id];
+        if (!mover)
+            return;
+        const w = page.world;
+        for (const i of [mover.ty * w.cols + mover.tx, mover.next]) {
+            if (i >= 0 && page.occupied[i] === id)
+                page.occupied[i] = "";
+        }
+        if (mover.job >= 0 && w.seats[mover.job].mover === id)
+            w.seats[mover.job].mover = "";
+        delete page.movers[id];
+        for (let i = 0; i < moverModel.count; i++) {
+            if (moverModel.get(i).moverId === id) {
+                moverModel.remove(i);
+                break;
+            }
+        }
+        countMoves();
+    }
+
+    function renderMover(mover) {
+        const v = page.moverViews[mover.id];
+        if (!v)
+            return;
+        v.x = mover.px;
+        v.y = mover.py - 8;
+        v.z = mover.py + 16;
+        v.frame = mover.frame;
+        v.dir = mover.dir;
+        v.carrying = mover.carrying;
+    }
+
+    // Movers wear the moving company's orange and its navy cap.
+    function moverLook(id) {
+        return Object.assign(lookFor({
+            id: id,
+            parentId: null
+        }), {
+            top: "tee",
+            shirt: "#d9822b",
+            accent: "#2f4a6b",
+            pants: "#2f4a6b",
+            shoes: "#3a2a20",
+            hat: "cap",
+            headphones: false,
+            bow: false,
+            lanyard: false
+        });
     }
 
     function newActor(person) {
@@ -1852,6 +2167,8 @@ Item {
         const seat = page.world.seatOf[actor.id];
         if (!seat)
             return breakGoal(actor, true);
+        if (seat.state !== "in")
+            return waitGoal(actor, seat);
         release(actor);
         return {
             x: seat.x,
@@ -1860,8 +2177,39 @@ Item {
             offY: pose === "ask" ? (seat.face === 0 ? 2 : 0) : seat.offY,
             pose: pose,
             kind: "desk",
-            seat: true
+            seat: true,
+            desk: seat.index
         };
+    }
+
+    // Beside the pod, out of the way of its seats, while the desk is carried in.
+    function waitGoal(actor, seat) {
+        const w = page.world;
+        const pod = w.pods[seat.pod];
+        const options = [];
+        for (const y of [pod.y + 1, pod.y + 2]) {
+            for (const x of [pod.x - 1, pod.x + pod.cols, pod.x - 2, pod.x + pod.cols + 1]) {
+                if (walkable(x, y) && free({
+                    x: x,
+                    y: y
+                }, actor))
+                    options.push([x, y]);
+            }
+        }
+        const far = ([x, y]) => Math.abs(x - seat.x) + Math.abs(y - seat.y);
+        options.sort((a, b) => far(a) - far(b));
+        const spot = options[0] ?? nearestFree(pod.x - 1, pod.y + 1, actor.id);
+        const goal = {
+            x: spot[0],
+            y: spot[1],
+            face: spot[0] < pod.x ? 2 : 1,
+            offY: 0,
+            pose: "stand",
+            kind: "wait",
+            desk: seat.index
+        };
+        claim(actor, goal);
+        return goal;
     }
 
     function spotGoal(actor, kind, pose) {
@@ -2250,13 +2598,18 @@ Item {
             pose(actor);
             render(actor);
         }
+        hire();
+        for (const id of Object.keys(page.movers)) {
+            if (stepMover(page.movers[id], dt))
+                moving = true;
+        }
         if (page.ticks % 6 === 0)
             updateScreens();
-        page.walking = moving;
+        page.walking = moving || page.jobs.length > 0;
     }
 
     function updateWalking() {
-        page.walking = Object.values(page.actors).some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
+        page.walking = page.jobs.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
     // Moves a person along its path, two pixels a tick, holding the tile it
@@ -2417,6 +2770,7 @@ Item {
             if (!view)
                 continue;
             const seat = page.world.seats[screen.seat];
+            view.visible = deskShown(seat);
             const owner = page.occupied[seat.y * page.world.cols + seat.x];
             const actor = owner ? page.actors[owner] : null;
             let mode = "off";
@@ -2611,60 +2965,47 @@ Item {
         const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
         const O = page.outline;
         switch (p.kind) {
-        case "desks":
+        case "deskN":
+            // A north seat's desk: its keyboard by the chair, the back of its
+            // monitor and the low divider to the desk across.
+            R(O, 0, 0, 16, 16);
+            R("#c99a64", 1, 1, 14, 11);
+            R("#ddb27c", 1, 1, 14, 1);
+            R("#6f8584", 1, 12, 14, 3);
+            R("#8aa09f", 1, 12, 14, 1);
+            R("#d7dbe2", 4, 1, 8, 2);
+            R("#b9bec8", 4, 2, 8, 1);
+            R(O, 3, 3, 10, 9);
+            R("#3b404d", 4, 4, 8, 7);
+            R("#4b5160", 4, 4, 8, 1);
+            if (r() < 0.3) {
+                R(O, 13, 4, 3, 4);
+                R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
+            }
+            break;
+        case "deskS":
             {
-                const W = p.w;
-                R("rgba(0,0,0,0.25)", 1, 30, W - 2, 2);
-                R(O, 0, 0, W, 30);
-                R("#c99a64", 1, 1, W - 2, 25);
-                R("#ddb27c", 1, 1, W - 2, 1);
-                R("#8f6538", 1, 26, W - 2, 3);
-                R("#7a5530", 1, 28, W - 2, 1);
-                R("#b88a55", 1, 13, W - 2, 1);
-                for (let i = 1; i < p.cols; i++) {
-                    R("rgba(0,0,0,0.12)", i * 16, 1, 1, 25);
-                    R("#7a5530", i * 16, 26, 1, 3);
-                }
-                // The low divider between the two rows.
-                R("#6f8584", 1, 12, W - 2, 3);
-                R("#8aa09f", 1, 12, W - 2, 1);
-                for (let i = 0; i < p.cols; i++) {
-                    const x = i * 16;
-                    // North: a monitor's back and a keyboard by the chair.
-                    R(O, x + 3, 3, 10, 9);
-                    R("#3b404d", x + 4, 4, 8, 7);
-                    R("#4b5160", x + 4, 4, 8, 1);
-                    R("#2b2f39", x + 7, 10, 2, 2);
-                    R("#d7dbe2", x + 4, 1, 8, 2);
-                    R("#b9bec8", x + 4, 2, 8, 1);
-                    // South: a monitor's front, a keyboard and a mouse.
-                    R(O, x + 2, 14, 12, 10);
-                    R("#2b2f39", x + 3, 15, 10, 8);
-                    R("#141a24", x + 4, 16, 8, 6);
-                    R("#2b2f39", x + 7, 23, 2, 2);
-                    R("#5d6372", x + 6, 24, 4, 1);
-                    R(O, x + 3, 25, 9, 1);
-                    R("#e3e6ec", x + 3, 24, 8, 2);
-                    R("#b9bec8", x + 4, 25, 6, 1);
-                    R("#e3e6ec", x + 12, 24, 2, 2);
-                    // Something on each desk.
-                    const thing = r();
-                    if (thing < 0.25) {
-                        R(O, x + 0, 19, 4, 5);
-                        R(pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), x + 1, 20, 2, 3);
-                        R("#6b4226", x + 1, 20, 2, 1);
-                    } else if (thing < 0.45) {
-                        R("#7a4a2a", x + 13, 18, 3, 3);
-                        R("#4fbf85", x + 12, 15, 5, 3);
-                        R("#3a9a68", x + 13, 14, 3, 2);
-                    } else if (thing < 0.6) {
-                        R("#f6f3ea", x + 12, 17, 4, 5);
-                        R("#d9d3c4", x + 12, 19, 4, 1);
-                    }
-                    if (r() < 0.3) {
-                        R(O, x + 13, 4, 3, 4);
-                        R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), x + 13, 5, 2, 2);
-                    }
+                // A south seat's desk: the front of its monitor (its screen
+                // is drawn over it), a keyboard and a mouse.
+                R("rgba(0,0,0,0.25)", 1, 14, 14, 2);
+                R(O, 0, 0, 16, 14);
+                R("#c99a64", 1, 1, 14, 10);
+                R("#8f6538", 1, 11, 14, 2);
+                R("#7a5530", 1, 12, 14, 1);
+                R(O, 2, 0, 12, 9);
+                R("#2b2f39", 3, 0, 10, 8);
+                R("#141a24", 4, 1, 8, 6);
+                R("#5d6372", 6, 9, 4, 1);
+                R("#e3e6ec", 3, 10, 8, 1);
+                R("#e3e6ec", 12, 10, 2, 1);
+                const thing = r();
+                if (thing < 0.25) {
+                    R(O, 0, 3, 3, 5);
+                    R(pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), 1, 4, 1, 3);
+                } else if (thing < 0.45) {
+                    R("#3a9a68", 13, 2, 3, 2);
+                    R("#4fbf85", 13, 3, 3, 3);
+                    R("#7a4a2a", 14, 6, 2, 2);
                 }
                 break;
             }
@@ -2970,6 +3311,10 @@ Item {
         id: actorModel
     }
 
+    ListModel {
+        id: moverModel
+    }
+
     Timer {
         interval: page.walking ? 40 : 200
         repeat: true
@@ -3091,7 +3436,10 @@ Item {
                             height: Math.max(1, page.worldRows * 16)
                             smooth: false
                             antialiasing: false
-                            onPaint: page.paintFloor(getContext("2d"))
+                            onPaint: {
+                                page.floorPaints++;
+                                page.paintFloor(getContext("2d"));
+                            }
                         }
 
                         Repeater {
@@ -3107,6 +3455,34 @@ Item {
                                 height: modelData.h
                                 smooth: false
                                 antialiasing: false
+                                onPaint: page.paintProp(getContext("2d"), modelData)
+                            }
+                        }
+
+                        // Each seat's desk and chair, shown while it is in the office.
+                        Repeater {
+                            model: page.units
+
+                            delegate: Canvas {
+                                id: unit
+
+                                required property var modelData
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
+                                smooth: false
+                                antialiasing: false
+                                Component.onCompleted: {
+                                    page.unitViews[modelData.key] = unit;
+                                    visible = page.deskShown(page.world.seats[modelData.seat]);
+                                }
+                                Component.onDestruction: {
+                                    if (page.unitViews[modelData.key] === unit)
+                                        delete page.unitViews[modelData.key];
+                                }
                                 onPaint: page.paintProp(getContext("2d"), modelData)
                             }
                         }
@@ -3130,7 +3506,10 @@ Item {
                                 width: 8
                                 height: 6
                                 color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                                Component.onCompleted: page.screenViews[modelData.key] = screen
+                                Component.onCompleted: {
+                                    page.screenViews[modelData.key] = screen;
+                                    visible = page.deskShown(page.world.seats[modelData.seat]);
+                                }
                                 Component.onDestruction: {
                                     if (page.screenViews[modelData.key] === screen)
                                         delete page.screenViews[modelData.key];
@@ -3211,6 +3590,64 @@ Item {
                                         border.color: modelData[4]
                                         visible: width > 0
                                     }
+                                }
+                            }
+                        }
+
+                        // The movers, and the desks they carry.
+                        Repeater {
+                            model: moverModel
+
+                            delegate: Item {
+                                id: mover
+
+                                required property string moverId
+                                property int frame: 0
+                                property int dir: 0
+                                property bool carrying: false
+                                readonly property var who: page.movers[moverId] ?? null
+
+                                objectName: "officeMover:" + moverId
+                                width: 16
+                                height: 24
+                                Component.onCompleted: {
+                                    page.moverViews[moverId] = mover;
+                                    if (who)
+                                        page.renderMover(who);
+                                }
+                                Component.onDestruction: {
+                                    if (page.moverViews[moverId] === mover)
+                                        delete page.moverViews[moverId];
+                                }
+
+                                Item {
+                                    width: 16
+                                    height: 24
+                                    clip: true
+
+                                    Canvas {
+                                        x: -(mover.frame + (mover.carrying ? 3 : 0)) * 18
+                                        y: -mover.dir * 26
+                                        width: 108
+                                        height: 104
+                                        smooth: false
+                                        antialiasing: false
+                                        onPaint: {
+                                            if (mover.who)
+                                                page.paintMoverSheet(getContext("2d"), mover.who.look);
+                                        }
+                                    }
+                                }
+
+                                Canvas {
+                                    visible: mover.carrying
+                                    x: -2
+                                    y: -10
+                                    width: 20
+                                    height: 14
+                                    smooth: false
+                                    antialiasing: false
+                                    onPaint: page.paintLoad(getContext("2d"), mover.who?.chair ?? "#3d4a63")
                                 }
                             }
                         }

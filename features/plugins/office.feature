@@ -1,7 +1,7 @@
 # Sources:
 #   plugins/office/plugin.json (permissions, settings, the page)
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, walking, talking)
+#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md
 #
@@ -211,10 +211,42 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office grows with the people in it
+    Scenario: The office keeps its size as people come and go
       Given the office has 4 threads
-      When it has 20 threads
-      Then the office has a desk for each of them
+      When it has 50 threads
+      Then the office is the same size, with room for 48 desks
+      And 48 of them have a desk and the other 2 take a break in the break room
+      When it has 2 threads
+      Then the office is the same size
+      And nothing in it is drawn again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The people there when the office opens are already at their desks
+      Given the office has 4 threads working, typing
+      When the office page opens
+      Then each person sits at a desk that is already there
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry in the desk of a new worker, who walks in and waits for it
+      Given the office has 4 threads
+      When it has 5 threads
+      Then the new person walks in through the door
+      And a mover walks in carrying a desk, a chair and a computer to the new person's place
+      And the new person waits beside the desks until the mover sets them down
+      And then sits at the new desk, and the mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry out the desks nobody sits at
+      Given the office has threads "A" and "B", each with 5 workers
+      When "B" and its workers leave the office
+      Then movers walk in, pick up their desks, carry them out through the door and leave
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Nobody walks through a mover or the desk it carries
+      Given the office has 4 working threads
+      When it has 16 working threads
+      Then several movers carry desks in at once
+      And no person, mover or desk being carried overlaps another
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown

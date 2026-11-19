@@ -25,6 +25,9 @@ the machine at the top. **+** and **−** zoom.
   person to open the thread and answer. A red mark means its last turn failed.
 - When one agent hands work to another or sends it a message, the two walk up
   to each other and the message shows in a speech bubble.
+- New threads walk in through the door, and movers carry their desks in. Desks
+  nobody uses are carried back out. The office has 48 desks; past that,
+  threads without a desk wait in the break room.
 
 Hover a person, or move to it with Tab, for its thread, project, agent and what
 it is doing; click it or press Return to open the thread.

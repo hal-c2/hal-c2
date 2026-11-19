@@ -131,7 +131,8 @@ Item {
         // The tiles each person held when the floor was last checked.
         property var stood: ({})
 
-        // Nobody stands on a wall or furniture or off the floor, a seat is only
+        // Nobody, people or movers, stands on a wall or furniture or off the
+        // floor, a seat is only
         // stepped onto as where a person is going (a step already begun ends
         // there, and the person leaves again), a step goes
         // to a tile next to the person, each person holds the tiles it stands
@@ -140,8 +141,9 @@ Item {
             const w = page.world;
             const held = {};
             const stood = {};
-            for (const id of Object.keys(page.actors)) {
-                const a = page.actors[id];
+            const everyone = Object.assign({}, page.actors, page.movers);
+            for (const id of Object.keys(everyone)) {
+                const a = everyone[id];
                 verify(a.tx >= 0 && a.ty >= 0 && a.tx < w.cols && a.ty < w.rows, id + " is off the floor at " + a.tx + "," + a.ty);
                 const here = a.ty * w.cols + a.tx;
                 const tiles = [here];
@@ -259,11 +261,12 @@ Item {
 
         function test_desks_that_change_hands_are_walked_to() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const signature = page.world.signature;
+            const world = page.world;
             const before = page.world.seatOf["b"];
             // A leaves and C comes in: B takes A's desk and C takes B's.
             plugin.publish([person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
-            compare(page.world.signature, signature, "the same desks");
+            verify(page.world === world, "the same office");
+            compare(page.moves, 0, "nobody carries a desk");
             verify(page.world.seatOf["b"] !== before, "B was given another desk");
             runUntil(() => arrived(actor("b")) && arrived(actor("c")), 1500, "both reach their desks");
             for (const id of ["b", "c"]) {
@@ -272,24 +275,25 @@ Item {
             }
         }
 
-        function test_people_stay_on_the_floor_when_the_office_shrinks() {
-            const a = [person("a", "A", "working", "typing")].concat(many(19, "aw", "working", "typing", "a"));
-            const b = [person("b", "B", "working", "typing")].concat(many(19, "bw", "working", "typing", "b"));
-            plugin.publish(a.concat(b));
-            const resting = a.map(p => person(p.id, p.title, "waiting", null, p.parentId));
-            const byId = {};
-            for (const p of resting)
-                byId[p.id] = p;
-            const narrow = page.buildWorld(page.podsFor(page.teamsOf(resting.map(p => p.id), byId))).cols;
-            verify(narrow < page.world.cols, "one team needs a narrower office");
-            plugin.publish(resting.concat(b));
-            // Someone in the break room stands past where the narrower office
-            // ends, by more than a tile so its old place there wraps onto floor.
-            runUntil(() => resting.some(p => actor(p.id).tx > narrow), 3000, "a person reaches the far side of the break room");
-            plugin.publish(resting);
-            compare(page.world.cols, narrow);
+        // The office holds 48 desks whoever is in it; anyone past that takes
+        // a break.
+        function test_the_office_keeps_its_size_as_people_come_and_go() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            const cols = page.worldCols, rows = page.worldRows;
+            const world = page.world;
+            plugin.publish(many(50, "t", "working", "typing"));
+            compare([page.worldCols, page.worldRows], [cols, rows]);
+            verify(page.world === world, "the same office");
+            compare(Object.keys(page.world.seatOf).length, 48);
+            compare(page.world.seats.length, 48);
+            for (const id of ["t48", "t49"]) {
+                verify(page.world.seatOf[id] === undefined, id + " has no desk");
+                verify(actor(id).goal && actor(id).goal.x > page.world.xd, id + " takes a break");
+            }
+            walk(100);
+            plugin.publish(many(2, "t", "working", "typing"));
+            compare([page.worldCols, page.worldRows], [cols, rows]);
             checkFloor();
-            walk(50);
         }
 
         function test_a_break_lasts_from_when_the_person_gets_there() {
@@ -613,15 +617,90 @@ Item {
             compare(plugin.opened, ["local/ask"]);
         }
 
-        function test_the_office_grows_with_the_people_in_it() {
+        function test_the_first_people_sit_at_desks_already_there() {
             plugin.publish(many(4, "t", "working", "typing"));
-            const small = page.deskCount;
-            verify(small >= 4);
-            plugin.publish(many(20, "t", "working", "typing"));
-            verify(page.deskCount >= 20, "a desk for each of 20 threads, has " + page.deskCount);
-            for (let i = 0; i < 20; i++)
-                verify(page.world.seatOf["t" + i] !== undefined, "t" + i + " has a desk");
+            compare(page.deskCount, 4);
+            compare(page.moves, 0, "nobody carries a desk");
+            for (let i = 0; i < 4; i++) {
+                const seat = page.world.seatOf["t" + i];
+                compare([actor("t" + i).tx, actor("t" + i).ty], [seat.x, seat.y], "t" + i + " is at its desk");
+            }
+        }
+
+        // A worker who comes in walks in through the door and waits, and a
+        // mover carries its desk in before it sits down.
+        function test_a_desk_is_carried_in_before_its_worker_sits() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"));
+            const seat = page.world.seatOf["t4"];
+            compare(seat.state, "coming");
+            compare([actor("t4").tx, actor("t4").ty], page.world.entrance, "t4 walks in through the door");
+            compare(page.deskCount, 4);
+            let carried = false;
+            runUntil(() => {
+                carried = carried || Object.values(page.movers).some(m => m.carrying);
+                if (seat.state !== "in")
+                    verify(actor("t4").tx !== seat.x || actor("t4").ty !== seat.y, "t4 does not sit before its desk is there");
+                return seat.state === "in";
+            }, 1500, "the desk is set down");
+            verify(carried, "a mover carried it");
+            compare(page.deskCount, 5);
+            runUntil(() => arrived(actor("t4")), 1500, "t4 reaches its desk");
+            compare([actor("t4").tx, actor("t4").ty], [seat.x, seat.y]);
+            runUntil(() => page.moves === 0, 1500, "the mover leaves");
+            compare(Object.keys(page.movers).length, 0);
+        }
+
+        // When a team leaves, movers carry its desks out and leave.
+        function test_a_desk_is_carried_out_after_its_pod_empties() {
+            const a = [person("a", "A", "working", "typing")].concat(many(5, "aw", "working", "typing", "a"));
+            const b = [person("b", "B", "working", "typing")].concat(many(5, "bw", "working", "typing", "b"));
+            plugin.publish(a.concat(b));
+            compare(page.deskCount, 12);
+            const pod = page.world.pods.find(p => p.members.includes("b"));
+            const used = b.map(p => page.world.seatOf[p.id]);
+            plugin.publish(a);
+            compare(pod.members.length, 0);
+            for (const seat of used)
+                compare(seat.state, "leaving");
+            runUntil(() => used.every(seat => seat.state === "out"), 3000, "the desks are picked up");
+            compare(page.deskCount, 6);
+            runUntil(() => page.moves === 0, 1500, "the movers leave");
+        }
+
+        // People walk around movers and the desks they carry, as around anyone.
+        function test_nobody_walks_through_a_carried_desk() {
+            plugin.publish(many(4, "t", "working", "typing"));
             checkFloor();
+            const activities = ["typing", "planning", "reading", "testing"];
+            const people = [];
+            for (let i = 0; i < 16; i++)
+                people.push(person("t" + i, "Thread " + i, "working", activities[i % 4]));
+            plugin.publish(people);
+            let carrying = 0;
+            for (let i = 0; i < 3000 && page.moves > 0; i++) {
+                page.advance(1);
+                checkFloor();
+                carrying = Math.max(carrying, Object.values(page.movers).filter(m => m.carrying).length);
+            }
+            compare(page.moves, 0, "the desks are all in");
+            verify(carrying > 1, "movers carried desks at once");
+            compare(page.deskCount, 16);
+        }
+
+        // People coming in do not repaint the floor or the furniture.
+        function test_people_coming_in_do_not_repaint_the_floor() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            tryVerify(() => page.floorPaints > 0);
+            const paints = page.floorPaints;
+            const props = page.props, units = page.units;
+            plugin.publish(many(12, "t", "working", "typing"));
+            page.advance(200);
+            plugin.publish(many(2, "t", "working", "typing"));
+            page.advance(200);
+            wait(50);
+            compare(page.floorPaints, paints);
+            verify(page.props === props && page.units === units, "the furniture is the same");
         }
 
         function test_the_office_holds_still_while_it_is_not_shown() {
