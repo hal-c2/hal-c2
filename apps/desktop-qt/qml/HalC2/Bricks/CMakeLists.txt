@@ -38,6 +38,7 @@ set(hal_c2_bricks_qml_files
     ConnectionStatusRow.qml
     ServerUpdateAction.qml
     ServerUpdatesList.qml
+    ShellBadge.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -55,6 +56,8 @@ set(hal_c2_bricks_qml_files
     ShellToolTip.qml
     ShellEmptyState.qml
     ShellTextField.qml
+    ShellTextArea.qml
+    ShellChoice.qml
     ShellSwitch.qml
     ShellSpinBox.qml
     ShellCheckBox.qml
@@ -76,6 +79,7 @@ set(hal_c2_bricks_qml_files
     SettingsPage.qml
     SettingsRow.qml
     SettingsHeading.qml
+    SettingsField.qml
     BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml

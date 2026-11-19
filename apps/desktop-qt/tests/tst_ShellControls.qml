@@ -43,6 +43,32 @@ TestCase {
         }
     }
 
+    // As the plugins' settings use it: what is typed is set, and shown from there.
+    Component {
+        id: boundSpinComponent
+        ShellSpinBox {
+            id: bound
+
+            property int saved: 0
+
+            from: 0
+            to: 999999999
+            value: saved
+            editable: true
+            onValueTyped: typed => bound.saved = typed
+        }
+    }
+
+    Component {
+        id: spyComponent
+        SignalSpy {}
+    }
+
+    Component {
+        id: fieldComponent
+        ShellTextField {}
+    }
+
     function init() {
         Theme.appearance = "dark";
         Theme.colors = dark;
@@ -105,5 +131,66 @@ TestCase {
         });
         compare(control.up.indicator.opacity, 0.4);
         compare(control.down.indicator.opacity, 1);
+    }
+
+    // A number typed in range is reported at once, before Return makes it the
+    // value; what reads no number in range is not.
+    function test_spinBoxReportsATypedNumberInRange() {
+        const control = createTemporaryObject(spinComponent, testCase);
+        const typed = createTemporaryObject(spyComponent, testCase, {
+            target: control,
+            signalName: "valueTyped"
+        });
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Backspace);
+        compare(typed.count, 0);
+        keyClick(Qt.Key_7);
+        compare(typed.count, 1);
+        compare(typed.signalArguments[0][0], 7);
+        compare(control.value, 5);
+        keyClick(Qt.Key_Return);
+        compare(control.value, 7);
+    }
+
+    // A long number typed into a box that shows what it set keeps every digit.
+    function test_spinBoxTakesALongTypedNumber() {
+        const control = createTemporaryObject(boundSpinComponent, testCase);
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        for (const key of [Qt.Key_2, Qt.Key_0, Qt.Key_0, Qt.Key_0, Qt.Key_0])
+            keyClick(key);
+        compare(control.contentItem.text, "20000");
+        compare(control.saved, 20000);
+    }
+
+    // An emptied box keeps the number it held when the keyboard leaves it or
+    // Return is pressed, where the stock box falls to `from`: nothing is saved.
+    function test_spinBoxKeepsItsValueWhenEmptied() {
+        const control = createTemporaryObject(spinComponent, testCase, {
+            from: 1,
+            value: 7
+        });
+        const elsewhere = createTemporaryObject(fieldComponent, testCase, {
+            y: 80
+        });
+        const modified = createTemporaryObject(spyComponent, testCase, {
+            target: control,
+            signalName: "valueModified"
+        });
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Backspace);
+        compare(control.contentItem.text, "");
+        elsewhere.forceActiveFocus();
+        compare(control.value, 7);
+        compare(control.contentItem.text, "7");
+        control.contentItem.forceActiveFocus();
+        control.contentItem.selectAll();
+        keyClick(Qt.Key_Minus);
+        keyClick(Qt.Key_Return);
+        compare(control.value, 7);
+        compare(control.contentItem.text, "7");
+        compare(modified.count, 0);
     }
 }

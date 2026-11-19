@@ -152,7 +152,7 @@ Rectangle {
                 text: header.work ? (header.task?.title ?? (header.run?.items ?? []).join(", ")) : (header.run?.label ?? "")
                 color: header.foreground
                 elide: Text.ElideRight
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -161,7 +161,7 @@ Rectangle {
                 visible: header.task !== null
                 text: header.task ? qsTr("%1 · %2% done").arg(header.taskStatus(header.task.status)).arg(header.task.derivedProgress ?? header.task.progress ?? 0) : ""
                 color: header.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
@@ -187,7 +187,7 @@ Rectangle {
             }
             color: header.muted
             elide: Text.ElideRight
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -197,7 +197,7 @@ Rectangle {
             text: header.refusal
             color: header.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 }

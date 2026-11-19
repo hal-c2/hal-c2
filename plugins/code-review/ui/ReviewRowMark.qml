@@ -1,10 +1,10 @@
 import QtQuick
-import HalC2.Shell
+import HalC2.Bricks
 
 // Beside a review thread's row in the thread list: where its review is, and the
 // verdict once the agent has one. Follows the plugin's `threads` topic, which every
 // row's mark shares.
-Rectangle {
+ShellBadge {
     id: mark
 
     property var plugin
@@ -14,17 +14,6 @@ Rectangle {
     readonly property string status: review?.status ?? ""
     readonly property string verdict: review?.verdict ?? ""
     readonly property bool sandboxed: review?.sandboxed === true
-    readonly property color tone: {
-        if (status === "failed")
-            return Theme.palette.color("error", "#ef4444");
-        if (status === "running" || status === "queued" || status === "publishing")
-            return Theme.palette.color("info", "#3b82f6");
-        if (verdict === "approve")
-            return Theme.palette.color("success", "#22c55e");
-        if (verdict === "request-changes")
-            return Theme.palette.color("warning", "#f59e0b");
-        return Theme.palette.color("textMuted", "#a1a1aa");
-    }
     readonly property string label: {
         switch (status) {
         case "queued":
@@ -58,24 +47,22 @@ Rectangle {
     }
 
     objectName: "codeReviewRowMark"
-    implicitWidth: text.implicitWidth + 10
-    implicitHeight: text.implicitHeight + 2
-    radius: height / 2
-    color: Qt.alpha(tone, 0.14)
-    border.color: Qt.alpha(tone, status === "waiting" ? 0.7 : 0.3)
+    // A sandboxed review's mark says so; it is stopped from its header.
+    text: mark.sandboxed ? qsTr("%1 · sandbox").arg(mark.label) : mark.label
+    tone: {
+        if (status === "failed")
+            return "error";
+        if (status === "running" || status === "queued" || status === "publishing")
+            return "info";
+        if (verdict === "approve")
+            return "success";
+        if (verdict === "request-changes")
+            return "warning";
+        return "neutral";
+    }
+    emphasised: status === "waiting"
     Accessible.role: Accessible.StaticText
     Accessible.name: (status === "waiting" ? qsTr("Review: %1, not published").arg(label) : qsTr("Review: %1").arg(label)) + (sandboxed ? qsTr(", in a sandbox") : "")
     onThreadChanged: follow()
     Component.onCompleted: follow()
-
-    Text {
-        id: text
-
-        anchors.centerIn: parent
-        // A sandboxed review's mark says so; it is stopped from its header.
-        text: mark.sandboxed ? qsTr("%1 · sandbox").arg(mark.label) : mark.label
-        color: mark.tone
-        font.pixelSize: Math.round(10 * Theme.fontScale)
-        font.weight: Font.Medium
-    }
 }

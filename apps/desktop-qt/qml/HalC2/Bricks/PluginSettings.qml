@@ -92,17 +92,9 @@ SettingsPage {
         font.pixelSize: Theme.type.meta.size
     }
 
-    component LongText: TextArea {
+    component LongText: ShellTextArea {
         Layout.fillWidth: true
         Layout.preferredHeight: 96
-        wrapMode: TextEdit.Wrap
-        color: page.foreground
-        font.pixelSize: Theme.type.body.size
-        background: Rectangle {
-            radius: Theme.radiusMd
-            color: Theme.palette.color("input", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-        }
     }
 
     Label {

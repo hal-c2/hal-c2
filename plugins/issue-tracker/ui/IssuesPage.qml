@@ -226,7 +226,7 @@ Item {
                         }
                         color: page.muted
                         elide: Text.ElideRight
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellComboBox {
@@ -290,7 +290,7 @@ Item {
                     text: page.refusal || (page.tracker?.problem ?? "")
                     color: page.warningColor
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -334,7 +334,7 @@ Item {
                         bottomPadding: 4
                         text: entry.modelData.repository
                         color: page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.Medium
                         font.capitalization: Font.AllUppercase
                     }
@@ -370,7 +370,7 @@ Item {
                                 text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
                                 color: page.foreground
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                             }
 
                             Text {
@@ -378,21 +378,23 @@ Item {
                                 text: page.issueMeta(row.modelData)
                                 color: page.muted
                                 elide: Text.ElideRight
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
                 }
 
+                // An empty list says why: not heard from yet, still looking, or nothing open.
                 Text {
+                    objectName: "issueTrackerListEmpty"
                     anchors.centerIn: parent
                     width: parent.width - 48
-                    visible: page.issues.length === 0 && page.tracker !== null && !page.tracker.looking
-                    text: qsTr("No open issues here. Pick the repositories to follow in the tracker's settings if that is a surprise.")
+                    visible: page.issues.length === 0
+                    text: page.tracker === null ? qsTr("Waiting for the tracker…") : page.tracker.looking ? qsTr("Looking at GitHub…") : qsTr("No open issues here. Pick the repositories to follow in the tracker's settings if that is a surprise.")
                     color: page.muted
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
             }
 
@@ -432,7 +434,7 @@ Item {
                         text: about.issue ? about.issue.key + "  " + (about.issue.title ?? "") : ""
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(16 * Theme.fontScale)
+                        font.pixelSize: Theme.type.title.size
                         font.weight: Font.Medium
                     }
 
@@ -459,7 +461,7 @@ Item {
                             }
                             color: page.muted
                             wrapMode: Text.Wrap
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellButton {
@@ -521,7 +523,7 @@ Item {
                         text: about.issue ? qsTr("Closing pull requests: %1").arg(about.issue.pullRequests.map(each => each.repository + "#" + each.number + " (" + (each.state ?? "") + ")").join(", ")) : ""
                         color: page.muted
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Text {
@@ -531,7 +533,7 @@ Item {
                         color: page.foreground
                         wrapMode: Text.Wrap
                         textFormat: Text.PlainText
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
                 }
             }
@@ -580,14 +582,14 @@ Item {
                             text: page.runTitle(run.modelData)
                             color: page.foreground
                             elide: Text.ElideRight
-                            font.pixelSize: Math.round(14 * Theme.fontScale)
+                            font.pixelSize: Theme.type.prose.size
                             font.weight: Font.Medium
                         }
 
                         Text {
                             text: page.runStatus(run.modelData)
                             color: run.modelData.status === "proposed" ? page.warningColor : run.modelData.status === "applied" ? page.successColor : page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellButton {
@@ -624,7 +626,7 @@ Item {
                         text: run.modelData.summary ?? ""
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     Text {
@@ -633,7 +635,7 @@ Item {
                         text: run.modelData.error ?? ""
                         color: page.warningColor
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Repeater {
@@ -664,7 +666,7 @@ Item {
                                 }
                                 color: page.foreground
                                 wrapMode: Text.Wrap
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
 
                             Text {
@@ -675,7 +677,7 @@ Item {
                                 color: page.muted
                                 wrapMode: Text.Wrap
                                 textFormat: Text.PlainText
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
                     }
@@ -696,7 +698,7 @@ Item {
                 color: page.muted
                 wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
     }
