@@ -61,7 +61,6 @@ defmodule HalC2.IssueTrackerClaimsTest do
 
   test "a dead claiming caller releases its run back to proposed" do
     test = self()
-    assert {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "issue-tracker", "tracker")
 
     caller =
       spawn(fn ->
@@ -75,13 +74,16 @@ defmodule HalC2.IssueTrackerClaimsTest do
     assert_receive :claimed
     assert status() == "applying"
 
-    ref = Process.monitor(caller)
+    # The tracker runs outside the plugin host here, so what it publishes is not passed
+    # on: the receipt is the tracker receiving the caller's DOWN, and a call after it is
+    # answered once that DOWN is handled.
+    tracker = Process.whereis(IssueTracker)
+    :erlang.trace(tracker, true, [:receive])
     Process.exit(caller, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^caller, _}
+    assert_receive {:trace, ^tracker, :receive, {:DOWN, _, :process, ^caller, _}}
+    :erlang.trace(tracker, false, [:receive])
 
-    # The release publishes the run proposed again on the tracker's topic.
-    assert_receive {:hal_c2_plugin_topic, _mc, "issue-tracker", "tracker",
-                    %{"runs" => [%{"status" => "proposed"}]}}
+    assert status() == "proposed"
   end
 
   test "a settle from a caller that no longer holds the claim is ignored" do

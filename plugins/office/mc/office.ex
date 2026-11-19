@@ -108,18 +108,13 @@ defmodule HalC2Plugins.Office do
   end
 
   # Publishes the topic when it changed, and sets the timer for when it next changes on
-  # its own.
+  # its own. The throttle counts from every look, so the view is built at most once a
+  # `@every_ms` however often the floor changes.
   defp publish(state) do
     now = now()
     view = Floor.view(state.floor, now)
-
-    state =
-      if view == state.published do
-        state
-      else
-        Host.publish(@id, @topic, view)
-        %{state | published: view, published_at: clock()}
-      end
+    if view != state.published, do: Host.publish(@id, @topic, view)
+    state = %{state | published: view, published_at: clock()}
 
     if state.expire, do: Process.cancel_timer(state.expire)
 

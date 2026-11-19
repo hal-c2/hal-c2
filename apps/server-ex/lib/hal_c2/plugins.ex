@@ -1059,9 +1059,10 @@ defmodule HalC2.Plugins do
     {:noreply, state}
   end
 
-  # One from a plugin that no longer runs (sent as it stopped) is not passed on.
+  # Only a running plugin publishes: one sent as a plugin stopped, or after it was
+  # removed, is not passed on.
   def handle_cast({:publish, id, topic, value}, state) do
-    unless match?(%{sup: nil}, state.plugins[id]) do
+    if match?(%{sup: sup} when sup != nil, state.plugins[id]) do
       for {{:topic, _, _, pid}, entry} <-
             :ets.match_object(@watchers, {{:topic, id, topic, :_}, :_}),
           do: HalC2.Watchers.tell(pid, entry, {:hal_c2_plugin_topic, node(), id, topic, value})
@@ -1231,7 +1232,6 @@ defmodule HalC2.Plugins do
       end)
 
     Enum.each(plugins, fn {id, plugin} -> revoke_dropped(id, plugin) end)
-    for id <- Map.keys(state.plugins), not is_map_key(plugins, id), do: forget_topics(id)
     drop_copies(plugins)
     %{state | plugins: plugins}
   end
@@ -1637,7 +1637,14 @@ defmodule HalC2.Plugins do
     for {key, _} <- :ets.tab2list(@providers), key not in keys, do: :ets.delete(@providers, key)
     :ets.insert(@providers, rows)
 
-    for {id, %{sup: nil}} <- state.plugins, do: forget_topics(id)
+    # What a plugin that does not run published, gone: one stopped, removed, or removed
+    # while the host was down (the heir keeps the values; this run never held the id).
+    running = for {id, %{sup: sup}} <- state.plugins, sup != nil, into: MapSet.new(), do: id
+
+    for {{:last, id, _}, _} <- :ets.match_object(@watchers, {{:last, :_, :_}, :_}),
+        id not in running,
+        do: forget_topics(id)
+
     state
   end
 

@@ -13,8 +13,8 @@ defmodule HalC2.PluginsPropTest do
   settings (version 2 of a package takes them live, so its process stays; version 1
   is restarted with them), call the running plugin (whose process must run with the
   settings saved last, after a crash too), read its files, follow, publish and drop topics,
-  kill a client (what a plugin published is forgotten once it is held and not running,
-  or removed, and it publishes nothing then), crash a plugin's process once or until its
+  kill a client (what a plugin published is forgotten once it does not run, held or
+  removed, and only a running plugin publishes), crash a plugin's process once or until its
   supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   hand the running plugins a turn (`observe/1`: every package hears turns, and only
@@ -366,16 +366,15 @@ defmodule HalC2.PluginsPropTest do
   end
 
   # A step, then the events of runs it stopped or replaced dropped, and what a plugin it
-  # left held and not running (or removed) last published forgotten.
+  # left not running (held and stopped, or not held at all) last published forgotten.
   defp step(s, call) do
     {next, expect} = act(s, call)
 
-    stopped =
-      for id <- Enum.uniq(Map.keys(s.held) ++ Map.keys(next.held)),
-          not match?(%{running: true}, next.held[id]),
-          do: id
-
-    next = %{next | last: Map.reject(next.last, fn {{id, _}, _} -> id in stopped end)}
+    next = %{
+      next
+      | last:
+          Map.filter(next.last, fn {{id, _}, _} -> match?(%{running: true}, next.held[id]) end)
+    }
 
     queue =
       next.queue
@@ -648,9 +647,10 @@ defmodule HalC2.PluginsPropTest do
   defp act(s, {:call, _, :unsubscribe, [c, id, topic]}),
     do: {update_in(s.subs[c], &MapSet.delete(&1, {id, topic})), :ok}
 
-  # One from a plugin held and not running (sent as it stopped) is not passed on.
+  # Only a running plugin publishes: one held and not running (sent as it stopped) or
+  # not held at all (sent after it was removed) is not passed on.
   defp act(s, {:call, _, :publish, [id, topic, value]}) do
-    if match?(%{running: false}, s.held[id]) do
+    if not match?(%{running: true}, s.held[id]) do
       {s, :ok}
     else
       inbox =
