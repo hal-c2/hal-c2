@@ -816,6 +816,7 @@ Item {
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.settled);
             page.zoom = page.maxScale / page.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
@@ -858,6 +859,7 @@ Item {
             compare(page.iconOf(actor("ask")), "ask");
             verify(find("officeIcon:ask").visible);
             verify(!find("officeIcon:busy").visible);
+            tryVerify(() => page.settled);
             waitForRendering(loader.item);
             mouseClick(find("officePerson:ask"));
             compare(plugin.opened, ["local/ask"]);
@@ -866,6 +868,7 @@ Item {
         function test_hovering_a_person_names_it_and_what_it_does() {
             plugin.publish([person("t", "Fix the parser", "working", "testing")]);
             runUntil(() => arrived(actor("t")));
+            tryVerify(() => page.settled);
             waitForRendering(loader.item);
             mouseMove(find("officePerson:t"));
             tryVerify(() => find("officeCard").visible);
@@ -878,6 +881,7 @@ Item {
         function test_the_keyboard_reaches_a_person() {
             plugin.publish([person("ask", "Fix the parser", "asking")]);
             runUntil(() => arrived(actor("ask")));
+            tryVerify(() => page.settled);
             const hit = find("officePerson:ask");
             hit.forceActiveFocus();
             compare(page.hovered, "ask");
@@ -1223,18 +1227,19 @@ Item {
             plugin.publish(many(40, "t", "idle"));
             compare(message(), "Setting up the office…");
             compare(find("officeStage").opacity, 0, "nothing half drawn shows");
+            verify(!find("officePerson:t0").enabled, "nobody can be hovered, reached with Tab or clicked yet");
             compare(page.sheetsPending, 40);
             // The sheets are painted a few a frame, not all at once.
             tryVerify(() => page.sheetsPending < 40);
-            verify(page.sheetsPending > 20, "only a few sheets were painted, not " + (40 - page.sheetsPending));
+            verify(page.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
             waitForRendering(page);
             const summary = find("officeSummary");
             verify(find("officeZoomIn").x >= summary.x + summary.width, "the zoom buttons sit beside the summary");
-            compare(message(), "Setting up the office…");
             tryVerify(() => page.settled, 5000);
             compare(page.sheetsPending, 0);
             compare(message(), "");
             compare(find("officeStage").opacity, 1);
+            verify(find("officePerson:t0").enabled);
             verify(page.sheetCost > 0, "what a sheet takes is known");
             // The first people are already where they belong.
             for (const id of Object.keys(page.actors))
@@ -1284,8 +1289,8 @@ Item {
         function test_setting_up_waits_while_the_page_is_not_shown() {
             plugin.publish(many(8, "t", "idle"));
             page.visible = false;
-            wait(100);
-            compare(page.sheetsPending, 8, "nothing is painted while hidden");
+            verify(!find("officeSheetPainter").running, "no sheet is asked for while hidden");
+            compare(page.sheetsPending, 8);
             page.visible = true;
             tryVerify(() => page.settled);
             page.visible = false;

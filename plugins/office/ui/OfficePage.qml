@@ -3510,6 +3510,7 @@ Item {
     }
 
     Timer {
+        objectName: "officeSheetPainter"
         interval: 16
         repeat: true
         running: page.visible && page.sheetsPending > 0
@@ -3608,6 +3609,8 @@ Item {
                 id: stage
 
                 objectName: "officeStage"
+                // Hidden until set up; the people in it are out of reach until
+                // then too (see their MouseArea).
                 opacity: page.settled ? 1 : 0
                 x: Math.max(0, (scroller.width - width) / 2)
                 y: Math.max(0, (scroller.height - height) / 2)
@@ -3920,8 +3923,14 @@ Item {
 
                                 // Tab walks the people; a focused one shows its card as a
                                 // hovered one does, and Return or Space opens its thread.
+                                // Nobody is reachable while the office is being set up.
+                                // (On this item, not the stage: under a stage whose
+                                // `enabled` changes, Ljós reports `visible` a change late,
+                                // hal-c2/ljos-ui#611.)
                                 MouseArea {
                                     id: hit
+
+                                    enabled: page.settled
 
                                     objectName: "officePerson:" + person.actorId
                                     Accessible.role: Accessible.Button
