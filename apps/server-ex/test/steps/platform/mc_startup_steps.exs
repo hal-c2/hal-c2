@@ -538,12 +538,13 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     {_, 0} = System.cmd("mkfifo", [ready])
 
     # A stand-in for bin/hal_c2 that drops the first TERM, as a booting BEAM does, and
-    # stops on the next.
+    # stops on the next. It gives up after 15 seconds, so it cannot outlive a failed run.
     File.write!(Path.join(bin, "hal_c2"), """
     #!/bin/sh
     trap 'echo missed >> "#{log}"; trap "echo stopped >> \\"#{log}\\"; exit 0" TERM' TERM
     echo up > "#{ready}"
-    while :; do sleep 1 & wait $!; done
+    i=0
+    while [ "$i" -lt 15 ]; do sleep 1 & wait $!; i=$((i + 1)); done
     """)
 
     File.chmod!(Path.join(bin, "hal_c2"), 0o755)
@@ -556,8 +557,11 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     "$0" & pid=$!
     read _ < "$1"
     kill -TERM "$pid"
+    # A wrapper that never stops is killed, so the scenario fails rather than hangs.
+    ( sleep 10; kill -KILL "$pid" ) >/dev/null 2>&1 & guard=$!
     wait "$pid"
     echo "$?"
+    kill "$guard" 2>/dev/null
     """
 
     {out, 0} = System.cmd("sh", ["-c", script, wrapper.path, wrapper.ready])
