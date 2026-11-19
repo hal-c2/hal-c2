@@ -18,6 +18,10 @@ Window {
     // sets no machine up (the phone, which shows its pairing screen before
     // there is an MC to wait for) turns it off.
     property bool firstRunGate: true
+    // Whether the app frames the window: a frameless window's drag handle and
+    // buttons are then its own to draw (the layout, and the wizard over it). A
+    // root whose system frames the window (Android) turns it off.
+    property bool framesWindow: true
     // The window's own ConnectionNotice at its top edge. A root that has the
     // notice elsewhere turns it off: DefaultLayout then shows it in a strip of
     // its own, and the phone places it clear of the status bar.
@@ -187,6 +191,7 @@ Window {
 
         anchors.fill: parent
         visible: root.firstRunGate && welcomeWizard.active
+        framesWindow: root.framesWindow
     }
 
     ShellErrorOverlay {

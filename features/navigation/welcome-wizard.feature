@@ -45,6 +45,14 @@ Feature: Welcome wizard
       Then the wizard covers the window
       And one set of window controls ends at the window's top right corner, over the wizard
 
+    # A tablet's system frames the window and draws its buttons itself.
+    @desktop
+    Scenario: The wizard draws no window controls on a window its system frames
+      Given a fresh installation with no workspace
+      When the user opens HAL-C2 in a window its system frames
+      Then the wizard covers the window
+      And no window controls show over the wizard
+
     @desktop
     Scenario: An existing workspace skips the wizard
       Given a workspace that already has projects

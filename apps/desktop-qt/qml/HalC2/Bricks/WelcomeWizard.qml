@@ -21,6 +21,8 @@ Item {
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color border: Theme.palette.color("border", "#27272a")
     readonly property color field: Theme.palette.color("canvas", "#09090b")
+    // Whether it draws a frameless window's buttons (ShellWindow.framesWindow).
+    property bool framesWindow: true
     property bool pairingOpen: false
     property bool pairingHelpOpen: false
 
@@ -960,10 +962,11 @@ Item {
 
     // A frameless window's buttons. The wizard covers the layout that draws
     // them (ShellWindow hides its body under the wizard), so it draws its own
-    // in the same corner, over its cover; macOS draws its own.
+    // in the same corner, over its cover; macOS draws its own, and so does a
+    // system that frames the window (`framesWindow`, Android).
     WindowControls {
         objectName: "windowButtons"
-        visible: Theme.frameless && Qt.platform.os !== "osx"
+        visible: wizard.framesWindow && Theme.frameless && Qt.platform.os !== "osx"
         window: wizard.Window.window
         buttonWidth: 32
         buttonHeight: 28

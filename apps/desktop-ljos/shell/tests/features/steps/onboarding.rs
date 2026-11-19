@@ -40,6 +40,9 @@ fn answer_import(mc: &mut FakeMc, rpc: &Rpc) {
 
 /// The whole window, as the built-in shell draws it.
 const SHELL: &str = "import HalC2.Bricks\nDefaultShell { width: 1200; height: 800 }\n";
+/// The same on a window its system frames (a tablet's).
+const FRAMED_SHELL: &str =
+    "import HalC2.Bricks\nDefaultShell { width: 1200; height: 800; framesWindow: false }\n";
 
 fn onboarding(world: &World) -> Value {
     world.state("onboarding")
@@ -431,6 +434,19 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user opens HAL-C2 in its window", |world, _, _| {
         open_hal_c2(world)?;
         crate::brick::Brick::show(world, SHELL, 1200.0, 800.0)
+    });
+    steps.step(
+        "the user opens HAL-C2 in a window its system frames",
+        |world, _, _| {
+            open_hal_c2(world)?;
+            crate::brick::Brick::show(world, FRAMED_SHELL, 1200.0, 800.0)
+        },
+    );
+    steps.step("no window controls show over the wizard", |world, _, _| {
+        let brick = crate::brick::shown(world)?;
+        let shown = brick.find_visible(world, "windowButtons")?;
+        expect!(shown.is_none(), "window controls show over the wizard");
+        Ok(())
     });
     steps.step("the wizard covers the window", |world, _, _| {
         let brick = crate::brick::shown(world)?;

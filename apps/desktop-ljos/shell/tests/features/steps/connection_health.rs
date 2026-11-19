@@ -3694,12 +3694,16 @@ fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
         // stays until setup finishes. This window is a desktop already set
         // up, so its user has finished setup, skipping the rest.
         let gate = |w: &World| text(&w.state("onboarding")["gate"]);
-        world.wait_for("the first-run gate to settle", move |w| {
-            gate(w) != "pending"
-        })?;
+        world.wait_for_with(
+            move |w| gate(w) != "pending",
+            move |w| format!("the first-run gate to settle (it is {:?})", gate(w)),
+        )?;
         if gate(world) == "wizard" {
             world.dispatch("onboarding.skip", json!(null))?;
-            world.wait_for("setup to finish", move |w| gate(w) == "app")?;
+            world.wait_for_with(
+                move |w| gate(w) == "app",
+                move |w| format!("setup to finish (the gate is {:?})", gate(w)),
+            )?;
         }
     }
     Brick::show(world, qml, 1200.0, 800.0)?;
