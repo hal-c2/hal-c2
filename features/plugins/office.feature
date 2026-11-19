@@ -3,7 +3,9 @@
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
 #   plugins/office/mc/floor.ex (the office topic's people, reviewers among them, and talks)
 #   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking)
+#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking, the review corner, project marks)
+#   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
+#   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md
 #
@@ -395,3 +397,85 @@ Feature: Office
       Given the office page is open
       When the user switches to the Threads tab
       Then the office stops animating until its page is shown again
+
+  Rule: Reviewers sit in a corner of their own
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers sit in the review corner
+      Given the office has 4 threads and a reviewer
+      Then the reviewer sits in the review corner, under its sign and by its whiteboard
+      And the 4 threads sit on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer's workers sit with it in the review corner
+      Given the office has a reviewer and 2 workers it delegated to
+      Then the workers sit in the review corner with it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry a new reviewer's desk into the review corner
+      Given the office has 2 threads
+      When it has a reviewer too
+      Then a mover carries a desk into the review corner and the reviewer sits down at it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner's desks sit at the nearest desks on the floor
+      Given the office has 10 reviewers
+      Then 8 of them sit in the review corner and the other 2 at the pod next to it
+      When a reviewer in the corner leaves
+      Then the others keep their desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Others sit in the review corner only when the floor is full
+      Given the office has 40 threads
+      Then none of them sits in the review corner
+      When it has 42 threads and a reviewer
+      Then 2 of the threads and the reviewer sit in the review corner
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The review whiteboard shows a checklist beside a diff
+      Given the office has a reviewer working, planning
+      Then the reviewer draws a checklist and a diff on the whiteboard in the review corner
+
+  Rule: Each desk shows its project
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's monogram in its colour
+      Given the project "api" has the monogram "AP" in blue in the sidebar
+      And the office has a thread in "api"
+      Then its desk shows "AP" in blue, in pixels, on the back of its monitor or chair
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's emoji
+      Given the project "fun" has the emoji "🎉" in the sidebar
+      And the office has a thread in "fun"
+      Then its desk shows "🎉" in pixels
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's logo in pixels, over its monogram while it loads
+      Given the project "logo" has a logo in the sidebar
+      And the office has a thread in "logo"
+      Then its desk shows the project's monogram in its colour until the logo loads
+      And then the logo, a few pixels across
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk for a project the sidebar has no icon for shows its first letter
+      Given the office has a thread in "web", which has no icon in the sidebar
+      Then its desk shows "W", uncoloured
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A project's new icon reaches its desks
+      Given the office has a thread in "api"
+      When the project "api" gets the monogram "AX" in green
+      Then its desk shows "AX" in green, and no other desk is drawn again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk nobody has shows no project
+      Given the office has threads "A" and "B"
+      When "A" leaves
+      Then the desk being carried out shows no project
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Hovering a person shows its project's icon and that it is reviewing
+      Given the office has a reviewer in "api"
+      When the user hovers its person
+      Then the card shows the project's sidebar icon beside "api · reviewing"

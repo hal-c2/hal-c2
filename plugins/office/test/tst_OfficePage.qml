@@ -7,6 +7,7 @@
 //     -input plugins/office/test/tst_OfficePage.qml
 import QtQuick
 import QtTest
+import HalC2.Shell
 
 // A TestCase is never visible, so what it clicks lives beside it.
 Item {
@@ -32,6 +33,13 @@ Item {
             } : null,
             since: "2026-11-18T21:00:00Z"
         };
+    }
+
+    // A thread the code-review plugin started, or one of its workers.
+    function reviewer(id, title, parentId) {
+        return Object.assign(person(id, title, "working", "typing", parentId), {
+            kind: "reviewer"
+        });
     }
 
     function many(n, prefix, state, activity, parentId) {
@@ -111,8 +119,29 @@ Item {
             open();
         }
 
+        function cleanup() {
+            loader.source = "";
+            Shell.state = Object.assign({}, Shell.state, {
+                projectIcons: undefined
+            });
+        }
+
         function actor(id) {
             return page.actors[id];
+        }
+
+        function corner() {
+            return page.world.pods.findIndex(pod => pod.review);
+        }
+
+        function markOf(id) {
+            return page.markViews["mark:" + page.world.seatOf[id].index];
+        }
+
+        function icons(map) {
+            Shell.state = Object.assign({}, Shell.state, {
+                projectIcons: map
+            });
         }
 
         // Runs the office until `done` holds, or fails after `limit` ticks.
@@ -267,6 +296,163 @@ Item {
                 compare(podOf(w), pod);
                 verify(page.world.pods[pod].seats.includes(page.world.seatOf[w]), w + " has a desk in the lead's pod");
             }
+        }
+
+        function test_reviewers_sit_in_the_review_corner_with_their_workers() {
+            const people = many(4, "t", "working", "typing").concat([reviewer("r", "Review #12")], [reviewer("rw0", "Check tests", "r"), reviewer("rw1", "Check docs", "r")]);
+            plugin.publish(people);
+            const review = corner();
+            verify(review >= 0, "the office has a review corner");
+            for (const id of ["r", "rw0", "rw1"])
+                compare(page.world.seatOf[id].pod, review, id + " sits in the review corner");
+            for (const id of ["t0", "t1", "t2", "t3"])
+                verify(page.world.seatOf[id].pod !== review, id + " sits on the floor");
+        }
+
+        // A reviewer who comes in later has its desk carried into the corner.
+        function test_movers_bring_a_reviewer_its_desk_in_the_corner() {
+            plugin.publish(many(2, "t", "working", "typing"));
+            plugin.publish(many(2, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
+            const seat = page.world.seatOf["r"];
+            compare(seat.pod, corner());
+            compare(page.jobs, [seat.index], "a desk comes in for the reviewer");
+            runUntil(() => page.moves === 0 && arrived(actor("r")), 3000, "the reviewer sits down");
+            compare([actor("r").tx, actor("r").ty], [seat.x, seat.y]);
+            checkFloor();
+        }
+
+        // Reviewers past the corner's eight desks sit at the nearest desks on
+        // the floor, and keep them.
+        function test_a_full_review_corner_sends_reviewers_to_the_nearest_desks() {
+            const reviewers = [];
+            for (let i = 0; i < 10; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish(many(2, "t", "working", "typing").concat(reviewers));
+            const review = corner();
+            const pods = reviewers.map(r => page.world.seatOf[r.id].pod);
+            compare(pods.filter(pod => pod === review).length, 8, "the corner is full of reviewers");
+            const spilt = reviewers.filter(r => page.world.seatOf[r.id].pod !== review);
+            compare(spilt.length, 2);
+            const at = pod => page.world.pods[pod];
+            const away = pod => Math.abs(at(pod).x - at(review).x) + Math.abs(at(pod).y - at(review).y);
+            const nearest = Math.min(...page.world.pods.map((pod, i) => i).filter(i => i !== review).map(away));
+            for (const r of spilt)
+                compare(away(page.world.seatOf[r.id].pod), nearest, r.id + " sits next to the corner");
+            const seats = {};
+            for (const r of reviewers)
+                seats[r.id] = page.world.seatOf[r.id];
+            plugin.publish(many(2, "t", "working", "typing").concat(reviewers.slice(1)));
+            for (const r of reviewers.slice(1))
+                verify(page.world.seatOf[r.id] === seats[r.id], r.id + " keeps its seat when a corner desk frees up");
+        }
+
+        // A reviewer plans at the review corner's whiteboard, anyone else at
+        // the others.
+        function test_reviewers_plan_at_the_review_whiteboard() {
+            plugin.publish([Object.assign(reviewer("r", "Review #12"), {
+                    activity: "planning"
+                }), person("t", "T", "working", "planning")]);
+            const board = key => page.world.boards.find(b => b.key === key);
+            verify(board(actor("r").goal.board).review, "the reviewer goes to the review whiteboard");
+            verify(!board(actor("t").goal.board).review, "the other goes to another whiteboard");
+        }
+
+        // The corner's desks go to anyone else only once the floor is full.
+        function test_others_sit_in_the_review_corner_only_when_the_floor_is_full() {
+            plugin.publish(many(40, "t", "working", "typing"));
+            const review = corner();
+            for (let i = 0; i < 40; i++)
+                verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
+            plugin.publish(many(42, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
+            compare(page.world.seatOf["t40"].pod, review);
+            compare(page.world.seatOf["t41"].pod, review);
+            compare(page.world.seatOf["r"].pod, review, "a reviewer still has a corner desk");
+        }
+
+        function test_a_desk_shows_its_project_as_the_sidebar_does() {
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AP",
+                    color: "blue",
+                    tint: "#4A90D9",
+                    automatic: false
+                },
+                "local:p-fun": {
+                    kind: "emoji",
+                    emoji: "🎉",
+                    automatic: false
+                },
+                "local:p-logo": {
+                    kind: "image",
+                    url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'/>",
+                    text: "LO",
+                    tint: "#e05d5d",
+                    automatic: true
+                }
+            });
+            const at = (id, projectId, project) => Object.assign(person(id, id, "working", "typing"), {
+                projectId: projectId,
+                project: project
+            });
+            plugin.publish([at("a", "p-api", "api"), at("b", "p-fun", "fun"), at("c", "p-logo", "logo"), at("d", "p-web", "web")]);
+            const a = markOf("a");
+            verify(a.visible, "a's desk shows its project");
+            compare([a.kind, a.label, a.tint], ["tile", "AP", "#4a90d9"]);
+            compare([markOf("b").kind, markOf("b").emoji], ["emoji", "🎉"]);
+            compare([markOf("c").kind, markOf("c").label, markOf("c").tint], ["image", "LO", "#e05d5d"]);
+            verify(markOf("c").url.indexOf("data:image/svg") === 0);
+            // A project the sidebar has no icon for shows its first letter, uncoloured.
+            compare([markOf("d").kind, markOf("d").label, markOf("d").tint], ["tile", "W", "#8b919e"]);
+            // A project's new look reaches its desks.
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AX",
+                    tint: "#5fbf7a"
+                }
+            });
+            compare([a.label, a.tint], ["AX", "#5fbf7a"]);
+            compare([markOf("b").kind, markOf("b").label], ["tile", "F"]);
+        }
+
+        // A desk with nobody at it, or out of the office, shows no project.
+        function test_a_desk_nobody_has_shows_no_project() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const mark = markOf("a");
+            verify(mark.visible);
+            plugin.publish([person("b", "B", "working", "typing")]);
+            verify(!mark.visible, "the desk being carried out shows no project");
+            runUntil(() => page.moves === 0, 3000, "the desk is carried out");
+            verify(!mark.visible);
+            verify(markOf("b").visible);
+        }
+
+        // The marks are painted once, and again only when a project's look changes.
+        function test_desk_marks_are_painted_only_when_a_project_changes() {
+            const web = Object.assign(person("w", "W", "working", "typing"), {
+                projectId: "p-web",
+                project: "web"
+            });
+            plugin.publish(many(6, "t", "working", "typing").concat([web]));
+            tryVerify(() => page.markPaints >= 7);
+            wait(50);
+            const paints = page.markPaints;
+            page.advance(200);
+            plugin.publish(many(6, "t", "working", "typing").concat([web]));
+            page.advance(200);
+            wait(50);
+            compare(page.markPaints, paints, "nothing repaints while nothing changes");
+            icons({
+                "local:p-web": {
+                    kind: "monogram",
+                    text: "WB",
+                    tint: "#e8894a"
+                }
+            });
+            tryVerify(() => page.markPaints > paints);
+            wait(50);
+            compare(page.markPaints, paints + 1, "only the web desk repaints");
         }
 
         function test_people_walk_around_furniture_and_never_through_each_other() {
