@@ -289,7 +289,9 @@ void DraftController::land() {
     return;
   }
   if (m_landingFailed) return;
-  const auto project = sidebar::mostRecentProject(m_store->projects(), m_store->threads());
+  QList<sidebar::Project> projects = m_store->projects();
+  projects.removeIf([this](const sidebar::Project& p) { return m_kept.forgotten.contains(p.environmentId); });
+  const auto project = sidebar::mostRecentProject(projects, m_store->threads());
   if (project && start(project->environmentId, project->id).isEmpty()) setLandingFailed(true);
 }
 
@@ -308,6 +310,19 @@ void DraftController::remove(const QString& id) {
     auto* navigation = NativeShell::of(drafts)->controller<NavigationController>();
     if (navigation->route() == NavigationController::Route::draft(id)) navigation->replace(NavigationController::Route());
   }
+}
+
+void DraftController::forgetEnvironment(const QString& environmentId) {
+  if (m_store->servesEnvironment(environmentId)) m_kept.forgotten.insert(environmentId);
+  removeEnvironment(environmentId);
+}
+
+void DraftController::removeEnvironment(const QString& environmentId) {
+  QStringList ids;
+  for (const Draft& draft : std::as_const(m_drafts)) {
+    if (draft.environmentId == environmentId) ids.append(draft.id);
+  }
+  for (const QString& id : std::as_const(ids)) remove(id);
 }
 
 void DraftController::promote(const QString& threadKey) {
@@ -394,6 +409,14 @@ void DraftController::moveTo(const QString& from, const QString& projectKey) {
 
 void DraftController::reconcile() {
   if (!m_active || !m_store->synchronized()) return;
+  // A removed environment whose rows have now gone takes any draft started
+  // for it meanwhile.
+  const QSet<QString> forgotten = m_kept.forgotten;
+  for (const QString& environmentId : forgotten) {
+    if (m_store->servesEnvironment(environmentId)) continue;
+    m_kept.forgotten.remove(environmentId);
+    removeEnvironment(environmentId);
+  }
   QStringList promoted;
   QStringList orphaned;
   for (const Draft& draft : std::as_const(m_drafts)) {

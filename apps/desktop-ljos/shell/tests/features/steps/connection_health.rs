@@ -484,12 +484,20 @@ fn environments(world: &World) -> Vec<String> {
 
 /// Removes the cluster member the scenario saved, as Cluster settings does;
 /// the MC then drops the member for every client. False when there is none.
+/// The answer lands before the member's rows go, the order in which a window
+/// once landed on a fresh draft of the removed environment (#1589).
 pub fn remove_saved_environment(world: &mut World) -> Outcome<bool> {
     let environment = watched(world).saved_environment.clone();
     if environment.is_empty() {
         return Ok(false);
     }
     world.dispatch("cluster.remove", json!({"id": environment}))?;
+    world.wait_for("the removal to be answered", |w| {
+        w.state("cluster")["notice"]["text"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("Removed "))
+    })?;
+    world.pump()?;
     world.mc.remove(&environment);
     Ok(true)
 }

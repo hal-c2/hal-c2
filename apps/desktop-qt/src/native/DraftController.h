@@ -2,6 +2,7 @@
 
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariant>
 
@@ -80,6 +81,9 @@ public:
   void setLandsOnDraft(bool lands) { m_landsOnDraft = lands; }
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
+  // Deletes the drafts of an environment removed from the cluster. Until the
+  // shell drops its rows, no window lands on a draft there either.
+  void forgetEnvironment(const QString& environmentId);
   // The draft's first turn was sent as the thread `threadKey`: the draft is
   // done and every window that showed it shows the thread instead.
   void promote(const QString& threadKey);
@@ -122,12 +126,16 @@ private:
   // A window is sending the draft's first message: it is the thread's now.
   bool launching(const QString& id) const;
   void changedEverywhere();
+  void removeEnvironment(const QString& environmentId);
 
   // What every window's controller keeps.
   struct Kept {
     QList<Draft> drafts;
     // shell-drafts.json.
     CoalescingWriter file;
+    // Environments removed while the shell still has their rows: no window
+    // lands on their projects, and their drafts go until the rows do.
+    QSet<QString> forgotten;
   };
 
   ShellBridge* m_bridge;

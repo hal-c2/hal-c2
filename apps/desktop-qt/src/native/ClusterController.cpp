@@ -200,12 +200,7 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
     // Nothing written for a removed machine is kept: its rows go with it, its drafts here.
     if (method == QLatin1String("cluster.remove")) {
       if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-        const QString removed = payload.value(QLatin1String("id")).toString();
-        QStringList ids;
-        for (const DraftController::Draft& draft : drafts->drafts()) {
-          if (draft.environmentId == removed) ids.append(draft.id);
-        }
-        for (const QString& id : std::as_const(ids)) drafts->remove(id);
+        drafts->forgetEnvironment(payload.value(QLatin1String("id")).toString());
       }
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());

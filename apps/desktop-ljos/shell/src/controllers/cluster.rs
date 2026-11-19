@@ -376,10 +376,7 @@ impl Cluster {
                 // controller follows: removed once it has returned.
                 let gone = removed.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
-                    let drafts = drafts::all(engine).into_iter();
-                    for draft in drafts.filter(|d| d.environment_id == gone) {
-                        drafts::remove(engine, &draft.id);
-                    }
+                    drafts::forget_environment(engine, &gone);
                 });
                 for hook in c.removed.clone() {
                     hook(engine, &removed);
