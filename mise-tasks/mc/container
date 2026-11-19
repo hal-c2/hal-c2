@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Install this checkout's MC in a Podman or Docker container named hal-c2-mc, its files on the hal-c2-mc volume; or manage it, or run an MC command in it"
 #MISE dir="{{config_root}}"
-#USAGE arg "[command]" default="install" help="install (build the image, replace the container, keep the volume), uninstall (remove the container, keep the volume), status, logs, restart, or an MC command run inside it: pair, cluster, threads, doctor"
+#USAGE arg "[command]" default="install" help="install (build the image, replace the container, keep the volume), uninstall (remove the container, keep the volume), status, logs, restart, doctor (checks and repairs the store, stopping the MC meanwhile), or an MC command run inside it: pair, cluster"
 #USAGE arg "[args]..." var=#true help="Arguments for an MC command, after -- when they start with a dash"
 #USAGE flag "--engine <engine>" help="podman or docker; podman when it is installed"
 #USAGE flag "--host <address>" help="install: the host address the MC is published on, 127.0.0.1 by default; 0.0.0.0 or a LAN or tailnet address lets other machines pair"
@@ -20,6 +20,11 @@ command -v "$engine" >/dev/null || {
 }
 eval "args=(${usage_args:-})"
 exists() { "$engine" container inspect "$name" >/dev/null 2>&1; }
+# Who the container runs as. Rootless Podman: this user, so mounted files keep their owner.
+identity=(--user "$(id -u):$(id -g)")
+[[ $engine == podman ]] && identity+=(--userns=keep-id)
+tty=()
+[[ -t 0 && -t 1 ]] && tty=(-it)
 remove() {
   if exists; then
     "$engine" stop -t 60 "$name" >/dev/null
@@ -51,9 +56,7 @@ case "${usage_command:-}" in
       -f apps/server-ex/rel/Containerfile "$context"
 
     run=(run -d --name "$name" --hostname "$name" --init --restart unless-stopped --stop-timeout 60
-      -p "$host:$port:3790" -v "$name:/data" --user "$(id -u):$(id -g)")
-    # Rootless Podman: the container's user is this user, so mounted files keep their owner.
-    [[ $engine == podman ]] && run+=(--userns=keep-id)
+      -p "$host:$port:3790" -v "$name:/data" "${identity[@]}")
     workspaces=()
     eval "workspaces=(${usage_workspace:-})"
     for dir in "${workspaces[@]}"; do
@@ -74,6 +77,18 @@ case "${usage_command:-}" in
   status) "$engine" ps -a --filter "name=^$name\$" ;;
   logs) exec "$engine" logs -f "$name" ;;
   restart) "$engine" restart -t 60 "$name" >/dev/null ;;
+  doctor)
+    # The doctor needs the store closed, so it runs beside the stopped MC, on its volume.
+    exists || {
+      echo "No $name container; run mise run mc:container first." >&2
+      exit 1
+    }
+    "$engine" stop -t 60 "$name" >/dev/null
+    status=0
+    "$engine" run --rm "${tty[@]}" -v "$name:/data" "${identity[@]}" "$name:latest" doctor "${args[@]}" || status=$?
+    "$engine" start "$name" >/dev/null
+    exit "$status"
+    ;;
   *)
     exists || {
       echo "No $name container; run mise run mc:container first." >&2
@@ -82,10 +97,11 @@ case "${usage_command:-}" in
     # A pairing link names where the host publishes the MC, not the container's own port.
     if [[ $usage_command == pair && ${#args[@]} -eq 0 ]]; then
       published="$("$engine" port "$name" 3790/tcp | head -n1)"
+      if [[ $published == 0.0.0.0:* ]]; then
+        echo "This link works on this machine; for another, name an address it reaches: mise run mc:container pair http://<lan-or-tailnet-address>:${published#*:}" >&2
+      fi
       args=("http://${published/0.0.0.0/127.0.0.1}")
     fi
-    tty=()
-    [[ -t 0 && -t 1 ]] && tty=(-it)
     exec "$engine" exec "${tty[@]}" "$name" hal-c2-mc "$usage_command" "${args[@]}"
     ;;
 esac

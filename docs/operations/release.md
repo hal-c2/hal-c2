@@ -52,8 +52,11 @@ Podman keeps mounted files yours; under Podman it comes back after a reboot only
 `systemctl --user enable podman-restart.service`.
 
 Running the task again rebuilds and replaces the container, keeping the volume. `pair` prints a
-link for the published address, and `cluster`, `threads` and `doctor` run the MC's own commands
-inside it (`mise run mc:container pair -- --ttl 1h`). `status`, `logs`, `restart` and `uninstall` manage the
+link for the published address (on `--host 0.0.0.0`, name the address another machine reaches:
+`mise run mc:container pair http://<address>:3790`), and other commands such as `cluster` run the
+MC's own command inside it (`mise run mc:container pair -- --ttl 1h`). `doctor` stops the MC, checks
+its store from a container of its own and starts it again. Importing threads finds nothing, since
+the container has no T3 Code or older HAL-C2 install to read. `status`, `logs`, `restart` and `uninstall` manage the
 container; uninstall leaves the volume, which `podman volume rm hal-c2-mc` deletes. Cluster traffic
 is not published, so a containerised MC does not cluster yet.
 
