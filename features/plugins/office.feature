@@ -173,6 +173,13 @@ Feature: Office
       And no two people overlap
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People in each other's way get past without pacing
+      Given two people walk into each other on open floor
+      Then one of them steps around the other and both get where they are going
+      When a person's way is blocked by someone standing still
+      Then it waits where it is instead of stepping back and forth
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: What a person does follows what its agent does
       Given the office has a thread working, typing
       Then its person sits at its desk using the computer

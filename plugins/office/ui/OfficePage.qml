@@ -2052,6 +2052,7 @@ Item {
             talk: null,
             queue: [],
             blocked: 0,
+            waitingFor: "",
             heldBy: "",
             face: -1,
             faceUntil: 0,
@@ -2623,11 +2624,20 @@ Item {
             const there = page.occupied[n];
             if (there && there !== actor.id) {
                 actor.blocked++;
-                if (actor.blocked % 8 === 0 && actor.blocked < 30)
+                actor.waitingFor = there;
+                // Two people walking into each other would both step around the
+                // same way and meet again, so only the first by id gives way.
+                const other = page.actors[there];
+                const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
+                const yields = !headOn || actor.id < other.id;
+                if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
                     route(actor, true);
                 if (actor.blocked >= 30) {
+                    // Stepping aside makes room for someone waiting on this
+                    // person; anyone else in the way is waited for, not paced
+                    // in front of.
                     const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-                    if (sides.length) {
+                    if (headOn && yields && sides.length) {
                         const s = pick(page.rng, sides);
                         actor.path = [s[1] * W + s[0]];
                         actor.sideStep = true;
@@ -2643,6 +2653,7 @@ Item {
             actor.dir = nx < actor.tx ? 1 : nx > actor.tx ? 2 : ny < actor.ty ? 3 : 0;
             actor.offY = 0;
             actor.blocked = 0;
+            actor.waitingFor = "";
         }
         if (actor.next < 0)
             return false;

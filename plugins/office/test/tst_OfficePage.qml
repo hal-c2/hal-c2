@@ -331,11 +331,13 @@ Item {
             compare([actor("lead").tx, actor("lead").ty], [desk.x, desk.y]);
         }
 
-        function test_a_blocked_person_steps_aside() {
+        // A person standing still in the way is waited for: the person behind
+        // it once stepped aside and back every second, pacing on the spot.
+        function test_a_person_blocked_by_someone_standing_still_waits() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const b = actor("b");
+            const a = actor("a"), b = actor("b");
             // A heads for B's desk, which B never leaves.
-            page.setGoal(actor("a"), {
+            page.setGoal(a, {
                 x: b.tx,
                 y: b.ty,
                 face: 0,
@@ -344,7 +346,71 @@ Item {
                 kind: "desk",
                 seat: true
             });
-            runUntil(() => actor("a").sideStep, 400, "the blocked person steps aside");
+            runUntil(() => a.blocked > 0, 1500, "A walks up to B");
+            const spot = [a.tx, a.ty];
+            for (let i = 0; i < 200; i++) {
+                walk(1);
+                compare([a.tx, a.ty, a.next], spot.concat([-1]), "A waits where it is");
+            }
+        }
+
+        // Where a row of open floor with open rows above and below it starts.
+        function openFloor(length) {
+            const w = page.world;
+            for (let y = 1; y < w.rows - 1; y++) {
+                for (let x = 0; x + length <= w.cols; x++) {
+                    let open = true;
+                    for (let dx = 0; dx < length && open; dx++) {
+                        for (let dy = -1; dy <= 1; dy++)
+                            open = open && page.walkable(x + dx, y + dy) && !page.occupied[(y + dy) * w.cols + x + dx];
+                    }
+                    if (open)
+                        return [x, y];
+                }
+            }
+            fail("the office has open floor");
+        }
+
+        // Stands A and B side by side and sends each to its own tile of the row.
+        function meet(left, row, aTo, bTo) {
+            const w = page.world;
+            const a = actor("a"), b = actor("b");
+            for (const who of [a, b]) {
+                page.occupied[who.ty * w.cols + who.tx] = "";
+                who.goal = null;
+                who.path = [];
+            }
+            page.place(a, left, row, true);
+            page.place(b, left + 1, row, true);
+            const goal = x => ({
+                    x: x,
+                    y: row,
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "floor"
+                });
+            page.setGoal(a, goal(aTo));
+            page.setGoal(b, goal(bTo));
+            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+                walk(1);
+            compare([a.tx, a.ty, b.tx, b.ty], [aTo, row, bTo, row], "both get where they are going");
+        }
+
+        // Two people walking into each other once both stepped around the same
+        // way, met again, and stepped back, over and over.
+        function test_two_people_walking_into_each_other_get_past() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const [left, row] = openFloor(8);
+            meet(left + 3, row, left + 7, left);
+        }
+
+        // Two people headed for each other's tile cannot go around: one steps
+        // aside to let the other through.
+        function test_two_people_swapping_places_get_there() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const [left, row] = openFloor(4);
+            meet(left + 1, row, left + 2, left + 1);
         }
 
         function test_what_a_person_does_follows_its_agent() {
