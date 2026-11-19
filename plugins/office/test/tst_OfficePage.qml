@@ -193,7 +193,7 @@ Item {
         // A host that makes the page without giving it a size still shows the
         // office, with the zoom buttons beside the summary, not over it.
         function test_a_page_given_no_size_shows_the_office() {
-            const made = Qt.createComponent(Qt.resolvedUrl("../ui/OfficePage.qml")).createObject(test, {
+            const made = createTemporaryObject(Qt.createComponent(Qt.resolvedUrl("../ui/OfficePage.qml")), test, {
                 plugin: plugin
             });
             plugin.publish(many(3, "t", "working", "typing"));
@@ -202,17 +202,18 @@ Item {
             const summary = findChild(made, "officeSummary");
             const scroller = findChild(made, "officeScroller");
             const row = summary.parent;
+            let needed = summary.implicitWidth;
             let buttons = 0;
             for (let i = 0; i < row.children.length; i++) {
                 const button = row.children[i];
                 if (button === summary || !button.visible)
                     continue;
-                verify(button.x >= summary.x + summary.implicitWidth, "a zoom button sits clear of the summary");
+                needed += row.spacing + button.width;
                 buttons++;
             }
             compare(buttons, 3);
+            verify(row.width >= needed, "the summary and the zoom buttons fit side by side");
             verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
-            made.destroy();
         }
 
         function test_some_workers_are_cats_and_dogs() {
