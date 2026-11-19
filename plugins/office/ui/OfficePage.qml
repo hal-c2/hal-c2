@@ -41,9 +41,15 @@ Item {
     property int actorCount: 0
     readonly property bool animating: visible && applicationActive && actorCount > 0
     property bool walking: false
-    property int zoomStep: 0
-    readonly property int autoScale: Math.max(2, Math.floor((scroller.width - 8) / Math.max(1, worldCols * 16)))
-    readonly property int pixelScale: Math.max(1, autoScale + zoomStep)
+    // The office fits the view at zoom 1, by its width or its height,
+    // whichever runs out first; each zoom button is a quarter more or less.
+    property real zoom: 1
+    readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(1, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
+    readonly property real pixelScale: Math.max(1, Math.min(8, fitScale * zoom))
+
+    function zoomBy(factor) {
+        zoom = Math.max(1 / fitScale, Math.min(8 / fitScale, zoom * factor));
+    }
 
     // The office as drawn: its size in tiles, its furniture, the screens of its
     // computers and its whiteboards. Rebuilt when the desks it needs change.
@@ -2988,14 +2994,21 @@ Item {
                 text: "−"
                 toolTip: qsTr("Zoom out")
                 enabled: page.pixelScale > 1
-                onClicked: page.zoomStep -= 1
+                onClicked: page.zoomBy(1 / 1.25)
+            }
+
+            ShellButton {
+                text: qsTr("Fit")
+                toolTip: qsTr("Fit the office to the view")
+                enabled: page.zoom !== 1
+                onClicked: page.zoom = 1
             }
 
             ShellButton {
                 text: "+"
                 toolTip: qsTr("Zoom in")
                 enabled: page.pixelScale < 8
-                onClicked: page.zoomStep += 1
+                onClicked: page.zoomBy(1.25)
             }
         }
 
@@ -3016,7 +3029,9 @@ Item {
             Item {
                 id: stage
 
+                objectName: "officeStage"
                 x: Math.max(0, (scroller.width - width) / 2)
+                y: Math.max(0, (scroller.height - height) / 2)
                 width: page.worldCols * 16 * page.pixelScale
                 height: page.worldRows * 16 * page.pixelScale
 

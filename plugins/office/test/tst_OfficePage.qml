@@ -210,7 +210,7 @@ Item {
                 verify(button.x >= summary.x + summary.implicitWidth, "a zoom button sits clear of the summary");
                 buttons++;
             }
-            compare(buttons, 2);
+            compare(buttons, 3);
             verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
             made.destroy();
         }
@@ -430,9 +430,25 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // The office fills the view by its width or its height, whichever runs
+        // out first, and the zoom buttons step it a little at a time.
+        function test_the_office_fits_the_view_and_zooms_in_small_steps() {
+            plugin.publish(many(9, "t", "working", "typing"));
+            tryVerify(() => page.worldCols > 0);
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            verify(stage.width <= scroller.width && stage.height <= scroller.height, "the whole office shows");
+            verify(scroller.width - stage.width <= 8 || scroller.height - stage.height <= 8, "it fills one side of the view");
+            const fitted = page.pixelScale;
+            page.zoomBy(1.25);
+            verify(page.pixelScale > fitted && page.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
+            page.zoom = 1;
+            compare(page.pixelScale, fitted);
+        }
+
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
-            page.zoomStep = 8 - page.autoScale;
+            page.zoom = 8 / page.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
             const hit = find("officePerson:" + far.id);
