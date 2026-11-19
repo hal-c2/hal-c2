@@ -144,6 +144,28 @@ defmodule HalC2.Steps.Plugins.Office do
     thread(context, new)
   end
 
+  # Put away after it has left for sitting idle. The thread made after is the receipt that
+  # the office has heard it put away, so bringing it back is a change of its own.
+  step ~r/^a thread "(?<title>[^"]+)" idle for (?<hours>\d+) hours that is (?<how>archived|settled)$/,
+       %{args: [title, hours, how]} = context do
+    context
+    |> thread(title)
+    |> idle_for(title, String.to_integer(hours) * 3_600_000)
+    |> put_away(title, how)
+    |> thread("After " <> title)
+    |> await_person("After " <> title, &(&1["state"] == "idle"))
+  end
+
+  step ~r/^the user (?<how>unarchives|unsettles) "(?<title>[^"]+)"$/,
+       %{args: [how, title]} = context do
+    patch =
+      if how == "unarchives",
+        do: %{"archivedAt" => nil},
+        else: %{"settledOverride" => "active"}
+
+    World.patch_thread(context, title, patch)
+  end
+
   step "a thread {string} moved to another machine", %{args: [title]} = context do
     context
     |> thread(title)
@@ -438,6 +460,11 @@ defmodule HalC2.Steps.Plugins.Office do
     {_, context} = await_topic(context, &((person(&1, title) || %{})["parentId"] == lead_id))
     Map.merge(context, %{thread: lead, lead: lead, worker: title})
   end
+
+  defp put_away(context, title, "archived"),
+    do: World.patch_thread(context, title, %{"archivedAt" => now()})
+
+  defp put_away(context, title, "settled"), do: settle(context, title)
 
   defp settle(context, title),
     do:

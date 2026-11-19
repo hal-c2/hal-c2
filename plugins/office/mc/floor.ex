@@ -83,7 +83,7 @@ defmodule HalC2Plugins.Office.Floor do
 
       since =
         case floor.states[id] do
-          {^state, since} -> later_run(since, row, state)
+          {^state, since} -> still(since, floor.rows[id], row, state, changed? && now)
           {_other, _since} when changed? -> iso(now)
           _ -> began(row, state, now)
         end
@@ -136,17 +136,28 @@ defmodule HalC2Plugins.Office.Floor do
     }
   end
 
-  # A thread idle or failed before and after a change, whose latest run ended after
-  # `since`, ran in between, and the shell's batching folded that run into the one
-  # change: it has been quiet since that run ended.
-  defp later_run(since, row, state) when state in ~w(idle failed) do
+  # When a thread idle or failed before and after a change (`old` to `row`) is quiet
+  # from. One the user unarchived or made active again is back `now`, for `idleHours`
+  # more. One whose latest run ended after `since` ran in between, and the shell's
+  # batching folded that run into the one change: it is quiet from that run's end.
+  defp still(since, old, row, state, now) when state in ~w(idle failed) do
     ended = row["latestRunCompletedAt"]
-    if (ms(ended) || 0) > (ms(since) || 0), do: ended, else: since
+
+    cond do
+      (now && put_away?(old)) and not put_away?(row) -> iso(now)
+      (ms(ended) || 0) > (ms(since) || 0) -> ended
+      true -> since
+    end
   end
 
-  defp later_run(since, _row, _state), do: since
+  defp still(since, _old, _row, _state, _now), do: since
 
-  # When a row read at start, or first seen, says its state began.
+  defp put_away?(nil), do: false
+  defp put_away?(row), do: row["archivedAt"] != nil or settled?(row)
+
+  # When a row read at start, or first seen, says its state began. An idle thread that
+  # waited on background work after its run ended counts from the run's end: the row
+  # keeps no time for when that work finished.
   defp began(row, "asking", now),
     do: get_in(row, ["pendingRuntimeRequest", "createdAt"]) || row["updatedAt"] || iso(now)
 

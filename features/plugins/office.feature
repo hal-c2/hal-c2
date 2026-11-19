@@ -114,6 +114,18 @@ Feature: Office
       Then the office has "New" and not "Moved in"
 
     @mc
+    Scenario Outline: A long-idle thread brought back is in the office for as long again
+      Given the office plugin keeps idle threads for 1 hour
+      And a thread "Old" idle for 2 hours that is <put away>
+      When the user <brings back> "Old"
+      Then the office has "Old" idle
+
+      Examples:
+        | put away | brings back |
+        | archived | unarchives  |
+        | settled  | unsettles   |
+
+    @mc
     Scenario: A renamed project is renamed in the office
       Given a thread "Fix the parser" in the project "api"
       When the project "api" is renamed "billing"

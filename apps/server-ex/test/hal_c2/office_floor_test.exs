@@ -84,4 +84,33 @@ defmodule HalC2.OfficeFloorTest do
     assert in_office?(floor, @start)
     assert Floor.next_change(floor, @start) == @start + @hour
   end
+
+  for {put_away, back} <- [
+        {%{"archivedAt" => "2026-01-01T00:00:00.000Z"}, %{"archivedAt" => nil}},
+        {%{"settledOverride" => "settled"}, %{"settledOverride" => "active"}}
+      ] do
+    test "a long-idle thread brought back (#{inspect(Map.keys(put_away))}) stays idleHours more" do
+      ended = @start - 2 * @hour
+
+      floor =
+        Floor.load(
+          floor(),
+          [Map.merge(row("idle", ended, ended), unquote(Macro.escape(put_away)))],
+          @start
+        )
+
+      refute in_office?(floor, @start)
+
+      floor =
+        Floor.rows(
+          floor,
+          [Map.merge(row("idle", ended, @start), unquote(Macro.escape(back)))],
+          @start
+        )
+
+      assert in_office?(floor, @start + @hour - 1)
+      assert Floor.next_change(floor, @start) == @start + @hour
+      refute in_office?(floor, @start + @hour)
+    end
+  end
 end

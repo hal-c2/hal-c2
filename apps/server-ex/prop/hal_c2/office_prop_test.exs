@@ -12,7 +12,8 @@ defmodule HalC2.OfficePropTest do
     waiting and the rest, newest first, no more than `maxPeople`;
   - an idle or failed thread is long idle `idleHours` after it became so: when its row
     first said its run ended, when the office saw it change state, or when a later run
-    ended; a row touched without changing its state (`touch`) is no less quiet;
+    ended, or when it was unarchived or made active again; a row touched without
+    changing its state (`touch`) is no less quiet;
   - each is in its row's state, shows what its agent last did only while working,
     and has a question exactly while asking;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
@@ -38,6 +39,7 @@ defmodule HalC2.OfficePropTest do
   @born_ms 120_000
   # How long before its row last changed a row's run ended, for the states that ran.
   @ran_ms 600_000
+  @put_away [:archived, :settled]
   @ranks %{"asking" => 0, "working" => 1, "waiting" => 2, "idle" => 3, "failed" => 3}
   @tools %{
     "Read" => "reading",
@@ -87,7 +89,12 @@ defmodule HalC2.OfficePropTest do
         elements([1, 0.5, 1.0e-7, 24])
       ])
 
-  defp put_idle(floor, at), do: Floor.load(floor, [row("t1", "idle", :none, nil, at)], at)
+  # Its run ended `at`, so a deadline of a few milliseconds is still ahead.
+  defp put_idle(floor, at) do
+    row = %{row("t1", "idle", :none, nil, at) | "latestRunCompletedAt" => Floor.iso(at)}
+    Floor.load(floor, [row], at)
+  end
+
   defp in_office?(floor, now), do: Floor.view(floor, now)["people"] != []
 
   def initial_state,
@@ -279,10 +286,22 @@ defmodule HalC2.OfficePropTest do
 
     since =
       case s.rows[id] do
-        nil -> ran || at
-        %{state: ^state, since: since} when state in ~w(idle failed) -> max(since, ran)
-        %{state: ^state, since: since} -> since
-        _ -> s.now
+        nil ->
+          ran || at
+
+        # Unarchived or made active again: back for `idleHours` more.
+        %{state: ^state, flag: old}
+        when state in ~w(idle failed) and old in @put_away and flag not in @put_away ->
+          s.now
+
+        %{state: ^state, since: since} when state in ~w(idle failed) ->
+          max(since, ran)
+
+        %{state: ^state, since: since} ->
+          since
+
+        _ ->
+          s.now
       end
 
     entry = %{state: state, flag: flag, parent: parent, at: at, since: since}
