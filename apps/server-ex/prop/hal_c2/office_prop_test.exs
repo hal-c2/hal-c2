@@ -15,8 +15,10 @@ defmodule HalC2.OfficePropTest do
     first said its run ended, when the office saw it change state, or when a later run
     ended, or when it was unarchived or made active again; a row touched without
     changing its state (`touch`) is no less quiet;
-  - each is in its row's state, shows what its agent last did only while working,
-    and has a question exactly while asking;
+  - each is in its row's state since that time, shows what its agent last did only
+    while working, and has a question exactly while asking;
+  - the next change it names is the first of those: an idle thread in it going long
+    idle, or a talk growing too old;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
     keeps its place, time, who said it to whom and its kind), those under ten minutes
     old, each from, to and of the kind it was said; once the timer fires, the office
@@ -109,18 +111,12 @@ defmodule HalC2.OfficePropTest do
       talks: []
     }
 
-  def command(_state) do
+  def command(s) do
     oneof([
-      {:call, __MODULE__, :put_row,
-       [
-         elements(@ids),
-         elements(~w(asking working waiting failed idle)),
-         elements([:none, :archived, :moved, :settled, :unsettled]),
-         elements([nil, "t1", "t2"]),
-         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000])
-       ]},
+      put_row(elements(@ids), elements(~w(asking working waiting failed idle))),
+      again(s),
       {:call, __MODULE__, :delete_row, [elements(@ids)]},
-      {:call, __MODULE__, :touch, [elements(@ids)]},
+      {:call, __MODULE__, :touch, [quiet_id(s)]},
       {:call, __MODULE__, :start_turn, [elements(@ids)]},
       {:call, __MODULE__, :call_tool, [elements(@ids), elements(Map.keys(@tools))]},
       {:call, __MODULE__, :say, [elements(@ids), elements(["Done.\nAll green.", "  ", "Fixed"])]},
@@ -130,6 +126,36 @@ defmodule HalC2.OfficePropTest do
       {:call, __MODULE__, :settings, [integer(1, 4), elements([1, 3])]},
       {:call, __MODULE__, :tick, [elements([1_000, 90_000, 5 * 60_000, 3_600_000])]}
     ])
+  end
+
+  defp put_row(id, state),
+    do:
+      {:call, __MODULE__, :put_row,
+       [
+         id,
+         state,
+         elements([:none, :archived, :moved, :settled, :unsettled]),
+         elements([nil, "t1", "t2"]),
+         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000])
+       ]}
+
+  # A row the office has, changed without changing its state: archived, settled or
+  # back, or a later run ended. Mostly an idle or failed one, whose quiet time is what
+  # such a change moves or must not move.
+  defp again(s) do
+    case for {id, %{state: state}} <- s.rows, do: {state in ~w(idle failed), put_row(id, state)} do
+      [] -> put_row(elements(@ids), elements(~w(failed idle)))
+      rows -> frequency(for {quiet?, call} <- rows, do: {if(quiet?, do: 4, else: 1), call})
+    end
+  end
+
+  # Mostly a thread idle or failed now: touched long after it went idle, it is still as
+  # quiet as it was.
+  defp quiet_id(s) do
+    case for {id, %{state: state}} <- s.rows, state in ~w(idle failed), do: id do
+      [] -> elements(@ids)
+      quiet -> frequency([{4, elements(quiet)}, {1, elements(@ids)}])
+    end
   end
 
   def precondition(_state, _call), do: true
@@ -208,9 +234,10 @@ defmodule HalC2.OfficePropTest do
   defp event(event), do: step(&Floor.observe(&1, event, Process.get(:now)))
 
   defp step(fun) do
+    now = Process.get(:now)
     floor = fun.(Process.get(:floor))
     Process.put(:floor, floor)
-    Floor.view(floor, Process.get(:now))
+    floor |> Floor.view(now) |> Map.put("next", Floor.next_change(floor, now))
   end
 
   defp item(id, tool) when tool in ["mix test", "ls -la"],
@@ -402,7 +429,22 @@ defmodule HalC2.OfficePropTest do
       Enum.all?(Enum.zip(view["people"], expected), &person?(s, &1)) and
       Enum.map(view["talks"], &talk/1) ==
         Enum.map(talks, &{&1.id, &1.from, &1.to, &1.kind, &1.text, &1.at}) and
-      kept?(call, view, talks)
+      view["next"] == next_change(s, talks) and kept?(call, view, talks)
+  end
+
+  # The next time the office changes by itself: an idle thread in it goes long idle, or
+  # its oldest talk grows too old.
+  defp next_change(s, talks) do
+    idle =
+      for {id, r} <- s.rows,
+          r.state in ~w(idle failed),
+          here?(s, id, []),
+          do: r.since + ceil(s.idle_hours * 3_600_000)
+
+    case Enum.filter(idle ++ Enum.map(talks, &(&1.at + @talk_ms)), &(&1 > s.now)) do
+      [] -> nil
+      times -> Enum.min(times)
+    end
   end
 
   defp talk(t), do: {t["id"], t["from"], t["to"], t["kind"], t["text"], Floor.ms(t["at"])}
@@ -435,9 +477,10 @@ defmodule HalC2.OfficePropTest do
 
   defp person?(s, {person, {id, r}}) do
     person["state"] == r.state and person["parentId"] == r.parent and
+      Floor.ms(person["since"]) == r.since and
       person["activity"] == if(r.state == "working", do: s.activity[id]) and
       person["question"] != nil == (r.state == "asking") and
-      person["provider"] in ["claudeAgent", "codex"] and is_binary(person["since"]) and
+      person["provider"] in ["claudeAgent", "codex"] and
       person["project"] == "api" and person["model"] == "gpt-5.4"
   end
 end
