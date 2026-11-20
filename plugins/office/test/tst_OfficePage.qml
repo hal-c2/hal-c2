@@ -1036,12 +1036,15 @@ Item {
         }
 
         // A speaker whose side someone else took while the claims were gone
-        // walks to another free side of the listener and talks from there,
-        // and nobody stops on one tile with someone else.
+        // walks to the nearest other free side of the listener and talks from
+        // there, and nobody stops on one tile with someone else.
         function test_a_speaker_whose_side_was_taken_moves_to_another() {
-            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting"), person("x", "X", "waiting")];
+            // C plans at a whiteboard, out in the open, so the talk can move
+            // to either side of it.
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "working", "planning"), person("x", "X", "waiting")];
             plugin.publish(people);
             const a = actor("lead"), c = actor("c"), x = actor("x");
+            runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
             plugin.publish(people, [
                 {
                     id: "talk-1",
@@ -1066,9 +1069,19 @@ Item {
                 kind: "stand"
             };
             page.claim(x, x.goal);
+            const [ox, oy] = [a.tx, a.ty];
             page.advance(1);
             verify(a.claim !== side, "the speaker gives the taken side up");
             compare(Math.abs(a.goal.x - c.tx) + Math.abs(a.goal.y - c.ty), 1, "it heads for another side of the listener");
+            // The nearest free side is one of the two beside its old one, two
+            // steps away; the one across the listener is a walk of four
+            // around it.
+            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.walkable(sx, sy) && [undefined, "lead"].includes(page.claims[sy * W + sx]));
+            const across = [2 * c.tx - ox, 2 * c.ty - oy];
+            verify(free.some(([sx, sy]) => sx === across[0] && sy === across[1]), "the side across the listener is free");
+            verify(free.some(([sx, sy]) => sx !== across[0] || sy !== across[1]), "and so is one beside the old one");
+            verify(a.goal.x !== across[0] || a.goal.y !== across[1], "it takes a side beside its old one, not the one across the listener");
+            compare(Math.abs(a.goal.x - ox) + Math.abs(a.goal.y - oy), 2, "two steps away");
             compare(page.claims[a.claim], "lead", "and claims it");
             compare(a.talk.phase, "go");
             runUntil(() => {

@@ -3108,25 +3108,7 @@ Item {
             const there = other.ty * W + other.tx;
             if (t.target !== there || actor.path.length === 0 && actor.next < 0) {
                 t.target = there;
-                const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [other.tx + dx, other.ty + dy]).filter(([x, y]) => walkable(x, y) && free({
-                        x: x,
-                        y: y
-                    }, actor));
-                if (!sides.length)
-                    return;
-                sides.sort((a, b) => Math.abs(a[0] - actor.tx) + Math.abs(a[1] - actor.ty) - (Math.abs(b[0] - actor.tx) + Math.abs(b[1] - actor.ty)));
-                const sidewaysFirst = sides.filter(s => s[1] === other.ty).concat(sides.filter(s => s[1] !== other.ty));
-                const best = sidewaysFirst[0];
-                actor.goal = {
-                    x: best[0],
-                    y: best[1],
-                    face: 0,
-                    offY: 0,
-                    pose: "talk",
-                    kind: "talk"
-                };
-                claim(actor, actor.goal);
-                route(actor);
+                toSide(actor, other);
             }
             return;
         }
@@ -3149,6 +3131,33 @@ Item {
             other.bubble = "";
             endTalk(actor);
         }
+    }
+
+    // Sends a speaker to the free side of `other` nearest it, counting the
+    // walk around `other` when it stands in the way, and beside it rather
+    // than above or below when two are as near. False when no side is free.
+    function toSide(actor, other) {
+        const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
+                    x: other.tx + dx,
+                    y: other.ty + dy
+                })).filter(s => walkable(s.x, s.y) && free(s, actor));
+        if (!sides.length)
+            return false;
+        const inside = (a, m, b) => Math.min(a, b) < m && m < Math.max(a, b);
+        const walk = s => {
+            const around = s.y === actor.ty && other.ty === actor.ty && inside(actor.tx, other.tx, s.x) || s.x === actor.tx && other.tx === actor.tx && inside(actor.ty, other.ty, s.y);
+            return Math.abs(s.x - actor.tx) + Math.abs(s.y - actor.ty) + (around ? 2 : 0);
+        };
+        sides.sort((a, b) => walk(a) - walk(b) || (b.y === other.ty) - (a.y === other.ty));
+        actor.goal = Object.assign({
+            face: 0,
+            offY: 0,
+            pose: "talk",
+            kind: "talk"
+        }, sides[0]);
+        claim(actor, actor.goal);
+        route(actor);
+        return true;
     }
 
     // Once a talk has begun, the speaker holds the side it talks from and the
@@ -3186,22 +3195,10 @@ Item {
             claim(actor, actor.goal);
             return true;
         }
-        const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
-                    x: other.tx + dx,
-                    y: other.ty + dy
-                })).filter(s => walkable(s.x, s.y) && free(s, actor));
-        if (!sides.length) {
+        if (!toSide(actor, other)) {
             endTalk(actor);
             return false;
         }
-        actor.goal = Object.assign({
-            face: 0,
-            offY: 0,
-            pose: "talk",
-            kind: "talk"
-        }, sides[0]);
-        claim(actor, actor.goal);
-        route(actor);
         actor.bubble = "";
         other.bubble = "";
         t.phase = "go";

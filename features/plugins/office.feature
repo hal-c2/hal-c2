@@ -446,7 +446,7 @@ Feature: Office
     Scenario: A speaker whose side someone else took talks from another side
       Given "Lead" is telling "C" "Got a minute?"
       When someone else is sent to the tile "Lead" talks from
-      Then "Lead" walks to another free side of "C" and says its line from there
+      Then "Lead" walks to the nearest other free side of "C", not round it, and says its line from there
       And nobody stops on a tile someone else stands on
 
     @desktop @mobile @backlog-desktop @backlog-mobile
