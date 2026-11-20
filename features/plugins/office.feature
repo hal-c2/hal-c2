@@ -525,11 +525,28 @@ Feature: Office
       Then the worker plans at the review corner's whiteboard and keeps its desk
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Others sit in the review corner only when the floor is full
-      Given the office has 40 threads
-      Then none of them sits in the review corner
-      When it has 42 threads and a reviewer
-      Then 2 of the threads and the reviewer sit in the review corner
+    Scenario: Nobody but reviewers sits in the review corner, even with the floor full
+      Given the office has 46 threads and a reviewer
+      Then 40 of the threads sit on the floor and the other 6 have no desk
+      And the reviewer sits alone in the review corner
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone in the review corner who is no reviewer leaves it
+      Given the office has 2 reviewers in the review corner
+      When one of them is a reviewer no more
+      Then it sits on the floor and the other keeps its corner desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner take only floor desks nobody else needs
+      Given the office has 10 reviewers and 8 teams of 5 threads, the reviewers listed first
+      Then every thread in the teams has a desk on the floor
+      And 8 of the reviewers sit in the review corner and the other 2 have no desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone reading who leaves the review corner on a full floor waits in the break room
+      Given the office has 40 threads and a reviewer reading at a shelf
+      When the reviewer is a reviewer no more
+      Then it has no desk and waits in the break room
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The review whiteboard shows a checklist beside a diff
@@ -573,6 +590,15 @@ Feature: Office
       Given the office has threads "A" and "B"
       When "A" leaves
       Then the desk being carried out shows no project
+
+    # Reviewers hot-desk: the review corner's desks belong to no project.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer's desk shows no project
+      Given the project "api" has the monogram "AP" in blue in the sidebar
+      And the office has 9 reviewers in "api" and a thread in "api"
+      Then the desks of the 8 reviewers in the review corner show no project
+      And neither does the desk of the reviewer at the pod next to it
+      And the thread's desk shows "AP" in blue
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Hovering a person shows its project's icon and that it is reviewing
