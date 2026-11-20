@@ -397,5 +397,15 @@ defmodule HalC2.Orchestration.TurnWriterTest do
                )
       end
     end
+
+    test "a reported exit code of 0 clears a failure an earlier completion marked" do
+      refute Map.has_key?(
+               finish("completed", "ENOENT: no such file or directory", %{
+                 "exitCode" => 0,
+                 "outputIndicatesFailure" => true
+               }),
+               "outputIndicatesFailure"
+             )
+    end
   end
 end

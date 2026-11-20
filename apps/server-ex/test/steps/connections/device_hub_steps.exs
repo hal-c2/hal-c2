@@ -366,10 +366,13 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   step "the device is asked to open exactly {string}", %{args: [url]} = context do
     assert {:ok, _} = context.reply
     calls = context |> calls() |> String.split("\n", trim: true)
+    prefix = "adb shell am start -a android.intent.action.VIEW -d "
+    assert line = Enum.find(calls, &String.starts_with?(&1, prefix)), inspect(calls)
 
-    assert "adb shell am start -a android.intent.action.VIEW -d #{url}" in calls,
-           inspect(calls)
-
+    # adb sends the joined line to the device's shell, which splits it into words again:
+    # a POSIX shell printing the words it reads stands in for it.
+    words = String.replace_prefix(line, prefix, "")
+    assert {^url, 0} = System.cmd("sh", ["-c", "printf '%s' " <> words])
     context
   end
 

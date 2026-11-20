@@ -91,7 +91,12 @@ defmodule HalC2.Workspace do
       matches =
         entries
         # An image search is about the files, whatever kind was also named.
-        |> Enum.filter(&(input["imageOnly"] == true or input["kind"] in [nil, &1["kind"]]))
+        |> Enum.filter(
+          &if(input["imageOnly"] == true,
+            do: &1["kind"] == "file",
+            else: input["kind"] in [nil, &1["kind"]]
+          )
+        )
         |> Enum.filter(&(input["imageOnly"] != true or image?(&1["path"])))
         |> rank(root, String.downcase(query))
 
@@ -223,8 +228,9 @@ defmodule HalC2.Workspace do
   # bare one kept in the project), whether named or reached through a link, or
   # follow a link that points at nothing there.
   defp writable_path(root, relative, error) do
-    segments = relative |> normalize() |> Path.split()
-    resolved = Path.join(root, relative) |> real() |> Path.relative_to(real(root))
+    normalized = normalize(relative)
+    segments = Path.split(normalized)
+    resolved = Path.join(root, normalized) |> real() |> Path.relative_to(real(root))
 
     cond do
       git_folder?(root, segments) or git_folder?(real(root), Path.split(resolved)) ->
@@ -242,18 +248,17 @@ defmodule HalC2.Workspace do
   end
 
   # Whether a folder on the way to the file is a `.git`, or a bare repository (one
-  # whose name ends in `.git` and that holds `HEAD` and `objects/`).
+  # that holds `HEAD`, `objects/` and `refs/`, whatever it is named).
   defp git_folder?(base, segments) do
     segments
     |> Enum.drop(-1)
     |> Enum.scan([], &(&2 ++ [&1]))
     |> Enum.any?(fn prefix ->
       dir = Path.join([base | prefix])
-      name = List.last(prefix)
 
-      name == ".git" or
-        (String.ends_with?(name, ".git") and File.regular?(Path.join(dir, "HEAD")) and
-           File.dir?(Path.join(dir, "objects")))
+      List.last(prefix) == ".git" or
+        (File.regular?(Path.join(dir, "HEAD")) and File.dir?(Path.join(dir, "objects")) and
+           File.dir?(Path.join(dir, "refs")))
     end)
   end
 
@@ -584,9 +589,12 @@ defmodule HalC2.Workspace do
       else: git_grep(root, query, regex, input)
   end
 
+  # Matching lines kept from one file, so one noisy file cannot fill a search.
+  @content_max_per_file 100
+
   defp ripgrep(rg, root, query, regex, input) do
     args =
-      ["--json", "--max-count", "100", "--max-filesize", "1M"] ++
+      ["--json", "--max-count", "#{@content_max_per_file}", "--max-filesize", "1M"] ++
         if(input["caseSensitive"] == true, do: ["--case-sensitive"], else: ["--ignore-case"]) ++
         if(input["wholeWord"] == true, do: ["--word-regexp"], else: []) ++
         if(regex, do: [], else: ["--fixed-strings"]) ++ ["-e", query, "."]
@@ -685,6 +693,7 @@ defmodule HalC2.Workspace do
 
       matches
       |> Enum.chunk_by(fn {_path, number, _column, _matched} -> number end)
+      |> Enum.take(@content_max_per_file)
       |> Enum.map(fn [{_path, number, _column, _matched} | _] = line_matches ->
         content = Enum.at(lines, number - 1, "")
 
