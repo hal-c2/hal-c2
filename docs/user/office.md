@@ -29,8 +29,10 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
   to each other and the message shows in a speech bubble.
 - New threads walk in through the door, and movers carry their desks in. Desks
   nobody uses are carried back out. The office starts with 48 desks, 8 of them
-  in the review corner, and grows by a row of desks when more threads come, so
-  every thread has a desk.
+  in the review corner, and grows by groups of desks when more threads come, so
+  every thread has a desk. It grows sideways in a wide window and down in a
+  tall one, whichever shows it bigger, and rearranges itself when you resize
+  the window that way; everyone keeps their desk and walks to it.
 - Threads the Code review plugin started to review a pull request, and the
   workers they delegated to, sit together in the review corner. When it is
   full they sit at the desks nearest it; other threads never sit there.

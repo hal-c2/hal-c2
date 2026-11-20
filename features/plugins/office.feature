@@ -268,7 +268,7 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Two people headed for the same spot never both stop there
-      Given the office has 16 waiting threads
+      Given the office has 8 waiting threads
       When they all take a break at once
       Then each heads for a spot of its own in the break room
 
@@ -314,6 +314,18 @@ Feature: Office
       And never more than 8 of them are on a break at once
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone walking back from a break keeps its place until it is out
+      Given the break room holds 8 people on a break
+      When one of them ends its break and walks back to its desk
+      Then nobody else goes on a break until it has left the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A break counts from when the person sits down
+      Given the office has 40 threads working, typing
+      When 30 more threads come in waiting, and movers carry in their desks
+      Then none of them goes on a break before it has sat at its desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Some people take breaks more often than others
       Given the office has 40 threads idle
       When the office runs for a while
@@ -336,6 +348,14 @@ Feature: Office
       And nobody else is sent to the spot "Reviewer" listens on until it has replied
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People take part in one talk at a time
+      Given "Lead" and "Reviewer" each have a talk for the other at the same moment
+      Then one of the talks runs to its end before the other starts
+      And when "Coder" has a talk for "Reviewer" while "Lead" is talking to it
+      Then "Coder" waits until "Lead" has had its reply
+      And afterwards nobody keeps a spot for either talk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person whose agent asks something shows a question mark
       Given the office has a thread "Fix the parser" asking
       Then its person stands at its desk with a question mark over its head
@@ -349,36 +369,134 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office grows a row of pods when people outnumber its desks
-      Given the office has 40 threads, at its 40 desks outside the review corner
+    Scenario: The office grows by pods when people outnumber its desks
+      Given the page is 1200 by 760
+      And the office has 40 threads, at its 40 desks outside the review corner
       When it has 41 threads
-      Then the office has another row of three pods at the bottom, 72 desks
-      And the 41st person has a desk in it
+      Then the office has two rows of four pods, 64 desks, as deep as before
+      And the 41st person has a desk in a new pod
       And everyone else keeps their desk
       And the office is drawn again once, for its new size
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office shrinks a row once a pod's worth of desks would still be free
-      Given the office has 70 threads, in four rows of pods
+    Scenario: The office grows into the grid of pods that shows it biggest
+      Given the page is 1600 by 900
+      When the office has 70 threads
+      Then its pods are in the grid that fits the page at the biggest scale
+      And it shows bigger than in rows of three pods
+      When the page is 700 by 1300
+      Then the office has fewer pods to a row than before
+      And everyone keeps their desk and walks there from where they were
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario Outline: An office of six pods is two rows of three in an ordinary window
+      Given the page is <width> by <height>
+      When the office has 12 threads
+      Then the office has two rows of three pods, 48 desks
+
+      Examples:
+        | width | height |
+        | 1024  | 700    |
+        | 1200  | 760    |
+        | 1920  | 1080   |
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A tall, narrow view stacks the pods in one column
+      Given the page is 300 by 1000
+      When the office has 12 threads and a reviewer
+      Then the office is one column of six pods
+      And the review corner is the top pod, where the reviewer sits
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Two people talking keep their places through a resize
+      Given "Lead" is talking to "Reviewer" in the break room
+      When the page is resized to a grid with fewer pods to a row
+      Then both still hold their tiles and nobody else is sent there
+      And the talk carries on to its end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping through the door when the office is resized walks on
+      Given a person is stepping from one tile to the next by the door
+      When the page is resized to a grid with fewer pods to a row
+      Then it carries on from a tile next to where it stands, through no furniture
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that keeps the best grid leaves the office as it is
+      Given the page is 1600 by 900 and the office has 70 threads
+      When the page is 1700 by 950 and then 1550 by 880
+      Then the office is not built or drawn again
+      And nobody moves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office shrinks once a pod's worth of desks would still be free
+      Given the page is 1200 by 760
+      And the office has 70 threads, in three rows of four pods
       When it has 57 threads
-      Then the office keeps its four rows
+      Then the office keeps its twelve pods
       When it has 56 threads
-      Then the people in the last row move to desks in the other rows
-      And the movers carry the last row's desks out
-      And then the office loses that row
+      Then the people in the last three pods move to desks in the others
+      And the movers carry those pods' desks out
+      And then the office is three rows of three pods
       And nobody is left standing where the office ended
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office grows for reviewers only once the review corner is full
-      Given the office has 40 threads and 8 reviewers, in two rows of pods
-      When a ninth reviewer comes in
-      Then the office has another row of three pods
+    Scenario: A resize while the office shrinks
+      Given the page is 1600 by 900 and the office has 70 threads
+      When it has 40 threads
+      And the page is 700 by 1300 before the office has shrunk
+      Then the office shrinks to the grid for its smaller size in the new view
+      And everyone is at a desk of their own, on the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office is never smaller than two rows of pods
-      Given the office has 75 threads
+    Scenario: Someone listening in a pod the office closes finishes the talk first
+      Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
+      And "Lead" is talking to someone who sits in one of the last three pods
+      When it has 56 threads, that listener among them
+      Then the listener keeps the tile it listens on until it has replied
+      And then walks to its new desk, and the office shrinks to three rows of three pods
+      And no tile stays claimed for the talk or past the office's new end
+
+    # The floor is built again on a resize, and everyone routed afresh, so someone can be
+    # sent to the tile a speaker talks from.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speaker whose side someone else took talks from another side
+      Given "Lead" is telling "C" "Got a minute?"
+      When someone else is sent to the tile "Lead" talks from
+      Then "Lead" walks to another free side of "C" and says its line from there
+      And nobody stops on a tile someone else stands on
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speaker with no free side left by the listener ends the talk
+      Given "Lead" is telling "C" "Got a minute?"
+      When every tile beside "C" is taken by someone else
+      Then the talk ends and "C" holds no tile for it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office emptied before its new desks arrive shrinks at once
+      Given the office is empty
+      When it has 75 threads
+      And it is empty again before any desk is carried in
+      Then the office is back to six pods straight away
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office grows for reviewers only once the review corner is full
+      Given the office has 40 threads and 8 reviewers, in six pods
+      When a ninth reviewer comes in
+      Then the office has more pods
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer at an ordinary desk counts as one of those
+      Given the office has 40 threads at its 40 desks outside the review corner
+      When one of them turns out to be a reviewer, delegated to by a new reviewer
+      And then another thread comes in
+      Then the office grows, so everyone has a desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office is never smaller than six pods
+      Given the page is 1200 by 760
+      And the office has 75 threads
       When it has 2 threads
-      Then the office shrinks back to two rows of pods, 48 desks
+      Then the office shrinks back to two rows of three pods, 48 desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: People coming and going within the office's size do not redraw it
@@ -531,7 +649,8 @@ Feature: Office
 
     # A worker can come in before the row of the reviewer that delegated to it, and is
     # no reviewer until then. Seats already taken stay put, so nobody moves while they
-    # stay; the team sits split until the worker leaves.
+    # stay; the team sits split until the worker leaves, or gives its floor desk up to
+    # a thread that needs it.
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A team that turns out to be reviewers keeps its seats on the floor
       Given the office has 2 threads and a worker on the floor whose lead is not in yet
@@ -563,7 +682,7 @@ Feature: Office
       Given the office has 40 threads
       Then none of them sits in the review corner
       When it has 42 threads and a reviewer
-      Then the office grows a row of pods
+      Then the office grows
       And none of the threads sits in the review corner
       And the reviewer sits in the review corner
 
@@ -579,11 +698,22 @@ Feature: Office
       Then every thread in the teams has a desk on the floor
       And 8 of the reviewers sit in the review corner and the other 2 at desks on the floor
 
+    # A reviewer on a floor desk counts as a desk the office needs, so the office grows
+    # rather than take it away. Should a thread still find no desk, a reviewer on a floor
+    # desk gives its desk up.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer on a floor desk keeps it when threads fill the floor
+      Given the office has 10 reviewers, 8 in the review corner and 2 on the floor
+      When a reviewer in the corner leaves and 40 threads come in
+      Then the office grows
+      And every thread has a desk on the floor
+      And every reviewer keeps its desk
+
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
       Given the office has 40 threads and a reviewer reading at a shelf
       When the reviewer is a reviewer no more
-      Then the office grows a row of pods and it has a desk on the floor
+      Then the office grows and it has a desk on the floor
       And it reads on at the shelf
 
     @desktop @mobile @backlog-desktop @backlog-mobile
