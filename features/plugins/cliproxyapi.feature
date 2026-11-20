@@ -154,6 +154,22 @@ Feature: CLIProxyAPI
       Then the page shows the proxy "failed" saying "use https for one elsewhere"
 
     @mc
+    Scenario: Connect over http to a proxy elsewhere, saved while the plugin was off, routes no agents there
+      Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
+      When the user turns the CLIProxyAPI plugin on
+      Then Settings → Providers has no "plugin_cliproxyapi_claude"
+      And Settings → Providers has no "plugin_cliproxyapi_codex"
+      And the page shows "Claude via CLIProxyAPI" as not added, saying "use https for one elsewhere"
+
+    @mc
+    Scenario: Connect put right after it was refused routes agents through the proxy
+      Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
+      And the user turns the CLIProxyAPI plugin on
+      When the user saves Connect to the fake CLIProxyAPI with the management key "their-secret"
+      Then Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
+      And Settings → Providers has "plugin_cliproxyapi_codex" named "Codex via CLIProxyAPI"
+
+    @mc
     Scenario: A client key the proxy did not take is added again on the next drain
       Given the fake CLIProxyAPI lets agents in with the key "their-key"
       And the fake CLIProxyAPI answers the next "PUT /config/access/api-keys" with 500 saying "config is read-only"

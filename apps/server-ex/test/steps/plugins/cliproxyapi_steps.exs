@@ -121,6 +121,16 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     Map.put(context, :reply, reply)
   end
 
+  # Saved while the plugin runs, so applied before the page's next call answers.
+  step "the user saves Connect to the fake CLIProxyAPI with the management key {string}",
+       %{args: [key]} = context do
+    context =
+      save(context, %{"mode" => "connect", "url" => context.fake.base, "managementKey" => key})
+
+    status(context)
+    context
+  end
+
   step "the save is refused saying {string}", %{args: [text]} = context do
     assert {:error, message, %{"_tag" => "PluginSettingsInvalid"}} = context.reply
     assert message =~ text
@@ -707,7 +717,8 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     await_status(context, fn status ->
       Enum.any?(
         status["instances"],
-        &(&1["label"] == label and &1["state"] == "taken" and &1["message"] =~ text)
+        &(&1["label"] == label and &1["state"] in ["taken", "withheld"] and
+            &1["message"] =~ text)
       )
     end)
   end

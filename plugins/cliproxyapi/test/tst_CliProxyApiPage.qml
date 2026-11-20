@@ -255,6 +255,23 @@ Item {
             compare(find("cliproxyapiInstanceText:claude").text, "Claude via CLIProxyAPI · cannot be checked: " + reason);
         }
 
+        function test_an_instance_withheld_from_refused_settings_says_why() {
+            const reason = "Connect over http only to a proxy on this machine (127.0.0.1, localhost); use https for one elsewhere.";
+            plugin.publish("status", test.status({
+                instances: [
+                    {
+                        name: "claude",
+                        instanceId: "plugin_cliproxyapi_claude",
+                        label: "Claude via CLIProxyAPI",
+                        state: "withheld",
+                        message: reason
+                    }
+                ]
+            }));
+            tryVerify(() => find("cliproxyapiInstanceText:claude") !== null);
+            compare(find("cliproxyapiInstanceText:claude").text, "Claude via CLIProxyAPI · not added: " + reason);
+        }
+
         function test_signing_in_shows_the_address_and_takes_the_one_pasted_back() {
             mouseClick(find("cliproxyapiSignIn:claude"));
             plugin.publish("accounts", {

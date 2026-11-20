@@ -107,6 +107,7 @@ Item {
         case "dismissed":
             return qsTr("%1 · deleted from Settings → Providers").arg(instance.label);
         case "taken":
+        case "withheld":
             return qsTr("%1 · not added: %2").arg(instance.label).arg(instance.message ?? "");
         case "added":
             return qsTr("%1 · in Settings → Providers").arg(instance.label);

@@ -804,6 +804,25 @@ defmodule HalC2Plugins.CliProxyApi do
     state
   end
 
+  # Connect settings that do not validate would send agents, and the client key, where
+  # the check meant to keep them from: the plugin's instances leave until the settings
+  # validate, and are put as new then. Those the user deleted stay deleted.
+  defp sync(%{invalid: invalid} = state) when invalid != nil do
+    case Host.provider_instances(@id, "list", %{}) do
+      {:ok, %{"instances" => listed}} ->
+        for %{"name" => name} <- listed,
+            do: Host.provider_instances(@id, "remove", %{"name" => name})
+
+        ledger = Map.filter(state.ledger, fn {_, entry} -> entry["state"] == "dismissed" end)
+        changed? = ledger != state.ledger
+        state = %{state | ledger: ledger, taken: %{}, unlisted: nil}
+        if changed?, do: save_ledger(state), else: state
+
+      {:error, message} ->
+        %{state | error: message, unlisted: message}
+    end
+  end
+
   defp sync(state) do
     case Host.provider_instances(@id, "list", %{}) do
       {:ok, %{"instances" => listed} = reply} ->
@@ -909,6 +928,7 @@ defmodule HalC2Plugins.CliProxyApi do
             "state" =>
               cond do
                 state.ledger[name]["state"] == "dismissed" -> "dismissed"
+                state.invalid -> "withheld"
                 state.unlisted -> "unknown"
                 Map.has_key?(state.taken, name) -> "taken"
                 state.ledger[name]["state"] == "created" -> "added"
@@ -916,7 +936,7 @@ defmodule HalC2Plugins.CliProxyApi do
               end,
             "message" =>
               if(state.ledger[name]["state"] != "dismissed",
-                do: state.unlisted || state.taken[name]
+                do: state.invalid || state.unlisted || state.taken[name]
               )
           }
         end
