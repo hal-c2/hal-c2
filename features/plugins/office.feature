@@ -337,7 +337,7 @@ Feature: Office
     Scenario: A break counts from when the person sits down
       Given the office has 40 threads working, typing
       When 30 more threads come in waiting, and movers carry in their desks
-      Then none of them goes on a break before it has sat at its desk
+      Then none of them goes on a break before it has sat at its desk for at least 15 seconds
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Some people take breaks more often than others
@@ -429,10 +429,38 @@ Feature: Office
       And the talk carries on to its end
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: Someone stepping through the door when the office is resized walks on
-      Given a person is stepping from one tile to the next by the door
+    Scenario: Someone resting at its desk through a resize takes its break as planned
+      Given the office has 16 threads waiting, each sitting at its desk until its next break
       When the page is resized to a grid with fewer pods to a row
-      Then it carries on from a tile next to where it stands, through no furniture
+      Then whoever still sits at its desk waits for the same next break as before
+      And whoever has a desk somewhere else waits 15 to 45 seconds from when it sits there
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping through the door when the office is resized walks on
+      Given a person is stepping through the door into the break room
+      When the page is resized to a grid with fewer pods to a row
+      Then it carries on stepping through the door where the door is now
+      And it is never put back on the office's floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping out of the door when the office is resized walks on
+      Given a person is stepping out of the break room through the door
+      When the page is resized to a grid with fewer pods to a row
+      Then it carries on stepping out of the door where the door is now
+      And it walks on to its desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping where a resize puts a wall steps from the floor
+      Given a person is stepping off a tile where the smaller office's south wall will be
+      When the page is resized to a grid with more pods to a row
+      Then it goes on from the nearest floor, never from inside the wall
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that moves the break room over the office keeps the office out of it
+      Given the page is 1200 by 760 and the office has 70 threads working, in rows of four pods
+      When the page is 300 by 1000, and the break room's wall moves west of where they sit
+      Then nobody who was in the office is in the break room
+      And they step to the office's floor by the wall and walk to their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A resize that keeps the best grid leaves the office as it is
@@ -462,6 +490,13 @@ Feature: Office
       And everyone is at a desk of their own, on the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that keeps the grid while the office shrinks still shrinks it for the new view
+      Given the page is 1150 by 900 and the office has 70 threads, in three rows of four pods
+      When it has 40 threads, and the office closes down to nine pods
+      And the page is 1450 by 900, where twelve pods are still best four to a row
+      Then the office closes down to eight pods instead, as fits the wider view best
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone listening in a pod the office closes finishes the talk first
       Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
       And "Lead" is talking to someone who sits in one of the last three pods
@@ -469,6 +504,24 @@ Feature: Office
       Then the listener keeps the tile it listens on until it has replied
       And then walks to its new desk, and the office shrinks to three rows of three pods
       And no tile stays claimed for the talk or past the office's new end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office closes a pod only once nobody listens at one of its seats
+      Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
+      And "Lead" is talking to someone who sits in one of the last three pods
+      When it has 56 threads, that listener among them
+      And the movers carry out every desk in the last three pods, the listener's too, before it has replied
+      Then the office keeps its twelve pods until the talk ends
+      And then shrinks to three rows of three pods
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office shrinks only once nobody listens in the rows it loses
+      Given the page is 900 by 900 and the office has 70 threads, in four rows of three pods
+      And "Lead" is talking to someone standing on the floor by the last row of pods
+      When it has 56 threads, that listener among them
+      And the movers carry out every desk in the last row of pods before it has replied
+      Then the office keeps its twelve pods until the talk ends
+      And then shrinks to three rows of three pods
 
     # The floor is built again on a resize, and everyone routed afresh, so someone can be
     # sent to the tile a speaker talks from.

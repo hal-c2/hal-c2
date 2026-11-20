@@ -2126,16 +2126,27 @@ Item {
             a.hold = -1;
             if (a.tx < 0)
                 continue;
-            const nx = a.next >= 0 ? across(a.next % old.cols) : -1;
+            // Whoever is in the break room, on its door or stepping onto the
+            // door moves with it, the step it takes and all.
+            const room = a.tx >= old.xd || a.next >= 0 && a.next % old.cols >= old.xd;
+            const shift = room ? dx : 0;
+            const nx = a.next >= 0 ? a.next % old.cols + shift : -1;
             const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
-            a.px += (across(a.tx) - a.tx) * 16;
-            a.tx = across(a.tx);
+            a.px += shift * 16;
+            a.tx += shift;
             a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;
             a.path = [];
             // A step through the break room's door that the door moved away
             // from is not finished: it goes on from the tile it set out from.
             if (a.tx >= w.cols || a.ty >= w.rows || a.next >= 0 && Math.abs(nx - a.tx) + Math.abs(ny - a.ty) !== 1)
                 place(a, a.tx, a.ty, true);
+            // Whoever was out in the office where the break room now is
+            // steps back to the office's floor by its wall: it goes into the
+            // break room only when let in (see restless()).
+            if (!room && (a.tx >= w.xd || a.next >= 0 && a.next % w.cols >= w.xd)) {
+                const free = nearestFree(w.xd - 1, a.ty, a.id, false, w.xd);
+                place(a, free[0], free[1], false);
+            }
             const goal = a.goal;
             if (page.movers[a.id]) {
                 if (a.job >= 0) {
@@ -2161,18 +2172,26 @@ Item {
                     a.goal.partner = Math.floor(goal.partner / old.cols) * w.cols + across(goal.partner % old.cols);
                 claim(a, a.goal);
             } else {
+                // Someone resting who still sits at its desk rests on to the
+                // same moment; one that has to move starts again once there.
+                const until = a.plan === "rest" ? a.until : Infinity;
                 a.goal = null;
                 a.plan = "";
                 decide(a, true);
+                if (a.plan === "rest" && a.goal?.seat && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0)
+                    a.until = until;
             }
             if (!page.primed && a.goal && !page.movers[a.id]) {
                 place(a, a.goal.x, a.goal.y, false);
                 a.path = [];
                 continue;
             }
+            // A step goes on only between tiles still open to it: the one it
+            // steps onto is floor or where it is going, and the one it steps
+            // from no wall or furniture, a seat it is leaving aside.
             const on = a.next >= 0 ? a.next : a.ty * w.cols + a.tx;
             const mine = a.goal && on === a.goal.y * w.cols + a.goal.x;
-            if (w.grid[on] !== 0 && !mine)
+            if (w.grid[on] !== 0 && !mine || a.next >= 0 && w.grid[a.ty * w.cols + a.tx] === 1)
                 place(a, a.tx, a.ty, true);
             route(a);
         }
@@ -2186,15 +2205,21 @@ Item {
     }
 
     // Once the desks in the pods the office is closing are all carried out,
-    // the office shrinks to the rest.
+    // and nobody listens at one of their seats or in the rows a shorter
+    // office loses, the office shrinks to the rest.
     function closeRows() {
         const w = page.world;
         const first = page.closeTo * w.pods[0].seats.length;
+        const seats = {};
         for (let i = first; i < w.seats.length; i++) {
             if (w.seats[i].state !== "out" || w.seats[i].mover)
                 return;
+            seats[w.seats[i].y * w.cols + w.seats[i].x] = true;
         }
         const count = page.closeTo;
+        const gone = (officeRows(Math.max(2, Math.ceil(count / gridFor(count).across))) - 1) * w.cols;
+        if (Object.values(page.actors).some(a => seats[a.hold] || a.hold >= gone))
+            return;
         page.closeTo = 0;
         build(gridFor(count).across, count);
     }
@@ -2202,15 +2227,17 @@ Item {
     // A view of another size may show the office bigger in another grid: it
     // is built again only when the best number of pods to a row changes. A
     // view with no size keeps the office as it is. An office closing pods
-    // works out again how many to close down to, in a grid for the new view.
+    // works out again how many to close down to, in a grid for the new view,
+    // even when it keeps its own.
     function refit() {
         const w = page.world;
         if (!w || scroller.width <= 8 || scroller.height <= 8)
             return;
         const across = gridFor(w.pods.length).across;
-        if (across === w.across)
+        if (across !== w.across)
+            build(across, w.pods.length);
+        else if (!page.closeTo)
             return;
-        build(across, w.pods.length);
         if (page.closeTo)
             take(page.office);
         updateMarks();
@@ -2641,9 +2668,9 @@ Item {
         actor.next = -1;
     }
 
-    // The nearest floor tile nobody else has claimed; with none, null, or the
-    // entrance unless `unclaimed`.
-    function nearestFree(x, y, self, unclaimed) {
+    // The nearest floor tile nobody else has claimed, west of `before` when
+    // given; with none, null, or the entrance unless `unclaimed`.
+    function nearestFree(x, y, self, unclaimed, before) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
         const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
@@ -2651,7 +2678,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.claims[i] || page.claims[i] === self))
+            if (w.grid[i] === 0 && !(cx >= before) && (!page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;
