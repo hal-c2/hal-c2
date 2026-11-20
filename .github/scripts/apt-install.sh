@@ -8,9 +8,12 @@ apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquir
 
 # At most 90+120 per attempt, 465s in all (515s with every kill grace), so the steps'
 # `timeout-minutes: 10` only fires if this script itself hangs.
+# A failed or timed-out update still goes on to the install: apt keeps each source's
+# lists as they arrive, so one stalled source (security.ubuntu.com, say) leaves the
+# others fresh. The attempt fails only if the install does.
 attempt() {
-  timeout -k 10 90 "${apt[@]}" update &&
-    timeout -k 10 120 "${apt[@]}" install -y "$@"
+  timeout -k 10 90 "${apt[@]}" update
+  timeout -k 10 120 "${apt[@]}" install -y "$@"
 }
 
 # A package the runner image already has needs no mirror at all.
