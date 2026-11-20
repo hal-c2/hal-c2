@@ -72,7 +72,7 @@ defmodule HalC2.Subprocess.Durable do
   (
     trap '' TERM
     stale=0
-    while sleep "$HAL_C2_DURABLE_LOOK"; do
+    while sleep "${HAL_C2_DURABLE_LOOK:-30}"; do
       if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
         stale=$((stale + 1))
       else
@@ -207,8 +207,13 @@ defmodule HalC2.Subprocess.Durable do
     args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
     look = Application.get_env(:hal_c2, :durable_look_seconds, 30)
 
+    # The shim's own interval is the only one: `Subprocess.start/2` blanks every
+    # `HAL_C2_*` name of the MC's environment, and a blank after the real value wins.
+    caller =
+      for {key, _} = entry <- opts[:env] || [], to_string(key) != "HAL_C2_DURABLE_LOOK", do: entry
+
     env =
-      for {key, value} <- [{"HAL_C2_DURABLE_LOOK", "#{look}"} | Enum.to_list(opts[:env] || [])],
+      for {key, value} <- [{"HAL_C2_DURABLE_LOOK", "#{look}"} | caller],
           do: {to_charlist(key), to_charlist(value)}
 
     cd = if opts[:cd], do: [cd: to_charlist(opts[:cd])], else: []

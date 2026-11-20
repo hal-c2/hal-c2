@@ -222,6 +222,38 @@ defmodule HalC2.SubprocessDurableTest do
     assert await_gone(program.pid, 200)
   end
 
+  # An MC started inside an agent session has HAL_C2_DURABLE_LOOK set itself, and
+  # `Subprocess.start/2` blanks it for the program: the blank must not beat the shim's.
+  test "the watchdog keeps its look when the MC's own environment sets one" do
+    Application.put_env(:hal_c2, :durable_look_seconds, 1)
+    previous = System.get_env("HAL_C2_DURABLE_LOOK")
+    System.put_env("HAL_C2_DURABLE_LOOK", "30")
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :durable_look_seconds)
+
+      if previous,
+        do: System.put_env("HAL_C2_DURABLE_LOOK", previous),
+        else: System.delete_env("HAL_C2_DURABLE_LOOK")
+    end)
+
+    {:ok, program} =
+      Durable.launch(
+        "t1",
+        ["sh", "-c", "trap '' TERM; while :; do sleep 1; done"],
+        env: [{"HAL_C2_DURABLE_LOOK", ""}]
+      )
+
+    on_exit(fn ->
+      System.cmd("kill", ["-s", "KILL", "--", "-#{program.group}"], stderr_to_stdout: true)
+    end)
+
+    Process.sleep(500)
+    long_ago = :calendar.system_time_to_universal_time(System.os_time(:second) - 3600, :second)
+    File.touch!(Path.join(program.dir, "alive"), long_ago)
+    assert await_gone(program.pid, 200)
+  end
+
   defp await_gone(_pid, 0), do: false
 
   defp await_gone(pid, tries) do
