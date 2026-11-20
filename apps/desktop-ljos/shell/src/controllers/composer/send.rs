@@ -98,10 +98,10 @@ fn started(engine: &Engine, title: &str, thread_key: String) {
     });
 }
 
-fn sticky_error(engine: &Engine, title: &str, description: &str, action: Action) {
+fn sticky_error(engine: &Engine, title: &str, description: &str, action: Action) -> Option<String> {
     controller::with::<Toasts, _>(engine, |t, e| {
-        t.show(e, "error", title, description, Some(action), 0);
-    });
+        t.show(e, "error", title, description, Some(action), 0)
+    })
 }
 
 /// Terminal excerpts whose text the store did not keep.
@@ -1261,6 +1261,8 @@ impl Composer {
     ) {
         let Some(error) = error else {
             started(engine, "Started 1 thread in background", thread_key);
+            // Nothing comes back into the draft now.
+            drafts::reconcile(engine);
             return;
         };
         if self.restore_launch(engine, &job.draft_id, &job.prompt) {
@@ -1282,12 +1284,16 @@ impl Composer {
                 controller::with::<Navigation, _>(engine, |n, e| n.open(e, Route::Draft(draft_id)));
             });
         });
-        sticky_error(
+        // While the toast offers the prompt back, the draft it goes to is
+        // kept even once emptied (drafts::reconcile).
+        if let Some(toast_id) = sticky_error(
             engine,
             "A background prompt could not be sent",
             NEWER_DRAFT,
             restore,
-        );
+        ) {
+            kept::offer(engine, &job.draft_id, toast_id);
+        }
     }
 
     /// Send to multiple models: each gets a thread of its own, in a new

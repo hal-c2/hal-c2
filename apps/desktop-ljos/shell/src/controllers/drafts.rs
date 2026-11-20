@@ -220,8 +220,8 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
 }
 
 /// Whether a prompt sent from the draft may yet come back into it: a
-/// window's composer is still making it into a thread, or a background send
-/// from it is unanswered.
+/// window's composer is still making it into a thread, a background send
+/// from it is unanswered, or a toast offers a failed one back.
 pub fn launch_pending(engine: &Engine, id: &str) -> bool {
     launching(engine, id) || crate::controllers::composer::awaits_launch(engine, id)
 }
@@ -503,8 +503,10 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
 
 /// Drops drafts whose thread now exists (promoted), empty drafts of an
 /// environment no MC serves, and drafts whose project is gone from an
-/// environment whose rows the shell holds.
-fn reconcile(engine: &Engine) {
+/// environment whose rows the shell holds. Runs on each store change, and
+/// once nothing more may come back into a draft (a background launch's
+/// answer, its restore offer closed).
+pub fn reconcile(engine: &Engine) {
     if !store::with(engine, |s| s.synchronized()) {
         return;
     }

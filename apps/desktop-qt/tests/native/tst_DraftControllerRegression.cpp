@@ -15,6 +15,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -57,6 +58,47 @@ struct Shell {
     return texts;
   }
 
+  // The composer's text of `draft` set to `text`, as edit `revision`.
+  void write(const QString& draft, const QString& text, int revision) {
+    bridge.dispatch(QStringLiteral("composer.text.set"),
+                    QVariantMap{{QStringLiteral("target"), draft},
+                                {QStringLiteral("edit"), edit(revision)},
+                                {QStringLiteral("text"), text},
+                                {QStringLiteral("cursor"), int(text.size())}});
+  }
+
+  static QVariantMap edit(int revision) {
+    return QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), revision}};
+  }
+
+  // `text` sent in the background from `draft`, open in the window.
+  void sendInBackground(const QString& draft, const QString& text) {
+    QTRY_COMPARE(bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draft);
+    write(draft, text, 1);
+    bridge.dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("edit"), edit(2)},
+                                                                  {QStringLiteral("text"), text},
+                                                                  {QStringLiteral("intent"), QStringLiteral("background")}});
+  }
+
+  // A draft of the joined machine whose background send of "in the back" the
+  // MC refused once the draft held "newer": a toast offers the prompt back.
+  // Its id in `offered`.
+  void refuseBehindANewerPrompt() {
+    QList<FakeMc::Rpc> launches;
+    mc.onRpc(QStringLiteral("orchestration.launchThread"), [&launches](const FakeMc::Rpc& rpc) { launches.append(rpc); });
+    QTRY_VERIFY(native->client()->isReady() && native->store()->synchronized());
+    join();
+    offered = drafts()->start(kBox, QStringLiteral("ops"));
+    sendInBackground(offered, QStringLiteral("in the back"));
+    QTRY_COMPARE(launches.size(), 1);
+    mc.onRpc(QStringLiteral("orchestration.launchThread"), [](const FakeMc::Rpc&) {});
+    write(offered, QStringLiteral("newer"), 3);
+    mc.refuse(launches.takeFirst(), QStringLiteral("no room"));
+    barrier();
+    QCOMPARE(native->controller<ComposerController>()->draft(offered), QStringLiteral("newer"));
+    QVERIFY(native->controller<ComposerController>()->awaitsLaunch(offered));
+  }
+
   // Whatever the MC has sent so far has reached the shell.
   void barrier() {
     bool done = false;
@@ -69,6 +111,7 @@ struct Shell {
   ShellBridge bridge;
   std::unique_ptr<NativeShell> native;
   QList<FakeMc::Rpc> removals;
+  QString offered;
 };
 
 }  // namespace
@@ -231,6 +274,67 @@ private slots:
     QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
     shell.mc.refuse(launches.takeFirst(), QStringLiteral("box went"));
     QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+  }
+
+  // A background send answered after its machine went: nothing comes back
+  // into the emptied draft, so it goes then, not on the next store change.
+  void aBackgroundLaunchAnsweredAfterTheMachineWentTakesItsDraft() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QList<FakeMc::Rpc> launches;
+    shell.mc.onRpc(QStringLiteral("orchestration.launchThread"), [&launches](const FakeMc::Rpc& rpc) { launches.append(rpc); });
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.sendInBackground(draft, QStringLiteral("in the back"));
+    QTRY_COMPARE(launches.size(), 1);
+
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+    shell.mc.reply(launches.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList());
+  }
+
+  // A background send refused while its draft holds a newer prompt: a toast
+  // offers the prompt back. Emptied while its machine is gone, the draft
+  // stays for the offer, which brings the prompt back.
+  void aRestoreOfferKeepsItsEmptiedDraftWhileTheMachineIsGone() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.refuseBehindANewerPrompt();
+    const QString draft = shell.offered;
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    shell.write(draft, QString(), 4);
+    shell.drafts()->reconcile();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+
+    QVERIFY(shell.native->controller<ToastController>()->runAction(QStringLiteral("Restore prompt")));
+    QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+  }
+
+  // The offer closed by hand gives nothing back: the emptied draft goes.
+  void aClosedRestoreOfferLetsItsEmptiedDraftGo() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.refuseBehindANewerPrompt();
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    shell.write(shell.offered, QString(), 4);
+    shell.drafts()->reconcile();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+
+    const QVariantList toasts =
+        shell.bridge.state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+    QCOMPARE(toasts.size(), 1);
+    shell.bridge.dispatch(QStringLiteral("notification.dismiss"),
+                          QVariantMap{{QStringLiteral("id"), toasts.constFirst().toMap().value(QStringLiteral("id"))}});
+    QTRY_COMPARE(shell.draftsFor(kBox), QStringList());
   }
 
   // The answer drops the drafts the machine had when it was asked to go. One

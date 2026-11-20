@@ -84,9 +84,14 @@ public:
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
   // Whether a prompt sent from the draft may yet come back into it: a window
-  // is still making it into a thread, or a background send from it is
-  // unanswered.
+  // is still making it into a thread, a background send from it is
+  // unanswered, or a toast offers a failed one back.
   bool launchPending(const QString& id) const;
+  // Drops drafts whose thread now exists, empty ones of a machine no MC
+  // serves, and ones whose project is gone. Runs on each store change, and
+  // once nothing more may come back into a draft (a background launch's
+  // answer, its restore offer closed).
+  void reconcile();
   // The draft's first turn was sent as the thread `threadKey`: the draft is
   // done and every window that showed it shows the thread instead.
   void promote(const QString& threadKey);
@@ -119,8 +124,6 @@ private:
   void present();
   void openMenu(const QString& id, double x, double y);
   void openProjects(double x, double y);
-  // Drops drafts whose thread now exists or whose project is gone.
-  void reconcile();
   // Written once edits pause (CoalescingWriter); `now` writes before returning and says whether it did.
   bool save(bool now = false) const;
   void setLandingFailed(bool failed);

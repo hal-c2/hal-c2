@@ -298,6 +298,111 @@ fn the_removal_answer_keeps_a_draft_whose_launch_is_pending() {
     assert_eq!(composer::draft(&hub.engine, &id), "in the back");
 }
 
+/// `text` sent in the background from a new draft of `box`, placed there;
+/// the draft's id.
+fn send_in_background(hub: &Hub, text: &str) -> String {
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    let cursor = text.encode_utf16().count();
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": text, "cursor": cursor}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    id
+}
+
+#[test]
+fn a_background_launch_answered_after_the_machine_went_takes_its_draft() {
+    let hub = listing();
+    let id = send_in_background(&hub, "in the back");
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Ok(json!({})),
+    );
+    hub.advance(0);
+    // Nothing comes back into it: it goes now, not on the next store change.
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+}
+
+/// A draft of `box` whose background send of "in the back" the MC refused
+/// once the draft held "newer": a toast offers the prompt back.
+fn refused_behind_a_newer_prompt(hub: &Hub) -> String {
+    let id = send_in_background(hub, "in the back");
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "newer", "cursor": 5}),
+    );
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("no room")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "newer");
+    assert!(composer::awaits_launch(&hub.engine, &id));
+    id
+}
+
+/// The offer's toast id.
+fn offer(hub: &Hub) -> serde_json::Value {
+    let items = hub.published("toasts")["items"].clone();
+    assert_eq!(items.as_array().map(Vec::len), Some(1));
+    assert_eq!(items[0]["actions"][0]["label"], "Restore prompt");
+    items[0]["id"].clone()
+}
+
+#[test]
+fn a_restore_offer_keeps_its_emptied_draft_while_the_machine_is_gone() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    box_goes(&hub);
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "", "cursor": 0}),
+    );
+    drafts::reconcile(&hub.engine);
+    // The offer may yet bring the prompt back into it.
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    let toast = offer(&hub);
+    hub.dispatch(
+        "notification.action",
+        json!({"id": toast, "actionId": "primary"}),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+#[test]
+fn a_closed_restore_offer_lets_its_emptied_draft_go() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    box_goes(&hub);
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "", "cursor": 0}),
+    );
+    drafts::reconcile(&hub.engine);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    let toast = offer(&hub);
+    hub.dispatch("notification.dismiss", json!({"id": toast}));
+    hub.advance(0);
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+}
+
 #[test]
 fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
     let hub = listing();

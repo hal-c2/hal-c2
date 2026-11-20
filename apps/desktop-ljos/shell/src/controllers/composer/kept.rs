@@ -16,7 +16,9 @@ use serde_json::{Map, json};
 
 use super::text::{self, images_signature};
 use crate::composer_model::utf16_len;
+use crate::controller;
 use crate::controllers::drafts;
+use crate::controllers::toasts::Toasts;
 use crate::json::Json;
 use crate::thread_view::summary::{Obj, as_object};
 
@@ -246,6 +248,24 @@ pub fn model_options(engine: &Engine, instance: &str, model: &str) -> Option<Jso
     })
 }
 
+/// A failed background prompt the toast `toast_id` of window `window`
+/// offers back to the draft `draft_id`.
+pub struct Offer {
+    pub draft_id: String,
+    pub window: String,
+    pub toast_id: String,
+}
+
+impl Offer {
+    /// Whether its toast is still shown; a toast busy now counts as shown.
+    pub fn shown(&self, engine: &Engine) -> bool {
+        controller::in_window(engine, &self.window, || {
+            controller::with::<Toasts, _>(engine, |t, _| t.shows(&self.toast_id)).unwrap_or(true)
+        })
+        .unwrap_or(false)
+    }
+}
+
 #[derive(Default)]
 pub struct Data {
     pub drafts: HashMap<String, Draft>,
@@ -273,6 +293,9 @@ pub struct Data {
     /// The threads whose `queue.resume` the MC has not answered: one request
     /// at a time per thread, whichever window asks.
     pub resuming: HashSet<String>,
+    /// Failed background prompts a toast offers back to their drafts. Not
+    /// saved: a toast lasts the run.
+    pub offers: Vec<Offer>,
     path: Option<PathBuf>,
     /// The images last written beside the drafts, so a keystroke does not
     /// rewrite them.
@@ -337,13 +360,56 @@ pub fn draft_preview(engine: &Engine, target: &str) -> Option<String> {
 }
 
 /// A launch from the draft is kept until its answer: a failed one's prompt
-/// comes back into the draft, a background one's too.
+/// comes back into the draft, a background one's too, or while its toast
+/// offers it back (the draft held a newer prompt).
 pub fn awaits_launch(engine: &Engine, draft_id: &str) -> bool {
-    read(engine, |d| {
-        d.unsent
+    let (unsent, offers) = read(engine, |d| {
+        let unsent = d
+            .unsent
             .iter()
-            .any(|u| u.target == draft_id && u.thread != draft_id)
-    })
+            .any(|u| u.target == draft_id && u.thread != draft_id);
+        let offers: Vec<(String, String)> = d
+            .offers
+            .iter()
+            .filter(|o| o.draft_id == draft_id)
+            .map(|o| (o.window.clone(), o.toast_id.clone()))
+            .collect();
+        (unsent, offers)
+    });
+    unsent
+        || offers.into_iter().any(|(window, toast_id)| {
+            Offer {
+                draft_id: draft_id.to_owned(),
+                window,
+                toast_id,
+            }
+            .shown(engine)
+        })
+}
+
+/// Notes that a toast offers a failed background prompt back to `draft_id`,
+/// forgetting offers whose toasts are gone.
+pub fn offer(engine: &Engine, draft_id: &str, toast_id: String) {
+    // Closed by hand, it gives nothing back: the draft may go.
+    let closed = toast_id.clone();
+    controller::with::<Toasts, _>(engine, |t, _| {
+        t.on_closed_by_user(move |engine, id| {
+            if id == closed {
+                drafts::reconcile(engine);
+            }
+        });
+    });
+    let offers = write(engine, |d| std::mem::take(&mut d.offers));
+    let mut offers: Vec<Offer> = offers.into_iter().filter(|o| o.shown(engine)).collect();
+    offers.push(Offer {
+        draft_id: draft_id.to_owned(),
+        window: controller::window_id(engine),
+        toast_id,
+    });
+    write(engine, |d| {
+        offers.append(&mut d.offers);
+        d.offers = offers;
+    });
 }
 
 /// A draft that became a thread: what the user typed after sending its

@@ -27,6 +27,7 @@ class NativeShell;
 class ShellBridge;
 class ShellStore;
 class TimelineModel;
+class ToastController;
 namespace sidebar {
 struct Thread;
 }
@@ -210,7 +211,8 @@ public:
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
   // A launch from the draft is kept until its answer: a failed one's prompt
-  // comes back into the draft, a background one's too.
+  // comes back into the draft, a background one's too, or while its toast
+  // offers it back (the draft held a newer prompt).
   bool awaitsLaunch(const QString& draftId) const;
   // The ids of what `target`'s draft carries besides its text: its
   // attachments, then its excerpts.
@@ -691,6 +693,12 @@ private:
   // holdsFiles() of the target, as last published.
   bool m_heldFiles = false;
   // What every window's composer keeps.
+  // A failed background prompt the toast `toastId` offers back to its draft.
+  struct Offer {
+    QString draftId;
+    QPointer<ToastController> toasts;
+    QString toastId;
+  };
   struct Kept {
     QHash<QString, Draft> drafts;
     // Newest first.
@@ -715,6 +723,8 @@ private:
     // The threads whose `queue.resume` the MC has not answered: one request
     // at a time per thread, whichever window asks.
     QSet<QString> resuming;
+    // Not saved: a toast lasts the run.
+    QList<Offer> offers;
   };
   // Where the drafts' images are kept: shell-composer-images.json beside them.
   QString imagesPath() const;

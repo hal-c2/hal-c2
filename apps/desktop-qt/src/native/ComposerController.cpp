@@ -1583,6 +1583,8 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                  ToastController::Action{QStringLiteral("Open"), [navigation, threadKey] {
                                            navigation->open(NavigationController::Route::thread(threadKey));
                                          }});
+    // Nothing comes back into the draft now.
+    shell->controller<DraftController>()->reconcile();
     return;
   }
   const auto restore = [this, draftId, text, attachments, contexts] {
@@ -1592,15 +1594,27 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
     toast(QStringLiteral("A background prompt could not be sent"), *error);
     return;
   }
-  toasts->show(QStringLiteral("error"), QStringLiteral("A background prompt could not be sent"),
-               QStringLiteral("Your newer draft is unchanged. Restore the failed prompt when this composer is empty."),
-               ToastController::Action{QStringLiteral("Restore prompt"),
-                                       [this, restore, draftId] {
-                                         if (!restore()) return;
-                                         NativeShell::of(this)->controller<NavigationController>()->open(
-                                             NavigationController::Route::draft(draftId));
-                                       }},
-               0);
+  // While the toast offers the prompt back, the draft it goes to is kept
+  // even once emptied (DraftController::reconcile).
+  m_kept.offers.removeIf([](const Offer& offer) { return !offer.toasts || !offer.toasts->shows(offer.toastId); });
+  const QString offered =
+      toasts->show(QStringLiteral("error"), QStringLiteral("A background prompt could not be sent"),
+                   QStringLiteral("Your newer draft is unchanged. Restore the failed prompt when this composer is empty."),
+                   ToastController::Action{QStringLiteral("Restore prompt"),
+                                           [this, restore, draftId] {
+                                             if (!restore()) return;
+                                             NativeShell::of(this)->controller<NavigationController>()->open(
+                                                 NavigationController::Route::draft(draftId));
+                                           }},
+                   0);
+  m_kept.offers.append({draftId, toasts, offered});
+  // Closed by hand, it gives nothing back: the draft may go.
+  const auto closed = std::make_shared<QMetaObject::Connection>();
+  *closed = connect(toasts, &ToastController::closedByUser, this, [this, closed, offered](const QString& id) {
+    if (id != offered) return;
+    disconnect(*closed);
+    NativeShell::of(this)->controller<DraftController>()->reconcile();
+  });
 }
 
 // Uploads the thread's oldest send's images, dispatches it command by
@@ -2872,8 +2886,12 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
 }
 
 bool ComposerController::awaitsLaunch(const QString& draftId) const {
-  return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(),
-                     [&draftId](const Unsent& unsent) { return unsent.target == draftId && unsent.thread != draftId; });
+  const bool unsent = std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&draftId](const Unsent& unsent) {
+    return unsent.target == draftId && unsent.thread != draftId;
+  });
+  return unsent || std::any_of(m_kept.offers.cbegin(), m_kept.offers.cend(), [&draftId](const Offer& offer) {
+           return offer.draftId == draftId && offer.toasts && offer.toasts->shows(offer.toastId);
+         });
 }
 
 QStringList ComposerController::carried(const QString& target) const {
