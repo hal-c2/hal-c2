@@ -464,7 +464,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
        }}
   }
 
-  step ~r/^a client tries to (?<change>.+?) "(?<thread>[^"]+)"$/,
+  step ~r/^a client tries to (?<change>record a visit to|rename|archive|pin|snooze|settle|mark unread|change the model of|link a pull request to) "(?<thread>[^"]+)"$/,
        %{args: [change, thread]} = context do
     {type, fields} = Map.fetch!(@changes, change)
 
