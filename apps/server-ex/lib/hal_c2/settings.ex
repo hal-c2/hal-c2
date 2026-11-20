@@ -491,11 +491,18 @@ defmodule HalC2.Settings do
           {Shared.apply(%{}, shared), true}
       end
 
+    # A plugin's record of an instance deleted by hand while the MC was down ends now: a
+    # later save starts from the file, and the record would hand the id back.
+    sealed = HalC2.Plugins.Host.seal_records(settings, settings, false)
+    {settings, records_changed} = {sealed, sealed != settings}
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = HalC2.UsageLimitSources.seal_keys(settings, %{})
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
     {settings, password_changed} = HalC2.ProviderSecrets.seal_server_passwords(settings, settings)
-    if changed or secrets_changed or password_changed, do: write!(path, settings)
+
+    if records_changed or changed or secrets_changed or password_changed,
+      do: write!(path, settings)
+
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
