@@ -603,6 +603,66 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  test "submodules fetched before another fails reach the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    pull!(context, 3, [
+      {"a-lib", "https://github.com/acme/inner.git", inner},
+      {"z-lib", "git://example.invalid/lib.git", context.shas[1]}
+    ])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, first, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, first, remote])
+    assert reason =~ "transport 'git' not allowed"
+    :ok = apply(checkout, :remove, [clone, first])
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, second, remote, 3, "main"])
+    assert {:error, _} = apply(checkout, :submodules, [clone, second, remote])
+    # The failed clone stops the update before any checkout, but the one cloned again
+    # borrowed everything from the store.
+    counts = git!(Path.join(second, "a-lib"), ["count-objects", "-v"])
+    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "submodules are fetched through the SSH program GIT_SSH names", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/wrapped")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    # A wrapper named by `GIT_SSH` alone, which says it ran.
+    log = Path.join(context.dir, "wrapper.log")
+    wrapper = Path.join(context.dir, "wrapper-ssh")
+
+    File.write!(wrapper, """
+    #!/bin/sh
+    echo ran >> '#{log}'
+    exec '#{System.get_env("GIT_SSH_COMMAND")}' "$@"
+    """)
+
+    File.chmod!(wrapper, 0o755)
+    restore = env(~w(GIT_SSH))
+    on_exit(restore)
+    System.delete_env("GIT_SSH_COMMAND")
+    System.put_env("GIT_SSH", wrapper)
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
+    assert File.read!(log) =~ "ran"
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a submodule at a local path is not fetched, and its checkout is still made", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     local = repo!(context.dir, "local", "secret.txt")

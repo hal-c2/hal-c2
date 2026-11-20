@@ -200,30 +200,36 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
       with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
            {:ok, {credentials, env}} <- credentials(clone, remote, url),
-           {:ok, checked} <- checked_config(path),
-           {:ok, _} <-
-             bounded_git(
-               path,
-               credentials ++
-                 [
-                   "-c",
-                   "submodule.active=.",
-                   "-c",
-                   "http.lowSpeedLimit=1000",
-                   "-c",
-                   "http.lowSpeedTime=60",
-                   "submodule",
-                   "update",
-                   # A `.gitmodules` entry's `update = none` (or another strategy) is
-                   # not followed: every submodule gets the commit the head pins.
-                   "--checkout",
-                   "--recursive",
-                   "--reference",
-                   store
-                 ],
-               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env]
-             ),
-           do: store(store, path)
+           {:ok, checked} <- checked_config(path) do
+        updated =
+          bounded_git(
+            path,
+            credentials ++
+              [
+                "-c",
+                "submodule.active=.",
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=60",
+                "submodule",
+                "update",
+                # A `.gitmodules` entry's `update = none` (or another strategy) is
+                # not followed: every submodule gets the commit the head pins.
+                "--checkout",
+                "--recursive",
+                "--reference",
+                store
+              ],
+            [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env]
+          )
+
+        # What the update fetched before it failed or ran out of time still reaches the
+        # store, as removing the checkout takes it; the error still tells the agent.
+        store(store, path)
+
+        with {:ok, _} <- updated, do: :ok
+      end
     else
       :ok
     end
@@ -255,7 +261,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
           _ ->
             []
         end)
-        # Includes are already expanded into what they hold.
+        # Includes are already expanded into what they hold. An `includeIf` that would
+        # match only a submodule's gitdir is lost on purpose: re-exported, its file could
+        # turn `sslVerify` off again.
         |> Enum.reject(fn {key, _} ->
           String.ends_with?(key, ".sslverify") or String.starts_with?(key, "include.") or
             String.starts_with?(key, "includeif.")
@@ -286,9 +294,10 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   # SSH that gives up on a server that does not connect or stops answering, unless the
-  # MC's environment names its own SSH command, which the overall timeout still bounds.
+  # MC's environment names its own SSH command or program (`GIT_SSH_COMMAND` or
+  # `GIT_SSH`, a wrapper ours would override), which the overall timeout still bounds.
   defp ssh_env do
-    if System.get_env("GIT_SSH_COMMAND") in [nil, ""],
+    if System.get_env("GIT_SSH_COMMAND") in [nil, ""] and System.get_env("GIT_SSH") in [nil, ""],
       do: [
         {"GIT_SSH_COMMAND",
          "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"}
