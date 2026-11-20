@@ -19,6 +19,8 @@ on:
       - "apps/desktop-qt/qml/**"
       - "apps/mobile-qt/qml/**"
       - "features/mobile/**"
+      # The default globs the features runner reads (kDefaultGlobs).
+      - "apps/mobile-qt/tests/tst_Features.cpp"
       - ".github/workflows/mobile-ljos.yml"
   pull_request:
     paths: *paths

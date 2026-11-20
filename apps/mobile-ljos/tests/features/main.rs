@@ -205,9 +205,11 @@ fn wanted_by(id: &str, globs: &[String], features: &Path) -> bool {
     })
 }
 
+/// What RATCHET holds; a RATCHET that cannot be read fails the run, as
+/// one held nothing would let every scenario stop passing unseen.
 fn read_ratchet(path: &Path) -> BTreeSet<String> {
     std::fs::read_to_string(path)
-        .unwrap_or_default()
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
