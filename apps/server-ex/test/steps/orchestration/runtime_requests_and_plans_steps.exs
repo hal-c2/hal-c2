@@ -554,6 +554,127 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  # --- questions a message the user writes closes ------------------------------------
+
+  step "another thread's agent sends a message to {string}", %{args: [thread]} = context do
+    context =
+      World.command(
+        context,
+        World.message_command(context, thread, "Status?", %{
+          "senderThreadId" => "thread-elsewhere",
+          "createdBy" => "agent",
+          "creationSource" => "mcp"
+        })
+      )
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step ~r/^the user (?:queues|queued) "(?<text>[^"]+)" behind the running turn of "(?<thread>[^"]+)"$/,
+       %{args: [text, thread]} = context do
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    assert {:ok, _} = context.reply
+
+    assert [%{"status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, thread)
+
+    Map.merge(context, %{thread: thread, queued_run: queued["id"]})
+  end
+
+  step "the running turn of {string} completes", %{args: [thread]} = context do
+    World.complete_codex_turn(context, thread)
+    World.await_runs(context, thread, ["completed", "completed"])
+    context
+  end
+
+  step "the running turn of {string} completes and Codex refuses to start the next",
+       %{args: [thread]} = context do
+    World.complete_codex_turn(context, thread)
+    World.await_runs(context, thread, ["completed", "failed"])
+    context
+  end
+
+  step "the user cancels the queued message", context do
+    context =
+      World.command(context, %{
+        "type" => "queued-run.cancel",
+        "threadId" => World.thread_id(context, context.thread),
+        "runId" => context.queued_run
+      })
+
+    assert {:ok, _} = context.reply
+    assert [%{"status" => "running"} | _] = World.runs(context, context.thread)
+    context
+  end
+
+  # A refused steer names a turn the fake app-server does not have; its own turn keeps
+  # running.
+  step ~r/^Codex (?<takes>takes|refuses) messages into the running turn of "(?<thread>[^"]+)"$/,
+       %{args: [takes, thread]} = context do
+    if takes == "refuses" do
+      {pid, _} = World.codex_runtime(context, thread)
+      :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-elsewhere"))
+    end
+
+    Map.put(context, :steer_taken, takes == "takes")
+  end
+
+  step "the user steers the running turn of {string} with {string}",
+       %{args: [thread, text]} = context do
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    if context.steer_taken,
+      do: assert({:ok, _} = context.reply),
+      else: assert({:error, _, _} = context.reply)
+
+    context
+  end
+
+  step "the provider then asked {string} without waiting on it", %{args: [question]} = context do
+    context |> Map.put(:older_request, context.request) |> ask_async([question])
+  end
+
+  step "the user answers the newer question with {string}", %{args: [answer]} = context do
+    respond(context, %{"answers" => %{"0" => answer}})
+  end
+
+  step "the newer question is closed as answered", context do
+    assert %{"status" => "resolved", "answers" => %{"0" => "5432"}} = request(context, "t1")
+    assert answer_message(context, "t1")["text"] == "Which port?\n5432"
+    context
+  end
+
+  step "the older question is closed by the message rather than answered", context do
+    context
+    |> Map.put(:request, context.older_request)
+    |> assert_closed_by_message()
+  end
+
+  step "the question is closed by the message rather than answered", context do
+    assert_closed_by_message(context)
+  end
+
+  # Written as an MC from before the fix wrote it: kept beside the question, closing nothing.
+  step "the user wrote to {string} after it, before a message closed such questions",
+       %{args: [thread]} = context do
+    context = World.add_message(context, thread, "user", "Use Postgres", World.iso_from_now(1))
+    assert request(context, "t1")["status"] == "pending"
+    context
+  end
+
   # --- requests and the end of their turn or server ------------------------------------
 
   step "the request is cancelled and marked not resumable", context do
@@ -867,6 +988,17 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
       "requestId" => context.request,
       "answers" => answers
     })
+  end
+
+  # Closed as a dismissed question is, saying the message closed it, with no answers.
+  # The message closes it once its provider takes the run, after the dispatch returns.
+  defp assert_closed_by_message(context) do
+    await_request(context, &(&1["status"] == "cancelled"))
+    request = request(context, "t1")
+    assert %{"status" => "cancelled", "closedBy" => "message"} = request
+    refute Map.has_key?(request, "answers")
+    assert request_item(context)["status"] == "cancelled"
+    context
   end
 
   defp answer_id(context), do: "async-answer:" <> context.request
