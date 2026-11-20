@@ -17,18 +17,22 @@ use hal_c2_shell::controllers::space::Space;
 use hal_c2_shell::json::Json;
 use ljos::prelude::Engine;
 
-pub struct MobileLayout;
+/// The layout the root last reported: the phone's until it says.
+pub struct MobileLayout {
+    desktop: bool,
+}
 
 impl Controller for MobileLayout {
     fn new(_init: Init<'_, Self>) -> Self {
-        MobileLayout
+        MobileLayout { desktop: false }
     }
 
     fn activate(&mut self, engine: &Engine) {
         // A phone's window with no thread stays on the thread list, and
         // its Space screen has steps, until the root says the window
-        // has room for the desktop's layout.
-        apply(engine, false);
+        // has room for the desktop's layout; a report heard before this
+        // is kept, not undone.
+        apply(engine, self.desktop);
     }
 
     fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
@@ -39,6 +43,7 @@ impl Controller for MobileLayout {
             .get("shown")
             .and_then(Json::as_bool)
             .unwrap_or(false);
+        self.desktop = shown;
         apply(engine, shown);
         true
     }
@@ -51,7 +56,7 @@ fn apply(engine: &Engine, desktop: bool) {
             drafts.land(engine);
         }
     });
-    controller::with::<Space, _>(engine, |spaces, _| {
-        spaces.set_page_shown_by_steps(!desktop);
+    controller::with::<Space, _>(engine, |spaces, engine| {
+        spaces.set_page_shown_by_steps(engine, !desktop);
     });
 }
