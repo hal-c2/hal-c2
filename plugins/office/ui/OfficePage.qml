@@ -2580,6 +2580,7 @@ Item {
         const actor = page.actors[id];
         if (!actor)
             return;
+        letGo(actor);
         release(actor);
         delete page.actors[id];
         for (let i = 0; i < actorModel.count; i++) {
@@ -2594,15 +2595,18 @@ Item {
         for (const other of Object.values(page.actors)) {
             if (other.talk && other.talk.to === id)
                 endTalk(other);
-            if (other.heldBy === id)
+            if (other.heldBy === id) {
+                other.heldBy = "";
                 letGo(other);
+            }
         }
     }
 
     // ── What each person does ───────────────────────────────────────────────
 
+    // Lets go of the tile a person stops at, unless it also listens there.
     function release(actor) {
-        if (actor.claim >= 0 && page.claims[actor.claim] === actor.id)
+        if (actor.claim >= 0 && actor.claim !== actor.hold && page.claims[actor.claim] === actor.id)
             delete page.claims[actor.claim];
         actor.claim = -1;
     }
@@ -2619,15 +2623,14 @@ Item {
         const i = spot.y * page.world.cols + spot.x;
         page.claims[i] = actor.id;
         actor.claim = i;
-        if (actor.hold === i)
-            actor.hold = -1;
     }
 
     // Someone listening keeps the tile it stopped on for the talk, besides the
-    // one it is headed for, so nobody else is sent there meanwhile.
+    // one it is headed for, so nobody else is sent there meanwhile. It keeps
+    // it even when it is headed there, should it be sent somewhere else.
     function holdHere(actor) {
         const i = actor.ty * page.world.cols + actor.tx;
-        if (page.claims[i] === undefined) {
+        if (page.claims[i] === undefined || page.claims[i] === actor.id) {
             page.claims[i] = actor.id;
             actor.hold = i;
         }
@@ -2972,13 +2975,16 @@ Item {
 
     // Starts the speaker's first talk whose listener is inside. One to someone
     // still outside the door waits its turn without holding up the rest.
+    // A talk waits while its listener is outside, or listens to someone else.
     function startTalk(actor) {
-        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0));
+        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0) && !listening(page.actors[t.to], actor));
         if (next < 0)
             return;
         const talk = actor.queue.splice(next, 1)[0];
-        if (!page.actors[talk.to])
+        const other = page.actors[talk.to];
+        if (!other)
             return;
+        other.heldBy = actor.id;
         actor.talk = {
             to: talk.to,
             text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
@@ -2995,8 +3001,9 @@ Item {
 
     function endTalk(actor) {
         const other = actor.talk ? page.actors[actor.talk.to] : null;
-        if (other) {
+        if (other && other.heldBy === actor.id) {
             other.face = -1;
+            other.heldBy = "";
             letGo(other);
         }
         actor.talk = null;
@@ -3021,12 +3028,10 @@ Item {
         const W = page.world.cols;
         const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            if (near) {
-                // The other person stops once it finishes its step on a tile it
-                // may stop at (see held()).
+            // The other person stops once it finishes its step on a tile it
+            // may stop at (see held()).
+            if (near)
                 t.met = true;
-                other.heldBy = actor.id;
-            }
             // The talk starts when both stand still side by side, each on a tile
             // nobody else has: the speaker on the side it claimed.
             const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
@@ -3086,6 +3091,12 @@ Item {
             other.bubble = "";
             endTalk(actor);
         }
+    }
+
+    // Whether someone other than the speaker is talking to this person.
+    function listening(actor, speaker) {
+        const other = actor?.heldBy ? page.actors[actor.heldBy] : null;
+        return !!other && other !== speaker && other.talk?.to === actor.id;
     }
 
     // Whether someone who walked up to talk to this person keeps it where it is.
