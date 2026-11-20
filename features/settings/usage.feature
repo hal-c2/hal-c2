@@ -659,7 +659,7 @@ Feature: Usage and limits
       And the user refreshes usage
       Then the limits are checked again
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A provider whose limits could not be read is named
       Given Codex could not read its limits
       When the user views limits
@@ -689,7 +689,7 @@ Feature: Usage and limits
       When the user switches "server" back on
       Then limits show the Codex limits of both again
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Leaving usage stops following limits
       Given the user views limits
       When the user leaves usage
@@ -698,7 +698,7 @@ Feature: Usage and limits
     # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
     # providers/usage-limits.feature.
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A banked reset credit is spent once the user confirms
       Given Codex has a reset credit banked
       When the user views limits
@@ -710,13 +710,13 @@ Feature: Usage and limits
 
     # The confirmation is UsagePage.qml's own dialog (tst_UsagePage.qml); no feature runner
     # drives it yet.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: The user backs out of spending a reset credit
       Given Codex has a reset credit banked
       When the user starts to use the reset credit but cancels
       Then the credit is still banked
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario Outline: A reset credit that cannot be used says why
       Given Codex has a reset credit banked
       And <situation>
@@ -757,7 +757,7 @@ Feature: Usage and limits
       Then the limit shows the time it resets and how long that is from now
 
     # Upstream #17869. Under a minute is not yet reset, so it never reads "resets in 0m".
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @priority-low
     Scenario Outline: How long until a limit resets is worded for the time left
       Given a limit window that resets in <time left>
       When the user views limits

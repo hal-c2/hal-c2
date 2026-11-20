@@ -452,11 +452,14 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
-/** `resets in 2h 13m`, or null when the window has no reset. */
+/** `resets in 2h 13m`, or null when the window has no reset. Under a minute is not yet reset. */
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
-  return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
+  if (resetsAt <= now) return "resets now";
+  return resetsAt - now < MINUTE
+    ? "Resets momentarily"
+    : `resets in ${formatDuration(resetsAt - now)}`;
 }
 
 /** Limit commands are served by HAL-C2 from the same snapshots as Usage → Limits. */
