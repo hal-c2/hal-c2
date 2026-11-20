@@ -29,9 +29,10 @@ QtObject {
             item.session.write(plain);
     }
 
-    // The part of a line a slow drag has moved by so far, kept until
-    // it makes a whole one.
+    // The part of a line a slow drag has moved `restOf` by so far, kept
+    // until it makes a whole one. Another terminal starts from none.
     property real rest: 0
+    property var restOf: null
 
     // `pixels` as a wheel has them: positive scrolls towards older
     // output. Whole lines only, where a wheel reaches the Terminal's
@@ -39,6 +40,10 @@ QtObject {
     function wheel(item, pixels) {
         if (!item || !item.scrollLines)
             return;
+        if (item !== restOf) {
+            restOf = item;
+            rest = 0;
+        }
         rest += pixels;
         const lines = Math.trunc(rest / 15);
         rest -= lines * 15;
