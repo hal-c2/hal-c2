@@ -3187,10 +3187,13 @@ Item {
         }
     }
 
-    // Sends a speaker to the free side of `other` nearest it, counting the
-    // walk around `other` when it stands in the way, and beside it rather
-    // than above or below when two are as near. False when no side is free.
-    function toSide(actor, other) {
+    // Sends a speaker to a free side of `other`: one beside it first, so
+    // neither's speech bubble covers the other, and the nearest of those,
+    // counting the walk around `other` when it stands in the way. A speaker
+    // already in a talk that lost its side (`nearest`) takes the nearest free
+    // side instead, beside only when two are as near, rather than walk round
+    // the listener. False when no side is free.
+    function toSide(actor, other, nearest) {
         const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
                     x: other.tx + dx,
                     y: other.ty + dy
@@ -3202,7 +3205,8 @@ Item {
             const around = s.y === actor.ty && other.ty === actor.ty && inside(actor.tx, other.tx, s.x) || s.x === actor.tx && other.tx === actor.tx && inside(actor.ty, other.ty, s.y);
             return Math.abs(s.x - actor.tx) + Math.abs(s.y - actor.ty) + (around ? 2 : 0);
         };
-        sides.sort((a, b) => walk(a) - walk(b) || (b.y === other.ty) - (a.y === other.ty));
+        const beside = (a, b) => (b.y === other.ty) - (a.y === other.ty);
+        sides.sort((a, b) => nearest ? walk(a) - walk(b) || beside(a, b) : beside(a, b) || walk(a) - walk(b));
         actor.goal = Object.assign({
             face: 0,
             offY: 0,
@@ -3249,7 +3253,7 @@ Item {
             claim(actor, actor.goal);
             return true;
         }
-        if (!toSide(actor, other)) {
+        if (!toSide(actor, other, true)) {
             endTalk(actor);
             return false;
         }

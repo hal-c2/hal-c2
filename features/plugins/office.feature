@@ -350,7 +350,7 @@ Feature: Office
     Scenario: Two agents that talk walk up to each other
       Given the office has threads "Lead" and "Reviewer"
       When the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
-      Then the person of "Lead" walks up next to the person of "Reviewer"
+      Then the person of "Lead" walks up next to the person of "Reviewer", beside it rather than above or below it
       And they face each other and "Please look at the diff" shows in a speech bubble
       And afterwards "Lead" goes back to what it was doing
 
