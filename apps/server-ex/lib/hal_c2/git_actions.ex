@@ -441,28 +441,79 @@ defmodule HalC2.GitActions do
     # An upstream whose remote-tracking ref is gone (its branch was deleted and pruned)
     # still has config; treat it as unset so the push publishes the branch again.
     upstream = upstream && upstream_ref_exists?(cwd, upstream) && upstream
+    upstream_name = upstream && upstream_branch_name(upstream)
+
+    # A local branch named after its upstream under another prefix
+    # ("upstream/effect-atom" tracking "origin/effect-atom") is that branch.
+    same? = upstream_name == branch or String.ends_with?(branch, "/#{upstream_name}")
 
     cond do
-      upstream && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
+      upstream && same? && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
         %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      upstream && upstream.remote ->
-        push!(cwd, ["push"], upstream.remote)
+      upstream && upstream.remote && same? ->
+        # A plain push refuses an upstream of a different name (push.default
+        # simple), so an alias pushes to its upstream branch by name.
+        args =
+          if upstream_name == branch,
+            do: ["push"],
+            else: ["push", upstream.remote, "HEAD:refs/heads/#{upstream_name}"]
+
+        push!(cwd, args, upstream.remote)
         %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      remote = Git.primary_remote(cwd) ->
-        push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"], remote)
+      # Cut from another branch: the upstream is its base, not its publish
+      # target. Publish under its own name and remember the base.
+      upstream && upstream.remote ->
+        result = publish(cwd, branch, upstream.remote)
+        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", upstream_name])
+        result
 
-        %{
-          "status" => "pushed",
-          "branch" => branch,
-          "upstreamBranch" => "#{remote}/#{branch}",
-          "setUpstream" => true
-        }
+      remote = push_remote(cwd, branch) ->
+        publish(cwd, branch, remote)
 
       true ->
         fail!("Cannot push because no git remote is configured for this repository.")
     end
+  end
+
+  defp upstream_branch_name(%{remote: nil, ref: name}), do: name
+
+  defp upstream_branch_name(%{remote: remote, ref: ref}),
+    do: String.replace_prefix(ref, "#{remote}/", "")
+
+  # Publishes `branch` on `remote` under its own name (a branch named after the
+  # remote's branch loses the remote's prefix) and tracks it there.
+  defp publish(cwd, branch, remote) do
+    name = String.replace_prefix(branch, "#{remote}/", "")
+    push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{name}"], remote)
+
+    %{
+      "status" => "pushed",
+      "branch" => branch,
+      "upstreamBranch" => "#{remote}/#{name}",
+      "setUpstream" => true
+    }
+  end
+
+  # The remote a first push goes to: the branch's pushRemote, the repository's
+  # pushDefault, then the primary remote — as git's own settings name them.
+  defp push_remote(cwd, branch) do
+    remotes =
+      case Git.ok(cwd, ["remote"]) do
+        {:ok, out} -> String.split(out, "\n", trim: true)
+        _ -> []
+      end
+
+    configured =
+      Enum.find_value(["branch.#{branch}.pushRemote", "remote.pushDefault"], fn key ->
+        case Git.ok(cwd, ["config", "--get", key]) do
+          {:ok, out} -> String.trim(out) |> then(&if(&1 == "", do: nil, else: &1))
+          _ -> nil
+        end
+      end)
+
+    if(configured in remotes, do: configured, else: Git.primary_remote(cwd))
   end
 
   defp upstream_ref_exists?(cwd, %{remote: nil, ref: ref}),
@@ -794,7 +845,13 @@ defmodule HalC2.GitActions do
 
       {:ok, %{err: err}} ->
         {hint, cta} = push_refusal(err, remote_repository(cwd, remote))
-        fail!("git push failed: #{last_lines(err)}#{hint}", cta)
+
+        # A named refusal (the workflow scope cases above) keeps its hint; a plain
+        # rejection is said in fixed words, quoting none of the remote's output.
+        case {hint, push_rejection(err)} do
+          {"", message} when is_binary(message) -> fail!(message)
+          _ -> fail!("git push failed: #{last_lines(err)}#{hint}", cta)
+        end
 
       {:error, reason} ->
         fail!("git push failed: #{reason}")
@@ -849,6 +906,21 @@ defmodule HalC2.GitActions do
 
       true ->
         {"", nil}
+    end
+  end
+
+  # Why the remote turned a push away, from git's own rejection lines, said in
+  # fixed words: a hook's or the server's own output is never quoted.
+  defp push_rejection(err) do
+    cond do
+      err =~ "non-fast-forward" ->
+        "The remote has commits this branch doesn't have. Pull or rebase, then push again."
+
+      err =~ "[remote rejected]" ->
+        "The remote rejected the push. Push this branch from a terminal to see the server's message."
+
+      true ->
+        nil
     end
   end
 

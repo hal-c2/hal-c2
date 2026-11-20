@@ -100,6 +100,105 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
     context
   end
 
+  # --- more remotes and publish targets ---------------------------------------------------
+
+  # Another bare remote beside origin, holding the same history.
+  defp add_remote(context, name) do
+    bare = HalC2.Test.Mc.tmp_dir(context.mc, "remote-#{name}")
+    World.git!(bare, ["clone", "-q", "--bare", context.bare, "."])
+    git(context, ["remote", "add", name, bare])
+    git(context, ["fetch", "-q", name])
+    Map.update(context, :bares, %{name => bare}, &Map.put(&1, name, bare))
+  end
+
+  defp bare_head(context, remote, branch) do
+    bare = if remote == "origin", do: context.bare, else: context.bares[remote]
+    World.git!(bare, ["rev-parse", "refs/heads/#{branch}"])
+  end
+
+  step "the branch is set to push to {string} and the repository's push default is {string}",
+       %{args: [push_remote, push_default]} = context do
+    context = context |> add_remote(push_remote) |> add_remote(push_default)
+    branch = git(context, ~w(branch --show-current))
+    git(context, ["config", "branch.#{branch}.pushRemote", push_remote])
+    git(context, ["config", "remote.pushDefault", push_default])
+    context
+  end
+
+  step "the repository's push default is {string} and the branch has no push remote",
+       %{args: [push_default]} = context do
+    context = add_remote(context, push_default)
+    git(context, ["config", "remote.pushDefault", push_default])
+    context
+  end
+
+  step "no push remote or push default is set and {string} and {string} exist",
+       %{args: [_origin, other]} = context do
+    add_remote(context, other)
+  end
+
+  step "the branch is pushed to {string}", %{args: [upstream]} = context do
+    [remote, branch] = String.split(upstream, "/", parts: 2)
+    %{"push" => push} = result(context)
+    assert push["status"] == "pushed"
+    assert push["upstreamBranch"] == upstream
+    assert bare_head(context, remote, branch) == context.pushed
+    assert git(context, ~w(rev-parse --abbrev-ref --symbolic-full-name @{upstream})) == upstream
+    context
+  end
+
+  step "{string} was cut from {string} and tracks it",
+       %{args: [name, "origin/" <> base]} = context do
+    git(context, ["branch", "-f", base, "HEAD"])
+    git(context, ["push", "-q", "origin", base])
+    git(context, ["checkout", "-q", "-b", name, "origin/#{base}"])
+    Map.put(context, :base_before, bare_head(context, base))
+  end
+
+  step "{string} is 1 commit ahead", %{args: [_name]} = context do
+    change(context, "cart")
+    Map.put(context, :pushed, head(context.cwd))
+  end
+
+  step "{string} has the new commit and {string} is unchanged",
+       %{args: ["origin/" <> branch, "origin/" <> base]} = context do
+    assert bare_head(context, branch) == context.pushed
+    assert bare_head(context, base) == context.base_before
+    context
+  end
+
+  step "{string} tracks {string} from now on", %{args: [_name, upstream]} = context do
+    assert git(context, ~w(rev-parse --abbrev-ref --symbolic-full-name @{upstream})) == upstream
+    context
+  end
+
+  step "{string} is remembered as the base the pull request will target",
+       %{args: [base]} = context do
+    branch = git(context, ~w(branch --show-current))
+    assert git(context, ["config", "--get", "branch.#{branch}.gh-merge-base"]) == base
+    context
+  end
+
+  step "the local branch {string} tracks {string}",
+       %{args: [name, "origin/" <> upstream]} = context do
+    git(context, ["branch", "-f", upstream, "HEAD"])
+    git(context, ["push", "-q", "origin", upstream])
+    git(context, ["checkout", "-q", "-b", name, "origin/#{upstream}"])
+    context
+  end
+
+  step "the checkout is on a local branch named {string}", %{args: [name]} = context do
+    context = branch(context, name)
+    change(context, "cart")
+    Map.put(context, :pushed, head(context.cwd))
+  end
+
+  step "the user pushes it to {string}", %{args: [remote]} = context do
+    assert remote in String.split(git(context, ["remote"]), "\n")
+    {events, context} = World.git_action(context, context.cwd, "push")
+    Map.put(context, :git_events, events)
+  end
+
   step "{string} is level with its upstream", %{args: [name]} = context do
     context = branch(context, name)
     change(context, "cart")

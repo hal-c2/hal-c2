@@ -40,7 +40,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: The first push goes to the remote the repository's settings name
     Given "feature/tax" has never been pushed
     And <settings>
@@ -54,7 +54,7 @@ Feature: Pushing, pulling and guarding the default branch
       | no push remote or push default is set and "origin" and "upstream" exist               | origin/feature/tax      |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: upstream is the branch's base)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A branch cut from another branch is pushed under its own name
     Given "feature/tax" was cut from "origin/dev" and tracks it
     And "feature/tax" is 1 commit ahead
@@ -64,7 +64,7 @@ Feature: Pushing, pulling and guarding the default branch
     And "dev" is remembered as the base the pull request will target
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: isAliasOfUpstreamHead)
-  @mc @backlog
+  @mc
   Scenario: A branch that tracks a remote branch of the same name under another prefix is pushed to it
     Given the local branch "upstream/effect-atom" tracks "origin/effect-atom"
     And "upstream/effect-atom" is 1 commit ahead
@@ -81,7 +81,7 @@ Feature: Pushing, pulling and guarding the default branch
     And "feature/tax" tracks "fork/feature/tax" from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: resolvePublishBranchName)
-  @mc @backlog
+  @mc
   Scenario: A branch named after a remote branch is published without the remote's prefix
     Given the checkout is on a local branch named "origin/hotfix"
     When the user pushes it to "origin"

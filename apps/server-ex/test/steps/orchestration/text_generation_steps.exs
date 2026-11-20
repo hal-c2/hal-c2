@@ -1431,8 +1431,14 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   end
 
   step "the failure says {string}", %{args: [message]} = context do
-    assert {:error, error, _} = context.reply
-    assert error == message
+    # A git action's failure is its last event; an RPC's is its error reply.
+    if context[:git_events] do
+      assert World.failure(context) == message
+    else
+      assert {:error, error, _} = context.reply
+      assert error == message
+    end
+
     context
   end
 

@@ -202,7 +202,7 @@ Feature: Reviewing working tree and branch changes
     Then the request is refused with "This folder is not part of a project on this machine, so its changes cannot be shown."
 
   # Upstream #20449: review diffs load for a thread's worktree outside the managed worktrees folder.
-  @backlog @mc
+  @mc
   Scenario: A thread's worktree outside the project folder can be reviewed
     Given thread "Work" of project "shop" works in a worktree outside the project folder
     When the user reviews the working tree of "Work"
