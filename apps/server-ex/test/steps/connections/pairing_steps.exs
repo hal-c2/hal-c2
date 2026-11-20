@@ -35,7 +35,31 @@ defmodule HalC2.Steps.Connections.Pairing do
   end
 
   step "an operator asks for a pairing link for {string}", %{args: [base]} = context do
-    context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
+    case Mc.run_task(Mix.Tasks.HalC2.Pair, [base]) do
+      {:error, _} = refusal ->
+        context |> Map.put(:base, base) |> Map.put(:refusal, refusal)
+
+      [line, expires] ->
+        assert_expiry_line(expires)
+        context |> Map.put(:base, base) |> Map.put(:printed, line)
+    end
+  end
+
+  step "the command fails saying the address must start with http:// or https://", context do
+    assert {:error, message} = context.refusal
+    assert message =~ "must be an http or https address"
+    context
+  end
+
+  step "an operator asks the MC for a pairing link without naming an address", context do
+    assert [line, expires] = Mc.run_task(Mix.Tasks.HalC2.Pair, [])
+    assert_expiry_line(expires)
+    Map.put(context, :printed, line)
+  end
+
+  step "the port is the one the MC actually listens on", context do
+    assert URI.parse(context.printed).port == context.mc.port
+    context
   end
 
   step "an operator asks for a pairing link with the option {string}",

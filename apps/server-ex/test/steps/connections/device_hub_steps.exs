@@ -350,6 +350,29 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     |> rpc("device.action", input)
   end
 
+  step "a client opens {string} on a booted Android device, on this machine or over SSH",
+       %{args: [url]} = context do
+    context = booted(context, "Android")
+
+    context
+    |> Map.put(:opened_url, url)
+    |> rpc("device.action", %{
+      "deviceId" => "emulator-5580",
+      "type" => "openUrl",
+      "url" => url
+    })
+  end
+
+  step "the device is asked to open exactly {string}", %{args: [url]} = context do
+    assert {:ok, _} = context.reply
+    calls = context |> calls() |> String.split("\n", trim: true)
+
+    assert "adb shell am start -a android.intent.action.VIEW -d #{url}" in calls,
+           inspect(calls)
+
+    context
+  end
+
   step "the MC answers with the device's detail after the action", context do
     assert {:ok, %{"deviceId" => id, "settings" => settings} = detail} = context.reply
     assert id == context.action["deviceId"]
