@@ -186,7 +186,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   of submodule objects as an alternate, and what it fetched goes into the store after,
   so the next review downloads only what is new. Nothing is written to the clone's
   config, which every review of the repository shares: the submodules are made active
-  and cloned from the head's `.gitmodules` for this command alone. Only HTTP(S) and SSH
+  and cloned from the head's `.gitmodules` for this command alone, each at its pinned
+  commit whatever update strategy it names, and over a checked certificate whatever the
+  MC's environment configures. Only HTTP(S) and SSH
   are used, so a `.gitmodules` cannot point git at a local path, run a command through
   `ext::` or reach a `git://` server, which nothing times out. A transfer that stalls is
   dropped (HTTP under 1 KB/s for a minute, SSH that stops answering), and the whole
@@ -198,6 +200,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
       with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
            {:ok, {credentials, env}} <- credentials(clone, remote, url),
+           {:ok, checked} <- checked_config(path),
            {:ok, _} <-
              bounded_git(
                path,
@@ -211,11 +214,14 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                    "http.lowSpeedTime=60",
                    "submodule",
                    "update",
+                   # A `.gitmodules` entry's `update = none` (or another strategy) is
+                   # not followed: every submodule gets the commit the head pins.
+                   "--checkout",
                    "--recursive",
                    "--reference",
                    store
                  ],
-               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ env]
+               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env]
              ),
            do: store(store, path)
     else
@@ -224,6 +230,60 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   @submodules_ms 15 * 60_000
+
+  # The command-scope configuration the MC's environment hands git (`GIT_CONFIG_COUNT`,
+  # `GIT_CONFIG_PARAMETERS` and the files they include), as git itself reads it, minus
+  # every `sslVerify`, given back as `GIT_CONFIG_COUNT` entries that replace it. The
+  # token's helper answers for every submodule on its server, nested ones too, whose
+  # URLs are not known before the update fetches them: with no `http.<url>.sslVerify`
+  # left for any of them, and the file-based configuration already left out, a token
+  # only goes over a checked certificate.
+  defp checked_config(path) do
+    with {:ok, listed} <- git(path, ["config", "--list", "--show-scope", "-z"]) do
+      entries =
+        listed
+        |> String.split(<<0>>)
+        |> Enum.chunk_every(2, 2, :discard)
+        |> Enum.flat_map(fn
+          ["command", entry] ->
+            case String.split(entry, "\n", parts: 2) do
+              [key, value] -> [{key, value}]
+              # A key with no value is true; an empty one would be false.
+              [key] -> [{key, "true"}]
+            end
+
+          _ ->
+            []
+        end)
+        # Includes are already expanded into what they hold.
+        |> Enum.reject(fn {key, _} ->
+          String.ends_with?(key, ".sslverify") or String.starts_with?(key, "include.") or
+            String.starts_with?(key, "includeif.")
+        end)
+
+      count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
+
+      stale =
+        for n <- length(entries)..(count - 1)//1,
+            name <- ["GIT_CONFIG_KEY_#{n}", "GIT_CONFIG_VALUE_#{n}"],
+            do: {name, nil}
+
+      set =
+        entries
+        |> Enum.with_index()
+        |> Enum.flat_map(fn {{key, value}, n} ->
+          [{"GIT_CONFIG_KEY_#{n}", key}, {"GIT_CONFIG_VALUE_#{n}", value}]
+        end)
+
+      {:ok,
+       [
+         {"GIT_CONFIG_PARAMETERS", nil},
+         {"GIT_CONFIG_COUNT", Integer.to_string(length(entries))} | set ++ stale
+       ]}
+    end
+  rescue
+    ArgumentError -> {:error, "GIT_CONFIG_COUNT in the MC's environment is not a number."}
+  end
 
   # SSH that gives up on a server that does not connect or stops answering, unless the
   # MC's environment names its own SSH command, which the overall timeout still bounds.
@@ -466,7 +526,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # A token goes only to the server it was issued for (`server`, else `url`'s), and over
   # a checked certificate: the configuration the MC's environment hands git
   # (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`) can rewrite `url` to another server
-  # or turn the check off, and is refused when it does. The helper is configured for
+  # or turn the check off, and is refused when it does; a submodule update drops every
+  # such `sslVerify` (`checked_config/1`). The helper is configured for
   # that origin alone (`credential.<url>.helper`), so git asks it about no other: a
   # fetch redirected elsewhere gets nothing.
   defp credentials(clone, %{"token" => token} = remote, url)

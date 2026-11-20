@@ -16,7 +16,9 @@ defmodule HalC2.CodeReviewTest do
   @key "acme/api#1"
   @package Path.expand("../../../../plugins/code-review", __DIR__)
   @support Path.expand("../support", __DIR__)
-  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL)
+  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
+                 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2 GIT_CONFIG_PARAMETERS
+                 GIT_CONFIG_GLOBAL)
 
   defmodule Dropped do
     # A test conn whose answer cannot be sent, as Bandit raises once its peer has gone.
@@ -517,6 +519,73 @@ defmodule HalC2.CodeReviewTest do
 
     counts = git!(Path.join(second, "my dir"), ["count-objects", "-v"])
     assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "submodules are fetched with the certificate checked, whatever the environment says",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    lib =
+      repo!(context.dir, "lib", "lib.txt", [{"deep", "https://github.com/acme/inner.git", inner}])
+
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/unchecked")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    # Each submodule fetch says whether git would check the certificate of its server.
+    log = Path.join(context.dir, "ssl.log")
+    ssh = Path.join(context.dir, "logging-ssh")
+
+    File.write!(ssh, """
+    #!/bin/sh
+    for url in https://github.com/acme/lib.git https://github.com/acme/inner.git; do
+      echo "$url $(git config --get-urlmatch http.sslVerify "$url")" >> '#{log}'
+    done
+    exec '#{System.get_env("GIT_SSH_COMMAND")}' "$@"
+    """)
+
+    File.chmod!(ssh, 0o755)
+    System.put_env("GIT_SSH_COMMAND", ssh)
+    included = Path.join(context.dir, "unchecked.gitconfig")
+    File.write!(included, "[http \"https://github.com/acme/\"]\n\tsslVerify = false\n")
+
+    # Beside the rewrite the fake remote needs: the check turned off for the submodules'
+    # URLs, for their server through an included file, and for every server.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "3",
+      "GIT_CONFIG_KEY_1" => "http.https://github.com/acme/inner.git.sslVerify",
+      "GIT_CONFIG_VALUE_1" => "false",
+      "GIT_CONFIG_KEY_2" => "include.path",
+      "GIT_CONFIG_VALUE_2" => included,
+      "GIT_CONFIG_PARAMETERS" => "'http.sslverify'='false'"
+    })
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/deep/inner.txt")) == "inner\n"
+
+    assert File.read!(log) |> String.split("\n", trim: true) |> Enum.uniq() == [
+             "https://github.com/acme/lib.git ",
+             "https://github.com/acme/inner.git "
+           ]
+
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule its .gitmodules says not to update still gets its pinned commit", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner, "\tupdate = none\n"}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/none")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
     :ok = apply(checkout, :release, [])
   end
 
@@ -3405,7 +3474,8 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # A bare `remotes/acme/<name>.git` with one commit of `file`, its text `<name>\n`,
-  # and `subs` as its submodules: `{path, url, sha}`.
+  # and `subs` as its submodules: `{path, url, sha}`, or `{path, url, sha, lines}` with
+  # more lines of its `.gitmodules` entry.
   defp repo!(dir, name, file, subs \\ []) do
     bare = Path.join(dir, "remotes/acme/#{name}.git")
     git!(dir, ["init", "-q", "--bare", "-b", "main", bare])
@@ -3437,14 +3507,16 @@ defmodule HalC2.CodeReviewTest do
   defp submodules!(seed, subs) do
     File.write!(
       Path.join(seed, ".gitmodules"),
-      Enum.map_join(subs, fn {path, url, _} ->
-        "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = #{url}\n"
+      Enum.map_join(subs, fn sub ->
+        {path, url} = {elem(sub, 0), elem(sub, 1)}
+        lines = if tuple_size(sub) == 4, do: elem(sub, 3), else: ""
+        "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = #{url}\n" <> lines
       end)
     )
 
     git!(seed, ["add", ".gitmodules"])
 
-    for {path, _, sha} <- subs do
+    for sub <- subs, {path, sha} = {elem(sub, 0), elem(sub, 2)} do
       sha = if is_map(sha), do: git!(sha.seed, ["rev-parse", "HEAD"]), else: sha
       git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{sha},#{path}"])
     end
