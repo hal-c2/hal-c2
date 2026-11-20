@@ -240,15 +240,16 @@ defmodule HalC2.Steps.Orchestration.Projects do
       |> World.create_thread("first", id)
       |> World.create_thread("second", id)
 
-    # A forced delete deletes the threads one by one under stable command ids, then the
-    # project; the MC stopping between them leaves exactly this.
+    # A forced delete deletes the threads one by one, then the project; the MC stopping
+    # between them leaves exactly this. The retry skips threads already deleted, so the
+    # first thread's deletedAt must survive it.
     first = World.thread_id(context, "first")
 
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "thread.delete",
         "threadId" => first,
-        "commandId" => "delete-#{id}:delete-thread:#{first}"
+        "commandId" => "interrupted-delete-#{first}"
       })
 
     World.await_row(first, &is_binary(&1["deletedAt"]))
