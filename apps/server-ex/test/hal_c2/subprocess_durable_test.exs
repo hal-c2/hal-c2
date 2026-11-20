@@ -226,16 +226,8 @@ defmodule HalC2.SubprocessDurableTest do
   # `Subprocess.start/2` blanks it for the program: the blank must not beat the shim's.
   test "the watchdog keeps its look when the MC's own environment sets one" do
     Application.put_env(:hal_c2, :durable_look_seconds, 1)
-    previous = System.get_env("HAL_C2_DURABLE_LOOK")
-    System.put_env("HAL_C2_DURABLE_LOOK", "30")
-
-    on_exit(fn ->
-      Application.delete_env(:hal_c2, :durable_look_seconds)
-
-      if previous,
-        do: System.put_env("HAL_C2_DURABLE_LOOK", previous),
-        else: System.delete_env("HAL_C2_DURABLE_LOOK")
-    end)
+    on_exit(fn -> Application.delete_env(:hal_c2, :durable_look_seconds) end)
+    put_mc_look("30")
 
     {:ok, sub} =
       Subprocess.start(["sh", "-c", "trap '' TERM; while :; do sleep 1; done"], durable: "t1")
@@ -257,11 +249,23 @@ defmodule HalC2.SubprocessDurableTest do
     assert await_gone(pid, 200)
   end
 
+  # Sets the MC's own HAL_C2_DURABLE_LOOK for one test, restoring what it was: the
+  # suite itself may run inside an agent session that sets it.
+  defp put_mc_look(value) do
+    previous = System.get_env("HAL_C2_DURABLE_LOOK")
+    System.put_env("HAL_C2_DURABLE_LOOK", value)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("HAL_C2_DURABLE_LOOK", previous),
+        else: System.delete_env("HAL_C2_DURABLE_LOOK")
+    end)
+  end
+
   # The shim exports its interval to the program only if it forgets to unset it.
   if :os.type() == {:unix, :linux} do
     test "the program does not inherit the shim's interval" do
-      System.put_env("HAL_C2_DURABLE_LOOK", "30")
-      on_exit(fn -> System.delete_env("HAL_C2_DURABLE_LOOK") end)
+      put_mc_look("30")
       script = ~S"tr '\0' '\n' </proc/$$/environ | grep -c '^HAL_C2_DURABLE_LOOK='; sleep 30"
       {:ok, sub} = Subprocess.start(["sh", "-c", script], durable: "t1")
       %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
