@@ -404,7 +404,7 @@ Feature: Subscription limits
 
   # xAI omits the usage percentage until an account has metered use, so the account is
   # kept with no windows rather than dropped as one that can never report.
-  @mc @shared @backlog-mobile @backlog-mc @priority-low
+  @mc @shared @backlog-mobile @priority-low
   Scenario: A Grok account with no metered usage yet stays in Limits
     Given Grok is signed in with a subscription and has not used any metered credit yet
     When the user opens Limits
@@ -414,7 +414,7 @@ Feature: Subscription limits
   # Upstream #17061: a complete weekly or monthly period with no usage percentage now reads as
   # unused; an incomplete, unsupported or invalid period still reports no limits. Replaces the
   # scenario above once the MC and the clients carry it.
-  @mc @shared @backlog @plugin-grok @priority-low
+  @mc @shared @plugin-grok @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A Grok account with no metered usage yet shows its billing period unused
     Given Grok is signed in with a subscription and has not used any metered credit yet
     And xAI reports <period> without a usage percentage

@@ -85,6 +85,14 @@ defmodule HalC2.ProviderUsageLimits.Acp do
             {:ok, %{"config" => %{"creditUsagePercent" => used} = config}} when is_number(used) ->
               limits(checked_at, [grok_window(used, config["currentPeriod"] || %{})])
 
+            # xAI omits the percentage until an account has metered use: a complete
+            # period then reads as unused, and the account stays listed either way.
+            {:ok, %{"config" => config}} ->
+              case grok_period(config["currentPeriod"]) do
+                {:complete, period} -> limits(checked_at, [grok_window(0, period)])
+                :incomplete -> limits(checked_at, [])
+              end
+
             {:ok, %{}} ->
               unavailable(checked_at, "unsupported")
 
@@ -121,13 +129,26 @@ defmodule HalC2.ProviderUsageLimits.Acp do
   defp grok_token(%{"key" => key}), do: present(key)
   defp grok_token(_), do: nil
 
+  # A period xAI fully names (its kind and when it ends), or `:incomplete`.
+  defp grok_period(period) when is_map(period) do
+    if grok_kind(period) in ["weekly", "monthly"] and
+         HalC2.ProviderUsageLimits.iso(period["end"]) != nil,
+       do: {:complete, period},
+       else: :incomplete
+  end
+
+  defp grok_period(_period), do: :incomplete
+
+  defp grok_kind(period) do
+    case String.replace_prefix(to_string(period["type"]), "USAGE_PERIOD_TYPE_", "") do
+      "WEEKLY" -> "weekly"
+      "MONTHLY" -> "monthly"
+      _ -> "other"
+    end
+  end
+
   defp grok_window(used, period) do
-    kind =
-      case String.replace_prefix(to_string(period["type"]), "USAGE_PERIOD_TYPE_", "") do
-        "WEEKLY" -> "weekly"
-        "MONTHLY" -> "monthly"
-        _ -> "other"
-      end
+    kind = grok_kind(period)
 
     %{
       "id" => "subscription",
