@@ -1398,7 +1398,9 @@ Item {
     // own kind) sit in the review corner, and once it is full at the desks
     // nearest it that nobody else needs. The corner is theirs alone: nobody
     // else ever needs a desk there, since the office grows first (see
-    // sync()), and whoever sits there and is no reviewer leaves it.
+    // sync()), and whoever sits there and is no reviewer leaves it. Should
+    // someone else still find no free desk, a reviewer on a floor desk gives
+    // it up.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
@@ -1486,10 +1488,27 @@ Item {
                     spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
+        // Reviewers hot-desk: one on a floor desk gives it up to someone else
+        // who has no desk of its own kind, the one nearest `near`, and spills
+        // again from the corner.
+        const chunkOf = {};
+        chunks.forEach((chunk, c) => chunk.forEach(id => chunkOf[id] = c));
+        const yieldTo = (id, near) => {
+            const held = Object.keys(seatOf).filter(r => reviewing[chunkOf[r]] && !w.pods[seatOf[r].pod].review);
+            if (!held.length)
+                return;
+            held.sort((a, b) => away(seatOf[a].pod, near) - away(seatOf[b].pod, near) || seatOf[a].index - seatOf[b].index);
+            const r = held[0], seat = seatOf[r];
+            delete seatOf[r];
+            taken[seat.index] = id;
+            seatOf[id] = seat;
+            spill.push([r, corner, chunkOf[r]]);
+        };
         // Those who did not fit sit at the nearest pod with a free desk, the
         // rest before reviewers, so a reviewer past the corner takes only a
         // floor desk nobody else needs: reviewers at one of their own kind
-        // first, the rest never in the corner.
+        // first, the rest never in the corner, and at a reviewer's floor desk
+        // when there is no other.
         for (const review of [false, true]) {
             for (const [id, near, c] of spill) {
                 if (reviewing[c] !== review)
@@ -1497,6 +1516,8 @@ Item {
                 const pod = nearest(near, 1, c, !review);
                 if (pod >= 0)
                     sit(id, pod);
+                else if (!review)
+                    yieldTo(id, near);
             }
         }
         return seatOf;

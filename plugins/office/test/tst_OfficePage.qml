@@ -567,6 +567,29 @@ Item {
             compare(reviewers.filter(r => page.world.seatOf[r.id] && page.world.seatOf[r.id].pod !== review).length, 2, "the other 2 reviewers sit on the floor");
         }
 
+        // A reviewer on a floor desk counts as one more desk the office needs,
+        // so when threads fill the floor the office grows instead of taking
+        // the desk from it: the reviewers keep their desks, and every thread
+        // has one on the floor.
+        function test_reviewers_on_the_floor_keep_their_desks_as_the_office_grows() {
+            const reviewers = [];
+            for (let i = 0; i < 10; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish(reviewers);
+            const review = corner();
+            const seats = {};
+            for (const r of reviewers)
+                seats[r.id] = page.world.seatOf[r.id].index;
+            verify(page.world.seatOf["r8"].pod !== review && page.world.seatOf["r9"].pod !== review, "r8 and r9 sit on the floor");
+            // r0 leaves the corner, and 40 threads need every floor desk.
+            plugin.publish(reviewers.slice(1).concat(many(40, "t", "working", "typing")));
+            verify(page.world.pods.length > 6, "the office grows");
+            for (let i = 0; i < 40; i++)
+                verify(page.world.seatOf["t" + i] && page.world.seatOf["t" + i].pod !== corner(), "t" + i + " has a floor desk");
+            for (let i = 1; i < 10; i++)
+                compare(page.world.seatOf["r" + i]?.index, seats["r" + i], "r" + i + " keeps its desk");
+        }
+
         // Someone reading at a shelf who loses its corner desk on a full floor
         // gets a desk on the floor, the office growing for it, and reads on.
         function test_a_reader_who_leaves_the_corner_on_a_full_floor_gets_a_floor_desk() {
