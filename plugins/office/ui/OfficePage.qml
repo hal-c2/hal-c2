@@ -2090,12 +2090,12 @@ Item {
             a.hold = -1;
             if (a.tx < 0)
                 continue;
-            const nx = a.next >= 0 ? across(a.next % old.cols) : -1;
-            const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
             // Whoever is in the break room, on its door or stepping onto the
-            // door moves with it.
+            // door moves with it, the step it takes and all.
             const room = a.tx >= old.xd || a.next >= 0 && a.next % old.cols >= old.xd;
             const shift = room ? dx : 0;
+            const nx = a.next >= 0 ? a.next % old.cols + shift : -1;
+            const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
             a.px += shift * 16;
             a.tx += shift;
             a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;

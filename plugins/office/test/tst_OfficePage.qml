@@ -1250,6 +1250,32 @@ Item {
             }, 3000, "C goes on to the break room");
         }
 
+        // Someone stepping out of the break room's door when the door moves
+        // moves with it too and goes on with the step to the office.
+        function test_a_step_out_of_the_door_goes_on_after_a_resize() {
+            plugin.publish([person("c", "C", "working", "typing")]);
+            const c = actor("c");
+            plugin.publish([person("c", "C", "waiting")]);
+            page.takeBreak(c);
+            runUntil(() => arrived(c) && c.tx > page.world.xd && c.until !== Infinity, 3000, "C gets to the break room");
+            c.until = page.now;
+            const xd = page.world.xd, W = page.world.cols;
+            runUntil(() => c.next >= 0 && c.tx === xd && c.next % W === xd - 1, 3000, "C steps out through the door");
+            page.advance(2);
+            const y = c.ty, offset = c.px - c.tx * 16;
+            resize(300, 1000);
+            const w = page.world;
+            verify(w.xd !== xd, "the door moves");
+            compare([c.tx, c.ty, c.next], [w.xd, y, y * w.cols + w.xd - 1], "C goes on stepping out of the door where it is now");
+            compare(c.px - c.tx * 16, offset, "from as far as it got");
+            checkFloor();
+            const seat = page.world.seatOf["c"];
+            runUntil(() => {
+                checkFloor();
+                return arrived(c) && c.tx === seat.x && c.ty === seat.y;
+            }, 3000, "C gets back to its desk");
+        }
+
         // Someone mid-step when a resize puts the office's south wall on the
         // tile it steps from goes on from the nearest floor, not from inside
         // the wall.
