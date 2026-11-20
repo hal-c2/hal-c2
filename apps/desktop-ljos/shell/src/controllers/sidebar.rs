@@ -412,6 +412,8 @@ pub struct Sidebar {
     /// counted on (snapshots landed, threads listed).
     migration_toast: String,
     migration_checked: (u64, usize),
+    /// The device could not keep the note this run: not tried again.
+    migration_write_failed: bool,
     /// The legacy tree, when legacySidebarEnabled; the projects listing
     /// all their threads last the session, as the web's did.
     tree: Option<Tree>,
@@ -465,6 +467,7 @@ impl Controller for Sidebar {
             open_draft_label: None,
             migration_toast: String::new(),
             migration_checked: (0, 0),
+            migration_write_failed: false,
             tree: None,
             showing_all: HashSet::new(),
             working_shelf: true,
@@ -898,9 +901,10 @@ impl Sidebar {
     /// Threads the MC brought over from the first version (`historyOrigin`
     /// "v1_import") are announced once per device, the first time they are
     /// listed; the notice still showing counts the threads that arrive
-    /// after it.
+    /// after it. A device that cannot keep the note is told so once a run,
+    /// not at every change of the store.
     fn announce_migrated_threads(&mut self, engine: &Engine) {
-        if !store::with(engine, |s| s.synchronized()) {
+        if self.migration_write_failed || !store::with(engine, |s| s.synchronized()) {
             return;
         }
         let settings = Settings::of(engine);
@@ -947,7 +951,11 @@ impl Sidebar {
             }
             return;
         }
-        if migrated == 0 || !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
+        if migrated == 0 {
+            return;
+        }
+        if !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
+            self.migration_write_failed = true;
             return;
         }
         self.migration_toast = controller::with::<Toasts, _>(engine, |t, e| {
