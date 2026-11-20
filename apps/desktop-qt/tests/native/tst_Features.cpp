@@ -285,6 +285,7 @@ const QStringList kDefaultGlobs{
     // The alerts themselves; the in-app card's own clicks are tst_Scenarios.qml's.
     QStringLiteral("navigation/qt-scenarios.feature"),
     QStringLiteral("threads/qt-scenarios.feature"),
+    QStringLiteral("threads/sidebar-list.feature:Moving through the list with the keyboard*"),
     QStringLiteral("timeline/notifications.feature:A notification's action runs it"),
     QStringLiteral("timeline/notifications.feature:Dismissing the last notification hides the notifications"),
     QStringLiteral("timeline/notifications.feature:A thread that changes state*"),

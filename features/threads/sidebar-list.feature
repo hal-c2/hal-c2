@@ -253,7 +253,7 @@ Feature: The thread list
     When the user opens "Review 1"
     Then "Review 1" is among the settled threads
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Moving through the list with the keyboard
     Given the thread list has keyboard focus on "Beta"
     When the user presses <key>

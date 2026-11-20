@@ -3543,6 +3543,12 @@ threads/sidebar-list.feature: An open settled plugin thread stays listed
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
 threads/sidebar-list.feature: Leaving the thread list for settings keeps the project filter
+threads/sidebar-list.feature: Moving through the list with the keyboard [Down, the next row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [End, the last row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Enter, "Beta" opens]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Home, the first row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Shift+F10, the menu for "Beta" opens]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Up, the previous row is focused]
 threads/sidebar-list.feature: Opening a draft from the list
 threads/sidebar-list.feature: Opening a thread from the list
 threads/sidebar-list.feature: Projects are dragged into place only when they are sorted by hand

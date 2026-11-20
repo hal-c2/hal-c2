@@ -30,6 +30,10 @@ const QString kProject = QStringLiteral("project");
 struct QtScenario {
   // The centre of the row whose menu Shift+F10 asks for.
   QPoint rowCentre;
+  // The list's rows that can be acted on, in order, and the one the
+  // keyboard cursor was on, when a step put it there.
+  QStringList rowKeys;
+  QString focusedKey;
   bool terminalWasOpen = false;
   // The notification actions that ran, as "<title>/<label>".
   std::shared_ptr<QStringList> ran = std::make_shared<QStringList>();
@@ -74,8 +78,13 @@ QString threadTitled(World& world, const QString& title, QJsonObject fields) {
   }
   const qsizetype minute = world.mc.threads.size();
   fields.insert(QStringLiteral("title"), title);
-  fields.insert(QStringLiteral("projectId"), kProject);
-  fields.insert(QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:%1:00Z").arg(minute, 2, 10, QLatin1Char('0')));
+  // In the scenario's own project when the Background made one; otherwise
+  // (threads/sidebar-list.feature) in the MC's first project.
+  fields.insert(QStringLiteral("projectId"),
+                world.mc.projects.contains(kProject) ? kProject : world.mc.projects.firstKey());
+  if (!fields.contains(QLatin1String("createdAt"))) {
+    fields.insert(QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:%1:00Z").arg(minute, 2, 10, QLatin1Char('0')));
+  }
   fields.insert(QStringLiteral("id"), titleId(title));
   putThread(world, titleId(title), fields);
   world.sync();
@@ -275,7 +284,10 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the thread list has keyboard focus on %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString key = threadTitled(world, c[0], {});
+    // Rows above and below, so the cursor has somewhere to go.
+    threadTitled(world, QStringLiteral("Older neighbour"), {{QStringLiteral("createdAt"), QStringLiteral("2026-09-23T08:00:00Z")}});
+    threadTitled(world, QStringLiteral("Newer neighbour"), {{QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:59:00Z")}});
+    const QString key = threadTitled(world, c[0], {{QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}});
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     world.sync();
     Brick& brick = showSidebar(world);
@@ -284,6 +296,47 @@ const Steps steps([] {
     const QString cursor = list->property("cursorKey").toString();
     expect(cursor == key, QStringLiteral("the keyboard cursor is on %1").arg(cursor));
     scenario(world).rowCentre = brick.at(row);
+    scenario(world).focusedKey = key;
+    scenario(world).rowKeys.clear();
+    for (const QVariant& entry : brick.root()->property("rows").toList()) {
+      const QString rowKey = entry.toMap().value(QStringLiteral("rowKey")).toString();
+      if (!rowKey.isEmpty()) scenario(world).rowKeys.append(rowKey);
+    }
+  });
+  // Where the keyboard cursor went (threads/sidebar-list.feature).
+  const auto focusedIs = [](World& world, const QString& expected, const QString& what) {
+    Brick& brick = shown(world);
+    QQuickItem* list = brick.item(QStringLiteral("list"));
+    world.waitFor([&] { return list->property("cursorKey").toString() == expected; },
+                  [&] { return QStringLiteral("%1; the cursor is on %2").arg(what, list->property("cursorKey").toString()); });
+  };
+  step(QStringLiteral("the next row is focused"), [focusedIs](World& world, const Captures&, const Table&) {
+    const QStringList& keys = scenario(world).rowKeys;
+    const qsizetype at = keys.indexOf(scenario(world).focusedKey);
+    expect(at >= 0 && at + 1 < keys.size(), QStringLiteral("there is no row after %1 in [%2]").arg(scenario(world).focusedKey, keys.join(QStringLiteral(", "))));
+    focusedIs(world, keys.at(at + 1), QStringLiteral("the next row to be focused"));
+  });
+  step(QStringLiteral("the previous row is focused"), [focusedIs](World& world, const Captures&, const Table&) {
+    const QStringList& keys = scenario(world).rowKeys;
+    const qsizetype at = keys.indexOf(scenario(world).focusedKey);
+    expect(at > 0, QStringLiteral("there is no row before %1 in [%2]").arg(scenario(world).focusedKey, keys.join(QStringLiteral(", "))));
+    focusedIs(world, keys.at(at - 1), QStringLiteral("the previous row to be focused"));
+  });
+  step(QStringLiteral("the first row is focused"), [focusedIs](World& world, const Captures&, const Table&) {
+    expect(!scenario(world).rowKeys.isEmpty(), QStringLiteral("the list has no rows"));
+    focusedIs(world, scenario(world).rowKeys.first(), QStringLiteral("the first row to be focused"));
+  });
+  step(QStringLiteral("the last row is focused"), [focusedIs](World& world, const Captures&, const Table&) {
+    expect(!scenario(world).rowKeys.isEmpty(), QStringLiteral("the list has no rows"));
+    focusedIs(world, scenario(world).rowKeys.last(), QStringLiteral("the last row to be focused"));
+  });
+  step(QStringLiteral("the menu for %1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor(
+        [&] {
+          const QVariant menu = world.state(QStringLiteral("menu"));
+          return menu.typeId() == QMetaType::QVariantMap && !at(menu, QStringLiteral("items")).toList().isEmpty();
+        },
+        [&] { return QStringLiteral("a menu for %1; the shell shows %2").arg(c[0], show(world.state(QStringLiteral("menu")))); });
   });
   step(QStringLiteral("the menu for %1 is requested beside that thread").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariant menu = world.state(QStringLiteral("menu"));
