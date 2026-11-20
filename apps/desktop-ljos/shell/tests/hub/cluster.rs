@@ -7,7 +7,9 @@ use std::rc::Rc;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::cluster::Cluster;
+use hal_c2_shell::controllers::composer;
 use hal_c2_shell::controllers::drafts;
+use hal_c2_shell::mc::McError;
 use hal_c2_shell::store;
 use proptest::prelude::*;
 use serde_json::json;
@@ -225,6 +227,39 @@ fn a_machine_that_went_without_this_client_removing_it_takes_only_its_empty_draf
 }
 
 #[test]
+fn a_background_launch_keeps_its_draft_for_the_prompt_while_the_machine_is_gone() {
+    let hub = listing();
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "in the back", "cursor": 11}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    // The draft is empty for the next prompt while the launch is answered.
+    assert_eq!(composer::draft(&hub.engine, &id), "");
+    // Placed where the user picked, and launched there.
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("box went")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+#[test]
 fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
     let hub = listing();
     let before = drafts::start(&hub.engine, "id-b", "p1").unwrap();
@@ -266,6 +301,53 @@ fn a_late_answer_keeps_text_rewritten_after_the_machine_came_back() {
         drafts::draft(&hub.engine, &draft).map(|d| d.text),
         Some("roll back the deploy, then tag it".to_owned())
     );
+}
+
+#[test]
+fn a_late_answer_keeps_text_written_back_to_what_it_was() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy, then tag it");
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Written in since, though back to what it was: kept.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_given_a_file_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    assert_eq!(hub.published("composer")["target"], draft.as_str());
+    hub.dispatch(
+        "composer.attach",
+        json!({"files": [{"name": "notes.md", "mimeType": "text/markdown", "base64": "IyBOb3Rlcwo="}]}),
+    );
+    hub.advance(0);
+    assert_eq!(composer::attachments(&hub.engine, &draft).len(), 1);
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Its text as it was, but a file attached since: kept, file and all.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+    assert_eq!(composer::attachments(&hub.engine, &draft).len(), 1);
 }
 
 #[test]

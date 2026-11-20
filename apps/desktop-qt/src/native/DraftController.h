@@ -51,6 +51,9 @@ public:
     QString threadId;
     QString createdAt;
     QString text;
+    // How many times its text was written or cleared this run, not saved: a
+    // late removal tells a draft written in since from one left as it was.
+    int edits = 0;
 
     QString threadKey() const { return environmentId + QLatin1Char(':') + threadId; }
   };

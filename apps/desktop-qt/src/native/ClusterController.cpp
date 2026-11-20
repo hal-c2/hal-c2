@@ -6,6 +6,9 @@
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 
+#include <utility>
+
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -19,6 +22,20 @@ const QString kLocalOnlyHint =
     QStringLiteral("Only this machine can open it: the MC listens on loopback. Invite over Tailscale instead.");
 
 const NativeControllerRegistrar<ClusterController> registrar(QStringLiteral("cluster"), {QStringLiteral("cluster")});
+
+// What a draft holds: how often its text was written, and the attachments the
+// composer keeps for it.
+using Held = std::pair<int, QStringList>;
+
+Held held(const QObject* controller, const DraftController::Draft& draft) {
+  QStringList attachments;
+  if (const auto* composer = NativeShell::of(controller)->controller<ComposerController>()) {
+    for (const QVariant& attachment : composer->attachments(draft.id)) {
+      attachments.append(attachment.toMap().value(QStringLiteral("id")).toString());
+    }
+  }
+  return {draft.edits, attachments};
+}
 
 }  // namespace
 
@@ -190,14 +207,15 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
                                const QString& failure) {
   ++m_generation;
   set(QStringLiteral("busy"), true);
-  // The drafts of the machine being removed, as they are now: one written
-  // after it joins again outlives a late answer, in the same draft or a new one.
-  QHash<QString, QString> doomed;
+  // The drafts of the machine being removed, as they are now: one written or
+  // attached to after it joins again outlives a late answer, in the same draft
+  // or a new one.
+  QHash<QString, Held> doomed;
   auto* drafts = NativeShell::of(this)->controller<DraftController>();
   if (drafts && method == QLatin1String("cluster.remove")) {
     const QString removed = payload.value(QLatin1String("id")).toString();
     for (const DraftController::Draft& draft : drafts->drafts()) {
-      if (draft.environmentId == removed) doomed.insert(draft.id, draft.text);
+      if (draft.environmentId == removed) doomed.insert(draft.id, held(this, draft));
     }
   }
   call(method, payload, [this, doomed, success, failure](const QJsonValue& result, const std::optional<QString>& error) {
@@ -213,7 +231,7 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
     if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
       for (auto it = doomed.cbegin(); it != doomed.cend(); ++it) {
         const auto draft = drafts->draft(it.key());
-        if (draft && draft->text == it.value()) drafts->remove(it.key());
+        if (draft && held(this, *draft) == it.value()) drafts->remove(it.key());
       }
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());

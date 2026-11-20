@@ -209,6 +209,9 @@ public:
   // What the sidebar shows for a draft with something in it: the text's first
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
+  // A launch from the draft is kept until its answer: a failed one's prompt
+  // comes back into the draft, a background one's too.
+  bool awaitsLaunch(const QString& draftId) const;
   // The threads (keys) whose composer holds something unsent, the rows the
   // sidebar marks "Unsent draft".
   QSet<QString> unsentThreads() const;

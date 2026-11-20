@@ -2,8 +2,11 @@
 // machine that leaves the cluster, each as the plain case that shows it
 // (hal-c2#1589).
 
+#include <QBuffer>
+#include <QImage>
 #include <QtTest>
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "FakeMc.h"
 #include "McClient.h"
@@ -161,6 +164,39 @@ private slots:
     QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
   }
 
+  // A background send empties its draft for the next prompt and keeps the
+  // prompt until the launch is answered. A machine that goes meanwhile takes
+  // its empty drafts, but not that one: a refused launch puts the prompt back.
+  void aBackgroundLaunchKeepsItsDraftWhileTheMachineIsGone() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QList<FakeMc::Rpc> launches;
+    shell.mc.onRpc(QStringLiteral("orchestration.launchThread"), [&launches](const FakeMc::Rpc& rpc) { launches.append(rpc); });
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    QTRY_COMPARE(shell.bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draft);
+    const auto edit = [](int revision) {
+      return QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), revision}};
+    };
+    shell.bridge.dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), draft},
+                                                                          {QStringLiteral("edit"), edit(1)},
+                                                                          {QStringLiteral("text"), QStringLiteral("in the back")},
+                                                                          {QStringLiteral("cursor"), 11}});
+    shell.bridge.dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("edit"), edit(2)},
+                                                                        {QStringLiteral("text"), QStringLiteral("in the back")},
+                                                                        {QStringLiteral("intent"), QStringLiteral("background")}});
+    QTRY_COMPARE(launches.size(), 1);
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+    shell.mc.refuse(launches.takeFirst(), QStringLiteral("box went"));
+    QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+  }
+
   // The answer drops the drafts the machine had when it was asked to go. One
   // written after it joined again, before a late answer, stays.
   void aLateAnswerKeepsADraftWrittenAfterARejoin() {
@@ -203,6 +239,65 @@ private slots:
     shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
     shell.barrier();
     QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy, then tag it")});
+  }
+
+  // Written in since, though back to what it was when the removal was asked.
+  void aLateAnswerKeepsTextWrittenBackToWhatItWas() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.join();
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy, then tag it"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+  }
+
+  // Its text as it was, but a file attached since: kept, file and all.
+  void aLateAnswerKeepsADraftGivenAFileAfterARejoin() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.join();
+    QCOMPARE(shell.drafts()->start(kBox, QStringLiteral("ops")), draft);
+    QTRY_COMPARE(shell.bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draft);
+    QImage picture(8, 8, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    picture.save(&buffer, "PNG");
+    shell.bridge.dispatch(QStringLiteral("composer.attach"),
+                          QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{
+                                                                    {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                                    {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                                    {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
+                                                                }}}});
+    auto* composer = shell.native->controller<ComposerController>();
+    QTRY_COMPARE(composer->attachments(draft).size(), 1);
+
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+    QCOMPARE(composer->attachments(draft).size(), 1);
   }
 
   // A snapshot sent before a member's rows have come names it without a

@@ -57,6 +57,9 @@ pub struct Draft {
     pub thread_id: String,
     pub created_at: String,
     pub text: String,
+    /// How many times its text was written or cleared this run, not saved: a
+    /// late removal tells a draft written in since from one left as it was.
+    pub edits: u64,
 }
 
 impl Draft {
@@ -74,6 +77,7 @@ impl Draft {
             thread_id: text("threadId"),
             created_at: text("createdAt"),
             text: text("text"),
+            edits: 0,
         };
         let complete = [
             &draft.id,
@@ -262,6 +266,7 @@ pub fn start_carrying(
                 thread_id: hal_c2_mc::new_uuid(),
                 created_at: model::format_iso(&created_at),
                 text: String::new(),
+                edits: 0,
             });
             // A draft that would not survive a restart is not started.
             if !save(engine) {
@@ -418,6 +423,7 @@ pub fn set_text(engine: &Engine, id: &str, text: &str) {
         match drafts.iter_mut().find(|d| d.id == id && d.text != text) {
             Some(draft) => {
                 draft.text = text.to_owned();
+                draft.edits += 1;
                 true
             }
             None => false,
@@ -447,6 +453,7 @@ pub fn renew(engine: &Engine, id: &str) {
             Some(draft) => {
                 draft.thread_id = hal_c2_mc::new_uuid();
                 draft.text.clear();
+                draft.edits += 1;
                 true
             }
             None => false,
@@ -515,12 +522,13 @@ fn reconcile(engine: &Engine) {
     });
     // No MC serves its machine now: removed, here or on another client,
     // switched off, or not back yet. A draft with nothing in it goes (one a
-    // window landed on before the rows went); one the user wrote waits.
-    orphaned.extend(
-        unserved
-            .into_iter()
-            .filter(|id| preview(engine, id).is_none() && !launching(engine, id)),
-    );
+    // window landed on before the rows went); one the user wrote waits, as
+    // does one whose launch may yet give its prompt back.
+    orphaned.extend(unserved.into_iter().filter(|id| {
+        preview(engine, id).is_none()
+            && !launching(engine, id)
+            && !crate::controllers::composer::awaits_launch(engine, id)
+    }));
     for key in promoted {
         promote(engine, &key);
     }

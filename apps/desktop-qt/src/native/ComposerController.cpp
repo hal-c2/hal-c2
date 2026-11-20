@@ -2871,6 +2871,11 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
   return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
 }
 
+bool ComposerController::awaitsLaunch(const QString& draftId) const {
+  return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(),
+                     [&draftId](const Unsent& unsent) { return unsent.target == draftId && unsent.thread != draftId; });
+}
+
 QSet<QString> ComposerController::unsentThreads() const {
   QSet<QString> threads;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {

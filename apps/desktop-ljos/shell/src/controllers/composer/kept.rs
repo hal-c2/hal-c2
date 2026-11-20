@@ -336,6 +336,16 @@ pub fn draft_preview(engine: &Engine, target: &str) -> Option<String> {
     text::preview_of(&text, carried)
 }
 
+/// A launch from the draft is kept until its answer: a failed one's prompt
+/// comes back into the draft, a background one's too.
+pub fn awaits_launch(engine: &Engine, draft_id: &str) -> bool {
+    read(engine, |d| {
+        d.unsent
+            .iter()
+            .any(|u| u.target == draft_id && u.thread != draft_id)
+    })
+}
+
 /// A draft that became a thread: what the user typed after sending its
 /// first message goes on in the thread's composer.
 pub fn adopt(engine: &Engine, draft_id: &str, thread_key: &str, text: &str) {

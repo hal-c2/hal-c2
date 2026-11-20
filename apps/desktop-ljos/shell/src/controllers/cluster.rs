@@ -358,14 +358,14 @@ impl Cluster {
         self.set(engine, "busy", json!(true));
         let sent = payload.clone();
         // The drafts of the machine being removed, as they are now: one
-        // written after it joins again outlives a late answer, in the same
-        // draft or a new one.
-        let doomed: Vec<(String, String)> = if method == "cluster.remove" {
+        // written or attached to after it joins again outlives a late
+        // answer, in the same draft or a new one.
+        let doomed: Vec<(String, Held)> = if method == "cluster.remove" {
             let removed = settings_page::text(&sent, "id");
             drafts::all(engine)
                 .into_iter()
                 .filter(|d| d.environment_id == removed)
-                .map(|d| (d.id, d.text))
+                .map(|d| (d.id.clone(), held(engine, &d)))
                 .collect()
         } else {
             Vec::new()
@@ -390,8 +390,8 @@ impl Cluster {
                 // controller follows: removed once it has returned.
                 let doomed = doomed.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
-                    for (id, text) in &doomed {
-                        if drafts::draft(engine, id).is_some_and(|d| d.text == *text) {
+                    for (id, then) in &doomed {
+                        if drafts::draft(engine, id).is_some_and(|d| held(engine, &d) == *then) {
                             drafts::remove(engine, id);
                         }
                     }
@@ -440,6 +440,18 @@ impl Cluster {
                 .publish(engine, "cluster", Json::Object(self.state.clone()));
         }
     }
+}
+
+/// What a draft holds: how often its text was written, and the attachments
+/// the composer keeps for it.
+type Held = (u64, Vec<Json>);
+
+fn held(engine: &Engine, draft: &drafts::Draft) -> Held {
+    let attachments = crate::controllers::composer::attachments(engine, &draft.id)
+        .into_iter()
+        .map(|a| a["id"].clone())
+        .collect();
+    (draft.edits, attachments)
 }
 
 /// `QJsonValue::toObject`: what is not an object is an empty one.
