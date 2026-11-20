@@ -180,6 +180,18 @@ Item {
             compare(list.model[0].number, 83);
             search.text = "feature/limits";
             tryVerify(() => list.count === 1 && list.model[0].number === 12, 1000, "a branch matches");
+            search.text = "83";
+            tryVerify(() => list.count === 1 && list.model[0].number === 83, 1000, "a bare number is its pull request, not one whose number holds it");
+            // A bare number also finds a branch or title that names it.
+            search.text = "1683";
+            tryCompare(list, "count", 0);
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(12, "running", "Add rate limits", "feature/limits"), review(83, "queued", "Cache the session", "fix/cache"), review(830, "failed", "Bump the parser", "fix/1683-resume")]
+            });
+            tryVerify(() => list.count === 1 && list.model[0].number === 830, 1000, "a bare number finds a branch naming it");
             search.text = "nothing like it";
             tryCompare(list, "count", 0);
             search.text = "";
@@ -216,6 +228,8 @@ Item {
             });
             const now = find("codeReviewRetry");
             tryVerify(() => now.visible && now.text === "Review now");
+            // Once the layout has made room for it, as for Approve.
+            tryVerify(() => now.width > 0 && now.mapToItem(find("codeReviewDetail").contentItem, 0, now.height).y <= find("codeReviewDetail").contentHeight);
             mouseClick(now);
             const asked = plugin.calls.filter(each => each.method === "retry");
             compare(asked.length, 1);

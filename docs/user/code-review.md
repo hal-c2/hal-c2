@@ -94,12 +94,16 @@ If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
 the queue instead of failing one by one, and the Reviews page says so and when
 they start again. If you know the limit no longer holds, say after signing in
-to another account, click **Resume now**. Picking another agent or model for
-the reviews ends the pause too. **Review now** on a queued review starts it
-next, ahead of the rest of the queue, and ends a pause as well.
+to another account, click **Resume now**. **Look now**, and picking another
+agent or model for the reviews, end the pause too; a limit that a review still
+running on the old agent hits after the switch only puts that review back in
+the queue. **Review now** on a queued review starts it next, ahead of the rest
+of the queue, and ends a pause as well. Other queued reviews start oldest first.
 
-A review the host would not take because of its own rate limit is posted again
-at the next look for pull requests.
+In a repository that publishes automatically, a review the host would not post
+because of its own rate limit is posted again at the first look for pull
+requests that the limit lets through. A review you publish yourself is not
+retried: publish it again once the limit resets.
 
 ## Reviews in a sandbox
 
@@ -210,8 +214,9 @@ review it again, then publish.
 Changing this moves the review threads there already are, not only new ones.
 
 The search field above the Reviews page's list finds a pull request by its
-number (`#83` or `83`), title, repository, author or branch. Every word you
-type has to match.
+title, repository, author or branch, or by its number: `#83` finds that pull
+request only, and `83` also finds a title or branch that names 83. Every word
+you type has to match.
 
 When a review is done — reported, published or failed — its thread is settled,
 so finished reviews leave your active list on their own. Unsettle one to bring

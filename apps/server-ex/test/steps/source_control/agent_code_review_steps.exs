@@ -1442,6 +1442,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "reviews of \#{int} and \#{int} are running", %{args: numbers} = context do
+    Enum.reduce(numbers, context, &running(&2, &1))
+  end
+
   step "the user resumes the reviews", context do
     {reply, context} = plugin(context, "resume", %{})
     assert {:ok, snapshot} = reply

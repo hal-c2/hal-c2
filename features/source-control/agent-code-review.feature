@@ -767,6 +767,24 @@ Feature: Agent code review
       Then "code-review" no longer says reviews are paused
       And the review of #12 is running again
 
+    # Asking to look is the user's say-so, as a start is.
+    @mc
+    Scenario: Looking at the pull requests now ends a usage-limit pause
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the plugin looks at the pull requests again
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    # The limit was the old model's: the new one has its own.
+    @mc
+    Scenario: A usage limit a run of the old model hits after a switch pauses nothing
+      Given reviews of #12 and #13 are running
+      When the user picks another model for "code-review"
+      And the agent's turn ends because its usage limit is reached
+      Then "code-review" no longer says reviews are paused
+      And the review of #13 is running again
+
     @mc
     Scenario: A queued review the user asks to start now starts next
       Given "code-review" runs at most 1 reviews at once

@@ -12,8 +12,9 @@ defmodule HalC2.CodeReviewPropTest do
   for pull requests, start, retry, stop (once as a run reads the pull request), report,
   dismiss, discard and publish reviews, end turns (one of them stopped by the
   provider's usage limit, which parks its review in the queue and starts nothing else
-  until the limit resets, restarts included, unless the user asks for a review or
-  resumes the queue; a queued review the user asks for starts before the watch's own),
+  until the limit resets, restarts included, unless the user asks for a review, looks,
+  resumes the queue or picks another model; a limit a run of the old model hits after
+  that only queues it; a queued review the user asks to start now starts next),
   answer a superseded post late, comment the review command and label pull requests,
   change settings (also while a look reads GitHub), turn the plugin off and on, and
   crash it. After every step:
@@ -401,6 +402,8 @@ defmodule HalC2.CodeReviewPropTest do
         activation: "selective",
         new_pushes: false,
         display: "threads",
+        # The reviews' model; another has a usage limit of its own.
+        model: "fake/one",
         per_author: 3,
         per_repository: 2,
         # Whether hubot is a trusted login, and the trigger label.
@@ -545,7 +548,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"concurrency", oneof([1, 2])},
             {"activation", oneof(~w(automatic selective))},
             {"reviewNewPushes", boolean()},
-            {"display", oneof(~w(page threads both))}
+            {"display", oneof(~w(page threads both))},
+            {"model", oneof(~w(fake/one fake/two))}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -636,7 +640,8 @@ defmodule HalC2.CodeReviewPropTest do
 
   # `{model after call, the reply it expects}`; a reply is :ok, :error, :held (a post
   # GitHub holds) or nil (a step with no reply to check).
-  defp step(m, {:call, _, :refresh, []}), do: {look(m), :ok}
+  # Asking to look ends a pause, as a start does.
+  defp step(m, {:call, _, :refresh, []}), do: {m |> unpause() |> look(), :ok}
   defp step(m, {:call, _, :poll, []}), do: {look(m), nil}
 
   # An ask reads the pull request first, so one closed since the last look is refused.
@@ -839,9 +844,13 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # A turn the provider's usage limit stopped: the review waits in the queue
-  # and nothing else starts until the plugin does.
+  # and nothing else starts until the plugin does. A run of a model the user has
+  # since moved off only waits in the queue: the limit was the old model's.
   defp step(m, {:call, _, :limited, [{key, k}]}) do
     case m.reviews[key] do
+      %{run: ^k, status: :running, model: model} when model != m.settings.model ->
+        {m |> queue(key, m.reviews[key].asked) |> pump(), nil}
+
       %{run: ^k, status: :running} ->
         {%{
            queue(m, key, m.reviews[key].asked)
@@ -892,6 +901,7 @@ defmodule HalC2.CodeReviewPropTest do
         "activation" => :activation,
         "reviewNewPushes" => :new_pushes,
         "display" => :display,
+        "model" => :model,
         "reviewsPerAuthorPerDay" => :per_author,
         "reviewsPerRepositoryPerDay" => :per_repository,
         "trustedLogins" => :trusted_logins,
@@ -900,7 +910,12 @@ defmodule HalC2.CodeReviewPropTest do
 
     value = if field == "trustedLogins", do: value != [], else: value
 
-    # The running plugin takes it as it is: the next look reads the rest.
+    # The running plugin takes it as it is: the next look reads the rest. Another
+    # model ends a usage-limit pause, as it has a limit of its own; a plugin turned off
+    # is not running to hear it, and keeps its pause.
+    m =
+      if m.enabled and name == :model and value != m.settings.model, do: unpause(m), else: m
+
     m = %{m | settings: Map.put(m.settings, name, value)}
     if m.enabled, do: {pump(m), :ok}, else: {m, :ok}
   end
@@ -1027,6 +1042,8 @@ defmodule HalC2.CodeReviewPropTest do
       asked: false,
       # When, by `seq`, the user asked a queued review to start now, or nil.
       now: nil,
+      # The model its last run started with.
+      model: nil,
       limited: nil,
       # Whether its findings were saved before reports were made safe.
       old: false
@@ -1167,7 +1184,9 @@ defmodule HalC2.CodeReviewPropTest do
     pump(m)
   end
 
-  # Starts queued reviews (those asked to start now first, then those asked for, each oldest first) while fewer than `concurrency` run; each
+  # Starts queued reviews (those asked to start now first, in the order asked, then
+  # the rest oldest first) while fewer than `concurrency` run, with the model saved
+  # now; each
   # start is a new run, held at the fetch while the hold is on. A paused queue
   # (a usage limit, or failed runs in a row) starts nothing.
   defp pump(%{paused: true} = m), do: m
@@ -1178,7 +1197,7 @@ defmodule HalC2.CodeReviewPropTest do
     taken =
       m.reviews
       |> Enum.filter(fn {_, r} -> r.status == :queued end)
-      |> Enum.sort_by(fn {_, r} -> {r.now == nil, r.now, not r.asked, r.seq} end)
+      |> Enum.sort_by(fn {_, r} -> {r.now == nil, r.now, r.seq} end)
       |> Enum.take(max(m.settings.concurrency - running, 0))
       |> Enum.map(&elem(&1, 0))
 
@@ -1208,6 +1227,7 @@ defmodule HalC2.CodeReviewPropTest do
              r
              | status: :running,
                now: nil,
+               model: m.settings.model,
                run: length(runs),
                launched: {r.trusted, r.approved},
                started: m.tick,

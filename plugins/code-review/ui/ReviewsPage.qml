@@ -27,14 +27,19 @@ Item {
     readonly property var order: ["running", "queued", "publishing", "waiting", "failed", "kept", "ready", "published"]
     // What the list is narrowed to, as typed in the search field once typing pauses.
     property string query: ""
-    // The reviews the list shows: those matching every word of the query.
+    // The reviews the list shows: those matching every word of the query. `#83` is that
+    // pull request only; a bare `83` is it too, or a title or branch that names 83.
     readonly property var shown: {
         const words = page.query.trim().toLowerCase().split(/\s+/).filter(word => word.length > 0);
         if (words.length === 0)
             return page.reviews;
         return page.reviews.filter(review => {
-            const text = ["#" + review.number, review.title, review.repository, review.author, review.headBranch, review.baseBranch].filter(part => part).join(" ").toLowerCase();
-            return words.every(word => /^#?\d+$/.test(word) ? review.number === Number(word.replace("#", "")) : text.includes(word));
+            const text = [review.title, review.repository, review.author, review.headBranch, review.baseBranch].filter(part => part).join(" ").toLowerCase();
+            return words.every(word => {
+                if (/^#\d+$/.test(word))
+                    return review.number === Number(word.slice(1));
+                return (/^\d+$/.test(word) && review.number === Number(word)) || text.includes(word);
+            });
         });
     }
     property string selected: ""
@@ -182,7 +187,8 @@ Item {
     objectName: "codeReviewPage"
     implicitWidth: 900
     implicitHeight: 600
-    onReviewsChanged: if (review === null && reviews.length > 0)
+    // Read from `reviews` itself: `review` may not have caught up with it yet.
+    onReviewsChanged: if (reviews.length > 0 && !reviews.some(each => each.id === selected))
         selected = reviews[0].id
     Component.onCompleted: follow()
 

@@ -44,7 +44,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
     covers: %{
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
-      "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
+      "HalC2Plugins.CodeReview handle_call {:looked, _, :asked}" => ~w(polled pump resume),
       "HalC2Plugins.CodeReview handle_call {:publish, _, _, _}" =>
         ~w(publish post-lock post refused covered),
       "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
@@ -89,6 +89,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:for_thread, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:review_thread?, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:start, _, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call :resume" =>
+        "the user's ask to end this machine's pause now, which the model's resume does at any time; no cluster claim goes through it",
       "HalC2Plugins.CodeReview handle_call {:dismiss, _, _, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:approve, _, _}" => @trust,
       "HalC2Plugins.CodeReview handle_call {:unapprove, _}" => @trust,
