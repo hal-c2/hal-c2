@@ -20,7 +20,9 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
 - A person at the computer is editing, running commands or tests. One at a
   whiteboard is planning; one at a bookshelf is reading.
 - A thread that is waiting or idle sits back at its desk, and now and then takes
-  a short break: coffee, the couch, the arcade or a chat in the break room.
+  a short break: coffee, the couch, the arcade or a chat in the break room. At
+  its desk, a waiting thread's screen often shows a game, a cat video, a meme
+  or some shopping.
 - A question mark means the thread's agent is asking you something. Click the
   person to open the thread and answer. A red mark means its last turn failed.
 - When one agent hands work to another or sends it a message, the two walk up

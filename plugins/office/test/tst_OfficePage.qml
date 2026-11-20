@@ -1032,6 +1032,97 @@ Item {
             verify(["coffee", "cooler", "couch", "table", "arcade", "chat", "vending", "fridge", "armchair"].filter(k => places[k]).length >= 4, "breaks go to different places");
         }
 
+        // Every slacking frame fits on the 8×6 screen in the six blocks a
+        // screen has for it.
+        function test_every_slacking_frame_fits_on_a_screen() {
+            for (const name of Object.keys(page.slackArt)) {
+                const art = page.slackArt[name];
+                verify(art.frames.length >= 2, name + " has frames to change between");
+                for (const frame of art.frames) {
+                    verify(frame.length >= 1 && frame.length <= 6, name + " has one to six blocks a frame");
+                    for (const [x, y, w, h] of frame)
+                        verify(x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= 8 && y + h <= 6, name + " stays on the screen");
+                }
+            }
+        }
+
+        // Waiting people slack off on their screens most of the time, idle
+        // ones now and then, each picking at random and changing every so
+        // often; working people keep to their work, and a screen changes at
+        // most once a second.
+        function test_waiting_people_slack_off_on_their_screens() {
+            const people = many(24, "w", "waiting").concat(many(24, "i", "idle"), many(8, "k", "working", "typing"));
+            plugin.publish(people);
+            const seen = {}, picks = {}, last = {};
+            const on = {
+                w: 0,
+                i: 0
+            }, at = {
+                w: 0,
+                i: 0
+            };
+            for (let t = 0; t < 1500; t++) {
+                page.advance(1);
+                for (const p of people) {
+                    const seat = page.world.seatOf[p.id];
+                    const view = seat && page.screenViews[seat.screen];
+                    if (!view || view.mode === "off") {
+                        delete last[p.id];
+                        continue;
+                    }
+                    const kind = p.id[0];
+                    if (kind === "k") {
+                        compare(view.slack, "", p.id + " keeps to its work");
+                        continue;
+                    }
+                    // A frame that follows another frame of the same slacking
+                    // was up for a second; the first after a pick may be shorter.
+                    const was = last[p.id];
+                    if (was && (was.slack !== view.slack || was.scene !== view.scene)) {
+                        const next = was.slack === view.slack;
+                        if (next && was.frame)
+                            verify(page.ticks - was.since >= 24, p.id + "'s screen changes at most once a second");
+                        last[p.id] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            since: page.ticks,
+                            frame: next
+                        };
+                    } else if (!was) {
+                        last[p.id] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            since: page.ticks,
+                            frame: false
+                        };
+                    }
+                    at[kind]++;
+                    if (view.slack) {
+                        on[kind]++;
+                        seen[view.slack] = true;
+                        picks[p.id] = Object.assign(picks[p.id] ?? {}, {
+                            [view.slack]: true
+                        });
+                    }
+                }
+            }
+            compare(Object.keys(seen).sort(), Object.keys(page.slackArt).sort(), "every kind of slacking shows up");
+            verify(Object.keys(picks).some(id => Object.keys(picks[id]).length >= 2), "someone switches to something else");
+            const waiting = on.w / at.w, idle = on.i / at.i;
+            verify(waiting > 0.5 && waiting < 0.95, "waiting people mostly slack, but not always: " + waiting);
+            verify(idle > 0.1 && idle < waiting, "idle people slack less: " + idle);
+        }
+
+        // Someone asking the user something keeps its screen on the question.
+        function test_a_person_asking_does_not_slack_off() {
+            plugin.publish(many(16, "a", "asking"));
+            for (let t = 0; t < 600; t++) {
+                page.advance(1);
+                for (const view of Object.values(page.screenViews))
+                    compare(view.slack, "");
+            }
+        }
+
         function test_two_agents_that_talk_walk_up_to_each_other() {
             const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing")].concat(many(6, "o", "working", "typing"));
             plugin.publish(people);

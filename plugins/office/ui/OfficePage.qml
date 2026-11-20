@@ -145,6 +145,39 @@ Item {
     property real now: 0
     property int ticks: 0
     property var rng: random(0x0ff1ce)
+    // What is on the screens draws from its own stream, so it never changes
+    // where anyone goes.
+    property var screenRng: random(0x5c4ee7)
+
+    // What a waiting or idle person slacks off with on its screen: a
+    // background and a few frames, each a list of [x, y, w, h, color] on the
+    // 8×6 screen. A frame lasts a second (see updateScreens()).
+    readonly property var slackArt: ({
+            solitaire: {
+                color: "#1f7a3a",
+                frames: [[[0, 1, 2, 2, "#ffffff"], [3, 1, 2, 3, "#ffffff"], [6, 1, 2, 4, "#ffffff"], [0, 1, 1, 1, "#e53935"], [3, 1, 1, 1, "#212121"], [6, 1, 1, 1, "#e53935"]], [[0, 1, 2, 3, "#ffffff"], [3, 1, 2, 2, "#ffffff"], [6, 1, 2, 4, "#ffffff"], [0, 3, 1, 1, "#212121"], [3, 1, 1, 1, "#e53935"], [6, 1, 1, 1, "#e53935"]], [[1, 0, 2, 2, "#ffffff"], [4, 2, 2, 2, "#ffffff"], [6, 4, 2, 2, "#ffffff"], [1, 0, 1, 1, "#e53935"], [4, 2, 1, 1, "#212121"], [6, 4, 1, 1, "#e53935"]]]
+            },
+            snake: {
+                color: "#0d1210",
+                frames: [[[1, 4, 3, 1, "#5fd38a"], [3, 2, 1, 2, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[2, 4, 2, 1, "#5fd38a"], [3, 1, 1, 3, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[3, 2, 1, 3, "#5fd38a"], [3, 1, 3, 1, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[3, 2, 1, 2, "#5fd38a"], [3, 1, 4, 1, "#5fd38a"], [1, 4, 1, 1, "#ff5252"]]]
+            },
+            blocks: {
+                color: "#151a33",
+                frames: [[[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 0, 1, 2, "#ffd54f"]], [[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 2, 1, 2, "#ffd54f"]], [[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 3, 1, 3, "#ffd54f"]], [[0, 5, 2, 1, "#ba68c8"], [6, 5, 2, 1, "#81c784"], [3, 0, 3, 1, "#e57373"], [4, 1, 1, 1, "#e57373"]]]
+            },
+            cat: {
+                color: "#202020",
+                frames: [[[2, 2, 4, 2, "#f4a24c"], [2, 1, 1, 1, "#f4a24c"], [5, 1, 1, 1, "#f4a24c"], [6, 3, 1, 1, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 2, 1, "#ff3b3b"]], [[2, 2, 4, 2, "#f4a24c"], [2, 1, 1, 1, "#f4a24c"], [5, 1, 1, 1, "#f4a24c"], [6, 1, 1, 2, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 4, 1, "#ff3b3b"]], [[2, 1, 4, 2, "#f4a24c"], [2, 0, 1, 1, "#f4a24c"], [5, 0, 1, 1, "#f4a24c"], [6, 2, 1, 1, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 6, 1, "#ff3b3b"]]]
+            },
+            meme: {
+                color: "#3a3a3a",
+                frames: [[[1, 0, 6, 1, "#ffffff"], [3, 2, 2, 2, "#ffd54f"], [3, 3, 2, 1, "#5d4037"], [1, 5, 6, 1, "#ffffff"]], [[2, 0, 4, 1, "#ffffff"], [2, 2, 4, 2, "#7cb342"], [2, 1, 1, 1, "#7cb342"], [5, 1, 1, 1, "#7cb342"], [0, 5, 8, 1, "#ffffff"]]]
+            },
+            shopping: {
+                color: "#f2f4f8",
+                frames: [[[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#4a90d9"], [5, 2, 2, 2, "#e57373"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#9aa5b0"]], [[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#4a90d9"], [5, 2, 2, 2, "#e57373"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#ff9900"], [7, 0, 1, 1, "#e53935"]], [[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#81c784"], [5, 2, 2, 2, "#ba68c8"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#9aa5b0"], [7, 0, 1, 1, "#e53935"]]]
+            }
+        })
 
     readonly property var frame: ({
             stand: 0,
@@ -2357,6 +2390,11 @@ Item {
             queue: [],
             heldBy: "",
             face: -1,
+            // What it slacks off with on its screen, and until when (see
+            // slackOf()); `beat` keeps its frames out of step with others'.
+            slack: "",
+            slackUntil: 0,
+            beat: hash(person.id) % 25,
             faceUntil: 0
         };
     }
@@ -3124,6 +3162,20 @@ Item {
         }
     }
 
+    // What a waiting or idle person has on its screen, picked at random
+    // every 8 to 20 seconds: a game, a cat video, a meme or some shopping
+    // most of the time while waiting, now and then while idle, and otherwise
+    // nothing much. Someone asking the user something keeps to the question.
+    function slackOf(actor) {
+        if (page.now >= actor.slackUntil) {
+            const state = actor.person.state;
+            const odds = state === "waiting" ? 0.75 : state === "idle" ? 0.35 : 0;
+            actor.slack = page.screenRng() < odds ? pick(page.screenRng, Object.keys(page.slackArt)) : "";
+            actor.slackUntil = page.now + between(page.screenRng, 8000, 20000);
+        }
+        return actor.slack;
+    }
+
     function updateScreens() {
         if (!page.world)
             return;
@@ -3136,12 +3188,17 @@ Item {
             // On for whoever sits there, from the step onto the seat.
             const i = seat.y * page.world.cols + seat.x;
             const actor = page.actors[page.claims[i]];
-            let mode = "off";
+            let mode = "off", slack = "";
             if (actor && actor.goal?.kind === "desk" && (actor.ty * page.world.cols + actor.tx === i || actor.next === i)) {
                 const p = actor.person;
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
+                if (mode === "idle")
+                    slack = slackOf(actor);
             }
             view.mode = mode;
+            view.slack = slack;
+            if (slack)
+                view.scene = Math.floor((page.ticks + actor.beat) / 25) % page.slackArt[slack].frames.length;
             view.phase = page.ticks / 6;
         }
         for (const board of page.boards) {
@@ -3948,6 +4005,11 @@ Item {
                                 required property var modelData
                                 property string mode: "off"
                                 property real phase: 0
+                                // What its sitter slacks off with, and which frame of it.
+                                property string slack: ""
+                                property int scene: 0
+                                readonly property var art: slack ? page.slackArt[slack] : null
+                                readonly property bool slacking: slack !== ""
                                 readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
                                 readonly property bool terminal: mode === "running" || mode === "testing"
 
@@ -3956,7 +4018,7 @@ Item {
                                 z: modelData.z
                                 width: 8
                                 height: 6
-                                color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                                color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
                                 Component.onCompleted: {
                                     page.screenViews[modelData.key] = screen;
                                     visible = page.deskShown(page.world.seats[modelData.seat]);
@@ -3972,7 +4034,7 @@ Item {
                                     delegate: Rectangle {
                                         required property int index
 
-                                        visible: screen.mode !== "off"
+                                        visible: screen.mode !== "off" && !screen.art
                                         x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
                                         y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
                                         height: 1
@@ -3998,6 +4060,24 @@ Item {
                                                 return "#9cc8ff";
                                             return ["#c792ea", "#82aaff", "#f8c25c"][index];
                                         }
+                                    }
+                                }
+
+                                // Its slacking frame: up to six blocks of pixels,
+                                // made while it slacks and only moved as frames change.
+                                Repeater {
+                                    model: screen.slacking ? 6 : 0
+
+                                    delegate: Rectangle {
+                                        required property int index
+                                        readonly property var block: screen.art ? screen.art.frames[screen.scene % screen.art.frames.length][index] : undefined
+
+                                        visible: block !== undefined
+                                        x: block?.[0] ?? 0
+                                        y: block?.[1] ?? 0
+                                        width: block?.[2] ?? 0
+                                        height: block?.[3] ?? 0
+                                        color: block?.[4] ?? "transparent"
                                     }
                                 }
                             }
