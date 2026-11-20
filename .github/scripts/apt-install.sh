@@ -29,6 +29,6 @@ timeout -k 10 30 sudo dpkg --configure -a
 # The retry goes straight to the Ubuntu archive: the runner's mirror list falls back to
 # it only after the stalled regional mirror's (azure., us-east-2.ec2., ...) timeouts have
 # used up the attempt. archive.ubuntu.com and security.ubuntu.com are left as they are.
-sudo sed -i -E 's#[a-z0-9.-]*\.archive\.ubuntu\.com#archive.ubuntu.com#g' \
+sudo sed -i -E 's#[a-z0-9.-]*\.archive\.ubuntu\.com#archive.ubuntu.com#gI' \
   /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 attempt "$@"

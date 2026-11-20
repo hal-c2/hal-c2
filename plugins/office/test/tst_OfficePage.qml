@@ -519,6 +519,91 @@ Item {
             compare(page.world.seatOf["r"].pod, review, "the reviewer has a corner desk");
         }
 
+        // Someone in the corner who is no reviewer leaves it at the next
+        // seating, for a desk on the floor, which the office grows for when
+        // the floor is full.
+        function test_someone_in_the_corner_who_is_no_reviewer_leaves_it() {
+            const review = corner();
+            plugin.publish([reviewer("a", "Review #12"), reviewer("b", "Review #13")]);
+            compare(page.world.seatOf["a"].pod, review);
+            compare(page.world.seatOf["b"].pod, review);
+            plugin.publish([person("a", "Review #12", "working", "typing"), reviewer("b", "Review #13")]);
+            verify(page.world.seatOf["a"].pod !== review, "a sits on the floor");
+            compare(page.world.seatOf["b"].pod, review, "b keeps its corner desk");
+            open();
+            plugin.publish(many(40, "t", "working", "typing").concat([reviewer("a", "Review #12")]));
+            compare(page.world.seatOf["a"].pod, review);
+            plugin.publish(many(40, "t", "working", "typing").concat([person("a", "Review #12", "working", "typing")]));
+            verify(page.world.seatOf["a"] && page.world.seatOf["a"].pod !== review, "with the floor full, the office grows and a sits on the floor");
+            compare(page.world.pods[review].members, [], "the corner is empty");
+        }
+
+        // Reviewers past the corner's desks take floor desks, and every other
+        // thread still has one, wherever they come in the list.
+        function test_reviewers_past_the_corner_sit_on_the_floor() {
+            const reviewers = [];
+            for (let i = 0; i < 10; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            // Eight teams of 5: five fill pods 0, 1, 3, 4 and 5 to 5 of 8,
+            // and the last three, which fit no pod whole, take the rest.
+            const teams = [];
+            for (let t = 0; t < 8; t++)
+                teams.push(...[person("l" + t, "Lead " + t, "working", "typing")].concat(many(4, "w" + t + "_", "working", "typing", "l" + t)));
+            plugin.publish(reviewers.concat(teams));
+            const review = corner();
+            for (const p of teams)
+                verify(page.world.seatOf[p.id] && page.world.seatOf[p.id].pod !== review, p.id + " has a floor desk");
+            compare(reviewers.filter(r => page.world.seatOf[r.id]?.pod === review).length, 8, "the corner is full of reviewers");
+            compare(reviewers.filter(r => page.world.seatOf[r.id] && page.world.seatOf[r.id].pod !== review).length, 2, "the other 2 reviewers sit on the floor");
+        }
+
+        // Someone reading at a shelf who loses its corner desk on a full floor
+        // gets a desk on the floor, the office growing for it, and reads on.
+        function test_a_reader_who_leaves_the_corner_on_a_full_floor_gets_a_floor_desk() {
+            const reading = p => Object.assign(p, {
+                    activity: "reading"
+                });
+            plugin.publish(many(40, "t", "working", "typing").concat([reading(reviewer("a", "Review #12"))]));
+            compare(actor("a").goal.kind, "shelf", "a reads at a shelf");
+            const rows = page.worldRows;
+            plugin.publish(many(40, "t", "working", "typing").concat([reading(person("a", "Review #12", "working"))]));
+            compare(page.worldRows, rows + 6, "the office grows");
+            verify(page.world.seatOf["a"] && page.world.seatOf["a"].pod !== corner(), "a sits on the floor");
+            compare(actor("a").goal.kind, "shelf", "a reads on");
+        }
+
+        // Reviewers hot-desk: no desk of theirs shows a project, in the corner
+        // or on the floor.
+        function test_reviewers_desks_show_no_project() {
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AP",
+                    tint: "#4A90D9"
+                }
+            });
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish([person("t", "T", "working", "typing")].concat(reviewers));
+            const review = corner();
+            verify(markOf("t").visible, "an ordinary desk shows its project");
+            const spilt = reviewers.filter(r => page.world.seatOf[r.id].pod !== review);
+            compare(spilt.length, 1, "one reviewer sits on the floor");
+            for (const r of reviewers)
+                verify(!markOf(r.id).visible, r.id + "'s desk shows no project");
+            // Nor once the project's look changes.
+            icons({
+                "local:p-api": {
+                    kind: "emoji",
+                    emoji: "🎉"
+                }
+            });
+            for (const r of reviewers)
+                verify(!markOf(r.id).visible, r.id + "'s desk still shows no project");
+            verify(markOf("t").visible);
+        }
+
         function test_a_desk_shows_its_project_as_the_sidebar_does() {
             icons({
                 "local:p-api": {
@@ -1088,6 +1173,42 @@ Item {
                 page.advance(1);
             }
             verify(c.path.length > 0 || c.next >= 0, "C still knows where it was going");
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
+        // Someone spoken to on its way stops only where nobody else may, and the
+        // speaker talks from the side it claimed, never where it happens to pass.
+        function test_a_talk_stops_people_only_where_nobody_else_has_claimed() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")]);
+            page.takeBreak(actor("c"));
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), c = actor("c");
+            const W = page.world.cols;
+            runUntil(() => a.talk?.met, 2000, "the lead catches C on its way");
+            verify(c.path.length > 0 || c.next >= 0, "C is on its way");
+            // Someone else has the tile C would stop at.
+            const taken = c.next >= 0 ? c.next : c.ty * W + c.tx;
+            page.claims[taken] = "b";
+            runUntil(() => a.talk?.phase === "say", 4000, "the talk starts");
+            verify(c.ty * W + c.tx !== taken, "C walks on past the spot that is someone else's");
+            compare(page.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
+            while (a.talk) {
+                const here = c.ty * W + c.tx;
+                if (c.next < 0)
+                    verify(!page.claims[here] || page.claims[here] === "c", "C stands on a tile nobody else has");
+                page.advance(1);
+            }
+            delete page.claims[taken];
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 

@@ -32,7 +32,8 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
 - Threads the Code review plugin started to review a pull request, and the
   workers they delegated to, sit together in the review corner. When it is
   full they sit at the desks nearest it; other threads never sit there.
-- Each desk shows the icon its project has in the sidebar.
+- Each desk shows the icon its project has in the sidebar. Reviewers hot-desk,
+  so their desks show none.
 
 Hover a person, or move to it with Tab, for its thread, project, agent and what
 it is doing; click it or press Return to open the thread.
