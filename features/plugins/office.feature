@@ -301,6 +301,7 @@ Feature: Office
       Given "Lead" talks to "Reviewer" just as "Reviewer" walks over another person's spot
       Then "Reviewer" walks on past that spot before it stops to listen
       And "Lead" talks from beside it, on a spot of its own
+      And nobody else is sent to the spot "Reviewer" listens on until it has replied
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person whose agent asks something shows a question mark

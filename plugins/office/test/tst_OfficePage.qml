@@ -1071,6 +1071,47 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // The one listening keeps the tile it stopped on for the whole talk:
+        // anyone else looking for a spot, as every goal does, finds it taken,
+        // so the listener stays put and the talk reaches its reply.
+        function test_a_listener_keeps_its_tile_until_the_talk_ends() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), b = actor("b"), c = actor("c");
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const spot = {
+                x: c.tx,
+                y: c.ty
+            };
+            const here = spot.y * page.world.cols + spot.x;
+            // B looks for somewhere to stand and wants C's tile.
+            if (page.free(spot, b)) {
+                page.claim(b, spot);
+                page.setGoal(b, Object.assign({
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "spot"
+                }, spot));
+            }
+            runUntil(() => a.talk?.phase === "reply", 400, "C replies");
+            compare(page.claims[here], "c", "C holds the tile it listens on");
+            verify(b.goal?.kind !== "spot", "B is not sent to C's tile");
+            compare([c.tx, c.ty], [spot.x, spot.y], "C listens where it stopped");
+            runUntil(() => !a.talk, 200, "the talk ends");
+            verify(page.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
         // The office fills the view by its width or its height, whichever runs
         // out first, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {
