@@ -569,6 +569,10 @@ fn a_link_the_mc_turns_down_says_so_and_changes_nothing() {
         "The pairing link is invalid or expired. Ask for a fresh one."
     );
     assert!(rig.mc.opened.borrow().is_empty());
+
+    // Forgetting the environment the link was for takes its error with it.
+    rig.with_health(|c, engine| c.cancel_pairing(engine));
+    assert_eq!(rig.published()["pairingError"], "");
 }
 
 /// What happens to a fresh link's exchange, in any order.

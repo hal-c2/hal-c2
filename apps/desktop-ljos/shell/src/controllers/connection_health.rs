@@ -544,11 +544,13 @@ impl ConnectionHealth {
 
     /// The environment the link was spent for is gone (the phone forgot
     /// it): the exchange in flight, if any, opens nothing when it lands,
-    /// and the link can be entered again.
+    /// the link can be entered again, and an earlier attempt's error,
+    /// which was about that environment, is cleared.
     pub fn cancel_pairing(&mut self, engine: &Engine) {
         self.pair_attempt += 1;
-        if self.pairing {
+        if self.pairing || !self.pairing_error.is_empty() {
             self.pairing = false;
+            self.pairing_error.clear();
             self.update(engine);
         }
     }
