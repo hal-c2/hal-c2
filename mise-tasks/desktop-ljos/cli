@@ -3,8 +3,11 @@
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
 root="$(cd ../.. && pwd)"
-# Every ljos crate is pinned to one rev; refuse to guess if they ever disagree.
-rev="$(grep -Eo 'ljos-ui", rev = "[0-9a-f]{40}' Cargo.toml | grep -Eo '[0-9a-f]{40}$' | sort -u)"
+# Every ljos crate is pinned to one full rev; refuse to guess if one is not,
+# or if they ever disagree. A crate on ljos-ui without a rev reads as "no rev".
+rev="$(awk '/git = "https:\/\/github\.com\/hal-c2\/ljos-ui"/ {
+  if (match($0, /rev = "[^"]*"/)) print substr($0, RSTART + 7, RLENGTH - 8); else print "no rev"
+}' Cargo.toml | sort -u)"
 if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
   echo "error: apps/desktop-ljos/Cargo.toml must pin every ljos-ui crate to one rev, found:" >&2
   echo "${rev:-none}" >&2
