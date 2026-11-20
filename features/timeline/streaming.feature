@@ -141,7 +141,7 @@ Feature: Streaming the agent's reply
 
   # Upstream #27316: a whole number of seconds under ten read "Worked for 7.0s". Kept apart from the
   # passing outline above until every surface is checked.
-  @backlog @shared @priority-low
+  @backlog-mobile @backlog-tui @shared @priority-low
   Scenario Outline: A duration under ten seconds drops a trailing zero
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
