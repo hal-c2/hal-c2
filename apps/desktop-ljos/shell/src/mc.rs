@@ -334,12 +334,15 @@ impl McStreams {
                     connection.tell_started(engine);
                 }
                 let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
-                for (id, event) in run {
-                    let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
-                    if let Some(connection) = connection {
-                        connection.client.deliver(event);
+                // The run's shell frames tell the store's listeners once.
+                crate::store::batched(engine, || {
+                    for (id, event) in run {
+                        let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
+                        if let Some(connection) = connection {
+                            connection.client.deliver(event);
+                        }
                     }
-                }
+                });
                 DELIVERING.with(|d| *d.borrow_mut() = outer);
             })
         };

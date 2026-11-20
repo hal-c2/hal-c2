@@ -1117,6 +1117,11 @@ struct Slot {
     flush: Cell<Option<crate::schedule::Schedule>>,
     /// Each saved environment's link and its `shell` subscription.
     links: RefCell<BTreeMap<String, crate::mc::Held>>,
+    /// How deep [`batched`] runs: while above zero, frames applied wait in
+    /// `pending` to tell the listeners once.
+    holding: Cell<u32>,
+    /// What the frames applied while held changed, not told yet.
+    pending: Cell<Changes>,
 }
 
 /// Puts a store over `cache` in the engine and subscribes it to `mc`'s
@@ -1145,7 +1150,7 @@ pub fn install(engine: &Engine, mc: &Rc<dyn Mc>, cache: Option<Rc<LocalCache>>) 
                 return;
             };
             let changed = store.borrow_mut().apply(frame);
-            settle(engine, Changes::changed(changed));
+            settle_frame(engine, Changes::changed(changed));
             // What its snapshot lists is the shell's own again: what was
             // held on a link for it comes back ([`Mc::reroute`]).
             if frame.get("t").and_then(Value::as_str) == Some("shell")
@@ -1196,7 +1201,7 @@ pub fn add_link(engine: &Engine, environment_id: &str, link: Rc<dyn Mc>) {
                 return;
             };
             let changed = store.borrow_mut().apply_from(frame, &client);
-            settle(engine, Changes::changed(changed));
+            settle_frame(engine, Changes::changed(changed));
             // What the link serves is known now: what was held on the link
             // it replaced (one addressed to a cluster MC) moves to it.
             if frame.get("t").and_then(Value::as_str) == Some("shell")
@@ -1369,9 +1374,70 @@ pub fn flush(engine: &Engine) {
     }
 }
 
+/// Runs `f` with the listeners held: the frames applied meanwhile tell them
+/// once, after `f`, rather than once each. The MC's deliveries run each
+/// frame's run of messages in one, so a burst of rows rebuilds what shows
+/// them once (desktop-qt's ShellStore coalesces its `changed` the same
+/// way). A change made outside a frame (opening, clearing, a link going)
+/// still tells at once, with what was held before it.
+pub fn batched<R>(engine: &Engine, f: impl FnOnce() -> R) -> R {
+    let slot = engine.extension::<Slot>();
+    slot.holding.set(slot.holding.get() + 1);
+    let result = f();
+    let depth = slot.holding.get() - 1;
+    slot.holding.set(depth);
+    if depth == 0 {
+        let pending = slot.pending.take();
+        if pending.changed || pending.origin_changed {
+            settle(engine, pending);
+        }
+    }
+    result
+}
+
+/// [`settle`] for a frame applied: held while [`batched`] runs.
+fn settle_frame(engine: &Engine, changes: Changes) {
+    let slot = engine.extension::<Slot>();
+    if slot.holding.get() == 0 {
+        return settle(engine, changes);
+    }
+    arm_flush(engine);
+    let pending = slot.pending.get();
+    slot.pending.set(Changes {
+        changed: pending.changed || changes.changed,
+        origin_changed: pending.origin_changed || changes.origin_changed,
+    });
+}
+
 /// After the store changed: arms or drops the flush, then tells the
-/// listeners, origin first.
+/// listeners, origin first, of this and of what frames held back.
 fn settle(engine: &Engine, changes: Changes) {
+    arm_flush(engine);
+    let slot = engine.extension::<Slot>();
+    let pending = slot.pending.take();
+    let changes = Changes {
+        changed: changes.changed || pending.changed,
+        origin_changed: changes.origin_changed || pending.origin_changed,
+    };
+    if !(changes.changed || changes.origin_changed) {
+        return;
+    }
+    let listeners = slot.listeners.borrow().clone();
+    for origin in [true, false] {
+        for listener in &listeners {
+            let only = Changes {
+                changed: changes.changed && !origin,
+                origin_changed: changes.origin_changed && origin,
+            };
+            if only.changed || only.origin_changed {
+                listener(engine, only);
+            }
+        }
+    }
+}
+
+/// Arms the flush while rows wait for the cache, drops it once none do.
+fn arm_flush(engine: &Engine) {
     let slot = engine.extension::<Slot>();
     let due = with(engine, ShellStore::flush_due);
     let armed = slot.flush.take();
@@ -1394,21 +1460,6 @@ fn settle(engine: &Engine, changes: Changes) {
         (true, armed) => slot.flush.set(armed),
         (false, Some(armed)) => armed.cancel(engine),
         (false, None) => {}
-    }
-    if !(changes.changed || changes.origin_changed) {
-        return;
-    }
-    let listeners = slot.listeners.borrow().clone();
-    for origin in [true, false] {
-        for listener in &listeners {
-            let only = Changes {
-                changed: changes.changed && !origin,
-                origin_changed: changes.origin_changed && origin,
-            };
-            if only.changed || only.origin_changed {
-                listener(engine, only);
-            }
-        }
     }
 }
 
