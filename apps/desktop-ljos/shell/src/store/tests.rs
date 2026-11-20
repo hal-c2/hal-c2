@@ -774,6 +774,21 @@ fn frames_delivered_in_one_run_tell_each_listener_once() {
 }
 
 #[test]
+fn a_run_that_panics_does_not_mute_the_listeners() {
+    let (engine, feeder, heard) = fed();
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        batched(&engine, || {
+            feeder.send(&engine, &snapshot());
+            panic!("a handler failed");
+        })
+    }));
+    assert!(run.is_err());
+    // The hold let go: the next frame tells at once, with what was held.
+    feeder.send(&engine, &put(9, 5));
+    assert_eq!(*heard.borrow(), [3]);
+}
+
+#[test]
 fn a_change_made_during_a_run_tells_what_the_run_held_with_it() {
     let (engine, feeder, heard) = fed();
     let origins = Rc::new(Cell::new(0));

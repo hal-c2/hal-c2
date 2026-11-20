@@ -1377,16 +1377,25 @@ pub fn flush(engine: &Engine) {
 /// Runs `f` with the listeners held: the frames applied meanwhile tell them
 /// once, after `f`, rather than once each. The MC's deliveries run each
 /// frame's run of messages in one, so a burst of rows rebuilds what shows
-/// them once (desktop-qt's ShellStore coalesces its `changed` the same
-/// way). A change made outside a frame (opening, clearing, a link going)
-/// still tells at once, with what was held before it.
+/// them once (desktop-qt's ShellStore still emits `changed` per frame,
+/// hal-c2/hal-c2#1689). A change made outside a frame (opening, clearing, a
+/// link going) still tells at once, with what was held before it. A panic
+/// in `f` lets go of the hold; what it held is told with the next change.
 pub fn batched<R>(engine: &Engine, f: impl FnOnce() -> R) -> R {
+    /// Lets go of one hold, on return or unwind.
+    struct Hold<'a>(&'a Cell<u32>);
+    impl Drop for Hold<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() - 1);
+        }
+    }
     let slot = engine.extension::<Slot>();
     slot.holding.set(slot.holding.get() + 1);
-    let result = f();
-    let depth = slot.holding.get() - 1;
-    slot.holding.set(depth);
-    if depth == 0 {
+    let result = {
+        let _hold = Hold(&slot.holding);
+        f()
+    };
+    if slot.holding.get() == 0 {
         let pending = slot.pending.take();
         if pending.changed || pending.origin_changed {
             settle(engine, pending);
