@@ -2485,6 +2485,50 @@ Item {
             page.doorOpensAt = 0;
         }
 
+        // A whiteboard fills by the time spent drawing on it, the same on
+        // the walking clock's 40 ms ticks as on the quiet clock's 200 ms
+        // ones: 12 s from blank to full.
+        function test_a_whiteboard_fills_by_time_on_either_clock() {
+            plugin.publish([person("lead", "Lead", "working", "planning")]);
+            runUntil(() => arrived(actor("lead")));
+            const board = page.boardViews[actor("lead").goal.board];
+            runUntil(() => board.progress > 0.05, 2000, "the planner draws");
+            // From just after the screens changed, so both runs count the
+            // same 2.4 s.
+            const settle = () => {
+                for (let i = 0; i < 10 && page.screensAt !== page.now + 200; i++)
+                    page.tick(40);
+                compare(page.screensAt, page.now + 200, "the screens just changed");
+            };
+            settle();
+            const start = board.progress;
+            for (let i = 0; i < 60; i++)
+                page.tick(40);
+            const walking = board.progress - start;
+            settle();
+            board.progress = start;
+            for (let i = 0; i < 12; i++)
+                page.tick(200);
+            const quiet = board.progress - start;
+            verify(arrived(actor("lead")), "the planner stays at the board");
+            fuzzyCompare(walking, 0.2, 0.02, "2.4 s on the walking clock fills a fifth");
+            fuzzyCompare(quiet, walking, 0.02, "and as much on the quiet clock");
+        }
+
+        // A quiet office touches no screen: idle and waiting screens only
+        // change when their picture does, never just because time passes.
+        function test_quiet_screens_do_not_change_with_the_clock() {
+            plugin.publish(many(16, "t", "idle"));
+            runUntil(() => Object.values(page.actors).every(arrived), 6000, "everyone sits down");
+            page.advance(10);
+            const views = Object.values(page.screenViews).filter(v => v.mode === "idle" && !v.slacking);
+            verify(views.length > 0, "some screens show the idle screen");
+            const phases = views.map(v => v.phase);
+            for (let i = 0; i < 10; i++)
+                page.tick(200);
+            compare(views.map(v => v.phase), phases, "their phase stays put");
+        }
+
         // Another machine's office starts with clean whiteboards.
         function test_another_machine_wipes_the_whiteboards() {
             plugin.publish([person("lead", "Lead", "working", "planning")]);

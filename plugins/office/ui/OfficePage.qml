@@ -144,7 +144,8 @@ Item {
     property bool primed: false
     property real now: 0
     property int ticks: 0
-    // When the screens next change (see updateScreens()).
+    // When the screens last changed and next change (see updateScreens()).
+    property real screensSeen: 0
     property real screensAt: 0
     property var rng: random(0x0ff1ce)
     // What is on the screens draws from its own stream, so it never changes
@@ -3335,7 +3336,8 @@ Item {
         // By the clock, not by ticks, as a tick is longer while nobody walks.
         if (page.now >= page.screensAt) {
             page.screensAt = page.now + 200;
-            updateScreens();
+            updateScreens(page.now - page.screensSeen);
+            page.screensSeen = page.now;
         }
         if (page.closeTo && page.ticks % 25 === 0)
             closeRows();
@@ -3492,7 +3494,10 @@ Item {
         return actor.slack;
     }
 
-    function updateScreens() {
+    // Brings the screens up to date, touching only those whose picture
+    // changes, and fills the whiteboards being drawn on by `elapsed` ms: a
+    // board takes 12 s to fill whichever clock the page runs on.
+    function updateScreens(elapsed) {
         if (!page.world)
             return;
         for (const screen of page.screens) {
@@ -3500,7 +3505,6 @@ Item {
             if (!view)
                 continue;
             const seat = page.world.seats[screen.seat];
-            view.visible = deskShown(seat);
             // On for whoever sits there, from the step onto the seat.
             const i = seat.y * page.world.cols + seat.x;
             const actor = page.actors[page.claims[i]];
@@ -3510,11 +3514,17 @@ Item {
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
                 slack = slackOf(actor);
             }
+            const shown = deskShown(seat);
+            const scene = slack ? Math.floor((page.now + actor.beat * 40) / 1000) % page.slackArt[slack].frames.length : view.scene;
+            // Only working screens move with the clock.
+            const phase = slack || mode === "off" || mode === "idle" || mode === "failed" ? view.phase : Math.floor(page.now / 240);
+            if (view.visible === shown && view.mode === mode && view.slack === slack && view.scene === scene && view.phase === phase)
+                continue;
+            view.visible = shown;
             view.mode = mode;
             view.slack = slack;
-            if (slack)
-                view.scene = Math.floor((page.now + actor.beat * 40) / 1000) % page.slackArt[slack].frames.length;
-            view.phase = page.now / 240;
+            view.scene = scene;
+            view.phase = phase;
         }
         for (const board of page.boards) {
             const view = page.boardViews[board.key];
@@ -3522,7 +3532,7 @@ Item {
                 continue;
             const drawing = Object.values(page.actors).some(a => a.goal?.board === board.key && a.tx === a.goal.x && a.ty === a.goal.y);
             if (drawing)
-                view.progress = Math.min(1, view.progress + 0.02);
+                view.progress = Math.min(1, view.progress + Math.max(0, elapsed) / 12000);
         }
     }
 
@@ -4330,7 +4340,7 @@ Item {
 
                                 required property var modelData
                                 property string mode: "off"
-                                property real phase: 0
+                                property int phase: 0
                                 // What its sitter slacks off with, and which frame of it.
                                 property string slack: ""
                                 property int scene: 0
@@ -4368,10 +4378,10 @@ Item {
                                             if (screen.mode === "failed")
                                                 return index === 1 ? 6 : 0;
                                             if (screen.mode === "browsing")
-                                                return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
+                                                return index === 0 ? 8 : 2 + ((screen.phase + index * 3) % 4);
                                             if (screen.mode === "idle")
                                                 return index === 1 ? 2 : 0;
-                                            return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
+                                            return 1 + ((screen.phase * (index + 2) + index * 5) % 6);
                                         }
                                         color: {
                                             if (screen.mode === "failed")
@@ -4379,7 +4389,7 @@ Item {
                                             if (screen.mode === "browsing")
                                                 return index === 0 ? "#4a90d9" : "#9aa5b0";
                                             if (screen.mode === "testing")
-                                                return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                                return (screen.phase + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
                                             if (screen.mode === "running")
                                                 return "#5fd38a";
                                             if (screen.mode === "idle")
