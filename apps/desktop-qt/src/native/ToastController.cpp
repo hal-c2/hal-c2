@@ -155,6 +155,10 @@ void ToastController::dismiss(const QString& id) {
   schedule();
 }
 
+bool ToastController::shows(const QString& id) const {
+  return std::any_of(m_toasts.cbegin(), m_toasts.cend(), [&id](const Toast& toast) { return toast.id == id; });
+}
+
 bool ToastController::setRows(const QString& id, QList<Row> rows, std::function<void(const QString&)> run) {
   for (Toast& toast : m_toasts) {
     if (toast.id != id) continue;

@@ -51,7 +51,7 @@ void DraftController::setStorePath(const QString& path) {
     const QJsonObject entry = value.toObject();
     Draft draft{entry.value(QLatin1String("id")).toString(),        entry.value(QLatin1String("environmentId")).toString(),
                 entry.value(QLatin1String("projectId")).toString(), entry.value(QLatin1String("threadId")).toString(),
-                entry.value(QLatin1String("createdAt")).toString(), entry.value(QLatin1String("text")).toString()};
+                entry.value(QLatin1String("createdAt")).toString(), entry.value(QLatin1String("text")).toString(), 0};
     if (draft.id.isEmpty() || draft.environmentId.isEmpty() || draft.projectId.isEmpty() || draft.threadId.isEmpty()) {
       continue;
     }
@@ -257,7 +257,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
   }
   if (id.isEmpty()) {
     id = newId();
-    m_drafts.append({id, environmentId, projectId, newId(), sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
+    m_drafts.append({id, environmentId, projectId, newId(), sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}, 0});
     // A draft that would not survive a restart is not started.
     if (!save(true)) {
       m_drafts.removeLast();
@@ -336,6 +336,7 @@ void DraftController::setText(const QString& id, const QString& text) {
   for (Draft& draft : m_drafts) {
     if (draft.id != id || draft.text == text) continue;
     draft.text = text;
+    ++draft.edits;
     save();
   }
 }
@@ -347,6 +348,7 @@ void DraftController::renew(const QString& id) {
     if (draft.id != id) continue;
     draft.threadId = newId();
     draft.text.clear();
+    ++draft.edits;
     save();
     changedEverywhere();
   }
@@ -399,7 +401,17 @@ void DraftController::reconcile() {
   for (const Draft& draft : std::as_const(m_drafts)) {
     if (m_store->thread(draft.threadKey())) {
       promoted.append(draft.threadKey());
-    } else if (m_store->servesEnvironment(draft.environmentId) &&
+    } else if (!m_store->servesEnvironment(draft.environmentId)) {
+      // No MC serves its machine now: removed, here or on another client,
+      // switched off, or not back yet. A draft with nothing in it goes (one a
+      // window landed on before the rows went); one the user wrote waits, as
+      // does one whose launch may yet give its prompt back, or that a toast
+      // offers a failed prompt back to.
+      const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+      const bool holds = composer ? composer->draftPreview(draft.id).has_value() : !draft.text.trimmed().isEmpty();
+      const bool offered = composer && composer->offersLaunch(draft.id);
+      if (!holds && !launchPending(draft.id) && !offered) orphaned.append(draft.id);
+    } else if (m_store->listsEnvironment(draft.environmentId) &&
                !m_store->project(draft.environmentId + QLatin1Char(':') + draft.projectId)) {
       // The project was removed, here or on another client.
       orphaned.append(draft.id);
@@ -423,6 +435,11 @@ bool DraftController::launching(const QString& id) const {
     const auto* composer = NativeShell::of(drafts)->controller<ComposerController>();
     return composer && composer->launching(id);
   });
+}
+
+bool DraftController::launchPending(const QString& id) const {
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  return launching(id) || (composer && composer->awaitsLaunch(id));
 }
 
 void DraftController::changedEverywhere() {

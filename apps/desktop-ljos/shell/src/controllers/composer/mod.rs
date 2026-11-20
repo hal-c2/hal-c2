@@ -67,7 +67,10 @@ use ljos::prelude::{Engine, ObjectId};
 use serde_json::json;
 
 use kept::{Attachment, Draft};
-pub use kept::{adopt, attachments, attachments_pending, draft, draft_preview, terminal_contexts};
+pub use kept::{
+    adopt, attachments, attachments_pending, awaits_launch, carried, draft, draft_preview,
+    offers_launch, terminal_contexts,
+};
 
 use crate::bridge::Bridge;
 use crate::composer_model::{self as model, Instance};
