@@ -175,13 +175,16 @@ const Steps steps([] {
 
   step(S("%1 is still shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
-    // Alone in a narrow window, or beside the list in a split one: wait for
-    // the layout the window's size calls for (MobileShell splits from
-    // 736x480 up) to settle with the thread shown, not for either layout.
+    // Alone in the phone layout, or beside the list in the desktop layout
+    // the shell has room for: wait for the shell to take the window's new
+    // size (the shell's width follows the window's a beat late, and `roomy`
+    // follows `fits` another) and for that layout to settle with the thread
+    // shown, not for either layout.
     world.waitFor(
         [&] {
-          const QSize size = world.window().size();
-          return size.width() >= 736 && size.height() >= 480 ? sideBySide(world, c[0]) : oneAtATime(world, c[0]);
+          const QQuickWindow& window = world.window();
+          if (window.property("width").toInt() != window.width() || window.property("roomy").toBool() != window.property("fits").toBool()) return false;
+          return window.property("roomy").toBool() ? sideBySide(world, c[0]) : oneAtATime(world, c[0]);
         },
         [&] { return S("%1 still shown; the screen says: %2").arg(c[0], screenTexts(world)); });
     const QVariantMap route = world.state(S("route")).toMap();
@@ -306,9 +309,11 @@ const Steps steps([] {
 
   // In the field on screen and in what the app keeps of it.
   step(S("the composer still reads %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return world.item(S("input"))->property("text").toString() == c[0]; },
-                  [&] { return S("the composer to read %1; it reads %2").arg(c[0], world.item(S("input"))->property("text").toString()); });
-    expect(world.state(S("composer")).toMap().value(S("text")).toString() == c[0], S("the app keeps %1").arg(show(world.state(S("composer")).toMap().value(S("text")))));
+    // The app's draft follows what the composer shows a beat later (it is
+    // saved once typing pauses), so wait for both.
+    const auto saved = [&] { return world.state(S("composer")).toMap().value(S("text")).toString(); };
+    world.waitFor([&] { return world.item(S("input"))->property("text").toString() == c[0] && saved() == c[0]; },
+                  [&] { return S("the composer to read %1; it reads %2 and the app keeps %3").arg(c[0], world.item(S("input"))->property("text").toString(), saved()); });
   });
 
   step(S("a hardware keyboard is attached to a (tablet|phone)"), [](World& world, const Captures& c, const Table&) {

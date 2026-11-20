@@ -130,7 +130,7 @@ describe("turn folds", () => {
     const fold = rows.find((r) => r.kind === "turn-fold");
     if (fold?.kind !== "turn-fold") throw new Error("expected a turn-fold row");
     expect(fold.turnId).toBe("t1");
-    expect(fold.label).toBe("Worked for 5.0s");
+    expect(fold.label).toBe("Worked for 5s");
     // The hidden rows: the grouped tool work, then the commentary message.
     expect(fold.hiddenRows.map((r) => r.kind)).toEqual(["work", "message"]);
     // The terminal assistant message is NOT hidden — it stays visible below.
@@ -170,7 +170,7 @@ describe("turn folds", () => {
 
 describe("formatDuration", () => {
   it("renders sub-minute and minute buckets like the web", () => {
-    expect(formatDuration(5_000)).toBe("5.0s");
+    expect(formatDuration(5_000)).toBe("5s");
     expect(formatDuration(22_000)).toBe("22s");
     expect(formatDuration(299_000)).toBe("4m 59s");
     expect(formatDuration(120_000)).toBe("2m");
