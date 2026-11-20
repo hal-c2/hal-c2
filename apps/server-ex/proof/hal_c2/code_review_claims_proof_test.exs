@@ -123,6 +123,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
+      "HalC2Plugins.CodeReview.Checkout.submodules/3" =>
+        "fills in the submodules of a checkout prepare made, before its claim, and fails nothing; the model's checkout has no files",
       "HalC2Plugins.CodeReview.Checkout.start/0" =>
         "the table of the attempt refs a machine's runs hold, made when its plugin starts; no claim or post goes through it",
       "HalC2Plugins.CodeReview.Checkout.release/0" =>

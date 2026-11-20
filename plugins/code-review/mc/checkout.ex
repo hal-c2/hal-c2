@@ -175,6 +175,86 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     :ok
   end
 
+  @doc """
+  Checks out the submodules of the worktree at `path`, of the bare clone at `clone`,
+  at the commits its head pins, nested ones included; `remote` signs in as for
+  `prepare/5`. Answers `:ok` at once when the head has no `.gitmodules`, else `:ok`
+  or `{:error, reason}`: a checkout missing some submodules is still reviewed.
+
+  Git keeps a worktree's submodule repositories under its own admin directory in the
+  clone, which `remove/2` takes with it. Each is cloned with the clone's shared store
+  of submodule objects as an alternate, and what it fetched goes into the store after,
+  so the next review downloads only what is new. Nothing is written to the clone's
+  config, which every review of the repository shares: the submodules are made active
+  and cloned from the head's `.gitmodules` for this command alone. Only the transports
+  git trusts by default are used (HTTP(S), SSH, git), so a `.gitmodules` cannot point
+  git at a local path or run a command through `ext::`.
+  """
+  def submodules(clone, path, %{"url" => url} = remote) do
+    if File.regular?(Path.join(path, ".gitmodules")) do
+      store = Path.join(clone, "hal-c2-submodules")
+
+      with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
+           {:ok, {credentials, env}} <- credentials(clone, remote, url),
+           {:ok, _} <-
+             git(
+               path,
+               credentials ++
+                 [
+                   "-c",
+                   "submodule.active=.",
+                   "-c",
+                   "http.lowSpeedLimit=1000",
+                   "-c",
+                   "http.lowSpeedTime=60",
+                   "submodule",
+                   "update",
+                   "--recursive",
+                   "--reference",
+                   store
+                 ],
+               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh:git"} | env]
+             ),
+           do: store(store, path)
+    else
+      :ok
+    end
+  end
+
+  # Puts the objects of the checkout's submodules into the store, under refs named for
+  # each one's remote so a later clone of it finds them, as far as it can: the checkout
+  # is whole without them. Git never collects garbage in the store (`gc.auto=0`), as the
+  # checkouts borrowing its objects do not hold its refs.
+  defp store(store, path) do
+    with {:ok, status} <-
+           git(path, ["-c", "submodule.active=.", "submodule", "status", "--recursive"]) do
+      for line <- String.split(status, "\n", trim: true),
+          [_sha, sub | _] <- [String.split(String.slice(line, 1..-1//1), " ", parts: 3)],
+          sub = Path.join(path, sub),
+          {:ok, from} <- [git(sub, ["config", "remote.origin.url"])] do
+        key = :crypto.hash(:sha256, from) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+
+        git(
+          store,
+          [
+            "-c",
+            "gc.auto=0",
+            "fetch",
+            "-q",
+            "--no-tags",
+            "--no-write-fetch-head",
+            sub,
+            "+HEAD:refs/hal-c2/submodules/#{key}/head",
+            "+refs/remotes/origin/*:refs/hal-c2/submodules/#{key}/remotes/*"
+          ],
+          [{"GIT_ALLOW_PROTOCOL", "file"}]
+        )
+      end
+    end
+
+    :ok
+  end
+
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."
   def remove(root, path) do
     alone(root, fn ->

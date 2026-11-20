@@ -453,6 +453,96 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  test "a review checkout has the submodules its head pins, nested ones too, which its removal takes",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    lib =
+      repo!(context.dir, "lib", "lib.txt", [{"deep", "https://github.com/acme/inner.git", inner}])
+
+    pinned = git!(lib.seed, ["rev-parse", "HEAD"])
+    # A commit past the pinned one, which the checkout does not get.
+    File.write!(Path.join(lib.seed, "lib.txt"), "later\n")
+    git!(lib.seed, ["commit", "-qam", "Later"])
+    git!(lib.seed, ["push", "-q", lib.bare, "HEAD:main"])
+    head = pull!(context, 3, [{"third_party/lib", "https://github.com/acme/lib.git", pinned}])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    prepare = fn path -> apply(checkout, :prepare, [clone, path, remote, 3, "main"]) end
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    assert {:ok, %{"headSha" => ^head}} = prepare.(first)
+    assert :ok = apply(checkout, :submodules, [clone, first, remote])
+    assert File.read!(Path.join(first, "third_party/lib/lib.txt")) == "lib\n"
+    assert File.read!(Path.join(first, "third_party/lib/deep/inner.txt")) == "inner\n"
+    assert git!(Path.join(first, "third_party/lib"), ["rev-parse", "HEAD"]) == pinned
+    # Every review of the repository shares the clone's config: nothing is registered there.
+    refute File.read!(Path.join(clone, "config")) =~ "submodule"
+
+    # The next checkout borrows what the first fetched: its submodules download nothing.
+    assert {:ok, _} = prepare.(second)
+    assert :ok = apply(checkout, :submodules, [clone, second, remote])
+    assert File.read!(Path.join(second, "third_party/lib/deep/inner.txt")) == "inner\n"
+
+    for sub <- ~w(third_party/lib third_party/lib/deep) do
+      counts = git!(Path.join(second, sub), ["count-objects", "-v"])
+      assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    end
+
+    :ok = apply(checkout, :release, [])
+    :ok = apply(checkout, :remove, [clone, first])
+    :ok = apply(checkout, :remove, [clone, second])
+    refute File.exists?(first) or File.exists?(second)
+    assert Path.wildcard(Path.join(clone, "worktrees/*")) == []
+  end
+
+  test "a submodule at a local path is not fetched, and its checkout is still made", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    local = repo!(context.dir, "local", "secret.txt")
+    pull!(context, 3, [{"lib", local.bare, git!(local.seed, ["rev-parse", "HEAD"])}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/local")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
+    assert reason =~ "transport 'file' not allowed"
+    refute File.exists?(Path.join(path, "lib/secret.txt"))
+    assert File.regular?(Path.join(path, "README.md"))
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a checkout whose head has no submodules is left as it is", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/plain")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 1, "main"])
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    refute File.exists?(Path.join(clone, "hal-c2-submodules"))
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "an agent is told which submodules its checkout lacks" do
+    settings = %{"prompt" => "Review", "readReviewMd" => false}
+    review = %{"number" => 1, "repository" => "acme/api"}
+    checkout = %{"path" => "/nowhere", "headSha" => "abc"}
+
+    refute apply(@server, :prompt, [settings, review, checkout]) =~ "submodules"
+
+    assert apply(@server, :prompt, [
+             settings,
+             review,
+             Map.put(checkout, "submodules", "git submodule failed: no route")
+           ]) =~
+             "submodules could not all be fetched on the reviewing machine, so checks " <>
+               "that need them are blocked there: git submodule failed: no route"
+  end
+
   test "a review asked for before its pull request is listed starts at the head of the pull request",
        context do
     rules!(context, head: 1, listed: false)
@@ -3277,6 +3367,54 @@ defmodule HalC2.CodeReviewTest do
 
     {:ok, _, binary} = :compile.forms(forms)
     binary
+  end
+
+  # A bare `remotes/acme/<name>.git` with one commit of `file`, its text `<name>\n`,
+  # and `subs` as its submodules: `{path, url, sha}`.
+  defp repo!(dir, name, file, subs \\ []) do
+    bare = Path.join(dir, "remotes/acme/#{name}.git")
+    git!(dir, ["init", "-q", "--bare", "-b", "main", bare])
+    seed = Path.join(dir, "seed-#{name}")
+    git!(dir, ["init", "-q", "-b", "main", seed])
+    File.write!(Path.join(seed, file), "#{name}\n")
+    git!(seed, ["add", file])
+    submodules!(seed, subs)
+    git!(seed, ["commit", "-q", "-m", "Start"])
+    git!(seed, ["push", "-q", bare, "main:main"])
+    %{bare: bare, seed: seed}
+  end
+
+  # Pull request `number` of acme/api: a commit on `main` with `subs` as its
+  # submodules. Answers its sha.
+  defp pull!(context, number, subs) do
+    seed = Path.join(context.dir, "seed")
+    git!(seed, ["checkout", "-q", "--detach", "main"])
+    submodules!(seed, subs)
+    git!(seed, ["commit", "-q", "-m", "Submodules"])
+    sha = git!(seed, ["rev-parse", "HEAD"])
+    bare = Path.join(context.dir, "remotes/acme/api.git")
+    git!(seed, ["push", "-q", bare, "#{sha}:refs/pull/#{number}/head"])
+    sha
+  end
+
+  defp submodules!(_seed, []), do: :ok
+
+  defp submodules!(seed, subs) do
+    File.write!(
+      Path.join(seed, ".gitmodules"),
+      Enum.map_join(subs, fn {path, url, _} ->
+        "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = #{url}\n"
+      end)
+    )
+
+    git!(seed, ["add", ".gitmodules"])
+
+    for {path, _, sha} <- subs do
+      sha = if is_map(sha), do: git!(sha.seed, ["rev-parse", "HEAD"]), else: sha
+      git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{sha},#{path}"])
+    end
+
+    :ok
   end
 
   defp push!(context, i) do
