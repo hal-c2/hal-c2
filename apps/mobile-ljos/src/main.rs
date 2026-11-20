@@ -374,7 +374,9 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             .and_then(|pairing| pairing.get("phase").cloned())
             .and_then(|phase| phase.as_str().map(|p| p == "pairing"))
             .unwrap_or(false);
-        if !pairing_busy && options.url.is_some() && !paired(&engine) {
+        // Paired or not: a device that keeps a session stays paired with
+        // it when the link fails, and the picture would hide that.
+        if !pairing_busy && options.url.is_some() {
             let error = pairing_error(&engine);
             if !error.is_empty() {
                 return Err(format!("pairing failed: {error}"));
