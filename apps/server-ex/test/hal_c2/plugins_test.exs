@@ -134,6 +134,36 @@ defmodule HalC2.PluginsTest do
     assert stored("notes") == %{"count" => 2}
   end
 
+  test "the instances of a plugin that is gone are released once settings.json takes the save" do
+    Application.put_env(:hal_c2, :plugin_release_retry_ms, 10)
+    on_exit(fn -> Application.delete_env(:hal_c2, :plugin_release_retry_ms) end)
+    stop_supervised!(Plugins)
+    id = "plugin_gone_work"
+
+    {:ok, _} =
+      HalC2.Settings.update(fn _ ->
+        %{
+          "providerInstances" => %{id => %{"driver" => "codex"}},
+          "plugins" => %{"gone" => %{"providerInstances" => [id]}}
+        }
+      end)
+
+    # The file check is off: only the host trying again notices the file is fixed.
+    File.write!(settings_file(), "{ not json")
+    start_supervised!(Plugins)
+    _ = :sys.get_state(Plugins)
+    :ok = HalC2.Settings.watch(self())
+    File.rm!(settings_file())
+
+    assert_receive {:hal_c2_settings, _, settings}, 5_000
+    assert settings["providerInstances"] == %{}
+
+    assert settings["plugins"]["gone"] == %{
+             "providerInstances" => [],
+             "releasedInstances" => [id]
+           }
+  end
+
   test "a toggle or save that settings.json refuses is answered with why, and the host stays" do
     package("notes", "1")
     Plugins.handle("rescan", %{})

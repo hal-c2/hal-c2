@@ -18,8 +18,9 @@ defmodule HalC2.PluginProvidersPropTest do
   - the settings document's instances are exactly the model's: the plugins', each
     belonging to a plugin that is installed, on and granted `providers:configure`, and
     the user's, as the user left them;
-  - a plugin lists only the instances it added, is refused a put under an id the user
-    has, and is refused everything without the permission.
+  - a plugin lists only the instances it added, and as released those the host took
+    out since it last put them; it is refused a put under an id the user has, and is
+    refused everything without the permission.
   """
 
   use ExUnit.Case, async: false
@@ -98,12 +99,14 @@ defmodule HalC2.PluginProvidersPropTest do
   # plugins: per id `%{installed, asks, enabled, granted}` (`enabled` and `granted` are
   # its `plugins.<id>` of the settings document, which outlives the package on disk).
   # instances: the plugins' instances the settings document holds, by `{id, name}`.
-  # users: the user's, by instance id. version: the next package version.
+  # users: the user's, by instance id. version: the next package version. released:
+  # the plugins' instances the host took out, by `{id, name}`.
   def initial_state do
     %{
       plugins:
         Map.new(@ids, &{&1, %{installed: false, asks: false, enabled: false, granted: false}}),
       instances: %{},
+      released: MapSet.new(),
       users: %{@user_id => @users},
       version: 1
     }
@@ -175,7 +178,11 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def next_state(state, _result, {:call, _, :put, [id, name, label]}) do
     if state.plugins[id].granted and not users?(state, id, name),
-      do: put_in(state.instances[{id, name}], instance(label)) |> settle(),
+      do:
+        state
+        |> put_in([:instances, {id, name}], instance(label))
+        |> Map.update!(:released, &MapSet.delete(&1, {id, name}))
+        |> settle(),
       else: state
   end
 
@@ -226,7 +233,10 @@ defmodule HalC2.PluginProvidersPropTest do
       for {{^id, name} = key, instance} <- Enum.sort(state.instances),
           do: %{"name" => name, "instanceId" => instance_id(key), "instance" => instance}
 
-    answered(state, id, result, &(&1 == {:ok, %{"instances" => own}})) and agrees(state)
+    released = for {^id, name} <- Enum.sort(state.released), do: name
+
+    answered(state, id, result, &(&1 == {:ok, %{"instances" => own, "released" => released}})) and
+      agrees(state)
   end
 
   def postcondition(state, call, result), do: agrees(next_state(state, result, call))
@@ -377,11 +387,13 @@ defmodule HalC2.PluginProvidersPropTest do
 
   # --- helpers ----------------------------------------------------------------
 
-  # The host takes out the instances of every plugin not installed, on and granted.
+  # The host takes out the instances of every plugin not installed, on and granted, and
+  # notes them released.
   defp settle(state) do
     allowed = for {id, p} <- state.plugins, p.installed and p.enabled and p.granted, do: id
+    {kept, out} = Map.split_with(state.instances, fn {{id, _}, _} -> id in allowed end)
 
-    %{state | instances: Map.filter(state.instances, fn {{id, _}, _} -> id in allowed end)}
+    %{state | instances: kept, released: MapSet.union(state.released, MapSet.new(Map.keys(out)))}
   end
 
   defp held(state),

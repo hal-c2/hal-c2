@@ -20,7 +20,9 @@ Feature: Provider instances a plugin adds
   reaches, so an instance of the user's is never its, whatever it is called. The save
   that deletes one of them ends the plugin's hold on that id, and no client's save hands
   a plugin one. They last
-  only while the plugin is installed, on and granted the permission.
+  only while the plugin is installed, on and granted the permission; the ones the MC took
+  out are listed to the plugin as such until it puts them again, so it can tell them from
+  ones the user deleted.
 
   Background:
     Given an MC with the user's own provider instance "claude-work"
@@ -110,8 +112,10 @@ Feature: Provider instances a plugin adds
       And it put the instance "claude" for Claude named "Claude via the proxy"
       And the user turned the plugin off
       When the user turns the plugin on again
-      And it puts the instance "claude" for Claude named "Claude via the proxy"
+      Then the plugin lists "claude" as taken out while it was off
+      When it puts the instance "claude" for Claude named "Claude via the proxy"
       Then Settings → Providers has the instance "plugin_host-probe_claude" named "Claude via the proxy"
+      And the plugin lists nothing as taken out while it was off
 
     @mc
     Scenario: Removing the plugin takes its instances out of Settings → Providers
@@ -134,6 +138,7 @@ Feature: Provider instances a plugin adds
       When the user deletes the instance "plugin_host-probe_claude" in Settings → Providers
       Then Settings → Providers has no instance "plugin_host-probe_claude"
       And the plugin lists no instances
+      And the plugin lists nothing as taken out while it was off
 
     @mc
     Scenario Outline: An instance of the user's named like a plugin's never leaves with one
