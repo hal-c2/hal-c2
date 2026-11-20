@@ -237,21 +237,41 @@ defmodule HalC2.SubprocessDurableTest do
         else: System.delete_env("HAL_C2_DURABLE_LOOK")
     end)
 
-    {:ok, program} =
-      Durable.launch(
-        "t1",
-        ["sh", "-c", "trap '' TERM; while :; do sleep 1; done"],
-        env: [{"HAL_C2_DURABLE_LOOK", ""}]
-      )
+    {:ok, sub} =
+      Subprocess.start(["sh", "-c", "trap '' TERM; while :; do sleep 1; done"], durable: "t1")
+
+    %{"pid" => pid, "group" => group} =
+      JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
 
     on_exit(fn ->
-      System.cmd("kill", ["-s", "KILL", "--", "-#{program.group}"], stderr_to_stdout: true)
+      System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
     end)
 
+    # The helper touches `alive` while attached; let it go, as an MC gone for good does.
+    HalC2.Orchestration.Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    HalC2.Orchestration.Recovery.leaving(false)
     Process.sleep(500)
     long_ago = :calendar.system_time_to_universal_time(System.os_time(:second) - 3600, :second)
-    File.touch!(Path.join(program.dir, "alive"), long_ago)
-    assert await_gone(program.pid, 200)
+    File.touch!(Path.join(sub.durable.dir, "alive"), long_ago)
+    assert await_gone(pid, 200)
+  end
+
+  # The shim exports its interval to the program only if it forgets to unset it.
+  if :os.type() == {:unix, :linux} do
+    test "the program does not inherit the shim's interval" do
+      System.put_env("HAL_C2_DURABLE_LOOK", "30")
+      on_exit(fn -> System.delete_env("HAL_C2_DURABLE_LOOK") end)
+      script = ~S"tr '\0' '\n' </proc/$$/environ | grep -c '^HAL_C2_DURABLE_LOOK='; sleep 30"
+      {:ok, sub} = Subprocess.start(["sh", "-c", script], durable: "t1")
+      %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+
+      on_exit(fn ->
+        System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
+      end)
+
+      assert {["0"], _} = lines(sub, 1)
+    end
   end
 
   defp await_gone(_pid, 0), do: false

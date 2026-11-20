@@ -60,7 +60,8 @@ defmodule HalC2.Subprocess.Durable do
   # shim leads the program's process group (`detach/3`), so the watcher signals both.
   # It needs two stale looks in a row: a machine waking from sleep can run the watcher
   # before the helper has touched `alive`. It is in the group it signals, so it ignores
-  # TERM to live to send the KILL, and only KILL stops it.
+  # TERM to live to send the KILL, and only KILL stops it. The interval is read once and
+  # unset, so the program never inherits it (an MC started under one would pass it on).
   # `kill -s`, because dash reads `kill -TERM -- -1` as a bad pid.
   @shim ~S"""
   exec </dev/null >/dev/null 2>&1
@@ -69,10 +70,12 @@ defmodule HalC2.Subprocess.Durable do
   touch "$dir/alive"
   trap : TERM INT HUP
   shim=$$
+  look=${HAL_C2_DURABLE_LOOK:-30}
+  unset HAL_C2_DURABLE_LOOK
   (
     trap '' TERM
     stale=0
-    while sleep "${HAL_C2_DURABLE_LOOK:-30}"; do
+    while sleep "$look"; do
       if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
         stale=$((stale + 1))
       else
