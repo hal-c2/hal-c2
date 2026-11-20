@@ -458,7 +458,7 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt === null) return null;
   if (resetsAt <= now) return "resets now";
   return resetsAt - now < MINUTE
-    ? "Resets momentarily"
+    ? "resets momentarily"
     : `resets in ${formatDuration(resetsAt - now)}`;
 }
 

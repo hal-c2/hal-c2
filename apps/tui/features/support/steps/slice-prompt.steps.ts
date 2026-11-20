@@ -20,7 +20,7 @@ const sent = (ctx: World) => ctx.fake!.calls.filter((call) => call.method === "s
 
 const FILES = ["src/cart.ts", "src/checkout.ts", "README.md"];
 
-type PromptWorld = World & { offeredSkills?: string[] };
+type PromptWorld = World & { offeredSkills?: string[]; typedIntoComposer?: string };
 
 /** The thread's provider has commands and skills, and its workspace has files. */
 async function withContext(ctx: PromptWorld) {
@@ -90,7 +90,8 @@ step(/^the user types "@(\w+)" in the prompt$/, async (ctx: World, query: string
   await settle(ctx);
 });
 
-step(/^the user types "([^"]*)" into the composer$/, async (ctx: World, text: string) => {
+step(/^the user types "([^"]*)" into the composer$/, async (ctx: PromptWorld, text: string) => {
+  ctx.typedIntoComposer = text;
   await withContext(ctx);
   // Key by key, as typed: a trigger character opens its picker and what
   // follows searches it, which one whole-string insert would skip past.
@@ -110,11 +111,13 @@ step(
 
 step("the skill menu opens", async (ctx: PromptWorld) => {
   expect(select(ctx)).toMatchObject({ open: true, title: "skills", searchable: true });
-  // Every offered skill the typed text still matches is in the menu (what
-  // followed the "$" is the picker's search).
-  const typed = select(ctx).query;
+  // The expected search comes from what the scenario typed after "$", not
+  // from the picker's own query, so wrong search routing fails here.
+  const typedText = ctx.typedIntoComposer ?? "";
+  const expectedSearch = typedText.slice(typedText.lastIndexOf("$") + 1);
+  expect(select(ctx).query).toBe(expectedSearch);
   for (const name of ctx.offeredSkills ?? []) {
-    if (name.startsWith(typed)) expect(labels(ctx)).toContain(`$${name}`);
+    if (name.startsWith(expectedSearch)) expect(labels(ctx)).toContain(`$${name}`);
   }
   expect((await objectRows(ctx, "selectOverlay")).join("\n")).toContain("$");
 });

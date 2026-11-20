@@ -134,7 +134,7 @@ function decodeEntities(text: string): string {
   return text.replace(
     /&(?:#([0-9]+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*));/g,
     (whole, decimal?: string, hex?: string, name?: string) => {
-      if (name !== undefined) return ENTITIES[name] ?? whole;
+      if (name !== undefined) return Object.hasOwn(ENTITIES, name) ? ENTITIES[name]! : whole;
       const code = decimal !== undefined ? Number(decimal) : Number.parseInt(hex!, 16);
       return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
         ? String.fromCodePoint(code)
@@ -154,6 +154,30 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
   const push = (value: string, style: ChunkStyle) => pushRaw(decodeEntities(value), style);
   const linked = (label: string, url: string) =>
     push(label, { fg: palette.accent, underline: true, link: url });
+  // A span's content goes through the same pass, so escapes and character
+  // references inside bold, italic, struck and link-label text read as they
+  // do at the top level (`**snake\_case**` shows no backslash).
+  const pushInline = (value: string, style: ChunkStyle) => {
+    chunks.push(...inlineMarkdown(value, palette, { ...base, ...style }));
+  };
+  // The whole whitespace-delimited token holding a backslash, cached so each
+  // token is scanned once: a first-separator escape such as `C:\_b` and a UNC
+  // `\\server\share` are paths from their token's start, which looking only
+  // at the text before the backslash cannot tell.
+  let tokenStart = 0;
+  let tokenEnd = -1;
+  let tokenInPath = false;
+  const inWindowsPath = (index: number): boolean => {
+    if (index < tokenStart || index >= tokenEnd) {
+      tokenStart = index;
+      while (tokenStart > 0 && !/\s/u.test(text[tokenStart - 1]!)) tokenStart -= 1;
+      tokenEnd = index;
+      while (tokenEnd < text.length && !/\s/u.test(text[tokenEnd]!)) tokenEnd += 1;
+      const token = text.slice(tokenStart, tokenEnd);
+      tokenInPath = /^[A-Za-z]:\\/.test(token) || token.startsWith("\\\\");
+    }
+    return tokenInPath;
+  };
   for (const match of text.matchAll(INLINE)) {
     const index = match.index ?? 0;
     const span = match.groups ?? {};
@@ -162,22 +186,23 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
     if (span.esc !== undefined) {
       // A backslash escapes punctuation (`\*` is a star), except inside a
       // Windows path, where it is the path's own separator and stays.
-      const token = text.slice(0, index).split(/\s/).at(-1) ?? "";
-      const inPath = /^[A-Za-z]:\\/.test(token) || token.startsWith("\\\\");
-      if (ESCAPABLE.includes(span.esc) && !inPath) pushRaw(span.esc, {});
+      if (ESCAPABLE.includes(span.esc) && !inWindowsPath(index)) pushRaw(span.esc, {});
       else pushRaw(`\\${span.esc}`, {});
     } else if (span.code !== undefined) pushRaw(span.code, { fg: palette.warning });
     else if (span.strong !== undefined || span.under !== undefined) {
-      push(span.strong ?? span.under!, { bold: true });
-    } else if (span.struck !== undefined) push(span.struck, { strikethrough: true });
+      pushInline(span.strong ?? span.under!, { bold: true });
+    } else if (span.struck !== undefined) pushInline(span.struck, { strikethrough: true });
     else if (span.em !== undefined || span.emu !== undefined) {
-      push(span.em ?? span.emu!, { italic: true });
+      pushInline(span.em ?? span.emu!, { italic: true });
     } else if (span.url !== undefined) {
       const url = span.url;
       const label = span.label !== "" ? span.label! : span.image ? url : "";
       if (label === "") push(match[0], {});
-      else if (isSafeLink(url)) linked(label, url);
-      else push(label, {});
+      // An image with no alt text shows its address itself: plain, not reparsed.
+      else if (isSafeLink(url) && span.label === "") linked(label, url);
+      else if (isSafeLink(url))
+        pushInline(label, { fg: palette.accent, underline: true, link: url });
+      else pushInline(label, {});
     } else if (span.auto !== undefined) linked(span.auto, span.auto);
     else if (span.www !== undefined) {
       // What is cut off the address is given back as plain text.

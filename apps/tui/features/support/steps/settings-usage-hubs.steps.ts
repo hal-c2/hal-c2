@@ -305,21 +305,38 @@ step("usage says {string}", async (ctx: SettingsWorld, notice: string) => {
 
 type LimitsWorld = SettingsWorld & { resetOutcome?: string };
 
-/** Spending a credit spends it in the fake's limits too, as the MC republishes them. */
-function spendInFake(ctx: SettingsWorld): void {
+/** Spending a credit spends only the credit the payload names in the fake's limits too. */
+function spendInFake(
+  ctx: SettingsWorld,
+  payload: { instanceId?: string; sourceId?: string; accountId?: string; creditId?: string },
+): void {
   const server = ctx.fake!.settings;
-  const clear = (limits: Record<string, unknown>) => {
-    const credits = limits.resetCredits as { availableCount: number } | undefined;
-    if (credits) limits.resetCredits = { ...credits, availableCount: 0 };
+  const spend = (limits: Record<string, unknown>) => {
+    const credits = limits.resetCredits as
+      | { availableCount: number; nextCreditId?: string }
+      | undefined;
+    if (!credits) return;
+    const { nextCreditId, ...rest } = credits;
+    limits.resetCredits = {
+      ...rest,
+      availableCount: Math.max(0, credits.availableCount - 1),
+      ...(nextCreditId !== undefined && nextCreditId !== payload.creditId ? { nextCreditId } : {}),
+    };
   };
-  for (const provider of server.usageLimits.providers as unknown as Array<
-    Record<string, unknown>
-  >) {
-    if (provider.usageLimits) clear(provider.usageLimits as Record<string, unknown>);
-  }
-  for (const source of server.usageLimits.sources as unknown as Array<Record<string, unknown>>) {
-    for (const account of (source.accounts ?? []) as Array<Record<string, unknown>>) {
-      if (account.usageLimits) clear(account.usageLimits as Record<string, unknown>);
+  if (payload.instanceId !== undefined) {
+    for (const provider of server.usageLimits.providers as unknown as Array<
+      Record<string, unknown>
+    >) {
+      if (provider.instanceId === payload.instanceId && provider.usageLimits)
+        spend(provider.usageLimits as Record<string, unknown>);
+    }
+  } else if (payload.sourceId !== undefined) {
+    for (const source of server.usageLimits.sources as unknown as Array<Record<string, unknown>>) {
+      if (source.id !== payload.sourceId) continue;
+      for (const account of (source.accounts ?? []) as Array<Record<string, unknown>>) {
+        if (account.id === payload.accountId && account.usageLimits)
+          spend(account.usageLimits as Record<string, unknown>);
+      }
     }
   }
   server.emitUsageLimits();
@@ -327,9 +344,9 @@ function spendInFake(ctx: SettingsWorld): void {
 
 step("the user uses the reset credit and confirms", async (ctx: LimitsWorld) => {
   fixture(ctx);
-  ctx.fake!.settings.on("provider.consumeResetCredit", () => {
+  ctx.fake!.settings.on("provider.consumeResetCredit", (payload) => {
     const outcome = ctx.resetOutcome ?? "reset";
-    if (outcome === "reset") spendInFake(ctx);
+    if (outcome === "reset") spendInFake(ctx, payload ?? {});
     return { outcome };
   });
   await openLimits(ctx);

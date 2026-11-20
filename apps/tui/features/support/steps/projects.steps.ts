@@ -370,6 +370,9 @@ step("no folder name is proposed", (ctx: World) => {
 });
 
 step("the destination is the folder the user browsed to", async (ctx: World) => {
+  // The scenario's When is only the paste, so the browsed folder at propose
+  // time is the browser's initial folder: with no repository name the
+  // destination falls back to it unchanged (`getCloneDestinationPath`).
   expect(flow(ctx).query).toBe("~/");
   expect(await settle(ctx)).toContain("Clone destination");
 });

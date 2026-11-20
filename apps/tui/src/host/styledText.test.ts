@@ -289,6 +289,49 @@ describe("inlineMarkdown", () => {
     ).toBe(String.raw`Open C:\a\_b and C:\Users\me`);
   });
 
+  it("keeps a Windows path whose first separator precedes punctuation, and a UNC path", () => {
+    const plain = (text: string) =>
+      spans(text)
+        .map(([part]) => part)
+        .join("");
+    expect(plain(String.raw`Open C:\_b now`)).toBe(String.raw`Open C:\_b now`);
+    expect(plain(String.raw`Open \\server\share\_b now`)).toBe(
+      String.raw`Open \\server\share\_b now`,
+    );
+    expect(plain(String.raw`\*x\*`)).toBe("*x*");
+  });
+
+  it("leaves inherited property names as written instead of decoding them as entities", () => {
+    expect(spans("&constructor; &toString; &amp;")).toEqual([
+      ["&constructor; &toString; &", 0, undefined],
+    ]);
+  });
+
+  it("reads escapes and entities inside styled spans and link labels", () => {
+    const plain = (text: string) =>
+      spans(text)
+        .map(([part]) => part)
+        .join("");
+    expect(plain(String.raw`**snake\_case**`)).toBe("snake_case");
+    expect(
+      spans(String.raw`**snake\_case**`).every(
+        ([, attributes]) => attributes === TextAttributes.BOLD,
+      ),
+    ).toBe(true);
+    expect(plain("**Tom &amp; Jerry**")).toBe("Tom & Jerry");
+    expect(plain(String.raw`*a\_b* ~~c\_d~~ [e\_f](https://example.com)`)).toBe("a_b c_d e_f");
+    expect(
+      spans(String.raw`*a\_b*`).every(([, attributes]) => attributes === TextAttributes.ITALIC),
+    ).toBe(true);
+    expect(
+      spans(String.raw`~~c\_d~~`).every(
+        ([, attributes]) => attributes === TextAttributes.STRIKETHROUGH,
+      ),
+    ).toBe(true);
+    const label = spans(String.raw`[e\_f](https://example.com)`);
+    expect(label.every(([, , url]) => url === "https://example.com")).toBe(true);
+  });
+
   it("keeps a balanced paren in a www address and leaves an unbalanced one out", () => {
     expect(spans("see www.example.com/a_(b) ok (www.example.com/c).")).toEqual([
       ["see ", 0, undefined],

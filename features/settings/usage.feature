@@ -767,8 +767,8 @@ Feature: Usage and limits
         | time left     | wording            |
         | 2 hours       | resets in 2h 0m    |
         | 1 minute      | resets in 1m       |
-        | 45 seconds    | Resets momentarily |
-        | 1 second      | Resets momentarily |
+        | 45 seconds    | resets momentarily |
+        | 1 second      | resets momentarily |
         | 0 seconds     | resets now         |
 
     @backlog @desktop @priority-low

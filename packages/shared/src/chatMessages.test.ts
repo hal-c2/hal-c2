@@ -21,6 +21,15 @@ describe("shouldCollapseUserMessage", () => {
     expect(shouldCollapseUserMessage(`[${"x".repeat(601)}](https://example.com)`)).toBe(true);
   });
 
+  it("measures link syntax inside a code span in full, as it is shown", () => {
+    const address = `https://example.com/${"a".repeat(680)}`;
+    expect(shouldCollapseUserMessage(`See \`[the rates page](${address})\` for details.`)).toBe(
+      true,
+    );
+    // Outside the code span the same link still reads as its label.
+    expect(shouldCollapseUserMessage(`See [the rates page](${address}) for details.`)).toBe(false);
+  });
+
   it("collapses prompts beyond the web UI line limit", () => {
     expect(
       shouldCollapseUserMessage(
