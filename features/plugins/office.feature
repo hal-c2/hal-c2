@@ -399,6 +399,12 @@ Feature: Office
       And the talk carries on to its end
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone resting at its desk through a resize takes its break as planned
+      Given the office has 8 threads waiting, each sitting at its desk until its next break
+      When the page is resized to a grid with fewer pods to a row
+      Then whoever still sits at its desk waits for the same next break as before
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone stepping through the door when the office is resized walks on
       Given a person is stepping from one tile to the next by the door
       When the page is resized to a grid with fewer pods to a row

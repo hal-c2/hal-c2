@@ -1207,6 +1207,29 @@ Item {
             checkFloor();
         }
 
+        // Someone resting at its desk that a resize leaves where it sits
+        // rests on to the same moment, so resizing never puts a break off.
+        function test_a_resize_keeps_the_rest_of_someone_still_at_its_desk() {
+            const people = many(8, "t", "waiting");
+            plugin.publish(people);
+            for (const p of people)
+                actor(p.id).restless = 0;
+            runUntil(() => people.every(p => arrived(actor(p.id)) && actor(p.id).until !== Infinity), 1500, "everyone sits and rests");
+            const before = {};
+            for (const p of people)
+                before[p.id] = [actor(p.id).tx, actor(p.id).ty, actor(p.id).until];
+            compare(page.world.across, 3);
+            resize(700, 1000);
+            compare(page.world.across, 2, "the office takes two pods to a row");
+            const still = people.filter(p => {
+                const a = actor(p.id);
+                return arrived(a) && a.tx === before[p.id][0] && a.ty === before[p.id][1];
+            });
+            verify(still.length > 0, "someone still sits where it sat");
+            for (const p of still)
+                compare(actor(p.id).until, before[p.id][2], p.id + " rests on to the same moment");
+        }
+
         // A resize that keeps the office's grid still works out again how
         // many pods a closing office closes down to, for the new view.
         function test_a_resize_that_keeps_the_grid_retargets_a_closure() {

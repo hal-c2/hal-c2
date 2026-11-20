@@ -2125,9 +2125,14 @@ Item {
                     a.goal.partner = Math.floor(goal.partner / old.cols) * w.cols + across(goal.partner % old.cols);
                 claim(a, a.goal);
             } else {
+                // Someone resting who still sits at its desk rests on to the
+                // same moment; one that has to move starts again once there.
+                const until = a.plan === "rest" ? a.until : Infinity;
                 a.goal = null;
                 a.plan = "";
                 decide(a, true);
+                if (a.plan === "rest" && a.goal?.seat && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0)
+                    a.until = until;
             }
             if (!page.primed && a.goal && !page.movers[a.id]) {
                 place(a, a.goal.x, a.goal.y, false);
