@@ -636,6 +636,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     // The desktop's git actions (GitController); the rest of these files is the MC's and the TUI's.
     QStringLiteral("source-control/git-actions.feature:The recommended action*"),
+    QStringLiteral("source-control/git-actions.feature:Uncommitted changes on a branch behind*"),
     QStringLiteral("source-control/git-actions.feature:A detached checkout*"),
     QStringLiteral("source-control/git-actions.feature:A repository without a remote*"),
     QStringLiteral("source-control/git-actions.feature:A menu entry that cannot run*"),

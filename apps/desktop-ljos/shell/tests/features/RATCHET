@@ -2694,6 +2694,9 @@ source-control/git-actions.feature: The recommended action is withheld with a re
 source-control/git-actions.feature: The recommended action is withheld with a reason [has no upstream and no local commits, No local commits to push.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is running another git action, Git action in progress.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is up to date with nothing to do, Branch is up to date. No action needed.]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a branch with an open pull request]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a feature branch with a remote]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [the default branch]
 source-control/pull-request-actions.feature: Merging from the review
 source-control/pull-request-list.feature: A list the MC cannot read can be retried
 source-control/pull-request-list.feature: A pull request list beside the thread
