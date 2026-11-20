@@ -748,8 +748,10 @@ pub fn saved(engine: &Engine) -> bool {
             if kept.carried {
                 entry.insert("carried".into(), json!(true));
             }
-            if kept.model_carried {
-                entry.insert("modelCarried".into(), json!(true));
+            // Written whenever either is set: a missing `modelCarried` reads
+            // back as `carried`, which would undo a model picked after the carry.
+            if kept.carried || kept.model_carried {
+                entry.insert("modelCarried".into(), json!(kept.model_carried));
             }
             if !entry.is_empty() {
                 targets.insert(key.clone(), Json::Object(entry));

@@ -123,14 +123,17 @@ fn start(cache: &Path) -> (Engine, Rc<FakeMc>) {
         .source(source)
         .build_engine();
     let mc = Rc::new(FakeMc::default());
-    // A config dir of the test's own, so this device's preferences
-    // (plan mode, say) have somewhere to be kept.
+    // Config and data dirs of the test's own, so this device's preferences
+    // (plan mode, say) and its drafts have somewhere to be kept.
     let config = cache.join("config");
+    let data = cache.join("data");
     std::fs::create_dir_all(&config).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
     let launch = Launch {
         mc_origin: Some(ORIGIN.into()),
         cache_dir: Some(cache.to_owned()),
         config_dir: Some(config),
+        data_dir: Some(data),
         ..Launch::default()
     };
     hal_c2_shell::start(&engine, &launch, mc.clone());
@@ -445,5 +448,33 @@ fn a_carried_model_gives_way_after_a_plan_pick_when_routed() {
     // draft keeps (asserted above) is what a send there would carry.
     let state = composer(&engine);
     assert_eq!(state["selectedModel"], json!("claude-opus"), "{state}");
+    store::flush(&engine);
+}
+
+#[test]
+fn a_model_picked_after_the_carry_stays_picked_across_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let draft = {
+        let (engine, _mc) = started(dir.path(), false);
+        Bridge::of(&engine).dispatch(&engine, "thread.open", json!({"key": "env-a:t1"}));
+        let draft = drafts::start_carrying(&engine, "env-a", "p1", true).expect("a draft");
+        // What adding a second model leaves: the mode still carried, the
+        // model the user's own.
+        kept::edit_draft(&engine, &draft, |kept| kept.model_carried = false);
+        assert!(kept::saved(&engine), "the drafts are written");
+        store::flush(&engine);
+        draft
+    };
+
+    let (engine, mc) = started(dir.path(), false);
+    let kept = kept::draft_of(&engine, &draft);
+    assert!(kept.carried && !kept.model_carried, "{kept:?}");
+    // So a row naming another model later leaves it alone.
+    send_project(&engine, &mc, 2, true);
+    assert_eq!(
+        kept::draft_of(&engine, &draft).model_selection,
+        Some(serde_json::from_value(json!({"instanceId": "codex", "model": "gpt-5"})).unwrap()),
+        "the picked model stays"
+    );
     store::flush(&engine);
 }
