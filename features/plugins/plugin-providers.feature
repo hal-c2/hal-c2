@@ -21,8 +21,8 @@ Feature: Provider instances a plugin adds
   that deletes one of them ends the plugin's hold on that id, and no client's save hands
   a plugin one. They last
   only while the plugin is installed, on and granted the permission; the ones the MC took
-  out are listed to the plugin as such until it puts them again, so it can tell them from
-  ones the user deleted.
+  out are listed to the plugin as such until it puts or removes them, or the user takes
+  the id, so it can tell them from ones the user deleted.
 
   Background:
     Given an MC with the user's own provider instance "claude-work"
@@ -116,6 +116,26 @@ Feature: Provider instances a plugin adds
       When it puts the instance "claude" for Claude named "Claude via the proxy"
       Then Settings → Providers has the instance "plugin_host-probe_claude" named "Claude via the proxy"
       And the plugin lists nothing as taken out while it was off
+
+    @mc
+    Scenario: An id the user takes while the plugin is off is not listed as taken out
+      Given a plugin granted "providers:configure"
+      And it put the instance "claude" for Claude named "Claude via the proxy"
+      And the user turned the plugin off
+      When the user adds an instance of their own as "plugin_host-probe_claude"
+      And the user turns the plugin on again
+      Then the plugin lists nothing as taken out while it was off
+      And the user's instance "plugin_host-probe_claude" is as it was
+
+    @mc
+    Scenario: An instance taken out that the plugin removes is not listed as taken out
+      Given a plugin granted "providers:configure"
+      And it put the instance "claude" for Claude named "Claude via the proxy"
+      And the user turned the plugin off
+      When the user turns the plugin on again
+      And it removes the instance "claude"
+      Then the plugin lists nothing as taken out while it was off
+      And Settings → Providers has no instance "plugin_host-probe_claude"
 
     @mc
     Scenario: Removing the plugin takes its instances out of Settings → Providers
