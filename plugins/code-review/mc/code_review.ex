@@ -231,6 +231,10 @@ defmodule HalC2Plugins.CodeReview do
 
   def call("retry", %{"key" => key}, _context), do: server({:start, key, "retry"})
 
+  # Ends a pause now: the user may know the limit that set it no longer holds, as
+  # after signing in to another account.
+  def call("resume", _input, _context), do: server(:resume)
+
   # The user's say-so for a pull request the watch does not trust, at the commit they
   # looked at: that commit is reviewed, as if they had asked. A new push needs it again.
   def call("approve", %{"key" => key, "headSha" => sha}, _context)
@@ -516,6 +520,24 @@ defmodule HalC2Plugins.CodeReview do
 
   defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
 
+  # A queued review the user asks for is theirs from then on: it is followed, the
+  # review limits do not hold it back, and it starts next (`askedAt`), before every
+  # other queued review not asked for since.
+  defp ask_queued(state, key, trigger) when trigger in ~w(user retry) do
+    case state.reviews[key] do
+      %{"status" => "queued"} = review ->
+        put(
+          state,
+          Map.merge(review, %{"trigger" => trigger, "following" => true, "askedAt" => now()})
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  defp ask_queued(state, _key, _trigger), do: state
+
   # A review queued on an approval it no longer has goes back to not started.
   defp unqueue(review, settings) do
     if review["status"] == "queued" and gated(settings, review),
@@ -554,15 +576,28 @@ defmodule HalC2Plugins.CodeReview do
       end
 
     state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
+
+    # A pause is the agent's that hit its limit: another agent, or model, has its own.
+    state =
+      if Map.take(settings, ~w(provider model)) != Map.take(old, ~w(provider model)),
+        do: unpause(state),
+        else: state
+
     state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
     {:reply, :ok, state |> pump() |> changed()}
   end
 
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
+
+  def handle_call(:resume, _from, state),
+    do:
+      {:reply, {:ok, nil}, %{unpause(state) | failures: 0} |> pump() |> changed()}
+      |> reply_snapshot()
+
   def handle_call(:reviews, _from, state), do: {:reply, state.reviews, state}
 
   def handle_call({:looked, found}, _from, state) do
-    {:reply, :ok, state |> apply_look(found) |> pump() |> changed()}
+    {:reply, :ok, state |> apply_look(found) |> pump() |> republish() |> changed()}
   end
 
   def handle_call({:start, key, trigger}, _from, state) when is_binary(key) do
@@ -571,9 +606,11 @@ defmodule HalC2Plugins.CodeReview do
         {:reply, {:error, "There is no review #{key}."}, state}
 
       # Two asks before either sees the other's leave one run. An ask of the
-      # user's also ends a pause: they may know the limit no longer holds.
+      # user's also ends a pause: they may know the limit no longer holds. A queued
+      # review asked for goes ahead of the watch's own (`ask_queued/3`).
       %{"status" => status} when status in ~w(queued running) ->
-        {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()}
+        {:reply, {:ok, nil},
+         state |> unpause() |> ask_queued(key, trigger) |> pump() |> changed()}
 
       review ->
         case gated(state.settings, review) do
@@ -609,7 +646,9 @@ defmodule HalC2Plugins.CodeReview do
          state}
 
       review["status"] in ~w(queued running) ->
-        {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()} |> reply_snapshot()
+        {:reply, {:ok, nil},
+         state |> unpause() |> ask_queued(review["key"], trigger) |> pump() |> changed()}
+        |> reply_snapshot()
 
       why = gated(state.settings, review) ->
         {:reply, {:error, why}, state |> put(Map.put_new(review, "status", "ready")) |> changed()}
@@ -1156,7 +1195,7 @@ defmodule HalC2Plugins.CodeReview do
   def handle_info(:poll, state), do: {:noreply, state}
 
   def handle_info({:polled, found}, state),
-    do: {:noreply, state |> apply_look(found) |> pump() |> changed()}
+    do: {:noreply, state |> apply_look(found) |> pump() |> republish() |> changed()}
 
   # A wake is named for the pause it was armed under; one left over from a pause
   # since ended or replaced does nothing.
@@ -1903,6 +1942,7 @@ defmodule HalC2Plugins.CodeReview do
         "following" => trigger in @asks or followed?(review),
         "previous" => previous,
         "queuedAt" => now(),
+        "askedAt" => nil,
         "startedAt" => nil,
         "finishedAt" => nil,
         "threadId" => nil,
@@ -1939,7 +1979,7 @@ defmodule HalC2Plugins.CodeReview do
         pause(
           state,
           %{},
-          "Reviews are paused after repeated failures; they start again at the next look."
+          "Reviews are paused after repeated failures."
         ),
       else: state
   end
@@ -1950,7 +1990,7 @@ defmodule HalC2Plugins.CodeReview do
 
     reason =
       reason ||
-        "Reviews are paused: the agent hit its usage limit#{if failure["resetAt"], do: ", which resets at #{failure["resetAt"]}"}. Queued reviews wait instead of failing one by one."
+        "Reviews are paused: the agent hit its usage limit. Queued reviews wait instead of failing one by one."
 
     %{state | paused_until: until, paused_reason: reason, failures: 0}
   end
@@ -2018,11 +2058,13 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   defp rate_limited?(problem) when is_binary(problem),
-    do: problem =~ ~r/rate.?limit|429|too many requests/i
+    do: problem =~ ~r/rate.?limit|429|too many requests|quota/i
 
   defp rate_limited?(_problem), do: false
 
-  # Starts queued reviews, oldest first, while fewer than `concurrency` run.
+  # Starts queued reviews while fewer than `concurrency` run: those the user asked to
+  # start now first, in the order asked, then the rest the user asked for, then the
+  # watch's own, each oldest first.
   defp pump(state) do
     if paused?(state) do
       state
@@ -2037,7 +2079,9 @@ defmodule HalC2Plugins.CodeReview do
     state.reviews
     |> Map.values()
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(& &1["queuedAt"])
+    |> Enum.sort_by(
+      &{&1["askedAt"] == nil, &1["askedAt"], &1["trigger"] not in ~w(user retry), &1["queuedAt"]}
+    )
     |> Enum.take(max(trunc(state.settings["concurrency"]) - running, 0))
     |> Enum.reduce(state, fn review, state ->
       thread_id = uuid()
@@ -2046,7 +2090,8 @@ defmodule HalC2Plugins.CodeReview do
         Map.merge(review, %{
           "status" => "running",
           "threadId" => thread_id,
-          "startedAt" => now()
+          "startedAt" => now(),
+          "askedAt" => nil
         })
 
       settings = state.settings
@@ -2908,6 +2953,28 @@ defmodule HalC2Plugins.CodeReview do
 
   # --- publishing ----------------------------------------------------------------------
 
+  # A post its repository publishes on its own that the host's rate limit turned
+  # away is tried again at the next look that the limit lets through. Any other
+  # refusal waits for the user, who may have to change the review first.
+  defp republish(state) do
+    settings = state.settings
+
+    if rate_limited?(state.problem) do
+      state
+    else
+      for {_key, %{"status" => "waiting", "publishError" => error} = review} <- state.reviews,
+          rate_limited?(error),
+          publishing(settings, review["repository"]) == "automatic",
+          untrusted(settings, review) == nil,
+          reduce: state do
+        state ->
+          review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
+          spawn_link(fn -> publish(review, settings, nil) end)
+          put(state, review)
+      end
+    end
+  end
+
   defp publishing(settings, repository) do
     Enum.find_value(settings["publishingByRepository"] || %{}, settings["publishing"], fn {repo,
                                                                                            mode} ->
@@ -3413,6 +3480,8 @@ defmodule HalC2Plugins.CodeReview do
           [] -> nil
           problems -> Enum.join(problems, " ")
         end,
+      # When a pause ends on its own; the page offers to end it now.
+      "pausedUntil" => if(paused?(state), do: DateTime.to_iso8601(state.paused_until)),
       "unwatched" => state.unwatched,
       "watching" => state.settings["repositories"] || [],
       "activation" => state.settings["activation"],

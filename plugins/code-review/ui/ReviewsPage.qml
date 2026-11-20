@@ -25,6 +25,18 @@ Item {
         return all.sort((a, b) => page.order.indexOf(a.status) - page.order.indexOf(b.status));
     }
     readonly property var order: ["running", "queued", "publishing", "waiting", "failed", "kept", "ready", "published"]
+    // What the list is narrowed to, as typed in the search field once typing pauses.
+    property string query: ""
+    // The reviews the list shows: those matching every word of the query.
+    readonly property var shown: {
+        const words = page.query.trim().toLowerCase().split(/\s+/).filter(word => word.length > 0);
+        if (words.length === 0)
+            return page.reviews;
+        return page.reviews.filter(review => {
+            const text = ["#" + review.number, review.title, review.repository, review.author, review.headBranch, review.baseBranch].filter(part => part).join(" ").toLowerCase();
+            return words.every(word => /^#?\d+$/.test(word) ? review.number === Number(word.replace("#", "")) : text.includes(word));
+        });
+    }
     property string selected: ""
     readonly property var review: reviews.find(review => review.id === selected) ?? null
     // Why the last action from this page failed, until the next one.
@@ -156,6 +168,11 @@ Item {
         if (review.skipped)
             return qsTr("Skipped: %1").arg(review.skipped);
         return "";
+    }
+
+    // Resumes a paused queue on `environment` now.
+    function resume(environment) {
+        page.ask("resume", {}, environment);
     }
 
     function time(value) {
@@ -295,25 +312,48 @@ Item {
                 Repeater {
                     model: page.plugin.environments
 
-                    delegate: Text {
+                    delegate: RowLayout {
+                        id: problemRow
+
                         required property string modelData
                         readonly property var state: page.byEnvironment[modelData] ?? null
+                        // Until when reviews are paused, if they are.
+                        readonly property string pausedUntil: state?.pausedUntil ?? ""
                         readonly property string problem: {
                             if (state === null)
                                 return "";
+                            const parts = [];
                             if (state.problem)
-                                return state.problem;
-                            if (state.unwatched.length > 0)
-                                return qsTr("No project on this MC has the remote of %1, so it is not watched.").arg(state.unwatched.join(", "));
-                            return "";
+                                parts.push(state.problem);
+                            if (pausedUntil.length > 0)
+                                parts.push(qsTr("They start again at %1.").arg(page.time(pausedUntil)));
+                            if (parts.length === 0 && state.unwatched.length > 0)
+                                parts.push(qsTr("No project on this MC has the remote of %1, so it is not watched.").arg(state.unwatched.join(", ")));
+                            return parts.join(" ");
                         }
 
                         Layout.fillWidth: true
                         visible: problem.length > 0
-                        text: page.several ? page.environmentLabel(modelData) + ": " + problem : problem
-                        color: page.warningColor
-                        wrapMode: Text.Wrap
-                        font.pixelSize: Theme.type.meta.size
+                        spacing: 8
+
+                        Text {
+                            objectName: "codeReviewProblem:" + problemRow.modelData
+                            Layout.fillWidth: true
+                            textFormat: Text.PlainText
+                            text: page.several ? page.environmentLabel(problemRow.modelData) + ": " + problemRow.problem : problemRow.problem
+                            color: page.warningColor
+                            wrapMode: Text.Wrap
+                            font.pixelSize: Theme.type.meta.size
+                        }
+
+                        // The user may know the limit no longer holds, as after signing in to another account.
+                        ShellButton {
+                            objectName: "codeReviewResume:" + problemRow.modelData
+                            visible: problemRow.pausedUntil.length > 0
+                            enabled: page.busy === 0
+                            text: qsTr("Resume now")
+                            onClicked: page.resume(problemRow.modelData)
+                        }
                     }
                 }
 
@@ -334,131 +374,161 @@ Item {
             Layout.fillHeight: true
             spacing: 0
 
-            ListView {
-                id: list
-
-                objectName: "codeReviewList"
+            ColumnLayout {
+                // Its children fill it, which would make it fill the row too.
+                Layout.fillWidth: false
                 Layout.preferredWidth: Math.min(380, page.width * 0.4)
                 Layout.fillHeight: true
-                clip: true
-                model: page.reviews
-                currentIndex: page.reviews.findIndex(review => review.id === page.selected)
-                keyNavigationEnabled: true
-                boundsBehavior: Flickable.StopAtBounds
-                onCurrentIndexChanged: if (currentIndex >= 0 && activeFocus)
-                    page.selected = page.reviews[currentIndex].id
+                spacing: 0
 
-                ScrollBar.vertical: ScrollBar {}
+                // Narrows the list by number, title, repository, author or branch.
+                ShellTextField {
+                    id: search
 
-                delegate: Column {
-                    id: entry
+                    objectName: "codeReviewSearch"
+                    Layout.fillWidth: true
+                    Layout.margins: 8
+                    placeholderText: qsTr("Search pull requests")
+                    Accessible.name: qsTr("Search pull requests")
+                    onTextChanged: searchPause.restart()
+                    Keys.onEscapePressed: text = ""
+                    Keys.onDownPressed: list.forceActiveFocus()
 
-                    required property var modelData
-                    required property int index
+                    // One filter per pause in typing, not one per key.
+                    Timer {
+                        id: searchPause
 
-                    width: ListView.view.width
-
-                    // The first review of a state names it.
-                    Text {
-                        width: entry.width
-                        visible: entry.index === 0 || page.reviews[entry.index - 1].status !== entry.modelData.status
-                        leftPadding: 16
-                        topPadding: entry.index > 0 ? 14 : 10
-                        bottomPadding: 4
-                        text: page.statusText(entry.modelData.status)
-                        color: page.muted
-                        font.pixelSize: Theme.type.caption.size
-                        font.weight: Font.Medium
-                        font.capitalization: Font.AllUppercase
+                        interval: 150
+                        onTriggered: page.query = search.text
                     }
+                }
 
-                    ItemDelegate {
-                        id: row
+                ListView {
+                    id: list
 
-                        readonly property var modelData: entry.modelData
-                        readonly property int index: entry.index
+                    objectName: "codeReviewList"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: page.shown
+                    currentIndex: page.shown.findIndex(review => review.id === page.selected)
+                    keyNavigationEnabled: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    onCurrentIndexChanged: if (currentIndex >= 0 && activeFocus)
+                        page.selected = page.shown[currentIndex].id
 
-                        objectName: "codeReview:" + modelData.key
-                        width: entry.width
-                        leftPadding: 16
-                        rightPadding: 12
-                        topPadding: 6
-                        bottomPadding: 6
-                        highlighted: modelData.id === page.selected
-                        Accessible.name: qsTr("#%1 %2, %3").arg(modelData.number).arg(modelData.title).arg(page.statusText(modelData.status))
-                        onClicked: {
-                            page.selected = modelData.id;
-                            list.currentIndex = index;
-                            list.forceActiveFocus();
+                    ScrollBar.vertical: ScrollBar {}
+
+                    delegate: Column {
+                        id: entry
+
+                        required property var modelData
+                        required property int index
+
+                        width: ListView.view.width
+
+                        // The first review of a state names it.
+                        Text {
+                            width: entry.width
+                            visible: entry.index === 0 || page.shown[entry.index - 1]?.status !== entry.modelData.status
+                            leftPadding: 16
+                            topPadding: entry.index > 0 ? 14 : 10
+                            bottomPadding: 4
+                            text: page.statusText(entry.modelData.status)
+                            color: page.muted
+                            font.pixelSize: Theme.type.caption.size
+                            font.weight: Font.Medium
+                            font.capitalization: Font.AllUppercase
                         }
 
-                        background: Rectangle {
-                            color: row.highlighted ? Theme.palette.color("sidebarRowSelected", "#27272a") : row.hovered ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
-                        }
+                        ItemDelegate {
+                            id: row
 
-                        contentItem: ColumnLayout {
-                            spacing: 2
+                            readonly property var modelData: entry.modelData
+                            readonly property int index: entry.index
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 6
+                            objectName: "codeReview:" + modelData.key
+                            width: entry.width
+                            leftPadding: 16
+                            rightPadding: 12
+                            topPadding: 6
+                            bottomPadding: 6
+                            highlighted: modelData.id === page.selected
+                            Accessible.name: qsTr("#%1 %2, %3").arg(modelData.number).arg(modelData.title).arg(page.statusText(modelData.status))
+                            onClicked: {
+                                page.selected = modelData.id;
+                                list.currentIndex = index;
+                                list.forceActiveFocus();
+                            }
+
+                            background: Rectangle {
+                                color: row.highlighted ? Theme.palette.color("sidebarRowSelected", "#27272a") : row.hovered ? Theme.palette.color("sidebarRowHover", "#1f1f23") : "transparent"
+                            }
+
+                            contentItem: ColumnLayout {
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        textFormat: Text.PlainText
+                                        text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
+                                        color: page.foreground
+                                        elide: Text.ElideRight
+                                        font.pixelSize: Theme.type.body.size
+                                    }
+
+                                    Text {
+                                        visible: text.length > 0
+                                        text: page.verdictText(row.modelData.verdict)
+                                        color: page.verdictColor(row.modelData.verdict)
+                                        font.pixelSize: Theme.type.caption.size
+                                        font.weight: Font.Medium
+                                    }
+                                }
 
                                 Text {
                                     Layout.fillWidth: true
                                     textFormat: Text.PlainText
-                                    text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
-                                    color: page.foreground
+                                    text: {
+                                        const parts = [row.modelData.repository, row.modelData.author];
+                                        if (row.modelData.sandboxed)
+                                            parts.push(qsTr("In a sandbox"));
+                                        if (page.several)
+                                            parts.push(page.environmentLabel(row.modelData.environment));
+                                        return parts.filter(part => part).join(" · ");
+                                    }
+                                    color: page.muted
                                     elide: Text.ElideRight
-                                    font.pixelSize: Theme.type.body.size
+                                    font.pixelSize: Theme.type.caption.size
                                 }
 
                                 Text {
+                                    Layout.fillWidth: true
                                     visible: text.length > 0
-                                    text: page.verdictText(row.modelData.verdict)
-                                    color: page.verdictColor(row.modelData.verdict)
+                                    textFormat: Text.PlainText
+                                    text: page.note(row.modelData)
+                                    color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
+                                    elide: Text.ElideRight
                                     font.pixelSize: Theme.type.caption.size
-                                    font.weight: Font.Medium
                                 }
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                textFormat: Text.PlainText
-                                text: {
-                                    const parts = [row.modelData.repository, row.modelData.author];
-                                    if (row.modelData.sandboxed)
-                                        parts.push(qsTr("In a sandbox"));
-                                    if (page.several)
-                                        parts.push(page.environmentLabel(row.modelData.environment));
-                                    return parts.filter(part => part).join(" · ");
-                                }
-                                color: page.muted
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.type.caption.size
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                visible: text.length > 0
-                                textFormat: Text.PlainText
-                                text: page.note(row.modelData)
-                                color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
-                }
 
-                Text {
-                    anchors.centerIn: parent
-                    width: parent.width - 48
-                    visible: page.reviews.length === 0
-                    text: qsTr("No reviews yet. Pick repositories to watch in the plugin's settings, or start a review above.")
-                    color: page.muted
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Theme.type.body.size
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - 48
+                        visible: page.shown.length === 0
+                        text: page.reviews.length === 0 ? qsTr("No reviews yet. Pick repositories to watch in the plugin's settings, or start a review above.") : qsTr("No pull request matches %1.").arg(page.query.trim())
+                        color: page.muted
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                        font.pixelSize: Theme.type.body.size
+                    }
                 }
             }
 
@@ -694,10 +764,11 @@ Item {
                             objectName: "codeReviewRetry"
                             // Another machine reviews this head; a review here would be a second one,
                             // unless that machine is out of reach and may not come back.
-                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status) && !page.gated(findings.review)
-                            primary: findings.status === "ready" || findings.status === "failed"
+                            // A queued one is started now: ahead of the watch's own, and past a pause.
+                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "publishing"].includes(findings.status) && !page.gated(findings.review)
+                            primary: ["ready", "failed", "queued"].includes(findings.status)
                             enabled: page.busy === 0
-                            text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
+                            text: findings.status === "queued" ? qsTr("Review now") : findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
                             onClicked: page.ask("retry", { key: findings.review.key }, findings.review.environment)
                         }
 
