@@ -1375,6 +1375,49 @@ Item {
             }, 3000, "the listener gets to its new desk");
         }
 
+        // Movers may carry out the desk someone listens at, the last in the
+        // pods the office closes, before it replies; the office waits for the
+        // talk before it closes them.
+        function test_the_office_closes_a_pod_only_once_its_talks_are_over() {
+            resize(1200, 760);
+            const all = many(70, "t", "working", "typing");
+            plugin.publish(all);
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.pods.length, 12);
+            const listener = all.find(p => page.world.seatOf[p.id].pod >= 9);
+            const speaker = all.find(p => page.world.seatOf[p.id].pod < 9);
+            const stay = all.filter(p => page.world.seatOf[p.id].pod < 9).slice(0, 55).concat([listener]);
+            const talks = [
+                {
+                    id: "talk-1",
+                    from: speaker.id,
+                    to: listener.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(all, talks);
+            const s = actor(speaker.id), l = actor(listener.id);
+            runUntil(() => s.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, held = l.ty * W + l.tx;
+            // The speaker goes on until it is let go.
+            s.talk.until = Infinity;
+            plugin.publish(stay, talks);
+            compare(page.closeTo, 9);
+            const first = 9 * page.world.pods[0].seats.length;
+            const closing = page.world.seats.slice(first);
+            runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
+            page.advance(50);
+            compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
+            compare([s.talk?.phase, l.hold, page.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
+            s.talk.until = page.now;
+            runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
+            compare(page.world.pods.length, 9);
+            const seat = page.world.seatOf[listener.id];
+            runUntil(() => arrived(l) && l.tx === seat.x && l.ty === seat.y, 3000, "the listener gets to its new desk");
+        }
+
         // A resize that keeps the same best grid leaves the office as it is.
         function test_a_resize_that_keeps_the_grid_keeps_the_office() {
             resize(1600, 900);

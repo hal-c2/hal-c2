@@ -466,6 +466,15 @@ Feature: Office
       And then walks to its new desk, and the office shrinks to three rows of three pods
       And no tile stays claimed for the talk or past the office's new end
 
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office closes a pod only once nobody listens at one of its seats
+      Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
+      And "Lead" is talking to someone who sits in one of the last three pods
+      When it has 56 threads, that listener among them
+      And the movers carry out every desk in the last three pods, the listener's too, before it has replied
+      Then the office keeps its twelve pods until the talk ends
+      And then shrinks to three rows of three pods
+
     # The floor is built again on a resize, and everyone routed afresh, so someone can be
     # sent to the tile a speaker talks from.
     @desktop @mobile @backlog-desktop @backlog-mobile

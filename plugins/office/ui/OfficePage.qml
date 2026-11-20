@@ -2166,14 +2166,19 @@ Item {
     }
 
     // Once the desks in the pods the office is closing are all carried out,
-    // the office shrinks to the rest.
+    // and nobody listens at one of their seats any more, the office shrinks
+    // to the rest.
     function closeRows() {
         const w = page.world;
         const first = page.closeTo * w.pods[0].seats.length;
+        const seats = {};
         for (let i = first; i < w.seats.length; i++) {
             if (w.seats[i].state !== "out" || w.seats[i].mover)
                 return;
+            seats[w.seats[i].y * w.cols + w.seats[i].x] = true;
         }
+        if (Object.values(page.actors).some(a => seats[a.hold]))
+            return;
         const count = page.closeTo;
         page.closeTo = 0;
         build(gridFor(count).across, count);
