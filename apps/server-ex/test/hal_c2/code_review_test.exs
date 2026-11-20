@@ -1609,6 +1609,7 @@ defmodule HalC2.CodeReviewTest do
     {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
     settle()
     send(@server, :poll)
+    await_look()
     settle()
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"

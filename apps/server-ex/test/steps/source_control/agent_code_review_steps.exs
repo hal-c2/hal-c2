@@ -1482,7 +1482,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the review of \#{int} is running and \#{int} still waits in the queue",
        %{args: [asked, other]} = context do
     {_, context} = await_review(context, asked, &(&1["status"] == "running"))
-    assert %{"status" => "queued"} = review(context.snapshot, other)
+    # The frame that showed the asked review running, not an earlier snapshot.
+    assert %{"status" => "queued"} = review(context.reviews_last, other)
     context
   end
 
