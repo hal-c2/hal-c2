@@ -268,7 +268,7 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Two people headed for the same spot never both stop there
-      Given the office has 16 waiting threads
+      Given the office has 8 waiting threads
       When they all take a break at once
       Then each heads for a spot of its own in the break room
 
@@ -296,6 +296,18 @@ Feature: Office
       When the office runs for a while
       Then most of them sit at their desks
       And never more than 8 of them are on a break at once
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone walking back from a break keeps its place until it is out
+      Given the break room holds 8 people on a break
+      When one of them ends its break and walks back to its desk
+      Then nobody else goes on a break until it has left the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A break counts from when the person sits down
+      Given the office has 40 threads working, typing
+      When 30 more threads come in waiting, and movers carry in their desks
+      Then none of them goes on a break before it has sat at its desk
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Some people take breaks more often than others
@@ -353,10 +365,36 @@ Feature: Office
       And everyone keeps their desk and walks there from where they were
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: An office of six pods is two rows of three in an ordinary window
-      Given the page is 1024 by 700, 1200 by 760 or 1920 by 1080
+    Scenario Outline: An office of six pods is two rows of three in an ordinary window
+      Given the page is <width> by <height>
       When the office has 12 threads
       Then the office has two rows of three pods, 48 desks
+
+      Examples:
+        | width | height |
+        | 1024  | 700    |
+        | 1200  | 760    |
+        | 1920  | 1080   |
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A tall, narrow view stacks the pods in one column
+      Given the page is 300 by 1000
+      When the office has 12 threads and a reviewer
+      Then the office is one column of six pods
+      And the review corner is the top pod, where the reviewer sits
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Two people talking keep their places through a resize
+      Given "Lead" is talking to "Reviewer" in the break room
+      When the page is resized to a grid with fewer pods to a row
+      Then both still hold their tiles and nobody else is sent there
+      And the talk carries on to its end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping through the door when the office is resized walks on
+      Given a person is stepping from one tile to the next by the door
+      When the page is resized to a grid with fewer pods to a row
+      Then it carries on from a tile next to where it stands, through no furniture
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A resize that keeps the best grid leaves the office as it is
@@ -378,14 +416,37 @@ Feature: Office
       And nobody is left standing where the office ended
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize while the office shrinks
+      Given the page is 1600 by 900 and the office has 70 threads
+      When it has 40 threads
+      And the page is 700 by 1300 before the office has shrunk
+      Then the office shrinks to the grid for its smaller size in the new view
+      And everyone is at a desk of their own, on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office emptied before its new desks arrive shrinks at once
+      Given the office is empty
+      When it has 75 threads
+      And it is empty again before any desk is carried in
+      Then the office is back to six pods straight away
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office grows for reviewers only once the review corner is full
       Given the office has 40 threads and 8 reviewers, in six pods
       When a ninth reviewer comes in
       Then the office has more pods
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office is never smaller than six pods in two rows
-      Given the office has 75 threads
+    Scenario: A reviewer at an ordinary desk counts as one of those
+      Given the office has 40 threads at its 40 desks outside the review corner
+      When one of them turns out to be a reviewer, delegated to by a new reviewer
+      And then another thread comes in
+      Then the office grows, so everyone has a desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office is never smaller than six pods
+      Given the page is 1200 by 760
+      And the office has 75 threads
       When it has 2 threads
       Then the office shrinks back to two rows of three pods, 48 desks
 

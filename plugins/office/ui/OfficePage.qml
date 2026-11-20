@@ -1884,6 +1884,10 @@ Item {
     function take(value) {
         const people = value?.people ?? [];
         sync(people);
+        // A closure with nothing left to carry out closes now: the clock may
+        // not run again for an office nobody is in.
+        if (page.closeTo)
+            closeRows();
         hear(value?.talks ?? []);
         page.primed = value !== null && value !== undefined;
         updateWalking();
@@ -1900,12 +1904,13 @@ Item {
 
     // The grid for at least `pods` pods, at least two rows of them, that
     // shows biggest when fitted to the view (see fitScale): it grows sideways
-    // in a wide view and down in a tall one, and has the fewest pods of those
-    // that show as big. Before the view has a size, it is three across.
+    // in a wide view and down in a tall one, down to a single column in a
+    // narrow one, and has the fewest pods of those that show as big. Before
+    // the view has a size, it is three across.
     function gridFor(pods) {
         const vw = scroller.width - 8, vh = scroller.height - 8;
         let best = null;
-        for (let across = 2; across <= Math.max(3, Math.ceil(pods / 2)); across++) {
+        for (let across = 1; across <= Math.max(3, Math.ceil(pods / 2)); across++) {
             const down = Math.max(2, Math.ceil(pods / across));
             const fit = vw > 0 && vh > 0 ? Math.min(vw / (officeCols(across) * 16), vh / (officeRows(down) * 16)) : across === 3 ? 1 : 0;
             if (!best || fit > best.fit || fit === best.fit && across * down < best.pods)
@@ -1922,12 +1927,18 @@ Item {
         // The review corner's eight desks are only for reviewers, and the
         // reviewers it has no room for take ordinary desks. The office grows
         // to a full grid when it runs out of desks, and closes pods once a
-        // smaller grid would leave a pod's worth free.
-        const reviewers = people.filter(p => p.kind === "reviewer").length;
+        // smaller grid would leave a pod's worth free. A reviewer who already
+        // sits at an ordinary desk keeps it (see seatTeams()), so it needs one
+        // of those rather than one in the corner.
+        const w = page.world;
+        const floor = p => {
+            const seat = w?.seatOf?.[p.id];
+            return !!seat && !w.pods[seat.pod]?.review;
+        };
+        const reviewers = people.filter(p => p.kind === "reviewer" && !floor(p)).length;
         const desks = people.length - reviewers + Math.max(8, reviewers);
         const need = Math.max(6, Math.ceil(desks / 8));
         const grid = gridFor(need);
-        const w = page.world;
         if (!w || need > w.pods.length || !page.primed && (grid.across !== w.across || grid.pods !== w.pods.length)) {
             page.closeTo = 0;
             build(grid.across, grid.pods);
@@ -2064,7 +2075,9 @@ Item {
             a.tx = across(a.tx);
             a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;
             a.path = [];
-            if (a.tx >= w.cols || a.ty >= w.rows)
+            // A step through the break room's door that the door moved away
+            // from is not finished: it goes on from the tile it set out from.
+            if (a.tx >= w.cols || a.ty >= w.rows || a.next >= 0 && Math.abs(nx - a.tx) + Math.abs(ny - a.ty) !== 1)
                 place(a, a.tx, a.ty, true);
             const goal = a.goal;
             if (page.movers[a.id]) {
@@ -2079,7 +2092,8 @@ Item {
                     leave(a);
                 }
             } else if (a.talk) {
-                // Its speaker finds a side of it again (see stepTalk()).
+                // Its speaker finds a side of it again (see stepTalk()), or,
+                // talking already, keeps the one it talks from (below).
                 a.goal = null;
                 a.talk.target = -1;
             } else if (a.plan === "break" && goal && goal.x >= old.xd) {
@@ -2105,6 +2119,28 @@ Item {
                 place(a, a.tx, a.ty, true);
             route(a);
         }
+        // Two still side by side and talking keep their tiles for the rest of
+        // the talk: the speaker the side it talks from, the listener the tile
+        // it listens on.
+        for (const a of everyone()) {
+            const other = a.talk && a.talk.phase !== "go" ? page.actors[a.talk.to] : null;
+            if (!other || a.next >= 0 || Math.abs(a.tx - other.tx) + Math.abs(a.ty - other.ty) !== 1)
+                continue;
+            const side = {
+                x: a.tx,
+                y: a.ty
+            };
+            if (!free(side, a))
+                continue;
+            a.goal = Object.assign({
+                face: 0,
+                offY: 0,
+                pose: "talk",
+                kind: "talk"
+            }, side);
+            claim(a, a.goal);
+            holdHere(other);
+        }
     }
 
     // Once the desks in the pods the office is closing are all carried out,
@@ -2123,7 +2159,8 @@ Item {
 
     // A view of another size may show the office bigger in another grid: it
     // is built again only when the best number of pods to a row changes. A
-    // view with no size keeps the office as it is.
+    // view with no size keeps the office as it is. An office closing pods
+    // works out again how many to close down to, in a grid for the new view.
     function refit() {
         const w = page.world;
         if (!w || scroller.width <= 8 || scroller.height <= 8)
@@ -2132,6 +2169,8 @@ Item {
         if (across === w.across)
             return;
         build(across, w.pods.length);
+        if (page.closeTo)
+            take(page.office);
         updateMarks();
         updateWalking();
     }
@@ -2810,12 +2849,13 @@ Item {
                 goal = seatGoal(actor, activity === "typing" || activity === "running" || activity === "testing" || activity === "browsing" ? "type" : "sit");
         } else {
             // Waiting and idle people sit at their desks, and now and then get
-            // up for a short break (see restless()).
+            // up for a short break (see restless()), counting from when they
+            // sit down (see tick()).
             if (!force && (actor.plan === "rest" || actor.plan === "break") && actor.goal)
                 return;
             plan = "rest";
             goal = seatGoal(actor, "sit");
-            actor.until = page.now + between(page.rng, 15000, 45000);
+            actor.until = Infinity;
         }
         actor.plan = plan;
         setGoal(actor, goal);
@@ -2823,7 +2863,8 @@ Item {
 
     // A person sitting at its desk with nothing to do decides, every so often,
     // whether to take a break: each by its own restlessness, and only while
-    // the break room has room. A cup brought back from the break room is
+    // the break room has room. Someone whose break is over keeps its place
+    // until it is out of the room. A cup brought back from the break room is
     // finished by then.
     function restless(actor) {
         actor.cup = false;
@@ -2832,7 +2873,8 @@ Item {
             return;
         let away = 0;
         for (const id of Object.keys(page.actors)) {
-            if (page.actors[id].plan === "break")
+            const other = page.actors[id];
+            if (other.plan === "break" || other.tx > page.world.xd)
                 away++;
         }
         if (away < page.breakRoomCap)
@@ -3139,9 +3181,12 @@ Item {
                 stepTalk(actor);
             else if (!actor.goal && actor.tx >= 0 && page.ticks % 8 === 0)
                 decide(actor, true);
-            else if (actor.plan === "rest" && page.now >= actor.until && actor.next < 0 && actor.path.length === 0)
-                restless(actor);
-            else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
+            else if (actor.plan === "rest" && actor.goal?.seat && actor.tx === actor.goal.x && actor.ty === actor.goal.y && actor.next < 0 && actor.path.length === 0) {
+                if (actor.until === Infinity)
+                    actor.until = page.now + between(page.rng, 15000, 45000);
+                else if (page.now >= actor.until)
+                    restless(actor);
+            } else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity) {
                     actor.until = page.now + actor.stay;
                 } else if (page.now >= actor.until) {
