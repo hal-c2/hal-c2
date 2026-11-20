@@ -290,7 +290,7 @@ Feature: Attaching images and files to a message
   @backlog @desktop
   # Upstream #21356: a message whose context ran past 120,000 characters lost the paths of its
   # attachments, so the agent never learned about the files.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A very long message still tells the agent where each attachment was saved
     Given the draft holds 119,000 characters of text and four attached files
     When the user sends it
