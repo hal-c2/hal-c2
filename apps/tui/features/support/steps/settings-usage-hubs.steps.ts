@@ -312,10 +312,12 @@ function spendInFake(ctx: SettingsWorld): void {
     const credits = limits.resetCredits as { availableCount: number } | undefined;
     if (credits) limits.resetCredits = { ...credits, availableCount: 0 };
   };
-  for (const provider of server.usageLimits.providers as Array<Record<string, unknown>>) {
+  for (const provider of server.usageLimits.providers as unknown as Array<
+    Record<string, unknown>
+  >) {
     if (provider.usageLimits) clear(provider.usageLimits as Record<string, unknown>);
   }
-  for (const source of server.usageLimits.sources as Array<Record<string, unknown>>) {
+  for (const source of server.usageLimits.sources as unknown as Array<Record<string, unknown>>) {
     for (const account of (source.accounts ?? []) as Array<Record<string, unknown>>) {
       if (account.usageLimits) clear(account.usageLimits as Record<string, unknown>);
     }
