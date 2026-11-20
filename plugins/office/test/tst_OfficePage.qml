@@ -1141,6 +1141,75 @@ Item {
             runUntil(() => !a.talk, 200, "the talk ends");
         }
 
+        // A listener spoken to where it was headed keeps that tile for the
+        // talk, even when it is sent elsewhere meanwhile.
+        function test_a_listener_sent_elsewhere_keeps_its_tile_for_the_talk() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "working", "typing")]);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")]);
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C gets to the break room");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const here = c.ty * page.world.cols + c.tx;
+            compare(c.claim, here, "C listens where it was headed");
+            compare(c.hold, here, "and holds that tile for the talk");
+            // C's agent gets to work: it is sent back to its desk.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "working", "typing")]);
+            page.decide(c, true);
+            verify(c.claim !== here, "C is headed for its desk");
+            while (a.talk) {
+                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare([c.tx, c.ty], [here % page.world.cols, Math.floor(here / page.world.cols)], "C stays put");
+                page.advance(1);
+            }
+            compare(page.claims[here], undefined, "C lets go of it after the talk");
+            runUntil(() => arrived(c) && c.goal.kind === "desk", 2000, "C goes back to its desk");
+        }
+
+        // Two people with something to say to the same one take turns: the
+        // second waits until the first is done.
+        function test_two_speakers_take_turns_with_one_listener() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "working", "typing")]);
+            const a = actor("lead"), d = actor("d"), c = actor("c");
+            const say = (from, id) => ({
+                        id: id,
+                        from: from,
+                        to: "c",
+                        kind: "message",
+                        text: "From " + from,
+                        at: new Date().toISOString()
+                    });
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "waiting")], [say("lead", "talk-1")]);
+            runUntil(() => a.talk?.phase === "say", 2000, "the lead starts");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "waiting")], [say("lead", "talk-1"), say("d", "talk-2")]);
+            let here = c.ty * page.world.cols + c.tx, turns = 0, last = "";
+            for (let t = 0; t < 3000 && turns < 2; t++) {
+                page.advance(1);
+                const talking = [a, d].filter(p => p.talk?.to === "c");
+                verify(talking.length <= 1, "one talks to C at a time");
+                const now = talking[0];
+                if (now && now.talk.phase !== "go") {
+                    if (now.id !== last) {
+                        last = now.id;
+                        turns++;
+                        here = c.ty * page.world.cols + c.tx;
+                    }
+                    compare(page.claims[here], "c", "C keeps its tile while " + now.id + " talks");
+                }
+            }
+            compare(turns, 2, "both get their say");
+            compare(last, "d", "D goes second");
+        }
+
         // A speaker that finds every side of its listener taken keeps the spot
         // it had, rather than stop somewhere nobody holds for it.
         function test_a_speaker_with_no_side_free_keeps_its_spot() {
