@@ -314,11 +314,12 @@ defmodule HalC2.Orchestration.Settlement do
             |> Enum.reduce(&if(terminal_at(&1) > terminal_at(&2), do: &1, else: &2))
             |> Map.get("snapshot")
 
+      # A thread nobody wrote in is as quiet as it has been since it was made.
       activity =
         latest(
           ~w(latestUserMessageAt latestRunRequestedAt latestRunStartedAt latestRunCompletedAt),
           row
-        )
+        ) || epoch_ms(row["createdAt"])
 
       cond do
         not candidate?(row, now) ->
