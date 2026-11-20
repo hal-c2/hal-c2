@@ -278,6 +278,24 @@ defmodule HalC2.SubprocessDurableTest do
     end
   end
 
+  # The shim's own shell variables must not overwrite what the caller exports; these
+  # are names it once used.
+  test "the program keeps the caller's variables whatever the shim names its own" do
+    {:ok, sub} =
+      Subprocess.start(["sh", "-c", ~S'echo "$dir $err $look"; sleep 30'],
+        durable: "t1",
+        env: [{"dir", "a"}, {"err", "b"}, {"look", "c"}]
+      )
+
+    %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+
+    on_exit(fn ->
+      System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
+    end)
+
+    assert {["a b c"], _} = lines(sub, 1)
+  end
+
   defp await_gone(_pid, 0), do: false
 
   defp await_gone(pid, tries) do
