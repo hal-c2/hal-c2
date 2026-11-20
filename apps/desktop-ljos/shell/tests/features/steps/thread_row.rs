@@ -106,6 +106,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.connect()?;
             world.sync()?;
+            let mut first_notice = None;
             for title in ["Legacy work", "Older legacy work"] {
                 let id = format!("t-{}", title.to_lowercase().replace(' ', "-"));
                 let row = json!({"id": id, "title": title, "projectId": "legacy",
@@ -113,8 +114,42 @@ pub fn register(steps: &mut Steps) {
                        "createdAt": "2026-09-01T09:00:00Z", "updatedAt": "2026-09-01T09:00:00Z"});
                 world.mc.threads.insert(id.clone(), row.clone());
                 world.mc.send_row(&id, &row);
+                world.sync()?;
+                if first_notice.is_none() {
+                    // The notice exists after the first row; the second recounts it.
+                    world.wait_for_with(
+                        |w| toasts(w).len() == 1,
+                        |w| {
+                            format!(
+                                "the one-thread notice; the shell shows {}",
+                                show(&w.state("toasts"))
+                            )
+                        },
+                    )?;
+                    let told = toasts(world);
+                    expect!(
+                        text(&told[0]["description"]).starts_with("1 thread "),
+                        "the shell shows {}",
+                        show(&world.state("toasts"))
+                    );
+                    first_notice = Some(text(&told[0]["id"]));
+                }
             }
-            world.sync()
+            let first_notice = first_notice.unwrap_or_default();
+            world.wait_for_with(
+                |w| {
+                    toasts(w).first().is_some_and(|t| {
+                        text(&t["id"]) == first_notice
+                            && text(&t["description"]).starts_with("2 threads")
+                    })
+                },
+                |w| {
+                    format!(
+                        "the same notice recounted to two; the shell shows {}",
+                        show(&w.state("toasts"))
+                    )
+                },
+            )
         },
     );
     steps.step(

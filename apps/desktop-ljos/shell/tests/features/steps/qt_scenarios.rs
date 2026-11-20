@@ -288,7 +288,10 @@ pub fn register(steps: &mut Steps) {
         let list = brick.item(world, "list")?;
         let expected = expected.to_owned();
         world.wait_for_with(
-            move |w| brick.text_of(w, list, "cursorKey") == expected,
+            move |w| {
+                brick.flag(w, list, "activeFocus")
+                    && brick.text_of(w, list, "cursorKey") == expected
+            },
             move |w| {
                 format!(
                     "{what}; the cursor is on {}",
@@ -373,16 +376,36 @@ pub fn register(steps: &mut Steps) {
             })
         })
     });
+    // The menu has no thread field, so the thread binding is its position: the menu is requested at
+    // the centre of the focused row, which "the thread list has keyboard focus on" records first.
+    fn menu_beside(menu: &serde_json::Value, (x, y): (f64, f64)) -> bool {
+        let (mx, my) = (
+            menu["x"].as_f64().unwrap_or(f64::NAN),
+            menu["y"].as_f64().unwrap_or(f64::NAN),
+        );
+        menu.is_object()
+            && !menu["items"].as_array().is_none_or(Vec::is_empty)
+            && (mx - x).abs() < 1.0
+            && (my - y).abs() < 1.0
+    }
+    fn row_centre(world: &mut World, title: &str) -> Outcome<(f64, f64)> {
+        let centre = world.part::<Scenario>().row_centre;
+        expect!(
+            centre != (0.0, 0.0),
+            "no row centre recorded for {title}; focus its row first"
+        );
+        Ok(centre)
+    }
     steps.step(&format!("the menu for {Q} opens"), |world, c, _| {
+        let centre = row_centre(world, &c[0])?;
         world.wait_for_with(
-            |w| {
-                let menu = w.state("menu");
-                menu.is_object() && !menu["items"].as_array().is_none_or(Vec::is_empty)
-            },
+            |w| menu_beside(&w.state("menu"), centre),
             |w| {
                 format!(
-                    "a menu for {}; the shell shows {}",
+                    "a menu for {} beside its row at {}, {}; the shell shows {}",
                     c[0],
+                    centre.0,
+                    centre.1,
                     show(&w.state("menu"))
                 )
             },
@@ -397,15 +420,15 @@ pub fn register(steps: &mut Steps) {
                 "no menu opened for {}",
                 c[0]
             );
-            let (x, y) = world.part::<Scenario>().row_centre;
-            let (mx, my) = (
-                menu["x"].as_f64().unwrap_or(f64::NAN),
-                menu["y"].as_f64().unwrap_or(f64::NAN),
-            );
+            let centre = row_centre(world, &c[0])?;
             expect!(
-                (mx - x).abs() < 1.0 && (my - y).abs() < 1.0,
-                "the menu is at {mx}, {my}, not beside {} at {x}, {y}",
-                c[0]
+                menu_beside(&menu, centre),
+                "the menu is at {}, {}, not beside {} at {}, {}",
+                menu["x"],
+                menu["y"],
+                c[0],
+                centre.0,
+                centre.1
             );
             Ok(())
         },

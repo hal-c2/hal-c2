@@ -307,7 +307,7 @@ const Steps steps([] {
   const auto focusedIs = [](World& world, const QString& expected, const QString& what) {
     Brick& brick = shown(world);
     QQuickItem* list = brick.item(QStringLiteral("list"));
-    world.waitFor([&] { return list->property("cursorKey").toString() == expected; },
+    world.waitFor([&] { return list->hasActiveFocus() && list->property("cursorKey").toString() == expected; },
                   [&] { return QStringLiteral("%1; the cursor is on %2").arg(what, list->property("cursorKey").toString()); });
   };
   step(QStringLiteral("the next row is focused"), [focusedIs](World& world, const Captures&, const Table&) {
@@ -357,23 +357,32 @@ const Steps steps([] {
         },
         QStringLiteral("the settled section to collapse"));
   });
-  step(QStringLiteral("the menu for %1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor(
-        [&] {
-          const QVariant menu = world.state(QStringLiteral("menu"));
-          return menu.typeId() == QMetaType::QVariantMap && !at(menu, QStringLiteral("items")).toList().isEmpty();
-        },
-        [&] { return QStringLiteral("a menu for %1; the shell shows %2").arg(c[0], show(world.state(QStringLiteral("menu")))); });
+  // The menu has no thread field, so the thread binding is its position: the menu is requested at
+  // the centre of the focused row, which "the thread list has keyboard focus on" records first.
+  const auto menuBesideRow = [](World& world, const QString& title) {
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    if (menu.typeId() != QMetaType::QVariantMap || at(menu, QStringLiteral("items")).toList().isEmpty()) return false;
+    const QPoint centre = scenario(world).rowCentre;
+    if (centre.isNull()) fail(QStringLiteral("no row centre recorded for %1; focus its row first").arg(title));
+    const double mx = at(menu, QStringLiteral("x")).toDouble();
+    const double my = at(menu, QStringLiteral("y")).toDouble();
+    return std::abs(mx - centre.x()) < 1.0 && std::abs(my - centre.y()) < 1.0;
+  };
+  step(QStringLiteral("the menu for %1 opens").arg(q), [menuBesideRow](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return menuBesideRow(world, c[0]); },
+                  [&] { return QStringLiteral("a menu for %1; the shell shows %2").arg(c[0], show(world.state(QStringLiteral("menu")))); });
   });
-  step(QStringLiteral("the menu for %1 is requested beside that thread").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the menu for %1 is requested beside that thread").arg(q), [menuBesideRow](World& world, const Captures& c, const Table&) {
     const QVariant menu = world.state(QStringLiteral("menu"));
     expect(menu.typeId() == QMetaType::QVariantMap && !at(menu, QStringLiteral("items")).toList().isEmpty(),
            QStringLiteral("no menu opened for %1").arg(c[0]));
     const QPoint centre = scenario(world).rowCentre;
-    const double mx = at(menu, QStringLiteral("x")).toDouble();
-    const double my = at(menu, QStringLiteral("y")).toDouble();
-    expect(std::abs(mx - centre.x()) < 1.0 && std::abs(my - centre.y()) < 1.0,
-           QStringLiteral("the menu is at %1, %2, not beside %3 at %4, %5").arg(mx).arg(my).arg(c[0]).arg(centre.x()).arg(centre.y()));
+    expect(menuBesideRow(world, c[0]), QStringLiteral("the menu is at %1, %2, not beside %3 at %4, %5")
+                                           .arg(at(menu, QStringLiteral("x")).toDouble())
+                                           .arg(at(menu, QStringLiteral("y")).toDouble())
+                                           .arg(c[0])
+                                           .arg(centre.x())
+                                           .arg(centre.y()));
   });
   step(QStringLiteral("the thread %1 can be settled").arg(q), [](World& world, const Captures& c, const Table&) {
     threadTitled(world, c[0], {});

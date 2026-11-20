@@ -322,8 +322,12 @@ const Steps steps([] {
              row.insert(QStringLiteral("activeRunId"), QStringLiteral("r1"));
              row.insert(QStringLiteral("pendingRuntimeRequest"),
                         request(c[0].endsWith(QLatin1String("question")) ? QStringLiteral("user_input") : QStringLiteral("command_approval"), now));
-           } else if (c[0] == QLatin1String("the agent run fails") || c[0] == QLatin1String("a run that started after the snooze fails")) {
+           } else if (c[0] == QLatin1String("the agent run fails")) {
              setRun(row, QStringLiteral("failed"), now);
+           } else if (c[0] == QLatin1String("a run that started after the snooze fails")) {
+             // The snooze was set 60 s ago; this run began after it.
+             setRun(row, QStringLiteral("failed"), now);
+             row.insert(QStringLiteral("latestRunStartedAt"), iso(now.addSecs(-30)));
            } else {
              setRun(row, QStringLiteral("completed"), now);
              row.insert(QStringLiteral("latestRunCompletedAt"), iso(now));

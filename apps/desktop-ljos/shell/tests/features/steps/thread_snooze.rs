@@ -465,8 +465,12 @@ pub fn register(steps: &mut Steps) {
                     row.insert("activeRunId".into(), json!("r1"));
                     let kind = if what.ends_with("question") { "user_input" } else { "command_approval" };
                     row.insert("pendingRuntimeRequest".into(), request(kind, now));
-                } else if what == "the agent run fails" || what == "a run that started after the snooze fails" {
+                } else if what == "the agent run fails" {
                     set_run(row, "failed", now);
+                } else if what == "a run that started after the snooze fails" {
+                    // The snooze was set 60 s ago; this run began after it.
+                    set_run(row, "failed", now);
+                    row.insert("latestRunStartedAt".into(), json!(iso(now - Duration::seconds(30))));
                 } else {
                     set_run(row, "completed", now);
                     row.insert("latestRunCompletedAt".into(), json!(iso(now)));
