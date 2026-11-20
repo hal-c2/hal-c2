@@ -1339,26 +1339,52 @@ Item {
         }
 
         // Someone resting at its desk that a resize leaves where it sits
-        // rests on to the same moment, so resizing never puts a break off.
+        // rests on to the same moment, so resizing never puts a break off;
+        // one it moves rests 15 to 45 seconds from when it sits again.
         function test_a_resize_keeps_the_rest_of_someone_still_at_its_desk() {
-            const people = many(8, "t", "waiting");
+            // Sixteen fill the first two pods. Going from three pods to a row
+            // to two keeps the first pod where it is and moves the second
+            // down a row.
+            const people = many(16, "t", "waiting");
             plugin.publish(people);
             for (const p of people)
                 actor(p.id).restless = 0;
             runUntil(() => people.every(p => arrived(actor(p.id)) && actor(p.id).until !== Infinity), 1500, "everyone sits and rests");
+            compare(page.world.across, 3);
             const before = {};
             for (const p of people)
                 before[p.id] = [actor(p.id).tx, actor(p.id).ty, actor(p.id).until];
-            compare(page.world.across, 3);
+            const stay = people.filter(p => page.world.seatOf[p.id].pod === 0);
+            const move = people.filter(p => page.world.seatOf[p.id].pod === 1);
+            compare([stay.length, move.length], [8, 8], "eight sit in each of the first two pods");
             resize(700, 1000);
             compare(page.world.across, 2, "the office takes two pods to a row");
-            const still = people.filter(p => {
-                const a = actor(p.id);
-                return arrived(a) && a.tx === before[p.id][0] && a.ty === before[p.id][1];
-            });
-            verify(still.length > 0, "someone still sits where it sat");
-            for (const p of still)
-                compare(actor(p.id).until, before[p.id][2], p.id + " rests on to the same moment");
+            for (const p of stay) {
+                const a = actor(p.id), seat = page.world.seatOf[p.id];
+                compare([seat.x, seat.y, a.tx, a.ty], before[p.id].slice(0, 2).concat(before[p.id].slice(0, 2)), p.id + " keeps its desk and sits at it");
+                verify(arrived(a), p.id + " still sits");
+                compare(a.until, before[p.id][2], p.id + " rests on to the same moment");
+            }
+            const sat = {};
+            for (const p of move) {
+                const seat = page.world.seatOf[p.id];
+                verify(seat.x !== before[p.id][0] || seat.y !== before[p.id][1], p.id + " has a desk somewhere else");
+                compare(actor(p.id).until, Infinity, p.id + " rests only once it sits again");
+            }
+            // Each that moves rests 15 to 45 seconds from the tick it sits.
+            runUntil(() => {
+                for (const p of move) {
+                    const a = actor(p.id);
+                    if (sat[p.id] || a.until === Infinity)
+                        continue;
+                    verify(arrived(a) && a.tx === page.world.seatOf[p.id].x && a.ty === page.world.seatOf[p.id].y, p.id + " rests only at its new desk");
+                    verify(a.until - page.now >= 15000 && a.until - page.now <= 45000, p.id + " rests 15 to 45 seconds, not " + (a.until - page.now));
+                    sat[p.id] = true;
+                }
+                for (const p of stay)
+                    compare(actor(p.id).until, before[p.id][2], p.id + " rests on to the same moment");
+                return move.every(p => sat[p.id]);
+            }, 1500, "everyone who moves sits again");
         }
 
         // A resize that keeps the office's grid still works out again how

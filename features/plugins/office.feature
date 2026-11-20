@@ -400,9 +400,10 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone resting at its desk through a resize takes its break as planned
-      Given the office has 8 threads waiting, each sitting at its desk until its next break
+      Given the office has 16 threads waiting, each sitting at its desk until its next break
       When the page is resized to a grid with fewer pods to a row
       Then whoever still sits at its desk waits for the same next break as before
+      And whoever has a desk somewhere else waits 15 to 45 seconds from when it sits there
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone stepping through the door when the office is resized walks on
