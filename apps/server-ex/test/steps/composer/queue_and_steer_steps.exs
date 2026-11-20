@@ -89,9 +89,10 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
     context
   end
 
+  # Notes the turn running now, for "the running turn keeps working".
   step "the provider rejects the steer", context do
     File.write!(Path.join(context.mc.home, "reject-steer"), "")
-    context
+    Map.put(context, :working_run, running_run(context)["id"])
   end
 
   step "the user tries to steer the running turn with {string}", %{args: [text]} = context do
