@@ -187,8 +187,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   so the next review downloads only what is new. Nothing is written to the clone's
   config, which every review of the repository shares: the submodules are made active
   and cloned from the head's `.gitmodules` for this command alone, each at its pinned
-  commit whatever update strategy it names, and over a checked certificate whatever the
-  MC's environment configures. Only HTTP(S) and SSH
+  commit whatever update strategy it names and in full whatever `shallow` says, over a
+  checked certificate whatever the MC's environment configures. Only HTTP(S) and SSH
   are used, so a `.gitmodules` cannot point git at a local path, run a command through
   `ext::` or reach a `git://` server, which nothing times out. A transfer that stalls is
   dropped (HTTP under 1 KB/s for a minute, SSH that stops answering), and the whole
@@ -217,6 +217,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                 # A `.gitmodules` entry's `update = none` (or another strategy) is
                 # not followed: every submodule gets the commit the head pins.
                 "--checkout",
+                # A `shallow = true` entry is not followed either: the store a shallow
+                # clone feeds turns shallow, and git refuses a shallow `--reference`.
+                "--no-recommend-shallow",
                 "--recursive",
                 "--reference",
                 store

@@ -603,6 +603,32 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  test "a submodule its .gitmodules says to clone shallow reaches the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    lib = repo!(context.dir, "lib", "lib.txt")
+    # A parent behind the pinned commit, which a depth-1 clone would leave out.
+    File.write!(Path.join(lib.seed, "lib.txt"), "pinned\n")
+    git!(lib.seed, ["commit", "-qam", "Pinned"])
+    git!(lib.seed, ["push", "-q", lib.bare, "HEAD:main"])
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib, "\tshallow = true\n"}])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    for path <- [first, second] do
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert :ok = apply(checkout, :submodules, [clone, path, remote])
+      assert File.read!(Path.join(path, "lib/lib.txt")) == "pinned\n"
+    end
+
+    counts = git!(Path.join(second, "lib"), ["count-objects", "-v"])
+    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a submodule over git:// is not fetched, as nothing times it out", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     pull!(context, 3, [{"lib", "git://example.invalid/lib.git", context.shas[1]}])
