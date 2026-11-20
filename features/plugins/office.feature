@@ -332,6 +332,14 @@ Feature: Office
       And nobody else is sent to the spot "Reviewer" listens on until it has replied
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People take part in one talk at a time
+      Given "Lead" and "Reviewer" each have a talk for the other at the same moment
+      Then one of the talks runs to its end before the other starts
+      And when "Coder" has a talk for "Reviewer" while "Lead" is talking to it
+      Then "Coder" waits until "Lead" has had its reply
+      And afterwards nobody keeps a spot for either talk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person whose agent asks something shows a question mark
       Given the office has a thread "Fix the parser" asking
       Then its person stands at its desk with a question mark over its head

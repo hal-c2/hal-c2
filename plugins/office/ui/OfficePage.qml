@@ -3018,8 +3018,16 @@ Item {
     // Starts the speaker's first talk whose listener is inside. One to someone
     // still outside the door waits its turn without holding up the rest.
     // A talk waits while its listener is outside, or listens to someone else.
+    // A person takes part in one talk at a time: someone being talked to
+    // starts no talk of its own, and nobody talks to someone already talking
+    // or being talked to. Two who talk to each other take turns.
     function startTalk(actor) {
-        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0) && !listening(page.actors[t.to], actor));
+        if (listening(actor))
+            return;
+        const next = actor.queue.findIndex(t => {
+            const other = page.actors[t.to];
+            return !(other?.tx < 0) && !other?.talk && !listening(other, actor);
+        });
         if (next < 0)
             return;
         const talk = actor.queue.splice(next, 1)[0];
@@ -3135,7 +3143,8 @@ Item {
         }
     }
 
-    // Whether someone other than the speaker is talking to this person.
+    // Whether someone other than `speaker` (anyone, without one) is talking to
+    // this person.
     function listening(actor, speaker) {
         const other = actor?.heldBy ? page.actors[actor.heldBy] : null;
         return !!other && other !== speaker && other.talk?.to === actor.id;
