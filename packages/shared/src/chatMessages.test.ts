@@ -15,6 +15,12 @@ describe("shouldCollapseUserMessage", () => {
     expect(shouldCollapseUserMessage("x".repeat(MAX_COLLAPSED_USER_MESSAGE_LENGTH + 1))).toBe(true);
   });
 
+  it("measures a message by what it shows, not its link destinations", () => {
+    const address = `https://example.com/${"a".repeat(680)}`;
+    expect(shouldCollapseUserMessage(`See [the rates page](${address}) for details.`)).toBe(false);
+    expect(shouldCollapseUserMessage(`[${"x".repeat(601)}](https://example.com)`)).toBe(true);
+  });
+
   it("collapses prompts beyond the web UI line limit", () => {
     expect(
       shouldCollapseUserMessage(

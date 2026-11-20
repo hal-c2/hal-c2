@@ -52,6 +52,7 @@ export const plainText = (text: StyledText): string => text.chunks.map((c) => c.
 // counts only where no letter or digit runs into it, so snake_case stays a word.
 const INLINE = new RegExp(
   [
+    /\\(?<esc>.)/u.source,
     /(?<ticks>`+)(?<code>[^`]|[^`][\s\S]*?[^`])\k<ticks>(?!`)/u.source,
     /\*\*(?<strong>[^*\n]+)\*\*|__(?<under>[^_\n]+)__/u.source,
     /~~(?<struck>[^~\n]+)~~/u.source,
@@ -92,12 +93,65 @@ function addressEnd(address: string): string {
  * address (nothing is fetched); a link that is not safe to open is just its
  * text. HTML is not Markdown here: it shows as it was written.
  */
+/** The named character references an agent's prose uses; numeric ones decode below. */
+const ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  nbsp: " ",
+  hellip: "…",
+  mdash: "—",
+  ndash: "–",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  laquo: "«",
+  raquo: "»",
+  deg: "°",
+  plusmn: "±",
+  times: "×",
+  divide: "÷",
+  middot: "·",
+  bull: "•",
+  dagger: "†",
+  sect: "§",
+  para: "¶",
+  euro: "€",
+  pound: "£",
+  yen: "¥",
+  cent: "¢",
+};
+
+/** Character references (`&amp;`, `&#169;`) shown as their characters, as Markdown reads them. */
+function decodeEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text.replace(
+    /&(?:#([0-9]+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*));/g,
+    (whole, decimal?: string, hex?: string, name?: string) => {
+      if (name !== undefined) return ENTITIES[name] ?? whole;
+      const code = decimal !== undefined ? Number(decimal) : Number.parseInt(hex!, 16);
+      return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+        ? String.fromCodePoint(code)
+        : whole;
+    },
+  );
+}
+
+const ESCAPABLE = `!"#$%&'()*+,-./:;<=>?@[\\]^_\`{|}~`;
+
 export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle = {}): TextChunk[] {
   const chunks: TextChunk[] = [];
   let last = 0;
-  const push = (value: string, style: ChunkStyle) => {
+  const pushRaw = (value: string, style: ChunkStyle) => {
     if (value.length > 0) chunks.push(chunk(value, { fg: palette.text, ...base, ...style }));
   };
+  const push = (value: string, style: ChunkStyle) => pushRaw(decodeEntities(value), style);
   const linked = (label: string, url: string) =>
     push(label, { fg: palette.accent, underline: true, link: url });
   for (const match of text.matchAll(INLINE)) {
@@ -105,7 +159,14 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
     const span = match.groups ?? {};
     push(text.slice(last, index), {});
     last = index + match[0].length;
-    if (span.code !== undefined) push(span.code, { fg: palette.warning });
+    if (span.esc !== undefined) {
+      // A backslash escapes punctuation (`\*` is a star), except inside a
+      // Windows path, where it is the path's own separator and stays.
+      const token = text.slice(0, index).split(/\s/).at(-1) ?? "";
+      const inPath = /^[A-Za-z]:\\/.test(token) || token.startsWith("\\\\");
+      if (ESCAPABLE.includes(span.esc) && !inPath) pushRaw(span.esc, {});
+      else pushRaw(`\\${span.esc}`, {});
+    } else if (span.code !== undefined) pushRaw(span.code, { fg: palette.warning });
     else if (span.strong !== undefined || span.under !== undefined) {
       push(span.strong ?? span.under!, { bold: true });
     } else if (span.struck !== undefined) push(span.struck, { strikethrough: true });

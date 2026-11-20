@@ -97,6 +97,33 @@ step(/^the turn completes after (\d+) minutes?$/, async (ctx: StreamWorld, minut
 
 step("the tool calls fold behind {string}", expectFolded);
 
+// A steer that lands before any output: the MC records it as a user_message
+// turn item with the steer intent, ahead of the turn's work.
+step("the user steered before the agent produced any output", async (ctx: StreamWorld) => {
+  await startRun(ctx);
+  const run = currentRun(ctx);
+  await addItem(ctx, "user_message", {
+    id: "steer-1",
+    messageId: `message:${run}`,
+    text: "Add tax to the cart",
+    inputIntent: "steer",
+  });
+  for (let n = 1; n <= 2; n += 1) await addCommand(ctx, n);
+  await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
+  // "the turn completes" finishes through a checkpoint of the changed files.
+  (ctx as { changedFiles?: string[] }).changedFiles = ["src/cart.ts"];
+});
+
+step("the turn's work folds behind one {string} row", async (ctx: StreamWorld, label: string) => {
+  const folds = itemsOf(ctx, "fold");
+  expect(folds).toHaveLength(1);
+  expect(plain(folds[0]!.lines[0]!.text)).toContain(label);
+  expect(itemsOf(ctx, "work")).toEqual([]);
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(label);
+  expect(screen).not.toContain("bun test cart-");
+});
+
 step("the answer stays visible", async (ctx: StreamWorld) => {
   expect(linesOf(messageItem(ctx, "answer"))).toContain(ANSWER);
   expect(await snapshot(ctx)).toContain(ANSWER);
@@ -167,14 +194,14 @@ step("its work folds behind {string}", async (ctx: StreamWorld, label: string) =
 });
 
 step("its work stays expanded so the user can see where it stopped", async (ctx: StreamWorld) => {
-  expect(foldRow(ctx)).toBe("▾ You stopped after 5.0s");
+  expect(foldRow(ctx)).toBe("▾ You stopped after 5s");
   // Its calls are open too, the stopped one among them.
   const group = linesOf(lastOf(ctx, "work"));
   expect(group[0]!.startsWith("▾ Ran 2 commands")).toBe(true);
   const stopped = group.find((line) => line.includes("bun test cart-2"));
   expect(stopped).toContain("Stopped");
   const screen = await snapshot(ctx);
-  expect(screen).toContain("▾ You stopped after 5.0s");
+  expect(screen).toContain("▾ You stopped after 5s");
   expect(screen).toContain("bun test cart-2");
 });
 
@@ -357,6 +384,25 @@ step(/^the user sent a message of (.+)$/, async (ctx: StreamWorld, kind: string)
   const fixture = await turns(ctx);
   fixture.messages[fixture.messages.length - 1]!.text = text;
 });
+
+// A 200-character message as the user reads it; its reference is shown by a
+// short label while what it points at is long.
+step(
+  /^the user sent a 200 character message holding (.+)$/,
+  async (ctx: StreamWorld, reference: string) => {
+    const held = reference.startsWith("a quote")
+      ? "[the earlier reply](hal-c2-context://v1/quote/q1)"
+      : `[the rates page](https://example.com/${"a".repeat(680)})`;
+    const label = /\[([^\]]*)\]/.exec(held)![1]!;
+    const before = "See ";
+    const after = " for details";
+    const pad = 200 - before.length - label.length - after.length;
+    const text = `${before}${held}${after}${" and the rest of the note".repeat(Math.ceil(pad / 25)).slice(0, pad)}`;
+    await startRun(ctx);
+    const fixture = await turns(ctx);
+    fixture.messages[fixture.messages.length - 1]!.text = text;
+  },
+);
 
 step("the user looks at it in the conversation", async (ctx: StreamWorld) => {
   await sync(ctx);

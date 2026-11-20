@@ -266,6 +266,29 @@ describe("inlineMarkdown", () => {
     ]);
   });
 
+  it("shows character references as their characters, but not in code", () => {
+    expect(spans("Tom &amp; Jerry &copy; 2026 &#8212; ok")).toEqual([
+      ["Tom & Jerry © 2026 — ok", 0, undefined],
+    ]);
+    expect(spans("`&amp;` &unknown;")).toEqual([
+      ["&amp;", 0, undefined],
+      [" &unknown;", 0, undefined],
+    ]);
+  });
+
+  it("reads a backslash as an escape outside Windows paths and as itself inside one", () => {
+    expect(
+      spans(String.raw`A \*literal\* star`)
+        .map(([text]) => text)
+        .join(""),
+    ).toBe("A *literal* star");
+    expect(
+      spans(String.raw`Open C:\a\_b and C:\Users\me`)
+        .map(([text]) => text)
+        .join(""),
+    ).toBe(String.raw`Open C:\a\_b and C:\Users\me`);
+  });
+
   it("keeps a balanced paren in a www address and leaves an unbalanced one out", () => {
     expect(spans("see www.example.com/a_(b) ok (www.example.com/c).")).toEqual([
       ["see ", 0, undefined],
