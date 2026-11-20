@@ -15,8 +15,8 @@ defmodule HalC2Plugins.CliProxyApi.Instances do
   again only when what it owns changes (the port, the key, the address); an edit the
   user makes to the plugin's own fields stands until then. An instance the user
   deletes is `dismissed` in the plugin's ledger and not added again until the user
-  adds it back from the page. One missing as the plugin starts was taken out while
-  it was off (`HalC2.Plugins` does that), so it is added back.
+  adds it back from the page. One the MC took out while the plugin was off is listed
+  to it as released (`HalC2.Plugins.Host.provider_instances/3`), so it is added back.
 
   The ledger is `%{name => %{"state" => "created" | "dismissed", "digest" => hex}}`:
   the digest of what the plugin last put, never the key itself.
@@ -88,16 +88,17 @@ defmodule HalC2Plugins.CliProxyApi.Instances do
     * `:dismiss`: the user deleted it, record that and leave it deleted,
     * `:keep`: nothing.
 
-  `phase` is `:start` as the plugin starts and `:running` after.
+  `released?` is whether the MC took the instance out while the plugin was off, rather
+  than the user deleting it.
   """
-  def decide(entry, current, desired, phase) do
+  def decide(entry, current, desired, released?) do
     digest = digest(desired)
 
     case {entry, current} do
       {%{"state" => "dismissed"}, _} -> :keep
       {nil, nil} -> {:put, desired}
       {nil, current} -> {:put, merge(current, desired)}
-      {%{"state" => "created"}, nil} when phase == :start -> {:put, desired}
+      {%{"state" => "created"}, nil} when released? -> {:put, desired}
       {%{"state" => "created"}, nil} -> :dismiss
       {%{"digest" => ^digest}, _current} -> :keep
       {_entry, current} -> {:put, merge(current, desired)}

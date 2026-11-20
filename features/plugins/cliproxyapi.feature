@@ -56,6 +56,13 @@ Feature: CLIProxyAPI
       Then the proxy's process has ended
 
     @mc
+    Scenario: The plugin started again after a crash keeps the settings saved last
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the user sets the CLIProxyAPI port to 18557
+      And the plugin's server crashes
+      Then the agent of "plugin_cliproxyapi_claude" is sent to "http://127.0.0.1:18557"
+
+    @mc
     Scenario: A binary path that is not there says so, and runs nothing
       Given the CLIProxyAPI plugin is set to run "/nowhere/cli-proxy-api"
       When the user turns the CLIProxyAPI plugin on
@@ -102,6 +109,9 @@ Feature: CLIProxyAPI
 
   Rule: Connect uses a proxy the user runs, with its management key
 
+    The management key goes with every call, so Connect speaks http only to a proxy on
+    this machine; one elsewhere is reached over https, its certificate checked.
+
     @mc
     Scenario: Connect adds the plugin's client key to the proxy's and runs nothing
       Given the fake CLIProxyAPI lets agents in with the key "their-key"
@@ -129,6 +139,34 @@ Feature: CLIProxyAPI
       Then the page shows the proxy "connected"
       And the proxy lets agents in with "their-key" and the plugin's client key
       And the page shows no usage, saying "usage statistics are disabled"
+
+    @mc
+    Scenario: Connect over http to a proxy elsewhere is refused
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
+      Then the save is refused saying "use https for one elsewhere"
+
+    @mc
+    Scenario: Connect over http to a proxy elsewhere, saved while the plugin was off, is not used
+      Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
+      When the user turns the CLIProxyAPI plugin on
+      Then the page shows the proxy "failed" saying "use https for one elsewhere"
+
+    @mc
+    Scenario: A client key the proxy did not take is added again on the next drain
+      Given the fake CLIProxyAPI lets agents in with the key "their-key"
+      And the fake CLIProxyAPI answers the next "PUT /config/access/api-keys" with 500 saying "config is read-only"
+      When the user connects the CLIProxyAPI plugin to it with the management key "their-secret"
+      Then the proxy lets agents in only with "their-key"
+      When the page refreshes
+      Then the proxy lets agents in with "their-key" and the plugin's client key
+
+    @mc
+    Scenario: A management key refused part way through a drain is not sent again
+      Given the fake CLIProxyAPI answers the next "GET /observability/logs" with 401 saying "invalid management key"
+      When the user connects the CLIProxyAPI plugin to it with the management key "their-secret"
+      Then the page shows the proxy "blocked" saying "invalid management key"
+      And the proxy was asked nothing after "GET /observability/logs"
 
   Rule: Accounts sign in through the proxy, from any device, by pasting the address the browser ends on
 
@@ -161,6 +199,21 @@ Feature: CLIProxyAPI
       And the user cancels the sign-in from the page
       Then no sign-in is waiting
       And the proxy was told to forget the sign-in
+
+    @mc
+    Scenario: A sign-in waiting on the proxy is dropped when the proxy moves
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the user signs in to "claude" from the page
+      And the user sets the CLIProxyAPI port to 18558
+      Then no sign-in is waiting
+
+    @mc
+    Scenario: A sign-in address that is not a web address is not given to the page
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the fake CLIProxyAPI hands out the sign-in address "javascript:alert(1)"
+      When the user tries to sign in to "claude" from the page
+      Then the page's call fails saying "not http or https"
+      And no sign-in is waiting
 
     @mc
     Scenario: An account can be switched off and removed
@@ -205,6 +258,31 @@ Feature: CLIProxyAPI
       And the fake CLIProxyAPI refuses API keys saying "claude-api-key[0]: unsupported field"
       When the user adds the "claude" API key "sk-ant-abcdefghijklmnop"
       Then the page's call fails saying "claude-api-key[0]: unsupported field"
+
+    @mc
+    Scenario: Removing a key removes that key, though another was added on the proxy since
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the user adds the "claude" API key "sk-ant-abcdefghijklmnop" with the base URL "https://api.example.com"
+      And the "claude" key "sk-ant-zyxwvutsrqpo" was added first on the proxy since
+      When the user removes the "claude" key "sk-a…mnop"
+      Then the proxy holds only the "claude" key "sk-ant-zyxwvutsrqpo"
+
+    @mc
+    Scenario: A key list the proxy failed to give is not taken for none
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the user adds the "claude" API key "sk-ant-abcdefghijklmnop" with the base URL "https://api.example.com"
+      And the fake CLIProxyAPI answers the next "GET /config/api-keys/claude" with 500 saying "config is being written"
+      When the user adds the "claude" API key "sk-ant-zyxwvutsrqpo"
+      Then the page's call fails saying "config is being written"
+      And the proxy holds only the "claude" key "sk-ant-abcdefghijklmnop"
+
+    @mc
+    Scenario: A key added is kept for the proxy's next start, though the proxy did not list it
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the user adds the "claude" API key "sk-ant-abcdefghijklmnop" with the base URL "https://api.example.com"
+      And the fake CLIProxyAPI answers the next "GET /config/api-keys" with 500 saying "busy"
+      When the user sets the CLIProxyAPI port to 18559
+      Then the proxy starts with the "claude" key "sk-ant-abcdefghijklmnop"
 
   Rule: The page shows the proxy's log
 
@@ -264,6 +342,15 @@ Feature: CLIProxyAPI
       And Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
       When the user adds "Codex via CLIProxyAPI" back from the page
       Then Settings → Providers has "plugin_cliproxyapi_codex" named "Codex via CLIProxyAPI"
+
+    @mc
+    Scenario: An instance the user deleted while the plugin was down stays deleted
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the plugin's server is busy
+      When the user deletes "plugin_cliproxyapi_codex" in Settings → Providers
+      And the plugin's server crashes
+      Then the page shows "Codex via CLIProxyAPI" as removed
+      And Settings → Providers has no "plugin_cliproxyapi_codex"
 
     @mc
     Scenario: An instance of the user's under the plugin's id stays theirs, and the page says why

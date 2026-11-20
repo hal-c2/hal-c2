@@ -4,7 +4,8 @@ defmodule HalC2Plugins.CliProxyApi do
   keeps "Claude via CLIProxyAPI" and "Codex via CLIProxyAPI" in Settings → Providers
   pointed at it, and drains what its page shows into topics.
 
-  The plugin is a supervisor of two processes, `Proxy` (the Port) and this server.
+  The plugin is a supervisor of three processes: an Agent holding the settings saved
+  last, `Proxy` (the Port) and this server, which a crash restarts with those settings.
   This server reads the proxy's management API on one timer (`@drain_ms`): the usage
   queue (summed by `Usage`), new log lines, the accounts, a sign-in waiting on the
   user and, every few hours, whether a newer release is out. It publishes a topic
@@ -35,24 +36,27 @@ defmodule HalC2Plugins.CliProxyApi do
   @key_providers ~w(claude codex gemini)
   @sign_in_providers ~w(claude codex)
 
+  @settings Module.concat(__MODULE__, Settings)
+
   @impl HalC2.Plugins.Extension
   def start_link(settings) do
     Supervisor.start_link(
       [
+        %{id: @settings, start: {Agent, :start_link, [fn -> settings end, [name: @settings]]}},
         Proxy,
-        %{
-          id: __MODULE__,
-          start: {GenServer, :start_link, [__MODULE__, settings, [name: __MODULE__]]}
-        }
+        %{id: __MODULE__, start: {GenServer, :start_link, [__MODULE__, nil, [name: __MODULE__]]}}
       ],
       strategy: :rest_for_one
     )
   end
 
-  # The host calls this from its own server: hand the settings over and return.
+  # The host calls this from its own server: hand the settings over and return. The
+  # Agent keeps them for this server started again after a crash.
   @impl HalC2.Plugins.Extension
-  def settings_changed(_pid, settings, _old),
-    do: GenServer.cast(__MODULE__, {:settings, settings})
+  def settings_changed(_pid, settings, _old) do
+    Agent.update(@settings, fn _ -> settings end)
+    GenServer.cast(__MODULE__, {:settings, settings})
+  end
 
   @impl HalC2.Plugins.Extension
   def validate_settings(settings) do
@@ -69,6 +73,11 @@ defmodule HalC2Plugins.CliProxyApi do
       settings["mode"] == "connect" and not address?(url) ->
         {:error, "Connect needs the proxy's address, such as http://127.0.0.1:8317."}
 
+      # The management key crosses the wire with every call.
+      settings["mode"] == "connect" and not (https?(url) or loopback?(url)) ->
+        {:error,
+         "Connect over http only to a proxy on this machine (127.0.0.1, localhost); use https for one elsewhere."}
+
       settings["mode"] == "connect" and String.trim(settings["managementKey"] || "") == "" ->
         {:error, "Connect needs the proxy's management key."}
 
@@ -82,12 +91,12 @@ defmodule HalC2Plugins.CliProxyApi do
     do: GenServer.call(__MODULE__, {:call, method, input || %{}}, 30_000)
 
   @impl GenServer
-  def init(settings) do
+  def init(nil) do
     Process.flag(:trap_exit, true)
     dir = Host.data_dir(@id)
 
     state = %{
-      settings: settings,
+      settings: Agent.get(@settings, & &1),
       dir: dir,
       management: secret(dir, "management.key", ""),
       client: secret(dir, "client.key", "hal-c2-"),
@@ -95,7 +104,6 @@ defmodule HalC2Plugins.CliProxyApi do
       usage: Usage.load(read_json(dir, "usage.json", [])),
       # Why the proxy gives no usage, when it refuses its usage queue.
       usage_note: nil,
-      phase: :start,
       spec: nil,
       proxy: %{"state" => "stopped", "pid" => nil, "restarts" => 0, "lines" => []},
       binary: nil,
@@ -104,6 +112,10 @@ defmodule HalC2Plugins.CliProxyApi do
       failure: nil,
       answering: false,
       unreachable: nil,
+      # Connect: whether the proxy holds the plugin's client key yet (`allow_client/1`).
+      allowed: false,
+      # Connect: why its saved settings are not used (`validate_settings/1`).
+      invalid: nil,
       blocked: nil,
       error: nil,
       # Per instance name, why the host refused to put it: the user has an instance
@@ -117,7 +129,9 @@ defmodule HalC2Plugins.CliProxyApi do
       logs: [],
       cursor: nil,
       published: %{},
-      timer: nil
+      timer: nil,
+      # The drain the timer is for: one cancelled after it fired is dropped.
+      drain: nil
     }
 
     HalC2.Settings.watch(self())
@@ -125,10 +139,14 @@ defmodule HalC2Plugins.CliProxyApi do
     {:ok, state}
   end
 
-  # Applied at once, so the page's next call sees the new settings.
+  # Applied at once, so the page's next call sees the new settings. A sign-in started on
+  # another proxy, or with another key, is that proxy's.
   @impl GenServer
-  def handle_cast({:settings, settings}, state),
-    do: {:noreply, apply_now(%{state | settings: settings, blocked: nil, failure: nil})}
+  def handle_cast({:settings, settings}, state) do
+    next = %{state | settings: settings, blocked: nil, failure: nil}
+    next = if conn(next) == conn(state), do: next, else: %{next | sign_in: nil}
+    {:noreply, apply_now(next)}
+  end
 
   @impl GenServer
   def handle_call({:call, method, input}, _from, state) do
@@ -141,8 +159,10 @@ defmodule HalC2Plugins.CliProxyApi do
   @impl GenServer
   def handle_info(:apply, state), do: {:noreply, apply_now(state)}
 
-  def handle_info(:drain, state),
-    do: {:noreply, %{state | timer: nil} |> drain() |> schedule() |> publish()}
+  def handle_info({:drain, token}, %{drain: token} = state),
+    do: {:noreply, %{state | timer: nil, drain: nil} |> drain() |> schedule() |> publish()}
+
+  def handle_info({:drain, _stale}, state), do: {:noreply, state}
 
   # A proxy that just started is asked soon rather than at the next drain.
   def handle_info({:cliproxyapi_proxy, proxy}, state) do
@@ -150,10 +170,8 @@ defmodule HalC2Plugins.CliProxyApi do
     {:noreply, state |> soon() |> publish()}
   end
 
-  # Only once it has put its instances: before that a missing one is one taken out
-  # while the plugin was off, not one the user deleted.
-  def handle_info({:hal_c2_settings, _mc, _settings}, %{phase: :running} = state),
-    do: {:noreply, state |> sync(:running) |> publish()}
+  def handle_info({:hal_c2_settings, _mc, _settings}, state),
+    do: {:noreply, state |> sync() |> publish()}
 
   def handle_info({ref, result}, %{download: ref} = state) do
     Process.demonitor(ref, [:flush])
@@ -176,8 +194,7 @@ defmodule HalC2Plugins.CliProxyApi do
   def handle_info(_message, state), do: {:noreply, state}
 
   defp apply_now(state) do
-    state = state |> apply_settings() |> sync(state.phase) |> Map.put(:phase, :running)
-    state |> drain() |> schedule() |> publish()
+    state |> apply_settings() |> sync() |> drain() |> schedule() |> publish()
   end
 
   # --- calls from the page ---
@@ -197,7 +214,7 @@ defmodule HalC2Plugins.CliProxyApi do
   defp handle("addInstance", %{"name" => name}, state) do
     if name in Instances.names() do
       # Written before the put: one the host refuses must not come back dismissed.
-      state = %{state | ledger: Map.delete(state.ledger, name)} |> save_ledger() |> sync(:running)
+      state = %{state | ledger: Map.delete(state.ledger, name)} |> save_ledger() |> sync()
       {:ok, view(state), state}
     else
       {:error, "#{inspect(name)} is not one of the plugin's instances.", state}
@@ -206,8 +223,9 @@ defmodule HalC2Plugins.CliProxyApi do
 
   defp handle("signIn", %{"provider" => provider}, state) when provider in @sign_in_providers do
     with {:ok, conn} <- usable(state),
-         {:ok, %{"url" => url, "state" => key}, _} <-
-           api(state, Api.get(conn, "/oauth/auth-url", provider: provider)) do
+         {:ok, %{"url" => url, "state" => key}, _} when is_binary(url) <-
+           api(state, Api.get(conn, "/oauth/auth-url", provider: provider)),
+         true <- address?(url) || :not_web do
       sign_in = %{
         "provider" => provider,
         "state" => key,
@@ -218,8 +236,14 @@ defmodule HalC2Plugins.CliProxyApi do
 
       {:ok, %{"url" => url}, %{state | sign_in: sign_in}}
     else
-      {:ok, body, _} -> {:error, "The proxy did not start a sign-in: #{inspect(body)}", state}
-      {:error, message, state} -> {:error, message, state}
+      :not_web ->
+        {:error, "The proxy returned a sign-in address that is not http or https.", state}
+
+      {:ok, body, _} ->
+        {:error, "The proxy did not start a sign-in: #{inspect(body)}", state}
+
+      {:error, message, state} ->
+        {:error, message, state}
     end
   end
 
@@ -293,17 +317,12 @@ defmodule HalC2Plugins.CliProxyApi do
     end
   end
 
-  defp handle("removeKey", %{"provider" => provider, "index" => index, "keys" => masked}, state)
-       when provider in @key_providers and is_integer(index) do
+  defp handle("removeKey", %{"provider" => provider, "id" => id}, state)
+       when provider in @key_providers and is_binary(id) do
     edit_keys(state, provider, fn groups ->
-      case Enum.at(groups, index) do
-        %{} = group ->
-          if mask_group(group)["keys"] == masked,
-            do: List.delete_at(groups, index),
-            else: :changed
-
-        nil ->
-          :changed
+      case Enum.find_index(groups, &(is_map(&1) and group_id(state, &1) == id)) do
+        nil -> :changed
+        index -> List.delete_at(groups, index)
       end
     end)
   end
@@ -325,8 +344,26 @@ defmodule HalC2Plugins.CliProxyApi do
       "connect" ->
         if state.spec, do: Proxy.halt()
         stopped = %{state.proxy | "state" => "stopped", "pid" => nil}
-        # The first answer of the proxy adds the client key to it (`allow_client/1`).
-        %{state | spec: nil, binary: nil, source: nil, proxy: stopped, answering: false}
+
+        # The host checks a save only while the plugin runs: settings saved while it was
+        # off are checked here, so the key is never sent where they would send it.
+        invalid =
+          case validate_settings(state.settings) do
+            :ok -> nil
+            {:error, message} -> message
+          end
+
+        # Each drain adds the client key to the proxy until it holds it (`allow_client/1`).
+        %{
+          state
+          | spec: nil,
+            binary: nil,
+            source: nil,
+            proxy: stopped,
+            answering: false,
+            allowed: false,
+            invalid: invalid
+        }
 
       "run" ->
         run(state)
@@ -425,10 +462,12 @@ defmodule HalC2Plugins.CliProxyApi do
   defp snapshot_keys(state), do: state
 
   # In Connect the proxy is someone else's: the plugin's client key is added to its
-  # access keys once, without touching the others.
-  defp allow_client(%{blocked: blocked} = state) when blocked != nil, do: state
+  # access keys, without touching the others, and tried again each drain until it is.
+  defp allow_client(state, tries \\ 2)
 
-  defp allow_client(state, tries \\ 2) do
+  defp allow_client(%{allowed: true} = state, _tries), do: state
+
+  defp allow_client(state, tries) do
     conn = conn(state)
 
     result =
@@ -442,18 +481,16 @@ defmodule HalC2Plugins.CliProxyApi do
       end
 
     case result do
-      {:ok, _, _} -> %{state | unreachable: nil, error: nil}
+      {:ok, _, _} -> %{state | allowed: true, unreachable: nil, error: nil}
       {:error, :conflict, _} when tries > 1 -> allow_client(state, tries - 1)
-      {:error, :conflict, message} -> %{state | error: message}
-      {:error, :auth, message} -> %{state | blocked: message}
-      {:error, :down, message} -> %{state | unreachable: message}
-      {:error, :http, message} -> %{state | error: message}
+      {:error, kind, message} -> refused(state, kind, message)
     end
   end
 
   # --- what the page shows ---
 
   defp drain(%{blocked: blocked} = state) when blocked != nil, do: state
+  defp drain(%{invalid: invalid} = state) when invalid != nil, do: state
 
   # A download in flight is Run's; in Connect the user's proxy is drained meanwhile.
   defp drain(state) do
@@ -466,8 +503,22 @@ defmodule HalC2Plugins.CliProxyApi do
         {:ok, state} ->
           was = state.answering
           state = %{state | answering: true, unreachable: nil}
-          state = if was, do: state, else: state |> allow_once() |> keys(conn)
-          state |> logs(conn) |> accounts(conn) |> check_sign_in(conn) |> latest(conn)
+
+          # A refusal ends the drain: a refused key is not sent again (`refused/3`).
+          Enum.reduce(
+            [
+              &if(mode(&1) == "connect", do: allow_client(&1), else: &1),
+              &if(was, do: &1, else: keys(&1, conn)),
+              &logs(&1, conn),
+              &accounts(&1, conn),
+              &check_sign_in(&1, conn),
+              &latest(&1, conn)
+            ],
+            state,
+            fn stage, state ->
+              if state.blocked == nil and state.answering, do: stage.(state), else: state
+            end
+          )
 
         {:error, kind, message} ->
           refused(state, kind, message)
@@ -488,15 +539,13 @@ defmodule HalC2Plugins.CliProxyApi do
 
         {:ok, %{state | usage: usage, usage_note: nil}}
 
-      {:error, :http, message} ->
+      {:error, kind, message} when kind in [:http, :missing] ->
         {:ok, %{state | usage_note: message}}
 
       {:error, kind, message} ->
         {:error, kind, message}
     end
   end
-
-  defp allow_once(state), do: if(mode(state) == "connect", do: allow_client(state), else: state)
 
   defp logs(state, conn) do
     query =
@@ -513,7 +562,7 @@ defmodule HalC2Plugins.CliProxyApi do
 
       {:error, kind, message} ->
         # A proxy that keeps no log file (Connect, say) still routes; say so and go on.
-        if kind == :http,
+        if kind in [:http, :missing],
           do: %{state | logs: ["(no log: #{message})"]},
           else: refused(state, kind, message)
     end
@@ -564,7 +613,7 @@ defmodule HalC2Plugins.CliProxyApi do
       {:ok, _, _} ->
         state
 
-      {:error, :http, message} ->
+      {:error, kind, message} when kind in [:http, :missing] ->
         %{state | sign_in: %{state.sign_in | "status" => "error", "error" => message}}
 
       {:error, kind, message} ->
@@ -593,12 +642,12 @@ defmodule HalC2Plugins.CliProxyApi do
   defp keys(state, conn) do
     case Api.get(conn, "/config/api-keys") do
       {:ok, %{} = keys, _} ->
-        %{state | keys: mask_keys(keys)}
+        %{state | keys: mask_keys(state, keys)}
 
       {:ok, _, _} ->
         state
 
-      {:error, :http, _} ->
+      {:error, kind, _} when kind in [:http, :missing] ->
         %{state | keys: []}
 
       {:error, kind, message} ->
@@ -618,9 +667,8 @@ defmodule HalC2Plugins.CliProxyApi do
         groups ->
           case Api.put(conn, path, groups, etag) do
             {:ok, _, _} ->
+              if mode(state) == "run", do: keep_keys(state, provider, groups)
               state = keys(state, conn)
-              snapshot = %{state | answering: true}
-              if mode(state) == "run", do: snapshot_keys(snapshot)
               {:ok, %{"keys" => state.keys}, state}
 
             {:error, :conflict, _} when tries > 1 ->
@@ -637,16 +685,36 @@ defmodule HalC2Plugins.CliProxyApi do
     case Api.get(conn, path) do
       {:ok, groups, headers} when is_list(groups) -> {:ok, groups, Api.etag(headers)}
       {:ok, _, headers} -> {:ok, [], Api.etag(headers)}
-      {:error, :http, _} -> {:ok, [], nil}
+      {:error, :missing, _} -> {:ok, [], nil}
       {:error, kind, message} -> {:error, message, refused(state, kind, message)}
     end
   end
 
-  defp mask_keys(keys) do
+  # What a key edit put, kept for the next start at once: the proxy writes it to its
+  # config, which the next start writes again from this file.
+  defp keep_keys(state, provider, groups) do
+    upstream = read_json(state.dir, "upstream-keys.json", %{})
+
+    private(
+      Path.join(state.dir, "upstream-keys.json"),
+      JSON.encode!(Map.put(upstream, provider, groups))
+    )
+  end
+
+  defp mask_keys(state, keys) do
     for provider <- @key_providers,
-        {group, index} <- Enum.with_index(List.wrap(keys[provider])),
+        group <- List.wrap(keys[provider]),
         is_map(group),
-        do: Map.merge(mask_group(group), %{"provider" => provider, "index" => index})
+        do:
+          Map.merge(mask_group(group), %{"provider" => provider, "id" => group_id(state, group)})
+  end
+
+  # Names a key group for `removeKey` without showing its keys: keyed by the client key,
+  # so it says nothing of them, and it changes whenever the group does.
+  defp group_id(state, group) do
+    :crypto.mac(:hmac, :sha256, state.client, :erlang.term_to_binary(group, [:deterministic]))
+    |> binary_part(0, 12)
+    |> Base.encode16(case: :lower)
   end
 
   defp mask_group(group) do
@@ -673,6 +741,9 @@ defmodule HalC2Plugins.CliProxyApi do
 
   defp usable(state) do
     cond do
+      mode(state) == "connect" and state.invalid != nil ->
+        {:error, state.invalid, state}
+
       mode(state) == "run" and state.proxy["state"] != "running" ->
         {:error, "The proxy is not running.", state}
 
@@ -688,8 +759,10 @@ defmodule HalC2Plugins.CliProxyApi do
     end
   end
 
-  defp schedule(%{timer: nil} = state),
-    do: %{state | timer: Process.send_after(self(), :drain, next_ms(state))}
+  defp schedule(%{timer: nil} = state) do
+    token = make_ref()
+    %{state | timer: Process.send_after(self(), {:drain, token}, next_ms(state)), drain: token}
+  end
 
   defp schedule(state), do: state
 
@@ -717,17 +790,18 @@ defmodule HalC2Plugins.CliProxyApi do
     state
   end
 
-  defp sync(state, phase) do
+  defp sync(state) do
     case Host.provider_instances(@id, "list", %{}) do
-      {:ok, %{"instances" => listed}} ->
+      {:ok, %{"instances" => listed} = reply} ->
         current = Map.new(listed, &{&1["name"], &1["instance"]})
+        released = reply["released"] || []
 
         {ledger, taken} =
           Enum.reduce(Instances.names(), {state.ledger, state.taken}, fn name, {ledger, taken} ->
             desired =
               Instances.desired(name, base(state), state.client, Path.join(state.dir, "claude"))
 
-            case Instances.decide(ledger[name], current[name], desired, phase) do
+            case Instances.decide(ledger[name], current[name], desired, name in released) do
               :keep ->
                 {ledger, Map.delete(taken, name)}
 
@@ -840,6 +914,9 @@ defmodule HalC2Plugins.CliProxyApi do
       mode(state) == "run" and state.failure ->
         {"failed", state.failure}
 
+      mode(state) == "connect" and state.invalid ->
+        {"failed", state.invalid}
+
       mode(state) == "connect" and state.unreachable ->
         {"unreachable", state.unreachable}
 
@@ -902,6 +979,25 @@ defmodule HalC2Plugins.CliProxyApi do
         else: state.management
 
     %{base: base(state), key: key}
+  end
+
+  defp https?(url), do: URI.parse(url).scheme == "https"
+
+  defp loopback?(url) do
+    case URI.parse(url).host do
+      "localhost" ->
+        true
+
+      host when is_binary(host) ->
+        case :inet.parse_address(to_charlist(host)) do
+          {:ok, {127, _, _, _}} -> true
+          {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
   end
 
   defp address?(url) do

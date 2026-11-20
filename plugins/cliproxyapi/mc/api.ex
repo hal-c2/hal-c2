@@ -7,8 +7,8 @@ defmodule HalC2Plugins.CliProxyApi.Api do
   the proxy's own (`{"error": ...}`) where it gave one. `kind` is `:auth` for a 401 or
   403, which the caller must not repeat: five failed keys get this machine's address
   banned from the management API for half an hour. `:down` is a proxy that does not
-  answer, `:http` any other refusal, `:conflict` a 412 (the config changed under an
-  `If-Match`).
+  answer, `:missing` a 404, `:http` any other refusal, `:conflict` a 412 (the config
+  changed under an `If-Match`). An https proxy's certificate is checked.
   """
 
   @prefix "/v8/management"
@@ -41,9 +41,14 @@ defmodule HalC2Plugins.CliProxyApi.Api do
         body -> {to_charlist(url), charlists, ~c"application/json", JSON.encode!(body)}
       end
 
-    case :httpc.request(method, req, [timeout: @timeout, connect_timeout: 3_000],
-           body_format: :binary
-         ) do
+    options = [timeout: @timeout, connect_timeout: 3_000]
+
+    options =
+      if String.starts_with?(url, "https:"),
+        do: [{:ssl, :httpc.ssl_verify_host_options(true)} | options],
+        else: options
+
+    case :httpc.request(method, req, options, body_format: :binary) do
       {:ok, {{_, status, _}, headers, text}} ->
         answer(status, strings(headers), text)
 
@@ -65,6 +70,7 @@ defmodule HalC2Plugins.CliProxyApi.Api do
     kind =
       cond do
         status in [401, 403] -> :auth
+        status == 404 -> :missing
         status == 412 -> :conflict
         true -> :http
       end

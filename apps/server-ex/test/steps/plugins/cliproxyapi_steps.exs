@@ -110,6 +110,46 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     |> turn_on()
   end
 
+  step "the user saves Connect to {string} with the management key {string}",
+       %{args: [url, key]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"mode" => "connect", "url" => url, "managementKey" => key}
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the save is refused saying {string}", %{args: [text]} = context do
+    assert {:error, message, %{"_tag" => "PluginSettingsInvalid"}} = context.reply
+    assert message =~ text
+    context
+  end
+
+  # The plugin's server, taken down as a crash would: the Agent keeps the settings and
+  # `rest_for_one` starts the server again on them. A server held busy first loses the
+  # settings changes sent to it meanwhile.
+  step "the plugin's server is busy", context do
+    :ok = :sys.suspend(server())
+    context
+  end
+
+  step "the plugin's server crashes", context do
+    old = server()
+    {:dictionary, dictionary} = Process.info(old, :dictionary)
+    [supervisor | _] = dictionary[:"$ancestors"]
+    ref = Process.monitor(old)
+    Process.exit(old, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^old, :killed}, 5_000
+    # Returns once the supervisor has handled the exit, and so started the server again;
+    # the server applies its settings before it answers a call.
+    :sys.get_state(supervisor)
+    assert server() not in [nil, old]
+    status(context)
+    context
+  end
+
   # --- the fake ----------------------------------------------------------------------
 
   step "the fake CLIProxyAPI lets agents in with the key {string}", %{args: [key]} = context do
@@ -131,6 +171,26 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
 
   step "the fake CLIProxyAPI keeps no usage, saying {string}", %{args: [message]} = context do
     Fake.update(context.fake, &%{&1 | no_usage: message})
+    context
+  end
+
+  step "the fake CLIProxyAPI answers the next {string} with {int} saying {string}",
+       %{args: [request, status, message]} = context do
+    answer(context, request, {status, %{"error" => message}})
+  end
+
+  step "the fake CLIProxyAPI hands out the sign-in address {string}", %{args: [url]} = context do
+    answer(
+      context,
+      "GET /oauth/auth-url",
+      {200, %{"status" => "ok", "url" => url, "state" => "st-x"}}
+    )
+  end
+
+  step "the {string} key {string} was added first on the proxy since",
+       %{args: [provider, key]} = context do
+    group = %{"keys" => [%{"api-key" => key}]}
+    Fake.update(context.fake, fn fake -> update_in(fake.keys[provider], &[group | &1 || []]) end)
     context
   end
 
@@ -217,6 +277,11 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     Map.put(context, :sign_in, reply)
   end
 
+  step "the user tries to sign in to {string} from the page", %{args: [provider]} = context do
+    {reply, context} = call(context, "signIn", %{"provider" => provider})
+    Map.put(context, :reply, reply)
+  end
+
   step "the user pastes the address the browser ended on", context do
     finish(context, "http://localhost:54545/callback?code=abc&state=#{state(context)}")
   end
@@ -264,11 +329,7 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     assert key
 
     {_, context} =
-      call!(context, "removeKey", %{
-        "provider" => provider,
-        "index" => key["index"],
-        "keys" => key["keys"]
-      })
+      call!(context, "removeKey", %{"provider" => provider, "id" => key["id"]})
 
     context
   end
@@ -413,6 +474,30 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
   step "the proxy lets agents in with {string} and the plugin's client key",
        %{args: [key]} = context do
     assert Fake.get(context.fake).access == [key, client_key()]
+    context
+  end
+
+  step "the proxy lets agents in only with {string}", %{args: [key]} = context do
+    assert Fake.get(context.fake).access == [key]
+    context
+  end
+
+  step "the proxy was asked nothing after {string}", %{args: [request]} = context do
+    last = Fake.requests(context.fake) |> List.last()
+
+    assert last["method"] <> " " <> String.replace_prefix(last["path"], "/v8/management", "") ==
+             request
+
+    context
+  end
+
+  step "the proxy holds only the {string} key {string}", %{args: [provider, key]} = context do
+    assert [%{"keys" => [%{"api-key" => ^key}]}] = Fake.get(context.fake).keys[provider]
+    context
+  end
+
+  step "the proxy starts with the {string} key {string}", %{args: [provider, key]} = context do
+    assert [%{"keys" => [%{"api-key" => ^key}]}] = config()["api-keys"][provider]
     context
   end
 
@@ -636,6 +721,16 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
 
   defp turn_off(context) do
     {_, context} = World.call!(context, "plugins.disable", %{"id" => @id})
+    context
+  end
+
+  defp server, do: Process.whereis(HalC2Plugins.CliProxyApi)
+
+  defp answer(context, request, reply) do
+    Fake.update(context.fake, fn fake ->
+      %{fake | next: Map.update(fake.next, request, [reply], &(&1 ++ [reply]))}
+    end)
+
     context
   end
 

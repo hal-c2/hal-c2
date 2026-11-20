@@ -8,8 +8,10 @@ defmodule HalC2.Test.FakeCliProxyApi do
   `start/0` returns `%{base, port, agent}`. The scenario sets what it holds with
   `update/2` (`refuse` to refuse every management key with that message, `queue` of
   usage records or `no_usage` to refuse the queue with that message, `logs`,
-  `credentials`, `keys`, `access`, `release` files, and `hold` to keep every release
-  download waiting) and reads what it was asked with `requests/1`.
+  `credentials`, `keys`, `access`, `release` files, `hold` to keep every release
+  download waiting, and `next`, `%{"GET /path" => [{status, body}]}`, answers the next
+  requests to a management path gives instead of what it holds) and reads what it was
+  asked with `requests/1`.
   """
   @behaviour Plug
 
@@ -34,6 +36,7 @@ defmodule HalC2.Test.FakeCliProxyApi do
           refuse_keys: nil,
           no_usage: nil,
           hold: false,
+          next: %{},
           requests: []
         }
       end)
@@ -141,10 +144,18 @@ defmodule HalC2.Test.FakeCliProxyApi do
   end
 
   defp route(%{request_path: @prefix <> path} = conn, body, state) do
-    if state.refuse && conn |> get_req_header("authorization") |> List.first() != nil do
-      {401, %{"error" => state.refuse}, state}
-    else
-      management(conn.method, path, conn.query_params, body, if_match(conn), state)
+    request = conn.method <> " " <> path
+
+    cond do
+      state.refuse && conn |> get_req_header("authorization") |> List.first() != nil ->
+        {401, %{"error" => state.refuse}, state}
+
+      match?([_ | _], state.next[request]) ->
+        [{status, reply} | rest] = state.next[request]
+        {status, reply, %{state | next: Map.put(state.next, request, rest)}}
+
+      true ->
+        management(conn.method, path, conn.query_params, body, if_match(conn), state)
     end
   end
 

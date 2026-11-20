@@ -254,7 +254,9 @@ the proxy's log.
   or the one on PATH, or else downloads CLIProxyAPI 8.0.79, the version it was
   tested with, and checks it against the release's checksums. A newer release is
   shown on the page but never installed. To use a proxy you run yourself, set
-  **Proxy** to **Connect** and give its address and management key.
+  **Proxy** to **Connect** and give its address and management key. The key goes
+  with every call, so a proxy on another machine needs an `https://` address with a
+  valid certificate; `http://` works only for one on this machine.
 - **The provider instances are yours to change.** Rename or switch them off and
   the plugin keeps that. Delete one and it stays deleted until you click **Add
   back** on the page. Turn the plugin off or remove it and both leave, your

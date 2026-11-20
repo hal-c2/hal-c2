@@ -78,7 +78,7 @@ Item {
             keys: [
                 {
                     provider: "claude",
-                    index: 0,
+                    id: "k1",
                     name: "",
                     baseUrl: "",
                     keys: ["sk-a…mnop"]
@@ -96,6 +96,9 @@ Item {
         property var calls: []
         property string refusal: ""
         property var answer: null
+        // Set, a call other than `status` waits here for the test to answer it.
+        property bool hold: false
+        property var held: null
 
         function watch(topic, callback, environment) {
             watchers[environment + "/" + topic] = callback;
@@ -112,7 +115,9 @@ Item {
                     input: input
                 }
             ]);
-            if (refusal)
+            if (hold && method !== "status")
+                held = callback;
+            else if (refusal)
                 callback(null, refusal);
             else
                 callback(method === "status" ? test.view : answer, null);
@@ -147,6 +152,9 @@ Item {
             plugin.calls = [];
             plugin.refusal = "";
             plugin.answer = null;
+            plugin.hold = false;
+            plugin.held = null;
+            plugin.environments = ["local"];
             loader.source = "";
             loader.setSource(Qt.resolvedUrl("../ui/CliProxyApiPage.qml"), {
                 plugin: plugin
@@ -309,7 +317,7 @@ Item {
             verify(!find("cliproxyapiAddKey").enabled);
             find("cliproxyapiKeyValue").text = "sk-ant-new";
             mouseClick(find("cliproxyapiAddKey"));
-            mouseClick(find("cliproxyapiRemoveKey:claude:0"));
+            mouseClick(find("cliproxyapiRemoveKey:claude:k1"));
             compare(asked(), [
                 {
                     method: "addKey",
@@ -323,8 +331,7 @@ Item {
                     method: "removeKey",
                     input: {
                         provider: "claude",
-                        index: 0,
-                        keys: ["sk-a…mnop"]
+                        id: "k1"
                     }
                 }
             ]);
@@ -356,6 +363,15 @@ Item {
                 latest: "8.1.0"
             }));
             verify(find("cliproxyapiUpdate").text.indexOf("CLIProxyAPI 8.1.0 is out") >= 0);
+        }
+
+        function test_a_reply_from_an_environment_the_page_left_is_dropped() {
+            plugin.hold = true;
+            mouseClick(find("cliproxyapiRemove:claude-user@example.com.json"));
+            plugin.environments = ["local", "work"];
+            loader.item.environment = "work";
+            plugin.held(null, "the proxy said: auth file not found");
+            compare(find("cliproxyapiProblem").text, "");
         }
 
         function test_a_refusal_shows() {

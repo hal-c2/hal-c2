@@ -126,7 +126,7 @@ QJsonArray usage(World& world) {
 QJsonArray keys(World& world) {
   if (state(world).email.isEmpty()) return {};
   return {QJsonObject{{QStringLiteral("provider"), QStringLiteral("claude")},
-                      {QStringLiteral("index"), 0},
+                      {QStringLiteral("id"), QStringLiteral("k1")},
                       {QStringLiteral("name"), QString()},
                       {QStringLiteral("baseUrl"), QString()},
                       {QStringLiteral("keys"), QJsonArray{QStringLiteral("sk-a…mnop")}}}};

@@ -87,14 +87,18 @@ Item {
         page.logs = view.logs ?? [];
     }
 
+    // A reply from an environment the page has since left is dropped.
     function start(method, input, done) {
         page.refusal = "";
+        const environment = page.environment;
         page.plugin.call(method, input, (result, error) => {
+            if (page.environment !== environment)
+                return;
             if (error)
                 page.refusal = error;
             else if (done)
                 done(result);
-        }, page.environment);
+        }, environment);
     }
 
     function stateLine() {
@@ -163,14 +167,17 @@ Item {
         font.pixelSize: Theme.type.body.size
         font.weight: Font.Medium
         elide: Text.ElideRight
+        textFormat: Text.PlainText
     }
 
+    // Proxy text (messages, emails, keys) is shown as typed, never read as markup.
     component Note: Text {
         Layout.fillWidth: true
         visible: text.length > 0
         color: page.muted
         wrapMode: Text.Wrap
         font.pixelSize: Theme.type.meta.size
+        textFormat: Text.PlainText
     }
 
     component Rule: Rectangle {
@@ -208,6 +215,7 @@ Item {
                     wrapMode: Text.Wrap
                     font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
+                    textFormat: Text.PlainText
                 }
 
                 ShellComboBox {
@@ -289,6 +297,7 @@ Item {
                         color: instance.modelData.state === "added" ? page.foreground : page.muted
                         wrapMode: Text.Wrap
                         font.pixelSize: Theme.type.meta.size
+                        textFormat: Text.PlainText
                     }
 
                     ShellButton {
@@ -440,6 +449,7 @@ Item {
                             color: account.modelData.disabled ? page.muted : page.foreground
                             elide: Text.ElideRight
                             font.pixelSize: Theme.type.body.size
+                            textFormat: Text.PlainText
                         }
 
                         Note {
@@ -508,6 +518,7 @@ Item {
                     color: page.foreground
                     wrapMode: page.narrow ? Text.Wrap : Text.NoWrap
                     elide: page.narrow ? Text.ElideNone : Text.ElideRight
+                    textFormat: Text.PlainText
                     font.pixelSize: Theme.type.meta.size
                 }
             }
@@ -530,8 +541,9 @@ Item {
                     id: key
 
                     required property var modelData
+                    required property int index
 
-                    objectName: "cliproxyapiKey:" + modelData.provider + ":" + modelData.index
+                    objectName: "cliproxyapiKey:" + modelData.provider + ":" + index
                     Layout.fillWidth: true
                     spacing: 8
 
@@ -541,17 +553,17 @@ Item {
                         color: page.foreground
                         elide: Text.ElideRight
                         font.pixelSize: Theme.type.meta.size
+                        textFormat: Text.PlainText
                     }
 
                     ShellButton {
-                        objectName: "cliproxyapiRemoveKey:" + key.modelData.provider + ":" + key.modelData.index
+                        objectName: "cliproxyapiRemoveKey:" + key.modelData.provider + ":" + key.modelData.id
                         subtle: true
                         destructive: true
                         text: qsTr("Remove")
                         onClicked: page.start("removeKey", {
                             provider: key.modelData.provider,
-                            index: key.modelData.index,
-                            keys: key.modelData.keys
+                            id: key.modelData.id
                         })
                     }
                 }
