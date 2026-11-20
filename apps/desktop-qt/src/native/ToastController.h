@@ -70,6 +70,8 @@ public:
   // An error toast, with "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
+  // Whether the toast `id` is still shown.
+  bool shows(const QString& id) const;
   // Changes a shown toast's text in place (a running action's stage); false
   // once it is gone.
   bool update(const QString& id, const QString& title, const QString& description = {});

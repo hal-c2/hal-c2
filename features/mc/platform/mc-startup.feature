@@ -441,6 +441,15 @@ Feature: Starting the MC
     When the service manager stops the wrapper
     Then the MC is told to stop and the wrapper waits for it
 
+  # The BEAM drops a TERM that arrives while it boots, so a stop right after a start
+  # (a container restarted by `mise run mc:container doctor`) waited out the service
+  # manager's timeout and was killed.
+  @mc
+  Scenario: Stopping the background service while the MC starts still stops it
+    Given the MC under the service wrapper is starting and misses a stop
+    When the service manager stops the wrapper while the MC starts
+    Then the wrapper tells the MC again until it stops
+
   # Two MCs on one home share its database and its cluster name: a member's connection
   # flips between them and each undoes the other's work. The desktop app can start its
   # MC at login before the background service's MC has said where it listens.
