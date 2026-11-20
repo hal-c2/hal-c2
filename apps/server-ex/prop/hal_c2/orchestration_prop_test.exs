@@ -2161,8 +2161,13 @@ defmodule HalC2.OrchestrationPropTest do
   # The limit recovery sweep a week on, when every reset the fake reports has passed.
   def sweep do
     for tid <- @threads, do: HalC2.Streams.flush_shell(tid)
-    HalC2.Orchestration.LimitRecovery.sweep(System.system_time(:millisecond) + 7 * 86_400_000)
-    reply({:ok, %{}}, [])
+
+    {_, ended} =
+      ended_during(fn ->
+        HalC2.Orchestration.LimitRecovery.sweep(System.system_time(:millisecond) + 7 * 86_400_000)
+      end)
+
+    reply({:ok, %{}}, ended)
   end
 
   def interrupt(tid) do
@@ -2668,7 +2673,37 @@ defmodule HalC2.OrchestrationPropTest do
     reply({:ok, %{}}, [run_id])
   end
 
-  defp thread_command(command), do: reply(Orchestration.dispatch(command), [])
+  defp thread_command(command) do
+    {result, ended} = ended_during(fn -> Orchestration.dispatch(command) end)
+    reply(result, ended)
+  end
+
+  # `fun`'s result, and the runs that ended while it ran. A queued run the command
+  # starts on an instance the project turned off fails as it starts, inside the
+  # command, and its end starts the next queued one off the runtime's process: the
+  # command waits on that as on any run it ends (`settled/3`). A run cancelled from the
+  # queue starts nothing.
+  defp ended_during(fun) do
+    open =
+      for tid <- @threads,
+          run <- runs(current(tid)),
+          open?(run),
+          into: MapSet.new(),
+          do: run["id"]
+
+    result = fun.()
+
+    ended =
+      for tid <- @threads,
+          run <- runs(current(tid)),
+          run["id"] in open,
+          not open?(run) and run["status"] != "cancelled",
+          do: run["id"]
+
+    {result, ended}
+  end
+
+  defp open?(run), do: run["status"] in ["queued" | @active]
 
   # The archived threads as a client that asks right after the command's reply gets
   # them (`orchestration.getArchivedShellSnapshot`): no waiting on the sidebar rows.
