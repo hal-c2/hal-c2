@@ -334,7 +334,8 @@ const Steps steps([] {
   step(S("the user pairs a (tablet|phone) with it"), [](World& world, const Captures& c, const Table&) {
     const QSize size = c[0] == QLatin1String("tablet") ? kTablet : kPhone;
     world.resize(size.width(), size.height());
-    pairWithEnvironment(world);
+    // A tablet's empty environment opens the wizard, not the thread list.
+    pairWithEnvironment(world, c[0] != QLatin1String("tablet"));
     world.sync();
   });
 
@@ -349,6 +350,9 @@ const Steps steps([] {
     expect(world.item(S("noProjectsHint"))->property("text").toString().contains(S("Add a project in HAL-C2 on the environment's machine")),
            S("the screen says: %1").arg(screenTexts(world)));
     expect(world.find(S("welcomeWizard")) == nullptr, S("the desktop's wizard covers the phone layout"));
+    // The desktop sidebar's Add project button once drew over the hint.
+    const QQuickItem* addProject = world.find(S("emptyAddProject"));
+    expect(addProject == nullptr || !addProject->isVisible(), S("Add project is drawn over the hint"));
   });
 
   step(S("the user presses Cmd-([A-Za-z0-9])"), [](World& world, const Captures& c, const Table&) { world.press(S("mod+") + c[0].toLower()); });
