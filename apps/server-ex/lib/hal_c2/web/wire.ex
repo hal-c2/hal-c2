@@ -16,7 +16,7 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 4
+  @version 5
   @max_detail 32_768
   @truncated "\n… output truncated for transport"
   @cut_keys ~w(prompt progress result)
