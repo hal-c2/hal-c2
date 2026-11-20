@@ -300,6 +300,8 @@ defmodule HalC2.Terminal.Hub do
     end
   end
 
+  # `ps comm=` is the command's name, which may itself hold spaces
+  # ("Google Chrome"): the whole of it is the label.
   defp command_name(raw) do
     raw = String.trim(raw)
 
@@ -308,9 +310,9 @@ defmodule HalC2.Terminal.Hub do
         do: raw |> String.slice(1..-2//1) |> String.trim(),
         else: raw
 
-    case String.split(raw) do
-      [first | _] -> first |> Path.basename() |> String.slice(0, 128)
-      [] -> nil
+    case raw do
+      "" -> nil
+      name -> name |> Path.basename() |> String.slice(0, 128)
     end
   end
 end

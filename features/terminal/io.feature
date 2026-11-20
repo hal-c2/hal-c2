@@ -229,7 +229,7 @@ Feature: Terminal input and output
 
     # Upstream #23140: a command whose name has spaces was labelled by its first word, so Google
     # Chrome showed as "Google".
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A running command whose name has spaces is labelled by its whole name
       Given a running terminal labelled "Terminal 1"
       When the user starts "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in it
