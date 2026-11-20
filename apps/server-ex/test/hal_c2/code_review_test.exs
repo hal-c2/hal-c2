@@ -1064,6 +1064,27 @@ defmodule HalC2.CodeReviewTest do
                    1_000
   end
 
+  # Clients make a script value of every `reviews` they are sent, findings and all, so
+  # a change that leaves what they show as it was sends nothing.
+  test "the reviews clients follow are sent again only when they changed" do
+    first = start_review()
+    {:ok, shown} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+    assert Enum.all?(shown["reviews"], &(not Map.has_key?(&1, "previous")))
+
+    # Asking again for the running review changes nothing the clients show.
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    # The first `reviews` sent is the report's, not the same value again.
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => sent}},
+                   1_000
+
+    assert %{"status" => status} = Enum.find(sent, &(&1["key"] == @key))
+    assert status != "running"
+  end
+
   # A run reads where other machines have its head when it steps back, so a run the
   # limit held back, back at a head it never reviewed, showed it was limited while the
   # laptop had that head published.
