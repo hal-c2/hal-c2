@@ -66,6 +66,13 @@ use ljos::prelude::{Engine, Version};
 /// The module's import name.
 pub const MODULE: &str = "HalC2.Shell";
 
+/// The shell's QML as build.rs compiled it, with its sources: what the app
+/// runs (`App::source`), and what the user's files in the config dir are
+/// compiled against (`App::user_qml`).
+pub fn pack() -> ljos::MapSource {
+    ljos::include_qml!("qml.pack")
+}
+
 /// Registers the native half of `HalC2.Shell` and makes its singletons, so
 /// `Shell.state` holds its keys before any QML reads it. The rest of the
 /// module is QML (qml/HalC2/Shell); a qmldir naming those files beside
@@ -77,7 +84,7 @@ pub const MODULE: &str = "HalC2.Shell";
 ///
 /// Also gives the engine the checkout's bindings and handlers as build.rs
 /// compiled them: a file runs that code while it is as built, and
-/// dynamically once edited (a reload, `--qml-dir`).
+/// dynamically once a user's file replaces it (`--qml-dir` too).
 pub fn register(engine: &Engine) {
     if let Err(e) = engine.register_compiled(ljos::include_compiled!("qml.rs")) {
         engine.warn(e.to_string());
@@ -162,9 +169,6 @@ pub struct Launch {
     pub allow_local_folder_import: bool,
     /// The third-party license manifest the Open source licenses page reads.
     pub licenses_manifest: Option<PathBuf>,
-    /// The QML the shell is made of, which `Runtime` compiles again for a
-    /// reload ([`qml::Roots::with_user`]); none: the host makes its own root.
-    pub qml: Option<qml::Roots>,
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
@@ -276,7 +280,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     #[cfg(target_os = "macos")]
     macos_window::install(engine);
     theme::install(engine, launch.config_dir.clone());
-    runtime::install(engine, launch.config_dir.as_deref(), launch.qml.clone());
+    runtime::install(engine, launch.config_dir.as_deref());
     if let Some(manifest) = &launch.licenses_manifest {
         controllers::licenses::set_manifest_path(engine, manifest);
     }
