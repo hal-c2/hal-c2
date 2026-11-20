@@ -352,8 +352,12 @@ QString formatDuration(qint64 ms) {
   if (ms < 0) return QStringLiteral("0ms");
   if (ms < 1000) return QStringLiteral("%1ms").arg(std::max<qint64>(1, ms));
   if (ms < 10000) {
-    const double tenths = std::round(ms / 100.0) / 10.0;
-    return tenths >= 10 ? QStringLiteral("10s") : QStringLiteral("%1s").arg(tenths, 0, 'f', 1);
+    // Tenths, but a whole number of seconds drops the trailing zero
+    // ("7s", not "7.0s"; upstream #27316).
+    const qint64 tenths = std::llround(ms / 100.0);
+    if (tenths >= 100) return QStringLiteral("10s");
+    if (tenths % 10 == 0) return QStringLiteral("%1s").arg(tenths / 10);
+    return QStringLiteral("%1.%2s").arg(tenths / 10).arg(tenths % 10);
   }
   if (ms < 60000) return QStringLiteral("%1s").arg(std::llround(ms / 1000.0));
   const qint64 total = std::llround(ms / 1000.0);
