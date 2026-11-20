@@ -605,6 +605,68 @@ Item {
             compare(actor("a").goal.kind, "shelf", "a reads on");
         }
 
+        // An office that grows so everyone has a desk keeps the review corner
+        // for reviewers on every tick: no other thread sits or steps on its
+        // seats, every one has a floor desk, the reviewers past the corner
+        // hot-desk on the floor, and one in the corner that is a reviewer no
+        // more leaves it at once for the floor.
+        function test_an_office_growing_for_everyone_keeps_the_corner_for_reviewers() {
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AP",
+                    tint: "#4A90D9"
+                }
+            });
+            const reviewers = [];
+            for (let i = 0; i < 12; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const leaving = {};
+            const run = (people, ticks, full) => {
+                const ordinary = people.filter(p => p.kind !== "reviewer");
+                for (let i = 0; i < ticks; i++) {
+                    const w = page.world, review = corner();
+                    const tiles = {};
+                    for (const seat of w.pods[review].seats)
+                        tiles[seat.y * w.cols + seat.x] = true;
+                    for (const p of ordinary) {
+                        const seat = w.seatOf[p.id], a = actor(p.id);
+                        verify(seat && seat.pod !== review, p.id + " has a floor desk");
+                        const on = tiles[a.ty * w.cols + a.tx] || a.next >= 0 && tiles[a.next];
+                        if (!leaving[p.id])
+                            verify(!on, p.id + " never sits in the review corner");
+                        else if (!on)
+                            delete leaving[p.id];
+                    }
+                    const inCorner = reviewers.filter(r => people.includes(r) && w.seatOf[r.id]?.pod === review);
+                    compare(inCorner.length, full, "the corner holds " + full + " reviewers");
+                    for (const r of people.filter(p => p.kind === "reviewer")) {
+                        verify(w.seatOf[r.id], r.id + " has a desk");
+                        verify(!markOf(r.id).visible, r.id + "'s desk shows no project");
+                    }
+                    page.advance(1);
+                }
+            };
+            const first = many(36, "t", "working", "typing").concat(reviewers);
+            plugin.publish(first);
+            const pods = page.world.pods.length;
+            run(first, 300, 8);
+            // Fifty threads and twelve reviewers need more desks than six pods.
+            const grown = many(50, "t", "working", "typing").concat(reviewers);
+            plugin.publish(grown);
+            verify(page.world.pods.length > pods, "the office grows");
+            run(grown, 400, 8);
+            // A reviewer in the corner that is a reviewer no more.
+            const was = reviewers.find(r => page.world.seatOf[r.id].pod === corner());
+            const demoted = grown.map(p => p === was ? person(was.id, was.title, "working", "typing") : p);
+            reviewers.splice(reviewers.indexOf(was), 1);
+            leaving[was.id] = true;
+            plugin.publish(demoted);
+            // The reviewers on the floor keep their desks there.
+            run(demoted, 600, 7);
+            verify(!leaving[was.id], was.id + " has left the corner");
+        }
+
         // Reviewers hot-desk: no desk of theirs shows a project, in the corner
         // or on the floor.
         function test_reviewers_desks_show_no_project() {
