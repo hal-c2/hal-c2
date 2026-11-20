@@ -356,6 +356,15 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             .and_then(|phase| phase.as_str().map(|p| p == "paired"))
             .unwrap_or(false)
     };
+    // A `--url` pairing that failed (unreachable, refused, not saved)
+    // is back on the pairing screen with its error: nothing to wait for.
+    let pairing_error = |engine: &Engine| {
+        Bridge::of(engine)
+            .published(engine, "pairing")
+            .and_then(|pairing| pairing.get("error").cloned())
+            .and_then(|error| error.as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
     let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
     loop {
         Platform::of(&engine).deliver(&engine);
@@ -365,6 +374,12 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             .and_then(|pairing| pairing.get("phase").cloned())
             .and_then(|phase| phase.as_str().map(|p| p == "pairing"))
             .unwrap_or(false);
+        if !pairing_busy && options.url.is_some() && !paired(&engine) {
+            let error = pairing_error(&engine);
+            if !error.is_empty() {
+                return Err(format!("pairing failed: {error}"));
+            }
+        }
         let waiting = pairing_busy
             || options.url.is_some() && !paired(&engine)
             || paired(&engine)
