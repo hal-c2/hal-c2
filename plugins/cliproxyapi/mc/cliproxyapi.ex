@@ -979,13 +979,16 @@ defmodule HalC2Plugins.CliProxyApi do
 
   # One instance's state for the page, with why. Under Connect settings that do not
   # validate, `taken` holds why the host refused to take the instance out: it is
-  # still in Settings → Providers, so it is never "withheld" (not added).
+  # still in Settings → Providers, so it is never "withheld" (not added). A list
+  # the host refused (`unlisted`) wins over both: `taken` then still holds whatever
+  # the last successful list left there, maybe a put refusal from when the settings
+  # validated, and the plugin does not know where the instance stands.
   defp instance_status(state, name) do
     cond do
       state.ledger[name]["state"] == "dismissed" -> {"dismissed", nil}
+      state.unlisted -> {"unknown", state.unlisted}
       state.invalid != nil and Map.has_key?(state.taken, name) -> {"remove_failed", state.taken[name]}
       state.invalid -> {"withheld", state.invalid}
-      state.unlisted -> {"unknown", state.unlisted}
       Map.has_key?(state.taken, name) -> {"taken", state.taken[name]}
       state.ledger[name]["state"] == "created" -> {"added", nil}
       true -> {"unknown", nil}
