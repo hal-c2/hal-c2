@@ -3540,6 +3540,7 @@ threads/sidebar-list.feature: A thread with unsent text in its composer is marke
 threads/sidebar-list.feature: A thread's status has a spoken name
 threads/sidebar-list.feature: Active threads are listed newest first
 threads/sidebar-list.feature: An open settled plugin thread stays listed
+threads/sidebar-list.feature: Enter on a shelf header folds the shelf
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
 threads/sidebar-list.feature: Leaving the thread list for settings keeps the project filter

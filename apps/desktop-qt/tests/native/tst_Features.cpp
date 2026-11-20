@@ -286,6 +286,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/qt-scenarios.feature"),
     QStringLiteral("threads/qt-scenarios.feature"),
     QStringLiteral("threads/sidebar-list.feature:Moving through the list with the keyboard*"),
+    QStringLiteral("threads/sidebar-list.feature:Enter on a shelf header folds the shelf"),
     QStringLiteral("timeline/notifications.feature:A notification's action runs it"),
     QStringLiteral("timeline/notifications.feature:Dismissing the last notification hides the notifications"),
     QStringLiteral("timeline/notifications.feature:A thread that changes state*"),

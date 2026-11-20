@@ -325,6 +325,35 @@ pub fn register(steps: &mut Steps) {
         expect!(last.is_some(), "the list has no rows");
         focused_is(world, &last.unwrap(), "the last row to be focused")
     });
+    steps.step(
+        "the thread list has keyboard focus on the settled section header",
+        |world, _, _| {
+            thread_titled(
+                world,
+                "Settled neighbour",
+                json!({"settledOverride": "settled", "settledAt": "2026-09-23T09:40:00Z"}),
+            )?;
+            wait_for_section(world, "Settled neighbour", "settled")?;
+            let brick = show_sidebar(world)?;
+            let list = focus_list(world, brick)?;
+            brick.write(world, list, "cursorKey", ljos::prelude::Value::from("header:settled"))?;
+            world.wait_for("the keyboard cursor on the settled section header", |w| {
+                brick.text_of(w, list, "cursorKey") == "header:settled"
+            })
+        },
+    );
+    steps.step("the settled section collapses", |world, _, _| {
+        let brick = shown(world)?;
+        world.wait_for("the settled section to collapse", |w| {
+            let Some(root) = brick.root(w) else { return false };
+            let rows = hal_c2_shell::json::from_value(w.engine(), &brick.read(w, root, "rows"));
+            rows.as_array().into_iter().flatten().any(|row| {
+                text(&row["kind"]) == "header"
+                    && text(&row["key"]) == "settled"
+                    && row["open"] == false
+            })
+        })
+    });
     steps.step(&format!("the menu for {Q} opens"), |world, c, _| {
         world.wait_for_with(
             |w| {

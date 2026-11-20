@@ -330,6 +330,33 @@ const Steps steps([] {
     expect(!scenario(world).rowKeys.isEmpty(), QStringLiteral("the list has no rows"));
     focusedIs(world, scenario(world).rowKeys.last(), QStringLiteral("the last row to be focused"));
   });
+  step(QStringLiteral("the thread list has keyboard focus on the settled section header"), [](World& world, const Captures&, const Table&) {
+    const QString key = threadTitled(world, QStringLiteral("Settled neighbour"), {});
+    updateThreadRow(world, key.mid(key.indexOf(QLatin1Char(':')) + 1), [](QJsonObject& row) {
+      row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
+      row.insert(QStringLiteral("settledAt"), QStringLiteral("2026-09-23T09:40:00Z"));
+    });
+    waitForSection(world, QStringLiteral("Settled neighbour"), QStringLiteral("settled"));
+    Brick& brick = showSidebar(world);
+    QQuickItem* list = focusList(world, brick);
+    list->setProperty("cursorKey", QStringLiteral("header:settled"));
+    world.waitFor([&] { return list->property("cursorKey").toString() == QLatin1String("header:settled"); },
+                  QStringLiteral("the keyboard cursor on the settled section header"));
+  });
+  step(QStringLiteral("the settled section collapses"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = shown(world);
+    world.waitFor(
+        [&] {
+          for (const QVariant& entry : brick.root()->property("rows").toList()) {
+            const QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("kind")) == QLatin1String("header") && row.value(QStringLiteral("key")) == QLatin1String("settled")) {
+              return !row.value(QStringLiteral("open")).toBool();
+            }
+          }
+          return false;
+        },
+        QStringLiteral("the settled section to collapse"));
+  });
   step(QStringLiteral("the menu for %1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor(
         [&] {

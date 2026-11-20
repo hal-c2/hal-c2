@@ -268,7 +268,7 @@ Feature: The thread list
       | Enter     | "Beta" opens                |
       | Shift+F10 | the menu for "Beta" opens   |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Enter on a shelf header folds the shelf
     Given the thread list has keyboard focus on the settled section header
     When the user presses Enter
