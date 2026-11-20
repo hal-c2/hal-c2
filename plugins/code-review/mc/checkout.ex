@@ -186,9 +186,11 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   of submodule objects as an alternate, and what it fetched goes into the store after,
   so the next review downloads only what is new. Nothing is written to the clone's
   config, which every review of the repository shares: the submodules are made active
-  and cloned from the head's `.gitmodules` for this command alone. Only the transports
-  git trusts by default are used (HTTP(S), SSH, git), so a `.gitmodules` cannot point
-  git at a local path or run a command through `ext::`.
+  and cloned from the head's `.gitmodules` for this command alone. Only HTTP(S) and SSH
+  are used, so a `.gitmodules` cannot point git at a local path, run a command through
+  `ext::` or reach a `git://` server, which nothing times out. A transfer that stalls is
+  dropped (HTTP under 1 KB/s for a minute, SSH that stops answering), and the whole
+  update has `@submodules_ms` before it and what it started are killed.
   """
   def submodules(clone, path, %{"url" => url} = remote) do
     if File.regular?(Path.join(path, ".gitmodules")) do
@@ -197,7 +199,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
       with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
            {:ok, {credentials, env}} <- credentials(clone, remote, url),
            {:ok, _} <-
-             git(
+             bounded_git(
                path,
                credentials ++
                  [
@@ -213,7 +215,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                    "--reference",
                    store
                  ],
-               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh:git"} | env]
+               [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ env]
              ),
            do: store(store, path)
     else
@@ -221,15 +223,34 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
+  @submodules_ms 15 * 60_000
+
+  # SSH that gives up on a server that does not connect or stops answering, unless the
+  # MC's environment names its own SSH command, which the overall timeout still bounds.
+  defp ssh_env do
+    if System.get_env("GIT_SSH_COMMAND") in [nil, ""],
+      do: [
+        {"GIT_SSH_COMMAND",
+         "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"}
+      ],
+      else: []
+  end
+
   # Puts the objects of the checkout's submodules into the store, under refs named for
   # each one's remote so a later clone of it finds them, as far as it can: the checkout
   # is whole without them. Git never collects garbage in the store (`gc.auto=0`), as the
-  # checkouts borrowing its objects do not hold its refs.
+  # checkouts borrowing its objects do not hold its refs. Paths come NUL-separated, as a
+  # submodule's path can hold any character but NUL.
   defp store(store, path) do
-    with {:ok, status} <-
-           git(path, ["-c", "submodule.active=.", "submodule", "status", "--recursive"]) do
-      for line <- String.split(status, "\n", trim: true),
-          [_sha, sub | _] <- [String.split(String.slice(line, 1..-1//1), " ", parts: 3)],
+    with {:ok, paths} <-
+           git(path, [
+             "submodule",
+             "foreach",
+             "--recursive",
+             "--quiet",
+             ~S(printf '%s\0' "$displaypath")
+           ]) do
+      for sub <- String.split(paths, <<0>>, trim: true),
           sub = Path.join(path, sub),
           {:ok, from} <- [git(sub, ["config", "remote.origin.url"])] do
         key = :crypto.hash(:sha256, from) |> Base.encode16(case: :lower) |> binary_part(0, 16)
@@ -503,34 +524,50 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                GIT_TRACE2_EVENT GIT_TRACE2_PERF)
 
   defp git(cwd, args, env \\ []) do
-    case System.cmd("git", args,
-           cd: cwd,
-           stderr_to_stdout: true,
-           env:
-             [
-               {"GIT_TERMINAL_PROMPT", "0"},
-               {"GIT_CONFIG_GLOBAL", "/dev/null"},
-               {"GIT_CONFIG_NOSYSTEM", "1"},
-               {"GIT_CONFIG", nil},
-               {"GIT_SSL_NO_VERIFY", nil},
-               {"GIT_TRACE_REDACT", "1"}
-             ] ++ Enum.map(@untraced, &{&1, nil}) ++ env
-         ) do
-      {out, 0} ->
-        {:ok, String.trim(out)}
-
-      {out, _} ->
-        said =
-          out
-          |> redact(env)
-          |> String.split("\n", trim: true)
-          |> Enum.map_join(" ", &String.trim/1)
-
-        {:error, "git #{command(args)} failed: #{said}"}
+    case System.cmd("git", args, cd: cwd, stderr_to_stdout: true, env: git_env() ++ env) do
+      {out, 0} -> {:ok, String.trim(out)}
+      {out, _} -> {:error, failed(args, out, env)}
     end
   rescue
     e in [ErlangError, File.Error] ->
       {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+  end
+
+  defp git_env do
+    [
+      {"GIT_TERMINAL_PROMPT", "0"},
+      {"GIT_CONFIG_GLOBAL", "/dev/null"},
+      {"GIT_CONFIG_NOSYSTEM", "1"},
+      {"GIT_CONFIG", nil},
+      {"GIT_SSL_NO_VERIFY", nil},
+      {"GIT_TRACE_REDACT", "1"}
+    ] ++ Enum.map(@untraced, &{&1, nil})
+  end
+
+  defp failed(args, out, env) do
+    said =
+      out
+      |> redact(env)
+      |> String.split("\n", trim: true)
+      |> Enum.map_join(" ", &String.trim/1)
+
+    "git #{command(args)} failed: #{said}"
+  end
+
+  # `git/3` under `@submodules_ms`: past it git and the programs it started are killed.
+  defp bounded_git(cwd, args, env) do
+    {unset, set} = Enum.split_with(git_env() ++ env, &match?({_, nil}, &1))
+
+    case HalC2.Git.run(cwd, args,
+           env: set,
+           unset: Enum.map(unset, &elem(&1, 0)),
+           timeout: @submodules_ms,
+           stop_children: {__MODULE__, cwd}
+         ) do
+      {:ok, %{status: 0, out: out}} -> {:ok, String.trim(out)}
+      {:ok, %{out: out, err: err}} -> {:error, failed(args, out <> err, env)}
+      {:error, reason} -> {:error, redact(reason, env)}
+    end
   end
 
   defp redact(out, env) do

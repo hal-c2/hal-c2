@@ -499,6 +499,41 @@ defmodule HalC2.CodeReviewTest do
     assert Path.wildcard(Path.join(clone, "worktrees/*")) == []
   end
 
+  test "a submodule whose path has a space reaches the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"my dir", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    for path <- [first, second] do
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert :ok = apply(checkout, :submodules, [clone, path, remote])
+      assert File.read!(Path.join(path, "my dir/inner.txt")) == "inner\n"
+    end
+
+    counts = git!(Path.join(second, "my dir"), ["count-objects", "-v"])
+    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule over git:// is not fetched, as nothing times it out", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    pull!(context, 3, [{"lib", "git://example.invalid/lib.git", context.shas[1]}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/plain-git")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
+    assert reason =~ "transport 'git' not allowed"
+    assert File.regular?(Path.join(path, "README.md"))
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a submodule at a local path is not fetched, and its checkout is still made", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     local = repo!(context.dir, "local", "secret.txt")
