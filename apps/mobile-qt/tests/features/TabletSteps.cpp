@@ -176,14 +176,13 @@ const Steps steps([] {
   step(S("%1 is still shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
     // Alone in the phone layout, or beside the list in the desktop layout
-    // the shell has room for: wait for the shell to take the window's new
-    // size (the shell's width follows the window's a beat late, and `roomy`
-    // follows `fits` another) and for that layout to settle with the thread
-    // shown, not for either layout.
+    // the shell has room for: wait for `roomy` to follow `fits` (a beat
+    // after the window's new size) and for that layout to settle with the
+    // thread shown, not for either layout.
     world.waitFor(
         [&] {
           const QQuickWindow& window = world.window();
-          if (window.property("width").toInt() != window.width() || window.property("roomy").toBool() != window.property("fits").toBool()) return false;
+          if (window.property("roomy").toBool() != window.property("fits").toBool()) return false;
           return window.property("roomy").toBool() ? sideBySide(world, c[0]) : oneAtATime(world, c[0]);
         },
         [&] { return S("%1 still shown; the screen says: %2").arg(c[0], screenTexts(world)); });
