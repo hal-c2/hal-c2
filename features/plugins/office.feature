@@ -432,6 +432,15 @@ Feature: Office
       And everyone is at a desk of their own, on the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone listening in a pod the office closes finishes the talk first
+      Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
+      And "Lead" is talking to someone who sits in one of the last three pods
+      When it has 56 threads, that listener among them
+      Then the listener keeps the tile it listens on until it has replied
+      And then walks to its new desk, and the office shrinks to three rows of three pods
+      And no tile stays claimed for the talk or past the office's new end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: An office emptied before its new desks arrive shrinks at once
       Given the office is empty
       When it has 75 threads

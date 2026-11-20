@@ -2119,27 +2119,12 @@ Item {
                 place(a, a.tx, a.ty, true);
             route(a);
         }
-        // Two still side by side and talking keep their tiles for the rest of
-        // the talk: the speaker the side it talks from, the listener the tile
-        // it listens on.
+        // Two still side by side and talking claim their tiles again before
+        // anyone else is routed (see keepTalk()).
         for (const a of everyone()) {
             const other = a.talk && a.talk.phase !== "go" ? page.actors[a.talk.to] : null;
-            if (!other || a.next >= 0 || Math.abs(a.tx - other.tx) + Math.abs(a.ty - other.ty) !== 1)
-                continue;
-            const side = {
-                x: a.tx,
-                y: a.ty
-            };
-            if (!free(side, a))
-                continue;
-            a.goal = Object.assign({
-                face: 0,
-                offY: 0,
-                pose: "talk",
-                kind: "talk"
-            }, side);
-            claim(a, a.goal);
-            holdHere(other);
+            if (other && a.next < 0 && Math.abs(a.tx - other.tx) + Math.abs(a.ty - other.ty) === 1)
+                keepTalk(a, other);
         }
     }
 
@@ -3128,6 +3113,7 @@ Item {
             endTalk(actor);
             return;
         }
+        keepTalk(actor, other);
         // Facing each other.
         actor.dir = dirTowards(actor, other);
         other.face = dirTowards(other, actor);
@@ -3140,6 +3126,32 @@ Item {
         } else if (t.phase === "reply" && page.now >= t.until) {
             other.bubble = "";
             endTalk(actor);
+        }
+    }
+
+    // Once a talk has begun, the speaker holds the side it talks from and the
+    // listener the tile it listens on, until it ends. Each is claimed again
+    // here, on every step of the talk, when it is missing: rearrange() builds
+    // the floor again and clears every claim. A tile someone else has taken
+    // meanwhile stays theirs.
+    function keepTalk(actor, other) {
+        const W = page.world.cols;
+        const side = {
+            x: actor.tx,
+            y: actor.ty
+        };
+        if (actor.claim !== side.y * W + side.x && free(side, actor)) {
+            actor.goal = Object.assign({
+                face: 0,
+                offY: 0,
+                pose: "talk",
+                kind: "talk"
+            }, side);
+            claim(actor, actor.goal);
+        }
+        if (other.hold !== other.ty * W + other.tx) {
+            letGo(other);
+            holdHere(other);
         }
     }
 
@@ -4007,6 +4019,14 @@ Item {
         onTriggered: page.tick(interval)
     }
 
+    // Refits after a resize. A timer rather than Qt.callLater, so that a
+    // refit still pending when the page goes away goes with it.
+    Timer {
+        id: refitLater
+        interval: 0
+        onTriggered: page.refit()
+    }
+
     // The sky in the windows and the clock follow the time of day.
     Timer {
         property int hour: new Date().getHours()
@@ -4085,8 +4105,8 @@ Item {
             contentHeight: Math.max(height, stage.height)
             boundsBehavior: Flickable.StopAtBounds
             // Once for both sides of a resize, at its new size.
-            onWidthChanged: Qt.callLater(page.refit)
-            onHeightChanged: Qt.callLater(page.refit)
+            onWidthChanged: refitLater.restart()
+            onHeightChanged: refitLater.restart()
 
             ScrollBar.vertical: ScrollBar {}
             ScrollBar.horizontal: ScrollBar {}

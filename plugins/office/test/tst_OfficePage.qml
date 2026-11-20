@@ -158,8 +158,10 @@ Item {
             return a.goal && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0 && a.path.length === 0;
         }
 
-        // The tiles each person held when the floor was last checked.
+        // The tiles each person held when the floor was last checked, and the
+        // width and break-room wall of the floor then.
         property var stood: ({})
+        property var stoodOn: null
 
         // Nobody, people or movers, stands on a wall or furniture or off the
         // floor, a seat is only stepped onto as where a person is going (a
@@ -169,6 +171,13 @@ Item {
         // tile. A carried desk is drawn within its mover's figure.
         function checkFloor() {
             const w = page.world;
+            // A floor built again at another width keeps every tile west of
+            // the break room's wall and shifts the rest (see rearrange()).
+            const [cols, xd] = this.stoodOn ?? [w.cols, w.xd];
+            const moved = t => {
+                const x = t % cols, y = (t - x) / cols;
+                return y * w.cols + (x >= xd ? x + w.xd - xd : x);
+            };
             const stopped = {};
             const stood = {};
             const everyone = Object.assign({}, page.actors, page.movers);
@@ -188,7 +197,7 @@ Item {
                     const x = t % w.cols, y = (t - x) / w.cols;
                     const cell = w.grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
-                    const stayed = (this.stood[id] ?? []).includes(t);
+                    const stayed = (this.stood[id] ?? []).map(moved).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
                 }
                 if (a.next < 0 && a.path.length === 0) {
@@ -200,6 +209,7 @@ Item {
                 stood[id] = tiles;
             }
             this.stood = stood;
+            this.stoodOn = [w.cols, w.xd];
             for (const m of Object.values(page.movers)) {
                 if (!m.carrying)
                     continue;
@@ -975,6 +985,33 @@ Item {
             }
         }
 
+        // Whatever clears the claims mid-talk, the next step of the talk
+        // claims the speaker's side and the listener's tile again.
+        function test_a_talk_claims_its_tiles_again_when_they_go_missing() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
+            delete page.claims[side];
+            delete page.claims[here];
+            a.claim = -1;
+            c.hold = -1;
+            page.advance(1);
+            compare([page.claims[side], page.claims[here]], ["lead", "c"], "both are claimed again");
+            compare([a.claim, c.hold], [side, here]);
+        }
+
         // Someone stepping through the break room's door when the door moves
         // goes on from the tile it set out from, never straight through what
         // lies between.
@@ -1021,6 +1058,63 @@ Item {
                 runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 3000, id + " gets to its desk");
             }
             checkFloor();
+        }
+
+        // Someone listening at a desk in a pod the office closes stays for the
+        // talk, then goes to its new desk; the pod closes after, and no tile
+        // stays claimed for the talk or past the office's new end.
+        function test_a_listener_in_a_closing_pod_finishes_the_talk() {
+            resize(1200, 760);
+            const all = many(70, "t", "working", "typing");
+            plugin.publish(all);
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.pods.length, 12);
+            const listener = all.find(p => page.world.seatOf[p.id].pod >= 9);
+            verify(listener, "someone sits in a pod a smaller office would close");
+            const speaker = all.find(p => page.world.seatOf[p.id].pod < 9);
+            const stay = all.filter(p => page.world.seatOf[p.id].pod < 9).slice(0, 55).concat([listener]);
+            verify(stay.includes(listener) && stay.length === 56, "56 people stay, the listener among them");
+            const talks = [
+                {
+                    id: "talk-1",
+                    from: speaker.id,
+                    to: listener.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(all, talks);
+            const s = actor(speaker.id), l = actor(listener.id);
+            runUntil(() => s.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, held = l.ty * W + l.tx;
+            compare(l.hold, held, "the listener holds the tile it listens on");
+            checkFloor();
+            plugin.publish(stay, talks);
+            compare(page.closeTo, 9, "the office closes the pods past nine");
+            verify(page.world.seatOf[listener.id].pod < 9, "the listener has a desk in a pod that stays");
+            let ended = false;
+            runUntil(() => {
+                checkFloor();
+                if (s.talk)
+                    compare(page.claims[held], listener.id, "the listener keeps its tile while it listens");
+                else
+                    ended = true;
+                return ended && !page.closeTo;
+            }, 6000, "the talk ends and the office shrinks");
+            compare(page.world.pods.length, 9);
+            compare([l.hold, l.heldBy], [-1, ""], "nothing is held for the talk");
+            const tiles = page.world.cols * page.world.rows;
+            const mine = Object.values(page.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.claims)) {
+                verify(Number(tile) < tiles, "tile " + tile + " is past the office's end");
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+            }
+            const seat = page.world.seatOf[listener.id];
+            runUntil(() => {
+                checkFloor();
+                return arrived(l) && l.tx === seat.x && l.ty === seat.y;
+            }, 3000, "the listener gets to its new desk");
         }
 
         // A resize that keeps the same best grid leaves the office as it is.
