@@ -2876,6 +2876,15 @@ bool ComposerController::awaitsLaunch(const QString& draftId) const {
                      [&draftId](const Unsent& unsent) { return unsent.target == draftId && unsent.thread != draftId; });
 }
 
+QStringList ComposerController::carried(const QString& target) const {
+  QStringList ids;
+  const auto kept = m_drafts.constFind(target);
+  if (kept == m_drafts.cend()) return ids;
+  for (const Attachment& attachment : kept->attachments) ids.append(attachment.id);
+  for (const Excerpt& excerpt : kept->excerpts) ids.append(excerpt.id);
+  return ids;
+}
+
 QSet<QString> ComposerController::unsentThreads() const {
   QSet<QString> threads;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {

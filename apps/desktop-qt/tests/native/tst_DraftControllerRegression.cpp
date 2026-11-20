@@ -197,6 +197,42 @@ private slots:
     QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
   }
 
+  // The removal answered while a background send from the machine's draft is
+  // unanswered: the draft waits for the launch, whose refused prompt comes back.
+  void theRemovalAnswerKeepsADraftWhoseLaunchIsPending() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QList<FakeMc::Rpc> launches;
+    shell.mc.onRpc(QStringLiteral("orchestration.launchThread"), [&launches](const FakeMc::Rpc& rpc) { launches.append(rpc); });
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    QTRY_COMPARE(shell.bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draft);
+    const auto edit = [](int revision) {
+      return QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), revision}};
+    };
+    shell.bridge.dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), draft},
+                                                                          {QStringLiteral("edit"), edit(1)},
+                                                                          {QStringLiteral("text"), QStringLiteral("in the back")},
+                                                                          {QStringLiteral("cursor"), 11}});
+    shell.bridge.dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("edit"), edit(2)},
+                                                                        {QStringLiteral("text"), QStringLiteral("in the back")},
+                                                                        {QStringLiteral("intent"), QStringLiteral("background")}});
+    QTRY_COMPARE(launches.size(), 1);
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QString()});
+    shell.mc.refuse(launches.takeFirst(), QStringLiteral("box went"));
+    QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+  }
+
   // The answer drops the drafts the machine had when it was asked to go. One
   // written after it joined again, before a late answer, stays.
   void aLateAnswerKeepsADraftWrittenAfterARejoin() {
@@ -298,6 +334,37 @@ private slots:
     shell.barrier();
     QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
     QCOMPARE(composer->attachments(draft).size(), 1);
+  }
+
+  // Its text as it was, but a terminal excerpt added since: kept, excerpt and all.
+  void aLateAnswerKeepsADraftGivenAnExcerptAfterARejoin() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->client()->isReady() && shell.native->store()->synchronized());
+    shell.join();
+    const QString draft = shell.drafts()->start(kBox, QStringLiteral("ops"));
+    shell.drafts()->setText(draft, QStringLiteral("roll back the deploy"));
+
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.join();
+    QCOMPARE(shell.drafts()->start(kBox, QStringLiteral("ops")), draft);
+    QTRY_COMPARE(shell.bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString(), draft);
+    shell.bridge.dispatch(QStringLiteral("composer.terminalContext.add"),
+                          QVariantMap{{QStringLiteral("text"), QStringLiteral("deploy failed: exit 1")},
+                                      {QStringLiteral("terminalId"), QStringLiteral("term-1")},
+                                      {QStringLiteral("terminalLabel"), QStringLiteral("Terminal 1")},
+                                      {QStringLiteral("lineStart"), 3},
+                                      {QStringLiteral("lineEnd"), 3}});
+    auto* composer = shell.native->controller<ComposerController>();
+    QCOMPARE(composer->terminalContexts(draft).size(), 1);
+
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList{QStringLiteral("roll back the deploy")});
+    QCOMPARE(composer->terminalContexts(draft).size(), 1);
   }
 
   // A snapshot sent before a member's rows have come names it without a

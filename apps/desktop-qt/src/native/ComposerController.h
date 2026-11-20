@@ -212,6 +212,9 @@ public:
   // A launch from the draft is kept until its answer: a failed one's prompt
   // comes back into the draft, a background one's too.
   bool awaitsLaunch(const QString& draftId) const;
+  // The ids of what `target`'s draft carries besides its text: its
+  // attachments, then its excerpts.
+  QStringList carried(const QString& target) const;
   // The threads (keys) whose composer holds something unsent, the rows the
   // sidebar marks "Unsent draft".
   QSet<QString> unsentThreads() const;

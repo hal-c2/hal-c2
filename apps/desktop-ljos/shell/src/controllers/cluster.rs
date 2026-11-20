@@ -358,8 +358,8 @@ impl Cluster {
         self.set(engine, "busy", json!(true));
         let sent = payload.clone();
         // The drafts of the machine being removed, as they are now: one
-        // written or attached to after it joins again outlives a late
-        // answer, in the same draft or a new one.
+        // written in, attached to or given an excerpt after it joins again
+        // outlives a late answer, in the same draft or a new one.
         let doomed: Vec<(String, Held)> = if method == "cluster.remove" {
             let removed = settings_page::text(&sent, "id");
             drafts::all(engine)
@@ -391,7 +391,11 @@ impl Cluster {
                 let doomed = doomed.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
                     for (id, then) in &doomed {
-                        if drafts::draft(engine, id).is_some_and(|d| held(engine, &d) == *then) {
+                        // One whose prompt may yet come back waits for it;
+                        // drafts' reconcile takes it once it holds nothing.
+                        let unchanged =
+                            drafts::draft(engine, id).is_some_and(|d| held(engine, &d) == *then);
+                        if unchanged && !drafts::launch_pending(engine, id) {
                             drafts::remove(engine, id);
                         }
                     }
@@ -443,15 +447,14 @@ impl Cluster {
 }
 
 /// What a draft holds: how often its text was written, and the attachments
-/// the composer keeps for it.
-type Held = (u64, Vec<Json>);
+/// and excerpts the composer keeps for it.
+type Held = (u64, Vec<String>);
 
 fn held(engine: &Engine, draft: &drafts::Draft) -> Held {
-    let attachments = crate::controllers::composer::attachments(engine, &draft.id)
-        .into_iter()
-        .map(|a| a["id"].clone())
-        .collect();
-    (draft.edits, attachments)
+    (
+        draft.edits,
+        crate::controllers::composer::carried(engine, &draft.id),
+    )
 }
 
 /// `QJsonValue::toObject`: what is not an object is an empty one.

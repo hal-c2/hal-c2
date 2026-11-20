@@ -406,7 +406,9 @@ void DraftController::reconcile() {
       // switched off, or not back yet. A draft with nothing in it goes (one a
       // window landed on before the rows went); one the user wrote waits, as
       // does one whose launch may yet give its prompt back.
-      if (!holdsAnything(draft.id) && !launching(draft.id)) orphaned.append(draft.id);
+      const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+      const bool holds = composer ? composer->draftPreview(draft.id).has_value() : !draft.text.trimmed().isEmpty();
+      if (!holds && !launchPending(draft.id)) orphaned.append(draft.id);
     } else if (m_store->listsEnvironment(draft.environmentId) &&
                !m_store->project(draft.environmentId + QLatin1Char(':') + draft.projectId)) {
       // The project was removed, here or on another client.
@@ -433,12 +435,9 @@ bool DraftController::launching(const QString& id) const {
   });
 }
 
-bool DraftController::holdsAnything(const QString& id) const {
-  // What the sidebar lists the draft for, its text else its attachments; or a
-  // prompt on its way that comes back into it if its launch fails.
+bool DraftController::launchPending(const QString& id) const {
   const auto* composer = NativeShell::of(this)->controller<ComposerController>();
-  if (!composer) return !draft(id).value_or(Draft{}).text.trimmed().isEmpty();
-  return composer->draftPreview(id).has_value() || composer->awaitsLaunch(id);
+  return launching(id) || (composer && composer->awaitsLaunch(id));
 }
 
 void DraftController::changedEverywhere() {

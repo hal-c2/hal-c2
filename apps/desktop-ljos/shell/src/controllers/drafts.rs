@@ -219,6 +219,13 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
     start_carrying(engine, environment_id, project_id, false)
 }
 
+/// Whether a prompt sent from the draft may yet come back into it: a
+/// window's composer is still making it into a thread, or a background send
+/// from it is unanswered.
+pub fn launch_pending(engine: &Engine, id: &str) -> bool {
+    launching(engine, id) || crate::controllers::composer::awaits_launch(engine, id)
+}
+
 /// Whether any window's composer is still making the draft into a thread.
 fn launching(engine: &Engine, id: &str) -> bool {
     let any = std::cell::Cell::new(false);
@@ -524,11 +531,11 @@ fn reconcile(engine: &Engine) {
     // switched off, or not back yet. A draft with nothing in it goes (one a
     // window landed on before the rows went); one the user wrote waits, as
     // does one whose launch may yet give its prompt back.
-    orphaned.extend(unserved.into_iter().filter(|id| {
-        preview(engine, id).is_none()
-            && !launching(engine, id)
-            && !crate::controllers::composer::awaits_launch(engine, id)
-    }));
+    orphaned.extend(
+        unserved
+            .into_iter()
+            .filter(|id| preview(engine, id).is_none() && !launch_pending(engine, id)),
+    );
     for key in promoted {
         promote(engine, &key);
     }

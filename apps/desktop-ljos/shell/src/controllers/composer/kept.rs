@@ -411,6 +411,21 @@ pub fn attachments(engine: &Engine, target: &str) -> Vec<Json> {
     })
 }
 
+/// The ids of what `target`'s draft carries besides its text: its
+/// attachments, then its excerpts.
+pub fn carried(engine: &Engine, target: &str) -> Vec<String> {
+    read(engine, |d| {
+        d.drafts
+            .get(target)
+            .into_iter()
+            .flat_map(|k| {
+                let attachments = k.attachments.iter().map(|a| a.id.clone());
+                attachments.chain(k.excerpts.iter().map(|e| e.id.clone()))
+            })
+            .collect()
+    })
+}
+
 /// Whether `target`'s draft holds a file (not only images): files went
 /// to the machine the draft is on.
 pub fn holds_files(engine: &Engine, target: &str) -> bool {

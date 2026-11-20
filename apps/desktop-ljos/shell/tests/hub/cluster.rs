@@ -260,6 +260,45 @@ fn a_background_launch_keeps_its_draft_for_the_prompt_while_the_machine_is_gone(
 }
 
 #[test]
+fn the_removal_answer_keeps_a_draft_whose_launch_is_pending() {
+    let hub = listing();
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "in the back", "cursor": 11}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // The launch may yet give its prompt back: the draft waits for it.
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("box went")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+#[test]
 fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
     let hub = listing();
     let before = drafts::start(&hub.engine, "id-b", "p1").unwrap();
@@ -348,6 +387,33 @@ fn a_late_answer_keeps_a_draft_given_a_file_after_the_machine_came_back() {
     // Its text as it was, but a file attached since: kept, file and all.
     assert!(drafts::draft(&hub.engine, &draft).is_some());
     assert_eq!(composer::attachments(&hub.engine, &draft).len(), 1);
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_given_an_excerpt_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    assert_eq!(hub.published("composer")["target"], draft.as_str());
+    hub.dispatch(
+        "composer.terminalContext.add",
+        json!({"text": "deploy failed: exit 1", "terminalId": "term-1",
+               "terminalLabel": "Terminal 1", "lineStart": 3, "lineEnd": 3}),
+    );
+    assert_eq!(composer::terminal_contexts(&hub.engine, &draft).len(), 1);
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Its text as it was, but an excerpt added since: kept, excerpt and all.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+    assert_eq!(composer::terminal_contexts(&hub.engine, &draft).len(), 1);
 }
 
 #[test]

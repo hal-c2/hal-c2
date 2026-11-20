@@ -23,18 +23,13 @@ const QString kLocalOnlyHint =
 
 const NativeControllerRegistrar<ClusterController> registrar(QStringLiteral("cluster"), {QStringLiteral("cluster")});
 
-// What a draft holds: how often its text was written, and the attachments the
-// composer keeps for it.
+// What a draft holds: how often its text was written, and the attachments and
+// excerpts the composer keeps for it.
 using Held = std::pair<int, QStringList>;
 
 Held held(const QObject* controller, const DraftController::Draft& draft) {
-  QStringList attachments;
-  if (const auto* composer = NativeShell::of(controller)->controller<ComposerController>()) {
-    for (const QVariant& attachment : composer->attachments(draft.id)) {
-      attachments.append(attachment.toMap().value(QStringLiteral("id")).toString());
-    }
-  }
-  return {draft.edits, attachments};
+  const auto* composer = NativeShell::of(controller)->controller<ComposerController>();
+  return {draft.edits, composer ? composer->carried(draft.id) : QStringList{}};
 }
 
 }  // namespace
@@ -207,9 +202,9 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
                                const QString& failure) {
   ++m_generation;
   set(QStringLiteral("busy"), true);
-  // The drafts of the machine being removed, as they are now: one written or
-  // attached to after it joins again outlives a late answer, in the same draft
-  // or a new one.
+  // The drafts of the machine being removed, as they are now: one written in,
+  // attached to or given an excerpt after it joins again outlives a late
+  // answer, in the same draft or a new one.
   QHash<QString, Held> doomed;
   auto* drafts = NativeShell::of(this)->controller<DraftController>();
   if (drafts && method == QLatin1String("cluster.remove")) {
@@ -230,8 +225,10 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
     // with them (DraftController::reconcile).
     if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
       for (auto it = doomed.cbegin(); it != doomed.cend(); ++it) {
+        // One whose prompt may yet come back waits for it; reconcile takes it
+        // once it holds nothing.
         const auto draft = drafts->draft(it.key());
-        if (draft && held(this, *draft) == it.value()) drafts->remove(it.key());
+        if (draft && held(this, *draft) == it.value() && !drafts->launchPending(it.key())) drafts->remove(it.key());
       }
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());

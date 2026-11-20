@@ -1,11 +1,12 @@
 // DraftController as machines leave the cluster, against a fake MC. The
 // machine joins with a project and leaves, removed from here or from another
 // client; the user writes drafts for it and for this machine, goes home (which
-// lands on the most recent project's draft), attaches files to them and removes
+// lands on the most recent project's draft), attaches files and terminal
+// excerpts to them and removes
 // the machine in Cluster settings, the MC holding each answer to give it before
 // or after it says the machine went. After every step the drafts the user wrote
 // are kept until an answer drops the ones its removal was asked with, unless
-// written in or attached to since (even back to the same text), and no empty
+// written in or added to since (even back to the same text), and no empty
 // draft is kept for a machine that went (hal-c2#1589).
 
 #include "Prop.h"
@@ -69,6 +70,10 @@ struct Shell {
   QMap<QString, int> touched;
   // The machine's drafts the user wrote, by id, with what they hold.
   QMap<QString, QString> written;
+  // What each of the machine's drafts should hold: its text, and how many
+  // files and excerpts.
+  QMap<QString, QString> texts;
+  QMap<QString, int> carried;
   QSet<QString> reached;
   int writes = 0;
 
@@ -98,12 +103,15 @@ struct Shell {
     RC_ASSERT(prop::until([&done] { return done; }));
   }
 
-  // What the draft holds: its text, and how many files are attached to it.
+  // What the draft holds: its text, and how many files and excerpts it carries.
   QString holds(const QString& id) const {
     const auto draft = drafts()->draft(id);
-    const qsizetype files = native.controller<ComposerController>()->attachments(id).size();
-    return (draft ? draft->text : QString()) + QStringLiteral(" +%1").arg(files);
+    return (draft ? draft->text : QString()) +
+           QStringLiteral(" +%1").arg(native.controller<ComposerController>()->carried(id).size());
   }
+
+  // What the machine's draft should hold.
+  QString expected(const QString& id) const { return texts.value(id) + QStringLiteral(" +%1").arg(carried.value(id)); }
 
   // The drafts kept for the environment: their ids, and what they hold.
   QMap<QString, QString> kept(const QString& environment, bool writtenOnly = true) const {
@@ -142,6 +150,8 @@ struct Shell {
     asked.clear();
     touched.clear();
     written.clear();
+    texts.clear();
+    carried.clear();
     if (mc.peers.contains(kBox)) mc.remove(kBox);
     barrier();
     RC_ASSERT(prop::until([this] { return !store()->servesEnvironment(kBox); }));
@@ -191,11 +201,11 @@ struct Write : Command {
     RC_ASSERT(!id.isEmpty());
     const QString text = again ? QStringLiteral("roll back the deploy")
                                : QStringLiteral("roll back the deploy %1").arg(++shell.writes);
-    const bool edits = shell.drafts()->draft(id)->text != text;
     shell.drafts()->setText(id, text);
     if (box) {
-      if (edits) ++shell.touched[id];
-      shell.written.insert(id, shell.holds(id));
+      if (shell.texts.value(id) != text) ++shell.touched[id];
+      shell.texts.insert(id, text);
+      shell.written.insert(id, shell.expected(id));
     }
     shell.check(next);
   }
@@ -205,8 +215,10 @@ struct Write : Command {
 };
 
 // The window opens the machine's project's draft and the user attaches a file
-// to it.
+// to it, or adds a terminal excerpt.
 struct Attach : Command {
+  bool excerpt = *rc::gen::arbitrary<bool>();
+
   void checkPreconditions(const Model& model) const override { RC_PRE(model.joined); }
   void apply(Model&) const override {}
   void run(const Model& model, Shell& shell) const override {
@@ -216,7 +228,26 @@ struct Attach : Command {
       return shell.bridge.state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString() == id;
     }));
     auto* composer = shell.native.controller<ComposerController>();
-    const qsizetype files = composer->attachments(id).size();
+    const qsizetype carried = composer->carried(id).size();
+    if (excerpt) {
+      shell.bridge.dispatch(QStringLiteral("composer.terminalContext.add"),
+                            QVariantMap{{QStringLiteral("text"), QStringLiteral("deploy failed: exit 1")},
+                                        {QStringLiteral("terminalId"), QStringLiteral("term-1")},
+                                        {QStringLiteral("terminalLabel"), QStringLiteral("Terminal 1")},
+                                        {QStringLiteral("lineStart"), 3},
+                                        {QStringLiteral("lineEnd"), 3}});
+    } else {
+      attachPicture(shell);
+    }
+    RC_ASSERT(prop::until([&] { return composer->carried(id).size() == carried + 1; }));
+    ++shell.touched[id];
+    ++shell.carried[id];
+    shell.written.insert(id, shell.expected(id));
+    shell.check(model);
+  }
+  void show(std::ostream& os) const override { os << (excerpt ? "Attach(excerpt)" : "Attach(file)"); }
+
+  static void attachPicture(Shell& shell) {
     QImage picture(8, 8, QImage::Format_RGB32);
     picture.fill(Qt::darkCyan);
     QByteArray png;
@@ -229,12 +260,7 @@ struct Attach : Command {
                                                                     {QStringLiteral("mimeType"), QStringLiteral("image/png")},
                                                                     {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
                                                                 }}}});
-    RC_ASSERT(prop::until([&] { return composer->attachments(id).size() == files + 1; }));
-    ++shell.touched[id];
-    shell.written.insert(id, shell.holds(id));
-    shell.check(model);
   }
-  void show(std::ostream& os) const override { os << "Attach"; }
 };
 
 // The window goes home, which lands on the most recent project's draft.

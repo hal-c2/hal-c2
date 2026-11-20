@@ -83,6 +83,10 @@ public:
   void setLandsOnDraft(bool lands) { m_landsOnDraft = lands; }
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
+  // Whether a prompt sent from the draft may yet come back into it: a window
+  // is still making it into a thread, or a background send from it is
+  // unanswered.
+  bool launchPending(const QString& id) const;
   // The draft's first turn was sent as the thread `threadKey`: the draft is
   // done and every window that showed it shows the thread instead.
   void promote(const QString& threadKey);
@@ -124,8 +128,6 @@ private:
   QList<DraftController*> everyWindow() const;
   // A window is sending the draft's first message: it is the thread's now.
   bool launching(const QString& id) const;
-  // Whether the draft holds anything the user wrote or attached.
-  bool holdsAnything(const QString& id) const;
   void changedEverywhere();
 
   // What every window's controller keeps.

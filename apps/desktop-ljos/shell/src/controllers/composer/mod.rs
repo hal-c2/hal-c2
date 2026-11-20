@@ -68,7 +68,8 @@ use serde_json::json;
 
 use kept::{Attachment, Draft};
 pub use kept::{
-    adopt, attachments, attachments_pending, awaits_launch, draft, draft_preview, terminal_contexts,
+    adopt, attachments, attachments_pending, awaits_launch, carried, draft, draft_preview,
+    terminal_contexts,
 };
 
 use crate::bridge::Bridge;
