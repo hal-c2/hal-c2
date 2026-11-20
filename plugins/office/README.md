@@ -28,8 +28,26 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   floor, each piece of furniture and one sprite sheet per person are painted
   once; the page then only moves them, on one timer that runs while the page is
   shown.
-- `test/tst_OfficePage.qml`: the page against a fake MC part; its header has the
-  command that runs it.
+- `test/tst_OfficePage.qml`: the page against a fake MC part.
+
+## Running the tests
+
+From the repository root, with both `-import` paths: `apps/desktop-qt/tests/imports`
+holds the fake `HalC2.Shell` and `apps/desktop-qt/qml` the bricks. Without them
+the run fails with "module HalC2.Shell is not installed".
+
+```bash
+# Ljós
+ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
+  plugins/office/test/tst_OfficePage.qml
+
+# Qt 6 (a bare qmltestrunner may be Qt 5's, which prints nothing and exits 1)
+QT_QPA_PLATFORM=offscreen "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" \
+  -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+  -input plugins/office/test/tst_OfficePage.qml
+```
+
+Add `OfficePage::test_<name>` after `-input <file>` to run single tests with Qt.
 
 ## The `office` topic
 

@@ -1222,6 +1222,37 @@ Item {
             compare(last, "d", "D goes second");
         }
 
+        // Two who talk to each other at once take turns: each is someone the
+        // other talks to only once the first talk is over.
+        function test_two_who_talk_to_each_other_take_turns() {
+            const people = [person("a", "A", "working", "typing"), person("b", "B", "working", "typing")].concat(many(4, "o", "working", "typing"));
+            plugin.publish(people);
+            const a = actor("a"), b = actor("b");
+            const say = (from, to, id) => ({
+                        id: id,
+                        from: from,
+                        to: to,
+                        kind: "message",
+                        text: "From " + from,
+                        at: new Date().toISOString()
+                    });
+            plugin.publish(people, [say("a", "b", "talk-1"), say("b", "a", "talk-2")]);
+            const talked = {};
+            runUntil(() => {
+                verify(!(a.talk && b.talk), "one of them talks at a time");
+                if (a.talk)
+                    talked.a = true;
+                if (b.talk)
+                    talked.b = true;
+                checkFloor();
+                return talked.a && talked.b && !a.talk && !b.talk;
+            }, 3000, "both talks run to their end");
+            compare([a.hold, b.hold, a.heldBy, b.heldBy], [-1, -1, "", ""], "nobody holds a tile for a talk");
+            const mine = Object.values(page.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.claims))
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+        }
+
         // A speaker that finds every side of its listener taken keeps the spot
         // it had, rather than stop somewhere nobody holds for it.
         function test_a_speaker_with_no_side_free_keeps_its_spot() {
