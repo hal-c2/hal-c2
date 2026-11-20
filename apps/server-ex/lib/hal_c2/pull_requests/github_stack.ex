@@ -200,7 +200,10 @@ defmodule HalC2.PullRequests.GitHubStack do
                })
            )
            |> read(ctx) do
-      await_merge(ctx, result, System.monotonic_time(:millisecond) + @merge_deadline_ms, 0)
+      deadline =
+        Application.get_env(:hal_c2, :stack_merge_deadline_ms, @merge_deadline_ms)
+
+      await_merge(ctx, result, System.monotonic_time(:millisecond) + deadline, 0)
     end
   end
 

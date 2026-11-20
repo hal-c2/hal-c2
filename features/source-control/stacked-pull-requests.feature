@@ -80,7 +80,7 @@ Feature: Stacked pull requests
 
   # Upstream #29919: after a squash merge of a lower layer, the layer above replayed its commits
   # onto the squash commit and conflicted.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Rebasing a stack whose bottom layer was squash-merged
     Given pull request 41 was squash-merged into "main" and 42 and 43 are still open
     When the user rebases the stack
@@ -360,27 +360,27 @@ Feature: Stacked pull requests
       | a stack merge | the same hint a single pull request's merge gives                 |
       | a stack rebase| a rebase hint that does not suggest updating with a merge commit |
 
-  @backlog @mc
+  @mc
   Scenario: A stack merge is submitted as one merge with the head the user saw
     When the user merges the stack at pull request 43 by squash
     Then GitHub is asked once to merge pull request 43 by squash at the head the user reviewed
     And the layers below it are merged by that one request
 
-  @backlog @mc
+  @mc
   Scenario: A stack merge GitHub puts in its merge queue is not reported as merged
     Given GitHub's merge queue accepts the stack merge
     When the user merges the stack at pull request 42
     Then the stack merge is accepted as submitted
     And the MC does not claim the layers are merged yet
 
-  @backlog @mc
+  @mc
   Scenario: A stack merge GitHub later rejects says so
     Given GitHub accepts the stack merge and later reports that it failed
     When the user merges the stack at pull request 43
     Then the user is told "GitHub refused the stack merge. Check the stack's branch rules and merge requirements."
     And no layer is reported as merged
 
-  @backlog @mc
+  @mc
   Scenario: A stack merge that is still running after five minutes is not reported as done
     Given GitHub is still working on the stack merge after five minutes
     When the user merges the stack at pull request 43
@@ -394,27 +394,27 @@ Feature: Stacked pull requests
     Then the MC asks GitHub again after one second, then two, four and eight
     And it never waits more than ten seconds between asks
 
-  @backlog @mc
+  @mc
   Scenario: Draft layers above the chosen layer do not hold the merge back
     Given the stack also has draft pull requests 44 and 45 above pull request 43
     When the user merges the stack at pull request 43
     Then pull requests 41, 42 and 43 are merged
     And pull requests 44 and 45 stay open
 
-  @backlog @mc
+  @mc
   Scenario: A draft layer at or below the chosen layer refuses the merge
     Given pull request 42 is a draft
     When the user merges the stack at pull request 43
     Then the merge is refused with "This operation is not supported for this stack."
     And nothing is merged
 
-  @backlog @mc
+  @mc
   Scenario: A layer that is already merged cannot start a stack merge
     Given pull request 41 is already merged
     When the user merges the stack at pull request 41
     Then the merge is refused with "This operation is not supported for this stack."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A stack action that no longer matches the stack names what changed
     Given <situation>
     When the user <action>
@@ -427,7 +427,7 @@ Feature: Stacked pull requests
       | the stack was replaced by another stack           | rebases the stack              | The stack changed. Refresh it before trying again.   |
       | a layer was merged after the user looked          | rebases the stack              | The stack changed. Refresh it before trying again.   |
 
-  @backlog @mc
+  @mc
   Scenario: A stack rebase is refused before anything changes when a fork cannot be pushed to
     Given pull request 43 comes from a fork whose owner does not allow maintainer updates
     And the user has no write access to that fork
@@ -435,46 +435,46 @@ Feature: Stacked pull requests
     Then the user is told "You cannot update every branch in this stack. Check write access and fork maintainer permissions before retrying."
     And no layer is rebased, including the ones below pull request 43
 
-  @backlog @mc
+  @mc
   Scenario: A fork that allows maintainer updates can be rebased
     Given pull request 43 comes from a fork whose owner allows maintainer updates
     When the user rebases the stack
     Then pull request 43 is rebased with the other layers
 
-  @backlog @mc
+  @mc
   Scenario: Layers that are already current are left alone in a rebase
     Given pull request 41 is already up to date with "main"
     When the user rebases the stack
     Then pull request 41 is not rebased again
     And pull requests 42 and 43 are rebased
 
-  @backlog @mc
+  @mc
   Scenario: A push to a layer during a stack rebase stops it and keeps the finished layers
     Given someone pushes to pull request 43 while the stack is being rebased
     When the user rebases the stack
     Then the rebase stops at pull request 43 without rebasing the pushed revision
     And the user is told "The stack changed at PR #43 after 2 layers. Earlier updates remain on GitHub. Refresh it before trying again."
 
-  @backlog @mc
+  @mc
   Scenario: A push to a layer already rebased is not built on
     Given someone pushes to pull request 41 after it was rebased but before pull request 42 was
     When the user rebases the stack
     Then pull request 42 is not rebased onto the new revision
     And the user is told which layer changed and how many finished before it
 
-  @backlog @mc
+  @mc
   Scenario: A rebase that fails on one layer says which layer and how many finished
     Given GitHub refuses to rebase pull request 43
     When the user rebases the stack
     Then the user is told "Stack rebase stopped at PR #43 after 2 layers. Earlier updates remain on GitHub; resolve the failing layer before retrying."
 
-  @backlog @mc
+  @mc
   Scenario: Only the top layer of a stack can start a rebase
     When the user rebases the stack from pull request 42
     Then it is refused because the stack no longer matches
     And nothing is rebased
 
-  @backlog @mc
+  @mc
   Scenario: A host without stacks reports no stack
     Given GitHub does not offer stacks for "acme/shop"
     When the user asks for the stack of pull request 42
@@ -489,7 +489,7 @@ Feature: Stacked pull requests
     Then the last synced stack stays
     And the refresh can be tried again
 
-  @backlog @mc
+  @mc
   Scenario: An unreadable stack answer is reported and changes nothing
     Given GitHub answers a stack action with something the MC cannot read
     When the user merges the stack at pull request 43
