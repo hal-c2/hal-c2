@@ -3,7 +3,13 @@
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
 root="$(cd ../.. && pwd)"
-rev="$(grep -Eo 'ljos-ui", rev = "[0-9a-f]{40}' Cargo.toml | grep -Eo '[0-9a-f]{40}$')"
+# Every ljos crate is pinned to one rev; refuse to guess if they ever disagree.
+rev="$(grep -Eo 'ljos-ui", rev = "[0-9a-f]{40}' Cargo.toml | grep -Eo '[0-9a-f]{40}$' | sort -u)"
+if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "error: apps/desktop-ljos/Cargo.toml must pin every ljos-ui crate to one rev, found:" >&2
+  echo "${rev:-none}" >&2
+  exit 1
+fi
 prefix="$root/.hal-c2/ljos-cli"
 # Built again only when the pin moves; the first build compiles Ljós (minutes).
 if [[ "$(cat "$prefix/rev" 2>/dev/null)" != "$rev" ]]; then
