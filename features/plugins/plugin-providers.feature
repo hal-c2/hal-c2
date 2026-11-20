@@ -57,10 +57,14 @@ Feature: Provider instances a plugin adds
     And the agent of "plugin_host-probe_claude" is given "ANTHROPIC_AUTH_TOKEN" as "sk-proxy"
 
   @mc
-  Scenario: A plugin never reaches the user's instances
+  Scenario: A plugin does not list the user's instances
     Given a plugin granted "providers:configure"
     When it lists its instances
     Then "claude-work" is not among them
+
+  @mc
+  Scenario: A plugin cannot remove the user's instance
+    Given a plugin granted "providers:configure"
     When it removes the instance "claude-work"
     Then the user's instance "claude-work" is as it was
 
@@ -72,6 +76,11 @@ Feature: Provider instances a plugin adds
     Then the MC refuses the call saying it "is a provider instance of the user's"
     And the user's instance "plugin_host-probe_claude" is as it was
     And the plugin lists no instances
+
+  @mc
+  Scenario: A plugin cannot remove an instance of the user's under the id it would use
+    Given the user added an instance of their own as "plugin_host-probe_claude"
+    And a plugin granted "providers:configure"
     When it removes the instance "claude"
     Then the user's instance "plugin_host-probe_claude" is as it was
 

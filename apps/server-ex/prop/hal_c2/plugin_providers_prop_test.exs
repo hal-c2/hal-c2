@@ -363,7 +363,8 @@ defmodule HalC2.PluginProvidersPropTest do
   end
 
   # As a client saves: the document it read, without the instance, then with one of the
-  # user's in its place, the host's record still as read. By hand: deleted from
+  # user's in its place, the host's record still as read and the host held until both
+  # are in. By hand: deleted from
   # settings.json, then added back as the user's, each adopted before the next.
   def user_replace(instance_id, via) when via in [:file, :down] do
     user_delete(instance_id, via)
@@ -372,15 +373,20 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def user_replace(instance_id, :settings) do
     {read, version} = HalC2.Settings.get()
+    :sys.suspend(Plugins)
 
-    {:ok, version} =
-      HalC2.Settings.put(
-        Map.update!(read, "providerInstances", &Map.delete(&1, instance_id)),
-        version
-      )
+    try do
+      {:ok, version} =
+        HalC2.Settings.put(
+          Map.update!(read, "providerInstances", &Map.delete(&1, instance_id)),
+          version
+        )
 
-    {:ok, _} =
-      HalC2.Settings.put(put_in(read, ["providerInstances", instance_id], @users), version)
+      {:ok, _} =
+        HalC2.Settings.put(put_in(read, ["providerInstances", instance_id], @users), version)
+    after
+      :sys.resume(Plugins)
+    end
 
     sync()
   end
