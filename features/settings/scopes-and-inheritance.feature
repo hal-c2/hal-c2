@@ -253,7 +253,7 @@ Feature: Settings scopes and inheritance
       Then settings.json is readable only by the user the MC runs as
       And it is replaced in one step so a crash never leaves half a file
 
-    @backlog @mc
+    @mc
     Scenario: Only settings that differ from the defaults are written
       Given the user changed one setting
       When the MC saves the settings
