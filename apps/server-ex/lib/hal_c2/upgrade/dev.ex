@@ -79,7 +79,7 @@ defmodule HalC2.Upgrade.Dev do
     with :ok <- write_boot(rel_dir, to, to_libs),
          {:ok, plan} <- plan(spec),
          {:ok, report} <- install(spec, plan) do
-      keep_boot()
+      keep_boot(rel_dir)
       prune(rel_dir, to, to_libs)
       {:ok, report}
     else
@@ -329,21 +329,28 @@ defmodule HalC2.Upgrade.Dev do
   end
 
   # Making a release permanent points `init` at its boot script for the next
-  # restart; a checkout's MC restarts as it was started (`mix hal_c2.server`).
-  defp keep_boot do
+  # restart; a checkout's MC restarts as it was started (`mix hal_c2.server`). `init`
+  # answers with the flags as the release handler just set them, so a boot script in
+  # `rel_dir` is one of these releases': booting it starts Elixir's applications from
+  # their stubs, without their default environment. The node was started without one.
+  @doc false
+  def keep_boot(rel_dir) do
+    default = String.to_charlist(Path.join([to_string(:code.root_dir()), "bin", "start"]))
+
     boot =
       case :init.get_argument(:boot) do
-        {:ok, [[boot | _] | _]} -> boot
-        _ -> String.to_charlist(Path.join([to_string(:code.root_dir()), "bin", "start"]))
+        {:ok, [[boot | _] | _]} -> if in_dir?(boot, rel_dir), do: default, else: boot
+        _ -> default
       end
 
-    config =
-      case :init.get_argument(:config) do
-        {:ok, [[config | _] | _]} -> config
-        _ -> false
-      end
+    # `false` keeps the release's `sys.config`, which `write_release/3` leaves empty.
+    :ok = :init.make_permanent(boot, false)
+  end
 
-    :ok = :init.make_permanent(boot, config)
+  defp in_dir?(path, dir) do
+    path = Path.expand(to_string(path))
+    dir = Path.expand(dir)
+    path == dir or String.starts_with?(path, dir <> "/")
   end
 
   defp loaded?(app), do: List.keymember?(:application.loaded_applications(), app, 0)
