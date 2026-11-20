@@ -1308,6 +1308,8 @@ Item {
         // so the listener stays put and the talk reaches its reply.
         function test_a_listener_keeps_its_tile_until_the_talk_ends() {
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")]);
+            page.takeBreak(actor("c"));
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
                 {
                     id: "talk-1",
