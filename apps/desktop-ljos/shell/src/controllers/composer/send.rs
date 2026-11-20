@@ -1278,6 +1278,7 @@ impl Composer {
         let restore = Action::new("Restore prompt", move |engine| {
             let (draft_id, prompt) = (draft_id.clone(), prompt.clone());
             later(&me, engine, move |c, engine| {
+                kept::forget_gone_offers(engine);
                 if !c.restore_launch(engine, &draft_id, &prompt) {
                     return;
                 }

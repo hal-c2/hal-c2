@@ -315,6 +315,8 @@ private slots:
 
     QVERIFY(shell.native->controller<ToastController>()->runAction(QStringLiteral("Restore prompt")));
     QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+    // The chosen Restore took its offer.
+    QCOMPARE(shell.native->controller<ComposerController>()->offerCount(), 0);
   }
 
   // An offer keeps an emptied draft, not one the removal was asked with: the
@@ -352,6 +354,7 @@ private slots:
     shell.bridge.dispatch(QStringLiteral("notification.dismiss"),
                           QVariantMap{{QStringLiteral("id"), toasts.constFirst().toMap().value(QStringLiteral("id"))}});
     QTRY_COMPARE(shell.draftsFor(kBox), QStringList());
+    QCOMPARE(shell.native->controller<ComposerController>()->offerCount(), 0);
   }
 
   // The answer drops the drafts the machine had when it was asked to go. One

@@ -357,6 +357,11 @@ fn refused_behind_a_newer_prompt(hub: &Hub) -> String {
     id
 }
 
+/// How many offers the composer has noted.
+fn offers(hub: &Hub) -> usize {
+    composer::kept::read(&hub.engine, |d| d.offers.len())
+}
+
 /// The offer's toast id.
 fn offer(hub: &Hub) -> serde_json::Value {
     let items = hub.published("toasts")["items"].clone();
@@ -384,6 +389,8 @@ fn a_restore_offer_keeps_its_emptied_draft_while_the_machine_is_gone() {
     );
     hub.advance(0);
     assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+    // The chosen Restore took its offer.
+    assert_eq!(offers(&hub), 0);
 }
 
 #[test]
@@ -422,6 +429,29 @@ fn a_closed_restore_offer_lets_its_emptied_draft_go() {
     hub.dispatch("notification.dismiss", json!({"id": toast}));
     hub.advance(0);
     assert!(drafts::draft(&hub.engine, &id).is_none());
+}
+
+#[test]
+fn offers_go_with_their_toasts() {
+    let hub = listing();
+    for round in 0..3 {
+        let id = refused_behind_a_newer_prompt(&hub);
+        let toast = offer(&hub);
+        if round == 0 {
+            hub.dispatch(
+                "composer.text.set",
+                json!({"target": id, "text": "", "cursor": 0}),
+            );
+            hub.dispatch(
+                "notification.action",
+                json!({"id": toast, "actionId": "primary"}),
+            );
+        } else {
+            hub.dispatch("notification.dismiss", json!({"id": toast}));
+        }
+        hub.advance(0);
+        assert_eq!(offers(&hub), 0);
+    }
 }
 
 #[test]

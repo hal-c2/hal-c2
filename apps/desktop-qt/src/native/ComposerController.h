@@ -216,6 +216,9 @@ public:
   // Whether a toast offers a failed background prompt back to the draft
   // (it held a newer one): kept for it while empty, not past a removal.
   bool offersLaunch(const QString& draftId) const;
+  // How many offers are noted: each goes once its toast is closed or its
+  // Restore is chosen.
+  int offerCount() const;
   // The ids of what `target`'s draft carries besides its text: its
   // attachments, then its excerpts.
   QStringList carried(const QString& target) const;
@@ -256,6 +259,7 @@ signals:
 
 private:
   void offerClosed(const QString& toastId);
+  void forgetGoneOffers();
   struct Attachment {
     QString id;
     QString name;

@@ -407,13 +407,21 @@ pub fn offer(engine: &Engine, draft_id: &str, toast_id: String) {
             });
         });
     }
+    forget_gone_offers(engine);
+    write(engine, |d| {
+        d.offers.push(Offer {
+            draft_id: draft_id.to_owned(),
+            window,
+            toast_id,
+        });
+    });
+}
+
+/// Forgets the offers whose toasts are gone: a chosen Restore takes its
+/// toast with it.
+pub fn forget_gone_offers(engine: &Engine) {
     let offers = write(engine, |d| std::mem::take(&mut d.offers));
     let mut offers: Vec<Offer> = offers.into_iter().filter(|o| o.shown(engine)).collect();
-    offers.push(Offer {
-        draft_id: draft_id.to_owned(),
-        window,
-        toast_id,
-    });
     write(engine, |d| {
         offers.append(&mut d.offers);
         d.offers = offers;
