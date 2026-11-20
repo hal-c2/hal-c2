@@ -7,8 +7,8 @@ defmodule HalC2.PullRequests.Sync do
 
   A sweep a minute asks the host once per pull request however many threads link it,
   in one batch per host (`HalC2.PullRequests.summaries/1`), and only for links that are
-  due: unsynced, open on an unsettled thread, or last read 15 minutes ago. Merged ones
-  are left alone. The stack is read only when the snapshot changed. A newly linked
+  due: unsynced, open on an unsettled thread, or closed less than a day ago and last read
+  15 minutes ago. Merged ones, a settled thread's and long-closed ones are left alone. The stack is read only when the snapshot changed. A newly linked
   pull request and `request/1` (after an action or a refresh) sync at once. `sweep/0`
   runs a sweep now and returns when it is done.
   """
@@ -180,9 +180,14 @@ defmodule HalC2.PullRequests.Sync do
       state
   end
 
+  @closed_horizon 24 * 60 * 60_000
+
+  # A settled thread's links leave the sweep, and so does a pull request closed over a
+  # day ago: both are read again when something asks (`request/1`) or when never read.
   defp due?(state, key, entries, now) do
     snapshots = Enum.map(entries, fn {_row, link} -> link["snapshot"] end)
     last = state.last_synced[key]
+    live = for {row, link} <- entries, unsettled?(row), do: link["snapshot"]
 
     cond do
       MapSet.member?(state.requested, key) or MapSet.member?(state.retry_stacks, key) ->
@@ -191,18 +196,25 @@ defmodule HalC2.PullRequests.Sync do
       nil in snapshots ->
         true
 
-      Enum.all?(snapshots, &(&1["state"] == "merged")) ->
-        false
-
-      Enum.any?(entries, fn {row, link} ->
-        link["snapshot"]["state"] == "open" and unsettled?(row)
-      end) ->
+      Enum.any?(live, &(&1["state"] == "open")) ->
         true
 
-      true ->
+      Enum.any?(live, &(&1["state"] == "closed" and not long_closed?(&1, now))) ->
         last == nil or now - last >= @slow_interval
+
+      true ->
+        false
     end
   end
+
+  defp long_closed?(%{"closedAt" => closed_at}, now) when is_binary(closed_at) do
+    case DateTime.from_iso8601(closed_at) do
+      {:ok, at, _} -> now - DateTime.to_unix(at, :millisecond) > @closed_horizon
+      _ -> false
+    end
+  end
+
+  defp long_closed?(_snapshot, _now), do: false
 
   defp sync_group({state, linked}, key, ref, entries, fields, now) do
     needs_stack? =
