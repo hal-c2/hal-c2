@@ -186,6 +186,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("terminal/composer-context.feature:An excerpt whose text is gone*"),
     QStringLiteral("terminal/composer-context.feature:The user is told when expired*"),
     QStringLiteral("terminal/composer-context.feature:A draft holding only expired*"),
+    QStringLiteral("terminal/composer-context.feature:Toasts about several expired*"),
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the MC rejects*"),

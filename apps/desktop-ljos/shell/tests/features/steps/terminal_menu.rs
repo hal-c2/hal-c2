@@ -750,6 +750,22 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
+        &format!("{Q} opens in the editor at line (\\d+)"),
+        |world, c, _| {
+            world.wait_for("the editor to be asked for the file", |w| {
+                editor_call(w).is_some()
+            })?;
+            let asked = editor_call(world).unwrap_or_default();
+            let wanted = format!("/{}:{}", c[0], c[1]);
+            expect!(
+                text(&asked["cwd"]).ends_with(&wanted),
+                "the editor was asked for {asked}"
+            );
+            expect!(world.opened_urls().is_empty(), "the browser was opened");
+            Ok(())
+        },
+    );
+    steps.step(
         "the path is resolved against the terminal's folder",
         |world, _, _| {
             let folder = terminal_attach(world, &shown_thread(world), "term-1")

@@ -697,6 +697,14 @@ const Steps steps([] {
            QStringLiteral("the editor was asked for %1").arg(QString::fromUtf8(QJsonDocument(asked).toJson(QJsonDocument::Compact))));
     expect(world.openedUrls.isEmpty(), QStringLiteral("the browser was opened"));
   });
+  step(QStringLiteral("%1 opens in the editor at line (\\d+)").arg(q), [editorCall](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !editorCall(world).isEmpty(); }, QStringLiteral("the editor to be asked for the file"));
+    const QJsonObject asked = editorCall(world);
+    const QString wanted = QStringLiteral("/") + c[0] + QLatin1Char(':') + c[1];
+    expect(asked.value(QLatin1String("cwd")).toString().endsWith(wanted),
+           QStringLiteral("the editor was asked for %1").arg(QString::fromUtf8(QJsonDocument(asked).toJson(QJsonDocument::Compact))));
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the browser was opened"));
+  });
   step(QStringLiteral("the path is resolved against the terminal's folder"), [editorCall](World& world, const Captures&, const Table&) {
     const QString folder = terminalAttach(world, shownThread(world), QStringLiteral("term-1"))->value(QLatin1String("cwd")).toString();
     expect(!folder.isEmpty() && editorCall(world).value(QLatin1String("cwd")) == folder + QStringLiteral("/src/app.ts:12:4"),

@@ -341,6 +341,13 @@ pub fn register(steps: &mut Steps) {
         "the draft holds nothing but a terminal excerpt whose text is gone",
         |world, _, _| restored_draft(world, "", 1),
     );
+    steps.step(
+        "the draft is otherwise empty and holds (one terminal excerpt|two terminal excerpts) whose text is gone",
+        |world, c, _| {
+            let count = if c[0].starts_with("one") { 1 } else { 2 };
+            restored_draft(world, "", count)
+        },
+    );
     steps.step("the message is sent without them", |world, _, _| {
         let message = wait_for_message(world)?;
         let sent = message.to_string();

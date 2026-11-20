@@ -132,7 +132,11 @@ fn stop_for_expired(engine: &Engine, text: &str, draft: &kept::Draft) -> bool {
         engine,
         "warning",
         title,
-        "Remove it or re-add it to include terminal output.",
+        if count == 1 {
+            "Remove it or re-add it to include terminal output."
+        } else {
+            "Remove them or re-add them to include terminal output."
+        },
     );
     true
 }
@@ -152,7 +156,11 @@ fn warn_of_expired(engine: &Engine, excerpts: &[Excerpt]) {
         engine,
         "warning",
         title,
-        "Re-add it if you want that terminal output included.",
+        if count == 1 {
+            "Re-add it if you want that terminal output included."
+        } else {
+            "Re-add them if you want that terminal output included."
+        },
     );
 }
 
