@@ -306,6 +306,20 @@ Feature: Office
       Given the office has a thread asking, at its desk
       Then its screen never shows a game, a video, a meme or shopping
 
+    # The page ticks every 40 ms while anyone walks and every 200 ms otherwise.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A whiteboard fills at the same pace whether anyone walks or not
+      Given the office has a thread working, planning, at a whiteboard
+      When 2.4 seconds pass with people walking, and again with nobody walking
+      Then the whiteboard fills by a fifth each time
+
+    # Only screens showing work follow the clock.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Quiet screens stay still
+      Given the office has 16 threads idle, at their desks
+      When the office runs for a while
+      Then a screen showing the idle screen does not change
+
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The break room never holds more than its cap
       Given the office has 70 threads waiting
