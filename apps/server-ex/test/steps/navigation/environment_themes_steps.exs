@@ -231,6 +231,54 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
     context
   end
 
+  step "{string}, a valid theme saved with a UTF-8 byte-order mark, is written into the themes folder",
+       %{args: [file]} = context do
+    context = watch_themes(context)
+    id = String.replace_suffix(file, ".json", "")
+    File.mkdir_p!(themes_dir(context))
+
+    File.write!(
+      Path.join(themes_dir(context), file),
+      "\uFEFF" <> JSON.encode!(palette(String.capitalize(id), "#7aa2f7"))
+    )
+
+    Map.put(context, :bom_theme, id)
+  end
+
+  step "{string} publishes the same file", context do
+    output = run_theme_task(["set", context.bom_theme])
+    assert output =~ ~s(Environment theme set to "#{context.bom_theme}".)
+    assert HalC2.EnvironmentThemes.show()["defaultTheme"] == context.bom_theme
+    context
+  end
+
+  step "no default theme is set", context do
+    context = services(context)
+    assert :ok = HalC2.EnvironmentThemes.clear_default()
+    context
+  end
+
+  step "no theme is published", context do
+    context = services(context)
+    File.mkdir_p!(themes_dir(context))
+
+    for file <- File.ls!(themes_dir(context)),
+        String.ends_with?(file, ".json"),
+        do: File.rm!(Path.join(themes_dir(context), file))
+
+    context
+  end
+
+  step "the output says the environment theme is not set", context do
+    assert context.operator_output =~ "Environment theme: not set."
+    context
+  end
+
+  step "the output says none is published and where to put one", context do
+    assert context.operator_output =~ "Published themes: none (publish into "
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp themes_dir(context), do: Path.join(context.mc.home, "themes")
