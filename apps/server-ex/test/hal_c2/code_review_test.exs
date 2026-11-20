@@ -1077,7 +1077,16 @@ defmodule HalC2.CodeReviewTest do
     rules!(context, head: 2)
     refresh()
 
-    assert %{"previous" => %{}} = :sys.get_state(@server).reviews[@key]
+    reviewed = first["reviewedSha"]
+
+    assert %{
+             "previous" => %{
+               "verdict" => "approve",
+               "summary" => "Looks right.",
+               "reviewedSha" => ^reviewed
+             }
+           } = :sys.get_state(@server).reviews[@key]
+
     assert %{"status" => "running"} = shown = review()
     refute Map.has_key?(shown, "previous")
   end
