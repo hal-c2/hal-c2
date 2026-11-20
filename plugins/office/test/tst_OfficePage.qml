@@ -1115,10 +1115,22 @@ Item {
         // A listener archived mid-talk leaves both tiles it held: the one it
         // listens on and the one it was headed for.
         function test_an_archived_listener_lets_go_of_its_tiles() {
-            // Lead and C get the desks side by side, and C heads for a break
-            // just as the lead speaks to it.
-            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
-            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+            // Lead and C get the desks side by side, and C sets off for the
+            // door just as the lead speaks to it.
+            const people = [person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")];
+            plugin.publish(people);
+            const door = {
+                x: page.world.entrance[0],
+                y: page.world.entrance[1]
+            };
+            page.claim(actor("c"), door);
+            page.setGoal(actor("c"), Object.assign({
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "spot"
+            }, door));
+            plugin.publish(people, [
                 {
                     id: "talk-1",
                     from: "lead",
