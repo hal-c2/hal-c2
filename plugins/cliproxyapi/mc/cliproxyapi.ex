@@ -496,6 +496,8 @@ defmodule HalC2Plugins.CliProxyApi do
 
   # A download in flight is Run's; in Connect the user's proxy is drained meanwhile.
   defp drain(state) do
+    state = proxy_output(state)
+
     if mode(state) == "run" and (state.download != nil or state.proxy["state"] != "running") do
       state
     else
@@ -759,6 +761,16 @@ defmodule HalC2Plugins.CliProxyApi do
       {:ok, body, headers} -> {:ok, body, headers}
       {:error, kind, message} -> {:error, message, refused(state, kind, message)}
     end
+  end
+
+  # The proxy tells the plugin when it starts, stops or fails, not of each line it
+  # prints, so the lines it printed since are read at every drain.
+  defp proxy_output(%{spec: nil} = state), do: state
+
+  defp proxy_output(state) do
+    %{state | proxy: %{state.proxy | "lines" => Proxy.status()["lines"]}}
+  catch
+    :exit, _ -> state
   end
 
   defp schedule(%{timer: nil} = state) do

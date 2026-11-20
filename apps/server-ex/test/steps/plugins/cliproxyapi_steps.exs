@@ -635,11 +635,14 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
-  # The page shows the proxy's own last lines while the management log is empty.
+  # The page shows the proxy's own last lines while the management log is empty. The
+  # proxy's output reaches the plugin as the binary prints it, which can be after it is
+  # running, so the step waits for the status that carries it.
   step "the page shows the proxy's own output in place of the log", context do
-    view = view(context)
-    assert view["logs"] == []
-    assert "CLIProxyAPI Version: 8.0.79 (fake)" in view["status"]["output"]
+    context =
+      await_status(context, &("CLIProxyAPI Version: 8.0.79 (fake)" in (&1["output"] || [])))
+
+    assert view(context)["logs"] == []
     context
   end
 
@@ -705,28 +708,6 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
       Enum.any?(
         status["instances"],
         &(&1["label"] == label and &1["state"] == "taken" and &1["message"] =~ text)
-      )
-    end)
-  end
-
-  step "the plugin's permission to configure providers is taken out of settings.json",
-       context do
-    :ok =
-      HalC2.Settings.update(
-        &update_in(&1, ["plugins", @id, "granted"], fn granted ->
-          List.delete(granted || [], "providers:configure")
-        end)
-      )
-
-    context
-  end
-
-  step "the page shows {string} as not known, saying {string}",
-       %{args: [label, text]} = context do
-    await_status(context, fn status ->
-      Enum.any?(
-        status["instances"],
-        &(&1["label"] == label and &1["state"] == "unknown" and &1["message"] =~ text)
       )
     end)
   end

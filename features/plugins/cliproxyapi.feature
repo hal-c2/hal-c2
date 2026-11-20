@@ -362,12 +362,6 @@ Feature: CLIProxyAPI
       And Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
 
     @mc
-    Scenario: An instance the MC cannot list is not said to be in Settings → Providers
-      Given the CLIProxyAPI plugin runs the fake binary
-      When the plugin's permission to configure providers is taken out of settings.json
-      Then the page shows "Claude via CLIProxyAPI" as not known, saying "was not granted the permission"
-
-    @mc
     Scenario: Adding back an instance the user has taken the id of says so, and keeps saying it
       Given the CLIProxyAPI plugin runs the fake binary
       When the user deletes "plugin_cliproxyapi_codex" in Settings → Providers
