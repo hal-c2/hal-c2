@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Run mobile-qt's feature scenarios against mobile-ljos with a coverage report: [globs relative to features/] [--backlog] [--raise] [--list]"
+#MISE dir="{{config_root}}/apps/mobile-ljos"
+# No globs runs what mobile-qt runs. A glob may name scenarios after a colon
+# (mobile/pairing-and-environments.feature:First launch*). --backlog runs the
+# @backlog and @backlog-mobile scenarios instead; --raise adds the scenarios
+# that newly pass to tests/features/RATCHET; --list names the scenarios and
+# runs none.
+set -euo pipefail
+exec mise exec -- cargo test -q -p hal_c2_mobile --test features -- "$@"

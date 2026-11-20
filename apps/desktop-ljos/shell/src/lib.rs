@@ -259,6 +259,18 @@ pub fn has_mc(engine: &Engine) -> bool {
 /// one, the shell store subscribes to it and they activate on its first
 /// snapshot, previewing what the cache kept until then.
 pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
+    start_with(engine, launch, mc, Vec::new());
+}
+
+/// [`start`] with controllers of the app's own beside the shell's (the
+/// phone's, in apps/mobile-ljos): built, activated and offered actions in
+/// name order with the rest, their state keys declared the same way.
+pub fn start_with(
+    engine: &Engine,
+    launch: &Launch,
+    mc: Rc<dyn mc::Mc>,
+    extra: Vec<controller::Registration>,
+) {
     let bridge = bridge::Bridge::of(engine);
     if let Some(origin) = &launch.mc_origin {
         bridge.set_mc_origin(engine, origin);
@@ -303,7 +315,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     // Each window keeps its panel and terminals under its own directory
     // of this one (ShellWindows::windowDir).
     controller::set_state_dir(engine, launch.state_dir.clone());
-    controller::start(engine, mc.clone(), controllers::registrations());
+    let mut registrations = controllers::registrations();
+    registrations.extend(extra);
+    controller::start(engine, mc.clone(), registrations);
     controllers::settings::Settings::of(engine).set_device_path(
         engine,
         launch

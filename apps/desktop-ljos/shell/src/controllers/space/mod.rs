@@ -2421,8 +2421,8 @@ impl Space {
         }
     }
 
-    pub fn set_page_shown_by_steps(&mut self) {
-        self.page_shown_by_steps = true;
+    pub fn set_page_shown_by_steps(&mut self, on: bool) {
+        self.page_shown_by_steps = on;
     }
 
     pub fn set_viewers_retry_ms(&mut self, ms: i64) {
