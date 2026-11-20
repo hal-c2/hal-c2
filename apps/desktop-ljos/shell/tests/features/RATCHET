@@ -3355,6 +3355,7 @@ threads/creating.feature: A new thread started while the list is scoped to a pro
 threads/creating.feature: A new thread starts in the project the user is looking at
 threads/creating.feature: A new thread uses the project default model when the project has one
 threads/creating.feature: A new worktree needs a base branch
+threads/creating.feature: A request to several models cut off by a quit comes back to its draft once
 threads/creating.feature: A thread cannot start from an empty task
 threads/creating.feature: A thread whose start fails gets its prompt back without touching a newer draft
 threads/creating.feature: Changing a draft's project picks an environment that has it
@@ -3443,6 +3444,7 @@ threads/menu-and-selection.feature: Selecting several threads [selects "A" and t
 threads/menu-and-selection.feature: The selection cannot be archived while one of its threads is running
 threads/menu-and-selection.feature: The selection menu counts what each action affects
 threads/menu-and-selection.feature: The thread menu offers its actions in a fixed order
+threads/migration-and-handoffs.feature: The user is told about threads migrated while the app is open
 threads/migration-and-handoffs.feature: The user is told threads were migrated
 threads/moving-between-machines.feature: A client looking at the thread follows it to its new machine
 threads/moving-between-machines.feature: A client sees that a thread is moving
@@ -3576,6 +3578,9 @@ threads/snooze.feature: A custom snooze time must be in the future and exist [a 
 threads/snooze.feature: A custom snooze time must be in the future and exist [an unreadable date]
 threads/snooze.feature: A failed snooze is reported
 threads/snooze.feature: A snoozable thread offers snoozing from the list
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [a run that started after the snooze fails]
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [the agent asks for an approval]
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [the agent asks the user a question]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [a run that started after the snooze finishes]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [the agent asks for an approval]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [the agent asks the user a question]
@@ -3953,6 +3958,8 @@ timeline/streaming.feature: A duration is written in hours, minutes and seconds,
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [38 seconds, 38s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [4.26 seconds, 4.3s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [62 seconds, 1m 2s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7 seconds, 7s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7.4 seconds, 7.4s]
 timeline/streaming.feature: A finished turn folds its work behind how long it took
 timeline/streaming.feature: A folded turn can be opened and closed again
 timeline/streaming.feature: A long message can be expanded and collapsed

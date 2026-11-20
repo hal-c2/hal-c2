@@ -453,7 +453,7 @@ pub fn register(steps: &mut Steps) {
 
     // Waking early: what the MC's row says once the thread needs the user.
     steps.step(
-        "(the agent asks for an approval|the agent asks the user a question|the agent run fails|a run that started after the snooze finishes)",
+        "(the agent asks for an approval|the agent asks the user a question|the agent run fails|a run that started after the snooze fails|a run that started after the snooze finishes)",
         |world, c, _| {
             let id = first_thread(world);
             scene(world).subject = format!("{}:{id}", world.mc.environment_id);
@@ -465,7 +465,7 @@ pub fn register(steps: &mut Steps) {
                     row.insert("activeRunId".into(), json!("r1"));
                     let kind = if what.ends_with("question") { "user_input" } else { "command_approval" };
                     row.insert("pendingRuntimeRequest".into(), request(kind, now));
-                } else if what == "the agent run fails" {
+                } else if what == "the agent run fails" || what == "a run that started after the snooze fails" {
                     set_run(row, "failed", now);
                 } else {
                     set_run(row, "completed", now);

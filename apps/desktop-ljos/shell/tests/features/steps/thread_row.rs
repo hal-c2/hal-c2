@@ -100,6 +100,23 @@ pub fn register(steps: &mut Steps) {
             world.connect()
         },
     );
+    // The import runs on the MC after the app has its snapshot: the rows come one by one.
+    steps.step(
+        "threads are migrated from the first version while the app is open",
+        |world, _, _| {
+            world.connect()?;
+            world.sync()?;
+            for title in ["Legacy work", "Older legacy work"] {
+                let id = format!("t-{}", title.to_lowercase().replace(' ', "-"));
+                let row = json!({"id": id, "title": title, "projectId": "legacy",
+                       "historyOrigin": "v1_import",
+                       "createdAt": "2026-09-01T09:00:00Z", "updatedAt": "2026-09-01T09:00:00Z"});
+                world.mc.threads.insert(id.clone(), row.clone());
+                world.mc.send_row(&id, &row);
+            }
+            world.sync()
+        },
+    );
     steps.step(
         "the user is told the threads were brought over",
         |world, _, _| {
