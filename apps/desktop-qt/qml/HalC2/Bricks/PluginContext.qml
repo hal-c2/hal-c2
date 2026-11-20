@@ -67,7 +67,7 @@ QtObject {
 
     Component.onDestruction: {
         for (const request of Object.keys(context.answers))
-            delete PluginChannel.answers[request];
+            PluginChannel.drop(request);
         for (const watch of Object.keys(context.watches)) {
             PluginChannel.forget(watch);
             McPlugins.unwatch(Number(watch));

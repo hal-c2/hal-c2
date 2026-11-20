@@ -9,7 +9,7 @@ mod common;
 use std::path::Path;
 use std::rc::Rc;
 
-use common::{FakeMc, call, number, shell_with};
+use common::{FakeMc, call, number, shell_with, text};
 use ljos::prelude::{Engine, ObjectId, Value};
 use serde_json::json;
 
@@ -30,6 +30,7 @@ Item {
     property int heard: 0
     property int rows: -1
     property var contexts: []
+    property string answeredBy: ""
 
     Component {
         id: factory
@@ -52,6 +53,21 @@ Item {
             made.push(context);
         }
         root.contexts = made;
+    }
+
+    // Part `index` calls its MC part; whose `done` runs is kept in `answeredBy`.
+    function ask(index) {
+        root.contexts[index].call("refresh", {}, (result, error) => {
+            root.answeredBy += String(index);
+        });
+    }
+
+    function drop(index) {
+        root.contexts[index].destroy();
+    }
+
+    function waiting() {
+        return Object.keys(PluginChannel.answers).length;
     }
 
     function close() {
@@ -150,4 +166,26 @@ fn more_plugin_parts_do_not_add_script_handlers_to_every_publish() {
             .all(|(_, shape)| shape["type"] != "plugin"),
         "closing the parts ends their watches"
     );
+}
+
+#[test]
+fn an_answer_reaches_only_the_part_that_asked_and_none_once_it_is_gone() {
+    let (engine, root, mc) = shell();
+    call(
+        &engine,
+        root,
+        "open",
+        &[Value::from(2), Value::from("threads")],
+    );
+    call(&engine, root, "ask", &[Value::from(1)]);
+    mc.answer(&engine, "plugins.call", Ok(json!(null)));
+    assert_eq!(text(&engine, root, "answeredBy"), "1");
+
+    // A part gone before its answer comes leaves nothing behind to call.
+    call(&engine, root, "ask", &[Value::from(0)]);
+    call(&engine, root, "drop", &[Value::from(0)]);
+    engine.process_deferred_deletes();
+    assert_eq!(call(&engine, root, "waiting", &[]), Value::from(0));
+    mc.answer(&engine, "plugins.call", Ok(json!(null)));
+    assert_eq!(text(&engine, root, "answeredBy"), "1");
 }

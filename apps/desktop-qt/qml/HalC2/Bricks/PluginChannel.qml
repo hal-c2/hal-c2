@@ -26,6 +26,10 @@ QtObject {
         delete channel.watches[watch];
     }
 
+    function drop(request) {
+        delete channel.answers[request];
+    }
+
     readonly property Connections link: Connections {
         target: McPlugins
 
