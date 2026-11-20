@@ -131,6 +131,9 @@ defmodule HalC2.GitActions do
       feature? and not commit? ->
         fail!("Feature-branch checkout is only supported for commit actions.")
 
+      not feature? and (push? or pr?) and branch == nil ->
+        fail!("Cannot #{if pr?, do: "create a pull request", else: "push"} from detached HEAD.")
+
       action == "create_pr" and status["hasWorkingTreeChanges"] ->
         fail!("Commit local changes before creating a PR.")
 
@@ -149,9 +152,6 @@ defmodule HalC2.GitActions do
           do: phase
 
     emit.(%{"kind" => "action_started", "phases" => phases})
-
-    if not feature? and (push? or pr?) and branch == nil,
-      do: fail!("Cannot #{if pr?, do: "create a pull request", else: "push"} from detached HEAD.")
 
     {branch_step, branch, suggestion} =
       if feature? do
@@ -376,7 +376,14 @@ defmodule HalC2.GitActions do
   defp suggestion(cwd, branch, input, include_branch) do
     case input["filePaths"] do
       [_ | _] = paths ->
-        Git.run(cwd, ["reset"])
+        # A reset that fails (another git holds the index lock) stops the commit:
+        # carrying on could commit files the user left out.
+        case Git.run(cwd, ["reset"]) do
+          {:ok, %{status: 0}} -> :ok
+          {:ok, %{err: err}} -> fail!("git reset failed: #{last_lines(err)}")
+          {:error, reason} -> fail!("git reset failed: #{reason}")
+        end
+
         git!(cwd, ["--literal-pathspecs", "add", "-A", "--"] ++ paths)
 
       _ ->
@@ -398,7 +405,11 @@ defmodule HalC2.GitActions do
 
         nil ->
           {:ok, %{out: patch}} =
-            Git.run(cwd, ~w(diff --no-ext-diff --cached --patch --minimal), max_bytes: 200_000)
+            Git.run(
+              cwd,
+              ~w(diff --no-ext-diff --no-textconv --cached --patch --minimal),
+              max_bytes: 200_000
+            )
 
           policy = Style.policy(cwd)
 
@@ -635,7 +646,11 @@ defmodule HalC2.GitActions do
     {:ok, %{out: stat}} = Git.run(cwd, ["diff", "--stat", range], max_bytes: 100_000)
 
     {:ok, %{out: patch}} =
-      Git.run(cwd, ["diff", "--no-ext-diff", "--patch", "--minimal", range], max_bytes: 200_000)
+      Git.run(
+        cwd,
+        ["diff", "--no-ext-diff", "--no-textconv", "--patch", "--minimal", range],
+        max_bytes: 200_000
+      )
 
     case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
            policy: Style.policy(cwd),

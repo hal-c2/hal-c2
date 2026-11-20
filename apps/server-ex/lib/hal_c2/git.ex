@@ -32,7 +32,11 @@ defmodule HalC2.Git do
       "-c",
       "safe.bareRepository=explicit",
       "-c",
-      "core.fsmonitor=false" | args
+      "core.fsmonitor=false",
+      # The MC reads git's output (and shows some of it to the writer model), so a
+      # checkout's colour setting must never colour it.
+      "-c",
+      "color.ui=false" | args
     ]
 
     opts =
@@ -225,8 +229,9 @@ defmodule HalC2.Git do
   end
 
   @doc """
-  The branch this one merges into: its gh-merge-base, the remote's default
-  branch, then main or master; remote-tracking refs preferred.
+  The branch this one merges into: its gh-merge-base, the branch it tracks when
+  that is another branch (it was cut from it), the remote's default branch,
+  then main or master; remote-tracking refs preferred.
   """
   def base_branch(root, branch) do
     configured = git_line(root, ["config", "--get", "branch.#{branch}.gh-merge-base"])
@@ -246,7 +251,16 @@ defmodule HalC2.Git do
           _ -> nil
         end
 
-    [configured, default, "main", "master"]
+    # A branch tracking another branch was cut from it, so that branch is its
+    # base; tracking its own name says nothing.
+    tracked =
+      case upstream(root, branch) do
+        %{remote: nil, ref: name} -> name
+        %{remote: remote, ref: ref} -> String.replace_prefix(ref, "#{remote}/", "")
+        _ -> nil
+      end
+
+    [configured, tracked, default, "main", "master"]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.map(fn candidate ->
       candidate
