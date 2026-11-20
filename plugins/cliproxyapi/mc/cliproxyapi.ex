@@ -121,6 +121,8 @@ defmodule HalC2Plugins.CliProxyApi do
       # Per instance name, why the host refused to put it: the user has an instance
       # under its id. Tried again on the next sync.
       taken: %{},
+      # Why the host could not list the plugin's instances, so none is known to be there.
+      unlisted: nil,
       latest: nil,
       latest_at: nil,
       accounts: [],
@@ -821,11 +823,11 @@ defmodule HalC2Plugins.CliProxyApi do
           end)
 
         changed? = ledger != state.ledger
-        state = %{state | ledger: ledger, taken: taken}
+        state = %{state | ledger: ledger, taken: taken, unlisted: nil}
         if changed?, do: save_ledger(state), else: state
 
       {:error, message} ->
-        %{state | error: message}
+        %{state | error: message, unlisted: message}
     end
   end
 
@@ -877,7 +879,10 @@ defmodule HalC2Plugins.CliProxyApi do
       "pid" => state.proxy["pid"],
       "restarts" => state.proxy["restarts"],
       "output" => Enum.take(state.proxy["lines"] || [], -5),
-      "version" => Release.version(),
+      # Only the binary the plugin downloads is known to be the release it pins; one
+      # from the settings or PATH is whatever the user put there.
+      "version" => if(state.source == "download", do: Release.version()),
+      "pinned" => Release.version(),
       "latest" => newer(state.latest),
       "binary" => state.binary,
       "source" => state.source,
@@ -892,10 +897,15 @@ defmodule HalC2Plugins.CliProxyApi do
             "state" =>
               cond do
                 state.ledger[name]["state"] == "dismissed" -> "dismissed"
+                state.unlisted -> "unknown"
                 Map.has_key?(state.taken, name) -> "taken"
-                true -> "added"
+                state.ledger[name]["state"] == "created" -> "added"
+                true -> "unknown"
               end,
-            "message" => state.taken[name]
+            "message" =>
+              if(state.ledger[name]["state"] != "dismissed",
+                do: state.unlisted || state.taken[name]
+              )
           }
         end
     }

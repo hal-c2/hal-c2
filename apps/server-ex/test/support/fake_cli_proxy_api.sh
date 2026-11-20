@@ -7,6 +7,12 @@
 trap 'kill $! 2>/dev/null; exit 0' TERM
 trap 'kill $! 2>/dev/null; echo "fatal: listen tcp 127.0.0.1: bind: address already in use"; exit 3' USR1
 dir=$(dirname "$2")
+# A run noted before this one that still runs overlaps it: two proxies on one port.
+if [ -f "$dir/fake-runs.log" ]; then
+  for pid in $(cut -d' ' -f1 "$dir/fake-runs.log"); do
+    kill -0 "$pid" 2>/dev/null && echo "$pid" >> "$dir/fake-overlaps.log"
+  done
+fi
 printf '%s %s %s MANAGEMENT_PASSWORD=%s WRITABLE_PATH=%s\n' "$$" "$1" "$2" \
   "$([ -n "$MANAGEMENT_PASSWORD" ] && echo set || echo unset)" "$WRITABLE_PATH" >> "$dir/fake-runs.log"
 echo "CLIProxyAPI Version: 8.0.79 (fake)"

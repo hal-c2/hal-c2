@@ -78,6 +78,7 @@ Feature: CLIProxyAPI
       When the user turns the CLIProxyAPI plugin on
       Then the proxy runs from "bin/8.0.79/cli-proxy-api" in the plugin's data folder
       And the page shows the proxy "running"
+      And the page shows the proxy running CLIProxyAPI 8.0.79
 
     @mc
     Scenario: A download that does not match the checksums is not installed
@@ -93,7 +94,7 @@ Feature: CLIProxyAPI
       Given CLIProxyAPI 8.1.0 is released
       And the CLIProxyAPI plugin runs the fake binary
       Then the page offers CLIProxyAPI "8.1.0" as an update
-      And the page shows the proxy running CLIProxyAPI 8.0.79, downloading nothing
+      And the page shows the proxy running the binary it was set to, downloading nothing
 
     @mc
     Scenario: Switching to Connect while the release downloads connects at once
@@ -292,7 +293,7 @@ Feature: CLIProxyAPI
       When the proxy logs "POST /v1/messages 200" and the page refreshes
       Then the page shows the log line "POST /v1/messages 200"
       When the user clears the log
-      Then the page shows no log lines
+      Then the page shows the proxy's own output in place of the log
 
   Rule: Claude and Codex via CLIProxyAPI follow the proxy, and the user's edits stand
 
@@ -359,6 +360,12 @@ Feature: CLIProxyAPI
       Then Settings → Providers has "plugin_cliproxyapi_codex" named "My Codex"
       And the page shows "Codex via CLIProxyAPI" as not added, saying "a provider instance of the user's"
       And Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
+
+    @mc
+    Scenario: An instance the MC cannot list is not said to be in Settings → Providers
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the plugin's permission to configure providers is taken out of settings.json
+      Then the page shows "Claude via CLIProxyAPI" as not known, saying "was not granted the permission"
 
     @mc
     Scenario: Adding back an instance the user has taken the id of says so, and keeps saying it

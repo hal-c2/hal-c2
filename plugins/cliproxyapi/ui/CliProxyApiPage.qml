@@ -101,17 +101,32 @@ Item {
         }, environment);
     }
 
+    // An instance is "added" only once the MC listed it; "unknown" until it could.
+    function instanceLine(instance) {
+        switch (instance.state) {
+        case "dismissed":
+            return qsTr("%1 · deleted from Settings → Providers").arg(instance.label);
+        case "taken":
+            return qsTr("%1 · not added: %2").arg(instance.label).arg(instance.message ?? "");
+        case "added":
+            return qsTr("%1 · in Settings → Providers").arg(instance.label);
+        default:
+            return instance.message ? qsTr("%1 · cannot be checked: %2").arg(instance.label).arg(instance.message) : qsTr("%1 · not checked yet").arg(instance.label);
+        }
+    }
+
     function stateLine() {
-        const version = status?.version ?? "";
+        // A version only for the binary the plugin downloaded; another is the user's.
+        const name = status?.version ? qsTr("CLIProxyAPI %1").arg(status.version) : qsTr("CLIProxyAPI");
         switch (page.phase) {
         case "running":
-            return qsTr("Running CLIProxyAPI %1 at %2").arg(version).arg(status.address);
+            return qsTr("Running %1 at %2").arg(name).arg(status.address);
         case "starting":
-            return qsTr("Starting CLIProxyAPI %1…").arg(version);
+            return qsTr("Starting %1…").arg(name);
         case "restarting":
-            return qsTr("Restarting CLIProxyAPI %1").arg(version);
+            return qsTr("Restarting %1").arg(name);
         case "downloading":
-            return qsTr("Downloading CLIProxyAPI %1…").arg(version);
+            return qsTr("Downloading %1…").arg(name);
         case "connected":
             return qsTr("Connected to CLIProxyAPI at %1").arg(status.address);
         case "connecting":
@@ -265,7 +280,7 @@ Item {
 
             Note {
                 objectName: "cliproxyapiUpdate"
-                text: page.status?.latest ? qsTr("CLIProxyAPI %1 is out. This plugin runs %2, the version it was tested with, until the plugin is updated; set its binary to run another.").arg(page.status.latest).arg(page.status.version) : ""
+                text: page.status?.latest ? qsTr("CLIProxyAPI %1 is out. This plugin downloads %2, the version it was tested with, until the plugin is updated; set its binary to run another.").arg(page.status.latest).arg(page.status.pinned) : ""
                 color: page.warningColor
             }
 
@@ -293,7 +308,7 @@ Item {
                     Text {
                         objectName: "cliproxyapiInstanceText:" + instance.modelData.name
                         Layout.fillWidth: true
-                        text: instance.modelData.state === "dismissed" ? qsTr("%1 · deleted from Settings → Providers").arg(instance.modelData.label) : instance.modelData.state === "taken" ? qsTr("%1 · not added: %2").arg(instance.modelData.label).arg(instance.modelData.message ?? "") : qsTr("%1 · in Settings → Providers").arg(instance.modelData.label)
+                        text: page.instanceLine(instance.modelData)
                         color: instance.modelData.state === "added" ? page.foreground : page.muted
                         wrapMode: Text.Wrap
                         font.pixelSize: Theme.type.meta.size

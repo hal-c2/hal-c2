@@ -2,8 +2,9 @@ defmodule HalC2Plugins.CliProxyApi.Proxy do
   @moduledoc """
   The `cli-proxy-api` process, run through a Port. One spec at a time: `run/1` starts
   it (and is a no-op when the same spec already runs), `halt/0` stops it. A process
-  that exits is started again after a backoff that doubles from a second to a minute,
-  and starts over at a second once one has run for a minute. Every start, exit and
+  that exits, or a restart that fails to start, is started again after a backoff that
+  doubles from a second to a minute, and starts over at a second once one has run for a
+  minute. Every start, exit and
   restart is sent to the process that last called `run/1` as
   `{:cliproxyapi_proxy, status}`.
 
@@ -106,52 +107,96 @@ defmodule HalC2Plugins.CliProxyApi.Proxy do
   # Only a proxy waiting to restart: a timer that fired as `run/1` or `halt/0` cancelled
   # it leaves its message behind, and starting on it would start a second process.
   def handle_info(:restart, %{state: "restarting", port: nil} = state),
-    do: {:noreply, start(%{state | timer: nil, restarts: state.restarts + 1})}
+    do: {:noreply, start(%{state | timer: nil, restarts: state.restarts + 1}, true)}
 
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state), do: stop(state)
 
-  defp start(%{spec: spec} = state) do
+  # `restart?` is a start the restart timer asked for: one that fails is tried again
+  # after the next backoff, as an exit is. A first start that fails is reported failed.
+  defp start(%{spec: spec} = state, restart? \\ false) do
     stop_left_behind(spec)
 
-    port =
-      Port.open({:spawn_executable, spec.binary}, [
-        :binary,
-        :exit_status,
-        :stderr_to_stdout,
-        {:line, 2_000},
-        {:args, spec.args},
-        {:cd, spec.cd},
-        {:env, Enum.map(spec.env, fn {k, v} -> {to_charlist(k), to_charlist(v)} end)}
-      ])
+    case open(spec) do
+      {:ok, port} -> started(state, port, restart?)
+      {:error, message} -> failed(state, message, restart?)
+    end
+  end
 
-    {:os_pid, os_pid} = Port.info(port, :os_pid)
-    File.write!(spec.pidfile, "#{os_pid}\n")
+  defp open(spec) do
+    {:ok,
+     Port.open({:spawn_executable, spec.binary}, [
+       :binary,
+       :exit_status,
+       :stderr_to_stdout,
+       {:line, 2_000},
+       {:args, spec.args},
+       {:cd, spec.cd},
+       {:env, Enum.map(spec.env, fn {k, v} -> {to_charlist(k), to_charlist(v)} end)}
+     ])}
+  rescue
+    error -> {:error, Exception.message(error)}
+  end
+
+  # The process runs from here on: a step that fails after this stops it, so no proxy
+  # is left running that nothing holds the pid of.
+  defp started(state, port, restart?) do
+    os_pid =
+      case Port.info(port, :os_pid) do
+        {:os_pid, os_pid} -> os_pid
+        nil -> nil
+      end
+
+    try do
+      if is_nil(os_pid), do: raise("the proxy exited as it started")
+      File.write!(state.spec.pidfile, "#{os_pid}\n")
+
+      state = %{
+        state
+        | port: port,
+          os_pid: os_pid,
+          started: System.monotonic_time(:millisecond),
+          code: nil,
+          state: "running"
+      }
+
+      tell(state, %{})
+    rescue
+      error ->
+        state = stop(%{state | port: port, os_pid: os_pid})
+        failed(state, Exception.message(error), restart?)
+    end
+  end
+
+  defp failed(%{backoff: backoff} = state, message, true) do
+    timer = Process.send_after(self(), :restart, backoff)
 
     state = %{
       state
-      | port: port,
-        os_pid: os_pid,
-        started: System.monotonic_time(:millisecond),
-        code: nil,
-        state: "running"
+      | port: nil,
+        os_pid: nil,
+        timer: timer,
+        backoff: min(backoff * 2, max_backoff()),
+        state: "restarting",
+        lines: Enum.take([message | state.lines], @lines)
     }
 
-    tell(state, %{})
-  rescue
-    error ->
-      tell(
-        %{
-          state
-          | port: nil,
-            os_pid: nil,
-            state: "failed",
-            lines: [Exception.message(error) | state.lines]
-        },
-        %{}
-      )
+    tell(state, %{"retryInMs" => backoff})
+  end
+
+  defp failed(state, message, false) do
+    tell(
+      %{
+        state
+        | port: nil,
+          os_pid: nil,
+          state: "failed",
+          lines: Enum.take([message | state.lines], @lines)
+      },
+      %{}
+    )
   end
 
   # Stops what runs now: TERM the pid the Port gave, wait for its exit, then KILL.

@@ -14,15 +14,19 @@ defmodule HalC2.CliProxyApiPropTest do
   The supervisor (`HalC2Plugins.CliProxyApi.Proxy`) as a state machine over the fake
   binary (`test/support/fake_cli_proxy_api.sh`): runs with one config or another, the
   same one again, halts, the proxy failing (and failing again while it waits to
-  restart, as `run/1` and `halt/0` come in), and the MC dying with the proxy still up.
-  After every step at most one of the processes it ever started still runs, the one
-  its status and pidfile name; a failed proxy is started again after a backoff that
-  doubles to its cap and starts over with a new config; a halted one stays down; and
-  the proxy a dead MC left behind is stopped by the next run. Every wait is on a
-  message the supervisor sends, never a sleep.
+  restart, as `run/1` and `halt/0` come in, or with its binary gone so the restart
+  cannot start), and the MC dying with the proxy still up. After every step at most
+  one of the processes it ever started still runs, the one its status and pidfile
+  name; a failed proxy, or a restart that could not start, is started again after a
+  backoff that doubles to its cap and starts over with a new config; a halted one
+  stays down; and the proxy a dead MC left behind is stopped by the next run. Every
+  wait is on a message the supervisor sends, never a sleep.
 
-  The plugin process, the page and the provider instances are covered by
-  `features/plugins/cliproxyapi.feature`.
+  The plugin process is not modelled here. What it decides is what the proxy's
+  management API, the MC's settings and the host answer it, so a model of it would be
+  a model of the fake proxy; `features/plugins/cliproxyapi.feature` drives it through
+  each of those answers instead, and `HalC2Plugins.CliProxyApi.Instances`, the part
+  that decides on its own, is plain functions those scenarios cover.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -165,6 +169,7 @@ defmodule HalC2.CliProxyApiPropTest do
         HalC2.Prop.put_env(:cliproxyapi, backoff_ms: @backoff)
         Process.put(:home, home)
         Process.put(:pids, [])
+        put_binary()
         start_proxy()
 
         {history, state, result} =
@@ -185,13 +190,14 @@ defmodule HalC2.CliProxyApiPropTest do
   def initial_state,
     do: %{spec: nil, up: false, restarts: 0, backoff: elem(@backoff, 0), orphan: false}
 
-  def command(%{up: true}) do
+  def command(%{up: true} = s) do
     frequency([
       {3, {:call, __MODULE__, :run, [config()]}},
       {2, {:call, __MODULE__, :halt, []}},
       {3, {:call, __MODULE__, :fail, []}},
       {2, {:call, __MODULE__, :fail_then_halt, []}},
       {2, {:call, __MODULE__, :fail_then_run, [config()]}},
+      {1, {:call, __MODULE__, :fail_unstartable_then_run, [other(s.spec)]}},
       {1, {:call, __MODULE__, :mc_dies, []}}
     ])
   end
@@ -206,7 +212,7 @@ defmodule HalC2.CliProxyApiPropTest do
   defp config, do: elements([:a, :b])
 
   def precondition(%{up: up}, {:call, _, name, _})
-      when name in [:fail, :fail_then_halt, :fail_then_run, :mc_dies],
+      when name in [:fail, :fail_then_halt, :fail_then_run, :fail_unstartable_then_run, :mc_dies],
       do: up
 
   def precondition(_s, _call), do: true
@@ -231,6 +237,10 @@ defmodule HalC2.CliProxyApiPropTest do
       else: next_state(%{s | up: false}, result, {:call, __MODULE__, :run, [spec]})
   end
 
+  # Runs the other config, so it starts over whatever the failed restarts counted.
+  def next_state(s, _result, {:call, _, :fail_unstartable_then_run, [spec]}),
+    do: %{s | spec: spec, up: true, restarts: 0, backoff: first(), orphan: false}
+
   def next_state(s, _result, {:call, _, :mc_dies, []}),
     do: %{s | spec: nil, up: false, restarts: 0, backoff: first(), orphan: true}
 
@@ -238,6 +248,9 @@ defmodule HalC2.CliProxyApiPropTest do
     do: %{s | restarts: s.restarts + 1, backoff: min(s.backoff * 2, elem(@backoff, 1))}
 
   defp first, do: elem(@backoff, 0)
+
+  defp other(:a), do: :b
+  defp other(:b), do: :a
 
   def postcondition(s, {:call, _, :run, [spec]}, seen) do
     same = s.up and s.spec == spec
@@ -270,6 +283,13 @@ defmodule HalC2.CliProxyApiPropTest do
 
     seen.retry == s.backoff and seen.pid != seen.before and running?(seen, restarts)
   end
+
+  # The restart that could not start waits out the next backoff, and leaves nothing
+  # running: only the proxy the run started is up.
+  def postcondition(s, {:call, _, :fail_unstartable_then_run, [_spec]}, seen),
+    do:
+      seen.retry == s.backoff and seen.retry_failed == min(s.backoff * 2, elem(@backoff, 1)) and
+        seen.pid != seen.before and running?(seen, 0)
 
   # The proxy it ran is still up, and no supervisor knows it.
   def postcondition(_s, {:call, _, :mc_dies, []}, seen),
@@ -323,6 +343,18 @@ defmodule HalC2.CliProxyApiPropTest do
     seen(before) |> Map.put(:retry, retry)
   end
 
+  # The binary is gone as the proxy fails, so its restart cannot start; it is back for
+  # the run of the other config.
+  def fail_unstartable_then_run(name) do
+    File.rm!(fake_binary())
+    before = fail_now()
+    {retry, _code} = await_restarting()
+    {retry_failed, _code} = await_restarting()
+    put_binary()
+    Proxy.run(spec(name))
+    seen(before) |> Map.merge(%{retry: retry, retry_failed: retry_failed})
+  end
+
   def mc_dies do
     before = current()
     proxy = Process.whereis(Proxy)
@@ -340,11 +372,19 @@ defmodule HalC2.CliProxyApiPropTest do
     flush()
   end
 
+  # A copy of the fake in the scratch home, so a command can take it away.
+  defp fake_binary, do: Path.join(Process.get(:home), "cli-proxy-api")
+
+  defp put_binary do
+    File.cp!(@binary, fake_binary())
+    File.chmod!(fake_binary(), 0o755)
+  end
+
   defp spec(name) do
     home = Process.get(:home)
 
     %{
-      binary: @binary,
+      binary: fake_binary(),
       args: ["-config", Path.join(home, "config.yaml")],
       env: %{"MANAGEMENT_PASSWORD" => password(name), "WRITABLE_PATH" => home},
       cd: home,

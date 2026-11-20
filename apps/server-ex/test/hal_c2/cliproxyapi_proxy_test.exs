@@ -32,7 +32,10 @@ defmodule HalC2.CliProxyApiProxyTest do
   end
 
   @tag :tmp_dir
-  test "a proxy a dead MC left running is stopped before the next one starts", %{spec: spec} do
+  test "a proxy a dead MC left running is stopped before the next one starts", %{
+    spec: spec,
+    tmp_dir: dir
+  } do
     %{"pid" => left} = Proxy.run(spec.("a"))
     kill_supervisor()
     assert alive?(left)
@@ -40,10 +43,39 @@ defmodule HalC2.CliProxyApiProxyTest do
     start()
     %{"state" => "running", "pid" => pid} = Proxy.run(spec.("a"))
 
-    # Gone by the time the new one runs: it held the port the new one listens on.
+    # Gone before the new one started, not only by the reply: it held the port the new
+    # one listens on. The fake notes a run it finds still running as it starts.
     refute alive?(left)
     assert alive?(pid)
+    refute File.exists?(Path.join(dir, "fake-overlaps.log"))
     Proxy.halt()
+  end
+
+  @tag :tmp_dir
+  test "a proxy that started but could not be recorded is stopped", %{tmp_dir: dir} do
+    config = Path.join(dir, "config.yaml")
+    before = running(config)
+
+    spec = %{spec(dir, "a") | pidfile: Path.join([dir, "missing", "cli-proxy-api.pid"])}
+    assert %{"state" => "failed", "pid" => nil} = Proxy.run(spec)
+    assert running(config) -- before == []
+  end
+
+  @tag :tmp_dir
+  test "a restart that fails to start is tried again", %{tmp_dir: dir} do
+    binary = Path.join(dir, "cli-proxy-api")
+    File.cp!(@binary, binary)
+    %{"pid" => first} = Proxy.run(%{spec(dir, "a") | binary: binary})
+
+    File.rm!(binary)
+    System.cmd("kill", ["-USR1", to_string(first)])
+    assert_receive {:cliproxyapi_proxy, %{"state" => "restarting", "restarts" => 0}}, 5_000
+    assert_receive {:cliproxyapi_proxy, %{"state" => "restarting", "restarts" => 1}}, 5_000
+
+    File.cp!(@binary, binary)
+    assert_receive {:cliproxyapi_proxy, %{"state" => "running", "pid" => pid}}, 5_000
+    Proxy.halt()
+    refute alive?(pid)
   end
 
   @tag :tmp_dir
@@ -81,6 +113,15 @@ defmodule HalC2.CliProxyApiProxyTest do
       cd: dir,
       pidfile: Path.join(dir, "cli-proxy-api.pid")
     }
+  end
+
+  # The fake proxies still running on `config`: read from `ps`, never signalled.
+  defp running(config) do
+    {out, 0} = System.cmd("ps", ["-eo", "pid=,args="])
+
+    for line <- String.split(out, "\n", trim: true),
+        String.contains?(line, "fake_cli_proxy_api.sh -config #{config}"),
+        do: line
   end
 
   defp alive?(pid),

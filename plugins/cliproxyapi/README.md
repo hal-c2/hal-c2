@@ -30,7 +30,8 @@ API: copy the folder into an MC's `plugins` folder to install it.
   - `instances.ex` is what the two provider instances hold and when they are put.
   - `usage.ex` sums the proxy's usage per day, account and model, 30 days at most.
   - `api.ex` is the management API's HTTP client.
-- `ui/CliProxyApiPage.qml`: the **CLIProxyAPI** page, for the desktop and the phone.
+- `ui/CliProxyApiPage.qml`: the **CLIProxyAPI** page. The desktop shows it; the phone
+  does not yet (its scenarios are `@backlog-mobile`).
 - `test/tst_CliProxyApiPage.qml`: the page against a fake MC part; its header has
   the command that runs it.
 

@@ -112,7 +112,26 @@ defmodule HalC2.Test.FakeCliProxyApi do
     end
   end
 
-  defp route(%{request_path: @prefix <> "/oauth/callback", method: "POST"}, body, state) do
+  defp route(%{request_path: @prefix <> path} = conn, body, state) do
+    request = conn.method <> " " <> path
+
+    cond do
+      state.refuse && conn |> get_req_header("authorization") |> List.first() != nil ->
+        {401, %{"error" => state.refuse}, state}
+
+      match?([_ | _], state.next[request]) ->
+        [{status, reply} | rest] = state.next[request]
+        {status, reply, %{state | next: Map.put(state.next, request, rest)}}
+
+      true ->
+        management(conn.method, path, conn.query_params, body, if_match(conn), state)
+    end
+  end
+
+  defp route(_conn, _body, state), do: {404, %{"error" => "not_found"}, state}
+
+  # Behind the management key like the rest: a refused key completes no sign-in.
+  defp callback(body, state) do
     query = URI.decode_query(URI.parse(body["redirect_url"] || "").query || "")
     key = query["state"] || body["state"]
 
@@ -143,23 +162,8 @@ defmodule HalC2.Test.FakeCliProxyApi do
     end
   end
 
-  defp route(%{request_path: @prefix <> path} = conn, body, state) do
-    request = conn.method <> " " <> path
-
-    cond do
-      state.refuse && conn |> get_req_header("authorization") |> List.first() != nil ->
-        {401, %{"error" => state.refuse}, state}
-
-      match?([_ | _], state.next[request]) ->
-        [{status, reply} | rest] = state.next[request]
-        {status, reply, %{state | next: Map.put(state.next, request, rest)}}
-
-      true ->
-        management(conn.method, path, conn.query_params, body, if_match(conn), state)
-    end
-  end
-
-  defp route(_conn, _body, state), do: {404, %{"error" => "not_found"}, state}
+  defp management("POST", "/oauth/callback", _query, body, _if_match, state),
+    do: callback(body, state)
 
   defp management(
          "GET",

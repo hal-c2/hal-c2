@@ -405,10 +405,11 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     assert run.env == %{"MANAGEMENT_PASSWORD" => "set", "WRITABLE_PATH" => dir()}
     management = File.read!(Path.join(dir(), "management.key"))
 
-    assert Enum.all?(
-             Fake.requests(context.fake),
-             &(&1["authorization"] == "Bearer " <> management)
-           )
+    requests =
+      Enum.filter(Fake.requests(context.fake), &String.starts_with?(&1["path"], "/v8/"))
+
+    assert requests != []
+    assert Enum.all?(requests, &(&1["authorization"] == "Bearer " <> management))
 
     context
   end
@@ -460,8 +461,19 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
-  step "the page shows the proxy running CLIProxyAPI 8.0.79, downloading nothing", context do
-    assert %{"state" => "running", "version" => @version, "source" => "setting"} = status(context)
+  step "the page shows the proxy running CLIProxyAPI 8.0.79", context do
+    assert %{"state" => "running", "version" => @version, "source" => "download"} =
+             status(context)
+
+    context
+  end
+
+  # The binary is the user's, so the page names no version for it: only the pinned one.
+  step "the page shows the proxy running the binary it was set to, downloading nothing",
+       context do
+    assert %{"state" => "running", "version" => nil, "pinned" => @version, "source" => "setting"} =
+             status(context)
+
     refute Enum.any?(Fake.requests(context.fake), &String.starts_with?(&1["path"], "/releases"))
     context
   end
@@ -623,8 +635,11 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
-  step "the page shows no log lines", context do
-    assert view(context)["logs"] == []
+  # The page shows the proxy's own last lines while the management log is empty.
+  step "the page shows the proxy's own output in place of the log", context do
+    view = view(context)
+    assert view["logs"] == []
+    assert "CLIProxyAPI Version: 8.0.79 (fake)" in view["status"]["output"]
     context
   end
 
@@ -690,6 +705,28 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
       Enum.any?(
         status["instances"],
         &(&1["label"] == label and &1["state"] == "taken" and &1["message"] =~ text)
+      )
+    end)
+  end
+
+  step "the plugin's permission to configure providers is taken out of settings.json",
+       context do
+    :ok =
+      HalC2.Settings.update(
+        &update_in(&1, ["plugins", @id, "granted"], fn granted ->
+          List.delete(granted || [], "providers:configure")
+        end)
+      )
+
+    context
+  end
+
+  step "the page shows {string} as not known, saying {string}",
+       %{args: [label, text]} = context do
+    await_status(context, fn status ->
+      Enum.any?(
+        status["instances"],
+        &(&1["label"] == label and &1["state"] == "unknown" and &1["message"] =~ text)
       )
     end)
   end

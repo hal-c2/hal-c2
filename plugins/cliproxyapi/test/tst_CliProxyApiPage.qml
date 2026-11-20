@@ -23,9 +23,10 @@ Item {
             restarts: 0,
             output: [],
             version: "8.0.79",
+            pinned: "8.0.79",
             latest: null,
-            binary: "/usr/bin/cli-proxy-api",
-            source: "path",
+            binary: "/data/cliproxyapi/bin/cli-proxy-api",
+            source: "download",
             address: "http://127.0.0.1:8317",
             error: null,
             instances: [
@@ -237,6 +238,23 @@ Item {
             verify(!find("cliproxyapiAddBack:codex").visible);
         }
 
+        function test_an_instance_the_mc_could_not_list_is_not_said_to_be_added() {
+            const reason = "cliproxyapi was not granted the permission to configure provider instances (providers:configure).";
+            plugin.publish("status", test.status({
+                instances: [
+                    {
+                        name: "claude",
+                        instanceId: "plugin_cliproxyapi_claude",
+                        label: "Claude via CLIProxyAPI",
+                        state: "unknown",
+                        message: reason
+                    }
+                ]
+            }));
+            tryVerify(() => find("cliproxyapiInstanceText:claude") !== null);
+            compare(find("cliproxyapiInstanceText:claude").text, "Claude via CLIProxyAPI · cannot be checked: " + reason);
+        }
+
         function test_signing_in_shows_the_address_and_takes_the_one_pasted_back() {
             mouseClick(find("cliproxyapiSignIn:claude"));
             plugin.publish("accounts", {
@@ -363,6 +381,17 @@ Item {
                 latest: "8.1.0"
             }));
             verify(find("cliproxyapiUpdate").text.indexOf("CLIProxyAPI 8.1.0 is out") >= 0);
+        }
+
+        function test_a_binary_of_the_users_is_not_given_the_pinned_version() {
+            plugin.publish("status", test.status({
+                version: null,
+                binary: "/usr/bin/cli-proxy-api",
+                source: "path",
+                latest: "8.1.0"
+            }));
+            compare(find("cliproxyapiState").text, "Running CLIProxyAPI at http://127.0.0.1:8317");
+            verify(find("cliproxyapiUpdate").text.indexOf("This plugin downloads 8.0.79") >= 0);
         }
 
         function test_a_reply_from_an_environment_the_page_left_is_dropped() {
