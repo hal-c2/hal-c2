@@ -8,7 +8,7 @@
 //!               [--render PNG [--size WxH] [--settle MS]]
 //!               [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...
 //!   hal-c2-ljos --check [--qml-dir DIR]
-//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
+//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL] [--load]
 //!               [--json] [--allow FILE] [--render options]...
 //!
 //! As desktop-qt's main.cpp, the shell runs the desktop host
@@ -58,7 +58,10 @@
 //! lines `RULE PATH  # why`, PATH the end of the path of the QML file the
 //! finding is in, or of one it names (what covers a control, for
 //! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
-//! toggles, popups) from running the shell's handlers.
+//! toggles, popups) from running the shell's handlers. `--load` audits the
+//! shell busy (src/loaded.rs): under an MC of its own with a working day's
+//! threads and a plugin, whose news comes on the picture's clock while the
+//! health checks let time pass.
 //!
 //! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
 //! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
@@ -90,6 +93,8 @@ use hal_c2_shell::{Launch, desktop_host, single_instance, store};
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
+
+mod loaded;
 
 const ROOT: &str = qml::DEFAULT_SHELL;
 /// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
@@ -141,7 +146,7 @@ fn usage() -> ExitCode {
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]\n\
-         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]\n\
+         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL] [--load]\n\
          \x20                  [--json] [--allow FILE] [--render options]..."
     );
     ExitCode::from(2)
@@ -254,6 +259,7 @@ fn parse() -> Result<Options, String> {
                 }
             }
             "--json" => o.audit.json = true,
+            "--load" => o.audit.load = true,
             "--allow" => o.audit.allow = Some(value()?.into()),
             "--render" => o.render = Some(value()?.into()),
             "--screenshot" => o.screenshot = Some(value()?.into()),
@@ -303,6 +309,9 @@ fn parse() -> Result<Options, String> {
     }
     // The checks that act run the shell's handlers, which write settings and
     // drafts: never into the user's own files.
+    if o.audit.load && (!o.audit.on || o.launch.mc_origin.is_some() || o.pair.is_some()) {
+        return Err("--load is the audit's own MC: give it --audit and no other MC".into());
+    }
     if o.audit.on && o.home_dir.is_none() {
         return Err("--audit runs the shell's handlers: give it a --home-dir of its own".into());
     }
@@ -653,6 +662,9 @@ struct Audit {
     act: bool,
     json: bool,
     allow: Option<PathBuf>,
+    /// `--load`: the shell under the audit's own MC ([`loaded`]), busy as on
+    /// a working day, rather than with none.
+    load: bool,
 }
 
 impl Default for Audit {
@@ -665,6 +677,7 @@ impl Default for Audit {
             act: true,
             json: false,
             allow: None,
+            load: false,
         }
     }
 }
@@ -690,6 +703,14 @@ fn render_to(
     // The bundled font: the same picture on every machine.
     ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
+    let load = match out {
+        Output::Audit(audit) => {
+            // What the turns do from the first one the shell's QML runs.
+            ljos_audit::watch(&engine);
+            audit.load
+        }
+        Output::Png(_) => false,
+    };
     let picture = Picture::new(options.size.0, options.size.1).settle(capture.settle_ms);
     picture.install(&engine);
     report_warnings(&engine);
@@ -772,6 +793,19 @@ fn render_to(
             }
             root
         }
+        None if load => {
+            // The audit's MC: the store waits on its snapshot as on any.
+            launch.mc_origin = Some(loaded::ORIGIN.into());
+            let mc = loaded::Loaded::new();
+            hal_c2_shell::start(&engine, &launch, mc.clone());
+            hal_c2_shell::theme::set_application_font(&engine);
+            let root = hal_c2_shell::runtime::open(&engine, false)?;
+            mc.start(&engine);
+            if !capture.play_after_snapshot {
+                play(&engine, &capture.steps);
+            }
+            root
+        }
         None => {
             let mc = Rc::new(Disconnected::default());
             hal_c2_shell::start(&engine, &launch, mc.clone());
@@ -843,6 +877,8 @@ fn audited(
     };
     options.matrix = audit.matrix.clone();
     options.act = audit.act;
+    // The health checks that let time pass run on the picture's clock.
+    options.clock = picture.clock().into();
     let options = options.only(&audit.rules).map_err(|e| e.to_string())?;
     let mut before = None;
     let mut scene = picture
