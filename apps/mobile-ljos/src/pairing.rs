@@ -597,11 +597,9 @@ impl Pairing {
             Offered::Shown => {
                 self.publish(engine);
                 // It is the pairing screen's to show: not under a scanner
-                // left open.
+                // left open. The close changes the scanner's state, not
+                // this one, so nothing here needs publishing again.
                 self.bridge.dispatch(engine, "scanner.close", Json::Null);
-                // A dispatch from inside a controller runs after it
-                // returns; republish is not needed, the screen follows.
-                self.publish(engine);
             }
         }
     }
