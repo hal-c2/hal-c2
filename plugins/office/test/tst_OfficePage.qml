@@ -2114,8 +2114,12 @@ Item {
         // A floor desk given away while its reviewer listens there stays the
         // reviewer's until the talk ends: the new owner waits beside the pod
         // meanwhile (see seatGoal()), and sits down as soon as the reviewer
-        // lets the tile go (see letGo()). The office grows rather than give a
-        // desk away (see seatTeams()), so the test gives it away by hand.
+        // lets the tile go (see letGo()). No publish reaches the yieldTo()
+        // fallback in seatTeams() that gives such a desk away: sync() grows
+        // the office first, counting the whole review corner and every
+        // reviewer on a floor desk, gridFor() never gives fewer pods than
+        // asked, the office has no size cap, and pods being closed leave
+        // room for the same count. So the test gives the desk away by hand.
         function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
             const reviewers = [];
             for (let i = 0; i < 9; i++)
