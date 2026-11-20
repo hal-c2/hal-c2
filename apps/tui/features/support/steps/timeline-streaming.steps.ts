@@ -167,14 +167,14 @@ step("its work folds behind {string}", async (ctx: StreamWorld, label: string) =
 });
 
 step("its work stays expanded so the user can see where it stopped", async (ctx: StreamWorld) => {
-  expect(foldRow(ctx)).toBe("▾ You stopped after 5.0s");
+  expect(foldRow(ctx)).toBe("▾ You stopped after 5s");
   // Its calls are open too, the stopped one among them.
   const group = linesOf(lastOf(ctx, "work"));
   expect(group[0]!.startsWith("▾ Ran 2 commands")).toBe(true);
   const stopped = group.find((line) => line.includes("bun test cart-2"));
   expect(stopped).toContain("Stopped");
   const screen = await snapshot(ctx);
-  expect(screen).toContain("▾ You stopped after 5.0s");
+  expect(screen).toContain("▾ You stopped after 5s");
   expect(screen).toContain("bun test cart-2");
 });
 
