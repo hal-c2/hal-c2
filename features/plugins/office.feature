@@ -573,6 +573,12 @@ Feature: Office
       And every desk is carried in and every mover leaves
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person and a mover that meet head-on walk through each other
+      Given a person and a mover carrying a desk walk into each other on open floor
+      Then they walk straight through each other and both get where they are going
+      And neither steps aside, waits or goes around
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in
       Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
       When the office has a "message" talk from "Lead" to "Newcomer"
@@ -722,6 +728,15 @@ Feature: Office
       Then the office grows
       And every thread has a desk on the floor
       And every reviewer keeps its desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer listening at a floor desk keeps it when the floor fills
+      Given the office has 9 reviewers, 8 in the review corner and 1 on the floor, and 39 threads
+      And a thread is talking to the reviewer on the floor, who listens at its desk
+      When another thread comes in
+      Then the office grows and the thread sits at a desk of its own
+      And the reviewer keeps its desk
+      And nobody stands on a tile someone else holds while they find their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
