@@ -380,7 +380,7 @@ Feature: Importing history from agents already used on this machine
     Then the command fails with "Thread history imports require at least one message."
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (excludedProjectAncestors, extractCwd, isHalC2ManagedWorktree)
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario Outline: Scratch and leftover folders are not offered
     Given sessions ran in <folder>
     When a client scans for agent sessions
@@ -395,7 +395,7 @@ Feature: Importing history from agents already used on this machine
       | a folder a transcript names with a relative path                         |
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readGitIdentity: submodules)
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: A submodule checkout is offered like any other repository
     Given sessions ran in "~/code/app/vendor/lib", which is a submodule checkout
     When a client scans for agent sessions

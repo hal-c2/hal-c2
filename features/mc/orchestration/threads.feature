@@ -255,7 +255,7 @@ Feature: Thread lifecycle in the orchestration engine
     Then both requests are cancelled with the reason "The thread was deleted."
     And neither can be answered any more
 
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: Deleting a thread that is already deleted keeps the first deletion time
     Given thread "t1" was deleted at 10:00
     When a client deletes "t1" again at 10:05
@@ -315,7 +315,7 @@ Feature: Thread lifecycle in the orchestration engine
     When the creation is recorded on the parent
     Then the parent's timeline links to "child" and the run that created it
 
-  @mc @backlog
+  @mc
   Scenario Outline: A deleted thread refuses further changes
     Given thread "t1" was deleted
     When a client tries to <change> "t1"

@@ -102,11 +102,50 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
 
         "a folder that no longer exists" ->
           Path.join(context.agent_home, "code/gone")
+
+        "a scratch folder Codex made under \"~/Documents/Codex\"" ->
+          Path.join([System.user_home!(), "Documents", "Codex", "scratch-1"])
+
+        "a folder under the old HAL-C2 home \"~/.hal-c2\"" ->
+          Path.join([System.user_home!(), ".hal-c2", "leftover"])
+
+        "a folder under the old T3 Code home \"~/.t3\"" ->
+          Path.join([System.user_home!(), ".t3", "leftover"])
+
+        "a link that leads into a HAL-C2 worktree folder" ->
+          target = mkdir(Path.join(context.agent_home, ".hal-c2/worktrees/app/hal-c2-9z8y"))
+          link = dir(context, "~/code/linked-worktree")
+          File.mkdir_p!(Path.dirname(link))
+          File.ln_s!(target, link)
+          link
+
+        "a folder a transcript names with a relative path" ->
+          "code/relative-app"
+
+        "\"~/code/app/vendor/lib\", which is a submodule checkout" ->
+          app = mkdir(dir(context, "~/code/app"))
+          lib = mkdir(Path.join(app, "vendor/lib"))
+          gitdir = mkdir(Path.join(app, ".git/modules/vendor/lib"))
+
+          File.write!(
+            Path.join(gitdir, "config"),
+            "[remote \"origin\"]\n\turl = git@github.com:acme/lib.git\n"
+          )
+
+          File.write!(Path.join(lib, ".git"), "gitdir: ../../.git/modules/vendor/lib\n")
+          lib
       end
 
     session(context, path, source: "codex")
     session(context, mkdir(dir(context, "~/code/app")), source: "codex")
     Map.put(context, :folder, path)
+  end
+
+  step "{string} is a candidate", %{args: [title]} = context do
+    assert Enum.any?(context.scan["candidates"], &(&1["title"] == title)),
+           "no candidate titled #{title}: #{inspect(context.scan["candidates"])}"
+
+    context
   end
 
   step "that folder is not a candidate", context do
