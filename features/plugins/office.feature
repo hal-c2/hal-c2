@@ -484,6 +484,15 @@ Feature: Office
       Then the office keeps its twelve pods until the talk ends
       And then shrinks to three rows of three pods
 
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office shrinks only once nobody listens in the rows it loses
+      Given the page is 900 by 900 and the office has 70 threads, in four rows of three pods
+      And "Lead" is talking to someone standing on the floor by the last row of pods
+      When it has 56 threads, that listener among them
+      And the movers carry out every desk in the last row of pods before it has replied
+      Then the office keeps its twelve pods until the talk ends
+      And then shrinks to three rows of three pods
+
     # The floor is built again on a resize, and everyone routed afresh, so someone can be
     # sent to the tile a speaker talks from.
     @desktop @mobile @backlog-desktop @backlog-mobile
