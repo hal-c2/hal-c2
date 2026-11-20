@@ -543,6 +543,12 @@ Feature: Office
       And every desk is carried in and every mover leaves
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person and a mover that meet head-on walk through each other
+      Given a person and a mover carrying a desk walk into each other on open floor
+      Then they walk straight through each other and both get where they are going
+      And neither steps aside, waits or goes around
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in
       Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
       When the office has a "message" talk from "Lead" to "Newcomer"

@@ -1408,6 +1408,47 @@ Item {
             }
         }
 
+        // A person and a mover carrying a desk that meet head-on walk through
+        // each other, as two people do: neither steps aside, waits or goes
+        // around.
+        function test_a_person_and_a_mover_walk_through_each_other() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"));
+            runUntil(() => Object.keys(page.movers).length > 0, 400, "a mover comes in");
+            const m = Object.values(page.movers)[0];
+            verify(m.carrying, "it carries a desk");
+            // It carries the desk along open floor instead of to its seat.
+            page.world.seats[m.job].mover = "";
+            m.job = -1;
+            m.path = [];
+            const a = actor("t0");
+            const [left, row] = openFloor(6);
+            standAt(a, left + 5, row);
+            page.place(m, left, row, true);
+            m.goal = {
+                x: left + 5,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "leave"
+            };
+            page.route(m);
+            send(a, left, row);
+            let ticks = 0, crossed = false, aside = false;
+            while (ticks < 600 && (page.movers[m.id] || !arrived(a))) {
+                walk(1);
+                ticks++;
+                aside = aside || a.ty !== row || page.movers[m.id] && m.ty !== row;
+                crossed = crossed || page.movers[m.id] && Math.abs(a.px - m.px) < 16 && a.py === m.py;
+            }
+            verify(crossed, "they pass through each other");
+            verify(!aside, "neither steps off the row");
+            verify(ticks <= 5 * 8 + 2, "both walk straight on, in " + ticks + " ticks");
+            verify(!page.movers[m.id], "the mover gets where it is going");
+            compare([a.tx, a.ty], [left, row], "and so does the person");
+        }
+
         // Where two people both want to stop, only one may: the tile is the
         // first one's, and the other stops beside it.
         function test_two_people_never_stop_on_one_tile() {
