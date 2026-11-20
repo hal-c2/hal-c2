@@ -951,6 +951,40 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // Someone spoken to on its way stops only where nobody else may, and the
+        // speaker talks from the side it claimed, never where it happens to pass.
+        function test_a_talk_stops_people_only_where_nobody_else_has_claimed() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), c = actor("c");
+            const W = page.world.cols;
+            runUntil(() => a.talk?.met, 2000, "the lead catches C on its way");
+            verify(c.path.length > 0 || c.next >= 0, "C is on its way");
+            // Someone else has the tile C would stop at.
+            const taken = c.next >= 0 ? c.next : c.ty * W + c.tx;
+            page.claims[taken] = "b";
+            runUntil(() => a.talk?.phase === "say", 4000, "the talk starts");
+            verify(c.ty * W + c.tx !== taken, "C walks on past the spot that is someone else's");
+            compare(page.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
+            while (a.talk) {
+                const here = c.ty * W + c.tx;
+                if (c.next < 0)
+                    verify(!page.claims[here] || page.claims[here] === "c", "C stands on a tile nobody else has");
+                page.advance(1);
+            }
+            delete page.claims[taken];
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
         // The office fills the view by its width or its height, whichever runs
         // out first, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {

@@ -297,6 +297,12 @@ Feature: Office
       And afterwards "Lead" goes back to what it was doing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person spoken to on its way stops only on a spot nobody else has
+      Given "Lead" talks to "Reviewer" just as "Reviewer" walks over another person's spot
+      Then "Reviewer" walks on past that spot before it stops to listen
+      And "Lead" talks from beside it, on a spot of its own
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person whose agent asks something shows a question mark
       Given the office has a thread "Fix the parser" asking
       Then its person stands at its desk with a question mark over its head

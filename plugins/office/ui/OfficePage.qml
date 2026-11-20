@@ -2369,6 +2369,12 @@ Item {
         return !claim || claim === actor.id;
     }
 
+    // Whether nobody else has claimed the tile a person stands on.
+    function mayStopHere(actor) {
+        const claim = page.claims[actor.ty * page.world.cols + actor.tx];
+        return !claim || claim === actor.id;
+    }
+
     // Claims the tile a person stops at, letting go of the one it had.
     function claim(actor, spot) {
         release(actor);
@@ -2731,13 +2737,16 @@ Item {
         const W = page.world.cols;
         const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            if (near && actor.next < 0) {
-                // The other person stops once it finishes its step (see held()),
-                // and the talk starts when both stand still side by side.
+            if (near) {
+                // The other person stops once it finishes its step on a tile it
+                // may stop at (see held()).
                 t.met = true;
                 other.heldBy = actor.id;
-                if (other.next >= 0)
-                    return;
+            }
+            // The talk starts when both stand still side by side, each on a tile
+            // nobody else has: the speaker on the side it claimed.
+            const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
+            if (near && atSide && other.next < 0 && mayStopHere(other)) {
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2745,6 +2754,8 @@ Item {
                 actor.bubbleUntil = t.until;
                 return;
             }
+            if (near && atSide)
+                return;
             const there = other.ty * W + other.tx;
             if (t.target !== there || actor.path.length === 0 && actor.next < 0) {
                 t.target = there;
@@ -2790,9 +2801,11 @@ Item {
     }
 
     // Whether someone who walked up to talk to this person keeps it where it is.
+    // It stops only on a tile nobody else claimed, and walks on past one that is
+    // someone's.
     function held(actor) {
         const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
-        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met;
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && mayStopHere(actor);
     }
 
     function dirTowards(a, b) {
