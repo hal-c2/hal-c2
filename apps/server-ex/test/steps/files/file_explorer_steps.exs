@@ -106,10 +106,13 @@ defmodule HalC2.Steps.Files.FileExplorer do
     # Absolute paths are the scenario's host paths, so a stray write stays in it.
     path = HalC2.Test.Mc.Host.path(context, file)
     contents = "export const written = #{System.unique_integer([:positive])};\n"
-    # What was there, for "nothing at ... changed" (`{:error, :eisdir}` for a folder).
+    # What was there, for "nothing at ... changed" (`{:error, :eisdir}` for a folder),
+    # keyed by where the path leads once its links are followed.
     before =
-      if Path.type(path) == :relative,
-        do: {file, File.read(Path.join(World.project(context, project).root, path))}
+      if Path.type(path) == :relative do
+        target = HalC2.Test.Mc.Host.resolved(World.project(context, project).root, path)
+        {target, File.read(target)}
+      end
 
     {reply, context} =
       World.call(context, "projects.writeFile", %{

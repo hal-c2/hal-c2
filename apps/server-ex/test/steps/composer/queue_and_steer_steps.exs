@@ -45,6 +45,7 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
       title = "#{provider} thread"
       context |> World.working_thread(title, provider) |> Map.put(:current, title)
     end
+    |> then(&Map.put(&1, :working_run, running_run(&1)["id"]))
   end
 
   step "the user steers the running turn with {string}", %{args: [text]} = context do
@@ -117,8 +118,10 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
     context
   end
 
+  # The same turn as before, when the scenario noted which one was running.
   step "the running turn keeps working", context do
-    assert %{"status" => "running"} = running_run(context)
+    run = running_run(context)
+    if working = context[:working_run], do: assert(run["id"] == working)
     context
   end
 

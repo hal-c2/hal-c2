@@ -666,13 +666,13 @@ Feature: Follow-ups while the agent is working
     Then the queued message is cancelled
 
   # Upstream #25426: an explicit queue still queues a goal.
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A goal the user queues on purpose waits its turn
     When the user queues "/goal ship the fix"
     Then "/goal ship the fix" is queued behind the running turn
 
   # Upstream #25426: a goal on any other provider keeps the old behaviour.
-  @mc @priority-low
+  @mc @shared @plugin-opencode @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A goal on another provider does not stop the turn
     Given the thread runs on OpenCode
     When the user sends "/goal ship the fix"

@@ -4818,6 +4818,20 @@ defmodule HalC2.Test.Mc.Host do
   """
   def root(%{mc: %{home: home}}), do: home <> "-fs"
 
+  @doc "`relative` under `root` with links in it followed, so a save through a link is checked at its target."
+  def resolved(root, relative) do
+    relative
+    |> Path.split()
+    |> Enum.reduce(root, fn part, dir ->
+      path = Path.join(dir, part)
+
+      case File.read_link(path) do
+        {:ok, target} -> Path.expand(target, dir)
+        _ -> path
+      end
+    end)
+  end
+
   @doc "The scenario's `$HOME` (`/home/sam`), set for the MC on first call."
   def home(context) do
     case Process.get({__MODULE__, :home}) do

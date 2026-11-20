@@ -214,11 +214,13 @@ defmodule HalC2.Steps.Files.Search do
   step "{string} holds {int} files named like {string} and only {int} of them are images",
        %{args: [project, count, name, images]} = context do
     root = World.project(context, project).root
-    made = for n <- 1..images, do: "generated/#{name}-#{n}.png"
+    # The images sit deeper than the other files, so they rank last: a limit taken
+    # before the image filter would keep none of them.
+    made = for n <- 1..images, do: "generated/assets/icons/#{name}-#{n}.png"
     for file <- made, do: write(root, file, contents("x.png"))
 
     for n <- 1..(count - images),
-        do: write(root, "generated/#{name}-doc-#{n}.ts", "export {};\n")
+        do: write(root, "generated/#{name}-#{n}.ts", "export {};\n")
 
     Map.put(context, :generated_images, made)
   end

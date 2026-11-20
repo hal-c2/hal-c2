@@ -314,14 +314,11 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
 
   step "nothing at {string} changed", %{args: [file]} = context do
     if Path.type(file) == :relative do
-      # A path in the project: the refused save left it as it was, or, for a path the
-      # save reached through a link, did not land there.
-      path = Path.join(World.project(context).root, file)
-
-      case context[:written_before] do
-        {^file, before} -> assert File.read(path) == before
-        _ -> refute File.read(path) == {:ok, context.written}
-      end
+      # A path in the project, the save's own target or the one its links led to:
+      # the refused save left it as it was.
+      path = Host.resolved(World.project(context).root, file)
+      assert {^path, before} = context[:written_before]
+      assert File.read(path) == before
 
       context
     else
