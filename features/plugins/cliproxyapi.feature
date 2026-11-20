@@ -88,6 +88,18 @@ Feature: CLIProxyAPI
       Then the page offers CLIProxyAPI "8.1.0" as an update
       And the page shows the proxy running CLIProxyAPI 8.0.79, downloading nothing
 
+    @mc
+    Scenario: Switching to Connect while the release downloads connects at once
+      Given the CLIProxyAPI 8.0.79 release for this machine, with its checksums
+      And the fake CLIProxyAPI holds its release downloads
+      And the CLIProxyAPI plugin is set to run without a binary
+      When the user turns the CLIProxyAPI plugin on
+      Then the page shows the proxy "downloading"
+      When the user switches the CLIProxyAPI plugin to connect to it with the management key "their-secret"
+      Then the page shows the proxy "connected"
+      And the proxy lets agents in with the plugin's client key
+      And no proxy has run
+
   Rule: Connect uses a proxy the user runs, with its management key
 
     @mc
@@ -108,6 +120,15 @@ Feature: CLIProxyAPI
       Then the proxy was refused once
       When the fake CLIProxyAPI takes the management key again and the user retries
       Then the page shows the proxy "connected"
+
+    @mc
+    Scenario: A proxy that keeps no usage still lets the plugin's agents in
+      Given the fake CLIProxyAPI lets agents in with the key "their-key"
+      And the fake CLIProxyAPI keeps no usage, saying "usage statistics are disabled"
+      When the user connects the CLIProxyAPI plugin to it with the management key "their-secret"
+      Then the page shows the proxy "connected"
+      And the proxy lets agents in with "their-key" and the plugin's client key
+      And the page shows no usage, saying "usage statistics are disabled"
 
   Rule: Accounts sign in through the proxy, from any device, by pasting the address the browser ends on
 
@@ -251,6 +272,18 @@ Feature: CLIProxyAPI
       Then Settings → Providers has "plugin_cliproxyapi_codex" named "My Codex"
       And the page shows "Codex via CLIProxyAPI" as not added, saying "a provider instance of the user's"
       And Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
+
+    @mc
+    Scenario: Adding back an instance the user has taken the id of says so, and keeps saying it
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the user deletes "plugin_cliproxyapi_codex" in Settings → Providers
+      Then the page shows "Codex via CLIProxyAPI" as removed
+      Given the user has a Codex instance of their own as "plugin_cliproxyapi_codex" named "My Codex"
+      When the user adds "Codex via CLIProxyAPI" back from the page
+      Then the page shows "Codex via CLIProxyAPI" as not added, saying "a provider instance of the user's"
+      When the user turns the CLIProxyAPI plugin off and on again
+      Then the page shows "Codex via CLIProxyAPI" as not added, saying "a provider instance of the user's"
+      And Settings → Providers has "plugin_cliproxyapi_codex" named "My Codex"
 
   Rule: The page shows the proxy and what it holds
 

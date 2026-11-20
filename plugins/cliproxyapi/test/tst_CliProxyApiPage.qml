@@ -178,6 +178,25 @@ Item {
             tryVerify(() => find("cliproxyapiAccount:claude-user@example.com.json") === null);
         }
 
+        function test_a_proxy_without_usage_says_why() {
+            verify(!find("cliproxyapiUsageNote").visible);
+            plugin.publish("usage", {
+                rows: [],
+                days: 7,
+                note: "usage statistics are disabled"
+            });
+            compare(find("cliproxyapiUsageNote").text, "The proxy gives no usage: usage statistics are disabled");
+            verify(find("cliproxyapiUsageNote").visible);
+            verify(!find("cliproxyapiNoUsage").visible);
+            plugin.publish("usage", {
+                rows: [],
+                days: 7,
+                note: null
+            });
+            verify(!find("cliproxyapiUsageNote").visible);
+            verify(find("cliproxyapiNoUsage").visible);
+        }
+
         function test_a_deleted_instance_is_added_back() {
             verify(!find("cliproxyapiAddBack:claude").visible);
             verify(find("cliproxyapiAddBack:codex").visible);

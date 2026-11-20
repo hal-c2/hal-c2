@@ -27,6 +27,7 @@ Item {
     property var accounts: []
     property var signIn: null
     property var usage: []
+    property string usageNote: ""
     property var keys: []
     property var logs: []
     property string refusal: ""
@@ -53,6 +54,7 @@ Item {
         page.accounts = [];
         page.signIn = null;
         page.usage = [];
+        page.usageNote = "";
         page.keys = [];
         page.logs = [];
         page.refusal = "";
@@ -66,7 +68,10 @@ Item {
         page.watches = [page.plugin.watch("status", value => page.status = value, environment), page.plugin.watch("accounts", value => {
                 page.accounts = value?.accounts ?? [];
                 page.signIn = value?.signIn ?? null;
-            }, environment), page.plugin.watch("usage", value => page.usage = value?.rows ?? [], environment), page.plugin.watch("keys", value => page.keys = value?.keys ?? [], environment), page.plugin.watch("logs", value => page.logs = value?.lines ?? [], environment)];
+            }, environment), page.plugin.watch("usage", value => {
+                page.usage = value?.rows ?? [];
+                page.usageNote = value?.note ?? "";
+            }, environment), page.plugin.watch("keys", value => page.keys = value?.keys ?? [], environment), page.plugin.watch("logs", value => page.logs = value?.lines ?? [], environment)];
     }
 
     // The answer of `status`, `refresh`, `retry` and `addInstance`: everything the page shows.
@@ -77,6 +82,7 @@ Item {
         page.accounts = view.accounts ?? [];
         page.signIn = view.signIn ?? null;
         page.usage = view.usage ?? [];
+        page.usageNote = view.usageNote ?? "";
         page.keys = view.keys ?? [];
         page.logs = view.logs ?? [];
     }
@@ -471,8 +477,16 @@ Item {
             }
 
             Note {
-                visible: page.usage.length === 0
+                objectName: "cliproxyapiNoUsage"
+                visible: page.usage.length === 0 && page.usageNote.length === 0
                 text: qsTr("Nothing used yet.")
+            }
+
+            // A proxy without a usage queue (statistics off, an older release) says why.
+            Note {
+                objectName: "cliproxyapiUsageNote"
+                visible: page.usageNote.length > 0
+                text: qsTr("The proxy gives no usage: %1").arg(page.usageNote)
             }
 
             Repeater {

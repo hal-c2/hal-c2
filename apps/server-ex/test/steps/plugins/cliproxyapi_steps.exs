@@ -93,6 +93,11 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     |> await_status(&(&1["address"] == "http://127.0.0.1:#{port}"))
   end
 
+  step "the user switches the CLIProxyAPI plugin to connect to it with the management key {string}",
+       %{args: [key]} = context do
+    save(context, %{"mode" => "connect", "url" => context.fake.base, "managementKey" => key})
+  end
+
   step "the user connects the CLIProxyAPI plugin to it with the management key {string}",
        %{args: [key]} = context do
     context
@@ -121,6 +126,16 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
   step "the fake CLIProxyAPI takes the management key again and the user retries", context do
     Fake.update(context.fake, &%{&1 | refuse: nil})
     {_, context} = call!(context, "retry")
+    context
+  end
+
+  step "the fake CLIProxyAPI keeps no usage, saying {string}", %{args: [message]} = context do
+    Fake.update(context.fake, &%{&1 | no_usage: message})
+    context
+  end
+
+  step "the fake CLIProxyAPI holds its release downloads", context do
+    Fake.update(context.fake, &%{&1 | hold: true})
     context
   end
 
@@ -390,6 +405,11 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
+  step "the proxy lets agents in with the plugin's client key", context do
+    assert Fake.get(context.fake).access == [client_key()]
+    context
+  end
+
   step "the proxy lets agents in with {string} and the plugin's client key",
        %{args: [key]} = context do
     assert Fake.get(context.fake).access == [key, client_key()]
@@ -478,6 +498,13 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
       end
 
     assert Enum.sort(shown) == Enum.sort(maps(table))
+    context
+  end
+
+  step "the page shows no usage, saying {string}", %{args: [text]} = context do
+    view = view(context)
+    assert view["usage"] == []
+    assert view["usageNote"] =~ text
     context
   end
 

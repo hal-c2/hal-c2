@@ -93,6 +93,8 @@ defmodule HalC2Plugins.CliProxyApi do
       client: secret(dir, "client.key", "hal-c2-"),
       ledger: read_json(dir, "providers.json", %{}),
       usage: Usage.load(read_json(dir, "usage.json", [])),
+      # Why the proxy gives no usage, when it refuses its usage queue.
+      usage_note: nil,
       phase: :start,
       spec: nil,
       proxy: %{"state" => "stopped", "pid" => nil, "restarts" => 0, "lines" => []},
@@ -194,7 +196,8 @@ defmodule HalC2Plugins.CliProxyApi do
 
   defp handle("addInstance", %{"name" => name}, state) do
     if name in Instances.names() do
-      state = %{state | ledger: Map.delete(state.ledger, name)} |> sync(:running)
+      # Written before the put: one the host refuses must not come back dismissed.
+      state = %{state | ledger: Map.delete(state.ledger, name)} |> save_ledger() |> sync(:running)
       {:ok, view(state), state}
     else
       {:error, "#{inspect(name)} is not one of the plugin's instances.", state}
@@ -451,30 +454,45 @@ defmodule HalC2Plugins.CliProxyApi do
   # --- what the page shows ---
 
   defp drain(%{blocked: blocked} = state) when blocked != nil, do: state
-  defp drain(%{download: ref} = state) when ref != nil, do: state
 
+  # A download in flight is Run's; in Connect the user's proxy is drained meanwhile.
   defp drain(state) do
-    if mode(state) == "run" and state.proxy["state"] != "running" do
+    if mode(state) == "run" and (state.download != nil or state.proxy["state"] != "running") do
       state
     else
       conn = conn(state)
 
-      case Api.get(conn, "/observability/usage/queue", count: @queue_batch) do
-        {:ok, records, _} ->
-          usage =
-            Usage.add(state.usage, if(is_list(records), do: records, else: []), Date.utc_today())
-
-          if usage != state.usage,
-            do: private(Path.join(state.dir, "usage.json"), JSON.encode!(Usage.dump(usage)))
-
+      case usage(state, conn) do
+        {:ok, state} ->
           was = state.answering
-          state = %{state | usage: usage, answering: true, unreachable: nil}
+          state = %{state | answering: true, unreachable: nil}
           state = if was, do: state, else: state |> allow_once() |> keys(conn)
           state |> logs(conn) |> accounts(conn) |> check_sign_in(conn) |> latest(conn)
 
         {:error, kind, message} ->
           refused(state, kind, message)
       end
+    end
+  end
+
+  # A proxy that keeps no usage queue (usage statistics off in its config, say) still
+  # routes: the page says why there is no usage, and the rest is read.
+  defp usage(state, conn) do
+    case Api.get(conn, "/observability/usage/queue", count: @queue_batch) do
+      {:ok, records, _} ->
+        usage =
+          Usage.add(state.usage, if(is_list(records), do: records, else: []), Date.utc_today())
+
+        if usage != state.usage,
+          do: private(Path.join(state.dir, "usage.json"), JSON.encode!(Usage.dump(usage)))
+
+        {:ok, %{state | usage: usage, usage_note: nil}}
+
+      {:error, :http, message} ->
+        {:ok, %{state | usage_note: message}}
+
+      {:error, kind, message} ->
+        {:error, kind, message}
     end
   end
 
@@ -694,6 +712,11 @@ defmodule HalC2Plugins.CliProxyApi do
 
   # --- provider instances ---
 
+  defp save_ledger(state) do
+    private(Path.join(state.dir, "providers.json"), JSON.encode!(state.ledger))
+    state
+  end
+
   defp sync(state, phase) do
     case Host.provider_instances(@id, "list", %{}) do
       {:ok, %{"instances" => listed}} ->
@@ -723,10 +746,9 @@ defmodule HalC2Plugins.CliProxyApi do
             end
           end)
 
-        if ledger != state.ledger,
-          do: private(Path.join(state.dir, "providers.json"), JSON.encode!(ledger))
-
-        %{state | ledger: ledger, taken: taken}
+        changed? = ledger != state.ledger
+        state = %{state | ledger: ledger, taken: taken}
+        if changed?, do: save_ledger(state), else: state
 
       {:error, message} ->
         %{state | error: message}
@@ -739,7 +761,7 @@ defmodule HalC2Plugins.CliProxyApi do
     views = %{
       "status" => status(state),
       "accounts" => %{"accounts" => state.accounts, "signIn" => state.sign_in},
-      "usage" => %{"rows" => usage_rows(state), "days" => @usage_days},
+      "usage" => %{"rows" => usage_rows(state), "days" => @usage_days, "note" => state.usage_note},
       "logs" => %{"lines" => state.logs},
       "keys" => %{"keys" => state.keys}
     }
@@ -760,6 +782,7 @@ defmodule HalC2Plugins.CliProxyApi do
       "accounts" => state.accounts,
       "signIn" => state.sign_in,
       "usage" => usage_rows(state),
+      "usageNote" => state.usage_note,
       "logs" => state.logs,
       "keys" => state.keys
     }
@@ -809,10 +832,12 @@ defmodule HalC2Plugins.CliProxyApi do
       state.blocked ->
         {"blocked", "The proxy refused the management key: #{state.blocked}"}
 
-      state.download ->
+      # A download and its failure are Run's: one left running when the user switched
+      # to Connect does not stand for the proxy they connect to.
+      mode(state) == "run" and state.download ->
         {"downloading", "Downloading CLIProxyAPI #{Release.version()}…"}
 
-      state.failure ->
+      mode(state) == "run" and state.failure ->
         {"failed", state.failure}
 
       mode(state) == "connect" and state.unreachable ->

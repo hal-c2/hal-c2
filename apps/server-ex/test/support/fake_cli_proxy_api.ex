@@ -7,8 +7,9 @@ defmodule HalC2.Test.FakeCliProxyApi do
 
   `start/0` returns `%{base, port, agent}`. The scenario sets what it holds with
   `update/2` (`refuse` to refuse every management key with that message, `queue` of
-  usage records, `logs`, `credentials`, `keys`, `access`, `release` files) and reads
-  what it was asked with `requests/1`.
+  usage records or `no_usage` to refuse the queue with that message, `logs`,
+  `credentials`, `keys`, `access`, `release` files, and `hold` to keep every release
+  download waiting) and reads what it was asked with `requests/1`.
   """
   @behaviour Plug
 
@@ -31,6 +32,8 @@ defmodule HalC2.Test.FakeCliProxyApi do
           latest: "8.0.79",
           release: %{},
           refuse_keys: nil,
+          no_usage: nil,
+          hold: false,
           requests: []
         }
       end)
@@ -72,6 +75,9 @@ defmodule HalC2.Test.FakeCliProxyApi do
       %{state | requests: [request | state.requests]}
     end)
 
+    # A held download waits until the scenario ends and the server goes with it.
+    if hold?(conn, agent), do: receive(do: (:never -> :ok))
+
     {status, reply, headers} =
       Agent.get_and_update(agent, fn state ->
         case route(conn, body, state) do
@@ -92,6 +98,9 @@ defmodule HalC2.Test.FakeCliProxyApi do
         |> send_resp(status, JSON.encode!(reply))
     end
   end
+
+  defp hold?(%{request_path: "/releases/" <> _}, agent), do: Agent.get(agent, & &1.hold)
+  defp hold?(_conn, _agent), do: false
 
   defp route(%{request_path: "/releases/" <> file}, _body, state) do
     case state.release[file] do
@@ -140,6 +149,17 @@ defmodule HalC2.Test.FakeCliProxyApi do
   end
 
   defp route(_conn, _body, state), do: {404, %{"error" => "not_found"}, state}
+
+  defp management(
+         "GET",
+         "/observability/usage/queue",
+         _query,
+         _body,
+         _match,
+         %{no_usage: message} = state
+       )
+       when message != nil,
+       do: {404, %{"error" => message}, state}
 
   defp management("GET", "/observability/usage/queue", query, _body, _match, state) do
     {taken, rest} = Enum.split(state.queue, String.to_integer(query["count"] || "1"))
