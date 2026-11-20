@@ -324,7 +324,7 @@ Feature: Project and environment identity
       Then at most 60 matching symbols are offered
       And spaces in the search match the dashes in symbol names
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A monogram is tidied before it is checked
       When the user types " ｓｈ " as the monogram of "shop"
       Then the monogram is saved as "SH"

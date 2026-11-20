@@ -961,7 +961,7 @@ Feature: Adding projects
         | Azure DevOps    | SSH       |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario Outline: A pasted clone address proposes the folder git would have chosen
       When the user pastes <address> as the Git URL to clone
       Then the proposed folder is named "<folder>"
@@ -977,7 +977,7 @@ Feature: Adding projects
         | https://host/acme/123                    | 123    |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui @priority-low
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario Outline: A pasted address that names no repository proposes no folder
       When the user pastes <address> as the Git URL to clone
       Then no folder name is proposed
