@@ -132,7 +132,7 @@ Item {
     // doorOpensAt on.
     property var outside: []
     property real doorOpensAt: 0
-    // The rows of pods the office is closing down to, while their desks are
+    // The number of pods the office is closing down to, while the desks are
     // carried out of the rest; 0 when it is not (see closeRows()).
     property int closeTo: 0
     // The most people on a break at once.
@@ -1352,14 +1352,16 @@ Item {
     // left and back out again. The break room is behind a wall with a door on
     // the right.
     //
-    // The office is two rows of pods, 48 desks of which the review corner's 8
-    // are for reviewers only, and a row of three more pods longer for each 24
-    // people past that, so everyone has a desk. It changes size only when
-    // that count of rows does, and is painted again only then: it grows as
-    // soon as people outnumber the desks they may take, and shrinks
-    // once a pod's worth of desks would still be free in the smaller office,
-    // after the desks in the rows it loses are carried out (see closeRows()).
-    // Rows are added at the bottom, so every tile keeps its place.
+    // The office is at least six pods in two rows, 48 desks of which the
+    // review corner's 8 are for reviewers only, and grows by pods, so
+    // everyone has a desk. It grows as soon as people outnumber the desks
+    // they may take, to the grid of pods that shows biggest in the view (see
+    // gridFor()), and shrinks once a pod's worth of desks would still be free
+    // in a smaller one, after the desks in the pods it loses are carried out
+    // (see closeRows()). It is painted again only when it changes size. Pods
+    // are added at the bottom of a grid of the same width, so every tile keeps
+    // its place; in one of another width people walk to where their desks now
+    // stand (see rearrange()).
 
     function teamsOf(ids, byId) {
         const rootOf = id => {
@@ -1390,8 +1392,8 @@ Item {
     // seat in its team's pod, or the nearest pod with room when that is full;
     // a new team takes a pod with room for all of it, and small teams share.
     // A team bigger than a pod takes as many as it needs; the office has a desk
-    // for everyone (see buildWorld()). While the office is closing rows, their
-    // pods take nobody, and whoever sat there moves to a desk in the rest.
+    // for everyone (see buildWorld()). While the office is closing pods, they
+    // take nobody, and whoever sat there moves to a desk in the rest.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
     // own kind) sit in the review corner, and once it is full at the desks
     // nearest it that nobody else needs. The corner is theirs alone: nobody
@@ -1400,7 +1402,7 @@ Item {
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
-        const open = pod => !page.closeTo || pod < page.closeTo * w.across;
+        const open = pod => !page.closeTo || pod < page.closeTo;
         const before = {};
         for (const id of Object.keys(w.seatOf ?? {})) {
             if (open(w.seatOf[id].pod))
@@ -1500,18 +1502,19 @@ Item {
         return seatOf;
     }
 
-    // The office: pods of 4×2 desks, three across and `down` rows of them, the
+    // The office: `count` pods of 4×2 desks, `across` of them to a row, the
     // walls, the furniture along them and the break room. The top pod by the
     // break room is the review corner, on a carpet of its own under a review
     // sign and the whiteboard where reviews are worked through. Every desk
     // starts out carried away (see furnish()).
-    function buildWorld(down) {
-        const podCols = 4, across = 3;
+    function buildWorld(across, count) {
+        const podCols = 4;
+        const down = Math.max(2, Math.ceil(count / across));
         const workW = across * podCols + 2 * (across - 1);
         const xd = 3 + workW + 2;
         const bx = xd + 1;
-        const cols = bx + 11;
-        const rows = 6 + 6 * down + 1;
+        const cols = officeCols(across);
+        const rows = officeRows(down);
         const grid = new Array(cols * rows).fill(0);
         const at = (x, y) => y * cols + x;
         const block = (x, y, w, h) => {
@@ -1528,7 +1531,7 @@ Item {
         grid[at(xd, 6)] = 0;
 
         const props = [], units = [], screens = [], boards = [], seats = [], spots = [], marks = [];
-        const corner = across - 1;
+        const corner = 2;
         const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
             key: kind + ":" + x + ":" + y,
             kind: kind,
@@ -1544,95 +1547,103 @@ Item {
         // has its own desk and chair, which come and go together. A desk's
         // place is kept for it while it is out, so the way around the pods
         // never changes; a seat is stepped onto only by whoever is going there.
+        // A pod keeps its number, and so its desks, in every grid: pod 2, the
+        // review corner, is always the top one by the break room.
         const placed = [];
-        for (let k = 0; k < down; k++) {
-            const y0 = 6 + 6 * k;
-            for (let c = 0; c < across; c++) {
-                const x = 3 + c * (podCols + 2);
-                const index = placed.length;
-                const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
-                const podSeats = [];
-                for (let i = 0; i < podCols; i++) {
-                    for (const north of [true, false]) {
-                        const seat = {
-                            index: seats.length + podSeats.length,
-                            x: x + i,
-                            y: north ? y0 : y0 + 3,
-                            deskY: north ? y0 + 1 : y0 + 2,
-                            face: north ? 0 : 3,
-                            offY: north ? 5 : -3,
-                            pod: index,
-                            chair: chair,
-                            screen: north ? "" : index + ":" + i,
-                            state: "out",
-                            mover: ""
-                        };
-                        podSeats.push(seat);
-                        grid[at(seat.x, seat.deskY)] = 1;
-                        grid[at(seat.x, seat.y)] = 2;
-                        units.push({
-                            key: "desk:" + seat.index,
-                            kind: north ? "deskN" : "deskS",
+        for (let index = 0; index < count; index++) {
+            const slot = index === corner ? across - 1 : index === across - 1 ? corner : index;
+            const y0 = 6 + 6 * Math.floor(slot / across);
+            const x = 3 + slot % across * (podCols + 2);
+            const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
+            const podSeats = [];
+            for (let i = 0; i < podCols; i++) {
+                for (const north of [true, false]) {
+                    const seat = {
+                        index: seats.length + podSeats.length,
+                        x: x + i,
+                        y: north ? y0 : y0 + 3,
+                        deskY: north ? y0 + 1 : y0 + 2,
+                        face: north ? 0 : 3,
+                        offY: north ? 5 : -3,
+                        pod: index,
+                        chair: chair,
+                        screen: north ? "" : index + ":" + i,
+                        state: "out",
+                        mover: ""
+                    };
+                    podSeats.push(seat);
+                    grid[at(seat.x, seat.deskY)] = 1;
+                    grid[at(seat.x, seat.y)] = 2;
+                    units.push({
+                        key: "desk:" + seat.index,
+                        kind: north ? "deskN" : "deskS",
+                        seat: seat.index,
+                        x: seat.x * 16,
+                        y: seat.deskY * 16,
+                        w: 16,
+                        h: 16,
+                        z: (y0 + 3) * 16,
+                        seed: hash("desk" + seat.index)
+                    });
+                    units.push({
+                        key: "chair:" + seat.index,
+                        kind: north ? "chairsN" : "chairsS",
+                        seat: seat.index,
+                        x: seat.x * 16,
+                        y: seat.y * 16,
+                        w: 16,
+                        h: 16,
+                        z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
+                        color: chair,
+                        seed: hash("chair" + seat.index)
+                    });
+                    if (!north)
+                        screens.push({
+                            key: seat.screen,
                             seat: seat.index,
-                            x: seat.x * 16,
-                            y: seat.deskY * 16,
-                            w: 16,
-                            h: 16,
-                            z: (y0 + 3) * 16,
-                            seed: hash("desk" + seat.index)
+                            x: seat.x * 16 + 4,
+                            y: seat.deskY * 16 + 1,
+                            z: (y0 + 3) * 16 + 1
                         });
-                        units.push({
-                            key: "chair:" + seat.index,
-                            kind: north ? "chairsN" : "chairsS",
-                            seat: seat.index,
-                            x: seat.x * 16,
-                            y: seat.y * 16,
-                            w: 16,
-                            h: 16,
-                            z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
-                            color: chair,
-                            seed: hash("chair" + seat.index)
-                        });
-                        if (!north)
-                            screens.push({
-                                key: seat.screen,
-                                seat: seat.index,
-                                x: seat.x * 16 + 4,
-                                y: seat.deskY * 16 + 1,
-                                z: (y0 + 3) * 16 + 1
-                            });
-                        // Its sitter's project: on the back of the monitor
-                        // facing us, or on the back of the chair facing away.
-                        marks.push({
-                            key: "mark:" + seat.index,
-                            seat: seat.index,
-                            x: seat.x * 16 + 3,
-                            y: north ? seat.deskY * 16 + 4 : seat.y * 16 + 5,
-                            w: 9,
-                            h: 7,
-                            z: north ? (y0 + 3) * 16 + 1 : (y0 + 4) * 16 + 2
-                        });
-                    }
+                    // Its sitter's project: on the back of the monitor
+                    // facing us, or on the back of the chair facing away.
+                    marks.push({
+                        key: "mark:" + seat.index,
+                        seat: seat.index,
+                        x: seat.x * 16 + 3,
+                        y: north ? seat.deskY * 16 + 4 : seat.y * 16 + 5,
+                        w: 9,
+                        h: 7,
+                        z: north ? (y0 + 3) * 16 + 1 : (y0 + 4) * 16 + 2
+                    });
                 }
-                placed.push({
-                    x: x,
-                    y: y0,
-                    cols: podCols,
-                    members: [],
-                    seats: podSeats,
-                    review: index === corner
-                });
-                for (const seat of podSeats)
-                    seats.push(seat);
             }
+            placed.push({
+                x: x,
+                y: y0,
+                cols: podCols,
+                members: [],
+                seats: podSeats,
+                review: index === corner
+            });
+            for (const seat of podSeats)
+                seats.push(seat);
         }
 
-        // Along the top wall: bookshelves, whiteboards and plants.
+        // Along the top wall: bookshelves, whiteboards and plants, and the
+        // review corner's whiteboard over it, whatever would hang there.
         const sequence = ["plant", "shelf", "board", "shelf", "board", "plant", "shelf", "board"];
+        const reviewX = placed[corner].x - 1;
+        let hung = false;
         let wx = 2;
         for (let i = 0; ; i++) {
-            const kind = sequence[i % sequence.length];
-            const w = kind === "shelf" ? 2 : kind === "board" ? 3 : 1;
+            let kind = sequence[i % sequence.length];
+            let w = kind === "shelf" ? 2 : kind === "board" ? 3 : 1;
+            if (!hung && wx + w > reviewX) {
+                kind = "board";
+                w = 3;
+                wx = Math.max(wx, reviewX);
+            }
             if (wx + w > xd - 1)
                 break;
             block(wx, 3, w, 1);
@@ -1651,8 +1662,8 @@ Item {
                     });
             } else {
                 const key = "board:" + boards.length;
-                const reviewPod = placed[corner];
-                const review = wx + w > reviewPod.x && wx < reviewPod.x + reviewPod.cols;
+                const review = !hung && wx >= reviewX;
+                hung = hung || review;
                 boards.push({
                     key: key,
                     x: wx * 16 + 5,
@@ -1878,24 +1889,51 @@ Item {
         updateWalking();
     }
 
-    // Rows of pods for `count` desks, the review corner's among them: room
-    // for them all, or, with `spare`, a pod's worth of desks more.
-    function podRows(count, spare) {
-        return Math.max(2, Math.ceil((count + (spare ? 8 : 0)) / 24));
+    // The size in tiles of an office `across` pods wide and `down` deep.
+    function officeCols(across) {
+        return 6 * across + 15;
+    }
+
+    function officeRows(down) {
+        return 6 * down + 7;
+    }
+
+    // The grid for at least `pods` pods, at least two rows of them, that
+    // shows biggest when fitted to the view (see fitScale): it grows sideways
+    // in a wide view and down in a tall one, and has the fewest pods of those
+    // that show as big. Before the view has a size, it is three across.
+    function gridFor(pods) {
+        const vw = scroller.width - 8, vh = scroller.height - 8;
+        let best = null;
+        for (let across = 2; across <= Math.max(3, Math.ceil(pods / 2)); across++) {
+            const down = Math.max(2, Math.ceil(pods / across));
+            const fit = vw > 0 && vh > 0 ? Math.min(vw / (officeCols(across) * 16), vh / (officeRows(down) * 16)) : across === 3 ? 1 : 0;
+            if (!best || fit > best.fit || fit === best.fit && across * down < best.pods)
+                best = {
+                    across: across,
+                    pods: across * down,
+                    fit: fit
+                };
+        }
+        return best;
     }
 
     function sync(people) {
         // The review corner's eight desks are only for reviewers, and the
-        // reviewers it has no room for take ordinary desks.
+        // reviewers it has no room for take ordinary desks. The office grows
+        // to a full grid when it runs out of desks, and closes pods once a
+        // smaller grid would leave a pod's worth free.
         const reviewers = people.filter(p => p.kind === "reviewer").length;
         const desks = people.length - reviewers + Math.max(8, reviewers);
-        const grow = podRows(desks, false);
-        const shrink = podRows(desks, true);
-        if (!page.world || grow > page.world.down || !page.primed && grow < page.world.down) {
+        const need = Math.max(6, Math.ceil(desks / 8));
+        const grid = gridFor(need);
+        const w = page.world;
+        if (!w || need > w.pods.length || !page.primed && (grid.across !== w.across || grid.pods !== w.pods.length)) {
             page.closeTo = 0;
-            build(grow);
+            build(grid.across, grid.pods);
         } else {
-            page.closeTo = shrink < page.world.down ? shrink : 0;
+            const keep = gridFor(Math.max(6, Math.ceil((desks + 8) / 8))).pods;
+            page.closeTo = keep < w.pods.length ? keep : 0;
         }
         const byId = {};
         for (const person of people)
@@ -1933,12 +1971,12 @@ Item {
         updateMarks();
     }
 
-    // Builds the office with `down` rows of pods, taking over what goes on in
-    // the one before, if any. The whiteboards are the same at every size and
-    // keep what is drawn on them.
-    function build(down) {
+    // Builds the office with `count` pods, `across` to a row, taking over
+    // what goes on in the one before, if any. The whiteboards stay, with what
+    // is drawn on them, while the office keeps its width.
+    function build(across, count) {
         const old = page.world;
-        const w = buildWorld(down);
+        const w = buildWorld(across, count);
         page.world = w;
         if (old)
             carry(old, w);
@@ -1947,7 +1985,7 @@ Item {
         page.props = w.props;
         page.units = w.units;
         page.screens = w.screens;
-        if (!old)
+        if (!old || old.across !== across)
             page.boards = w.boards;
         page.deskMarks = w.marks;
         page.deskCount = w.seats.filter(deskShown).length;
@@ -1955,9 +1993,10 @@ Item {
     }
 
     // Moves the desks, who has them and everyone in the office over from
-    // `old` to the bigger or smaller `w`. Tiles keep their places; whoever
-    // stands, steps or is headed where the smaller office ends goes on from
-    // the nearest floor, and movers on their way out head for the new
+    // `old` to the bigger or smaller `w`. A desk keeps its number and its
+    // owner. While the office keeps its width tiles keep their places, and
+    // whoever stands, steps or is headed where the smaller office ends goes on
+    // from the nearest floor; movers on their way out head for the new
     // entrance.
     function carry(old, w) {
         for (const seat of w.seats) {
@@ -1972,7 +2011,12 @@ Item {
             if (seat)
                 w.seatOf[id] = seat;
         }
+        w.pods.forEach((pod, i) => pod.members = old.pods[i]?.members ?? []);
         page.jobs = page.jobs.filter(i => i < w.seats.length);
+        if (old.across !== w.across) {
+            rearrange(old, w);
+            return;
+        }
         const n = w.cols * w.rows;
         const lost = i => i >= n || w.grid[i] === 1;
         for (const a of everyone()) {
@@ -1999,18 +2043,97 @@ Item {
         }
     }
 
-    // Once the desks in the rows the office is closing are all carried out,
+    // In an office of another width the desks stand elsewhere, and the break
+    // room moves along with whoever is in it. Everyone else walks on from
+    // where it is to where it was going: people to their own desk, movers to
+    // the desk they carry. Whoever is left on furniture, or past the smaller
+    // office's edge, steps to the nearest floor first. Before the office is
+    // first shown, people are simply there.
+    function rearrange(old, w) {
+        page.claims = {};
+        const dx = w.xd - old.xd;
+        const across = x => x >= old.xd ? x + dx : x;
+        for (const a of everyone()) {
+            a.claim = -1;
+            a.hold = -1;
+            if (a.tx < 0)
+                continue;
+            const nx = a.next >= 0 ? across(a.next % old.cols) : -1;
+            const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
+            a.px += (across(a.tx) - a.tx) * 16;
+            a.tx = across(a.tx);
+            a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;
+            a.path = [];
+            if (a.tx >= w.cols || a.ty >= w.rows)
+                place(a, a.tx, a.ty, true);
+            const goal = a.goal;
+            if (page.movers[a.id]) {
+                if (a.job >= 0) {
+                    const seat = w.seats[a.job];
+                    a.goal = Object.assign({}, goal, {
+                        x: seat.x,
+                        y: seat.y,
+                        face: seat.face
+                    });
+                } else {
+                    leave(a);
+                }
+            } else if (a.talk) {
+                // Its speaker finds a side of it again (see stepTalk()).
+                a.goal = null;
+                a.talk.target = -1;
+            } else if (a.plan === "break" && goal && goal.x >= old.xd) {
+                a.goal = Object.assign({}, goal, {
+                    x: across(goal.x)
+                });
+                if (goal.partner !== undefined)
+                    a.goal.partner = Math.floor(goal.partner / old.cols) * w.cols + across(goal.partner % old.cols);
+                claim(a, a.goal);
+            } else {
+                a.goal = null;
+                a.plan = "";
+                decide(a, true);
+            }
+            if (!page.primed && a.goal && !page.movers[a.id]) {
+                place(a, a.goal.x, a.goal.y, false);
+                a.path = [];
+                continue;
+            }
+            const on = a.next >= 0 ? a.next : a.ty * w.cols + a.tx;
+            const mine = a.goal && on === a.goal.y * w.cols + a.goal.x;
+            if (w.grid[on] !== 0 && !mine)
+                place(a, a.tx, a.ty, true);
+            route(a);
+        }
+    }
+
+    // Once the desks in the pods the office is closing are all carried out,
     // the office shrinks to the rest.
     function closeRows() {
         const w = page.world;
-        const first = page.closeTo * w.across * w.pods[0].seats.length;
+        const first = page.closeTo * w.pods[0].seats.length;
         for (let i = first; i < w.seats.length; i++) {
             if (w.seats[i].state !== "out" || w.seats[i].mover)
                 return;
         }
-        const down = page.closeTo;
+        const count = page.closeTo;
         page.closeTo = 0;
-        build(down);
+        build(gridFor(count).across, count);
+    }
+
+    // A view of another size may show the office bigger in another grid: it
+    // is built again only when the best number of pods to a row changes. A
+    // view with no size keeps the office as it is.
+    function refit() {
+        const w = page.world;
+        if (!w || scroller.width <= 8 || scroller.height <= 8)
+            return;
+        const across = gridFor(w.pods.length).across;
+        if (across === w.across)
+            return;
+        build(across, w.pods.length);
+        updateMarks();
+        updateWalking();
     }
 
     function layout(teams, byId) {
@@ -3896,6 +4019,9 @@ Item {
             contentWidth: Math.max(width, stage.width)
             contentHeight: Math.max(height, stage.height)
             boundsBehavior: Flickable.StopAtBounds
+            // Once for both sides of a resize, at its new size.
+            onWidthChanged: Qt.callLater(page.refit)
+            onHeightChanged: Qt.callLater(page.refit)
 
             ScrollBar.vertical: ScrollBar {}
             ScrollBar.horizontal: ScrollBar {}

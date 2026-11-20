@@ -333,36 +333,61 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office grows a row of pods when people outnumber its desks
-      Given the office has 40 threads, at its 40 desks outside the review corner
+    Scenario: The office grows by pods when people outnumber its desks
+      Given the page is 1200 by 760
+      And the office has 40 threads, at its 40 desks outside the review corner
       When it has 41 threads
-      Then the office has another row of three pods at the bottom, 72 desks
-      And the 41st person has a desk in it
+      Then the office has two rows of four pods, 64 desks, as deep as before
+      And the 41st person has a desk in a new pod
       And everyone else keeps their desk
       And the office is drawn again once, for its new size
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office shrinks a row once a pod's worth of desks would still be free
-      Given the office has 70 threads, in four rows of pods
+    Scenario: The office grows into the grid of pods that shows it biggest
+      Given the page is 1600 by 900
+      When the office has 70 threads
+      Then its pods are in the grid that fits the page at the biggest scale
+      And it shows bigger than in rows of three pods
+      When the page is 700 by 1300
+      Then the office has fewer pods to a row than before
+      And everyone keeps their desk and walks there from where they were
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office of six pods is two rows of three in an ordinary window
+      Given the page is 1024 by 700, 1200 by 760 or 1920 by 1080
+      When the office has 12 threads
+      Then the office has two rows of three pods, 48 desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that keeps the best grid leaves the office as it is
+      Given the page is 1600 by 900 and the office has 70 threads
+      When the page is 1700 by 950 and then 1550 by 880
+      Then the office is not built or drawn again
+      And nobody moves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office shrinks once a pod's worth of desks would still be free
+      Given the page is 1200 by 760
+      And the office has 70 threads, in three rows of four pods
       When it has 57 threads
-      Then the office keeps its four rows
+      Then the office keeps its twelve pods
       When it has 56 threads
-      Then the people in the last row move to desks in the other rows
-      And the movers carry the last row's desks out
-      And then the office loses that row
+      Then the people in the last three pods move to desks in the others
+      And the movers carry those pods' desks out
+      And then the office is three rows of three pods
       And nobody is left standing where the office ended
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office grows for reviewers only once the review corner is full
-      Given the office has 40 threads and 8 reviewers, in two rows of pods
+      Given the office has 40 threads and 8 reviewers, in six pods
       When a ninth reviewer comes in
-      Then the office has another row of three pods
+      Then the office has more pods
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office is never smaller than two rows of pods
+    Scenario: The office is never smaller than six pods in two rows
       Given the office has 75 threads
       When it has 2 threads
-      Then the office shrinks back to two rows of pods, 48 desks
+      Then the office shrinks back to two rows of three pods, 48 desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: People coming and going within the office's size do not redraw it
@@ -547,7 +572,7 @@ Feature: Office
       Given the office has 40 threads
       Then none of them sits in the review corner
       When it has 42 threads and a reviewer
-      Then the office grows a row of pods
+      Then the office grows
       And none of the threads sits in the review corner
       And the reviewer sits in the review corner
 
@@ -567,7 +592,7 @@ Feature: Office
     Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
       Given the office has 40 threads and a reviewer reading at a shelf
       When the reviewer is a reviewer no more
-      Then the office grows a row of pods and it has a desk on the floor
+      Then the office grows and it has a desk on the floor
       And it reads on at the shelf
 
     @desktop @mobile @backlog-desktop @backlog-mobile
