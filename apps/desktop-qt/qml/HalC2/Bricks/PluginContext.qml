@@ -17,28 +17,39 @@ QtObject {
     property string pluginId: ""
     property var environments: []
     readonly property string environment: environments.length > 0 ? environments[0] : ""
-    // Callbacks by request and by watch; neither is bound to, so they change in place.
+    // The requests and watches this context has with PluginChannel, which hands
+    // each value to the one callback that asked for it; theirs end with it.
     property var answers: ({})
     property var watches: ({})
+
+    function expect(request, done) {
+        context.answers[request] = true;
+        PluginChannel.expect(request, (result, error) => {
+            delete context.answers[request];
+            done(result, error);
+        });
+    }
 
     function call(method, input, done, environment) {
         const request = McPlugins.call(environment ?? context.environment, context.pluginId, method, input ?? null);
         if (done)
-            context.answers[request] = done;
+            context.expect(request, done);
         return request;
     }
 
     function saveSettings(settings, done, environment) {
         const request = McPlugins.saveSettings(environment ?? context.environment, context.pluginId, settings);
         if (done)
-            context.answers[request] = done;
+            context.expect(request, done);
         return request;
     }
 
     function watch(topic, onValue, environment) {
         const watch = McPlugins.watch(environment ?? context.environment, context.pluginId, topic);
-        if (watch >= 0)
-            context.watches[watch] = onValue;
+        if (watch >= 0) {
+            context.watches[watch] = true;
+            PluginChannel.follow(watch, onValue);
+        }
         return watch;
     }
 
@@ -46,6 +57,7 @@ QtObject {
         if (context.watches[watch] === undefined)
             return;
         delete context.watches[watch];
+        PluginChannel.forget(watch);
         McPlugins.unwatch(watch);
     }
 
@@ -53,26 +65,12 @@ QtObject {
         Shell.dispatch("thread.open", { key: (environment ?? context.environment) + ":" + threadId });
     }
 
-    readonly property Connections link: Connections {
-        target: McPlugins
-
-        function onAnswered(request, result, error) {
-            const done = context.answers[request];
-            if (done === undefined)
-                return;
-            delete context.answers[request];
-            done(result, error.length > 0 ? error : null);
-        }
-
-        function onPublished(watch, value) {
-            const onValue = context.watches[watch];
-            if (onValue !== undefined)
-                onValue(value);
-        }
-    }
-
     Component.onDestruction: {
-        for (const watch of Object.keys(context.watches))
+        for (const request of Object.keys(context.answers))
+            delete PluginChannel.answers[request];
+        for (const watch of Object.keys(context.watches)) {
+            PluginChannel.forget(watch);
             McPlugins.unwatch(Number(watch));
+        }
     }
 }
