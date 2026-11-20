@@ -1112,6 +1112,45 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // A speaker that finds every side of its listener taken keeps the spot
+        // it had, rather than stop somewhere nobody holds for it.
+        function test_a_speaker_with_no_side_free_keeps_its_spot() {
+            plugin.publish(many(6, "t", "working", "typing"));
+            const W = page.world.cols;
+            const lead = actor("t0");
+            const far = Object.values(page.actors).find(a => Math.abs(a.tx - lead.tx) + Math.abs(a.ty - lead.ty) > 2);
+            verify(far, "someone sits away from the lead");
+            const blocked = [];
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                const i = (far.ty + dy) * W + far.tx + dx;
+                if (page.walkable(far.tx + dx, far.ty + dy) && page.claims[i] === undefined) {
+                    page.claims[i] = "someone";
+                    blocked.push(i);
+                }
+            }
+            plugin.publish(many(6, "t", "working", "typing"), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: far.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => !!lead.talk, 200, "the lead goes to talk");
+            for (let i = 0; i < 200; i++) {
+                page.advance(1);
+                if (lead.next < 0 && lead.path.length === 0)
+                    compare(page.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
+            }
+            compare(lead.talk.phase, "go", "the lead waits for a side to come free");
+            for (const i of blocked)
+                delete page.claims[i];
+            runUntil(() => lead.talk?.phase === "say", 2000, "the talk starts once a side is free");
+            compare(page.claims[lead.ty * W + lead.tx], "t0");
+        }
+
         // The office fills the view by its width or its height, whichever runs
         // out first, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {

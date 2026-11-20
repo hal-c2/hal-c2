@@ -2733,8 +2733,7 @@ Item {
             until: 0,
             met: false
         };
-        release(actor);
-        actor.goal = null;
+        // It keeps the spot it had until it claims a side to talk from.
         page.walking = true;
     }
 
