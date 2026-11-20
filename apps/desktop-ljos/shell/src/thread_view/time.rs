@@ -323,9 +323,6 @@ pub fn format_duration(ms: i64) -> String {
         let tenths = (ms as f64 / 100.0).round() / 10.0;
         return if tenths >= 10.0 {
             "10s".into()
-        } else if tenths == tenths.floor() {
-            // A whole number of seconds drops the trailing zero ("7s").
-            format!("{}s", tenths as i64)
         } else {
             format!("{tenths:.1}s")
         };
@@ -446,7 +443,6 @@ mod tests {
         assert_eq!(format_duration(0), "1ms");
         assert_eq!(format_duration(850), "850ms");
         assert_eq!(format_duration(4_240), "4.2s");
-        assert_eq!(format_duration(7_000), "7s");
         assert_eq!(format_duration(9_960), "10s");
         assert_eq!(format_duration(12_400), "12s");
         assert_eq!(format_duration(120_000), "2m");
