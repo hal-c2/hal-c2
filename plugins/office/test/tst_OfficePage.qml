@@ -2320,23 +2320,29 @@ Item {
             for (const p of people)
                 actor(p.id).restless = 1;
             const sat = {};
+            const armed = {};
             let late = 0;
             runUntil(() => {
                 for (const p of people) {
                     const a = actor(p.id), seat = page.world.seatOf[p.id];
                     if (a.tx === seat.x && a.ty === seat.y) {
                         sat[p.id] = sat[p.id] ?? page.now;
+                        // The first rest after it sits, before a break
+                        // replaces it, is 15 to 45 seconds from then; the
+                        // tick after it sits sets it.
+                        if (armed[p.id] === undefined && a.plan === "rest" && a.until !== Infinity) {
+                            armed[p.id] = a.until;
+                            verify(a.until >= sat[p.id] + 15000 && a.until <= sat[p.id] + 45040, p.id + " rests 15 to 45 seconds from when it sat down, not until " + (a.until - sat[p.id]) + " ms after");
+                        }
                     } else if (sat[p.id] === undefined) {
                         verify(a.plan !== "break", p.id + " goes on a break before it ever sat down");
                         if (seat.state !== "in" && page.now > 15000)
                             late++;
                     }
                 }
-                return people.every(p => sat[p.id] !== undefined);
-            }, 3000, "everyone sits down");
+                return people.every(p => armed[p.id] !== undefined);
+            }, 3000, "everyone sits down and rests");
             verify(late > 0, "some desks arrive after a rest would have ended");
-            for (const p of people)
-                verify(actor(p.id).until === Infinity || actor(p.id).until >= sat[p.id] + 15000 || actor(p.id).plan === "break", p.id + " rests from when it sat down");
         }
 
         // When a team leaves, movers carry its desks out and leave.

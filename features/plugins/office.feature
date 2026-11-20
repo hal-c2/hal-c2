@@ -307,7 +307,7 @@ Feature: Office
     Scenario: A break counts from when the person sits down
       Given the office has 40 threads working, typing
       When 30 more threads come in waiting, and movers carry in their desks
-      Then none of them goes on a break before it has sat at its desk
+      Then none of them goes on a break before it has sat at its desk for at least 15 seconds
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Some people take breaks more often than others
