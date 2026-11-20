@@ -500,6 +500,11 @@ defmodule HalC2.Settings do
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
     {settings, password_changed} = HalC2.ProviderSecrets.seal_server_passwords(settings, settings)
 
+    # Taken before the startup write below replaces the file: what changed while this
+    # MC was down is stamped at the time its file changed, not at this restart, or an
+    # offline edit would outrank a member's newer one (`start_shared/1`).
+    document_at = file_ms(path)
+
     if records_changed or changed or secrets_changed or password_changed,
       do: write!(path, settings)
 
@@ -514,6 +519,7 @@ defmodule HalC2.Settings do
       version: 0,
       watchers: %{},
       stamp: stamp(path),
+      document_at: document_at,
       id: HalC2.Environment.id(),
       shared: shared,
       held: held
@@ -537,7 +543,13 @@ defmodule HalC2.Settings do
           Map.drop(state.shared, Shared.document_keys())
 
         true ->
-          local_shared(state.shared, state.settings, Shared.document_keys(), state, state.path)
+          local_shared(
+            state.shared,
+            state.settings,
+            Shared.document_keys(),
+            state,
+            state.document_at
+          )
       end
 
     file = HalC2.Keybindings.path()
@@ -550,7 +562,7 @@ defmodule HalC2.Settings do
             keybindings(HalC2.Keybindings.rules()),
             ["keybindings"],
             state,
-            file
+            file_ms(file)
           ),
         else: Map.delete(shared, "keybindings")
 
@@ -560,15 +572,22 @@ defmodule HalC2.Settings do
   end
 
   # `records` with a local write for each of `units` whose value in `values` is not the
-  # one its record holds, stamped now, or at `file`'s time when given.
-  defp local_shared(records, values, units, state, file \\ nil) do
-    at =
-      case file && File.stat(file, time: :posix) do
-        {:ok, %{mtime: seconds}} -> seconds * 1000
-        _ -> System.os_time(:millisecond)
-      end
+  # one its record holds, stamped now, or at `at` (a file's time) when given.
+  defp local_shared(records, values, units, state, at \\ nil) do
+    Shared.local(
+      records,
+      values,
+      units,
+      Shared.stamp(records, at || System.os_time(:millisecond)),
+      state.id
+    )
+  end
 
-    Shared.local(records, values, units, Shared.stamp(records, at), state.id)
+  defp file_ms(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %{mtime: seconds}} -> seconds * 1000
+      _ -> nil
+    end
   end
 
   # A rules file that cannot be written fails the edit, not the table every service reads.
