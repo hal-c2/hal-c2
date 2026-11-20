@@ -84,8 +84,8 @@ public:
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
   // Whether a prompt sent from the draft may yet come back into it: a window
-  // is still making it into a thread, a background send from it is
-  // unanswered, or a toast offers a failed one back.
+  // is still making it into a thread, or a background send from it is
+  // unanswered.
   bool launchPending(const QString& id) const;
   // Drops drafts whose thread now exists, empty ones of a machine no MC
   // serves, and ones whose project is gone. Runs on each store change, and

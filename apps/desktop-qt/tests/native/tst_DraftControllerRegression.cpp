@@ -96,7 +96,7 @@ struct Shell {
     mc.refuse(launches.takeFirst(), QStringLiteral("no room"));
     barrier();
     QCOMPARE(native->controller<ComposerController>()->draft(offered), QStringLiteral("newer"));
-    QVERIFY(native->controller<ComposerController>()->awaitsLaunch(offered));
+    QVERIFY(native->controller<ComposerController>()->offersLaunch(offered));
   }
 
   // Whatever the MC has sent so far has reached the shell.
@@ -315,6 +315,23 @@ private slots:
 
     QVERIFY(shell.native->controller<ToastController>()->runAction(QStringLiteral("Restore prompt")));
     QTRY_COMPARE(shell.native->controller<ComposerController>()->draft(draft), QStringLiteral("in the back"));
+  }
+
+  // An offer keeps an emptied draft, not one the removal was asked with: the
+  // answer takes the draft still holding its newer prompt.
+  void theRemovalAnswerTakesADraftARestoreOfferIsShownFor() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.refuseBehindANewerPrompt();
+    shell.bridge.dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), kBox}});
+    QTRY_COMPARE(shell.removals.size(), 1);
+    shell.mc.reply(shell.removals.takeFirst(), QJsonObject());
+    shell.barrier();
+    QVERIFY(!shell.drafts()->draft(shell.offered));
+    shell.mc.remove(kBox);
+    QTRY_VERIFY(!shell.native->store()->servesEnvironment(kBox));
+    shell.barrier();
+    QCOMPARE(shell.draftsFor(kBox), QStringList());
   }
 
   // The offer closed by hand gives nothing back: the emptied draft goes.

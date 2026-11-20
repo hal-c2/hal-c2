@@ -353,7 +353,7 @@ fn refused_behind_a_newer_prompt(hub: &Hub) -> String {
     );
     hub.advance(0);
     assert_eq!(composer::draft(&hub.engine, &id), "newer");
-    assert!(composer::awaits_launch(&hub.engine, &id));
+    assert!(composer::offers_launch(&hub.engine, &id));
     id
 }
 
@@ -384,6 +384,27 @@ fn a_restore_offer_keeps_its_emptied_draft_while_the_machine_is_gone() {
     );
     hub.advance(0);
     assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+#[test]
+fn the_removal_answer_takes_a_draft_a_restore_offer_is_shown_for() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // An offer keeps an emptied draft, not one the removal was asked with.
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+    box_goes(&hub);
+    let left = drafts::all(&hub.engine)
+        .into_iter()
+        .filter(|d| d.environment_id == "id-b")
+        .count();
+    assert_eq!(left, 0);
 }
 
 #[test]

@@ -250,6 +250,7 @@ pub fn model_options(engine: &Engine, instance: &str, model: &str) -> Option<Jso
 
 /// A failed background prompt the toast `toast_id` of window `window`
 /// offers back to the draft `draft_id`.
+#[derive(Clone)]
 pub struct Offer {
     pub draft_id: String,
     pub window: String,
@@ -296,6 +297,8 @@ pub struct Data {
     /// Failed background prompts a toast offers back to their drafts. Not
     /// saved: a toast lasts the run.
     pub offers: Vec<Offer>,
+    /// The windows whose toasts tell the offers when one is closed.
+    offers_heard: HashSet<String>,
     path: Option<PathBuf>,
     /// The images last written beside the drafts, so a keystroke does not
     /// rewrite them.
@@ -360,50 +363,55 @@ pub fn draft_preview(engine: &Engine, target: &str) -> Option<String> {
 }
 
 /// A launch from the draft is kept until its answer: a failed one's prompt
-/// comes back into the draft, a background one's too, or while its toast
-/// offers it back (the draft held a newer prompt).
+/// comes back into the draft, a background one's too.
 pub fn awaits_launch(engine: &Engine, draft_id: &str) -> bool {
-    let (unsent, offers) = read(engine, |d| {
-        let unsent = d
-            .unsent
+    read(engine, |d| {
+        d.unsent
             .iter()
-            .any(|u| u.target == draft_id && u.thread != draft_id);
-        let offers: Vec<(String, String)> = d
-            .offers
+            .any(|u| u.target == draft_id && u.thread != draft_id)
+    })
+}
+
+/// Whether a toast offers a failed background prompt back to the draft (it
+/// held a newer one): kept for it while empty, not past a removal.
+pub fn offers_launch(engine: &Engine, draft_id: &str) -> bool {
+    let offers: Vec<Offer> = read(engine, |d| {
+        d.offers
             .iter()
             .filter(|o| o.draft_id == draft_id)
-            .map(|o| (o.window.clone(), o.toast_id.clone()))
-            .collect();
-        (unsent, offers)
+            .cloned()
+            .collect()
     });
-    unsent
-        || offers.into_iter().any(|(window, toast_id)| {
-            Offer {
-                draft_id: draft_id.to_owned(),
-                window,
-                toast_id,
-            }
-            .shown(engine)
-        })
+    offers.iter().any(|o| o.shown(engine))
 }
 
 /// Notes that a toast offers a failed background prompt back to `draft_id`,
 /// forgetting offers whose toasts are gone.
 pub fn offer(engine: &Engine, draft_id: &str, toast_id: String) {
-    // Closed by hand, it gives nothing back: the draft may go.
-    let closed = toast_id.clone();
-    controller::with::<Toasts, _>(engine, |t, _| {
-        t.on_closed_by_user(move |engine, id| {
-            if id == closed {
-                drafts::reconcile(engine);
-            }
+    let window = controller::window_id(engine);
+    if write(engine, |d| d.offers_heard.insert(window.clone())) {
+        // An offer closed by hand gives nothing back: its draft may go. One
+        // listener for the window's toasts.
+        let heard = window.clone();
+        controller::with::<Toasts, _>(engine, |t, _| {
+            t.on_closed_by_user(move |engine, id| {
+                let gone = write(engine, |d| {
+                    let before = d.offers.len();
+                    d.offers
+                        .retain(|o| !(o.window == heard && o.toast_id == id));
+                    d.offers.len() != before
+                });
+                if gone {
+                    drafts::reconcile(engine);
+                }
+            });
         });
-    });
+    }
     let offers = write(engine, |d| std::mem::take(&mut d.offers));
     let mut offers: Vec<Offer> = offers.into_iter().filter(|o| o.shown(engine)).collect();
     offers.push(Offer {
         draft_id: draft_id.to_owned(),
-        window: controller::window_id(engine),
+        window,
         toast_id,
     });
     write(engine, |d| {

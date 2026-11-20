@@ -405,10 +405,12 @@ void DraftController::reconcile() {
       // No MC serves its machine now: removed, here or on another client,
       // switched off, or not back yet. A draft with nothing in it goes (one a
       // window landed on before the rows went); one the user wrote waits, as
-      // does one whose launch may yet give its prompt back.
+      // does one whose launch may yet give its prompt back, or that a toast
+      // offers a failed prompt back to.
       const auto* composer = NativeShell::of(this)->controller<ComposerController>();
       const bool holds = composer ? composer->draftPreview(draft.id).has_value() : !draft.text.trimmed().isEmpty();
-      if (!holds && !launchPending(draft.id)) orphaned.append(draft.id);
+      const bool offered = composer && composer->offersLaunch(draft.id);
+      if (!holds && !launchPending(draft.id) && !offered) orphaned.append(draft.id);
     } else if (m_store->listsEnvironment(draft.environmentId) &&
                !m_store->project(draft.environmentId + QLatin1Char(':') + draft.projectId)) {
       // The project was removed, here or on another client.

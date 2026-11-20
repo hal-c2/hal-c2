@@ -211,9 +211,11 @@ public:
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
   // A launch from the draft is kept until its answer: a failed one's prompt
-  // comes back into the draft, a background one's too, or while its toast
-  // offers it back (the draft held a newer prompt).
+  // comes back into the draft, a background one's too.
   bool awaitsLaunch(const QString& draftId) const;
+  // Whether a toast offers a failed background prompt back to the draft
+  // (it held a newer one): kept for it while empty, not past a removal.
+  bool offersLaunch(const QString& draftId) const;
   // The ids of what `target`'s draft carries besides its text: its
   // attachments, then its excerpts.
   QStringList carried(const QString& target) const;
@@ -253,6 +255,7 @@ signals:
   void outboxRetryScheduled(const QString& target, int delayMs);
 
 private:
+  void offerClosed(const QString& toastId);
   struct Attachment {
     QString id;
     QString name;

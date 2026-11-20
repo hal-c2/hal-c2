@@ -220,8 +220,8 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
 }
 
 /// Whether a prompt sent from the draft may yet come back into it: a
-/// window's composer is still making it into a thread, a background send
-/// from it is unanswered, or a toast offers a failed one back.
+/// window's composer is still making it into a thread, or a background send
+/// from it is unanswered.
 pub fn launch_pending(engine: &Engine, id: &str) -> bool {
     launching(engine, id) || crate::controllers::composer::awaits_launch(engine, id)
 }
@@ -532,12 +532,13 @@ pub fn reconcile(engine: &Engine) {
     // No MC serves its machine now: removed, here or on another client,
     // switched off, or not back yet. A draft with nothing in it goes (one a
     // window landed on before the rows went); one the user wrote waits, as
-    // does one whose launch may yet give its prompt back.
-    orphaned.extend(
-        unserved
-            .into_iter()
-            .filter(|id| preview(engine, id).is_none() && !launch_pending(engine, id)),
-    );
+    // does one whose launch may yet give its prompt back, or that a toast
+    // offers a failed prompt back to.
+    orphaned.extend(unserved.into_iter().filter(|id| {
+        preview(engine, id).is_none()
+            && !launch_pending(engine, id)
+            && !crate::controllers::composer::offers_launch(engine, id)
+    }));
     for key in promoted {
         promote(engine, &key);
     }

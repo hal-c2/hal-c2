@@ -1595,7 +1595,7 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
     return;
   }
   // While the toast offers the prompt back, the draft it goes to is kept
-  // even once emptied (DraftController::reconcile).
+  // even once emptied (DraftController::reconcile, offersLaunch).
   m_kept.offers.removeIf([](const Offer& offer) { return !offer.toasts || !offer.toasts->shows(offer.toastId); });
   const QString offered =
       toasts->show(QStringLiteral("error"), QStringLiteral("A background prompt could not be sent"),
@@ -1608,13 +1608,7 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                                            }},
                    0);
   m_kept.offers.append({draftId, toasts, offered});
-  // Closed by hand, it gives nothing back: the draft may go.
-  const auto closed = std::make_shared<QMetaObject::Connection>();
-  *closed = connect(toasts, &ToastController::closedByUser, this, [this, closed, offered](const QString& id) {
-    if (id != offered) return;
-    disconnect(*closed);
-    NativeShell::of(this)->controller<DraftController>()->reconcile();
-  });
+  connect(toasts, &ToastController::closedByUser, this, &ComposerController::offerClosed, Qt::UniqueConnection);
 }
 
 // Uploads the thread's oldest send's images, dispatches it command by
@@ -2886,12 +2880,22 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
 }
 
 bool ComposerController::awaitsLaunch(const QString& draftId) const {
-  const bool unsent = std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&draftId](const Unsent& unsent) {
-    return unsent.target == draftId && unsent.thread != draftId;
+  return std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(),
+                     [&draftId](const Unsent& unsent) { return unsent.target == draftId && unsent.thread != draftId; });
+}
+
+bool ComposerController::offersLaunch(const QString& draftId) const {
+  return std::any_of(m_kept.offers.cbegin(), m_kept.offers.cend(), [&draftId](const Offer& offer) {
+    return offer.draftId == draftId && offer.toasts && offer.toasts->shows(offer.toastId);
   });
-  return unsent || std::any_of(m_kept.offers.cbegin(), m_kept.offers.cend(), [&draftId](const Offer& offer) {
-           return offer.draftId == draftId && offer.toasts && offer.toasts->shows(offer.toastId);
-         });
+}
+
+// An offer closed by hand gives nothing back: its draft may go.
+void ComposerController::offerClosed(const QString& toastId) {
+  const auto* toasts = qobject_cast<ToastController*>(sender());
+  const auto gone = m_kept.offers.removeIf(
+      [toasts, &toastId](const Offer& offer) { return offer.toasts == toasts && offer.toastId == toastId; });
+  if (gone > 0) NativeShell::of(this)->controller<DraftController>()->reconcile();
 }
 
 QStringList ComposerController::carried(const QString& target) const {
