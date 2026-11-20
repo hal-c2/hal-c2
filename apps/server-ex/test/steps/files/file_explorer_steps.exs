@@ -106,6 +106,10 @@ defmodule HalC2.Steps.Files.FileExplorer do
     # Absolute paths are the scenario's host paths, so a stray write stays in it.
     path = HalC2.Test.Mc.Host.path(context, file)
     contents = "export const written = #{System.unique_integer([:positive])};\n"
+    # What was there, for "nothing at ... changed" (`{:error, :eisdir}` for a folder).
+    before =
+      if Path.type(path) == :relative,
+        do: {file, File.read(Path.join(World.project(context, project).root, path))}
 
     {reply, context} =
       World.call(context, "projects.writeFile", %{
@@ -114,7 +118,7 @@ defmodule HalC2.Steps.Files.FileExplorer do
         "contents" => contents
       })
 
-    Map.merge(context, %{reply: reply, written: contents})
+    Map.merge(context, %{reply: reply, written: contents, written_before: before})
   end
 
   step "{string} is a git repository that tracks {string} and {string}",

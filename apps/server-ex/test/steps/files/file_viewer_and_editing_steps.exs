@@ -249,8 +249,7 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
 
   step "the returned text ends before that character", context do
     assert {:ok, %{"contents" => contents, "truncated" => true}} = context.reply
-    assert String.ends_with?(contents, "a")
-    refute contents =~ "é"
+    assert contents == String.duplicate("a", 1_048_575)
     context
   end
 
@@ -315,9 +314,15 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
 
   step "nothing at {string} changed", %{args: [file]} = context do
     if Path.type(file) == :relative do
-      # A path in the project: the refused save must not have landed there.
+      # A path in the project: the refused save left it as it was, or, for a path the
+      # save reached through a link, did not land there.
       path = Path.join(World.project(context).root, file)
-      if File.regular?(path), do: refute(File.read!(path) == context.written)
+
+      case context[:written_before] do
+        {^file, before} -> assert File.read(path) == before
+        _ -> refute File.read(path) == {:ok, context.written}
+      end
+
       context
     else
       path = Host.path(context, file)

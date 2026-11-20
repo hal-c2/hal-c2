@@ -277,6 +277,8 @@ defmodule HalC2.Steps.Files.Search do
   end
 
   step "the line is not returned", context do
+    assert {:ok, %{"matches" => _}} = context.reply
+
     refute Enum.any?(context.matches, &(&1["lineContent"] == context.line)),
            inspect(context.matches)
 

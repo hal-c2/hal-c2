@@ -275,7 +275,9 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   end
 
   step "the output says none is published and where to put one", context do
-    assert context.operator_output =~ "Published themes: none (publish into "
+    assert context.operator_output =~
+             "Published themes: none (publish into #{themes_dir(context)})."
+
     context
   end
 

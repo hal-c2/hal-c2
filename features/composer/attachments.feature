@@ -287,10 +287,9 @@ Feature: Attaching images and files to a message
       | with accessibility elements that have no names | that the elements have no readable names or values |
       | without accessibility data                     | that the app did not provide accessibility data    |
 
-  @backlog @desktop
   # Upstream #21356: a message whose context ran past 120,000 characters lost the paths of its
   # attachments, so the agent never learned about the files.
-  @mc @priority-high
+  @desktop @mc @priority-high @backlog-desktop
   Scenario: A very long message still tells the agent where each attachment was saved
     Given the draft holds 119,000 characters of text and four attached files
     When the user sends it

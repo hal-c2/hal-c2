@@ -36,7 +36,9 @@ Feature: Searching project files
       Then "src/cart.ts" is returned
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (supports typo-resistant file search through fff)
-    @mc @priority-low
+    # The MC has no typo matching yet: "compoesr" finds this path only as a subsequence that
+    # runs through "components/", and a root-level "Composer.tsx" is missed.
+    @mc @backlog @priority-low
     Scenario: A name typed with two letters swapped still finds the file
       Given "shop" holds "src/components/Composer.tsx"
       When a client searches "shop" for files named "compoesr"
