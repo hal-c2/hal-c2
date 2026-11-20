@@ -364,6 +364,11 @@ impl MobileTerminal {
         if !self.has_session(engine) {
             return;
         }
+        // A modifier held in another terminal is not this one's.
+        if !self.held.is_empty() && self.held_for != self.active_terminal_id(engine) {
+            self.held.clear();
+            self.publish(engine);
+        }
         if self.held.is_empty() || (!one_character(data) && arrow_of(data).is_none()) {
             self.write(engine, data);
             return;

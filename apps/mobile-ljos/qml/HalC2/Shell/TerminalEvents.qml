@@ -29,13 +29,19 @@ QtObject {
             item.session.write(plain);
     }
 
+    // The part of a line a slow drag has moved by so far, kept until
+    // it makes a whole one.
+    property real rest: 0
+
     // `pixels` as a wheel has them: positive scrolls towards older
     // output. Whole lines only, where a wheel reaches the Terminal's
-    // own counting of them.
+    // own counting of them; what is left over carries to the next.
     function wheel(item, pixels) {
         if (!item || !item.scrollLines)
             return;
-        const lines = Math.round(pixels / 15);
+        rest += pixels;
+        const lines = Math.trunc(rest / 15);
+        rest -= lines * 15;
         if (lines !== 0)
             item.scrollLines(-lines);
     }
