@@ -5777,6 +5777,79 @@ defmodule HalC2.OrchestrationTest do
     on_exit(fn -> Process.exit(session, :kill) end)
   end
 
+  # A question asked in the background is answered by the next message the user
+  # writes, so that message closes it once the agent gets it; a message the MC or
+  # another agent sends does not.
+  test "only a message the user writes closes the questions asked in the background" do
+    thread_id = launch("hello")
+    state = await_run(thread_id, "completed")
+    [%{"id" => run_id}] = StreamState.list(state, "run")
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"runtime-request", "q1",
+         %{
+           "s" => %{
+             "id" => "q1",
+             "status" => "pending",
+             "kind" => "user-input",
+             "nodeId" => "node:q1",
+             "createdAt" => HalC2.Orchestration.Entities.now(),
+             "responseCapability" => %{"type" => "message"}
+           }
+         }},
+        {"turn-item", "turn-item:q1",
+         %{
+           "s" => %{
+             "id" => "turn-item:q1",
+             "type" => "user_input_request",
+             "status" => "waiting",
+             "ordinal" => 100
+           }
+         }}
+      ])
+
+    request = fn -> StreamState.get(current(thread_id), "runtime-request")["q1"] end
+
+    {:ok, _} =
+      send_message(thread_id, "m-agent", "hello", %{
+        "senderThreadId" => "thread-elsewhere",
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      })
+
+    _ = await_statuses(thread_id, ["completed", "completed"])
+
+    {:ok, _} =
+      send_message(thread_id, "m-limit", "hello", %{
+        "usageLimitContinuationOfRunId" => run_id,
+        "createdBy" => "user",
+        "creationSource" => "server"
+      })
+
+    _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+    assert %{"status" => "pending"} = request.()
+
+    # Nor does one the provider never takes: the agent did not get it.
+    {:ok, _} = send_message(thread_id, "m-refused", "refuse to start")
+    _ = await_statuses(thread_id, ~w(completed completed completed failed))
+    assert %{"status" => "pending"} = request.()
+
+    {:ok, _} = send_message(thread_id, "m-user", "hello")
+    _ = await_statuses(thread_id, ~w(completed completed completed failed completed))
+
+    _ =
+      await_state(
+        thread_id,
+        &(StreamState.get(&1, "runtime-request")["q1"]["status"] == "cancelled")
+      )
+
+    assert %{"status" => "cancelled", "closedBy" => "message", "resolvedAt" => _} = request.()
+
+    assert %{"status" => "cancelled"} =
+             StreamState.get(current(thread_id), "turn-item")["turn-item:q1"]
+  end
+
   defp send_message(thread_id, message_id, text, extra \\ %{}) do
     Orchestration.dispatch(
       Map.merge(
