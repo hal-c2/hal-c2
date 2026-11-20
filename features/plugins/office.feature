@@ -329,6 +329,12 @@ Feature: Office
       And afterwards "Lead" goes back to what it was doing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person spoken to on its way stops only on a spot nobody else has
+      Given "Lead" talks to "Reviewer" just as "Reviewer" walks over another person's spot
+      Then "Reviewer" walks on past that spot before it stops to listen
+      And "Lead" talks from beside it, on a spot of its own
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person whose agent asks something shows a question mark
       Given the office has a thread "Fix the parser" asking
       Then its person stands at its desk with a question mark over its head
@@ -561,6 +567,25 @@ Feature: Office
       And the reviewer sits in the review corner
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone in the review corner who is no reviewer leaves it
+      Given the office has 2 reviewers in the review corner
+      When one of them is a reviewer no more
+      Then it sits on the floor and the other keeps its corner desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner sit on the floor, and every other thread keeps a desk
+      Given the office has 10 reviewers and 8 teams of 5 threads, the reviewers listed first
+      Then every thread in the teams has a desk on the floor
+      And 8 of the reviewers sit in the review corner and the other 2 at desks on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
+      Given the office has 40 threads and a reviewer reading at a shelf
+      When the reviewer is a reviewer no more
+      Then the office grows a row of pods and it has a desk on the floor
+      And it reads on at the shelf
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The review whiteboard shows a checklist beside a diff
       Given the office has a reviewer working, planning
       Then the reviewer draws a checklist and a diff on the whiteboard in the review corner
@@ -602,6 +627,15 @@ Feature: Office
       Given the office has threads "A" and "B"
       When "A" leaves
       Then the desk being carried out shows no project
+
+    # Reviewers hot-desk: the review corner's desks belong to no project.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer's desk shows no project
+      Given the project "api" has the monogram "AP" in blue in the sidebar
+      And the office has 9 reviewers in "api" and a thread in "api"
+      Then the desks of the 8 reviewers in the review corner show no project
+      And neither does the desk of the reviewer at the pod next to it
+      And the thread's desk shows "AP" in blue
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Hovering a person shows its project's icon and that it is reviewing

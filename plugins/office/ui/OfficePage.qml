@@ -1426,8 +1426,10 @@ Item {
     // for everyone (see buildWorld()). While the office is closing rows, their
     // pods take nobody, and whoever sat there moves to a desk in the rest.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
-    // own kind) sit in the review corner, and at the desks nearest it once it is full; nobody
-    // else needs a desk there, since the office grows first (see sync()).
+    // own kind) sit in the review corner, and once it is full at the desks
+    // nearest it that nobody else needs. The corner is theirs alone: nobody
+    // else ever needs a desk there, since the office grows first (see
+    // sync()), and whoever sits there and is no reviewer leaves it.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
@@ -1461,10 +1463,12 @@ Item {
         // A pod is a chunk's own when it is the review corner exactly when the
         // chunk reviews.
         const own = (pod, c) => !!w.pods[pod].review === reviewing[c];
-        // Everyone seated keeps their seat, wherever it is; a chunk's pod is
-        // where its first seated member sat, and a team's home for each kind
-        // is its first chunk of that kind with one.
-        const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        // Everyone seated keeps their seat, but for an ordinary person in the
+        // corner; a chunk's pod is where its first member keeping a seat sat,
+        // and a team's home for each kind is its first chunk of that kind with
+        // one.
+        const keeps = (id, c) => !!before[id] && (reviewing[c] || !w.pods[before[id].pod].review);
+        const homes = chunks.map((chunk, c) => before[chunk.find(id => keeps(id, c))]?.pod ?? -1);
         const kindOf = c => teamOf[c] + (reviewing[c] ? ":review" : ":floor");
         const teamHome = {};
         homes.forEach((home, c) => {
@@ -1483,10 +1487,10 @@ Item {
             open.sort((a, b) => (own(b, c) - own(a, c)) || away(a, near) - away(b, near) || a - b);
             return open.length ? open[0] : -1;
         };
-        chunks.forEach(chunk => {
+        chunks.forEach((chunk, c) => {
             for (const id of chunk) {
                 const seat = before[id];
-                if (seat && !taken[seat.index]) {
+                if (keeps(id, c) && !taken[seat.index]) {
                     taken[seat.index] = id;
                     seatOf[id] = seat;
                 }
@@ -1513,13 +1517,18 @@ Item {
                     spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
-        // Those who did not fit sit at the nearest pod with a free desk, a pod
-        // of their own kind first.
-        for (const [id, near, c] of spill) {
-            const pod = nearest(near, 1, c, false);
-            if (pod < 0)
-                break;
-            sit(id, pod);
+        // Those who did not fit sit at the nearest pod with a free desk, the
+        // rest before reviewers, so a reviewer past the corner takes only a
+        // floor desk nobody else needs: reviewers at one of their own kind
+        // first, the rest never in the corner.
+        for (const review of [false, true]) {
+            for (const [id, near, c] of spill) {
+                if (reviewing[c] !== review)
+                    continue;
+                const pod = nearest(near, 1, c, !review);
+                if (pod >= 0)
+                    sit(id, pod);
+            }
         }
         return seatOf;
     }
@@ -2154,7 +2163,8 @@ Item {
     }
 
     // Shows the project of whoever has the desk, while it is in the office.
-    // A mark is painted again only when its project's look changes.
+    // Reviewers hot-desk, so the corner's desks and any desk a reviewer has
+    // show none. A mark is painted again only when its project's look changes.
     function updateMark(mark, owner) {
         const view = page.markViews[mark.key];
         if (!view)
@@ -2163,7 +2173,8 @@ Item {
         const seat = w.seats[mark.seat];
         const id = owner ?? Object.keys(w.seatOf).find(each => w.seatOf[each] === seat) ?? "";
         const person = id ? page.actors[id]?.person : null;
-        const sign = person ? signOf(person) : null;
+        const hot = person?.kind === "reviewer" || !!w.pods[seat.pod]?.review;
+        const sign = person && !hot ? signOf(person) : null;
         view.visible = !!sign?.kind && deskShown(seat);
         if (!sign)
             return;
@@ -2511,6 +2522,12 @@ Item {
     // Whether a person may stop at a spot: nobody else has claimed it.
     function free(spot, actor) {
         const claim = page.claims[spot.y * page.world.cols + spot.x];
+        return !claim || claim === actor.id;
+    }
+
+    // Whether nobody else has claimed the tile a person stands on.
+    function mayStopHere(actor) {
+        const claim = page.claims[actor.ty * page.world.cols + actor.tx];
         return !claim || claim === actor.id;
     }
 
@@ -2903,13 +2920,16 @@ Item {
         const W = page.world.cols;
         const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            if (near && actor.next < 0) {
-                // The other person stops once it finishes its step (see held()),
-                // and the talk starts when both stand still side by side.
+            if (near) {
+                // The other person stops once it finishes its step on a tile it
+                // may stop at (see held()).
                 t.met = true;
                 other.heldBy = actor.id;
-                if (other.next >= 0)
-                    return;
+            }
+            // The talk starts when both stand still side by side, each on a tile
+            // nobody else has: the speaker on the side it claimed.
+            const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
+            if (near && atSide && other.next < 0 && mayStopHere(other)) {
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2917,6 +2937,8 @@ Item {
                 actor.bubbleUntil = t.until;
                 return;
             }
+            if (near && atSide)
+                return;
             const there = other.ty * W + other.tx;
             if (t.target !== there || actor.path.length === 0 && actor.next < 0) {
                 t.target = there;
@@ -2962,9 +2984,11 @@ Item {
     }
 
     // Whether someone who walked up to talk to this person keeps it where it is.
+    // It stops only on a tile nobody else claimed, and walks on past one that is
+    // someone's.
     function held(actor) {
         const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
-        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met;
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && mayStopHere(actor);
     }
 
     function dirTowards(a, b) {
