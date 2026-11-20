@@ -231,12 +231,44 @@ defmodule HalC2.SourceControl do
 
   @doc "`sourceControl.lookupRepository`: a repository's name and clone URLs."
   def lookup(%{"provider" => provider, "repository" => repository} = input) do
+    repository = if provider == "github", do: github_repository_name(repository), else: repository
+
     if not safe_repository?(repository) do
       repository_error(provider, "lookupRepository", {:error, "invalid repository name"})
     else
       lookup_repository(provider, repository, input)
     end
   end
+
+  # A pasted GitHub address names its repository: the scheme, host, query and
+  # one trailing ".git" are not part of the name ("acme/web.git/" and
+  # "https://github.com/acme/web.git?tab=readme" are both "acme/web", while
+  # "acme/web.git.git" is the repository "web.git").
+  defp github_repository_name(repository) when is_binary(repository) do
+    path =
+      repository
+      |> String.trim()
+      |> String.split(["?", "#"], parts: 2)
+      |> hd()
+      |> String.trim_trailing("/")
+      |> String.replace(~r{^[a-z][a-z0-9+.-]*://}, "")
+
+    segments = String.split(path, "/", trim: true)
+
+    segments =
+      if(
+        match?([host | _] when is_binary(host), segments) and String.contains?(hd(segments), "."),
+        do: tl(segments),
+        else: segments
+      )
+
+    case segments do
+      [owner, repo | _] -> "#{owner}/#{String.replace_suffix(repo, ".git", "")}"
+      _ -> repository
+    end
+  end
+
+  defp github_repository_name(repository), do: repository
 
   defp lookup_repository(provider, repository, input) do
     case provider do

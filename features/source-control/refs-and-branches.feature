@@ -93,7 +93,7 @@ Feature: Picking, switching and creating branches
     Then "feature/tax" is marked current and "main" is not
 
   # Upstream #22807
-  @backlog @mc
+  @mc
   Scenario: Opening the branch list does not fetch from the remote
     When the user opens the branch list
     Then the thread's git status is read from the checkout

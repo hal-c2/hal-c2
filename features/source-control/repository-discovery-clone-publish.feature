@@ -459,7 +459,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
 
   # Upstream #21325: ".git" was dropped only at the very end, so "web.git/" and "web.git?tab=readme"
   # looked up "acme/web.git" and found nothing.
-  @mc @backlog
+  @mc
   Scenario Outline: A pasted GitHub address ending in ".git" with more after it names the repository
     When the user looks up "<pasted>" on GitHub
     Then the repository "<repository>" is looked up
