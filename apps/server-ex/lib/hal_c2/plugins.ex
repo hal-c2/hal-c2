@@ -1609,9 +1609,9 @@ defmodule HalC2.Plugins do
   # A plugin's provider instances (`HalC2.Plugins.Host.provider_instances/3`) last only
   # while it is installed, on and granted `providers:configure`: once it is turned off,
   # removed or updated to stop asking, the ones its record names leave the settings
-  # document with the record, and the plugin adds them again when it is back on. An id
-  # whose instance is gone (the user deleted it) leaves the record, so an instance the
-  # user adds under it later is theirs. Every settings change comes back here, so one
+  # document with the record, and the plugin adds them again when it is back on. (The
+  # save that deletes one of them takes its id out of the record itself:
+  # `HalC2.Plugins.Host.seal_records/3`.) Every settings change comes back here, so one
   # an instance's own save raced past is taken out by the next.
   defp release_instances(state) do
     keep =
@@ -1622,22 +1622,18 @@ defmodule HalC2.Plugins do
           do: id
 
     release = fn settings ->
-      instances = settings["providerInstances"] || %{}
-
       Enum.reduce(settings["plugins"] || %{}, settings, fn {id, _config}, settings ->
         case HalC2.Plugins.Host.added_instances(settings, id) do
           [] ->
             settings
 
           ids ->
-            {gone, kept} =
-              if MapSet.member?(keep, id),
-                do: {[], Enum.filter(ids, &Map.has_key?(instances, &1))},
-                else: {ids, []}
-
-            settings
-            |> Map.update("providerInstances", %{}, &Map.drop(&1, gone))
-            |> put_in(["plugins", id, "providerInstances"], kept)
+            if MapSet.member?(keep, id),
+              do: settings,
+              else:
+                settings
+                |> Map.update("providerInstances", %{}, &Map.drop(&1, ids))
+                |> put_in(["plugins", id, "providerInstances"], [])
         end
       end)
     end

@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.provider_instances/3 and the record of what each plugin added, gated by providers:configure)
 #   apps/server-ex/lib/hal_c2/plugins.ex (a plugin's instances leave settings once it is off, removed or stops asking)
 #   apps/server-ex/lib/hal_c2/plugins/package.ex (permission ids and their labels)
+#   apps/server-ex/lib/hal_c2/settings.ex (every save keeps that record the host's, and drops the ids it deletes)
 #   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables sealed on every settings write)
 #   packages/contracts/src/plugin.ts (PluginPermissionId)
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceConfig, ProviderInstanceId)
@@ -16,7 +17,9 @@ Feature: Provider instances a plugin adds
   ordinary instance the user can rename, switch off or delete like any other. It needs
   `providers:configure`. Each goes under the instance id `plugin_<plugin id>_<name>`, and
   the MC records which ones the plugin added: that record, not the id, is what the plugin
-  reaches, so an instance of the user's is never its, whatever it is called. They last
+  reaches, so an instance of the user's is never its, whatever it is called. The save
+  that deletes one of them ends the plugin's hold on that id, and no client's save hands
+  a plugin one. They last
   only while the plugin is installed, on and granted the permission.
 
   Background:
@@ -150,6 +153,14 @@ Feature: Provider instances a plugin adds
       And it put the instance "claude" for Claude named "Claude via the proxy"
       And the user deleted the instance "plugin_host-probe_claude" in Settings → Providers
       When the user adds an instance of their own as "plugin_host-probe_claude"
+      And the user turns the plugin off
+      Then the user's instance "plugin_host-probe_claude" is as it was
+
+    @mc
+    Scenario: An instance the user puts in place of the plugin's before the MC reconciles is theirs
+      Given a plugin granted "providers:configure"
+      And it put the instance "claude" for Claude named "Claude via the proxy"
+      When the user deletes "plugin_host-probe_claude" and adds one of their own under that id, saving twice at once
       And the user turns the plugin off
       Then the user's instance "plugin_host-probe_claude" is as it was
 

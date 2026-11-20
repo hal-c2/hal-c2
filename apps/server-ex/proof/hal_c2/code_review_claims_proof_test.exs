@@ -161,7 +161,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.feed_backlog/1" => @host,
       "HalC2.Plugins.Host.run_active?/3" => @host,
       "HalC2.Plugins.Host.provider_instances/3" => @host,
-      "HalC2.Plugins.Host.added_instances/2" => @host
+      "HalC2.Plugins.Host.added_instances/2" => @host,
+      "HalC2.Plugins.Host.seal_records/3" => @host
     },
     environment: %{
       "push" => "a commit is pushed to the pull request",

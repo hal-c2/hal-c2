@@ -695,7 +695,16 @@ defmodule HalC2.Settings do
   @impl true
   def handle_call({:put, settings, version}, from, %{version: version} = state) do
     {:reply, reply, state} =
-      handle_call({:update, &carry_over(settings, state.settings, &1)}, from, state)
+      handle_call(
+        {:update,
+         &carry_over(
+           HalC2.Plugins.Host.seal_records(settings, state.settings, true),
+           state.settings,
+           &1
+         )},
+        from,
+        state
+      )
 
     # A client is answered with the error type it knows (`ServerSettingsError`).
     reply =
@@ -848,6 +857,7 @@ defmodule HalC2.Settings do
   # `shared` is what the records are before this document's shared keys are compared
   # with them: a member's newer records, saved together with the keys they change.
   defp save(state, settings, write?, shared \\ nil) do
+    settings = HalC2.Plugins.Host.seal_records(settings, state.settings, false)
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
 

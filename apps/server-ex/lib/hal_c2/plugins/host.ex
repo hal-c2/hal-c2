@@ -190,13 +190,79 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   The ids of the provider instances the host recorded adding for plugin `id` in
-  `settings` (`provider_instances/3`). `HalC2.Plugins` drops an id from the record
-  once its instance is gone, so one the user adds later under that id is theirs.
+  `settings` (`provider_instances/3`). The save that deletes one of them drops its id
+  from the record (`seal_records/3`), so one the user adds later under that id is theirs.
   """
   def added_instances(settings, id) do
     case get_in(settings, ["plugins", id, "providerInstances"]) do
       ids when is_list(ids) -> Enum.filter(ids, &is_binary/1)
       _ -> []
+    end
+  end
+
+  @doc """
+  Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
+  `settings` over `current`. A document a client wrote (`client?`) gets every plugin's
+  record from `current`, so a copy the client held from before cannot hand a plugin an
+  id; and every saved document keeps only the recorded ids whose instance it still
+  holds, so the save that deletes a plugin's instance ends the plugin's hold on that id
+  before anything reconciles.
+  """
+  def seal_records(settings, current, client?) do
+    settings = if client?, do: records_from(settings, current), else: settings
+
+    case settings do
+      %{"plugins" => %{} = plugins} ->
+        held = settings["providerInstances"]
+        held = if is_map(held), do: held, else: %{}
+
+        plugins =
+          Map.new(plugins, fn
+            {id, %{"providerInstances" => ids} = config} when is_list(ids) ->
+              {id, %{config | "providerInstances" => Enum.filter(ids, &Map.has_key?(held, &1))}}
+
+            other ->
+              other
+          end)
+
+        %{settings | "plugins" => plugins}
+
+      _ ->
+        settings
+    end
+  end
+
+  defp records_from(client, current) do
+    theirs = current["plugins"]
+
+    theirs =
+      for {id, %{"providerInstances" => ids}} when is_list(ids) <-
+            if(is_map(theirs), do: theirs, else: %{}),
+          into: %{},
+          do: {id, ids}
+
+    case client["plugins"] || %{} do
+      %{} = plugins ->
+        plugins =
+          Map.new(plugins, fn
+            {id, %{} = config} -> {id, Map.delete(config, "providerInstances")}
+            other -> other
+          end)
+
+        plugins =
+          Enum.reduce(theirs, plugins, fn {id, ids}, plugins ->
+            case plugins[id] || %{} do
+              %{} = config -> Map.put(plugins, id, Map.put(config, "providerInstances", ids))
+              _ -> plugins
+            end
+          end)
+
+        if plugins == %{} and not Map.has_key?(client, "plugins"),
+          do: client,
+          else: Map.put(client, "plugins", plugins)
+
+      _ ->
+        client
     end
   end
 

@@ -113,6 +113,28 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
     add(context, id)
   end
 
+  # A client that keeps the document it read and saves twice, both before the host has
+  # taken in either save: its second save still carries the host's record as read.
+  step "the user deletes {string} and adds one of their own under that id, saving twice at once",
+       %{args: [id]} = context do
+    {%{"settings" => read, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings", %{})
+
+    deleted = Map.update!(read, "providerInstances", &Map.delete(&1, id))
+
+    {%{"version" => version}, context} =
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => deleted, "version" => version})
+
+    {_, context} =
+      World.call!(context, "hal-c2.writeSettings", %{
+        "settings" => put_in(read, ["providerInstances", id], @users),
+        "version" => version
+      })
+
+    {_, context} = World.call!(context, "plugins.list", %{})
+    context
+  end
+
   # --- checks ----------------------------------------------------------------------------
 
   step "Settings → Providers has the instance {string} named {string}",
