@@ -272,6 +272,24 @@ Item {
             compare(find("cliproxyapiInstanceText:claude").text, "Claude via CLIProxyAPI · not added: " + reason);
         }
 
+        function test_an_instance_the_mc_could_not_remove_says_so_and_offers_nothing() {
+            const reason = "Could not read settings.json. Fix or remove it, then save again.";
+            plugin.publish("status", test.status({
+                instances: [
+                    {
+                        name: "claude",
+                        instanceId: "plugin_cliproxyapi_claude",
+                        label: "Claude via CLIProxyAPI",
+                        state: "remove_failed",
+                        message: reason
+                    }
+                ]
+            }));
+            tryVerify(() => find("cliproxyapiInstanceText:claude") !== null);
+            compare(find("cliproxyapiInstanceText:claude").text, "Claude via CLIProxyAPI · could not be removed: " + reason);
+            verify(!find("cliproxyapiAddBack:claude").visible);
+        }
+
         function test_signing_in_shows_the_address_and_takes_the_one_pasted_back() {
             mouseClick(find("cliproxyapiSignIn:claude"));
             plugin.publish("accounts", {

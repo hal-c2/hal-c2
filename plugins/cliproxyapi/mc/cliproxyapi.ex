@@ -122,8 +122,9 @@ defmodule HalC2Plugins.CliProxyApi do
       invalid: nil,
       blocked: nil,
       error: nil,
-      # Per instance name, why the host refused to put it: the user has an instance
-      # under its id. Tried again on the next sync.
+      # Per instance name, why the host refused it: to put it, the user has an
+      # instance under its id; under Connect settings that do not validate, to
+      # take it out. Tried again on the next sync.
       taken: %{},
       # Why the host could not list the plugin's instances, so none is known to be there.
       unlisted: nil,
@@ -963,26 +964,32 @@ defmodule HalC2Plugins.CliProxyApi do
       "error" => state.error,
       "instances" =>
         for name <- Instances.names() do
+          {instance_state, message} = instance_status(state, name)
+
           %{
             "name" => name,
             "instanceId" => "plugin_#{@id}_#{name}",
             "label" => Instances.label(name),
-            "state" =>
-              cond do
-                state.ledger[name]["state"] == "dismissed" -> "dismissed"
-                state.invalid -> "withheld"
-                state.unlisted -> "unknown"
-                Map.has_key?(state.taken, name) -> "taken"
-                state.ledger[name]["state"] == "created" -> "added"
-                true -> "unknown"
-              end,
-            "message" =>
-              if(state.ledger[name]["state"] != "dismissed",
-                do: state.invalid || state.unlisted || state.taken[name]
-              )
+            "state" => instance_state,
+            "message" => message
           }
         end
     }
+  end
+
+  # One instance's state for the page, with why. Under Connect settings that do not
+  # validate, `taken` holds why the host refused to take the instance out: it is
+  # still in Settings → Providers, so it is never "withheld" (not added).
+  defp instance_status(state, name) do
+    cond do
+      state.ledger[name]["state"] == "dismissed" -> {"dismissed", nil}
+      state.invalid != nil and Map.has_key?(state.taken, name) -> {"remove_failed", state.taken[name]}
+      state.invalid -> {"withheld", state.invalid}
+      state.unlisted -> {"unknown", state.unlisted}
+      Map.has_key?(state.taken, name) -> {"taken", state.taken[name]}
+      state.ledger[name]["state"] == "created" -> {"added", nil}
+      true -> {"unknown", nil}
+    end
   end
 
   defp phase(state) do

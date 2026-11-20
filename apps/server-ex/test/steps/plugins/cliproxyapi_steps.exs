@@ -152,6 +152,30 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
+  # As the host hands over settings saved while the plugin was off or down: the Agent
+  # holds them at once, and this server, busy, takes them up when it starts again.
+  step "Connect to {string} with the management key {string} was saved in its place",
+       %{args: [url, key]} = context do
+    settings = %{
+      "mode" => "connect",
+      "url" => url,
+      "managementKey" => key,
+      "binaryPath" => @binary,
+      "port" => context.fake.port
+    }
+
+    HalC2Plugins.CliProxyApi.settings_changed(server(), settings, nil)
+    context
+  end
+
+  # The host lists instances from the document it holds, but taking one out saves
+  # the document, which reads the file first: an unreadable one refuses the remove.
+  step "the settings file cannot be read", context do
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.write!(path, "{ not json")
+    context
+  end
+
   step "the plugin's server crashes", context do
     old = server()
     {:dictionary, dictionary} = Process.info(old, :dictionary)
@@ -778,6 +802,17 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
       Enum.any?(
         status["instances"],
         &(&1["label"] == label and &1["state"] in ["taken", "withheld"] and
+            &1["message"] =~ text)
+      )
+    end)
+  end
+
+  step "the page shows {string} as not removed, saying {string}",
+       %{args: [label, text]} = context do
+    await_status(context, fn status ->
+      Enum.any?(
+        status["instances"],
+        &(&1["label"] == label and &1["state"] == "remove_failed" and
             &1["message"] =~ text)
       )
     end)

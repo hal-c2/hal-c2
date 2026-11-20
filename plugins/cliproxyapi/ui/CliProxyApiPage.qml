@@ -114,6 +114,8 @@ Item {
         case "taken":
         case "withheld":
             return qsTr("%1 · not added: %2").arg(instance.label).arg(instance.message ?? "");
+        case "remove_failed":
+            return qsTr("%1 · could not be removed: %2").arg(instance.label).arg(instance.message ?? "");
         case "added":
             return qsTr("%1 · in Settings → Providers").arg(instance.label);
         default:

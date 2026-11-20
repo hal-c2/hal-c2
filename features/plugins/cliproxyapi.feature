@@ -168,6 +168,16 @@ Feature: CLIProxyAPI
       And the page shows "Claude via CLIProxyAPI" as not added, saying "use https for one elsewhere"
 
     @mc
+    Scenario: An instance the MC could not take out under refused Connect settings says so
+      Given the CLIProxyAPI plugin runs the fake binary
+      And the plugin's server is busy
+      And Connect to "http://192.0.2.10:8317" with the management key "their-secret" was saved in its place
+      And the settings file cannot be read
+      When the plugin's server crashes
+      Then Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
+      And the page shows "Claude via CLIProxyAPI" as not removed, saying "Could not read"
+
+    @mc
     Scenario: Connect put right after it was refused routes agents through the proxy
       Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
       And the user turns the CLIProxyAPI plugin on
