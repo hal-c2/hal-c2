@@ -261,13 +261,17 @@ pub(crate) fn point_on(
 /// The shell prints a line with `link` in it; where the link is drawn.
 fn show_link(world: &mut World, printed: &str, link: &str) -> Outcome<(f64, f64)> {
     let (brick, terminal) = drawn_terminal(world)?;
-    let thread_id = shown_thread(world);
-    print(
-        &mut world.mc,
-        &thread_id,
-        "term-1",
-        &format!("{printed}\r\n"),
-    );
+    // A line the Given step already printed holds the link; click it there
+    // rather than printing a second line of its own.
+    if !call(world, terminal, "text").contains(link) {
+        let thread_id = shown_thread(world);
+        print(
+            &mut world.mc,
+            &thread_id,
+            "term-1",
+            &format!("{printed}\r\n"),
+        );
+    }
     let wanted = link.to_owned();
     let shown = printed.to_owned();
     world.wait_for_with(

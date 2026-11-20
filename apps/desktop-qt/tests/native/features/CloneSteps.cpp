@@ -386,10 +386,13 @@ const Steps steps([] {
     expect(fake(world).asked.value(1) == u"browse: ~/", fake(world).asked.join(u"; "));
   });
   step(QStringLiteral("the destination is the folder the user browsed to"), [](World& world, const Captures&, const Table&) {
-    enter(world);
+    // Browse on from the home folder to another one, as the user does, rather than accept the folder browsing began at.
+    fakeFiles(world.mc).folders << fakeFiles(world.mc).home + QStringLiteral("/code");
+    enter(world, QStringLiteral("~/code/"));
     world.waitFor([&] { return !started(world).isEmpty(); }, QStringLiteral("the clone to start"));
-    const QString destination = started(world).value(QLatin1String("destinationPath")).toString();
-    expect(destination == u"~/" || destination == fakeFiles(world.mc).home,
+    QString destination = started(world).value(QLatin1String("destinationPath")).toString();
+    while (destination.endsWith(QLatin1Char('/'))) destination.chop(1);
+    expect(destination == u"~/code" || destination == fakeFiles(world.mc).home + QStringLiteral("/code"),
            QStringLiteral("the clone started with %1").arg(show(started(world).toVariantMap())));
   });
 

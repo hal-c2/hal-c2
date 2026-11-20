@@ -312,7 +312,9 @@ const Steps steps([] {
   // The shell prints a line with `link` in it; where the link is drawn.
   const auto showLink = [pointOn](World& world, const QString& printed, const QString& link) {
     QQuickItem* terminal = drawnTerminal(world);
-    print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
+    // A line the Given step already printed holds the link; click it there
+    // rather than printing a second line of its own.
+    if (!call(terminal, "text").contains(link)) print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
     world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
     return pointOn(world, terminal, link);
   };

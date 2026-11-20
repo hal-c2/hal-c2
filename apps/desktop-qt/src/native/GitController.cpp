@@ -518,7 +518,11 @@ void GitController::onActionFrame(const QJsonObject& frame) {
     const QJsonObject toast = result.value(QLatin1String("toast")).toObject();
     const QJsonObject cta = toast.value(QLatin1String("cta")).toObject();
     std::optional<ToastController::Action> next;
-    if (text(cta, "kind") == QLatin1String("open_pr")) {
+    // A push from behind its upstream could not fast-forward, so offer none.
+    const QString ctaAction = text(cta.value(QLatin1String("action")).toObject(), "kind");
+    const bool pushBehind = ctaAction == QLatin1String("push") && status().has_value() && count(*status(), "behindCount") > 0;
+    if (pushBehind) {
+    } else if (text(cta, "kind") == QLatin1String("open_pr")) {
       const QUrl url(text(cta, "url"));
       next = ToastController::Action{text(cta, "label"), [this, url] { m_bridge->openExternal(url); }};
     } else if (text(cta, "kind") == QLatin1String("run_action")) {
