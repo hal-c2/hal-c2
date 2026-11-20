@@ -29,6 +29,16 @@ timeout -k 10 30 sudo dpkg --configure -a
 # The retry goes straight to the Ubuntu archive: the runner's mirror list falls back to
 # it only after the stalled regional mirror's (azure., us-east-2.ec2., ...) timeouts have
 # used up the attempt. archive.ubuntu.com and security.ubuntu.com are left as they are.
-sudo sed -i -E 's#[a-z0-9.-]*\.archive\.ubuntu\.com#archive.ubuntu.com#gI' \
+# Only a whole hostname ending in .archive.ubuntu.com is rewritten, so a host such as
+# foo.archive.ubuntu.com.example.org stays as it is.
+sudo sed -i -E 's#(://|@|^|[[:space:]])[a-z0-9.-]*\.archive\.ubuntu\.com([/:[:space:]]|$)#\1archive.ubuntu.com\2#gI' \
   /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+# The rewritten mirror now repeats the archive's own entry; keep the first of each,
+# whatever its scheme, hostname case or priority. The path keeps its case.
+if [ -f /etc/apt/apt-mirrors.txt ]; then
+  awk '{ url = $1; sub(/^[a-zA-Z]+:\/\//, "", url); i = index(url "/", "/")
+         key = tolower(substr(url, 1, i - 1)) substr(url, i) } !seen[key]++' /etc/apt/apt-mirrors.txt |
+    sudo tee /etc/apt/apt-mirrors.txt.dedup >/dev/null &&
+    sudo mv /etc/apt/apt-mirrors.txt.dedup /etc/apt/apt-mirrors.txt
+fi
 attempt "$@"
