@@ -192,8 +192,11 @@ pub struct Launch {
 struct Kept {
     cache_dir: std::cell::RefCell<Option<PathBuf>>,
     allow_local_folder_import: std::cell::Cell<bool>,
-    opened: std::cell::RefCell<Vec<Rc<dyn Fn(&Engine, &session::Session)>>>,
+    opened: std::cell::RefCell<Vec<OpenedListener>>,
 }
+
+/// What [`on_opened`] keeps.
+type OpenedListener = Rc<dyn Fn(&Engine, &session::Session)>;
 
 /// Calls `f` with each session [`open`] connects with, once it has (as
 /// NativeShell::opened): a host that keeps the session for the next start
