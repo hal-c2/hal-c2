@@ -37,7 +37,7 @@ sudo sed -i -E 's#(://|@|^|[[:space:]])[a-z0-9.-]*\.archive\.ubuntu\.com([/:[:sp
 # whatever its scheme, hostname case or priority. The path keeps its case.
 if [ -f /etc/apt/apt-mirrors.txt ]; then
   awk '{ url = $1; sub(/^[a-zA-Z]+:\/\//, "", url); i = index(url "/", "/")
-         key = tolower(substr(url, 1, i - 1)) substr(url, i) } !seen[key]++' /etc/apt/apt-mirrors.txt |
+         key = tolower(substr(url, 1, i - 1)) substr(url, i) } NF == 0 || !seen[key]++' /etc/apt/apt-mirrors.txt |
     sudo tee /etc/apt/apt-mirrors.txt.dedup >/dev/null &&
     sudo mv /etc/apt/apt-mirrors.txt.dedup /etc/apt/apt-mirrors.txt
 fi
