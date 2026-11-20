@@ -309,17 +309,18 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # each one's remote so a later clone of it finds them, as far as it can: the checkout
   # is whole without them. Git never collects garbage in the store (`gc.auto=0`), as the
   # checkouts borrowing its objects do not hold its refs. Paths come NUL-separated, as a
-  # submodule's path can hold any character but NUL.
+  # submodule's path can hold any character but NUL, leading and trailing spaces included,
+  # so that output is read untrimmed.
   defp store(store, path) do
     with {:ok, paths} <-
-           git(path, [
+           raw_git(path, [
              "submodule",
              "foreach",
              "--recursive",
              "--quiet",
              ~S(printf '%s\0' "$displaypath")
            ]) do
-      for sub <- String.split(paths, <<0>>, trim: true),
+      for sub <- paths |> String.split(<<0>>) |> Enum.drop(-1),
           sub = Path.join(path, sub),
           {:ok, from} <- [git(sub, ["config", "remote.origin.url"])] do
         key = :crypto.hash(:sha256, from) |> Base.encode16(case: :lower) |> binary_part(0, 16)
@@ -594,8 +595,13 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                GIT_TRACE2_EVENT GIT_TRACE2_PERF)
 
   defp git(cwd, args, env \\ []) do
+    with {:ok, out} <- raw_git(cwd, args, env), do: {:ok, String.trim(out)}
+  end
+
+  # `git/3` answering its output as git wrote it.
+  defp raw_git(cwd, args, env \\ []) do
     case System.cmd("git", args, cd: cwd, stderr_to_stdout: true, env: git_env() ++ env) do
-      {out, 0} -> {:ok, String.trim(out)}
+      {out, 0} -> {:ok, out}
       {out, _} -> {:error, failed(args, out, env)}
     end
   rescue

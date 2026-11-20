@@ -501,11 +501,20 @@ defmodule HalC2.CodeReviewTest do
     assert Path.wildcard(Path.join(clone, "worktrees/*")) == []
   end
 
-  test "a submodule whose path has a space reaches the store the next checkout borrows from",
+  test "submodules whose paths have spaces reach the store the next checkout borrows from",
        context do
     checkout = HalC2Plugins.CodeReview.Checkout
     inner = repo!(context.dir, "inner", "inner.txt")
-    pull!(context, 3, [{"my dir", "https://github.com/acme/inner.git", inner}])
+    lib = repo!(context.dir, "lib", "inner.txt")
+    tail = repo!(context.dir, "tail", "inner.txt")
+
+    # The first path git lists starts with a space, the last ends with one.
+    pull!(context, 3, [
+      {" leading lib", "https://github.com/acme/lib.git", lib},
+      {"my dir", "https://github.com/acme/inner.git", inner},
+      {"trailing lib ", "https://github.com/acme/tail.git", tail}
+    ])
+
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
     first = Path.join(context.dir, "subs/first")
@@ -514,11 +523,16 @@ defmodule HalC2.CodeReviewTest do
     for path <- [first, second] do
       assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
       assert :ok = apply(checkout, :submodules, [clone, path, remote])
+      assert File.read!(Path.join(path, " leading lib/inner.txt")) == "lib\n"
       assert File.read!(Path.join(path, "my dir/inner.txt")) == "inner\n"
+      assert File.read!(Path.join(path, "trailing lib /inner.txt")) == "tail\n"
     end
 
-    counts = git!(Path.join(second, "my dir"), ["count-objects", "-v"])
-    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    for sub <- [" leading lib", "my dir", "trailing lib "] do
+      counts = git!(Path.join(second, sub), ["count-objects", "-v"])
+      assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    end
+
     :ok = apply(checkout, :release, [])
   end
 
@@ -3570,7 +3584,7 @@ defmodule HalC2.CodeReviewTest do
       Enum.map_join(subs, fn sub ->
         {path, url} = {elem(sub, 0), elem(sub, 1)}
         lines = if tuple_size(sub) == 4, do: elem(sub, 3), else: ""
-        "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = #{url}\n" <> lines
+        "[submodule \"#{path}\"]\n\tpath = \"#{path}\"\n\turl = #{url}\n" <> lines
       end)
     )
 
