@@ -131,7 +131,9 @@ defmodule HalC2.Plugins.Host do
   A `name` is lowercase letters, digits and dashes. The instances last only while the
   plugin is installed, on and granted `providers:configure`: the plugin host takes
   them out of the document when it is turned off, removed, or updated to stop asking
-  (`HalC2.Plugins`), and the plugin adds them again once it is back on.
+  (`HalC2.Plugins`), and the plugin adds them again once it is back on. `list` names
+  those the host took out (`"released"`) until the plugin puts them again, so a plugin
+  starting up can tell them from ones the user deleted while it was down.
   """
   def provider_instances(id, "list", _input) do
     with :ok <- permit(id, "providers:configure") do
@@ -147,7 +149,11 @@ defmodule HalC2.Plugins.Host do
               "instance" => instance
             }
 
-      {:ok, %{"instances" => instances}}
+      released =
+        for instance_id <- Enum.sort(released_instances(settings, id)),
+            do: String.replace_prefix(instance_id, "plugin_#{id}_", "")
+
+      {:ok, %{"instances" => instances, "released" => released}}
     end
   end
 
@@ -193,8 +199,17 @@ defmodule HalC2.Plugins.Host do
   `settings` (`provider_instances/3`). The save that deletes one of them drops its id
   from the record (`seal_records/3`), so one the user adds later under that id is theirs.
   """
-  def added_instances(settings, id) do
-    case get_in(settings, ["plugins", id, "providerInstances"]) do
+  def added_instances(settings, id), do: ids(settings, id, "providerInstances")
+
+  @doc """
+  The ids of the provider instances of plugin `id` the host took out of `settings` as
+  the plugin stopped being installed, on and granted (`HalC2.Plugins`), and the plugin
+  has not put again since.
+  """
+  def released_instances(settings, id), do: ids(settings, id, "releasedInstances")
+
+  defp ids(settings, id, key) do
+    case get_in(settings, ["plugins", id, key]) do
       ids when is_list(ids) -> Enum.filter(ids, &is_binary/1)
       _ -> []
     end
@@ -203,8 +218,8 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
   `settings` over `current`. A document a client wrote (`client?`) gets every plugin's
-  record from `current`, so a copy the client held from before cannot hand a plugin an
-  id; and every saved document keeps only the recorded ids whose instance it still
+  records (`added_instances/2`, `released_instances/2`) from `current`, so a copy the
+  client held from before cannot hand a plugin an id; and every saved document keeps only the recorded ids whose instance it still
   holds, so the save that deletes a plugin's instance ends the plugin's hold on that id
   before anything reconciles.
   """
@@ -232,27 +247,30 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
+  @records ["providerInstances", "releasedInstances"]
+
   defp records_from(client, current) do
     theirs = current["plugins"]
 
     theirs =
-      for {id, %{"providerInstances" => ids}} when is_list(ids) <-
-            if(is_map(theirs), do: theirs, else: %{}),
+      for {id, %{} = config} <- if(is_map(theirs), do: theirs, else: %{}),
+          records = Map.filter(config, fn {key, ids} -> key in @records and is_list(ids) end),
+          records != %{},
           into: %{},
-          do: {id, ids}
+          do: {id, records}
 
     case client["plugins"] || %{} do
       %{} = plugins ->
         plugins =
           Map.new(plugins, fn
-            {id, %{} = config} -> {id, Map.delete(config, "providerInstances")}
+            {id, %{} = config} -> {id, Map.drop(config, @records)}
             other -> other
           end)
 
         plugins =
-          Enum.reduce(theirs, plugins, fn {id, ids}, plugins ->
+          Enum.reduce(theirs, plugins, fn {id, records}, plugins ->
             case plugins[id] || %{} do
-              %{} = config -> Map.put(plugins, id, Map.put(config, "providerInstances", ids))
+              %{} = config -> Map.put(plugins, id, Map.merge(config, records))
               _ -> plugins
             end
           end)
@@ -283,6 +301,14 @@ defmodule HalC2.Plugins.Host do
         Map.put(settings["providerInstances"] || %{}, instance_id, instance)
       )
       |> record(id, &Enum.uniq(&1 ++ [instance_id]))
+      |> unrelease(id, instance_id)
+    end
+  end
+
+  defp unrelease(settings, id, instance_id) do
+    case released_instances(settings, id) do
+      [] -> settings
+      ids -> put_in(settings, ["plugins", id, "releasedInstances"], List.delete(ids, instance_id))
     end
   end
 

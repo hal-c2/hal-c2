@@ -153,6 +153,16 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
     context
   end
 
+  step "the plugin lists {string} as taken out while it was off", %{args: [name]} = context do
+    assert released(context) == [name]
+    context
+  end
+
+  step "the plugin lists nothing as taken out while it was off", context do
+    assert released(context) == []
+    context
+  end
+
   step "the plugin lists no instances", context do
     assert listed(context) == []
     context
@@ -230,6 +240,13 @@ defmodule HalC2.Steps.Plugins.PluginProviders do
       PluginHost.call!(context, "provider_instances", "list", %{})
 
     instances
+  end
+
+  defp released(context) do
+    {%{"released" => released}, _} =
+      PluginHost.call!(context, "provider_instances", "list", %{})
+
+    released
   end
 
   defp disable(context) do
