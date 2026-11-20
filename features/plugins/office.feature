@@ -407,9 +407,10 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone stepping through the door when the office is resized walks on
-      Given a person is stepping from one tile to the next by the door
+      Given a person is stepping through the door into the break room
       When the page is resized to a grid with fewer pods to a row
-      Then it carries on from a tile next to where it stands, through no furniture
+      Then it carries on stepping through the door where the door is now
+      And it is never put back on the office's floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone stepping where a resize puts a wall steps from the floor

@@ -1226,8 +1226,8 @@ Item {
         }
 
         // Someone stepping through the break room's door when the door moves
-        // goes on from the tile it set out from, never straight through what
-        // lies between.
+        // moves with it and goes on with the step, never back out to the
+        // office's floor nor straight through what lies between.
         function test_a_step_through_the_door_goes_on_after_a_resize() {
             plugin.publish([person("c", "C", "working", "typing")]);
             const c = actor("c");
@@ -1236,15 +1236,16 @@ Item {
             const xd = page.world.xd, W = page.world.cols;
             runUntil(() => c.next >= 0 && c.tx === xd - 1 && c.next % W === xd, 3000, "C steps through the door");
             page.advance(2);
+            const y = c.ty, offset = c.px - c.tx * 16;
             resize(300, 1000);
-            verify(page.world.xd !== xd, "the door moves");
-            if (c.next >= 0)
-                compare(Math.abs(c.next % page.world.cols - c.tx) + Math.abs(Math.floor(c.next / page.world.cols) - c.ty), 1, "C steps to a tile next to it");
-            else
-                compare([c.px, c.py], [c.tx * 16, c.ty * 16], "C stands on its tile");
+            const w = page.world;
+            verify(w.xd !== xd, "the door moves");
+            compare([c.tx, c.ty, c.next], [w.xd - 1, y, y * w.cols + w.xd], "C goes on stepping through the door where it is now");
+            compare(c.px - c.tx * 16, offset, "from as far as it got");
             checkFloor();
             runUntil(() => {
                 checkFloor();
+                verify(c.tx >= page.world.xd - 1, "C is never put back on the office's floor, at " + c.tx + "," + c.ty);
                 return arrived(c) && c.tx > page.world.xd;
             }, 3000, "C goes on to the break room");
         }
