@@ -8,7 +8,8 @@ defmodule HalC2Plugins.CliProxyApi.Api do
   403, which the caller must not repeat: five failed keys get this machine's address
   banned from the management API for half an hour. `:down` is a proxy that does not
   answer, `:missing` a 404, `:http` any other refusal, `:conflict` a 412 (the config
-  changed under an `If-Match`). An https proxy's certificate is checked.
+  changed under an `If-Match`). A redirect is not followed, and is an `:http`
+  refusal. An https proxy's certificate is checked.
   """
 
   @prefix "/v8/management"
@@ -41,7 +42,9 @@ defmodule HalC2Plugins.CliProxyApi.Api do
         body -> {to_charlist(url), charlists, ~c"application/json", JSON.encode!(body)}
       end
 
-    options = [timeout: @timeout, connect_timeout: 3_000]
+    # The key goes with every request, so a redirect, which `:httpc` would follow with
+    # it, is answered as a refusal instead.
+    options = [timeout: @timeout, connect_timeout: 3_000, autoredirect: false]
 
     options =
       if String.starts_with?(url, "https:"),

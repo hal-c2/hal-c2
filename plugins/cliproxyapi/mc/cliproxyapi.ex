@@ -73,6 +73,10 @@ defmodule HalC2Plugins.CliProxyApi do
       settings["mode"] == "connect" and not address?(url) ->
         {:error, "Connect needs the proxy's address, such as http://127.0.0.1:8317."}
 
+      # The plugin and Codex append their paths to it, which would land in a query.
+      settings["mode"] == "connect" and suffixed?(url) ->
+        {:error, "Connect takes the proxy's address without a query (?) or fragment (#)."}
+
       # The management key crosses the wire with every call.
       settings["mode"] == "connect" and not (https?(url) or loopback?(url)) ->
         {:error,
@@ -147,6 +151,10 @@ defmodule HalC2Plugins.CliProxyApi do
   def handle_cast({:settings, settings}, state) do
     next = %{state | settings: settings, blocked: nil, failure: nil}
     next = if conn(next) == conn(state), do: next, else: %{next | sign_in: nil}
+
+    # A cursor and its lines are the proxy's at that address; another address starts
+    # its log over, where an unrelated edit leaves them alone.
+    next = if base(next) == base(state), do: next, else: %{next | cursor: nil, logs: []}
     {:noreply, apply_now(next)}
   end
 
@@ -368,7 +376,8 @@ defmodule HalC2Plugins.CliProxyApi do
         }
 
       "run" ->
-        run(state)
+        # `invalid` is Connect's: a refusal there must not withhold Run's proxy.
+        run(%{state | invalid: nil})
     end
   end
 
@@ -736,7 +745,11 @@ defmodule HalC2Plugins.CliProxyApi do
   # A refused key is never tried again by itself; a proxy that does not answer is
   # one starting, or one gone.
   defp refused(state, :auth, message), do: %{state | blocked: message}
-  defp refused(state, :down, message), do: %{state | answering: false, unreachable: message}
+
+  # The proxy at that address may be another one when it answers again, without the
+  # plugin's client key: the next drain checks its access keys afresh.
+  defp refused(state, :down, message),
+    do: %{state | answering: false, unreachable: message, allowed: false}
   defp refused(state, _kind, message), do: %{state | error: message}
 
   defp usable(%{blocked: blocked} = state) when blocked != nil,
@@ -809,13 +822,42 @@ defmodule HalC2Plugins.CliProxyApi do
   # validate, and are put as new then. Those the user deleted stay deleted.
   defp sync(%{invalid: invalid} = state) when invalid != nil do
     case Host.provider_instances(@id, "list", %{}) do
-      {:ok, %{"instances" => listed}} ->
-        for %{"name" => name} <- listed,
-            do: Host.provider_instances(@id, "remove", %{"name" => name})
+      {:ok, %{"instances" => listed} = reply} ->
+        present = MapSet.new(listed, & &1["name"])
+        released = MapSet.new(reply["released"] || [])
 
-        ledger = Map.filter(state.ledger, fn {_, entry} -> entry["state"] == "dismissed" end)
+        failed =
+          Enum.reduce(listed, %{}, fn %{"name" => name}, failed ->
+            case Host.provider_instances(@id, "remove", %{"name" => name}) do
+              {:ok, _} -> failed
+              {:error, message} -> Map.put(failed, name, message)
+            end
+          end)
+
+        # A remove the host refused leaves its instance there, and its ledger entry
+        # with it, so the page cannot call it not added. A created instance already
+        # gone was the user's doing unless the host released it while the plugin was
+        # off, so it stays deleted when the settings validate again.
+        ledger =
+          Enum.reduce(state.ledger, %{}, fn {name, entry}, ledger ->
+            cond do
+              entry["state"] == "dismissed" -> Map.put(ledger, name, entry)
+              Map.has_key?(failed, name) -> Map.put(ledger, name, entry)
+              name not in present and name not in released -> Map.put(ledger, name, %{"state" => "dismissed"})
+              true -> ledger
+            end
+          end)
+
         changed? = ledger != state.ledger
-        state = %{state | ledger: ledger, taken: %{}, unlisted: nil}
+
+        state = %{
+          state
+          | ledger: ledger,
+            taken: failed,
+            unlisted: nil,
+            error: failed |> Map.values() |> List.first() || state.error
+        }
+
         if changed?, do: save_ledger(state), else: state
 
       {:error, message} ->
@@ -1040,6 +1082,11 @@ defmodule HalC2Plugins.CliProxyApi do
       _ ->
         false
     end
+  end
+
+  defp suffixed?(url) do
+    %URI{query: query, fragment: fragment} = URI.parse(url)
+    query != nil or fragment != nil
   end
 
   defp address?(url) do

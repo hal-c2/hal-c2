@@ -66,6 +66,9 @@ defmodule HalC2.CliProxyApiProxyTest do
     binary = Path.join(dir, "cli-proxy-api")
     File.cp!(@binary, binary)
     %{"pid" => first} = Proxy.run(%{spec(dir, "a") | binary: binary})
+    # Consumed here, so the "running" after the binary is back is the restart's, not
+    # this first run's left in the mailbox.
+    assert_receive {:cliproxyapi_proxy, %{"state" => "running", "pid" => ^first}}, 5_000
 
     File.rm!(binary)
     System.cmd("kill", ["-USR1", to_string(first)])
@@ -74,6 +77,7 @@ defmodule HalC2.CliProxyApiProxyTest do
 
     File.cp!(@binary, binary)
     assert_receive {:cliproxyapi_proxy, %{"state" => "running", "pid" => pid}}, 5_000
+    assert pid != first
     Proxy.halt()
     refute alive?(pid)
   end

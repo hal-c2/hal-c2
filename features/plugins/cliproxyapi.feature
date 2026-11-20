@@ -148,6 +148,12 @@ Feature: CLIProxyAPI
       Then the save is refused saying "use https for one elsewhere"
 
     @mc
+    Scenario: Connect to an address with a query is refused
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the user saves Connect to "https://proxy.example/gateway?tenant=blue" with the management key "their-secret"
+      Then the save is refused saying "without a query (?) or fragment (#)"
+
+    @mc
     Scenario: Connect over http to a proxy elsewhere, saved while the plugin was off, is not used
       Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
       When the user turns the CLIProxyAPI plugin on
@@ -168,6 +174,26 @@ Feature: CLIProxyAPI
       When the user saves Connect to the fake CLIProxyAPI with the management key "their-secret"
       Then Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
       And Settings → Providers has "plugin_cliproxyapi_codex" named "Codex via CLIProxyAPI"
+
+    @mc
+    Scenario: Run put in place of a refused Connect routes agents through the proxy it runs
+      Given the user saves Connect to "http://192.0.2.10:8317" with the management key "their-secret"
+      And the user turns the CLIProxyAPI plugin on
+      When the user switches the CLIProxyAPI plugin to run the fake binary
+      Then Settings → Providers has "plugin_cliproxyapi_claude" named "Claude via CLIProxyAPI"
+      And Settings → Providers has "plugin_cliproxyapi_codex" named "Codex via CLIProxyAPI"
+      And the page shows the proxy "running"
+
+    @mc
+    Scenario: A proxy replaced at the same address is given the client key again
+      Given the fake CLIProxyAPI lets agents in with the key "their-key"
+      When the user connects the CLIProxyAPI plugin to it with the management key "their-secret"
+      Then the proxy lets agents in with "their-key" and the plugin's client key
+      When the fake CLIProxyAPI stops answering
+      And the page refreshes
+      And a fresh fake CLIProxyAPI answers in its place, letting agents in with the key "their-key"
+      And the page refreshes
+      Then the proxy lets agents in with "their-key" and the plugin's client key
 
     @mc
     Scenario: A client key the proxy did not take is added again on the next drain
@@ -310,6 +336,14 @@ Feature: CLIProxyAPI
       Then the page shows the log line "POST /v1/messages 200"
       When the user clears the log
       Then the page shows the proxy's own output in place of the log
+
+    @mc
+    Scenario: A proxy at another address does not show the first one's log
+      Given the CLIProxyAPI plugin runs the fake binary
+      When the proxy logs "POST /v1/messages 200" and the page refreshes
+      Then the page shows the log line "POST /v1/messages 200"
+      When the user sets the CLIProxyAPI port to 18559
+      Then the page shows no log lines
 
   Rule: Claude and Codex via CLIProxyAPI follow the proxy, and the user's edits stand
 

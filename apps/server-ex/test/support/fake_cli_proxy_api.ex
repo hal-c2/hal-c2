@@ -48,7 +48,7 @@ defmodule HalC2.Test.FakeCliProxyApi do
       )
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
-    %{base: "http://127.0.0.1:#{port}", port: port, agent: agent}
+    %{base: "http://127.0.0.1:#{port}", port: port, agent: agent, server: server}
   end
 
   def update(%{agent: agent}, fun), do: Agent.update(agent, fun)

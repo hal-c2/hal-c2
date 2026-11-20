@@ -93,6 +93,13 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     |> await_status(&(&1["address"] == "http://127.0.0.1:#{port}"))
   end
 
+  # Saved while the plugin runs, so applied before the page's next call answers.
+  step "the user switches the CLIProxyAPI plugin to run the fake binary", context do
+    context = save(context, run_settings(context, @binary))
+    status(context)
+    context
+  end
+
   step "the user switches the CLIProxyAPI plugin to connect to it with the management key {string}",
        %{args: [key]} = context do
     save(context, %{"mode" => "connect", "url" => context.fake.base, "managementKey" => key})
@@ -149,11 +156,19 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     old = server()
     {:dictionary, dictionary} = Process.info(old, :dictionary)
     [supervisor | _] = dictionary[:"$ancestors"]
-    ref = Process.monitor(old)
-    Process.exit(old, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^old, :killed}, 5_000
-    # Returns once the supervisor has handled the exit, and so started the server again;
-    # the server applies its settings before it answers a call.
+    # Signals are ordered only per sender, so the server's exit can reach the supervisor
+    # after a call of ours: the trace says when the exit is in its queue, and a call sent
+    # after that returns once it has started the server again. The server applies its
+    # settings before it answers a call.
+    :erlang.trace(supervisor, true, [:receive])
+
+    try do
+      Process.exit(old, :kill)
+      assert_receive {:trace, ^supervisor, :receive, {:EXIT, ^old, :killed}}, 5_000
+    after
+      :erlang.trace(supervisor, false, [:receive])
+    end
+
     :sys.get_state(supervisor)
     assert server() not in [nil, old]
     status(context)
@@ -165,6 +180,26 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
   step "the fake CLIProxyAPI lets agents in with the key {string}", %{args: [key]} = context do
     Fake.update(context.fake, &%{&1 | access: [key]})
     context
+  end
+
+  step "the fake CLIProxyAPI stops answering", context do
+    GenServer.stop(context.fake.server)
+    context
+  end
+
+  # The agent (what the scenario holds) is the same; only the listener is new, as a
+  # proxy replaced at the same address is. Its access keys are the step's, no others.
+  step "a fresh fake CLIProxyAPI answers in its place, letting agents in with the key {string}",
+       %{args: [key]} = context do
+    Fake.update(context.fake, &%{&1 | access: [key]})
+
+    server =
+      ExUnit.Callbacks.start_supervised!(
+        {Bandit, plug: {Fake, context.fake.agent}, port: context.fake.port, ip: :loopback},
+        id: make_ref()
+      )
+
+    Map.put(context, :fake, %{context.fake | server: server})
   end
 
   step "the fake CLIProxyAPI refuses every management key saying {string}",
@@ -645,14 +680,39 @@ defmodule HalC2.Steps.Plugins.CliProxyApi do
     context
   end
 
-  # The page shows the proxy's own last lines while the management log is empty. The
-  # proxy's output reaches the plugin as the binary prints it, which can be after it is
-  # running, so the step waits for the status that carries it.
-  step "the page shows the proxy's own output in place of the log", context do
-    context =
-      await_status(context, &("CLIProxyAPI Version: 8.0.79 (fake)" in (&1["output"] || [])))
-
+  step "the page shows no log lines", context do
     assert view(context)["logs"] == []
+    context
+  end
+
+  # The page shows the proxy's own last lines while the management log is empty. The
+  # version line reaches the plugin only at a drain, and the timer is an hour, so the
+  # step drains on purpose: the trace says when the line is in the proxy supervisor's
+  # hands, and the `refresh` after it answers once that drain has read it. A line
+  # already there is read by the first drain.
+  step "the page shows the proxy's own output in place of the log", context do
+    line = "CLIProxyAPI Version: 8.0.79 (fake)"
+    proxy = Process.whereis(HalC2Plugins.CliProxyApi.Proxy)
+    :erlang.trace(proxy, true, [:receive])
+
+    context =
+      try do
+        {view, context} = call!(context, "refresh")
+
+        if line in (view["status"]["output"] || []) do
+          context
+        else
+          assert_receive {:trace, ^proxy, :receive, {_, {:data, {:eol, ^line}}}}, 5_000
+          {_view, context} = call!(context, "refresh")
+          context
+        end
+      after
+        :erlang.trace(proxy, false, [:receive])
+      end
+
+    view = view(context)
+    assert line in (view["status"]["output"] || [])
+    assert view["logs"] == []
     context
   end
 
