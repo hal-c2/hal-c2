@@ -1954,6 +1954,61 @@ Item {
             }, 9000, "r8 and t39 each sit at their own desk");
         }
 
+        // A floor desk given away while its reviewer listens there stays the
+        // reviewer's until the talk ends: the new owner waits beside the pod
+        // meanwhile (see seatGoal()), and sits down as soon as the reviewer
+        // lets the tile go (see letGo()). The office grows rather than give a
+        // desk away (see seatTeams()), so the test gives it away by hand.
+        function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish(reviewers.concat(many(39, "t", "working", "typing")));
+            const r8 = actor("r8"), t0 = actor("t0"), t1 = actor("t1");
+            const w = page.world;
+            verify(w.seatOf["r8"].pod !== corner(), "r8 sits on the floor");
+            runUntil(() => arrived(r8) && arrived(t0) && arrived(t1), 6000, "everyone sits down");
+            const seat = w.seatOf["r8"], other = w.seatOf["t1"];
+            const tile = seat.y * w.cols + seat.x;
+            plugin.publish(reviewers.concat(many(39, "t", "working", "typing")), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "r8",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => t0.talk?.phase === "say", 3000, "t0 talks to r8");
+            compare(r8.hold, tile, "r8 listens at its desk");
+            checkFloor();
+            // r8's desk goes to t1, and t1's to r8, as layout() and sync() do.
+            w.seatOf["t1"] = seat;
+            w.seatOf["r8"] = other;
+            for (const a of [t1, r8]) {
+                a.goal = null;
+                page.decide(a, false);
+            }
+            compare(t1.goal.kind, "wait", "t1 waits for the desk r8 listens at");
+            const pod = w.pods[seat.pod];
+            verify(t1.goal.x < pod.x || t1.goal.x >= pod.x + pod.cols, "beside the pod");
+            runUntil(() => {
+                if (t0.talk) {
+                    compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
+                    compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
+                    compare(t1.goal.kind, "wait", "while t1 waits");
+                }
+                checkFloor();
+                return !t0.talk;
+            }, 3000, "the talk runs to its end");
+            compare(t1.goal.kind, "desk", "t1 heads for its desk as soon as r8 lets it go");
+            runUntil(() => {
+                checkFloor();
+                return arrived(t1) && t1.tx === seat.x && t1.ty === seat.y && arrived(r8) && r8.tx === other.x && r8.ty === other.y;
+            }, 6000, "t1 and r8 each sit at their new desk");
+        }
+
         // A speaker that finds every side of its listener taken keeps the spot
         // it had, rather than stop somewhere nobody holds for it.
         function test_a_speaker_with_no_side_free_keeps_its_spot() {

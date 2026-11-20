@@ -709,6 +709,14 @@ Feature: Office
       And nobody stands on a tile someone else holds while they find their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk given away while someone listens at it is theirs until the talk ends
+      Given a thread is talking to a reviewer, who listens at its floor desk
+      When that desk goes to another thread
+      Then the reviewer stays at it until the talk ends
+      And the thread waits beside the pod meanwhile
+      And sits down at the desk as soon as the talk ends
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
       Given the office has 40 threads and a reviewer reading at a shelf
       When the reviewer is a reviewer no more
