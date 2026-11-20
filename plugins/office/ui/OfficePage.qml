@@ -2092,6 +2092,7 @@ Item {
                 continue;
             const nx = a.next >= 0 ? across(a.next % old.cols) : -1;
             const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
+            const room = a.tx >= old.xd;
             a.px += (across(a.tx) - a.tx) * 16;
             a.tx = across(a.tx);
             a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;
@@ -2100,6 +2101,13 @@ Item {
             // from is not finished: it goes on from the tile it set out from.
             if (a.tx >= w.cols || a.ty >= w.rows || a.next >= 0 && Math.abs(nx - a.tx) + Math.abs(ny - a.ty) !== 1)
                 place(a, a.tx, a.ty, true);
+            // Whoever was out in the office where the break room now is
+            // steps back to the office's floor by its wall: it goes into the
+            // break room only when let in (see restless()).
+            if (!room && (a.tx >= w.xd || a.next >= 0 && a.next % w.cols >= w.xd)) {
+                const free = nearestFree(w.xd - 1, a.ty, a.id, false, w.xd);
+                place(a, free[0], free[1], false);
+            }
             const goal = a.goal;
             if (page.movers[a.id]) {
                 if (a.job >= 0) {
@@ -2139,9 +2147,12 @@ Item {
                 a.path = [];
                 continue;
             }
+            // A step goes on only between tiles still open to it: the one it
+            // steps onto is floor or where it is going, and the one it steps
+            // from no wall or furniture, a seat it is leaving aside.
             const on = a.next >= 0 ? a.next : a.ty * w.cols + a.tx;
             const mine = a.goal && on === a.goal.y * w.cols + a.goal.x;
-            if (w.grid[on] !== 0 && !mine)
+            if (w.grid[on] !== 0 && !mine || a.next >= 0 && w.grid[a.ty * w.cols + a.tx] === 1)
                 place(a, a.tx, a.ty, true);
             route(a);
         }
@@ -2605,9 +2616,9 @@ Item {
         actor.next = -1;
     }
 
-    // The nearest floor tile nobody else has claimed; with none, null, or the
-    // entrance unless `unclaimed`.
-    function nearestFree(x, y, self, unclaimed) {
+    // The nearest floor tile nobody else has claimed, west of `before` when
+    // given; with none, null, or the entrance unless `unclaimed`.
+    function nearestFree(x, y, self, unclaimed, before) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
         const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
@@ -2615,7 +2626,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.claims[i] || page.claims[i] === self))
+            if (w.grid[i] === 0 && !(cx >= before) && (!page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;

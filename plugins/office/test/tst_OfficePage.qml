@@ -937,8 +937,12 @@ Item {
             for (const id of Object.keys(seats)) {
                 const a = actor(id);
                 compare(page.world.seatOf[id].index, seats[id], id + " keeps its desk");
-                if (at[id][0] < page.world.cols && at[id][1] < page.world.rows)
+                // Those where the break room now is step to the office's
+                // floor by its wall.
+                if (at[id][0] < page.world.xd && at[id][1] < page.world.rows)
                     verify(Math.abs(a.tx - at[id][0]) + Math.abs(a.ty - at[id][1]) <= 2, id + " is still near where it was");
+                else
+                    verify(a.tx < page.world.xd, id + " stays out of the break room");
             }
             for (const id of Object.keys(seats)) {
                 const seat = page.world.seatOf[id];
@@ -1181,6 +1185,71 @@ Item {
                 checkFloor();
                 return arrived(c) && c.tx > page.world.xd;
             }, 3000, "C goes on to the break room");
+        }
+
+        // Someone mid-step when a resize puts the office's south wall on the
+        // tile it steps from goes on from the nearest floor, not from inside
+        // the wall.
+        function test_a_step_from_where_a_wall_comes_goes_on_from_the_floor() {
+            resize(300, 1000);
+            plugin.publish(many(70, "t", "working", "typing"));
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.across, 1);
+            // The south wall of an office of three rows of pods.
+            const y = 6 * 3 + 7 - 1, W = page.world.cols;
+            let x = 1;
+            while (x < page.world.xd && !(page.walkable(x, y) && page.walkable(x, y - 1)))
+                x++;
+            verify(x < page.world.xd, "the floor is open where the wall will be");
+            const a = actor("t0");
+            standAt(a, x, y);
+            send(a, x, y - 1);
+            page.advance(2);
+            compare([a.tx, a.ty, a.next], [x, y, (y - 1) * W + x], "t0 steps north from where the wall will be");
+            resize(1200, 760);
+            compare([page.world.across, page.world.rows], [4, y + 1], "the south wall is where t0 steps from");
+            const w = page.world;
+            verify(w.grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
+            if (a.next >= 0)
+                verify(w.grid[a.next] !== 1, "nor steps into one");
+            else
+                compare([a.px, a.py], [a.tx * 16, a.ty * 16], "t0 stands on its tile");
+            const seat = w.seatOf["t0"];
+            runUntil(() => arrived(a) && a.tx === seat.x && a.ty === seat.y, 3000, "t0 gets to its desk");
+        }
+
+        // When a resize moves the break room's wall west, over where people
+        // sit and walk, those in the office stay out of the break room: they
+        // step to the office's floor by the wall and walk to their desks.
+        function test_a_resize_that_moves_the_break_room_keeps_the_office_out_of_it() {
+            resize(1200, 760);
+            plugin.publish(many(70, "t", "working", "typing"));
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.across, 4);
+            const xd = page.world.xd;
+            const office = Object.keys(page.actors).filter(id => actor(id).tx < xd);
+            compare(office.length, 70, "everyone is in the office");
+            // One of them is mid-step where the wall will be.
+            const a = actor("t0"), W = page.world.cols, wall = 3 + 4 + 2;
+            let y = 3;
+            while (y < page.world.rows && !(page.walkable(wall, y) && page.walkable(wall + 1, y)))
+                y++;
+            standAt(a, wall + 1, y);
+            send(a, wall, y);
+            page.advance(2);
+            compare(a.next, y * W + wall, "t0 steps onto where the wall will be");
+            checkFloor();
+            resize(300, 1000);
+            compare([page.world.across, page.world.xd], [1, wall], "the wall moves west of where people sat");
+            const w = page.world;
+            for (const id of office) {
+                const p = actor(id);
+                verify(p.tx < w.xd, id + " stays out of the break room, not at " + p.tx + "," + p.ty);
+                if (p.next >= 0)
+                    verify(p.next % w.cols < w.xd, id + " steps no further than the office");
+            }
+            checkFloor();
+            walk(100);
         }
 
         // A resize while the office is closing pods closes it down to what

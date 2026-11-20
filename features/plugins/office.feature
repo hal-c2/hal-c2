@@ -411,6 +411,19 @@ Feature: Office
       Then it carries on from a tile next to where it stands, through no furniture
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone stepping where a resize puts a wall steps from the floor
+      Given a person is stepping off a tile where the smaller office's south wall will be
+      When the page is resized to a grid with more pods to a row
+      Then it goes on from the nearest floor, never from inside the wall
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that moves the break room over the office keeps the office out of it
+      Given the page is 1200 by 760 and the office has 70 threads working, in rows of four pods
+      When the page is 300 by 1000, and the break room's wall moves west of where they sit
+      Then nobody who was in the office is in the break room
+      And they step to the office's floor by the wall and walk to their desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A resize that keeps the best grid leaves the office as it is
       Given the page is 1600 by 900 and the office has 70 threads
       When the page is 1700 by 950 and then 1550 by 880
