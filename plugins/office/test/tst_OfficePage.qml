@@ -1207,6 +1207,25 @@ Item {
             checkFloor();
         }
 
+        // A resize that keeps the office's grid still works out again how
+        // many pods a closing office closes down to, for the new view.
+        function test_a_resize_that_keeps_the_grid_retargets_a_closure() {
+            resize(1150, 900);
+            plugin.publish(many(70, "t", "working", "typing"));
+            walk(200);
+            compare([page.world.across, page.world.pods.length], [4, 12]);
+            plugin.publish(many(40, "t", "working", "typing"));
+            compare(page.closeTo, 9, "40 people close the office down to nine pods");
+            const world = page.world;
+            resize(1450, 900);
+            compare(page.gridFor(12).across, 4, "the wider view keeps the office's grid");
+            verify(page.world === world, "so the office is not built again");
+            compare(page.closeTo, 8, "but it closes down to eight pods, as the wider view fits best");
+            runUntil(() => !page.closeTo, 6000, "the office shrinks");
+            compare(page.world.pods.length, 8);
+            checkFloor();
+        }
+
         // Someone listening at a desk in a pod the office closes stays for the
         // talk, then goes to its new desk; the pod closes after, and no tile
         // stays claimed for the talk or past the office's new end.

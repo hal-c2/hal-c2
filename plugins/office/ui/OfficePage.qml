@@ -2166,15 +2166,17 @@ Item {
     // A view of another size may show the office bigger in another grid: it
     // is built again only when the best number of pods to a row changes. A
     // view with no size keeps the office as it is. An office closing pods
-    // works out again how many to close down to, in a grid for the new view.
+    // works out again how many to close down to, in a grid for the new view,
+    // even when it keeps its own.
     function refit() {
         const w = page.world;
         if (!w || scroller.width <= 8 || scroller.height <= 8)
             return;
         const across = gridFor(w.pods.length).across;
-        if (across === w.across)
+        if (across !== w.across)
+            build(across, w.pods.length);
+        else if (!page.closeTo)
             return;
-        build(across, w.pods.length);
         if (page.closeTo)
             take(page.office);
         updateMarks();

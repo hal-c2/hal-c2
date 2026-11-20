@@ -432,6 +432,13 @@ Feature: Office
       And everyone is at a desk of their own, on the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A resize that keeps the grid while the office shrinks still shrinks it for the new view
+      Given the page is 1150 by 900 and the office has 70 threads, in three rows of four pods
+      When it has 40 threads, and the office closes down to nine pods
+      And the page is 1450 by 900, where twelve pods are still best four to a row
+      Then the office closes down to eight pods instead, as fits the wider view best
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone listening in a pod the office closes finishes the talk first
       Given the page is 1200 by 760 and the office has 70 threads, in three rows of four pods
       And "Lead" is talking to someone who sits in one of the last three pods
