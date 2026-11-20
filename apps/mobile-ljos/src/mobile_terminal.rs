@@ -106,6 +106,14 @@ pub fn status_label(status: &str, busy: bool) -> &'static str {
     }
 }
 
+/// The draft's label for output attached from the terminal `name`. The
+/// name is empty until the Terminals listing is ported (H1), so the
+/// context reads as a terminal's, not as " (visible output)".
+pub fn context_label(name: &str) -> String {
+    let name = if name.is_empty() { "Terminal" } else { name };
+    format!("{name} (visible output)")
+}
+
 /// An arrow key as a terminal sends it, ESC [ A..D or, in application
 /// cursor mode, ESC O A..D: its letter, else none.
 fn arrow_of(data: &str) -> Option<char> {
@@ -437,7 +445,7 @@ impl MobileTerminal {
         }
         let payload = json!({
             "terminalId": self.context_terminal.0,
-            "terminalLabel": format!("{} (visible output)", self.context_terminal.1),
+            "terminalLabel": context_label(&self.context_terminal.1),
             "lineStart": context.start + 1,
             "lineEnd": context.end + 1,
             "text": text,
@@ -486,6 +494,12 @@ mod tests {
         assert_eq!(status_label("running", true), "Task running");
         assert_eq!(status_label("running", false), "Ready");
         assert_eq!(status_label("", false), "Not started");
+    }
+
+    #[test]
+    fn attached_output_is_labelled_by_its_terminal_or_as_a_terminal() {
+        assert_eq!(context_label("Build"), "Build (visible output)");
+        assert_eq!(context_label(""), "Terminal (visible output)");
     }
 
     #[test]
