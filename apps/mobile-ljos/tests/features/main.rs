@@ -207,14 +207,13 @@ fn wanted_by(id: &str, globs: &[String], features: &Path) -> bool {
 
 /// What RATCHET holds; a RATCHET that cannot be read fails the run, as
 /// one held nothing would let every scenario stop passing unseen.
-fn read_ratchet(path: &Path) -> BTreeSet<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+fn read_ratchet(path: &Path) -> std::io::Result<BTreeSet<String>> {
+    Ok(std::fs::read_to_string(path)?
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(str::to_owned)
-        .collect()
+        .collect())
 }
 
 fn write_ratchet(path: &Path, held: &BTreeSet<String>) -> std::io::Result<()> {
@@ -301,7 +300,14 @@ fn main() -> ExitCode {
     let mut steps = Steps::default();
     steps::register(&mut steps);
     let ratchet_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/features/RATCHET");
-    let held = read_ratchet(&ratchet_path);
+    // Said here: a panic would only be kept by the hook, never printed.
+    let held = match read_ratchet(&ratchet_path) {
+        Ok(held) => held,
+        Err(error) => {
+            eprintln!("{}: {error}", ratchet_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
 
     let started = Instant::now();
     let mut passing = BTreeSet::new();
