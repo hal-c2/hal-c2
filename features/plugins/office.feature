@@ -533,6 +533,18 @@ Feature: Office
       Then it sits on the floor and the other keeps its corner desk
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner take only floor desks nobody else needs
+      Given the office has 10 reviewers and 8 teams of 5 threads, the reviewers listed first
+      Then every thread in the teams has a desk on the floor
+      And 8 of the reviewers sit in the review corner and the other 2 have no desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone reading who leaves the review corner on a full floor waits in the break room
+      Given the office has 40 threads and a reviewer reading at a shelf
+      When the reviewer is a reviewer no more
+      Then it has no desk and waits in the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The review whiteboard shows a checklist beside a diff
       Given the office has a reviewer working, planning
       Then the reviewer draws a checklist and a diff on the whiteboard in the review corner

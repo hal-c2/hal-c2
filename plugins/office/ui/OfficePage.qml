@@ -1373,9 +1373,10 @@ Item {
     // A team bigger than a pod takes as many as it needs. Whoever is left over
     // when every desk is taken has none, and spends the time in the break room.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
-    // own kind) sit in the review corner, and at the desks nearest it once it
-    // is full. The corner is theirs alone: nobody else ever takes a desk
-    // there, and whoever sits there and is no reviewer leaves it.
+    // own kind) sit in the review corner, and once it is full at the desks
+    // nearest it that nobody else needs. The corner is theirs alone: nobody
+    // else ever takes a desk there, and whoever sits there and is no reviewer
+    // leaves it.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
@@ -1458,13 +1459,18 @@ Item {
                     spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
-        // Those who did not fit sit at the nearest pod with a free desk:
-        // reviewers at one of their own kind first, the rest never in the
-        // corner.
-        for (const [id, near, c] of spill) {
-            const pod = nearest(near, 1, c, !reviewing[c]);
-            if (pod >= 0)
-                sit(id, pod);
+        // Those who did not fit sit at the nearest pod with a free desk, the
+        // rest before reviewers, so a reviewer past the corner takes only a
+        // floor desk nobody else needs: reviewers at one of their own kind
+        // first, the rest never in the corner.
+        for (const review of [false, true]) {
+            for (const [id, near, c] of spill) {
+                if (reviewing[c] !== review)
+                    continue;
+                const pod = nearest(near, 1, c, !review);
+                if (pod >= 0)
+                    sit(id, pod);
+            }
         }
         return seatOf;
     }
@@ -1910,11 +1916,12 @@ Item {
         // Seats move between people as people come and go; whoever was headed
         // for a desk, or waiting for one, that is no longer theirs plans again,
         // and so does whoever waited in the break room for want of a desk and
-        // now has one.
+        // now has one, or left its desk for a whiteboard or a shelf and has
+        // none now.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
             const goal = actor.goal;
-            if (goal?.deskless && seatOf[id]) {
+            if (goal?.deskless && seatOf[id] || (goal?.kind === "board" || goal?.kind === "shelf") && !seatOf[id]) {
                 actor.goal = null;
                 continue;
             }

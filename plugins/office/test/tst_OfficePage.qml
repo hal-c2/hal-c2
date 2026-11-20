@@ -515,6 +515,38 @@ Item {
             compare(page.world.pods[review].members, [], "the corner is empty");
         }
 
+        // Reviewers past the corner's desks take a floor desk only when no
+        // other thread needs it, wherever they come in the list.
+        function test_reviewers_past_the_corner_take_no_desk_others_need() {
+            const reviewers = [];
+            for (let i = 0; i < 10; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            // Eight teams of 5: five fill pods 0, 1, 3, 4 and 5 to 5 of 8,
+            // and the last three, which fit no pod whole, take the rest.
+            const teams = [];
+            for (let t = 0; t < 8; t++)
+                teams.push(...[person("l" + t, "Lead " + t, "working", "typing")].concat(many(4, "w" + t + "_", "working", "typing", "l" + t)));
+            plugin.publish(reviewers.concat(teams));
+            const review = corner();
+            for (const p of teams)
+                verify(page.world.seatOf[p.id] && page.world.seatOf[p.id].pod !== review, p.id + " has a floor desk");
+            compare(reviewers.filter(r => page.world.seatOf[r.id]?.pod === review).length, 8, "the corner is full of reviewers");
+            compare(reviewers.filter(r => !page.world.seatOf[r.id]).length, 2, "the other 2 reviewers have no desk");
+        }
+
+        // Someone reading at a shelf who loses its corner desk on a full floor
+        // waits in the break room, rather than read on without a desk.
+        function test_a_reader_who_leaves_the_corner_on_a_full_floor_waits_in_the_break_room() {
+            const reading = p => Object.assign(p, {
+                    activity: "reading"
+                });
+            plugin.publish(many(40, "t", "working", "typing").concat([reading(reviewer("a", "Review #12"))]));
+            compare(actor("a").goal.kind, "shelf", "a reads at a shelf");
+            plugin.publish(many(40, "t", "working", "typing").concat([reading(person("a", "Review #12", "working"))]));
+            verify(!page.world.seatOf["a"], "a has no desk");
+            verify(actor("a").goal.x > page.world.xd, "a waits in the break room, not at a " + actor("a").goal.kind);
+        }
+
         // Reviewers hot-desk: no desk of theirs shows a project, in the corner
         // or on the floor.
         function test_reviewers_desks_show_no_project() {
