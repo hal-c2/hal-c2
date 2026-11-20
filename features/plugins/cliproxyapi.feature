@@ -384,6 +384,21 @@ Feature: CLIProxyAPI
       And the page shows the log line "POST /v1/messages 200"
 
     @desktop @mobile @backlog-mobile
+    Scenario: The page says when it is connected to a proxy it did not start
+      Given the CLIProxyAPI page connected to the proxy at "http://127.0.0.1:18317"
+      Then the page says it is connected to the proxy at "http://127.0.0.1:18317"
+
+    @desktop @mobile @backlog-mobile
+    Scenario: The page says why a proxy gives no usage
+      Given the CLIProxyAPI page with the proxy giving no usage, saying "usage statistics are off"
+      Then the page says the proxy gives no usage, saying "usage statistics are off"
+
+    @desktop @mobile @backlog-mobile
+    Scenario: The page says why an instance of the plugin's was not added
+      Given the CLIProxyAPI page with "Codex via CLIProxyAPI" not added, saying "a provider instance of the user's"
+      Then the page shows "Codex via CLIProxyAPI" as not added, saying "a provider instance of the user's"
+
+    @desktop @mobile @backlog-mobile
     Scenario: The page signs in by asking for the address the browser ended on
       Given the CLIProxyAPI page with the proxy running
       When the user signs in to Claude on the page

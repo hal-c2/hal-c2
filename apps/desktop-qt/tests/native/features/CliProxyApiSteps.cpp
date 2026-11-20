@@ -24,8 +24,14 @@ QString package() { return QDir(QStringLiteral(HAL_C2_FEATURES_DIR "/../plugins/
 
 // The MC part's state: the proxy's, its accounts and the sign-in under way.
 struct FakeCliProxyApi {
+  QString mode = QStringLiteral("run");
   QString state = QStringLiteral("running");
   QString message;
+  QString address = QStringLiteral("http://127.0.0.1:8317");
+  // Why the proxy gives no usage, when it gives none.
+  QString usageNote;
+  // Why the host did not add Codex via CLIProxyAPI, when it did not.
+  QString codexTaken;
   QString email;
   QJsonValue signIn = QJsonValue::Null;
   QString pasted;
@@ -77,7 +83,12 @@ QJsonObject instance(const QString& name, const QString& label) {
 
 QJsonObject status(World& world) {
   const FakeCliProxyApi& fake = state(world);
-  return {{QStringLiteral("mode"), QStringLiteral("run")},
+  QJsonObject codex = instance(QStringLiteral("codex"), QStringLiteral("Codex via CLIProxyAPI"));
+  if (!fake.codexTaken.isEmpty()) {
+    codex.insert(QStringLiteral("state"), QStringLiteral("taken"));
+    codex.insert(QStringLiteral("message"), fake.codexTaken);
+  }
+  return {{QStringLiteral("mode"), fake.mode},
           {QStringLiteral("state"), fake.state},
           {QStringLiteral("message"), fake.message},
           {QStringLiteral("pid"), 4242},
@@ -87,10 +98,10 @@ QJsonObject status(World& world) {
           {QStringLiteral("latest"), QJsonValue::Null},
           {QStringLiteral("binary"), QStringLiteral("/usr/bin/cli-proxy-api")},
           {QStringLiteral("source"), QStringLiteral("path")},
-          {QStringLiteral("address"), QStringLiteral("http://127.0.0.1:8317")},
+          {QStringLiteral("address"), fake.address},
           {QStringLiteral("error"), QJsonValue::Null},
           {QStringLiteral("instances"), QJsonArray{instance(QStringLiteral("claude"), QStringLiteral("Claude via CLIProxyAPI")),
-                                                   instance(QStringLiteral("codex"), QStringLiteral("Codex via CLIProxyAPI"))}}};
+                                                   codex}}};
 }
 
 QString accountName(const QString& email) { return QStringLiteral("claude-%1.json").arg(email); }
@@ -141,6 +152,7 @@ QJsonArray logs(World& world) {
 QJsonObject view(World& world) {
   return {{QStringLiteral("status"), status(world)}, {QStringLiteral("accounts"), accounts(world)},
           {QStringLiteral("signIn"), state(world).signIn},  {QStringLiteral("usage"), usage(world)},
+          {QStringLiteral("usageNote"), state(world).usageNote},
           {QStringLiteral("logs"), logs(world)},            {QStringLiteral("keys"), keys(world)}};
 }
 
@@ -148,7 +160,7 @@ void publish(World& world) {
   FakePluginPart& part = fakePluginPart(world, kId);
   part.topics.insert(QStringLiteral("status"), status(world));
   part.topics.insert(QStringLiteral("accounts"), QJsonObject{{QStringLiteral("accounts"), accounts(world)}, {QStringLiteral("signIn"), state(world).signIn}});
-  part.topics.insert(QStringLiteral("usage"), QJsonObject{{QStringLiteral("rows"), usage(world)}, {QStringLiteral("days"), 7}});
+  part.topics.insert(QStringLiteral("usage"), QJsonObject{{QStringLiteral("rows"), usage(world)}, {QStringLiteral("days"), 7}, {QStringLiteral("note"), state(world).usageNote}});
   part.topics.insert(QStringLiteral("keys"), QJsonObject{{QStringLiteral("keys"), keys(world)}});
   part.topics.insert(QStringLiteral("logs"), QJsonObject{{QStringLiteral("lines"), logs(world)}});
   for (const QString& topic : {QStringLiteral("status"), QStringLiteral("accounts"), QStringLiteral("usage"), QStringLiteral("keys"), QStringLiteral("logs")})
@@ -242,6 +254,33 @@ const Steps steps([] {
     state(world).state = QStringLiteral("blocked");
     state(world).message = c[0];
     openPage(world);
+  });
+
+  step(QStringLiteral("the CLIProxyAPI page connected to the proxy at %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    state(world).mode = QStringLiteral("connect");
+    state(world).state = QStringLiteral("connected");
+    state(world).address = c[0];
+    openPage(world);
+  });
+  step(QStringLiteral("the CLIProxyAPI page with the proxy giving no usage, saying %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    state(world).usageNote = c[0];
+    openPage(world);
+  });
+  step(QStringLiteral("the CLIProxyAPI page with \"Codex via CLIProxyAPI\" not added, saying %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    state(world).codexTaken = c[0];
+    openPage(world);
+  });
+
+  step(QStringLiteral("the page says it is connected to the proxy at %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    waitSays(world, QStringLiteral("cliproxyapiState"), QStringLiteral("Connected to CLIProxyAPI at %1").arg(c[0]));
+  });
+  step(QStringLiteral("the page says the proxy gives no usage, saying %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    waitSays(world, QStringLiteral("cliproxyapiUsageNote"), QStringLiteral("The proxy gives no usage: %1").arg(c[0]));
+  });
+  step(QStringLiteral("the page shows %1 as not added, saying %2").arg(kQuoted, kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QString name = c[0].startsWith(QLatin1String("Claude")) ? QStringLiteral("claude") : QStringLiteral("codex");
+    waitSays(world, QStringLiteral("cliproxyapiInstanceText:") + name, QStringLiteral("%1 · not added: ").arg(c[0]));
+    waitSays(world, QStringLiteral("cliproxyapiInstanceText:") + name, c[1]);
   });
 
   step(QStringLiteral("the page shows the proxy running CLIProxyAPI 8.0.79"), [](World& world, const Captures&, const Table&) {
