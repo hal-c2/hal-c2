@@ -1164,6 +1164,8 @@ defmodule HalC2.Plugins do
         entry -> entry
       end)
 
+    # One from before instances were released has no retry of a refused release.
+    state = Map.put_new(state, :release_retry, nil)
     {:ok, sync(%{state | plugins: plugins, refs: refs})}
   end
 

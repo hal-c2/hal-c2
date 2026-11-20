@@ -19,8 +19,9 @@ defmodule HalC2.PluginProvidersPropTest do
     belonging to a plugin that is installed, on and granted `providers:configure`, and
     the user's, as the user left them;
   - a plugin lists only the instances it added, and as released those the host took
-    out since it last put them; it is refused a put under an id the user has, and is
-    refused everything without the permission.
+    out since it last put or removed them, short of those the user has since taken;
+    it is refused a put under an id the user has, and is refused everything without
+    the permission.
   """
 
   use ExUnit.Case, async: false
@@ -188,12 +189,21 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def next_state(state, _result, {:call, _, :remove, [id, name]}) do
     if state.plugins[id].granted,
-      do: %{state | instances: Map.delete(state.instances, {id, name})},
+      do: %{
+        state
+        | instances: Map.delete(state.instances, {id, name}),
+          released: MapSet.delete(state.released, {id, name})
+      },
       else: state
   end
 
-  def next_state(state, _result, {:call, _, :user_add, [instance_id, _via]}),
-    do: put_in(state.users[instance_id], @users)
+  # An id the host took out that the user takes is theirs, no longer the plugin's.
+  def next_state(state, _result, {:call, _, :user_add, [instance_id, _via]}) do
+    %{
+      put_in(state.users[instance_id], @users)
+      | released: MapSet.reject(state.released, &(instance_id(&1) == instance_id))
+    }
+  end
 
   def next_state(state, _result, {:call, _, :user_delete, [instance_id, _via]}) do
     %{

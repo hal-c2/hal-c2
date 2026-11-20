@@ -126,14 +126,16 @@ defmodule HalC2.Plugins.Host do
     * `"put"` `%{"name", "instance"}` → `%{"instanceId"}`: adds the instance or
       replaces it whole, and refuses when the user has an instance of that id. A
       plugin that keeps what the user changed reads it first.
-    * `"remove"` `%{"name"}` → `%{"removed" => boolean}`.
+    * `"remove"` `%{"name"}` → `%{"removed" => boolean}`, whether an instance was
+      removed. A name `list` gives as released is no longer, either way.
 
   A `name` is lowercase letters, digits and dashes. The instances last only while the
   plugin is installed, on and granted `providers:configure`: the plugin host takes
   them out of the document when it is turned off, removed, or updated to stop asking
   (`HalC2.Plugins`), and the plugin adds them again once it is back on. `list` names
-  those the host took out (`"released"`) until the plugin puts them again, so a plugin
-  starting up can tell them from ones the user deleted while it was down.
+  those the host took out (`"released"`) until the plugin puts or removes them, or the
+  user adds an instance of their own under that id, so a plugin starting up can tell
+  them from ones the user deleted while it was down.
   """
   def provider_instances(id, "list", _input) do
     with :ok <- permit(id, "providers:configure") do
@@ -173,8 +175,13 @@ defmodule HalC2.Plugins.Host do
   def provider_instances(id, "remove", %{"name" => name}) do
     with :ok <- permit(id, "providers:configure"),
          {:ok, instance_id} <- instance_id(id, name) do
-      if instance_id in added_instances(HalC2.Settings.settings(), id) do
+      settings = HalC2.Settings.settings()
+      added? = instance_id in added_instances(settings, id)
+
+      if added? or instance_id in released_instances(settings, id) do
         drop = fn settings ->
+          settings = unrelease(settings, id, instance_id)
+
           if instance_id in added_instances(settings, id) do
             settings
             |> Map.update("providerInstances", %{}, &Map.delete(&1, instance_id))
@@ -184,7 +191,7 @@ defmodule HalC2.Plugins.Host do
           end
         end
 
-        with :ok <- saved(HalC2.Settings.update(drop)), do: {:ok, %{"removed" => true}}
+        with :ok <- saved(HalC2.Settings.update(drop)), do: {:ok, %{"removed" => added?}}
       else
         {:ok, %{"removed" => false}}
       end
@@ -204,7 +211,8 @@ defmodule HalC2.Plugins.Host do
   @doc """
   The ids of the provider instances of plugin `id` the host took out of `settings` as
   the plugin stopped being installed, on and granted (`HalC2.Plugins`), and the plugin
-  has not put again since.
+  has not put or removed since. The save that gives the user an instance under one of
+  them drops it (`seal_records/3`): that id is the user's now, not the plugin's to put.
   """
   def released_instances(settings, id), do: ids(settings, id, "releasedInstances")
 
@@ -219,9 +227,10 @@ defmodule HalC2.Plugins.Host do
   Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
   `settings` over `current`. A document a client wrote (`client?`) gets every plugin's
   records (`added_instances/2`, `released_instances/2`) from `current`, so a copy the
-  client held from before cannot hand a plugin an id; and every saved document keeps only the recorded ids whose instance it still
-  holds, so the save that deletes a plugin's instance ends the plugin's hold on that id
-  before anything reconciles.
+  client held from before cannot hand a plugin an id. Every saved document keeps only
+  the recorded ids whose instance it still holds, so the save that deletes a plugin's
+  instance ends the plugin's hold on that id before anything reconciles; and only the
+  released ids it holds no instance under, so one the user takes is not the plugin's.
   """
   def seal_records(settings, current, client?) do
     settings = if client?, do: records_from(settings, current), else: settings
@@ -233,8 +242,11 @@ defmodule HalC2.Plugins.Host do
 
         plugins =
           Map.new(plugins, fn
-            {id, %{"providerInstances" => ids} = config} when is_list(ids) ->
-              {id, %{config | "providerInstances" => Enum.filter(ids, &Map.has_key?(held, &1))}}
+            {id, %{} = config} ->
+              {id,
+               config
+               |> filter_record("providerInstances", &Map.has_key?(held, &1))
+               |> filter_record("releasedInstances", &(not Map.has_key?(held, &1)))}
 
             other ->
               other
@@ -244,6 +256,13 @@ defmodule HalC2.Plugins.Host do
 
       _ ->
         settings
+    end
+  end
+
+  defp filter_record(config, key, keep?) do
+    case config do
+      %{^key => ids} when is_list(ids) -> %{config | key => Enum.filter(ids, keep?)}
+      _ -> config
     end
   end
 
