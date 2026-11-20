@@ -8,10 +8,12 @@ defmodule HalC2.PluginProvidersPropTest do
   consent), remove it from disk, turn it on accepting what it asks for, turn it off, put
   and remove instances from its code (as a plugin that has not stopped yet would, too),
   list them, and add or delete one as the user does in Settings → Providers or by hand
-  in settings.json, the user's under the very ids the plugins use too
+  in settings.json, while the MC runs or while it is down, the user's under the very ids the plugins use too
   (`plugin_alpha_claude`, `plugin_x_y`). The user also puts one of their own in place
   of a plugin's: as a client does, from the document it read, in two saves before the
   host hears of either; or by hand, deleting it from settings.json and then adding it.
+  By hand while the MC is down, Plugins and Settings stop and start again around the
+  edit.
 
   After every step, once the host has heard the settings change:
 
@@ -331,39 +333,60 @@ defmodule HalC2.PluginProvidersPropTest do
     end)
   end
 
-  # In Settings, or by hand in settings.json, which the MC adopts at its next check.
+  # In Settings; by hand in settings.json, which the MC adopts at its next check; or by
+  # hand while the MC is down, which it reads as it starts.
   defp edit(:settings, fun) do
     HalC2.Settings.update(fun)
     sync()
   end
 
   defp edit(:file, fun) do
-    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
-    held = if File.exists?(path), do: JSON.decode!(File.read!(path)), else: %{}
-    File.write!(path, JSON.encode!(fun.(held)))
+    edit_file(fun)
     send(HalC2.Settings, :check)
     sync()
   end
 
+  defp edit(:down, fun) do
+    sup = Process.get({HalC2.Prop, :services})
+    :ok = Supervisor.terminate_child(sup, Plugins)
+    :ok = Supervisor.terminate_child(sup, HalC2.Settings)
+    edit_file(fun)
+    {:ok, _} = Supervisor.restart_child(sup, HalC2.Settings)
+    {:ok, _} = Supervisor.restart_child(sup, Plugins)
+    sync()
+  end
+
+  defp edit_file(fun) do
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    held = if File.exists?(path), do: JSON.decode!(File.read!(path)), else: %{}
+    File.write!(path, JSON.encode!(fun.(held)))
+  end
+
   # As a client saves: the document it read, without the instance, then with one of the
-  # user's in its place, the host's record still as read. By hand: deleted from
+  # user's in its place, the host's record still as read and the host held until both
+  # are in. By hand: deleted from
   # settings.json, then added back as the user's, each adopted before the next.
-  def user_replace(instance_id, :file) do
-    user_delete(instance_id, :file)
-    user_add(instance_id, :file)
+  def user_replace(instance_id, via) when via in [:file, :down] do
+    user_delete(instance_id, via)
+    user_add(instance_id, via)
   end
 
   def user_replace(instance_id, :settings) do
     {read, version} = HalC2.Settings.get()
+    :sys.suspend(Plugins)
 
-    {:ok, version} =
-      HalC2.Settings.put(
-        Map.update!(read, "providerInstances", &Map.delete(&1, instance_id)),
-        version
-      )
+    try do
+      {:ok, version} =
+        HalC2.Settings.put(
+          Map.update!(read, "providerInstances", &Map.delete(&1, instance_id)),
+          version
+        )
 
-    {:ok, _} =
-      HalC2.Settings.put(put_in(read, ["providerInstances", instance_id], @users), version)
+      {:ok, _} =
+        HalC2.Settings.put(put_in(read, ["providerInstances", instance_id], @users), version)
+    after
+      :sys.resume(Plugins)
+    end
 
     sync()
   end
@@ -411,7 +434,7 @@ defmodule HalC2.PluginProvidersPropTest do
 
   defp users?(state, id, name), do: Map.has_key?(state.users, instance_id({id, name}))
   defp update_plugin(state, id, fun), do: update_in(state.plugins[id], fun)
-  defp via, do: elements([:settings, :file])
+  defp via, do: elements([:settings, :file, :down])
   defp instance_id({id, name}), do: "plugin_#{id}_#{name}"
   defp instance(label), do: %{"driver" => "claudeAgent", "displayName" => label}
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
