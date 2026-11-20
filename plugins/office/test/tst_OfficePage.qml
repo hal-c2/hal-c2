@@ -1035,6 +1035,79 @@ Item {
             compare([a.claim, c.hold], [side, here]);
         }
 
+        // A speaker whose side someone else took while the claims were gone
+        // walks to another free side of the listener and talks from there,
+        // and nobody stops on one tile with someone else.
+        function test_a_speaker_whose_side_was_taken_moves_to_another() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting"), person("x", "X", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c"), x = actor("x");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            checkFloor();
+            const W = page.world.cols, side = a.ty * W + a.tx;
+            delete page.claims[side];
+            a.claim = -1;
+            x.goal = {
+                x: a.tx,
+                y: a.ty,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "stand"
+            };
+            page.claim(x, x.goal);
+            page.advance(1);
+            verify(a.claim !== side, "the speaker gives the taken side up");
+            compare(Math.abs(a.goal.x - c.tx) + Math.abs(a.goal.y - c.ty), 1, "it heads for another side of the listener");
+            compare(page.claims[a.claim], "lead", "and claims it");
+            compare(a.talk.phase, "go");
+            runUntil(() => {
+                checkFloor();
+                return a.talk?.phase === "say";
+            }, 3000, "it talks from the other side");
+            compare(a.ty * W + a.tx, a.claim, "it stands on the side it claimed");
+            runUntil(() => {
+                checkFloor();
+                return !a.talk;
+            }, 12000, "the talk ends");
+        }
+
+        // A speaker with no free side left by the listener ends the talk.
+        function test_a_speaker_with_no_free_side_ends_the_talk() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols;
+            a.claim = -1;
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
+                page.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
+            page.advance(1);
+            verify(!a.talk, "the talk ends");
+            compare(c.heldBy, "", "the listener is let go");
+            compare(c.hold, -1, "and holds no tile");
+        }
+
         // Someone stepping through the break room's door when the door moves
         // goes on from the tile it set out from, never straight through what
         // lies between.

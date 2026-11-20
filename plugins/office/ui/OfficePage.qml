@@ -2140,8 +2140,8 @@ Item {
                 place(a, a.tx, a.ty, true);
             route(a);
         }
-        // Two still side by side and talking claim their tiles again before
-        // anyone else is routed (see keepTalk()).
+        // Two still side by side and talking claim their tiles again, or the
+        // speaker moves on (see keepTalk()).
         for (const a of everyone()) {
             const other = a.talk && a.talk.phase !== "go" ? page.actors[a.talk.to] : null;
             if (other && a.next < 0 && Math.abs(a.tx - other.tx) + Math.abs(a.ty - other.ty) === 1)
@@ -3134,7 +3134,8 @@ Item {
             endTalk(actor);
             return;
         }
-        keepTalk(actor, other);
+        if (!keepTalk(actor, other))
+            return;
         // Facing each other.
         actor.dir = dirTowards(actor, other);
         other.face = dirTowards(other, actor);
@@ -3153,15 +3154,29 @@ Item {
     // Once a talk has begun, the speaker holds the side it talks from and the
     // listener the tile it listens on, until it ends. Each is claimed again
     // here, on every step of the talk, when it is missing: rearrange() builds
-    // the floor again and clears every claim. A tile someone else has taken
-    // meanwhile stays theirs.
+    // the floor again and clears every claim, and routes others meanwhile.
+    // A speaker whose side someone else took walks to another free side of
+    // the listener and starts its line again; with none, or when someone
+    // took the listener's tile, the talk ends. Returns whether the two still
+    // talk where they stand.
     function keepTalk(actor, other) {
         const W = page.world.cols;
+        const t = actor.talk;
         const side = {
             x: actor.tx,
             y: actor.ty
         };
-        if (actor.claim !== side.y * W + side.x && free(side, actor)) {
+        if (other.hold !== other.ty * W + other.tx) {
+            letGo(other);
+            holdHere(other);
+            if (other.hold < 0) {
+                endTalk(actor);
+                return false;
+            }
+        }
+        if (actor.claim === side.y * W + side.x)
+            return true;
+        if (free(side, actor)) {
             actor.goal = Object.assign({
                 face: 0,
                 offY: 0,
@@ -3169,11 +3184,30 @@ Item {
                 kind: "talk"
             }, side);
             claim(actor, actor.goal);
+            return true;
         }
-        if (other.hold !== other.ty * W + other.tx) {
-            letGo(other);
-            holdHere(other);
+        const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
+                    x: other.tx + dx,
+                    y: other.ty + dy
+                })).filter(s => walkable(s.x, s.y) && free(s, actor));
+        if (!sides.length) {
+            endTalk(actor);
+            return false;
         }
+        actor.goal = Object.assign({
+            face: 0,
+            offY: 0,
+            pose: "talk",
+            kind: "talk"
+        }, sides[0]);
+        claim(actor, actor.goal);
+        route(actor);
+        actor.bubble = "";
+        other.bubble = "";
+        t.phase = "go";
+        t.target = other.ty * W + other.tx;
+        t.deadline = page.now + 25000;
+        return false;
     }
 
     // Whether someone other than `speaker` (anyone, without one) is talking to

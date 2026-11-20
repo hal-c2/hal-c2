@@ -440,6 +440,21 @@ Feature: Office
       And then walks to its new desk, and the office shrinks to three rows of three pods
       And no tile stays claimed for the talk or past the office's new end
 
+    # The floor is built again on a resize, and everyone routed afresh, so someone can be
+    # sent to the tile a speaker talks from.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speaker whose side someone else took talks from another side
+      Given "Lead" is telling "C" "Got a minute?"
+      When someone else is sent to the tile "Lead" talks from
+      Then "Lead" walks to another free side of "C" and says its line from there
+      And nobody stops on a tile someone else stands on
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speaker with no free side left by the listener ends the talk
+      Given "Lead" is telling "C" "Got a minute?"
+      When every tile beside "C" is taken by someone else
+      Then the talk ends and "C" holds no tile for it
+
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: An office emptied before its new desks arrive shrinks at once
       Given the office is empty
