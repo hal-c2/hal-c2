@@ -1601,13 +1601,15 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "queued"} = review()
 
-    # Neither a save, which starts queued reviews when it makes room, nor a restart
-    # starts the queue into the limit.
+    # Neither a save, which starts queued reviews when it makes room, nor a restart,
+    # nor the timed look after it starts the queue into the limit. "Look now" is the
+    # user's ask and ends the pause, so the look here is the timer's.
     save_settings(%{"concurrency" => 2})
     assert %{"status" => "queued"} = review()
     {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
     settle()
-    refresh()
+    send(@server, :poll)
+    settle()
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
     _ = context
