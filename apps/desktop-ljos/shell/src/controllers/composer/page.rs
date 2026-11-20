@@ -23,12 +23,11 @@ use crate::bridge::Bridge;
 use crate::composer_model::{self as model, Trigger};
 use crate::controller::{self, Controller};
 use crate::controllers::keybindings::Keymap;
-use crate::controllers::settings::Settings;
 use crate::controllers::space::{self, Space};
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::json::Json;
 use crate::store;
-use crate::thread_view::summary::{Obj, as_object, text as field};
+use crate::thread_view::summary::{Obj, text as field};
 
 /// Told whether the MC took the prompt.
 type Answer = Rc<dyn Fn(&Engine, bool)>;
@@ -175,98 +174,6 @@ impl Composer {
             return picked.clone();
         }
         self.page_project.clone()
-    }
-
-    /// The model a page's ask starts on, as a new thread in its project
-    /// would: this device's project override, the project's own, the
-    /// default for new threads, then the model of the user's latest thread
-    /// in the project whose provider can run it, then the model last sent
-    /// with. None for any other target.
-    pub(super) fn page_base_selection(&self, engine: &Engine, key: &str) -> Option<Obj> {
-        if !self.on_page() || key != page_key(&self.page_id) {
-            return None;
-        }
-        let environment = self.mc.environment();
-        let project = self.page_project(engine);
-        let settings = Settings::of(engine);
-        let mut selection = settings
-            .value(&format!(
-                "projectSettingsOverrides.{project}.defaultModelSelection"
-            ))
-            .map(|v| as_object(&v).clone())
-            .unwrap_or_default();
-        if selection.is_empty() {
-            selection = store::with(engine, |s| {
-                s.project_row(&environment, &project)
-                    .map(|row| {
-                        as_object(row.get("defaultModelSelection").unwrap_or(&Json::Null)).clone()
-                    })
-                    .unwrap_or_default()
-            });
-        }
-        if selection.is_empty() {
-            selection = Settings::of(engine)
-                .value("defaultModelSelection")
-                .map(|v| as_object(&v).clone())
-                .unwrap_or_default();
-        }
-        if selection.is_empty() && !project.is_empty() {
-            let mut latest = String::new();
-            for thread in store::with(engine, |s| s.threads()).iter() {
-                if thread.environment_id != environment
-                    || thread.project_id != project
-                    || thread.updated_at < latest
-                {
-                    continue;
-                }
-                if !self
-                    .instance_of(&thread.model_selection)
-                    .is_some_and(|i| i.ready())
-                {
-                    continue;
-                }
-                latest = thread.updated_at.clone();
-                selection = thread.model_selection.clone();
-            }
-        }
-        if selection.is_empty() {
-            let last = kept::read(engine, |d| {
-                d.last_models
-                    .get(&d.last_instance)
-                    .cloned()
-                    .unwrap_or_default()
-            });
-            if let Some(instance) = self.instance_of(&last)
-                && instance.ready()
-                && !model::find_model(instance, field(&last, "model")).is_empty()
-            {
-                selection = last;
-            }
-        }
-        Some(selection)
-    }
-
-    /// The permissions a page's ask starts in: its project's default, else
-    /// the default for new threads. None for any other target.
-    pub(super) fn page_runtime_mode(&self, engine: &Engine, target: &str) -> Option<String> {
-        if !self.on_page() || target != page_key(&self.page_id) {
-            return None;
-        }
-        let settings = Settings::of(engine);
-        for path in [
-            format!(
-                "projectSettingsOverrides.{}.defaultRuntimeMode",
-                self.page_project(engine)
-            ),
-            "defaultRuntimeMode".to_owned(),
-        ] {
-            if let Some(mode) = settings.value(&path).as_ref().and_then(Json::as_str)
-                && !mode.is_empty()
-            {
-                return Some(mode.to_owned());
-            }
-        }
-        Some("full-access".into())
     }
 
     /// The trigger at a page's caret: `/` picks a kind of block (SpacePage's

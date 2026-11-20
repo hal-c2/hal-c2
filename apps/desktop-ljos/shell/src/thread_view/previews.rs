@@ -101,9 +101,9 @@ pub enum Then {
         generation: u64,
         to: For,
     },
-    /// The row the tab was at, to bring it back.
+    /// The tabs before it when it closed, to bring it back among them.
     Close {
-        row: usize,
+        before: Vec<String>,
         tab: String,
     },
     /// A page's report: its answer is [`Effect::Heard`] with `id`.
@@ -1038,10 +1038,14 @@ impl Previews {
             return;
         }
         self.closing.insert(tab.to_owned(), self.rows[row].clone());
+        let before = self.rows[..row]
+            .iter()
+            .map(|r| tab_of(r).to_owned())
+            .collect();
         self.remove(tab);
         let payload = json!({"threadId": self.thread, "tabId": tab});
         let then = Then::Close {
-            row,
+            before,
             tab: tab.to_owned(),
         };
         self.call("preview.close", payload, then);
@@ -1190,7 +1194,7 @@ impl Previews {
                     self.effects.push(Effect::Open(forwarded(&url, port)));
                 }
             },
-            Then::Close { row, tab } => {
+            Then::Close { before, tab } => {
                 // Another thread, opened since, forgot what it was closing,
                 // or the MC closed it anyway.
                 let Some(snapshot) = self.closing.remove(&tab) else {
@@ -1199,9 +1203,15 @@ impl Previews {
                 let Err(error) = result else {
                     return;
                 };
-                // It is still open on the MC: it comes back where it was.
+                // It is still open on the MC: it comes back where it was, after
+                // the last of the tabs before it that is still shown. Tabs come
+                // in the MC's order, and any opened since are after it.
                 if self.row_of(&tab).is_none() {
-                    let at = row.min(self.rows.len());
+                    let at = self
+                        .rows
+                        .iter()
+                        .rposition(|r| before.iter().any(|b| b == tab_of(r)))
+                        .map_or(0, |last| last + 1);
                     self.rows.insert(at, snapshot);
                     self.changes.push(RowChange::Inserted {
                         first: at,

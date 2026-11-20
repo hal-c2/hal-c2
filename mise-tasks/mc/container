@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+#MISE description="Install this checkout's MC in a Podman or Docker container named hal-c2-mc, its files on the hal-c2-mc volume; or manage it, or run an MC command in it"
+#MISE dir="{{config_root}}"
+#USAGE arg "[command]" default="install" help="install (build the image, replace the container, keep the volume), uninstall (remove the container, keep the volume), status, logs, restart, doctor (checks and repairs the store, stopping the MC meanwhile), or an MC command run inside it: pair, cluster"
+#USAGE arg "[args]..." var=#true help="Arguments for an MC command, after -- when they start with a dash"
+#USAGE flag "--engine <engine>" help="podman or docker; podman when it is installed"
+#USAGE flag "--host <address>" help="install: the host address the MC is published on, 127.0.0.1 by default; 0.0.0.0 or a LAN or tailnet address lets other machines pair"
+#USAGE flag "--port <port>" help="install: the host port, 3790 by default"
+#USAGE flag "--workspace <dir>" var=#true help="install: a directory the MC's projects can use, mounted at the same path"
+set -euo pipefail
+
+name=hal-c2-mc
+engine="${usage_engine:-}"
+if [[ -z $engine ]]; then
+  if command -v podman >/dev/null; then engine=podman; else engine=docker; fi
+fi
+command -v "$engine" >/dev/null || {
+  echo "mc:container needs podman or docker on PATH." >&2
+  exit 1
+}
+eval "args=(${usage_args:-})"
+exists() { "$engine" container inspect "$name" >/dev/null 2>&1; }
+# Who the container runs as. Rootless Podman: this user, so mounted files keep their owner.
+# SELinux labelling is off rather than relabelling the workspaces, which are the user's own
+# directories and stay in use on the host.
+identity=(--user "$(id -u):$(id -g)" --security-opt label=disable)
+[[ $engine == podman ]] && identity+=(--userns=keep-id)
+tty=()
+[[ -t 0 && -t 1 ]] && tty=(-it)
+remove() {
+  if exists; then
+    "$engine" stop -t 60 "$name" >/dev/null
+    "$engine" rm "$name" >/dev/null
+  fi
+}
+
+# usage defaults the command to install. It is empty only when mise skipped parsing,
+# as it does for a --help after --, which must never rebuild and replace the container.
+case "${usage_command:-}" in
+  "")
+    echo "No command; mise run mc:container --help lists them." >&2
+    exit 1
+    ;;
+  install)
+    host="${usage_host:-127.0.0.1}"
+    port="${usage_port:-3790}"
+    version="${HAL_C2_MC_VERSION:-$(apps/server-ex/scripts/local-version)}"
+
+    # The build context is what release:mc builds from, as git sees the checkout:
+    # tracked and new files, never node_modules, _build, deps or cargo targets.
+    context="$(mktemp -d "${TMPDIR:-/tmp}/hal-c2-mc-container.XXXXXX")"
+    trap 'rm -rf "$context"' EXIT
+    git ls-files -z -co --exclude-standard -- apps/server-ex packages native patches \
+      mise.toml package.json pnpm-lock.yaml pnpm-workspace.yaml ':(glob)**/package.json' |
+      tar --null -T - --ignore-failed-read -cf - 2>/dev/null | tar -xf - -C "$context"
+
+    "$engine" build -t "$name:latest" --build-arg "HAL_C2_MC_VERSION=$version" \
+      --build-arg "HAL_C2_UID=$(id -u)" --build-arg "HAL_C2_GID=$(id -g)" -f apps/server-ex/rel/Containerfile "$context"
+
+    run=(run -d --name "$name" --hostname "$name" --init --restart unless-stopped --stop-timeout 60
+      -p "$host:$port:3790" -v "$name:/data" "${identity[@]}")
+    workspaces=()
+    eval "workspaces=(${usage_workspace:-})"
+    for dir in "${workspaces[@]}"; do
+      dir="$(realpath "$dir")"
+      run+=(-v "$dir:$dir")
+    done
+
+    # The volume stays, so the new container has the old one's threads, settings and logins.
+    remove
+    "$engine" "${run[@]}" "$name:latest" >/dev/null
+    echo "The MC $version runs in the $engine container $name, on $host:$port."
+    echo "Pair a client: mise run mc:container pair"
+    ;;
+  uninstall)
+    remove
+    echo "Removed the container $name. Its files stay on the volume: $engine volume rm $name deletes them."
+    ;;
+  status) "$engine" ps -a --filter "name=^$name\$" ;;
+  logs) exec "$engine" logs -f "$name" ;;
+  restart) "$engine" restart -t 60 "$name" >/dev/null ;;
+  doctor)
+    # The doctor needs the store closed, so it runs beside the stopped MC, on its volume.
+    exists || {
+      echo "No $name container; run mise run mc:container first." >&2
+      exit 1
+    }
+    running="$("$engine" container inspect -f '{{.State.Running}}' "$name")"
+    if [[ $running == true ]]; then
+      # From a trap, so a Ctrl-C at the doctor's prompt still brings the MC back.
+      trap '"$engine" start "$name" >/dev/null' EXIT
+      "$engine" stop -t 60 "$name" >/dev/null
+    fi
+    status=0
+    "$engine" run --rm "${tty[@]}" -v "$name:/data" "${identity[@]}" "$name:latest" doctor "${args[@]}" || status=$?
+    exit "$status"
+    ;;
+  *)
+    exists || {
+      echo "No $name container; run mise run mc:container first." >&2
+      exit 1
+    }
+    # A pairing link names where the host publishes the MC, not the container's own port,
+    # unless the command names a BASE_URL or pairs over Tailscale.
+    own_base=false
+    if [[ $usage_command == pair ]]; then
+      skip=false
+      for arg in "${args[@]}"; do
+        if $skip; then skip=false; continue; fi
+        case "$arg" in
+          --ttl | --label | --tailscale-serve-port) skip=true ;;
+          --tailscale) own_base=true ;;
+          -*) ;;
+          *) own_base=true ;;
+        esac
+      done
+    fi
+    if [[ $usage_command == pair ]] && ! $own_base; then
+      published="$("$engine" port "$name" 3790/tcp | head -n1)"
+      if [[ $published == 0.0.0.0:* ]]; then
+        echo "This link works on this machine; for another, name an address it reaches: mise run mc:container pair http://<lan-or-tailnet-address>:${published#*:}" >&2
+      fi
+      args=("http://${published/0.0.0.0/127.0.0.1}" "${args[@]}")
+    fi
+    exec "$engine" exec "${tty[@]}" "$name" hal-c2-mc "$usage_command" "${args[@]}"
+    ;;
+esac

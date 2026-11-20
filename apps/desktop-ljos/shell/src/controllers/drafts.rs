@@ -57,6 +57,9 @@ pub struct Draft {
     pub thread_id: String,
     pub created_at: String,
     pub text: String,
+    /// How many times its text was written or cleared this run, not saved: a
+    /// late removal tells a draft written in since from one left as it was.
+    pub edits: u64,
 }
 
 impl Draft {
@@ -74,6 +77,7 @@ impl Draft {
             thread_id: text("threadId"),
             created_at: text("createdAt"),
             text: text("text"),
+            edits: 0,
         };
         let complete = [
             &draft.id,
@@ -215,6 +219,13 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
     start_carrying(engine, environment_id, project_id, false)
 }
 
+/// Whether a prompt sent from the draft may yet come back into it: a
+/// window's composer is still making it into a thread, or a background send
+/// from it is unanswered.
+pub fn launch_pending(engine: &Engine, id: &str) -> bool {
+    launching(engine, id) || crate::controllers::composer::awaits_launch(engine, id)
+}
+
 /// Whether any window's composer is still making the draft into a thread.
 fn launching(engine: &Engine, id: &str) -> bool {
     let any = std::cell::Cell::new(false);
@@ -262,6 +273,7 @@ pub fn start_carrying(
                 thread_id: hal_c2_mc::new_uuid(),
                 created_at: model::format_iso(&created_at),
                 text: String::new(),
+                edits: 0,
             });
             // A draft that would not survive a restart is not started.
             if !save(engine) {
@@ -418,6 +430,7 @@ pub fn set_text(engine: &Engine, id: &str, text: &str) {
         match drafts.iter_mut().find(|d| d.id == id && d.text != text) {
             Some(draft) => {
                 draft.text = text.to_owned();
+                draft.edits += 1;
                 true
             }
             None => false,
@@ -447,6 +460,7 @@ pub fn renew(engine: &Engine, id: &str) {
             Some(draft) => {
                 draft.thread_id = hal_c2_mc::new_uuid();
                 draft.text.clear();
+                draft.edits += 1;
                 true
             }
             None => false,
@@ -487,19 +501,25 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
     changed(engine);
 }
 
-/// Drops drafts whose thread now exists (promoted) or whose project is gone
-/// from an environment the shell still serves.
-fn reconcile(engine: &Engine) {
+/// Drops drafts whose thread now exists (promoted), empty drafts of an
+/// environment no MC serves, and drafts whose project is gone from an
+/// environment whose rows the shell holds. Runs on each store change, and
+/// once nothing more may come back into a draft (a background launch's
+/// answer, its restore offer closed).
+pub fn reconcile(engine: &Engine) {
     if !store::with(engine, |s| s.synchronized()) {
         return;
     }
-    let (promoted, orphaned) = store::with(engine, |s| {
+    let (promoted, mut orphaned, unserved) = store::with(engine, |s| {
         let mut promoted = Vec::new();
         let mut orphaned = Vec::new();
+        let mut unserved = Vec::new();
         for draft in kept(engine).drafts.borrow().iter() {
             if s.thread(&draft.thread_key()).is_some() {
                 promoted.push(draft.thread_key());
-            } else if s.serves_environment(&draft.environment_id)
+            } else if !s.serves_environment(&draft.environment_id) {
+                unserved.push(draft.id.clone());
+            } else if s.lists_environment(&draft.environment_id)
                 && s.project(&format!("{}:{}", draft.environment_id, draft.project_id))
                     .is_none()
             {
@@ -507,8 +527,18 @@ fn reconcile(engine: &Engine) {
                 orphaned.push(draft.id.clone());
             }
         }
-        (promoted, orphaned)
+        (promoted, orphaned, unserved)
     });
+    // No MC serves its machine now: removed, here or on another client,
+    // switched off, or not back yet. A draft with nothing in it goes (one a
+    // window landed on before the rows went); one the user wrote waits, as
+    // does one whose launch may yet give its prompt back, or that a toast
+    // offers a failed prompt back to.
+    orphaned.extend(unserved.into_iter().filter(|id| {
+        preview(engine, id).is_none()
+            && !launch_pending(engine, id)
+            && !crate::controllers::composer::offers_launch(engine, id)
+    }));
     for key in promoted {
         promote(engine, &key);
     }

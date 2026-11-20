@@ -241,6 +241,22 @@ private slots:
     QCOMPARE(changed.constLast().constFirst().toString(), QStringLiteral("tab-1"));
   }
 
+  // A close the MC refused put the tab back at the row it had, which a tab the
+  // MC closed since had moved: tab-2 came back after tab-3, out of the MC's order.
+  void aRefusedCloseBringsTheTabBackInTheMcsOrder() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1")), tab(QStringLiteral("tab-2")), tab(QStringLiteral("tab-3"))}, 1)));
+    f.previews->close(QStringLiteral("tab-2"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    f.emitEvent(QStringLiteral("closed"), QStringLiteral("tab-1"), 2);
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList{QStringLiteral("tab-3")});
+    f.mc.refuse(f.held[QStringLiteral("preview.close")].takeFirst(), QStringLiteral("no"));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), (QStringList{QStringLiteral("tab-2"), QStringLiteral("tab-3")}));
+  }
+
   // A link opened after the tabs could not be listed again showed a row the
   // MC may no longer have instead of asking it for a tab.
   void aLinkAfterAFailedListAsksForATab() {
