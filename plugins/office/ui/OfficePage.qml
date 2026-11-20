@@ -144,6 +144,8 @@ Item {
     property bool primed: false
     property real now: 0
     property int ticks: 0
+    // When the screens next change (see updateScreens()).
+    property real screensAt: 0
     property var rng: random(0x0ff1ce)
     // What is on the screens draws from its own stream, so it never changes
     // where anyone goes.
@@ -2402,9 +2404,11 @@ Item {
             queue: [],
             heldBy: "",
             face: -1,
-            // What it slacks off with on its screen, and until when (see
-            // slackOf()); `beat` keeps its frames out of step with others'.
+            // What it slacks off with on its screen, the state it picked it
+            // in, and until when (see slackOf()); `beat` keeps its frames out
+            // of step with others'.
             slack: "",
+            slackFor: "",
             slackUntil: 0,
             beat: hash(person.id) % 25,
             faceUntil: 0
@@ -3073,8 +3077,11 @@ Item {
             if (stepMover(page.movers[id], dt))
                 moving = true;
         }
-        if (page.ticks % 6 === 0)
+        // By the clock, not by ticks, as a tick is longer while nobody walks.
+        if (page.now >= page.screensAt) {
+            page.screensAt = page.now + 200;
             updateScreens();
+        }
         if (page.closeTo && page.ticks % 25 === 0)
             closeRows();
         page.walking = moving || page.jobs.length > 0 || page.outside.length > 0;
@@ -3213,11 +3220,18 @@ Item {
     // every 8 to 20 seconds: a game, a cat video, a meme or some shopping
     // most of the time while waiting, now and then while idle, and otherwise
     // nothing much. Someone asking the user something keeps to the question.
+    // A pick holds only for the state it was made in, so a change of state
+    // picks again at once.
     function slackOf(actor) {
-        if (page.now >= actor.slackUntil) {
-            const state = actor.person.state;
-            const odds = state === "waiting" ? 0.75 : state === "idle" ? 0.35 : 0;
+        const state = actor.person.state;
+        if (state !== "waiting" && state !== "idle") {
+            actor.slackFor = "";
+            return "";
+        }
+        if (page.now >= actor.slackUntil || actor.slackFor !== state) {
+            const odds = state === "waiting" ? 0.75 : 0.35;
             actor.slack = page.screenRng() < odds ? pick(page.screenRng, Object.keys(page.slackArt)) : "";
+            actor.slackFor = state;
             actor.slackUntil = page.now + between(page.screenRng, 8000, 20000);
         }
         return actor.slack;
@@ -3239,14 +3253,13 @@ Item {
             if (actor && actor.goal?.kind === "desk" && (actor.ty * page.world.cols + actor.tx === i || actor.next === i)) {
                 const p = actor.person;
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
-                if (mode === "idle")
-                    slack = slackOf(actor);
+                slack = slackOf(actor);
             }
             view.mode = mode;
             view.slack = slack;
             if (slack)
-                view.scene = Math.floor((page.ticks + actor.beat) / 25) % page.slackArt[slack].frames.length;
-            view.phase = page.ticks / 6;
+                view.scene = Math.floor((page.now + actor.beat * 40) / 1000) % page.slackArt[slack].frames.length;
+            view.phase = page.now / 240;
         }
         for (const board of page.boards) {
             const view = page.boardViews[board.key];

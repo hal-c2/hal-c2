@@ -1208,6 +1208,72 @@ Item {
             }
         }
 
+        // A person slacking while it waits drops it as soon as its agent asks
+        // something, or gets to work, even with nothing in particular to do.
+        function test_slacking_stops_as_soon_as_the_state_changes_data() {
+            return [
+                {
+                    tag: "asking",
+                    state: "asking"
+                },
+                {
+                    tag: "working with no activity",
+                    state: "working"
+                }
+            ];
+        }
+
+        function test_slacking_stops_as_soon_as_the_state_changes(data) {
+            plugin.publish(many(16, "a", "waiting"));
+            let slacking = 0;
+            for (let t = 0; t < 300; t++) {
+                page.advance(1);
+                slacking += Object.values(page.screenViews).filter(view => view.slack).length;
+            }
+            verify(slacking > 0, "they slack off while waiting");
+            plugin.publish(many(16, "a", data.state));
+            page.advance(5);
+            for (let t = 0; t < 600; t++) {
+                for (const view of Object.values(page.screenViews))
+                    compare(view.slack, "", data.tag + " people do not slack");
+                page.advance(1);
+            }
+        }
+
+        // While nobody walks the clock ticks slower, and a slacking frame still
+        // lasts a second.
+        function test_a_slacking_frame_lasts_a_second_on_the_slow_clock() {
+            plugin.publish(many(24, "w", "waiting"));
+            runUntil(() => !page.walking, 4000, "everyone sits down");
+            const last = {};
+            let changes = 0;
+            for (let t = 0; t < 600; t++) {
+                page.tick(200);
+                for (const [key, view] of Object.entries(page.screenViews)) {
+                    const was = last[key];
+                    if (was && view.slack && was.slack === view.slack && was.scene !== view.scene) {
+                        if (was.changed)
+                            compare(page.now - was.at, 1000, "a frame is up for a second");
+                        changes++;
+                        last[key] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            at: page.now,
+                            changed: true
+                        };
+                    } else if (!was || was.slack !== view.slack) {
+                        last[key] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            at: page.now,
+                            changed: false
+                        };
+                    }
+                }
+            }
+            verify(changes > 50, "frames change: " + changes);
+        }
+
         function test_two_agents_that_talk_walk_up_to_each_other() {
             const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing")].concat(many(6, "o", "working", "typing"));
             plugin.publish(people);
