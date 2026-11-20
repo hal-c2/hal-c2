@@ -410,6 +410,26 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
         for step in &options.steps {
             scripted_run::run(&engine, step);
         }
+        // What a step asked the MC for (thread.open's thread) is waited
+        // for as the snapshot was, so the picture shows it.
+        let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
+        loop {
+            Platform::of(&engine).deliver(&engine);
+            pump.pump(&engine);
+            if !hal_c2_shell::controllers::threads::loading(&engine) {
+                break;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero()
+                || wakes.recv_timeout(left) == Err(mpsc::RecvTimeoutError::Disconnected)
+            {
+                eprintln!(
+                    "hal-c2-mobile-ljos: a step's thread did not load, so what the shell shows now"
+                );
+                hal_c2_shell::controllers::threads::drain(&engine);
+                break;
+            }
+        }
     }
     let png = picture.png(&engine, root).map_err(|e| e.to_string())?;
     store::flush(&engine);
