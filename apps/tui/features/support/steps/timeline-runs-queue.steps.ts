@@ -19,6 +19,7 @@ import {
   addItem,
   currentRun,
   itemsOf,
+  lastOf,
   linesOf,
   NOW_MS,
   setItem,
@@ -57,6 +58,19 @@ step("the message is marked {string}", async (ctx: TurnWorld, marker: string) =>
   const rows = itemsOf(ctx, "message").flatMap(linesOf);
   expect(rows).toContain(marker);
   expect((await snapshot(ctx)).replace(/[│╭╮╰╯─\s]+/g, " ")).toContain(marker.split(" ")[0]!);
+});
+
+// No intent marker row under the message (upstream #21474's queued case).
+step("the message is not marked", async (ctx: TurnWorld) => {
+  const rows = itemsOf(ctx, "message").flatMap(linesOf);
+  for (const marker of [
+    "Queued behind the active turn",
+    "Steered the active turn",
+    "Originally queued, then promoted to steer the active turn",
+  ]) {
+    expect(rows).not.toContain(marker);
+  }
+  expect(await snapshot(ctx)).not.toContain("Queued behind the active turn");
 });
 
 // --- Sent attachments ----------------------------------------------------------------
@@ -350,6 +364,29 @@ step(
     await sync(ctx);
   },
 );
+
+// --- A diff's compact counts -----------------------------------------------------------
+
+step(/^a diff adds ([\d,]+) lines$/, async (ctx: TurnWorld, lines: string) => {
+  const additions = Number(lines.replaceAll(",", ""));
+  await startRun(ctx);
+  await addItem(ctx, "file_change", { fileName: "src/cart.ts" });
+  await addItem(ctx, "assistant_message", { text: "Done." });
+  await addItem(ctx, "checkpoint", {
+    checkpointId: "checkpoint",
+    scopeId: "scope-1",
+    files: [{ path: "src/cart.ts", kind: "modified", additions, deletions: 0 }],
+  });
+  await settleRun(ctx, "completed", 30);
+});
+
+step("its summary and file row read {string}", async (ctx: TurnWorld, reading: string) => {
+  const lines = linesOf(lastOf(ctx, "files"));
+  // The summary line and the one file's row both carry the compact count.
+  expect(lines[0]).toContain(reading);
+  expect(lines.find((line) => line.includes("cart.ts"))).toContain(reading);
+  expect(await snapshot(ctx)).toContain(reading);
+});
 
 step("the context window reads {string}", async (ctx: TurnWorld, reading: string) => {
   expect(plain(hostState(ctx, "timeline").context)).toContain(reading);

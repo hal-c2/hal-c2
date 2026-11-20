@@ -35,7 +35,7 @@ Feature: Thread titles
     When the user renames "Fix login" to "Fix OAuth login"
     Then the thread is listed as "Fix OAuth login"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: A thread title cannot be empty
     When the user renames "Fix login" to an empty title
     Then the title stays "Fix login"

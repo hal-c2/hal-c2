@@ -47,7 +47,7 @@ Feature: Recommended git action and the git menu
       | is up to date with an open pull request                        | View PR           |
 
   # Upstream #24117: a dirty branch behind its upstream was offered a commit and push whose push could not fast-forward.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: Uncommitted changes on a branch behind its upstream recommend only a commit
     Given the checkout has uncommitted changes on <branch> that is behind its upstream
     When the user looks at the thread's git actions
