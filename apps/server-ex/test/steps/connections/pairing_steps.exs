@@ -279,12 +279,12 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   # The host the listener binds, which is what the MC says it is reached at.
   step "the MC listens on its LAN address", context do
-    World.put_app_env(:host, Mc.lan_address())
+    listen_on(Mc.lan_address())
     context
   end
 
   step "the MC listens on every network interface", context do
-    World.put_app_env(:host, "0.0.0.0")
+    listen_on("0.0.0.0")
     context
   end
 
@@ -437,6 +437,13 @@ defmodule HalC2.Steps.Connections.Pairing do
   end
 
   # --- helpers -----------------------------------------------------------------------
+  # The bind, and the runtime record that names it, as an MC started with it writes it
+  # (`mix hal_c2.pair` reads a running MC's bind from its record).
+  defp listen_on(host) do
+    World.put_app_env(:host, host)
+    ExUnit.Callbacks.stop_supervised!(HalC2.RuntimeRecord)
+    ExUnit.Callbacks.start_supervised!(HalC2.RuntimeRecord)
+  end
 
   # `hal-c2.createPairingLink` over the administrator's socket, as Settings → Connections asks.
   defp ask_for_link(context, where) do

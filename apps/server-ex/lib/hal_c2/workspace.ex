@@ -220,13 +220,14 @@ defmodule HalC2.Workspace do
   end
 
   # What a save never does: land in git's own folders (a repository's `.git`, or a
-  # bare one kept in the project), or follow a link that points at nothing there.
+  # bare one kept in the project), whether named or reached through a link, or
+  # follow a link that points at nothing there.
   defp writable_path(root, relative, error) do
     segments = relative |> normalize() |> Path.split()
-    folders = Enum.drop(segments, -1)
+    resolved = Path.join(root, relative) |> real() |> Path.relative_to(real(root))
 
     cond do
-      Enum.any?(folders, &(&1 == ".git" or String.ends_with?(&1, ".git"))) ->
+      git_folder?(root, segments) or git_folder?(real(root), Path.split(resolved)) ->
         error.("operation_failed", "'#{relative}' is inside a git folder.")
 
       dangling_link?(root, segments) ->
@@ -238,6 +239,22 @@ defmodule HalC2.Workspace do
       true ->
         :ok
     end
+  end
+
+  # Whether a folder on the way to the file is a `.git`, or a bare repository (one
+  # whose name ends in `.git` and that holds `HEAD` and `objects/`).
+  defp git_folder?(base, segments) do
+    segments
+    |> Enum.drop(-1)
+    |> Enum.scan([], &(&2 ++ [&1]))
+    |> Enum.any?(fn prefix ->
+      dir = Path.join([base | prefix])
+      name = List.last(prefix)
+
+      name == ".git" or
+        (String.ends_with?(name, ".git") and File.regular?(Path.join(dir, "HEAD")) and
+           File.dir?(Path.join(dir, "objects")))
+    end)
   end
 
   defp dangling_link?(root, segments) do

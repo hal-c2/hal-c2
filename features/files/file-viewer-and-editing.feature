@@ -1475,6 +1475,7 @@ Feature: Viewing and editing files
     # a repository's config or hooks. A bare repository kept inside the project counts too.
     @mc @priority-high
     Scenario Outline: A save into git's own folders is refused
+      Given "shop" keeps a bare repository at "vendor/lib.git"
       When a client writes "<path>" in "shop"
       Then the MC refuses the save
       And nothing at "<path>" changed
@@ -1484,6 +1485,14 @@ Feature: Viewing and editing files
         | .git/config           |
         | .git/hooks/pre-commit |
         | vendor/lib.git/config |
+
+    # A link that leads into git's folder is refused like the folder itself.
+    @mc @priority-high
+    Scenario: A save through a link into git's own folder is refused
+      Given "gitdir" in "shop" is a link to its folder ".git"
+      When a client writes "gitdir/config" in "shop"
+      Then the MC refuses the save
+      And nothing at ".git/config" changed
 
     # Upstream #20449: only git's folders are refused; files that merely start with .git save.
     @mc
@@ -1495,6 +1504,7 @@ Feature: Viewing and editing files
         | path                     |
         | .gitignore               |
         | .github/workflows/ci.yml |
+        | site.git/index.html      |
 
     # Upstream #18819: saves no longer follow a link out of the project, or a link to nothing.
     # Upstream #20449: the deepest existing part of a save's path is resolved, and a link

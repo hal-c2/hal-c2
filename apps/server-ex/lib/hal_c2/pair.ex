@@ -344,7 +344,9 @@ defmodule HalC2.Pair do
   # listening on every interface records a loopback origin no other device can
   # use, so the machine's network address serves instead.
   defp reachable_origin(port, running) do
-    bind = (running && running["host"]) || Application.get_env(:hal_c2, :host)
+    # A running MC's record names its bind only when one was set (the default is
+    # loopback); this tool's own setting describes no other MC.
+    bind = if running, do: running["host"], else: Application.get_env(:hal_c2, :host)
     ip = bind in ["0.0.0.0", "::"] && HalC2.Web.network_ip(:inet.getifaddrs())
 
     if ip,

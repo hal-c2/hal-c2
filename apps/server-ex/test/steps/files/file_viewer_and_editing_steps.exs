@@ -288,6 +288,18 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     Map.put(context, :link_guard, guard)
   end
 
+  step "{string} keeps a bare repository at {string}", %{args: [project, folder]} = context do
+    path = Path.join(World.project(context, project).root, folder)
+    # No user or system git config: a template there could seed the repository.
+    {_, 0} =
+      System.cmd("git", ["init", "-q", "--bare", path],
+        env: %{"GIT_CONFIG_GLOBAL" => "/dev/null", "GIT_CONFIG_NOSYSTEM" => "1"},
+        stderr_to_stdout: true
+      )
+
+    context
+  end
+
   step "{string} in {string} is a link to its folder {string}",
        %{args: [link, project, folder]} = context do
     root = World.project(context, project).root
