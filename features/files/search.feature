@@ -36,7 +36,7 @@ Feature: Searching project files
       Then "src/cart.ts" is returned
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (supports typo-resistant file search through fff)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A name typed with two letters swapped still finds the file
       Given "shop" holds "src/components/Composer.tsx"
       When a client searches "shop" for files named "compoesr"
@@ -63,7 +63,7 @@ Feature: Searching project files
         | image files | logo  | "assets/logo.png"  |
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches before applying the result limit)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A search for image files drops everything else before it applies the limit
       Given "shop" holds 300 files named like "logo" and only 3 of them are images
       When a client searches "shop" for image files named "logo" with a limit of 50
@@ -71,7 +71,7 @@ Feature: Searching project files
       And the result is not marked as truncated
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches ... kind directory)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: Asking for folders and image files at once returns image files
       Given "shop" holds "public/icon.svg" and the folder "public"
       When a client searches "shop" for image files and folders with an empty query
@@ -174,7 +174,7 @@ Feature: Searching project files
 
     # Upstream #29167: a match past a line's first 512 characters was dropped, and the result
     # still said it was complete.
-    @backlog @mc
+    @mc
     Scenario Outline: A <kind> content search finds a match far along a long line
       Given "dist/app.min.js" in "shop" is one line with "checkout" after its first 600 characters
       When a client searches the contents of "shop" for "<query>" <how>
@@ -210,7 +210,7 @@ Feature: Searching project files
       And the rescan's results are used once it finishes
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: One file with a very large number of matches does not fill the whole result
       Given "logs/trace.log" in "shop" contains "total" on 1,000 lines
       And "src/cart.ts" contains "total" once
@@ -219,7 +219,7 @@ Feature: Searching project files
       And "src/cart.ts" is returned
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (isWholeWordRange, mapContentMatchRanges)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario Outline: Whole-word search treats punctuation and accented letters like a word processor
       Given "src/cart.ts" contains the line "<line>"
       When a client searches the contents of "shop" for "<query>" matching whole words
@@ -234,14 +234,14 @@ Feature: Searching project files
         | écrans only         | écran | is not returned |
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (mapContentMatchRanges: byte offsets to characters)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: The match range counts characters even when the line has wide characters before it
       Given "src/cart.ts" contains the line "日本語 total"
       When a client searches the contents of "shop" for "total"
       Then the match range starts at character 4 of the line
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (buildContentSearchQuery)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A regular expression search is case-insensitive unless the user asked to match case
       Given "src/cart.ts" contains the line "const Total = 1"
       When a client searches the contents of "shop" for "T.tal" as a regular expression

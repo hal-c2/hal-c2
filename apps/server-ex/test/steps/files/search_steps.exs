@@ -173,6 +173,146 @@ defmodule HalC2.Steps.Files.Search do
     context
   end
 
+  step "{string} holds {string} and the folder {string}",
+       %{args: [project, file, folder]} = context do
+    root = World.project(context, project).root
+    # The file this step adds is the newest in the project (an empty search
+    # ranks by when files last changed, at second precision).
+    hour_ago = System.os_time(:second) - 3600
+
+    for path <- Path.wildcard(Path.join(root, "**/*")),
+        File.regular?(path),
+        do: File.touch!(path, hour_ago)
+
+    write(root, file, contents(file))
+    File.mkdir_p!(Path.join(root, folder))
+    context
+  end
+
+  step "a client searches {string} for image files and folders with an empty query",
+       %{args: [project]} = context do
+    Mc.ensure(HalC2.Workspace)
+
+    {reply, context} =
+      World.call(context, "projects.searchEntries", %{
+        "cwd" => World.project(context, project).root,
+        "query" => "",
+        "limit" => 50,
+        "kind" => "directory",
+        "imageOnly" => true
+      })
+
+    assert {:ok, %{"entries" => entries}} = reply
+
+    Map.merge(context, %{
+      reply: reply,
+      search_kind: "image files",
+      listing: Enum.map(entries, & &1["path"])
+    })
+  end
+
+  step "{string} holds {int} files named like {string} and only {int} of them are images",
+       %{args: [project, count, name, images]} = context do
+    root = World.project(context, project).root
+    made = for n <- 1..images, do: "generated/#{name}-#{n}.png"
+    for file <- made, do: write(root, file, contents("x.png"))
+
+    for n <- 1..(count - images),
+        do: write(root, "generated/#{name}-doc-#{n}.ts", "export {};\n")
+
+    Map.put(context, :generated_images, made)
+  end
+
+  step "a client searches {string} for image files named {string} with a limit of {int}",
+       %{args: [project, query, limit]} = context do
+    search_entries(context, project, query, "image files", limit)
+  end
+
+  step "the {int} images are returned", %{args: [count]} = context do
+    # Those images, and nothing but images: had the limit been applied before
+    # the kind filter, the far more numerous other files would crowd them out.
+    assert length(context.generated_images) == count
+
+    for file <- context.generated_images,
+        do: assert(file in context.listing, "#{file} not in #{inspect(context.listing)}")
+
+    for path <- context.listing,
+        do: assert(Path.extname(path) in ~w(.png .jpg .jpeg .gif .svg .webp))
+
+    context
+  end
+
+  step "{string} in {string} is one line with {string} after its first {int} characters",
+       %{args: [file, project, word, count]} = context do
+    root = World.project(context, project).root
+    write(root, file, String.duplicate("x", count) <> " " <> word <> "\n")
+    context
+  end
+
+  step "a client searches the contents of {string} for {string} as plain text",
+       %{args: [project, query]} = context do
+    search_contents(context, project, query, %{})
+  end
+
+  step "a client searches the contents of {string} for {string} matching whole words",
+       %{args: [project, query]} = context do
+    search_contents(context, project, query, %{"wholeWord" => true})
+  end
+
+  step "a client searches the contents of {string} for {string} as a regular expression matching case",
+       %{args: [project, query]} = context do
+    search_contents(context, project, query, %{"useRegex" => true, "caseSensitive" => true})
+  end
+
+  step "a client searches the contents of {string} for {string} with a limit of {int}",
+       %{args: [project, query, limit]} = context do
+    search_contents(context, project, query, %{"limit" => limit})
+  end
+
+  step "the line is returned", context do
+    assert Enum.any?(context.matches, &(&1["lineContent"] == context.line)),
+           inspect(context.matches)
+
+    context
+  end
+
+  step "the line is not returned", context do
+    refute Enum.any?(context.matches, &(&1["lineContent"] == context.line)),
+           inspect(context.matches)
+
+    context
+  end
+
+  step "the match range starts at character {int} of the line", %{args: [start]} = context do
+    assert [%{"matchRanges" => [%{"start" => ^start} | _]} | _] = context.matches
+    context
+  end
+
+  step ~r/^"(?<file>[^"]+)" in "(?<project>[^"]+)" contains "(?<text>[^"]+)" on (?<count>[\d,]+) lines$/,
+       %{args: [file, project, text, count]} = context do
+    count = count |> String.replace(",", "") |> String.to_integer()
+    root = World.project(context, project).root
+    write(root, file, String.duplicate("the #{text} so far\n", count))
+    # The file is part of the project's content, whatever the machine's own
+    # global ignore file says about its kind.
+    File.write!(Path.join(root, ".gitignore"), "!#{file}\n", [:append])
+    context
+  end
+
+  step "{string} contains {string} once", %{args: [file, text]} = context do
+    contents = File.read!(Path.join(World.project(context).root, file))
+    lines = String.split(contents, "\n")
+    assert Enum.count(lines, &(String.downcase(&1) =~ String.downcase(text))) == 1
+    context
+  end
+
+  step "no more than {int} matches come from {string}", %{args: [count, file]} = context do
+    from = Enum.count(context.matches, &(&1["path"] == file))
+    assert from <= count, "#{from} matches from #{file}"
+    assert from > 0
+    context
+  end
+
   # The notes mention a call to `cart(`, so a literal search for it has a match.
   defp contents("docs/" <> _), do: "Call cart(items) to fill the shopping cart.\n"
 

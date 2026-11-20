@@ -34,7 +34,7 @@ defmodule HalC2.Workspace do
   @image_read_max_bytes 10 * 1_048_576
   @chat_image_extensions ~w(.avif .bmp .gif .jpeg .jpg .png .svg .tif .tiff .webp)
   @image_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .ico .avif .tiff)
-  @walk_skip ~w(.git node_modules .hg .svn _build deps target dist .next)
+  @walk_skip ~w(.git node_modules .hg .svn _build deps target dist .next .convex)
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -90,7 +90,8 @@ defmodule HalC2.Workspace do
 
       matches =
         entries
-        |> Enum.filter(&(input["kind"] in [nil, &1["kind"]]))
+        # An image search is about the files, whatever kind was also named.
+        |> Enum.filter(&(input["imageOnly"] == true or input["kind"] in [nil, &1["kind"]]))
         |> Enum.filter(&(input["imageOnly"] != true or image?(&1["path"])))
         |> rank(root, String.downcase(query))
 
@@ -211,10 +212,41 @@ defmodule HalC2.Workspace do
       end
     else
       with {:ok, path} <- inside_file(root, relative, error),
+           :ok <- writable_path(root, relative, error),
            :ok <- mkdir(Path.dirname(path), error),
            {:ok, path} <- inside(root, relative, error),
            do: {:ok, path, normalize(relative)}
     end
+  end
+
+  # What a save never does: land in git's own folders (a repository's `.git`, or a
+  # bare one kept in the project), or follow a link that points at nothing there.
+  defp writable_path(root, relative, error) do
+    segments = relative |> normalize() |> Path.split()
+    folders = Enum.drop(segments, -1)
+
+    cond do
+      Enum.any?(folders, &(&1 == ".git" or String.ends_with?(&1, ".git"))) ->
+        error.("operation_failed", "'#{relative}' is inside a git folder.")
+
+      dangling_link?(root, segments) ->
+        error.(
+          "resolved_path_outside_root",
+          "'#{relative}' is through a link to a file that is not there."
+        )
+
+      true ->
+        :ok
+    end
+  end
+
+  defp dangling_link?(root, segments) do
+    segments
+    |> Enum.scan([], &(&2 ++ [&1]))
+    |> Enum.any?(fn prefix ->
+      full = Path.join([root | prefix])
+      symlink?(full) and not File.exists?(full)
+    end)
   end
 
   # A file outside the root is written only where `read_file/1` would have given the
@@ -313,8 +345,13 @@ defmodule HalC2.Workspace do
              root,
              ~w(-c core.fsmonitor=false ls-files -z --cached --others --exclude-standard)
            ) do
-        {:ok, %{status: 0, out: out}} -> out |> String.split(<<0>>, trim: true) |> Enum.uniq()
-        _ -> walk(root)
+        {:ok, %{status: 0, out: out}} ->
+          files = out |> String.split(<<0>>, trim: true) |> Enum.uniq()
+          ignored = tracked_ignored(root)
+          Enum.reject(files, &(&1 in ignored))
+
+        _ ->
+          walk(root)
       end
 
     files = Enum.reject(files, &String.starts_with?(&1, ".git/"))
@@ -441,7 +478,8 @@ defmodule HalC2.Workspace do
         for name <- Enum.sort(names),
             name != ".git",
             full = Path.join(path, name),
-            File.dir?(full) or File.regular?(full) do
+            File.dir?(full) or File.regular?(full),
+            listed?(root, path, full) do
           %{
             "path" => if(relative in ["", "."], do: name, else: "#{relative}/#{name}"),
             "kind" => if(File.dir?(full), do: "directory", else: "file")
@@ -473,6 +511,33 @@ defmodule HalC2.Workspace do
 
       {:error, _} = failure ->
         failure
+    end
+  end
+
+  # A link is listed as what it points to, unless following it would leave the
+  # project, enter git's folders, or loop back into the folder being listed.
+  defp listed?(root, dir_path, full) do
+    if symlink?(full) do
+      root_real = real(root)
+      target = real(full)
+
+      within?(root_real, target) and
+        not (File.dir?(full) and within?(target, real(dir_path))) and
+        ".git" not in Path.split(Path.relative_to(target, root_real))
+    else
+      true
+    end
+  end
+
+  # Tracked files an ignore rule has since come to cover (`--cached --ignored`);
+  # untracked ones are already left out by the scan's own `--exclude-standard`.
+  defp tracked_ignored(root) do
+    case HalC2.Git.run(
+           root,
+           ~w(-c core.fsmonitor=false ls-files -z --cached --ignored --exclude-standard)
+         ) do
+      {:ok, %{status: 0, out: out}} -> out |> String.split(<<0>>, trim: true) |> MapSet.new()
+      _ -> MapSet.new()
     end
   end
 
