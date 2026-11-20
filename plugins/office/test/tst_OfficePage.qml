@@ -1001,11 +1001,14 @@ Item {
             compare(Math.abs(a.tx - c.tx) + Math.abs(a.ty - c.ty), 1, "the two are still side by side");
             const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
             checkFloor();
-            while (a.talk) {
+            runUntil(() => {
+                if (!a.talk)
+                    return true;
                 compare(page.claims[side], "lead", "the lead keeps the side it talks from");
                 compare(page.claims[here], "c", "C keeps the tile it listens on");
-                walk(1);
-            }
+                checkFloor();
+                return false;
+            }, 400, "the talk ends");
         }
 
         // Whatever clears the claims mid-talk, the next step of the talk
