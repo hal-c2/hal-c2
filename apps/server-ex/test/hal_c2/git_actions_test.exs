@@ -61,6 +61,25 @@ defmodule HalC2.GitActionsTest do
     refute Enum.any?(events, &(&1["label"] == "Generating commit message..."))
   end
 
+  test "a commit on a branch behind its upstream offers no push", %{repo: repo} do
+    other = repo <> "-other"
+    git!(Path.dirname(repo), ["clone", "-q", Path.join(Path.dirname(repo), "origin.git"), other])
+    git!(other, ~w(config user.name t))
+    git!(other, ~w(config user.email t@t))
+    File.write!(Path.join(other, "up.txt"), "up\n")
+    git!(other, ~w(add up.txt))
+    git!(other, ~w(commit -q -m up))
+    git!(other, ~w(push -q origin main))
+    git!(repo, ~w(fetch -q))
+
+    File.write!(Path.join(repo, "b.txt"), "b\n")
+
+    assert {{:ok, %{"commit" => %{"status" => "created"}, "toast" => %{"cta" => cta}}}, _} =
+             run(%{"cwd" => repo, "action" => "commit", "commitMessage" => "Add b"})
+
+    assert cta == %{"kind" => "none"}
+  end
+
   # The upstream's branch was deleted and pruned: its config remains but its ref is gone.
   test "push publishes a branch again after its upstream was deleted and pruned", %{
     repo: repo,

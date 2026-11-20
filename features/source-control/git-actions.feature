@@ -59,6 +59,14 @@ Feature: Recommended git action and the git menu
       | a branch with an open pull request     |
       | a feature branch with a remote         |
 
+  # The MC decides: a push from behind its upstream cannot fast-forward, so the commit's
+  # result carries no Push action for any client to show.
+  @mc
+  Scenario: A commit on a branch behind its upstream offers no Push
+    Given "feature/tax" has uncommitted changes and is behind its upstream
+    When the user commits the changes
+    Then the commit is made and the result offers no Push
+
   @desktop @tui
   Scenario Outline: The recommended action is withheld with a reason
     Given the checkout <state>

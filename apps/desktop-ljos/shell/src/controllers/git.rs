@@ -996,17 +996,7 @@ impl Git {
                 self.sync_branch(engine, &result);
                 let shown = result.get("toast").cloned().unwrap_or(Json::Null);
                 let cta = shown.get("cta").cloned().unwrap_or(Json::Null);
-                // A push from behind its upstream could not fast-forward.
-                let behind = self
-                    .status(engine)
-                    .is_some_and(|s| count(&s, "behindCount") > 0);
                 let next = match text(&cta, "kind").as_str() {
-                    "run_action"
-                        if behind
-                            && cta.get("action").is_some_and(|a| text(a, "kind") == "push") =>
-                    {
-                        None
-                    }
                     "open_pr" => {
                         let url = text(&cta, "url");
                         let bridge = self.bridge;
