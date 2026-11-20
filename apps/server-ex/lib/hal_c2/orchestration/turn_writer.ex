@@ -488,9 +488,10 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp keep_output(item, _tail), do: item
 
-  # A command the provider says completed whose output says otherwise.
+  # A command the provider says completed whose output says otherwise. A
+  # reported exit code of 0 settles it, whatever the text says.
   defp output_failure(%{"status" => "completed", "output" => output} = item, :command) do
-    if CommandOutput.failed?(output),
+    if item["exitCode"] != 0 and CommandOutput.failed?(output),
       do: Map.put(item, "outputIndicatesFailure", true),
       else: item
   end

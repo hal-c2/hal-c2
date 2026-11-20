@@ -335,14 +335,16 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       :ok
     end
 
-    defp finish(status, output) do
+    defp finish(status, output, fields \\ %{}) do
       %{
         thread_id: "t1",
         items: %{"c" => %{id: "i1", node: "n1", message: nil, kind: :command}},
         buffer: %{},
         flush_timer: nil
       }
-      |> TurnWriter.finish_item("c", status, &Map.put(&1, "output", output))
+      |> TurnWriter.finish_item("c", status, fn item ->
+        item |> Map.put("output", output) |> Map.merge(fields)
+      end)
 
       StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure("t1")), "turn-item")["i1"]
     end
@@ -385,6 +387,15 @@ defmodule HalC2.Orchestration.TurnWriterTest do
                finish("completed", "exited with exit code 0"),
                "outputIndicatesFailure"
              )
+    end
+
+    for output <- ["ENOENT: no such file or directory", "exit code 2"] do
+      test "a reported exit code of 0 settles it, whatever its output says: #{inspect(output)}" do
+        refute Map.has_key?(
+                 finish("completed", unquote(output), %{"exitCode" => 0}),
+                 "outputIndicatesFailure"
+               )
+      end
     end
   end
 end

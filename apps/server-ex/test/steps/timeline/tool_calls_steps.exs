@@ -681,6 +681,40 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     context
   end
 
+  step "the provider reported a command as completed with exit code 0", context do
+    Map.merge(context, %{reported_command: "ls", reported_output: ""})
+  end
+
+  step ~r/^the command's (?<part>output|command) says "(?<text>.*)"$/,
+       %{args: [part, text]} = context do
+    case part do
+      "output" -> Map.put(context, :reported_output, text <> "\n")
+      "command" -> Map.put(context, :reported_command, text)
+    end
+  end
+
+  step "the user reads the activity group", context do
+    title = World.current(context)
+
+    run =
+      JSON.encode!(%{
+        "command" => context.reported_command,
+        "output" => context.reported_output
+      })
+
+    {{:ok, _}, context} = World.send_message(context, title, "run command " <> run)
+    item = await_command(context, &(&1["status"] == "completed"))
+    Map.put(context, :command_item, item)
+  end
+
+  step "the command is shown as succeeded", context do
+    item = context.command_item
+    assert item["status"] == "completed"
+    assert item["exitCode"] == 0
+    refute Map.get(item, "outputIndicatesFailure")
+    context
+  end
+
   step "the command's final output is shown", context do
     assert %{"running" => false, "output" => "a.txt\n"} = context.shown
     context
