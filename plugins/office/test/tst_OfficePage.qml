@@ -556,6 +556,30 @@ Item {
             compare(reviewers.filter(r => !page.world.seatOf[r.id]).length, 2, "the other 2 reviewers have no desk");
         }
 
+        // A reviewer on a floor desk hot-desks: it gives the desk up to
+        // someone else who has none, and takes a free corner desk if there is
+        // one, or none. The reviewers in the corner keep theirs.
+        function test_reviewers_on_the_floor_give_their_desks_up_to_others() {
+            const reviewers = [];
+            for (let i = 0; i < 10; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish(reviewers);
+            const review = corner();
+            const seats = {};
+            for (const r of reviewers)
+                seats[r.id] = page.world.seatOf[r.id];
+            verify(seats["r8"].pod !== review && seats["r9"].pod !== review, "r8 and r9 sit on the floor");
+            // r0 leaves the corner, and 40 threads need every floor desk.
+            plugin.publish(reviewers.slice(1).concat(many(40, "t", "working", "typing")));
+            for (let i = 0; i < 40; i++)
+                verify(page.world.seatOf["t" + i] && page.world.seatOf["t" + i].pod !== review, "t" + i + " has a floor desk");
+            for (let i = 1; i < 8; i++)
+                verify(page.world.seatOf["r" + i] === seats["r" + i], "r" + i + " keeps its corner desk");
+            const moved = ["r8", "r9"].filter(id => page.world.seatOf[id]);
+            compare(moved.length, 1, "one of r8 and r9 has a desk");
+            verify(page.world.seatOf[moved[0]] === seats["r0"], moved[0] + " takes the corner desk r0 left");
+        }
+
         // Someone reading at a shelf who loses its corner desk on a full floor
         // waits in the break room, rather than read on without a desk.
         function test_a_reader_who_leaves_the_corner_on_a_full_floor_waits_in_the_break_room() {
