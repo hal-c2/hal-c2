@@ -177,9 +177,14 @@ fn an_answer_reaches_only_the_part_that_asked_and_none_once_it_is_gone() {
         "open",
         &[Value::from(2), Value::from("threads")],
     );
+    // Both ask; the answers come back the other way round.
+    call(&engine, root, "ask", &[Value::from(0)]);
     call(&engine, root, "ask", &[Value::from(1)]);
-    mc.answer(&engine, "plugins.call", Ok(json!(null)));
+    let second = mc.calls.borrow().len() - 1;
+    mc.reply(&engine, second, Ok(json!(null)));
     assert_eq!(text(&engine, root, "answeredBy"), "1");
+    mc.answer(&engine, "plugins.call", Ok(json!(null)));
+    assert_eq!(text(&engine, root, "answeredBy"), "10");
 
     // A part gone before its answer comes leaves nothing behind to call.
     call(&engine, root, "ask", &[Value::from(0)]);
@@ -187,5 +192,5 @@ fn an_answer_reaches_only_the_part_that_asked_and_none_once_it_is_gone() {
     engine.process_deferred_deletes();
     assert_eq!(call(&engine, root, "waiting", &[]), Value::from(0));
     mc.answer(&engine, "plugins.call", Ok(json!(null)));
-    assert_eq!(text(&engine, root, "answeredBy"), "1");
+    assert_eq!(text(&engine, root, "answeredBy"), "10");
 }
