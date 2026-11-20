@@ -285,6 +285,30 @@ impl Core {
 
     /// The shell's own environment is forgotten, its session already off
     /// the device. An exchange in flight has nobody to answer.
+    /// A session the shell connected with, its own pairing's or one
+    /// ConnectionHealth bought pairing again (mobile-qt's
+    /// Pairing::remember): the device's own from now on, to be saved;
+    /// none when it is the one kept already. A new session at the same
+    /// address is the same environment until it says otherwise.
+    pub fn remember(&mut self, session: &Environment) -> Option<Environment> {
+        let mut next = session.clone();
+        if let Some(own) = &self.paired
+            && own.origin == next.origin
+        {
+            if next.label.is_empty() {
+                next.label.clone_from(&own.label);
+            }
+            if next.environment_id.is_empty() {
+                next.environment_id.clone_from(&own.environment_id);
+            }
+        }
+        if self.paired.as_ref() == Some(&next) {
+            return None;
+        }
+        self.paired = Some(next.clone());
+        Some(next)
+    }
+
     pub fn forgotten(&mut self) {
         self.attempt += 1;
         self.pairing = false;
@@ -329,15 +353,29 @@ pub fn save(path: &std::path::Path, environment: &Environment) -> bool {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let tmp = path.with_extension("json.tmp");
         let bytes = serde_json::to_vec(environment).map_err(std::io::Error::other)?;
-        std::fs::write(&tmp, bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        let tmp = path.with_extension("json.tmp");
+        // One a failed save left behind; made afresh, so it is ours alone
+        // from its first byte.
+        match std::fs::remove_file(&tmp) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
         }
-        std::fs::rename(&tmp, path)
+        let written = (|| {
+            use std::io::Write;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&tmp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            std::fs::rename(&tmp, path)
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        written
     })();
     if let Err(error) = &done {
         eprintln!("[pairing] not saved to {}: {error}", path.display());
@@ -392,6 +430,13 @@ impl Controller for Pairing {
         if let Some(path) = &path {
             core.paired = load(path);
         }
+        let me = init.me.clone();
+        hal_c2_shell::on_opened(init.engine, move |engine, session| {
+            let session = session.clone();
+            me.run_after(engine, move |c: &mut Pairing, engine| {
+                c.remember(engine, &session)
+            });
+        });
         Pairing {
             bridge: init.bridge,
             me: init.me,
@@ -445,7 +490,9 @@ impl Pairing {
     /// first one paired beside a forgotten one takes its place.
     pub fn start(&mut self, engine: &Engine) {
         let Some(environment) = self.core.paired.clone() else {
-            self.promote(engine);
+            if !self.promote(engine) {
+                self.publish(engine);
+            }
             return;
         };
         self.open(engine, &environment);
@@ -575,6 +622,30 @@ impl Pairing {
         self.open(engine, &next);
     }
 
+    /// The shell is connected with `session` already, so it is this
+    /// device's whether or not it can be saved: the one on the device is
+    /// the one the MC refused, and is what the next start would open.
+    fn remember(&mut self, engine: &Engine, session: &Environment) {
+        let Some(next) = self.core.remember(session) else {
+            return;
+        };
+        if let Some(path) = &self.path
+            && !save(path, &next)
+        {
+            controller::with::<Toasts, _>(engine, |toasts, engine| {
+                toasts.show(
+                    engine,
+                    "warning",
+                    "Session not saved",
+                    "The new session could not be saved on this device. It stays connected, and may need a fresh pairing link the next time HAL-C2 starts.",
+                    None,
+                    0,
+                );
+            });
+        }
+        self.publish(engine);
+    }
+
     /// A link from outside the app: shown, never spent.
     fn offer(&mut self, engine: &Engine, received: &str) {
         let invitation = pairing::read_invitation(received)
@@ -685,10 +756,10 @@ impl Pairing {
         // Until it is gone, nothing is forgotten, an exchange in flight
         // included.
         if let Some(path) = &self.path
-            && path.exists()
-            && std::fs::remove_file(path).is_err()
+            && let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("[pairing] not forgotten: {}", path.display());
+            eprintln!("[pairing] not forgotten: {}: {error}", path.display());
             self.core.error =
                 "This environment could not be forgotten: its session could not be deleted from this device."
                     .into();
@@ -732,7 +803,20 @@ impl Pairing {
         };
         // Kept as the shell's own before it leaves the saved ones: there
         // is always one place on the device it is in.
-        if !self.path.as_deref().is_some_and(|path| save(path, &next)) {
+        let Some(path) = self.path.as_deref() else {
+            return false;
+        };
+        if !save(path, &next) {
+            // save says why on stderr; the user hears why the device is
+            // not paired, and the saved one stays where it was.
+            let name = if next.label.is_empty() {
+                "A paired environment"
+            } else {
+                next.label.as_str()
+            };
+            self.core.error = format!(
+                "{name} could not be connected: its session could not be saved on this device."
+            );
             return false;
         }
         let id = next.environment_id.clone();
@@ -778,6 +862,42 @@ mod tests {
         assert_eq!(load(&path), Some(environment("env-1")));
         std::fs::write(&path, "{}").unwrap();
         assert!(load(&path).is_none());
+    }
+
+    #[test]
+    fn a_session_bought_pairing_again_is_kept_as_the_same_environment() {
+        let mut core = Core::default();
+        core.paired = Some(environment("env-1"));
+        // The shell's own opening of what it keeps changes nothing.
+        assert_eq!(core.remember(&environment("env-1")), None);
+        // Pair again (ConnectionHealth) names no label or id of its own.
+        let again = Environment {
+            token: "fresh".into(),
+            label: String::new(),
+            environment_id: String::new(),
+            ..environment("env-1")
+        };
+        let kept = core.remember(&again).expect("a new session is kept");
+        assert_eq!(kept.token, "fresh");
+        assert_eq!(kept.label, "My MacBook");
+        assert_eq!(kept.environment_id, "env-1");
+        assert_eq!(core.paired, Some(kept));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_saved_session_is_the_users_alone_over_a_stale_temp() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pairing.json");
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, "left by a failed save").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(save(&path, &environment("env-1")));
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(!tmp.exists());
+        assert_eq!(load(&path), Some(environment("env-1")));
     }
 
     #[test]

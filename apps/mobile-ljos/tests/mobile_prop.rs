@@ -29,6 +29,10 @@ enum PairAction {
     FailStale,
     FailCurrent,
     PairOwnStale,
+    PairOwnCurrent,
+    /// The shell opened a session: its own (`fresh` false) or one
+    /// bought pairing again, at the kept environment's address.
+    Remember(bool),
     Forget,
 }
 
@@ -42,6 +46,8 @@ fn pair_action() -> impl Strategy<Value = PairAction> {
         Just(PairAction::FailStale),
         Just(PairAction::FailCurrent),
         Just(PairAction::PairOwnStale),
+        Just(PairAction::PairOwnCurrent),
+        any::<bool>().prop_map(PairAction::Remember),
         Just(PairAction::Forget),
     ]
 }
@@ -127,6 +133,28 @@ proptest! {
                     let stale = core.attempt.wrapping_add(1);
                     prop_assert!(!core.paired_own(stale, environment("env-2")));
                     prop_assert_eq!(&core.paired, &before.paired);
+                }
+                PairAction::PairOwnCurrent => {
+                    let landed = core.paired_own(core.attempt, environment("env-2"));
+                    prop_assert!(landed);
+                    prop_assert_eq!(core.paired.clone(), Some(environment("env-2")));
+                    prop_assert!(!core.pairing && !core.adding);
+                    prop_assert!(core.error.is_empty() && core.link.is_empty());
+                }
+                PairAction::Remember(fresh) => {
+                    let opened = Environment {
+                        token: if fresh { "fresh".into() } else { "session".into() },
+                        label: String::new(),
+                        environment_id: String::new(),
+                        ..environment("env-1")
+                    };
+                    let kept = core.remember(&opened);
+                    prop_assert_eq!(core.paired.as_ref().map(|e| e.token.as_str()), Some(opened.token.as_str()));
+                    prop_assert_eq!(kept.is_some(), before.paired != core.paired, "saved exactly when it changed");
+                    if let Some(own) = &before.paired {
+                        prop_assert_eq!(&core.paired.as_ref().unwrap().environment_id, &own.environment_id, "the same environment at its address");
+                    }
+                    prop_assert_eq!(core.pairing, before.pairing);
                 }
                 PairAction::Forget => {
                     core.forgotten();

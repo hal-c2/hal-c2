@@ -316,7 +316,12 @@ pub fn register(steps: &mut Steps) {
             |world| phase(world) == "paired",
             |world| format!("the phone to pair; it is {}", show(&world.state("pairing"))),
         )?;
-        expect!(world.pairing_file().exists(), "the phone keeps no session");
+        // What the next start opens: a session it can read, with an
+        // origin and a token, not just a file.
+        expect!(
+            hal_c2_mobile::pairing::load(&world.pairing_file()).is_some(),
+            "the phone keeps no session it can open"
+        );
         world.wait_for(
             |world| world.find("homeScreen").is_some(),
             |_| "the home screen".into(),
