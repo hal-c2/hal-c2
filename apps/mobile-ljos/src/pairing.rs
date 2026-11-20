@@ -139,6 +139,9 @@ pub struct Core {
     pub link: String,
     pub adding: bool,
     pub offered: String,
+    /// How many times the device forgot its own environment: a session
+    /// the shell opened before the last forget is not remembered.
+    pub forgets: u64,
 }
 
 /// What [`Core::begin`] decided of a link the user entered.
@@ -290,7 +293,12 @@ impl Core {
     /// Pairing::remember): the device's own from now on, to be saved;
     /// none when it is the one kept already. A new session at the same
     /// address is the same environment until it says otherwise.
-    pub fn remember(&mut self, session: &Environment) -> Option<Environment> {
+    /// `forgets` is [`Core::forgets`] as the session opened: one
+    /// forgotten since is not saved again.
+    pub fn remember(&mut self, session: &Environment, forgets: u64) -> Option<Environment> {
+        if forgets != self.forgets {
+            return None;
+        }
         let mut next = session.clone();
         if let Some(own) = &self.paired
             && own.origin == next.origin
@@ -311,6 +319,7 @@ impl Core {
 
     pub fn forgotten(&mut self) {
         self.attempt += 1;
+        self.forgets += 1;
         self.pairing = false;
         self.paired = None;
         self.adding = false;
@@ -414,6 +423,9 @@ pub struct Pairing {
     path: Option<PathBuf>,
     device: Client,
     exchange: Exchange,
+    /// [`Core::forgets`], read as the shell opens a session, which may be
+    /// while this controller is running.
+    forgets: Rc<std::cell::Cell<u64>>,
 }
 
 impl Controller for Pairing {
@@ -430,11 +442,14 @@ impl Controller for Pairing {
         if let Some(path) = &path {
             core.paired = load(path);
         }
+        let forgets = Rc::new(std::cell::Cell::new(core.forgets));
         let me = init.me.clone();
+        let opened_at = forgets.clone();
         hal_c2_shell::on_opened(init.engine, move |engine, session| {
             let session = session.clone();
+            let at = opened_at.get();
             me.run_after(engine, move |c: &mut Pairing, engine| {
-                c.remember(engine, &session)
+                c.remember(engine, &session, at)
             });
         });
         Pairing {
@@ -444,6 +459,7 @@ impl Controller for Pairing {
             path,
             device,
             exchange,
+            forgets,
         }
     }
 
@@ -625,8 +641,8 @@ impl Pairing {
     /// The shell is connected with `session` already, so it is this
     /// device's whether or not it can be saved: the one on the device is
     /// the one the MC refused, and is what the next start would open.
-    fn remember(&mut self, engine: &Engine, session: &Environment) {
-        let Some(next) = self.core.remember(session) else {
+    fn remember(&mut self, engine: &Engine, session: &Environment, forgets: u64) {
+        let Some(next) = self.core.remember(session, forgets) else {
             return;
         };
         if let Some(path) = &self.path
@@ -768,6 +784,7 @@ impl Pairing {
         }
         let had = self.core.paired.is_some();
         self.core.forgotten();
+        self.forgets.set(self.core.forgets);
         if had && let Some(mc) = controller::mc(engine) {
             mc.close();
         }
@@ -866,10 +883,12 @@ mod tests {
 
     #[test]
     fn a_session_bought_pairing_again_is_kept_as_the_same_environment() {
-        let mut core = Core::default();
-        core.paired = Some(environment("env-1"));
+        let mut core = Core {
+            paired: Some(environment("env-1")),
+            ..Core::default()
+        };
         // The shell's own opening of what it keeps changes nothing.
-        assert_eq!(core.remember(&environment("env-1")), None);
+        assert_eq!(core.remember(&environment("env-1"), 0), None);
         // Pair again (ConnectionHealth) names no label or id of its own.
         let again = Environment {
             token: "fresh".into(),
@@ -877,11 +896,15 @@ mod tests {
             environment_id: String::new(),
             ..environment("env-1")
         };
-        let kept = core.remember(&again).expect("a new session is kept");
+        let kept = core.remember(&again, 0).expect("a new session is kept");
         assert_eq!(kept.token, "fresh");
         assert_eq!(kept.label, "My MacBook");
         assert_eq!(kept.environment_id, "env-1");
         assert_eq!(core.paired, Some(kept));
+        // One that opened before a forget is not saved back.
+        core.forgotten();
+        assert_eq!(core.remember(&again, 0), None);
+        assert_eq!(core.paired, None);
     }
 
     #[cfg(unix)]

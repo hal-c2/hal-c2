@@ -33,6 +33,9 @@ enum PairAction {
     /// The shell opened a session: its own (`fresh` false) or one
     /// bought pairing again, at the kept environment's address.
     Remember(bool),
+    /// A session that opened before the last forget lands after it
+    /// (`remember` runs after the controller returns).
+    RememberAfterForget,
     Forget,
 }
 
@@ -48,6 +51,7 @@ fn pair_action() -> impl Strategy<Value = PairAction> {
         Just(PairAction::PairOwnStale),
         Just(PairAction::PairOwnCurrent),
         any::<bool>().prop_map(PairAction::Remember),
+        Just(PairAction::RememberAfterForget),
         Just(PairAction::Forget),
     ]
 }
@@ -148,7 +152,7 @@ proptest! {
                         environment_id: String::new(),
                         ..environment("env-1")
                     };
-                    let kept = core.remember(&opened);
+                    let kept = core.remember(&opened, core.forgets);
                     prop_assert_eq!(core.paired.as_ref().map(|e| e.token.as_str()), Some(opened.token.as_str()));
                     prop_assert_eq!(kept.is_some(), before.paired != core.paired, "saved exactly when it changed");
                     if let Some(own) = &before.paired {
@@ -156,8 +160,18 @@ proptest! {
                     }
                     prop_assert_eq!(core.pairing, before.pairing);
                 }
+                PairAction::RememberAfterForget => {
+                    let opened = environment("env-1");
+                    let at = core.forgets;
+                    core.forgotten();
+                    let after = core.clone();
+                    prop_assert_eq!(core.remember(&opened, at), None, "a forgotten session is not saved back");
+                    prop_assert_eq!(core.state(), after.state());
+                    prop_assert_eq!(&core.paired, &after.paired);
+                }
                 PairAction::Forget => {
                     core.forgotten();
+                    prop_assert_eq!(core.forgets, before.forgets + 1);
                     prop_assert!(core.paired.is_none());
                     prop_assert!(!core.pairing);
                     prop_assert!(!core.adding);
