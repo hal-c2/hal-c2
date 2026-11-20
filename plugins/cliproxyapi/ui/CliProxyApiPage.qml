@@ -58,6 +58,11 @@ Item {
         page.keys = [];
         page.logs = [];
         page.refusal = "";
+        // Typed for the environment just left: a key or sign-in address for it must
+        // not be sent to this one. A late reply is still dropped (see `start`).
+        apiKey.clear();
+        baseUrl.clear();
+        address.clear();
         if (page.environment.length === 0)
             return;
         const environment = page.environment;

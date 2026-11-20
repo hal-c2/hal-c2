@@ -411,6 +411,21 @@ Item {
             verify(find("cliproxyapiUpdate").text.indexOf("This plugin downloads 8.0.79") >= 0);
         }
 
+        function test_inputs_typed_for_one_environment_do_not_reach_another() {
+            plugin.hold = true;
+            find("cliproxyapiKeyValue").text = "sk-ant-local";
+            find("cliproxyapiKeyBase").text = "https://a.example";
+            mouseClick(find("cliproxyapiAddKey"));
+            plugin.environments = ["local", "work"];
+            loader.item.environment = "work";
+            compare(find("cliproxyapiKeyValue").text, "");
+            compare(find("cliproxyapiKeyBase").text, "");
+            // The first environment's late success must not clear what this one holds.
+            find("cliproxyapiKeyValue").text = "sk-ant-work";
+            plugin.held({}, null);
+            compare(find("cliproxyapiKeyValue").text, "sk-ant-work");
+        }
+
         function test_a_reply_from_an_environment_the_page_left_is_dropped() {
             plugin.hold = true;
             mouseClick(find("cliproxyapiRemove:claude-user@example.com.json"));
