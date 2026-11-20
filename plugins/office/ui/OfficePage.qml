@@ -2351,6 +2351,7 @@ Item {
         const actor = page.actors[id];
         if (!actor)
             return;
+        letGo(actor);
         release(actor);
         delete page.actors[id];
         for (let i = 0; i < actorModel.count; i++) {

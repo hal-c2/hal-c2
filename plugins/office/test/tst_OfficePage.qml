@@ -1112,6 +1112,35 @@ Item {
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
+        // A listener archived mid-talk leaves both tiles it held: the one it
+        // listens on and the one it was headed for.
+        function test_an_archived_listener_lets_go_of_its_tiles() {
+            // Lead and C get the desks side by side, and C heads for a break
+            // just as the lead speaks to it.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), c = actor("c");
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const here = c.ty * page.world.cols + c.tx, ahead = c.claim;
+            compare(c.hold, here, "C holds the tile it listens on");
+            verify(ahead >= 0 && ahead !== here, "and the one it was headed for");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing")]);
+            verify(!actor("c"), "C has left");
+            compare(page.claims[here], undefined, "C's tile is free");
+            compare(page.claims[ahead], undefined, "the tile C was headed for is free");
+            compare(Object.values(page.claims).indexOf("c"), -1, "C holds no tile at all");
+            runUntil(() => !a.talk, 200, "the talk ends");
+        }
+
         // A speaker that finds every side of its listener taken keeps the spot
         // it had, rather than stop somewhere nobody holds for it.
         function test_a_speaker_with_no_side_free_keeps_its_spot() {
