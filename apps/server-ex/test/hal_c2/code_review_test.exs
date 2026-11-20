@@ -1064,6 +1064,53 @@ defmodule HalC2.CodeReviewTest do
                    1_000
   end
 
+  # A review run again keeps the run before it for its own prompt; clients never read
+  # it, so what they are sent leaves it out.
+  test "a review run again on a new head sends clients none of the run before it",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    reviewed = first["reviewedSha"]
+
+    assert %{
+             "previous" => %{
+               "verdict" => "approve",
+               "summary" => "Looks right.",
+               "reviewedSha" => ^reviewed
+             }
+           } = :sys.get_state(@server).reviews[@key]
+
+    assert %{"status" => "running"} = shown = review()
+    refute Map.has_key?(shown, "previous")
+  end
+
+  # Clients make a script value of every `reviews` they are sent, findings and all, so
+  # a change that leaves what they show as it was sends nothing.
+  test "the reviews clients follow are sent again only when they changed" do
+    first = start_review()
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+
+    # Asking again for the running review changes nothing the clients show.
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    # The first `reviews` sent is the report's, not the same value again.
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => sent}},
+                   1_000
+
+    assert %{"status" => status} = Enum.find(sent, &(&1["key"] == @key))
+    assert status != "running"
+  end
+
   # A run reads where other machines have its head when it steps back, so a run the
   # limit held back, back at a head it never reviewed, showed it was limited while the
   # laptop had that head published.
