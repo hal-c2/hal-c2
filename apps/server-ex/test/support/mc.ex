@@ -4820,16 +4820,17 @@ defmodule HalC2.Test.Mc.Host do
 
   @doc "`relative` under `root` with links in it followed, so a save through a link is checked at its target."
   def resolved(root, relative) do
-    relative
-    |> Path.split()
-    |> Enum.reduce(root, fn part, dir ->
-      path = Path.join(dir, part)
+    relative |> Path.split() |> Enum.reduce(root, &follow(Path.join(&2, &1), 40))
+  end
 
-      case File.read_link(path) do
-        {:ok, target} -> Path.expand(target, dir)
-        _ -> path
-      end
-    end)
+  # A link to a link is followed to the end of the chain, for at most `hops` links.
+  defp follow(path, 0), do: path
+
+  defp follow(path, hops) do
+    case File.read_link(path) do
+      {:ok, target} -> follow(Path.expand(target, Path.dirname(path)), hops - 1)
+      _ -> path
+    end
   end
 
   @doc "The scenario's `$HOME` (`/home/sam`), set for the MC on first call."
