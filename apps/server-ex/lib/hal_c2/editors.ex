@@ -149,7 +149,14 @@ defmodule HalC2.Editors do
         ["--line", line, Path.expand(path)]
 
       {:line_column, [_, path, line, column]} ->
-        ["--line", line, "--column", column, Path.expand(path)]
+        # JetBrains IDEs (the `:line_column` family) count columns from zero.
+        [
+          "--line",
+          line,
+          "--column",
+          to_string(max(String.to_integer(column) - 1, 0)),
+          Path.expand(path)
+        ]
 
       _ ->
         [Path.expand(target)]
