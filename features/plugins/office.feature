@@ -493,7 +493,8 @@ Feature: Office
 
     # A worker can come in before the row of the reviewer that delegated to it, and is
     # no reviewer until then. Seats already taken stay put, so nobody moves while they
-    # stay; the team sits split until the worker leaves.
+    # stay; the team sits split until the worker leaves, or gives its floor desk up to
+    # a thread that needs it.
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A team that turns out to be reviewers keeps its seats on the floor
       Given the office has 2 threads and a worker on the floor whose lead is not in yet
@@ -537,6 +538,15 @@ Feature: Office
       Given the office has 10 reviewers and 8 teams of 5 threads, the reviewers listed first
       Then every thread in the teams has a desk on the floor
       And 8 of the reviewers sit in the review corner and the other 2 have no desk
+
+    # Reviewers hot-desk: a floor desk is theirs only while no other thread needs it.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer on a floor desk gives it up to a thread that has none
+      Given the office has 10 reviewers, 8 in the review corner and 2 on the floor
+      When a reviewer in the corner leaves and 40 threads come in
+      Then every thread has a desk on the floor
+      And one of the reviewers on the floor takes the free corner desk and the other has none
+      And the reviewers in the corner keep their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor waits in the break room

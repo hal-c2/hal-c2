@@ -30,8 +30,9 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
   threads without a desk wait in the break room.
 - Threads the Code review plugin started to review a pull request, and the
   workers they delegated to, sit together in the review corner. When it is
-  full they sit at the free desks nearest it that no other thread needs. Other
-  threads never sit there, even when the rest of the office is full.
+  full they sit at the free desks nearest it, and give a desk up when another
+  thread needs it. Other threads never sit there, even when the rest of the
+  office is full.
 - Each desk shows the icon its project has in the sidebar. Reviewers hot-desk,
   so their desks show none.
 
