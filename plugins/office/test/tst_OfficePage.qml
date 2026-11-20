@@ -1035,6 +1035,41 @@ Item {
             compare([a.claim, c.hold], [side, here]);
         }
 
+        // A speaker walking up to a listener talks from beside it, even from
+        // straight below, where the side below would be nearer, so neither's
+        // speech bubble covers the other.
+        function test_a_speaker_walks_up_beside_the_listener() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "working", "planning")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
+            const W = page.world.cols;
+            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.walkable(x, y) && page.claims[y * W + x] === undefined);
+            verify(beside.length > 0, "a side beside C is free");
+            let below = 0;
+            while (below < 3 && page.walkable(c.tx, c.ty + below + 1))
+                below++;
+            verify(below >= 2, "the floor below C is open");
+            standAt(a, c.tx, c.ty + below);
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "go" && a.goal?.kind === "talk", 400, "Lead sets out for C");
+            compare(a.goal.y, c.ty, "Lead heads for a side beside C, not the one below");
+            runUntil(() => {
+                checkFloor();
+                return a.talk?.phase === "say";
+            }, 3000, "the talk starts");
+            compare(a.ty, c.ty, "Lead talks from beside C");
+        }
+
         // A speaker whose side someone else took while the claims were gone
         // walks to the nearest other free side of the listener and talks from
         // there, and nobody stops on one tile with someone else.
