@@ -152,6 +152,7 @@ impl Composer {
         kept::edit_draft(engine, target, |k| {
             k.model_selection = Some(as_object(&selection).clone());
             k.carried = false;
+            k.model_carried = false;
         });
         kept::save(engine);
         self.publish(engine);

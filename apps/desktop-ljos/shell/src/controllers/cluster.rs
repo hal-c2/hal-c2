@@ -357,6 +357,19 @@ impl Cluster {
         self.generation += 1;
         self.set(engine, "busy", json!(true));
         let sent = payload.clone();
+        // The drafts of the machine being removed, as they are now: one
+        // written in, attached to or given an excerpt after it joins again
+        // outlives a late answer, in the same draft or a new one.
+        let doomed: Vec<(String, Held)> = if method == "cluster.remove" {
+            let removed = settings_page::text(&sent, "id");
+            drafts::all(engine)
+                .into_iter()
+                .filter(|d| d.environment_id == removed)
+                .map(|d| (d.id.clone(), held(engine, &d)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.call(engine, method, payload, move |c, engine, result| {
             c.state.insert("busy".into(), json!(false));
             let status = match result {
@@ -369,16 +382,22 @@ impl Cluster {
                 Ok(status) => status,
             };
             // Nothing written for a removed machine is kept: its rows go
-            // with it, its drafts here.
+            // with it, its drafts here. One a window lands on before the rows
+            // go is empty and goes with them (drafts' reconcile).
             if method == "cluster.remove" {
                 let removed = settings_page::text(&sent, "id").to_owned();
                 // A draft that is shown leaves the route, which this
                 // controller follows: removed once it has returned.
-                let gone = removed.clone();
+                let doomed = doomed.clone();
                 Bridge::of(engine).defer(engine, move |engine| {
-                    let drafts = drafts::all(engine).into_iter();
-                    for draft in drafts.filter(|d| d.environment_id == gone) {
-                        drafts::remove(engine, &draft.id);
+                    for (id, then) in &doomed {
+                        // One whose prompt may yet come back waits for it;
+                        // drafts' reconcile takes it once it holds nothing.
+                        let unchanged =
+                            drafts::draft(engine, id).is_some_and(|d| held(engine, &d) == *then);
+                        if unchanged && !drafts::launch_pending(engine, id) {
+                            drafts::remove(engine, id);
+                        }
                     }
                 });
                 for hook in c.removed.clone() {
@@ -425,6 +444,17 @@ impl Cluster {
                 .publish(engine, "cluster", Json::Object(self.state.clone()));
         }
     }
+}
+
+/// What a draft holds: how often its text was written, and the attachments
+/// and excerpts the composer keeps for it.
+type Held = (u64, Vec<String>);
+
+fn held(engine: &Engine, draft: &drafts::Draft) -> Held {
+    (
+        draft.edits,
+        crate::controllers::composer::carried(engine, &draft.id),
+    )
 }
 
 /// `QJsonValue::toObject`: what is not an object is an empty one.

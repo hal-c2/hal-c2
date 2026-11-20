@@ -7,7 +7,10 @@ use std::rc::Rc;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::cluster::Cluster;
+use hal_c2_shell::controllers::composer;
 use hal_c2_shell::controllers::drafts;
+use hal_c2_shell::mc::McError;
+use hal_c2_shell::store;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -151,6 +154,445 @@ fn a_removed_machines_drafts_go_with_it_once_the_mc_agrees() {
     answer(&hub, "env-1", "cluster.remove", Ok(members(&[])));
     assert_eq!(environments(), ["env-1"]);
     assert!(drafts::draft(&hub.engine, &kept).is_some());
+}
+
+const AT: &str = "2026-03-01T00:00:00Z";
+
+/// The shell's rows: this machine (`env-1`) and `box` (MC `b`, environment
+/// `id-b`), each with its projects.
+fn listing() -> Hub {
+    let hub = Hub::clustered();
+    hub.mc.set_ready(&hub.engine, true);
+    let mcs = json!([
+        {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "env-1", "label": "Laptop"}},
+        {"mc": "b", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "id-b", "label": "box"}},
+    ]);
+    let rows = [("a", "p1"), ("b", "p1"), ("b", "p2")].map(|(mc, id)| project(mc, id));
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": mcs, "rows": rows}),
+    );
+    hub.dispatch("cluster.open", json!({}));
+    hub.advance(0);
+    hub
+}
+
+fn project(mc: &str, id: &str) -> serde_json::Value {
+    json!([mc, id, "project", {"id": id, "title": id, "workspaceRoot": format!("/w/{id}"),
+        "scripts": [], "createdAt": AT, "updatedAt": AT}])
+}
+
+/// The MC says `box` went, removed by any client or switched off.
+fn box_goes(hub: &Hub) {
+    let gone = json!({"t": "shell.mc", "mc": "b", "online": false, "removed": true});
+    hub.mc.frame(&hub.engine, "shell", "", gone);
+    hub.advance(0);
+}
+
+/// `box` joins again, with its projects.
+fn box_comes_back(hub: &Hub) {
+    let environment = json!({"t": "shell.environment", "mc": "b",
+        "environment": {"environmentId": "id-b", "label": "box"}});
+    hub.mc.frame(&hub.engine, "shell", "", environment);
+    // Described before its rows come: its projects may only not have come yet.
+    hub.advance(0);
+    // `shell.rows` carries each row as [id, kind, fields], without its MC.
+    let rows = ["p1", "p2"].map(|id| json!(project("b", id).as_array().unwrap()[1..]));
+    let rows = json!({"t": "shell.rows", "mc": "b", "rows": rows});
+    hub.mc.frame(&hub.engine, "shell", "", rows);
+    hub.advance(0);
+    let listed = store::with(&hub.engine, |s| s.project("id-b:p2").is_some());
+    assert!(listed, "box is listed again");
+}
+
+#[test]
+fn a_machine_that_went_without_this_client_removing_it_takes_only_its_empty_drafts() {
+    let hub = listing();
+    let empty = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    let written = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &written, "roll back the deploy");
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &empty).is_none());
+    // It may only be switched off: what the user wrote waits for it.
+    assert_eq!(
+        drafts::draft(&hub.engine, &written).map(|d| d.text),
+        Some("roll back the deploy".to_owned())
+    );
+    box_comes_back(&hub);
+    assert!(drafts::draft(&hub.engine, &written).is_some());
+}
+
+#[test]
+fn a_background_launch_keeps_its_draft_for_the_prompt_while_the_machine_is_gone() {
+    let hub = listing();
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "in the back", "cursor": 11}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    // The draft is empty for the next prompt while the launch is answered.
+    assert_eq!(composer::draft(&hub.engine, &id), "");
+    // Placed where the user picked, and launched there.
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("box went")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+#[test]
+fn the_removal_answer_keeps_a_draft_whose_launch_is_pending() {
+    let hub = listing();
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "in the back", "cursor": 11}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // The launch may yet give its prompt back: the draft waits for it.
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("box went")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+}
+
+/// `text` sent in the background from a new draft of `box`, placed there;
+/// the draft's id.
+fn send_in_background(hub: &Hub, text: &str) -> String {
+    let id = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    assert_eq!(hub.published("composer")["target"], id.as_str());
+    let cursor = text.encode_utf16().count();
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": text, "cursor": cursor}),
+    );
+    hub.dispatch("composer.submit", json!({"intent": "background"}));
+    let pick = json!({"environmentId": "id-b", "projectId": "p1"});
+    hub.mc.answer(&hub.engine, "hal-c2.placeThread", Ok(pick));
+    hub.advance(0);
+    assert!(
+        hub.mc
+            .pending_on("id-b", "orchestration.launchThread")
+            .is_some()
+    );
+    id
+}
+
+#[test]
+fn a_background_launch_answered_after_the_machine_went_takes_its_draft() {
+    let hub = listing();
+    let id = send_in_background(&hub, "in the back");
+    box_goes(&hub);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Ok(json!({})),
+    );
+    hub.advance(0);
+    // Nothing comes back into it: it goes now, not on the next store change.
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+}
+
+/// A draft of `box` whose background send of "in the back" the MC refused
+/// once the draft held "newer": a toast offers the prompt back.
+fn refused_behind_a_newer_prompt(hub: &Hub) -> String {
+    let id = send_in_background(hub, "in the back");
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "newer", "cursor": 5}),
+    );
+    hub.mc.answer_on(
+        &hub.engine,
+        "id-b",
+        "orchestration.launchThread",
+        Err(McError::new("no room")),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "newer");
+    assert!(composer::offers_launch(&hub.engine, &id));
+    id
+}
+
+/// How many offers the composer has noted.
+fn offers(hub: &Hub) -> usize {
+    composer::kept::read(&hub.engine, |d| d.offers.len())
+}
+
+/// The offer's toast id.
+fn offer(hub: &Hub) -> serde_json::Value {
+    let items = hub.published("toasts")["items"].clone();
+    assert_eq!(items.as_array().map(Vec::len), Some(1));
+    assert_eq!(items[0]["actions"][0]["label"], "Restore prompt");
+    items[0]["id"].clone()
+}
+
+#[test]
+fn a_restore_offer_keeps_its_emptied_draft_while_the_machine_is_gone() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    box_goes(&hub);
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "", "cursor": 0}),
+    );
+    drafts::reconcile(&hub.engine);
+    // The offer may yet bring the prompt back into it.
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    let toast = offer(&hub);
+    hub.dispatch(
+        "notification.action",
+        json!({"id": toast, "actionId": "primary"}),
+    );
+    hub.advance(0);
+    assert_eq!(composer::draft(&hub.engine, &id), "in the back");
+    // The chosen Restore took its offer.
+    assert_eq!(offers(&hub), 0);
+}
+
+#[test]
+fn the_removal_answer_takes_a_draft_a_restore_offer_is_shown_for() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // An offer keeps an emptied draft, not one the removal was asked with.
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+    box_goes(&hub);
+    let left = drafts::all(&hub.engine)
+        .into_iter()
+        .filter(|d| d.environment_id == "id-b")
+        .count();
+    assert_eq!(left, 0);
+}
+
+#[test]
+fn a_closed_restore_offer_lets_its_emptied_draft_go() {
+    let hub = listing();
+    let id = refused_behind_a_newer_prompt(&hub);
+    box_goes(&hub);
+    hub.dispatch(
+        "composer.text.set",
+        json!({"target": id, "text": "", "cursor": 0}),
+    );
+    drafts::reconcile(&hub.engine);
+    assert!(drafts::draft(&hub.engine, &id).is_some());
+    let toast = offer(&hub);
+    hub.dispatch("notification.dismiss", json!({"id": toast}));
+    hub.advance(0);
+    assert!(drafts::draft(&hub.engine, &id).is_none());
+}
+
+#[test]
+fn offers_go_with_their_toasts() {
+    let hub = listing();
+    for round in 0..3 {
+        let id = refused_behind_a_newer_prompt(&hub);
+        let toast = offer(&hub);
+        if round == 0 {
+            hub.dispatch(
+                "composer.text.set",
+                json!({"target": id, "text": "", "cursor": 0}),
+            );
+            hub.dispatch(
+                "notification.action",
+                json!({"id": toast, "actionId": "primary"}),
+            );
+        } else {
+            hub.dispatch("notification.dismiss", json!({"id": toast}));
+        }
+        hub.advance(0);
+        assert_eq!(offers(&hub), 0);
+    }
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_written_after_the_machine_came_back() {
+    let hub = listing();
+    let before = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &before, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    let after = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &after, "deploy again");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // The answer takes the drafts the machine had when it was asked to go.
+    assert!(drafts::draft(&hub.engine, &before).is_none());
+    assert!(drafts::draft(&hub.engine, &after).is_some());
+}
+
+#[test]
+fn a_late_answer_keeps_text_rewritten_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy, then tag it");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Written in since the removal was asked: kept.
+    assert_eq!(
+        drafts::draft(&hub.engine, &draft).map(|d| d.text),
+        Some("roll back the deploy, then tag it".to_owned())
+    );
+}
+
+#[test]
+fn a_late_answer_keeps_text_written_back_to_what_it_was() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy, then tag it");
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Written in since, though back to what it was: kept.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_given_a_file_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    assert_eq!(hub.published("composer")["target"], draft.as_str());
+    hub.dispatch(
+        "composer.attach",
+        json!({"files": [{"name": "notes.md", "mimeType": "text/markdown", "base64": "IyBOb3Rlcwo="}]}),
+    );
+    hub.advance(0);
+    assert_eq!(composer::attachments(&hub.engine, &draft).len(), 1);
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Its text as it was, but a file attached since: kept, file and all.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+    assert_eq!(composer::attachments(&hub.engine, &draft).len(), 1);
+}
+
+#[test]
+fn a_late_answer_keeps_a_draft_given_an_excerpt_after_the_machine_came_back() {
+    let hub = listing();
+    let draft = drafts::start(&hub.engine, "id-b", "p1").unwrap();
+    drafts::set_text(&hub.engine, &draft, "roll back the deploy");
+    hub.dispatch("cluster.remove", json!({"id": "id-b"}));
+    box_goes(&hub);
+    box_comes_back(&hub);
+    assert_eq!(drafts::start(&hub.engine, "id-b", "p1").unwrap(), draft);
+    assert_eq!(hub.published("composer")["target"], draft.as_str());
+    hub.dispatch(
+        "composer.terminalContext.add",
+        json!({"text": "deploy failed: exit 1", "terminalId": "term-1",
+               "terminalLabel": "Terminal 1", "lineStart": 3, "lineEnd": 3}),
+    );
+    assert_eq!(composer::terminal_contexts(&hub.engine, &draft).len(), 1);
+    let index = hub
+        .mc
+        .pending("cluster.remove")
+        .expect("the removal is asked");
+    hub.mc.reply(&hub.engine, index, Ok(members(&[])));
+    hub.advance(0);
+    // Its text as it was, but an excerpt added since: kept, excerpt and all.
+    assert!(drafts::draft(&hub.engine, &draft).is_some());
+    assert_eq!(composer::terminal_contexts(&hub.engine, &draft).len(), 1);
+}
+
+#[test]
+fn a_member_named_before_its_rows_keeps_its_drafts() {
+    let hub = listing();
+    let written = drafts::start(&hub.engine, "id-b", "p2").unwrap();
+    drafts::set_text(&hub.engine, &written, "roll back the deploy");
+    // A snapshot sent before a member's rows have come names it without a
+    // version and with no rows: its projects may only not have come yet.
+    let mcs = json!([
+        {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "env-1", "label": "Laptop"}},
+        {"mc": "b", "online": true, "epoch": null, "rev": 0, "reset": true,
+            "environment": {"environmentId": "id-b", "label": "box"}},
+    ]);
+    let snapshot = json!({"t": "shell", "mcs": mcs, "rows": [project("a", "p1")]});
+    hub.mc.frame(&hub.engine, "shell", "", snapshot);
+    hub.advance(0);
+    assert!(store::with(&hub.engine, |s| s.serves_environment("id-b")));
+    assert_eq!(
+        drafts::draft(&hub.engine, &written).map(|d| d.text),
+        Some("roll back the deploy".to_owned())
+    );
 }
 
 /// This machine runs 2.0 and is clustered with `studio`, connected on 1.3.
