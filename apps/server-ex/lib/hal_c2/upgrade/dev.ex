@@ -309,7 +309,7 @@ defmodule HalC2.Upgrade.Dev do
 
   # The release handler takes each application's new specification (its version,
   # modules and default environment) from the boot script, so the new release gets
-  # one of its own. The node keeps booting the way it started: `keep_boot/0`.
+  # one of its own. The node keeps booting the way it started: `keep_boot/1`.
   defp write_boot(rel_dir, vsn, libs) do
     dir = Path.join(rel_dir, vsn)
     path = for {_app, _vsn, lib_dir} <- libs, do: String.to_charlist(Path.join(lib_dir, "ebin"))
