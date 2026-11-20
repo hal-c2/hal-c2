@@ -571,6 +571,65 @@ fn a_link_the_mc_turns_down_says_so_and_changes_nothing() {
     assert!(rig.mc.opened.borrow().is_empty());
 }
 
+/// What happens to a fresh link's exchange, in any order.
+#[derive(Clone, Debug)]
+enum PairOp {
+    /// The user enters a link.
+    Pair,
+    /// The environment it was for is forgotten (the phone's Pairing).
+    Cancel,
+    /// Every exchange in flight answers.
+    Land,
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// An exchange begun before a cancel opens nothing when it lands, and
+    /// one begun after it opens its session; a link is held off only
+    /// while one is being spent.
+    #[test]
+    fn a_cancelled_exchange_opens_nothing(
+        ops in proptest::collection::vec(
+            prop_oneof![Just(PairOp::Pair), Just(PairOp::Cancel), Just(PairOp::Land)],
+            1..20,
+        )
+    ) {
+        static CASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let rig = Rig::new(&format!("pair-model-{}", CASE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        rig.with_health(|c, _| c.set_exchange(Arc::new(|_, _| paired("https://studio.example", "session"))));
+        // The model: whether a link is being spent, and whether the
+        // exchange that would answer it is still the current one.
+        let (mut pairing, mut current, mut opened) = (false, false, 0usize);
+        for op in ops {
+            match op {
+                PairOp::Pair => {
+                    rig.dispatch("connection.pair", json!({"pairingUrl": "https://studio.example/pair#token=T0KEN"}));
+                    if !pairing {
+                        pairing = true;
+                        current = true;
+                    }
+                }
+                PairOp::Cancel => {
+                    rig.with_health(|c, engine| c.cancel_pairing(engine));
+                    pairing = false;
+                    current = false;
+                }
+                PairOp::Land => {
+                    Platform::of(&rig.engine).finish(&rig.engine);
+                    if current {
+                        opened += 1;
+                    }
+                    pairing = false;
+                    current = false;
+                }
+            }
+            prop_assert_eq!(&rig.published()["pairing"], &json!(pairing));
+            prop_assert_eq!(rig.mc.opened.borrow().len(), opened);
+        }
+    }
+}
+
 // -- The model ------------------------------------------------------------------
 
 /// What the client and the MC do to the connection, in any order.

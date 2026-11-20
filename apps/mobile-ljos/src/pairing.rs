@@ -49,6 +49,7 @@ use std::sync::Arc;
 use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing as Exchanged};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller::{self, Controller, Init, Me};
+use hal_c2_shell::controllers::connection_health::ConnectionHealth;
 use hal_c2_shell::controllers::menus::Menus;
 use hal_c2_shell::controllers::saved_environments::SavedEnvironments;
 use hal_c2_shell::controllers::toasts::Toasts;
@@ -286,15 +287,15 @@ impl Core {
         true
     }
 
-    /// The shell's own environment is forgotten, its session already off
-    /// the device. An exchange in flight has nobody to answer.
     /// A session the shell connected with, its own pairing's or one
     /// ConnectionHealth bought pairing again (mobile-qt's
     /// Pairing::remember): the device's own from now on, to be saved;
     /// none when it is the one kept already. A new session at the same
     /// address is the same environment until it says otherwise.
     /// `forgets` is [`Core::forgets`] as the session opened: one
-    /// forgotten since is not saved again.
+    /// forgotten since is not saved again. One ConnectionHealth was still
+    /// buying when the forget landed never opens (`Pairing::forget`
+    /// cancels it), so it never reaches here.
     pub fn remember(&mut self, session: &Environment, forgets: u64) -> Option<Environment> {
         if forgets != self.forgets {
             return None;
@@ -317,6 +318,8 @@ impl Core {
         Some(next)
     }
 
+    /// The shell's own environment is forgotten, its session already off
+    /// the device. An exchange in flight has nobody to answer.
     pub fn forgotten(&mut self) {
         self.attempt += 1;
         self.forgets += 1;
@@ -785,6 +788,9 @@ impl Pairing {
         let had = self.core.paired.is_some();
         self.core.forgotten();
         self.forgets.set(self.core.forgets);
+        // A fresh link ConnectionHealth is spending for it opens nothing:
+        // the session it bought would be remembered as this device's.
+        controller::with::<ConnectionHealth, _>(engine, |c, engine| c.cancel_pairing(engine));
         if had && let Some(mc) = controller::mc(engine) {
             mc.close();
         }

@@ -294,6 +294,9 @@ pub struct ConnectionHealth {
     /// Whether the client's phase was Ready when last seen.
     ready: bool,
     pairing: bool,
+    /// The exchange in flight answers only while this is what it began
+    /// with; [`ConnectionHealth::cancel_pairing`] moves it on.
+    pair_attempt: u64,
     pairing_error: String,
     /// Whether a reconnect is held back, and the timer that runs while it is.
     grace: Cell<Grace>,
@@ -347,6 +350,7 @@ impl Controller for ConnectionHealth {
             snapshots_at_ready: 0,
             ready: false,
             pairing: false,
+            pair_attempt: 0,
             pairing_error: String::new(),
             grace: Cell::new(Grace::Shown),
             grace_ms: Cell::new(GRACE_MS),
@@ -517,6 +521,8 @@ impl ConnectionHealth {
             return;
         };
         self.pairing = true;
+        self.pair_attempt += 1;
+        let attempt = self.pair_attempt;
         self.pairing_error.clear();
         self.update(engine);
         let exchange = self.exchange.clone();
@@ -526,7 +532,7 @@ impl ConnectionHealth {
             engine,
             move || exchange(&link, &client),
             move |engine, result| {
-                me.run(engine, |c, engine| c.paired(engine, result.ok()));
+                me.run(engine, |c, engine| c.paired(engine, attempt, result.ok()));
             },
         );
         if spawned.is_err() {
@@ -536,7 +542,21 @@ impl ConnectionHealth {
         }
     }
 
-    fn paired(&mut self, engine: &Engine, result: Option<Pairing>) {
+    /// The environment the link was spent for is gone (the phone forgot
+    /// it): the exchange in flight, if any, opens nothing when it lands,
+    /// and the link can be entered again.
+    pub fn cancel_pairing(&mut self, engine: &Engine) {
+        self.pair_attempt += 1;
+        if self.pairing {
+            self.pairing = false;
+            self.update(engine);
+        }
+    }
+
+    fn paired(&mut self, engine: &Engine, attempt: u64, result: Option<Pairing>) {
+        if attempt != self.pair_attempt {
+            return;
+        }
         self.pairing = false;
         let text = |p: &Pairing, key: &str| {
             p.descriptor
