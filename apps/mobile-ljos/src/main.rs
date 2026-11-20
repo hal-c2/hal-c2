@@ -36,7 +36,7 @@ use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::streams::Pump;
 use hal_c2_shell::{Launch, store};
-use ljos::prelude::{Engine, LogLevel};
+use ljos::prelude::{Engine, LogLevel, Platform};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
 
@@ -328,6 +328,13 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     picture.install(&engine);
     report_warnings(&engine);
     let (woken, wakes) = mpsc::channel();
+    // The pairing exchange answers through the platform's inbox (an
+    // `ljos::task`), which a window drains each frame; here the wait
+    // below drains it, woken as the side streams wake it.
+    let answered = woken.clone();
+    Platform::of(&engine).set_waker(move || {
+        let _ = answered.send(());
+    });
     let mut pump = Pump::new(move || {
         let _ = woken.send(());
     });
@@ -339,6 +346,9 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     let root = hal_c2_shell::runtime::open(&engine, false)?;
     // A paired phone waits for its MC's first snapshot (or a `--url`
     // pairing to land); the pairing screen is all an unpaired one shows.
+    // The shell starts with no MC of its own (the phone opens the one it
+    // paired with), so it is active at once: the store's first
+    // synchronization is the snapshot to wait for, not activation.
     let paired = |engine: &Engine| {
         Bridge::of(engine)
             .published(engine, "pairing")
@@ -348,6 +358,7 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     };
     let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
     loop {
+        Platform::of(&engine).deliver(&engine);
         pump.pump(&engine);
         let pairing_busy = Bridge::of(&engine)
             .published(&engine, "pairing")
@@ -356,13 +367,19 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
             .unwrap_or(false);
         let waiting = pairing_busy
             || options.url.is_some() && !paired(&engine)
-            || paired(&engine) && hal_c2_shell::controllers::threads::loading(&engine);
+            || paired(&engine)
+                && (!store::with(&engine, |s| s.synchronized())
+                    || hal_c2_shell::controllers::threads::loading(&engine));
         if !waiting {
             break;
         }
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() || wakes.recv_timeout(left) == Err(mpsc::RecvTimeoutError::Disconnected) {
-            eprintln!("hal-c2-mobile-ljos: no snapshot yet, so what the shell shows now");
+            let status = connection.client().status();
+            eprintln!(
+                "hal-c2-mobile-ljos: no snapshot yet ({:?} {}), so what the shell shows now",
+                status.phase, status.failure
+            );
             hal_c2_shell::controllers::threads::drain(&engine);
             break;
         }
