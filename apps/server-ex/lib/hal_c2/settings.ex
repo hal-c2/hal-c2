@@ -857,14 +857,17 @@ defmodule HalC2.Settings do
   # `shared` is what the records are before this document's shared keys are compared
   # with them: a member's newer records, saved together with the keys they change.
   defp save(state, settings, write?, shared \\ nil) do
-    settings = HalC2.Plugins.Host.seal_records(settings, state.settings, false)
+    # A record trimmed here is written even when adopting a hand edit: a later save
+    # starts from the file (`disk/1`), and a stale record would hand the id back.
+    sealed = HalC2.Plugins.Host.seal_records(settings, state.settings, false)
+    {settings, records_changed} = {sealed, sealed != settings}
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
 
     {settings, password_changed} =
       HalC2.ProviderSecrets.seal_server_passwords(settings, state.settings)
 
-    if write? or keys_changed or secrets_changed or password_changed,
+    if write? or records_changed or keys_changed or secrets_changed or password_changed,
       do: write!(state.path, settings)
 
     state =

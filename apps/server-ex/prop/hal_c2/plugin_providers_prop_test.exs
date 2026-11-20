@@ -7,10 +7,11 @@ defmodule HalC2.PluginProvidersPropTest do
   each time, so an update that drops it is revoked and one that adds it waits for
   consent), remove it from disk, turn it on accepting what it asks for, turn it off, put
   and remove instances from its code (as a plugin that has not stopped yet would, too),
-  list them, and add or delete one as the user does in Settings → Providers, the user's
-  under the very ids the plugins use too (`plugin_alpha_claude`, `plugin_x_y`). The user
-  also puts one of their own in place of a plugin's as a client does, from the document
-  it read, in two saves before the host hears of either.
+  list them, and add or delete one as the user does in Settings → Providers or by hand
+  in settings.json, the user's under the very ids the plugins use too
+  (`plugin_alpha_claude`, `plugin_x_y`). The user also puts one of their own in place
+  of a plugin's: as a client does, from the document it read, in two saves before the
+  host hears of either; or by hand, deleting it from settings.json and then adding it.
 
   After every step, once the host has heard the settings change:
 
@@ -123,27 +124,27 @@ defmodule HalC2.PluginProvidersPropTest do
         {5, {:call, __MODULE__, :put, [id, name, elements(@labels)]}},
         {2, {:call, __MODULE__, :remove, [id, name]}},
         {2, {:call, __MODULE__, :list, [id]}},
-        {2, {:call, __MODULE__, :user_add, [elements(@user_ids)]}}
+        {2, {:call, __MODULE__, :user_add, [elements(@user_ids), via()]}}
       ] ++
         if(held(state) != [],
-          do: [{6, {:call, __MODULE__, :user_delete, [elements(held(state))]}}],
+          do: [{6, {:call, __MODULE__, :user_delete, [elements(held(state)), via()]}}],
           else: []
         ) ++
         if(theirs != [],
-          do: [{20, {:call, __MODULE__, :user_replace, [elements(theirs)]}}],
+          do: [{20, {:call, __MODULE__, :user_replace, [elements(theirs), via()]}}],
           else: []
         )
     )
   end
 
   # The user adds an instance under an id nothing holds.
-  def precondition(state, {:call, _, :user_add, [instance_id]}),
+  def precondition(state, {:call, _, :user_add, [instance_id, _via]}),
     do: instance_id not in held(state)
 
-  def precondition(state, {:call, _, :user_delete, [instance_id]}),
+  def precondition(state, {:call, _, :user_delete, [instance_id, _via]}),
     do: instance_id in held(state)
 
-  def precondition(state, {:call, _, :user_replace, [instance_id]}),
+  def precondition(state, {:call, _, :user_replace, [instance_id, _via]}),
     do: Enum.any?(Map.keys(state.instances), &(instance_id(&1) == instance_id))
 
   def precondition(_state, _call), do: true
@@ -184,10 +185,10 @@ defmodule HalC2.PluginProvidersPropTest do
       else: state
   end
 
-  def next_state(state, _result, {:call, _, :user_add, [instance_id]}),
+  def next_state(state, _result, {:call, _, :user_add, [instance_id, _via]}),
     do: put_in(state.users[instance_id], @users)
 
-  def next_state(state, _result, {:call, _, :user_delete, [instance_id]}) do
+  def next_state(state, _result, {:call, _, :user_delete, [instance_id, _via]}) do
     %{
       state
       | instances:
@@ -196,10 +197,10 @@ defmodule HalC2.PluginProvidersPropTest do
     }
   end
 
-  def next_state(state, result, {:call, _, :user_replace, [instance_id]}) do
+  def next_state(state, result, {:call, _, :user_replace, [instance_id, _via]}) do
     state
-    |> next_state(result, {:call, __MODULE__, :user_delete, [instance_id]})
-    |> next_state(result, {:call, __MODULE__, :user_add, [instance_id]})
+    |> next_state(result, {:call, __MODULE__, :user_delete, [instance_id, :settings]})
+    |> next_state(result, {:call, __MODULE__, :user_add, [instance_id, :settings]})
   end
 
   def next_state(state, _result, {:call, _, :list, _}), do: state
@@ -300,25 +301,39 @@ defmodule HalC2.PluginProvidersPropTest do
 
   def list(id), do: Host.provider_instances(id, "list", %{})
 
-  def user_add(instance_id) do
-    HalC2.Settings.update(
-      &put_in(&1, [Access.key("providerInstances", %{}), instance_id], @users)
-    )
+  def user_add(instance_id, via) do
+    edit(via, &put_in(&1, [Access.key("providerInstances", %{}), instance_id], @users))
+  end
 
+  def user_delete(instance_id, via) do
+    edit(via, fn settings ->
+      Map.update!(settings, "providerInstances", &Map.delete(&1, instance_id))
+    end)
+  end
+
+  # In Settings, or by hand in settings.json, which the MC adopts at its next check.
+  defp edit(:settings, fun) do
+    HalC2.Settings.update(fun)
     sync()
   end
 
-  def user_delete(instance_id) do
-    HalC2.Settings.update(fn settings ->
-      Map.update!(settings, "providerInstances", &Map.delete(&1, instance_id))
-    end)
-
+  defp edit(:file, fun) do
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    held = if File.exists?(path), do: JSON.decode!(File.read!(path)), else: %{}
+    File.write!(path, JSON.encode!(fun.(held)))
+    send(HalC2.Settings, :check)
     sync()
   end
 
   # As a client saves: the document it read, without the instance, then with one of the
-  # user's in its place, the host's record still as read.
-  def user_replace(instance_id) do
+  # user's in its place, the host's record still as read. By hand: deleted from
+  # settings.json, then added back as the user's, each adopted before the next.
+  def user_replace(instance_id, :file) do
+    user_delete(instance_id, :file)
+    user_add(instance_id, :file)
+  end
+
+  def user_replace(instance_id, :settings) do
     {read, version} = HalC2.Settings.get()
 
     {:ok, version} =
@@ -374,6 +389,7 @@ defmodule HalC2.PluginProvidersPropTest do
 
   defp users?(state, id, name), do: Map.has_key?(state.users, instance_id({id, name}))
   defp update_plugin(state, id, fun), do: update_in(state.plugins[id], fun)
+  defp via, do: elements([:settings, :file])
   defp instance_id({id, name}), do: "plugin_#{id}_#{name}"
   defp instance(label), do: %{"driver" => "claudeAgent", "displayName" => label}
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
