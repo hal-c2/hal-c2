@@ -327,6 +327,53 @@ step("a destination folder named {string} is suggested", (ctx: World, name: stri
   expect(flow(ctx).query).toBe(`~/${name}`);
 });
 
+// adding-projects.feature: a pasted clone address proposes the folder git would choose.
+async function pasteCloneUrl(ctx: ProjectsWorld, url: string): Promise<void> {
+  await openAddProject(ctx);
+  await chooseSource(ctx, "Git URL");
+  await fillField(ctx, url);
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+}
+
+step(/^the user pastes "?(\S+?)"? as the Git URL to clone$/, pasteCloneUrl);
+
+step("the repository is cloned from {string}", async (ctx: ProjectsWorld, url: string) => {
+  expect(flow(ctx).step).toBe("destination");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  expect(recorded(ctx, "cloneRepository").at(-1)?.[0]).toBe(url);
+});
+
+step(
+  "a pasted address that is already a URL or a local path is used as typed",
+  async (ctx: ProjectsWorld) => {
+    for (const typed of ["https://gitlab.com/group/project.git", "/home/sam/shop"]) {
+      await pasteCloneUrl(ctx, typed);
+      expect(flow(ctx).step).toBe("destination");
+      await pressKey(ctx, "Enter");
+      await settle(ctx);
+      expect(recorded(ctx, "cloneRepository").at(-1)?.[0]).toBe(typed);
+    }
+  },
+);
+
+step("the proposed folder is named {string}", async (ctx: World, name: string) => {
+  expect(flow(ctx).step).toBe("destination");
+  expect(flow(ctx).query).toBe(`~/${name}`);
+  expect(await settle(ctx)).toContain(`~/${name}`);
+});
+
+step("no folder name is proposed", (ctx: World) => {
+  expect(flow(ctx).step).toBe("destination");
+  expect(flow(ctx).query).toBe("~/");
+});
+
+step("the destination is the folder the user browsed to", async (ctx: World) => {
+  expect(flow(ctx).query).toBe("~/");
+  expect(await settle(ctx)).toContain("Clone destination");
+});
+
 step("the user adds a project from a repository", openAddProject);
 step("GitLab is marked as needing setup", async (ctx: World) => {
   const row = flow(ctx).rows.find((candidate) => candidate.title === "GitLab repository");
