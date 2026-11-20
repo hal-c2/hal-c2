@@ -232,6 +232,36 @@ private slots:
     }
   }
 
+  // A device that cannot save its settings is told so once a run, not at
+  // every change of the store, and the migrated-threads note waits.
+  void aDeviceThatCannotKeepTheMigrationNoteIsToldOnce() {
+    QTemporaryDir home;
+    // The preferences file would sit under a regular file: not writable.
+    QFile blocker(home.filePath(QStringLiteral("blocker")));
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    blocker.close();
+    Shell shell(home.path(), {});
+    shell.native->controller<SettingsController>()->setDevicePath(blocker.fileName() + QStringLiteral("/preferences.json"));
+    QTRY_VERIFY(shell.native->client()->isReady());
+
+    const auto count = [&shell](const QString& title) {
+      qsizetype n = 0;
+      for (const QVariant& item : shell.bridge.state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        if (item.toMap().value(QStringLiteral("title")).toString() == title) ++n;
+      }
+      return n;
+    };
+    for (const QString& id : {QStringLiteral("m1"), QStringLiteral("m2"), QStringLiteral("m3")}) {
+      QJsonObject row = threadRow(id);
+      row.insert(QStringLiteral("historyOrigin"), QStringLiteral("v1_import"));
+      shell.send(id, row);
+      // The sidebar has the row, so the store's change reached it.
+      QTRY_VERIFY(QJsonDocument::fromVariant(shell.sidebar()).toJson().contains(shell.key(id).toUtf8()));
+    }
+    QCOMPARE(count(QStringLiteral("Setting not saved")), 1);
+    QCOMPARE(count(QStringLiteral("Your threads were brought over")), 0);
+  }
+
   // Back does not open a thread deleted since the window left it.
   void backSkipsADeletedThread() {
     QTemporaryDir home;
