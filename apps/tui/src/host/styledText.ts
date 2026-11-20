@@ -178,12 +178,17 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
     }
     return tokenInPath;
   };
+  // Inside a link label (`base.link` is set) the author's URL is the only
+  // link: a label that is itself an address or a link stays plain text.
+  const inLabel = base.link !== undefined;
   for (const match of text.matchAll(INLINE)) {
     const index = match.index ?? 0;
     const span = match.groups ?? {};
     push(text.slice(last, index), {});
     last = index + match[0].length;
-    if (span.esc !== undefined) {
+    if (inLabel && (span.url !== undefined || span.auto !== undefined || span.www !== undefined)) {
+      push(match[0], {});
+    } else if (span.esc !== undefined) {
       // A backslash escapes punctuation (`\*` is a star), except inside a
       // Windows path, where it is the path's own separator and stays.
       if (ESCAPABLE.includes(span.esc) && !inWindowsPath(index)) pushRaw(span.esc, {});

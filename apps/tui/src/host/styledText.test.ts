@@ -307,6 +307,23 @@ describe("inlineMarkdown", () => {
     ]);
   });
 
+  it("opens only the author's URL over a label that is itself an address", () => {
+    const linkOf = (text: string) =>
+      inlineMarkdown(text, THEME)
+        .filter((part) => part.link)
+        .map((part) => [part.text, part.link!.url]);
+    expect(linkOf("[www.example.com/docs](https://docs.example.com/x)")).toEqual([
+      ["www.example.com/docs", "https://docs.example.com/x"],
+    ]);
+    const split = inlineMarkdown("[see <https://a.dev>](https://b.dev)", THEME);
+    expect(split.map((part) => part.text).join("")).toBe("see <https://a.dev>");
+    expect(split.every((part) => part.link?.url === "https://b.dev")).toBe(true);
+    const styled = inlineMarkdown(String.raw`[**a\_b** &amp; _c_](https://b.dev)`, THEME);
+    expect(styled.map((part) => part.text).join("")).toBe("a_b & c");
+    expect(styled.every((part) => part.link?.url === "https://b.dev")).toBe(true);
+    expect(styled.some((part) => ((part.attributes ?? 0) & TextAttributes.BOLD) !== 0)).toBe(true);
+  });
+
   it("reads escapes and entities inside styled spans and link labels", () => {
     const plain = (text: string) =>
       spans(text)
