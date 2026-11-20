@@ -2391,6 +2391,7 @@ Item {
             // its own (see restless()).
             restless: between(page.rng, 0.15, 0.5),
             claim: -1,
+            hold: -1,
             until: 0,
             stay: 0,
             cup: false,
@@ -2508,6 +2509,8 @@ Item {
         for (const other of Object.values(page.actors)) {
             if (other.talk && other.talk.to === id)
                 endTalk(other);
+            if (other.heldBy === id)
+                letGo(other);
         }
     }
 
@@ -2525,18 +2528,30 @@ Item {
         return !claim || claim === actor.id;
     }
 
-    // Whether nobody else has claimed the tile a person stands on.
-    function mayStopHere(actor) {
-        const claim = page.claims[actor.ty * page.world.cols + actor.tx];
-        return !claim || claim === actor.id;
-    }
-
     // Claims the tile a person stops at, letting go of the one it had.
     function claim(actor, spot) {
         release(actor);
         const i = spot.y * page.world.cols + spot.x;
         page.claims[i] = actor.id;
         actor.claim = i;
+        if (actor.hold === i)
+            actor.hold = -1;
+    }
+
+    // Someone listening keeps the tile it stopped on for the talk, besides the
+    // one it is headed for, so nobody else is sent there meanwhile.
+    function holdHere(actor) {
+        const i = actor.ty * page.world.cols + actor.tx;
+        if (page.claims[i] === undefined) {
+            page.claims[i] = actor.id;
+            actor.hold = i;
+        }
+    }
+
+    function letGo(actor) {
+        if (actor.hold >= 0 && actor.hold !== actor.claim && page.claims[actor.hold] === actor.id)
+            delete page.claims[actor.hold];
+        actor.hold = -1;
     }
 
     function seatGoal(actor, pose) {
@@ -2889,15 +2904,16 @@ Item {
             until: 0,
             met: false
         };
-        release(actor);
-        actor.goal = null;
+        // It keeps the spot it had until it claims a side to talk from.
         page.walking = true;
     }
 
     function endTalk(actor) {
         const other = actor.talk ? page.actors[actor.talk.to] : null;
-        if (other)
+        if (other) {
             other.face = -1;
+            letGo(other);
+        }
         actor.talk = null;
         actor.bubble = "";
         actor.plan = "";
@@ -2929,7 +2945,11 @@ Item {
             // The talk starts when both stand still side by side, each on a tile
             // nobody else has: the speaker on the side it claimed.
             const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
-            if (near && atSide && other.next < 0 && mayStopHere(other)) {
+            if (near && atSide && other.next < 0 && free({
+                x: other.tx,
+                y: other.ty
+            }, other)) {
+                holdHere(other);
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2988,7 +3008,10 @@ Item {
     // someone's.
     function held(actor) {
         const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
-        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && mayStopHere(actor);
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && free({
+            x: actor.tx,
+            y: actor.ty
+        }, actor);
     }
 
     function dirTowards(a, b) {
