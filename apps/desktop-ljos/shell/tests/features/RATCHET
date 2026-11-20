@@ -1328,6 +1328,7 @@ navigation/palette-add-project.feature: Relative paths need a current project
 navigation/palette-add-project.feature: The folder browser names what Enter does
 navigation/palette-add-project.feature: The user chooses which environment receives the project
 navigation/palette-add-project.feature: mod+Enter adds the highlighted folder
+navigation/qt-scenarios.feature: The header's terminal toggle opens and closes the terminal drawer
 navigation/qt-shell-backlog.feature: A device tab streams a device screen
 navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
 navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
@@ -3494,6 +3495,11 @@ threads/pinning-and-order.feature: Unpinning asks first when the user wants conf
 threads/pull-request-links.feature: An environment that cannot find pull requests says it needs an update
 threads/pull-request-links.feature: Choosing a different pull request from a pull request link
 threads/pull-request-links.feature: Unlinking returns the thread to its branch pull request
+threads/qt-scenarios.feature: A new thread starts in the project in scope
+threads/qt-scenarios.feature: A snoozed thread offers to wake instead of settle
+threads/qt-scenarios.feature: Arrow keys and Enter open another thread
+threads/qt-scenarios.feature: Settling a thread from the list
+threads/qt-scenarios.feature: Shift+F10 opens the focused thread's menu beside it
 threads/search.feature: An offline environment is left out of the search
 threads/search.feature: Leaving a search
 threads/search.feature: Moving through search results with the keyboard
@@ -3731,6 +3737,7 @@ timeline/markdown.feature: The user copies a code block
 timeline/markdown.feature: The user copies a table [CSV]
 timeline/markdown.feature: The user copies a table [Markdown]
 timeline/notifications.feature: A newer alert for a thread replaces its older one
+timeline/notifications.feature: A notification's action runs it
 timeline/notifications.feature: A system notification is not shown without permission
 timeline/notifications.feature: A thread that changes state raises an alert [asks for approval, Approval needed]
 timeline/notifications.feature: A thread that changes state raises an alert [asks the user a question, Input needed]
@@ -3740,6 +3747,7 @@ timeline/notifications.feature: A thread that changes state raises an alert [sto
 timeline/notifications.feature: Clicking a system notification opens its own thread
 timeline/notifications.feature: Clicking a system notification opens its thread in the window last used
 timeline/notifications.feature: Coming back to the window clears its system notifications
+timeline/notifications.feature: Dismissing the last notification hides the notifications
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications only, shown, not played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications with sound, shown, played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Off, not shown, not played]

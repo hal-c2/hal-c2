@@ -181,13 +181,13 @@ Feature: Alerts when a thread needs the user
       | where                |
       | a linked environment |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A notification's action runs it
     Given the notification "Update ready" offers "Restart"
     When the user chooses "Restart"
     Then the "Restart" action of "Update ready" runs
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Dismissing the last notification hides the notifications
     Given the only notification is "Copied"
     When the user dismisses "Copied"
