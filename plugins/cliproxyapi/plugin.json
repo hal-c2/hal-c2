@@ -1,0 +1,61 @@
+{
+  "id": "cliproxyapi",
+  "name": "CLIProxyAPI",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "Runs CLIProxyAPI on this machine and routes Claude and Codex through it, so your agents use the accounts you sign in to there: several Claude or Codex subscriptions taking turns, or API keys of your own. Adds \"Claude via CLIProxyAPI\" and \"Codex via CLIProxyAPI\" to Settings → Providers and keeps them pointed at the proxy. Its page signs accounts in, shows what each account and model used, the proxy's log, and the upstream API keys.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/cliproxyapi",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "providers:configure",
+      "reason": "To add \"Claude via CLIProxyAPI\" and \"Codex via CLIProxyAPI\" to Settings → Providers and keep their address and key in step with the proxy. Rename, switch off or delete them like your own; one you delete stays deleted until you add it back from the plugin's page."
+    }
+  ],
+  "settings": [
+    {
+      "key": "mode",
+      "label": "Proxy",
+      "type": "choice",
+      "options": [
+        { "value": "run", "label": "Run CLIProxyAPI on this machine" },
+        { "value": "connect", "label": "Connect to a CLIProxyAPI already running" }
+      ],
+      "default": "run",
+      "description": "Run starts the proxy with the MC and stops it with the plugin. Connect uses one you run yourself, at the address and with the management key below."
+    },
+    {
+      "key": "binaryPath",
+      "label": "cli-proxy-api binary",
+      "type": "text",
+      "default": "",
+      "description": "Left empty, the plugin uses cli-proxy-api from PATH, or else downloads CLIProxyAPI 8.0.79 for this machine from its GitHub release, checked against the release's checksums."
+    },
+    {
+      "key": "port",
+      "label": "Port",
+      "type": "number",
+      "default": 8317,
+      "description": "The port the proxy listens on, on 127.0.0.1 only."
+    },
+    {
+      "key": "url",
+      "label": "Address to connect to",
+      "type": "text",
+      "default": "",
+      "description": "With Connect: the proxy's address as this machine reaches it, such as http://127.0.0.1:8317."
+    },
+    {
+      "key": "managementKey",
+      "label": "Management key",
+      "type": "secret",
+      "default": "",
+      "description": "With Connect: the proxy's management key (remote-management.secret-key). Run makes its own."
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "cliproxyapi", "title": "CLIProxyAPI", "qml": "ui/CliProxyApiPage.qml" }]
+  }
+}

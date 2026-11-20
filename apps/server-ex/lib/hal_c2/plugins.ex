@@ -808,7 +808,7 @@ defmodule HalC2.Plugins do
         pid = watcher(key),
         do: :ets.insert(@watchers, {key, HalC2.Watchers.monitor_entry(entry, pid)})
 
-    state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}}
+    state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}, release_retry: nil}
 
     {:ok, state, {:continue, :scan}}
   end
@@ -1139,6 +1139,9 @@ defmodule HalC2.Plugins do
     end
   end
 
+  def handle_info(:release_instances, state),
+    do: {:noreply, release_instances(%{state | release_retry: nil})}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # A host updated in place by a release upgrade from before crashes were charged to the
@@ -1161,6 +1164,8 @@ defmodule HalC2.Plugins do
         entry -> entry
       end)
 
+    # One from before instances were released has no retry of a refused release.
+    state = Map.put_new(state, :release_retry, nil)
     {:ok, sync(%{state | plugins: plugins, refs: refs})}
   end
 
@@ -1603,6 +1608,60 @@ defmodule HalC2.Plugins do
       end
     end)
     |> sync()
+    |> release_instances()
+  end
+
+  # A plugin's provider instances (`HalC2.Plugins.Host.provider_instances/3`) last only
+  # while it is installed, on and granted `providers:configure`: once it is turned off,
+  # removed or updated to stop asking, the ones its record names leave the settings
+  # document with the record, noted as released for the plugin to add again when it is
+  # back on. (The save that deletes one of them takes its id out of the record itself:
+  # `HalC2.Plugins.Host.seal_records/3`.) Every settings change comes back here, so one
+  # an instance's own save raced past is taken out by the next; a release the settings
+  # could not save (a file that is not JSON, a failed write) is tried again.
+  defp release_instances(state) do
+    keep =
+      for {id, plugin} <- state.plugins,
+          enabled?(plugin),
+          "providers:configure" in granted(id),
+          into: MapSet.new(),
+          do: id
+
+    release = fn settings ->
+      Enum.reduce(settings["plugins"] || %{}, settings, fn {id, _config}, settings ->
+        case HalC2.Plugins.Host.added_instances(settings, id) do
+          [] ->
+            settings
+
+          ids ->
+            if MapSet.member?(keep, id),
+              do: settings,
+              else:
+                settings
+                |> Map.update("providerInstances", %{}, &Map.drop(&1, ids))
+                |> put_in(["plugins", id, "providerInstances"], [])
+                |> put_in(
+                  ["plugins", id, "releasedInstances"],
+                  Enum.uniq(HalC2.Plugins.Host.released_instances(settings, id) ++ ids)
+                )
+        end
+      end)
+    end
+
+    settings = HalC2.Settings.settings()
+
+    released? =
+      release.(settings) == settings or
+        (not HalC2.Settings.unreadable?() and match?({:ok, _}, HalC2.Settings.update(release)))
+
+    cond do
+      released? or state.release_retry != nil ->
+        state
+
+      true ->
+        retry_ms = Application.get_env(:hal_c2, :plugin_release_retry_ms, 5_000)
+        %{state | release_retry: Process.send_after(self(), :release_instances, retry_ms)}
+    end
   end
 
   # The running provider adapters, by the driver they serve, for `provider/1`, and the
