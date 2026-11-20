@@ -562,6 +562,14 @@ Feature: Office
       And the reviewers in the corner keep their desks
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer listening at a floor desk it gives up hears the talk out
+      Given the office has 9 reviewers, 8 in the review corner and 1 on the floor, and 39 threads
+      And a thread is talking to the reviewer on the floor, who listens at its desk
+      When another thread comes in and is given that desk
+      Then the reviewer stays at the desk until the talk ends
+      And the thread waits beside the pod meanwhile, then sits down at the desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor waits in the break room
       Given the office has 40 threads and a reviewer reading at a shelf
       When the reviewer is a reviewer no more

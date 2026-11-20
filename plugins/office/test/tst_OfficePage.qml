@@ -1264,9 +1264,11 @@ Item {
             const talked = {};
             runUntil(() => {
                 verify(!(a.talk && b.talk), "one of them talks at a time");
-                if (a.talk)
+                // Only a talk that gets to its line counts, not one that gives
+                // up on the way.
+                if (a.talk && a.talk.phase !== "go")
                     talked.a = true;
-                if (b.talk)
+                if (b.talk && b.talk.phase !== "go")
                     talked.b = true;
                 checkFloor();
                 return talked.a && talked.b && !a.talk && !b.talk;
@@ -1275,6 +1277,50 @@ Item {
             const mine = Object.values(page.actors).map(p => p.claim);
             for (const tile of Object.keys(page.claims))
                 verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+        }
+
+        // A reviewer listening at a floor desk that goes to someone else keeps
+        // the tile until the talk ends; the desk's new owner waits beside the
+        // pod meanwhile, and sits down once the reviewer has gone.
+        function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const threads = many(40, "t", "working", "typing");
+            plugin.publish(reviewers.concat(threads.slice(0, 39)));
+            const r8 = actor("r8"), t0 = actor("t0");
+            verify(page.world.seatOf["r8"].pod !== corner(), "r8 sits on the floor");
+            runUntil(() => arrived(r8) && arrived(t0), 6000, "everyone sits down");
+            const seat = page.world.seatOf["r8"];
+            const tile = seat.y * page.world.cols + seat.x;
+            plugin.publish(reviewers.concat(threads.slice(0, 39)), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "r8",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => t0.talk?.phase === "say", 3000, "t0 talks to r8");
+            compare(r8.hold, tile, "r8 listens at its desk");
+            checkFloor();
+            plugin.publish(reviewers.concat(threads));
+            compare(page.world.seatOf["t39"], seat, "t39 is given r8's desk");
+            const t39 = actor("t39");
+            runUntil(() => {
+                if (t0.talk) {
+                    compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
+                    compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
+                }
+                checkFloor();
+                return !t0.talk;
+            }, 3000, "the talk runs to its end");
+            runUntil(() => {
+                checkFloor();
+                return arrived(t39) && t39.tx === seat.x && t39.ty === seat.y;
+            }, 6000, "t39 sits at its desk once r8 has gone");
         }
 
         // A speaker that finds every side of its listener taken keeps the spot
