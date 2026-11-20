@@ -694,6 +694,15 @@ Feature: Office
       And every reviewer keeps its desk
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer listening at a floor desk keeps it when the floor fills
+      Given the office has 9 reviewers, 8 in the review corner and 1 on the floor, and 39 threads
+      And a thread is talking to the reviewer on the floor, who listens at its desk
+      When another thread comes in
+      Then the office grows and the thread sits at a desk of its own
+      And the reviewer keeps its desk
+      And nobody stands on a tile someone else holds while they find their desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Someone reading who leaves the review corner on a full floor gets a floor desk
       Given the office has 40 threads and a reviewer reading at a shelf
       When the reviewer is a reviewer no more

@@ -2682,9 +2682,17 @@ Item {
     }
 
     function letGo(actor) {
-        if (actor.hold >= 0 && actor.hold !== actor.claim && page.claims[actor.hold] === actor.id)
-            delete page.claims[actor.hold];
+        const i = actor.hold;
         actor.hold = -1;
+        if (i < 0 || i === actor.claim || page.claims[i] !== actor.id)
+            return;
+        delete page.claims[i];
+        // Whoever was given the desk there meanwhile waits for it (see
+        // seatGoal()), and goes to it now.
+        const w = page.world;
+        const owner = page.actors[Object.keys(w.seatOf).find(id => w.seatOf[id].y * w.cols + w.seatOf[id].x === i)];
+        if (owner?.goal?.kind === "wait")
+            decide(owner, true);
     }
 
     function seatGoal(actor, pose) {
@@ -2695,7 +2703,10 @@ Item {
             release(actor);
             return null;
         }
-        if (seat.state !== "in")
+        // A desk someone still listens at is theirs until the talk ends (see
+        // letGo()).
+        const holder = page.actors[page.claims[seat.y * page.world.cols + seat.x]];
+        if (seat.state !== "in" || holder && holder !== actor && holder.hold === seat.y * page.world.cols + seat.x)
             return waitGoal(actor, seat);
         claim(actor, seat);
         return {

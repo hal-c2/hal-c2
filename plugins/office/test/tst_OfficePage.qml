@@ -1821,9 +1821,11 @@ Item {
             const talked = {};
             runUntil(() => {
                 verify(!(a.talk && b.talk), "one of them talks at a time");
-                if (a.talk)
+                // Only a talk that gets to its line counts, not one that gives
+                // up on the way.
+                if (a.talk && a.talk.phase !== "go")
                     talked.a = true;
-                if (b.talk)
+                if (b.talk && b.talk.phase !== "go")
                     talked.b = true;
                 checkFloor();
                 return talked.a && talked.b && !a.talk && !b.talk;
@@ -1832,6 +1834,48 @@ Item {
             const mine = Object.values(page.actors).map(p => p.claim);
             for (const tile of Object.keys(page.claims))
                 verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+        }
+
+        // A reviewer listening at a floor desk when a thread comes in to a full
+        // floor keeps its desk: the office grows for the thread rather than
+        // take the desk (see seatTeams()), and nobody ends up on a tile
+        // someone else holds while the floor is laid out again. Were the desk
+        // given away, its new owner would wait for the talk to end (see
+        // seatGoal()).
+        function test_a_reviewer_listening_at_a_floor_desk_keeps_it_when_the_floor_fills() {
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const threads = many(40, "t", "working", "typing");
+            plugin.publish(reviewers.concat(threads.slice(0, 39)));
+            const r8 = actor("r8"), t0 = actor("t0");
+            verify(page.world.seatOf["r8"].pod !== corner(), "r8 sits on the floor");
+            runUntil(() => arrived(r8) && arrived(t0), 6000, "everyone sits down");
+            const seat = page.world.seatOf["r8"];
+            const tile = seat.y * page.world.cols + seat.x;
+            plugin.publish(reviewers.concat(threads.slice(0, 39)), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "r8",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => t0.talk?.phase === "say", 3000, "t0 talks to r8");
+            compare(r8.hold, tile, "r8 listens at its desk");
+            checkFloor();
+            plugin.publish(reviewers.concat(threads));
+            verify(page.world.pods.length > 6, "the office grows");
+            compare(page.world.seatOf["r8"].index, seat.index, "r8 keeps its desk");
+            const t39 = actor("t39");
+            verify(page.world.seatOf["t39"].index !== seat.index, "t39 has a desk of its own");
+            runUntil(() => {
+                checkFloor();
+                const at = (a, s) => arrived(a) && a.tx === s.x && a.ty === s.y;
+                return !t0.talk && at(r8, page.world.seatOf["r8"]) && at(t39, page.world.seatOf["t39"]);
+            }, 9000, "r8 and t39 each sit at their own desk");
         }
 
         // A speaker that finds every side of its listener taken keeps the spot
