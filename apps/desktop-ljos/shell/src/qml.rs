@@ -1,17 +1,20 @@
 //! The shell's QML: desktop-qt's bricks (`apps/desktop-qt/qml`) and this
 //! app's own (`apps/desktop-ljos/qml`: the entry and the QML half of
-//! `HalC2.Shell`), with the user's (`<config>/qml` and `<config>/shell.qml`)
-//! when there is a config dir, compiled at start-up as one import path
-//! (`App::qml_dirs`) and again for each reload (src/runtime.rs).
+//! `HalC2.Shell`), as one import path. build.rs compiles them into the pack
+//! a release runs; a `dev-qml` build compiles them at start-up instead
+//! (`App::qml_dirs`), with the user's (`<config>/qml` and
+//! `<config>/shell.qml`) when there is a config dir, and so do the tests.
 
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "dev-qml")]
 use ljos::dev::Compiled;
 
-/// The key of the built-in shell, `qml/Main.qml`.
+/// The key of the entry, `qml/Main.qml`: the ShellLoader that shows the
+/// user's shell, else the built-in `HalC2/Bricks/DefaultShell.qml`.
 pub const DEFAULT_SHELL: &str = "Main";
 
-/// The key of `<config>/shell.qml` in what [`compile`] makes.
+/// The key of `<config>/shell.qml` among the directories' files.
 pub const USER_SHELL: &str = "shell";
 
 /// The import path: the user's modules, the bricks' root, this app's, then
@@ -37,23 +40,6 @@ impl Roots {
             shell: app.join("qml"),
             user: None,
         }
-    }
-
-    /// Where they are when neither `--qml-dir` nor HAL_C2_QML_DIR names
-    /// them: in a release, one directory beside the executable
-    /// (`share/hal-c2/qml`, or the bundle's `Resources/hal-c2/qml` on
-    /// macOS), as [`crate::desktop_host::default_entry`] finds the host;
-    /// else this checkout's.
-    pub fn default_for(executable_dir: &Path, release: bool) -> Roots {
-        if !release {
-            return Roots::checkout();
-        }
-        let installed = if cfg!(target_os = "macos") {
-            "../Resources/hal-c2/qml"
-        } else {
-            "../share/hal-c2/qml"
-        };
-        Roots::one(executable_dir.join(installed))
     }
 
     /// `dir` holding both: `dir/HalC2/Bricks` and the entry (a release lays
@@ -101,46 +87,16 @@ impl Roots {
         }
         Ok(once)
     }
-
-    /// What a reload follows: all of the config dir (its `qml` and
-    /// `shell.qml` may be made later) and the two roots.
-    pub fn watched(&self) -> Vec<PathBuf> {
-        let mut dirs: Vec<PathBuf> = self.user.iter().cloned().collect();
-        dirs.push(self.bricks.clone());
-        if self.shell != self.bricks {
-            dirs.push(self.shell.clone());
-        }
-        dirs
-    }
 }
 
 /// Compiles the roots against the standard modules and `HalC2.Shell`, as
-/// `App::qml_dirs` does for the app, printing nothing: for `--check`, the
-/// runtime's reloads and the tests, which show what it found themselves.
+/// `App::qml_dirs` does for the app, printing nothing: for a `dev-qml`
+/// build's `--check`, which shows what it found itself.
+#[cfg(feature = "dev-qml")]
 pub fn compile(roots: &Roots) -> Result<Compiled, String> {
     let dirs = roots.dirs()?;
     let snapshot = ljos::engine();
     crate::register(&snapshot);
     let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
     ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_release_reads_the_qml_beside_its_executable() {
-        let installed = Roots::default_for(Path::new("/opt/hal-c2-ljos/bin"), true);
-        let dir = if cfg!(target_os = "macos") {
-            "/opt/hal-c2-ljos/bin/../Resources/hal-c2/qml"
-        } else {
-            "/opt/hal-c2-ljos/bin/../share/hal-c2/qml"
-        };
-        assert_eq!(installed.bricks, Path::new(dir));
-        assert_eq!(installed.shell, Path::new(dir));
-        let built = Roots::default_for(Path::new("/opt/hal-c2-ljos/bin"), false);
-        assert_eq!(built.bricks, Roots::checkout().bricks);
-        assert_eq!(built.shell, Roots::checkout().shell);
-    }
 }

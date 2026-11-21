@@ -15,9 +15,9 @@ Item {
     // The window it lays out: its route, settings section and thread list.
     required property ShellWindow window
     // Whether the layout frames the window: its tabs, sidebar band and header
-    // are then the drag handle of a frameless window and carry its buttons. A
-    // root whose system frames the window (Android) turns it off.
-    property bool framesWindow: true
+    // are then the drag handle of a frameless window and carry its buttons;
+    // the window's own choice (`ShellWindow.framesWindow`) unless set here.
+    property bool framesWindow: window.framesWindow
     // Whether the layout shows the window's ConnectionNotice, as a strip at the
     // foot of the window that takes its own room, so it covers neither the
     // header's controls nor the thread. It does once the window's own notice

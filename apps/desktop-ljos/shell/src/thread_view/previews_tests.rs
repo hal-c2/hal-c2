@@ -1275,6 +1275,28 @@ fn a_close_refused_after_the_list_says_the_tab_is_gone_brings_nothing_back() {
     }
 }
 
+/// A close the MC refuses brings the tab back among the tabs that were before
+/// it, not at the row it had, which tabs closed and opened since have moved.
+#[test]
+fn a_refused_close_brings_the_tab_back_in_the_mcs_order() {
+    let mut sim = Sim::new();
+    for action in [
+        Action::SetActive(true),
+        Action::McOpen("t2", ""),
+        Action::McOpen("t2", ""),
+        Action::SetThread("t2"),
+        Action::Answer(0, true, false),
+        Action::UserClose("tab-2"),
+        Action::McOpen("t2", ""),
+        Action::UserClose("tab-1"),
+        Action::UserNewTab,
+        Action::Answer(3, false, false),
+        Action::AnswerAll,
+    ] {
+        step(&mut sim, &action).unwrap();
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 

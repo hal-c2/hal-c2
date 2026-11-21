@@ -16,12 +16,12 @@ mise run release:desktop-ljos  # the same, plus release/hal-c2-ljos-<version>-<p
 The macOS apps are signed ad hoc, not with a Developer ID: they run on the Mac that built them, and
 Gatekeeper refuses them on a Mac that downloaded them.
 
-The Ljós desktop is built with `HAL_C2_RELEASE` set, which makes `hal-c2-ljos` read its QML, the
-desktop host and Node from `share/hal-c2` beside its `bin/` (`Resources/hal-c2` in the macOS bundle)
-instead of the checkout, and gives its window the app id `hal-c2-ljos`, so it does not take
-desktop-qt's `hal-c2` entry. On Linux CEF's runtime sits beside the binary; the macOS bundle does not
-carry CEF yet, so its browser tabs show no pages ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`
-on what it staged.
+The Ljós desktop's QML is compiled into `hal-c2-ljos`. It is built with `HAL_C2_RELEASE` set, which
+makes it read the desktop host and Node from `share/hal-c2` beside its `bin/` (`Resources/hal-c2` in
+the macOS bundle) instead of the checkout, and gives its window the app id `hal-c2-ljos`, so it does
+not take desktop-qt's `hal-c2` entry. On Linux CEF's runtime sits beside the binary; the macOS bundle
+does not carry CEF yet, so its browser tabs show no pages ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
+which fails when a QML file of the checkout is missing from the binary.
 
 A local build is versioned `<package version>-local.<commit time>.g<commit>` unless
 `HAL_C2_MC_VERSION` names one, so machines that build the same commit run the same version. A
@@ -57,6 +57,29 @@ The installed MC's cluster is managed through
 
 Once the service runs, `mise run mc:reload --release` builds this checkout and moves the service to
 it, in place when the change allows and through a restart when it does not.
+
+### In a container
+
+`mise run mc:container` builds this checkout's MC into an image (`apps/server-ex/rel/Containerfile`,
+on Ubuntu 24.04 like the published bundles, so it can still update itself) and runs it as the
+container `hal-c2-mc` under Podman, or Docker with `--engine docker`. It publishes on
+`127.0.0.1:3790` (`--host`, `--port`) and keeps everything on the `hal-c2-mc` volume: the MC's
+files, and a home for provider CLIs and their logins, which the image does not carry. Install a
+provider with `podman exec -it hal-c2-mc npm install -g <package>` (or its own installer) and log in
+the same way; SSH keys for git remotes go in the container's `~/.ssh`. The container sees only
+directories named with `--workspace <dir>`, mounted at the same path, so projects outside them must
+be cloned into the MC; it runs without SELinux separation, so they need no relabelling. It runs as
+you, under an account the image gives your uid, and rootless Podman keeps mounted files yours; under
+Podman it comes back after a reboot only with `systemctl --user enable podman-restart.service`.
+
+Running the task again rebuilds and replaces the container, keeping the volume. `pair` prints a link
+for the published address (on `--host 0.0.0.0`, name the address another machine reaches: `mise run
+mc:container pair http://<address>:3790`), and other commands such as `cluster` run the MC's own
+command inside it (`mise run mc:container pair -- --ttl 1h`). `doctor` stops the MC, checks its
+store from a container of its own and starts it again. Importing threads finds nothing, since the
+container has no T3 Code or older HAL-C2 install to read. `status`, `logs`, `restart` and
+`uninstall` manage the container; uninstall leaves the volume, which `podman volume rm hal-c2-mc`
+deletes. Cluster traffic is not published, so a containerised MC does not cluster yet.
 
 ## MC
 

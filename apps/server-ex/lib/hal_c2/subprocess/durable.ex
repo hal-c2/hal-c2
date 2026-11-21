@@ -60,19 +60,22 @@ defmodule HalC2.Subprocess.Durable do
   # shim leads the program's process group (`detach/3`), so the watcher signals both.
   # It needs two stale looks in a row: a machine waking from sleep can run the watcher
   # before the helper has touched `alive`. It is in the group it signals, so it ignores
-  # TERM to live to send the KILL, and only KILL stops it.
+  # TERM to live to send the KILL, and only KILL stops it. The watcher reads its interval
+  # and the shim then unsets it, so the program never inherits it (an MC started under
+  # one would pass it on). Assigning a variable that came in exported changes it for the
+  # program, so the shim assigns none: it keeps its values in `$1`..`$3` (the function's
+  # `shift` leaves them), and `command` keeps a program named `program` off the function.
   # `kill -s`, because dash reads `kill -TERM -- -1` as a bad pid.
   @shim ~S"""
   exec </dev/null >/dev/null 2>&1
-  dir=$1; wait_minutes=$2; err=$3; shift 3
-  exec 3<>"$dir/in"
-  touch "$dir/alive"
+  exec 3<>"$1/in"
+  touch "$1/alive"
   trap : TERM INT HUP
-  shim=$$
   (
+    dir=$1; wait_minutes=$2; shim=$$; look=${HAL_C2_DURABLE_LOOK:-30}
     trap '' TERM
     stale=0
-    while sleep "$HAL_C2_DURABLE_LOOK"; do
+    while sleep "$look"; do
       if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
         stale=$((stale + 1))
       else
@@ -86,13 +89,14 @@ defmodule HalC2.Subprocess.Durable do
       fi
     done
   ) 3<&- &
-  watch=$!
-  "$@" <&3 >>"$dir/out" 2>>"$err" 3<&-
-  status=$?
-  kill -KILL "$watch" 2>/dev/null
-  printf '%s' "$status" >"$dir/status.tmp"
-  mv "$dir/status.tmp" "$dir/status"
-  printf '\n\001hal-c2-exit %s\n' "$status" >>"$dir/out"
+  unset HAL_C2_DURABLE_LOOK
+  program() { shift 3; command "$@"; }
+  program "$@" <&3 >>"$1/out" 2>>"$3" 3<&-
+  set -- "$?" "$1"
+  kill -KILL "$!" 2>/dev/null
+  printf '%s' "$1" >"$2/status.tmp"
+  mv "$2/status.tmp" "$2/status"
+  printf '\n\001hal-c2-exit %s\n' "$1" >>"$2/out"
   """
 
   # `in` opened read-write, so the open cannot block once the shim is gone. A shim gone
@@ -207,8 +211,13 @@ defmodule HalC2.Subprocess.Durable do
     args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
     look = Application.get_env(:hal_c2, :durable_look_seconds, 30)
 
+    # The shim's own interval is the only one: `Subprocess.start/2` blanks every
+    # `HAL_C2_*` name of the MC's environment, and a blank after the real value wins.
+    caller =
+      for {key, _} = entry <- opts[:env] || [], to_string(key) != "HAL_C2_DURABLE_LOOK", do: entry
+
     env =
-      for {key, value} <- [{"HAL_C2_DURABLE_LOOK", "#{look}"} | Enum.to_list(opts[:env] || [])],
+      for {key, value} <- [{"HAL_C2_DURABLE_LOOK", "#{look}"} | caller],
           do: {to_charlist(key), to_charlist(value)}
 
     cd = if opts[:cd], do: [cd: to_charlist(opts[:cd])], else: []

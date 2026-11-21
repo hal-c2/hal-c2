@@ -1,7 +1,7 @@
 # Sources:
 #   plugins/office/plugin.json (permissions, settings, the page)
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, walking, talking)
+#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md
 #
@@ -82,6 +82,37 @@ Feature: Office
       When "Archived" is archived, "Deleted" is deleted and "Settled" is settled
       Then the office has "Kept" and none of the others
 
+    # Settling or archiving a thread leaves its workers' own threads as they are
+    # (delegation.feature: a subagent keeps its replies after its parent settles), so
+    # the office walks up the lineage itself. A worker asking under a parent the user
+    # put away leaves too: putting the parent away puts its work away, and such a
+    # question is most often one nobody waits on any more.
+    @mc
+    Scenario Outline: Workers leave the office with the thread that delegated to them, unless they work
+      Given a thread "Lead" with a worker "Tests", a working worker "Build" and an asking worker "Review"
+      And the worker "Tests" has a worker "Fixtures"
+      When <put away>
+      Then the office has "Build" and none of the others
+
+      Examples:
+        | put away                 |
+        | a client settles "Lead"  |
+        | a client archives "Lead" |
+        | "Lead" is deleted        |
+
+    @mc
+    Scenario Outline: Workers come back with the thread that delegated to them
+      Given a thread "Lead" with a worker "Write the tests"
+      And <put away>
+      And the office does not have "Write the tests"
+      When <brought back>
+      Then the office has "Lead" and "Write the tests"
+
+      Examples:
+        | put away                 | brought back               |
+        | a client settles "Lead"  | a client unsettles "Lead"  |
+        | a client archives "Lead" | a client unarchives "Lead" |
+
     @mc
     Scenario: A settled thread whose agent starts working again comes back
       Given a settled thread "Settled" in the project "api"
@@ -99,6 +130,31 @@ Feature: Office
       Given the office plugin keeps idle threads for 1 hour
       And a thread "Old" idle for 2 hours and a thread "Recent" idle for a minute
       Then the office has "Recent" and not "Old"
+
+    @mc
+    Scenario: A thread idle for longer than the office keeps idle threads has left, even if its row changed since
+      Given the office plugin keeps idle threads for 1 hour
+      And a thread "Old" idle for 2 hours and a thread "Recent" idle for a minute
+      When the agent session of "Old" is stopped for sitting idle, and then a thread "New" is made
+      Then the office has "New" and "Recent" and not "Old"
+
+    @mc
+    Scenario: A thread that comes to this machine long idle is not in the office
+      Given the office plugin keeps idle threads for 1 hour
+      When a thread "Moved in" whose last turn ended 2 hours ago comes to this machine, and then a thread "New" is made
+      Then the office has "New" and not "Moved in"
+
+    @mc
+    Scenario Outline: A long-idle thread brought back is in the office for as long again
+      Given the office plugin keeps idle threads for 1 hour
+      And a thread "Old" idle for 2 hours that is <put away>
+      When the user <brings back> "Old"
+      Then the office has "Old" idle
+
+      Examples:
+        | put away | brings back |
+        | archived | unarchives  |
+        | settled  | unsettles   |
 
     @mc
     Scenario: A renamed project is renamed in the office
@@ -173,6 +229,21 @@ Feature: Office
       And no two people overlap
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Two people walking into each other get past
+      Given two people walk into each other on open floor
+      Then one of them steps around the other and both get where they are going
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person boxed in is given way
+      Given a person with no free floor beside it walks into another person
+      Then the other steps aside and both get where they are going
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person blocked by someone standing still waits
+      Given a person's way is blocked by someone standing still
+      Then it waits where it is instead of stepping back and forth
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: What a person does follows what its agent does
       Given the office has a thread working, typing
       Then its person sits at its desk using the computer
@@ -211,10 +282,173 @@ Feature: Office
       Then a card names "Fix the parser", its project, its agent and model, and that it is testing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
-    Scenario: The office grows with the people in it
+    Scenario: The office keeps its size as people come
       Given the office has 4 threads
-      When it has 20 threads
-      Then the office has a desk for each of them
+      When it has 50 threads
+      Then the office is the same size, with room for 48 desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office keeps its size as people go
+      Given the office has 50 threads
+      When it has 2 threads
+      Then the office is the same size, with room for 48 desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Workers past the 48th desk wait in the break room
+      Given the office has 50 threads working, typing
+      Then 48 of them have a desk and the other 2 take a break in the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A worker without a desk sits down once a desk is free
+      Given the office has 50 threads working, typing, 2 of them without a desk
+      And one of the threads with a desk is waiting, and takes a break
+      When another thread with a desk leaves
+      Then one of the 2 walks from the break room to that desk and sits down
+      And the thread with a desk on its break stays on its break
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A worker without a desk waits in the break room whatever it does
+      Given the office has 48 threads with a desk
+      When it has another thread working, planning
+      Then the new person waits in the break room, not at a whiteboard
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People coming and going do not redraw the office
+      Given the office has 4 threads
+      When it has 12 threads
+      And then it has 2 threads
+      Then nothing in the office is drawn again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The people there when the office opens are already at their desks
+      Given the office has 4 threads working, typing
+      When the office page opens
+      Then each person sits at a desk that is already there
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A full office says it is being set up until everyone in it is drawn
+      Given the office has 40 threads
+      When the office page opens
+      Then its header is laid out and the office says "Setting up the office…"
+      And the page keeps drawing frames while the people are drawn a few at a time
+      When everyone is drawn
+      Then the office shows with each person at a desk, and the message is gone
+      When it has another thread
+      Then the office does not say it is being set up again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office that has not arrived yet is not being set up
+      Given the office page is open on a machine whose office has not arrived
+      Then the office says "Waiting for the office…"
+      When its office arrives with no threads
+      Then the office says "Nobody is in the office. Threads show up here as they work."
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Another machine's office is set up afresh, with its people already at their desks
+      Given the office page is open and set up on a machine with 4 threads
+      When the user picks another machine with 6 threads
+      Then the office says it is being set up until those 6 are drawn
+      When the user picks the first machine again
+      Then the office says it is being set up, and its 4 people are at their desks, not walking in
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry in the desk of a new worker, who walks in and waits for it
+      Given the office has 4 threads
+      When it has a 5th thread working, typing
+      Then the new person walks in through the door
+      And a mover walks in carrying a desk, a chair and a computer to the new person's place
+      And the new person waits beside the desks until the mover sets them down
+      And then sits at the new desk, and the mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People keep their desks as others come and go
+      Given the office has a thread "A" with a worker and a thread "B" with 2 workers, sharing a group of desks
+      When "A" delegates to another worker
+      Then the new worker sits with "A" and everyone else stays at their desk
+      When the first worker of "A" leaves
+      Then only its desk is carried out and everyone else stays at their desk
+      When a team has outgrown its group of desks and gains another worker
+      Then the team stays where it is and only the new worker sits at the nearest free desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry out the desks nobody sits at
+      Given the office has threads "A" and "B", each with 5 workers
+      When "B" and its workers leave the office
+      Then movers walk in, pick up their desks, carry them out through the door and leave
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Nobody walks through a mover or the desk it carries
+      Given the office has 4 working threads
+      When it has 16 working threads
+      Then several movers carry desks in at once
+      And no person, mover or desk being carried overlaps another
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk being carried never covers the person just north of it
+      Given a mover carries a desk along open floor
+      And someone stands just north of its way
+      When the mover walks right past them
+      Then the desk it holds in front of it never covers them
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: People and movers get through the door without a jam
+      Given the office has 2 threads
+      When it has 8 threads
+      Then the new people come in one at a time, each once the doorway and the floor beside it are clear
+      And nobody stands waiting in the doorway
+      And every desk is carried in and every mover leaves
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person and a mover that meet head-on get past each other
+      Given a person and a mover meet head-on and only one of them has room to step aside
+      Then that one steps aside and both get where they are going
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk to someone still outside waits for them to come in
+      Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
+      When the office has a "message" talk from "Lead" to "Newcomer"
+      Then "Lead" waits until "Newcomer" has come in, however long that takes
+      And then walks up to "Newcomer" and says it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk waiting for someone outside lets the speaker's other talks go first
+      Given the office has threads "Lead", "Reviewer" and "Newcomer", with "Newcomer" still outside the door
+      When the office has a "message" talk from "Lead" to "Newcomer" and then one from "Lead" to "Reviewer"
+      Then "Lead" walks up to "Reviewer" and says it while "Newcomer" is still outside
+      And the talk to "Newcomer" waits until "Newcomer" has come in
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Talks waiting for people outside never crowd out a talk to someone inside
+      Given the office has threads "Lead" and "Reviewer", and three newcomers still outside the door
+      When the office has a "message" talk from "Lead" to each newcomer and then one from "Lead" to "Reviewer"
+      Then "Lead" walks up to "Reviewer" and says it while the newcomers are still outside
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Newcomers waiting for their desks each wait in a place of their own
+      Given the office has no threads
+      When it has 16 threads working, typing
+      Then each new person waits beside its group of desks, or as near it as there is room, where nobody else waits
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Another machine's office starts with clean whiteboards
+      Given the office has a thread working, planning, that has drawn on a whiteboard
+      When the user picks another machine
+      Then every whiteboard in its office is clean
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office fits its view
+      Given the office page is open
+      Then the whole office shows and fills the view's width or its height, unless the largest zoom comes first
+      When the user zooms in and then picks Fit
+      Then the whole office shows again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Zooming goes in small steps up to a largest size
+      Given the office page is open
+      When the user zooms in
+      Then the office grows by about a quarter, with every art pixel the same size
+      When the user zooms in until it can grow no more
+      Then zooming in is off
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown

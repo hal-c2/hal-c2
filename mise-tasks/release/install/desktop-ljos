@@ -28,7 +28,7 @@ if [[ $os == Darwin ]]; then
   exit 0
 fi
 
-# A directory, not one file: the binary reads its QML, host and CEF from beside it.
+# A directory, not one file: the binary reads its host, Node and CEF from beside it.
 lib="$HOME/.local/lib/hal-c2-ljos"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 bin="$HOME/.local/bin/hal-c2-ljos"

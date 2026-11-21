@@ -1346,7 +1346,7 @@ Feature: GitHub Markdown in a page
       Then the exported Markdown is "# Plan\n\n```latex\nx^2\n```\n"
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog @priority-low
+    @shared @backlog-desktop @backlog-mobile @priority-low
     Scenario Outline: Math is shown as math
       Given a page holding <math>
       When the user opens the page

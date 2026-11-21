@@ -10,6 +10,10 @@ defmodule HalC2Plugins.Office.Floor do
                        "model", "state", "activity", "question", "since"}],
         "talks" => [%{"id", "from", "to", "kind", "text", "at"}]}
 
+  A thread is in the office while it works, waits or asks, or was idle less than
+  `idleHours` and is not settled; never once archived, deleted or moved to another
+  machine. A worker is in it only while the thread it was delegated from is, unless it
+  works or waits itself: a parent's row that changes changes its workers too.
   A person's `state` comes from its row alone (`state_of/1`); its `activity` from the
   last tool call heard in the turn under way, shown only while it is working. Talks are
   kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
@@ -68,8 +72,9 @@ defmodule HalC2Plugins.Office.Floor do
   def load(floor, rows, now), do: Enum.reduce(rows, floor, &put_row(&2, &1, now, false))
 
   @doc """
-  Rows that changed: a state that changed began `now`, a deleted row leaves, and a
-  worker just created is a `delegate` talk from its parent.
+  Rows that changed: a state that changed began `now`, a row first seen began when it
+  says it did (as `load/3` takes it), a deleted row leaves, and a worker just created is
+  a `delegate` talk from its parent.
   """
   def rows(floor, rows, now), do: Enum.reduce(rows, floor, &put_row(&2, &1, now, true))
 
@@ -82,8 +87,8 @@ defmodule HalC2Plugins.Office.Floor do
 
       since =
         case floor.states[id] do
-          {^state, since} -> since
-          _ when changed? -> iso(now)
+          {^state, since} -> still(since, floor.rows[id], row, state, changed? && now)
+          {_other, _since} when changed? -> iso(now)
           _ -> began(row, state, now)
         end
 
@@ -135,7 +140,28 @@ defmodule HalC2Plugins.Office.Floor do
     }
   end
 
-  # When a row read at start says its state began.
+  # When a thread idle or failed before and after a change (`old` to `row`) is quiet
+  # from. One the user unarchived or made active again is back `now`, for `idleHours`
+  # more. One whose latest run ended after `since` ran in between, and the shell's
+  # batching folded that run into the one change: it is quiet from that run's end.
+  defp still(since, old, row, state, now) when state in ~w(idle failed) do
+    ended = row["latestRunCompletedAt"]
+
+    cond do
+      (now && put_away?(old)) and not put_away?(row) -> iso(now)
+      (ms(ended) || 0) > (ms(since) || 0) -> ended
+      true -> since
+    end
+  end
+
+  defp still(since, _old, _row, _state, _now), do: since
+
+  defp put_away?(nil), do: false
+  defp put_away?(row), do: row["archivedAt"] != nil or settled?(row)
+
+  # When a row read at start, or first seen, says its state began. An idle thread that
+  # waited on background work after its run ended counts from the run's end: the row
+  # keeps no time for when that work finished.
   defp began(row, "asking", now),
     do: get_in(row, ["pendingRuntimeRequest", "createdAt"]) || row["updatedAt"] || iso(now)
 
@@ -404,10 +430,36 @@ defmodule HalC2Plugins.Office.Floor do
     %{"people" => people, "talks" => talks}
   end
 
-  defp in?(floor, row, state, now) do
-    row["archivedAt"] == nil and not is_map(row["movedTo"]) and
-      (state in ~w(asking working waiting) or
-         (not settled?(row) and quiet_for(row, now) < floor.idle_hours * 3_600_000))
+  # Whether a thread is in the office: not archived or moved away, and working, waiting,
+  # or else asking or recently idle while not settled. A worker that is not working or
+  # waiting leaves with the thread it was delegated from (`parent_here?/4`), asking or
+  # not: putting the parent away puts its work away. An idle or failed thread stays
+  # `idleHours` from when it became so: its row changes for other reasons too (a
+  # provider session stopped for sitting idle, say), and those do not make it any less
+  # quiet.
+  defp in?(floor, row, state, now, seen \\ []) do
+    cond do
+      row["archivedAt"] != nil or is_map(row["movedTo"]) -> false
+      state in ~w(working waiting) -> true
+      not parent_here?(floor, row, now, [row["id"] | seen]) -> false
+      state == "asking" -> true
+      true -> not settled?(row) and quiet_for(floor, row, now) < floor.idle_hours * 3_600_000
+    end
+  end
+
+  # Whether the thread `row` was delegated from is in the office, walking up its lineage:
+  # a parent this MC has no row for (deleted, or never here) is not. A lineage that loops
+  # back stops where it does, as if it ended there.
+  defp parent_here?(floor, row, now, seen) do
+    with parent when is_binary(parent) <- parent_of(row),
+         false <- parent in seen do
+      case {floor.rows[parent], floor.states[parent]} do
+        {%{} = parent_row, {state, _since}} -> in?(floor, parent_row, state, now, seen)
+        _ -> false
+      end
+    else
+      _ -> true
+    end
   end
 
   defp settled?(row),
@@ -415,7 +467,9 @@ defmodule HalC2Plugins.Office.Floor do
       row["settledOverride"] == "settled" or
         (row["settledAt"] != nil and row["settledOverride"] != "active")
 
-  defp quiet_for(row, now), do: now - (ms(row["updatedAt"]) || now)
+  defp quiet_for(floor, row, now), do: now - (ms(since(floor, row)) || now)
+
+  defp since(floor, row), do: elem(floor.states[row["id"]], 1)
 
   defp person(floor, row, state) do
     id = row["id"]
@@ -433,7 +487,7 @@ defmodule HalC2Plugins.Office.Floor do
       "activity" => if(state == "working", do: floor.activity[id]),
       "question" =>
         if(state == "asking", do: %{"kind" => request["kind"], "since" => request["createdAt"]}),
-      "since" => elem(floor.states[id], 1)
+      "since" => since(floor, row)
     }
   end
 
@@ -448,7 +502,7 @@ defmodule HalC2Plugins.Office.Floor do
           {state, _} = floor.states[id],
           state in ~w(idle failed),
           in?(floor, row, state, now),
-          at = ms(row["updatedAt"]),
+          at = ms(since(floor, row)),
           do: at + ceil(floor.idle_hours * 3_600_000)
 
     talks = for talk <- floor.talks, at = ms(talk["at"]), at + @talk_ms > now, do: at + @talk_ms

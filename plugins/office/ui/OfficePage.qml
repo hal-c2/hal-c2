@@ -15,7 +15,9 @@ import HalC2.Bricks
 //
 // Everything is drawn once into canvases (the floor, each piece of furniture,
 // and a sprite sheet per person) and animated by moving them on one timer that
-// runs only while the page is shown.
+// runs only while the page is shown. The sprite sheets are painted a few a
+// frame; until the floor and everyone on it are drawn, the page says the office
+// is being set up.
 Item {
     id: page
 
@@ -33,22 +35,76 @@ Item {
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
 
+    // A host that does not stretch the page gives it this size.
+    implicitWidth: 900
+    implicitHeight: 600
+
     property bool applicationActive: Qt.application.state === Qt.ApplicationActive
     property int actorCount: 0
-    readonly property bool animating: visible && applicationActive && actorCount > 0
+    // Movers at work and desks waiting for one.
+    property int moves: 0
+    readonly property bool animating: visible && applicationActive && (actorCount > 0 || moves > 0)
     property bool walking: false
-    property int zoomStep: 0
-    readonly property int autoScale: Math.max(2, Math.floor((scroller.width - 8) / Math.max(1, worldCols * 16)))
-    readonly property int pixelScale: Math.max(1, autoScale + zoomStep)
+    // The office fits the view at zoom 1, by its width or its height,
+    // whichever runs out first; each zoom button is a quarter more or less.
+    // It can shrink below one device pixel per art pixel only to fit, and
+    // grows no further than topScale, the most zoomed in scale.
+    property real zoom: 1
+    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
+    readonly property real minScale: Math.min(1, fitScale)
+    readonly property real maxScale: 8
+    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
+    // Nearest-neighbour art at a fractional scale draws some art pixels a
+    // device pixel wider than others. So the art is drawn at the next whole
+    // number of device pixels per art pixel, drawScale, into a layer shrunk
+    // smoothly to pixelScale. From `crispFrom` device pixels per art pixel up
+    // a step of one device pixel is under a quarter, so a zoomed scale snaps
+    // to whole device pixels and is drawn directly; the layer is then at most
+    // `crispFrom` times the office's art size, or about the view's size at Fit.
+    readonly property int crispFrom: 4
+    readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
+    readonly property bool resampled: drawScale - pixelScale > 0.001
 
-    // The office as drawn: its size in tiles, its furniture, the screens of its
-    // computers and its whiteboards. Rebuilt when the desks it needs change.
+    // The scale shown for a wanted zoomed scale: kept within bounds, and
+    // rounded to whole device pixels where that is fine enough, never past
+    // the largest whole number of device pixels within maxScale.
+    function snapScale(wanted) {
+        const ratio = devicePixelRatio;
+        const scale = Math.max(minScale, Math.min(maxScale, wanted));
+        const devicePixels = scale * ratio;
+        return devicePixels >= crispFrom ? Math.min(Math.round(devicePixels), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
+    }
+    // The most zoomed in scale shown.
+    readonly property real topScale: snapScale(maxScale)
+
+    // Zooms from the scale shown, so a step always moves it; where the scale
+    // snaps, by at least one device pixel, so in and out take the same path.
+    function zoomBy(factor) {
+        const ratio = devicePixelRatio;
+        let next = pixelScale * factor;
+        if (next * ratio >= crispFrom) {
+            // A scale between whole device pixels (Fit) moves to the next
+            // whole one, a whole one by at least one device pixel.
+            const now = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
+            const step = Math.round(next * ratio);
+            next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
+        }
+        zoom = Math.max(minScale, Math.min(maxScale, next)) / fitScale;
+    }
+
+    // The office as drawn: its size in tiles, its furniture, each desk and
+    // chair, the screens of its computers and its whiteboards. Built once; the
+    // movers bring desks in and take them out.
     property int worldCols: 0
     property int worldRows: 0
     property var props: []
+    property var units: []
     property var screens: []
     property var boards: []
     property int deskCount: 0
+    // How many times the floor has been painted.
+    property int floorPaints: 0
     property string hovered: ""
 
     // The simulation, mutated in place each tick; nothing binds to these.
@@ -57,9 +113,16 @@ Item {
     property var views: ({})
     property var overlays: ({})
     property var screenViews: ({})
+    property var unitViews: ({})
+    property var moverViews: ({})
     property var boardViews: ({})
     property var occupied: []
     property var claims: ({})
+    property var movers: ({})
+    property var jobs: []
+    // People who came in while the doorway was busy wait outside, in order.
+    property var outside: []
+    property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
     property int arrivals: 0
@@ -67,6 +130,19 @@ Item {
     property real now: 0
     property int ticks: 0
     property var rng: random(0x0ff1ce)
+
+    // The people whose sprite sheets wait to be painted, in order. A full
+    // office's sheets painted at once block the page for a tenth of a second
+    // on Qt and for seconds on Ljós, so paintSheets() paints as many each
+    // frame as fit sheetBudget milliseconds, by what the last ones took.
+    property var sheetQueue: []
+    property int sheetsPending: 0
+    property real sheetCost: 0
+    readonly property real sheetBudget: 10
+    // Whether this machine's office has been drawn once: its floor and the
+    // sprite sheet of everyone in it. Until then the page says it is being set
+    // up; newcomers after that just walk in. See settle().
+    property bool settled: false
 
     readonly property var frame: ({
             stand: 0,
@@ -459,8 +535,15 @@ Item {
         if (top === "dress" && !S)
             m(side ? 5 : 4, 15, side ? 7 : 8, 3, L.shirt);
 
-        // Arms and what the hands hold.
-        if (!side) {
+        // Arms and what the hands hold. A mover holds a desk in front of it
+        // (see paintLoad()).
+        if (L.carry && !side) {
+            arm(3, 11, 5);
+            arm(11, 11, 5);
+        } else if (L.carry) {
+            sideArm(7, 11, 3, 3);
+            m(4, 13, 4, 2, short ? skin : sleeveShade);
+        } else if (!side) {
             const right = f === 6 || f === 7 || f === 8 || f === 9 || f === 10 || f === 11;
             const left = f === 13;
             if (f === 4 || f === 5) {
@@ -1162,17 +1245,101 @@ Item {
 
     // Draws a whole sprite sheet into a canvas: 16×24 frames on an 18×26 grid,
     // so a scaled frame never samples the frame next to it.
+    // A person's sheet: facing us, facing left and facing away, one row each;
+    // facing right is the left row mirrored where it is shown.
     function paintSheet(ctx, look) {
-        ctx.clearRect(0, 0, 270, 104);
-        // Row 2 faces the other way: row 1's frames, mirrored.
-        for (const d of [0, 1, 3]) {
+        ctx.clearRect(0, 0, 270, 78);
+        for (const [row, d] of [[0, 0], [1, 1], [2, 3]]) {
             for (let f = 0; f < 15; f++) {
                 const parts = look.pet ? petFrame(look, f, d) : humanFrame(look, f, d);
+                paintCell(ctx, parts, f * 18, row * 26, false);
+            }
+        }
+    }
+
+    // A person's sheet waits its turn to be painted.
+    function queueSheet(view) {
+        view.sheet = "queued";
+        page.sheetQueue.push(view);
+        page.sheetsPending++;
+    }
+
+    function dropSheet(view) {
+        const i = page.sheetQueue.indexOf(view);
+        if (i >= 0)
+            page.sheetQueue.splice(i, 1);
+        if (view.sheet === "queued" || view.sheet === "due")
+            page.sheetsPending--;
+        view.sheet = "";
+    }
+
+    // Asks the next sheets in the queue to be painted, one before it is known
+    // what a sheet takes, then as many as the budget allows; a sheet whose
+    // canvas cannot paint yet keeps its place.
+    function paintSheets() {
+        let n = page.sheetCost > 0 ? Math.max(1, Math.floor(page.sheetBudget / page.sheetCost)) : 1;
+        const waiting = [];
+        while (n > 0 && page.sheetQueue.length) {
+            const view = page.sheetQueue.shift();
+            if (!view.paintable) {
+                waiting.push(view);
+                continue;
+            }
+            view.sheet = "due";
+            view.requestSheet();
+            n--;
+        }
+        page.sheetQueue = waiting.concat(page.sheetQueue);
+    }
+
+    function sheetPainted(view, ms) {
+        if (view.sheet !== "due")
+            return;
+        view.sheet = "painted";
+        // Date.now() counts whole milliseconds; a sheet takes at least one.
+        const cost = Math.max(1, ms);
+        page.sheetCost = page.sheetCost > 0 ? 0.7 * page.sheetCost + 0.3 * cost : cost;
+        page.sheetsPending--;
+        settle(page.office);
+    }
+
+    // A mover's sheet: standing and two walking frames, empty-handed and then
+    // carrying, in the four directions.
+    function paintMoverSheet(ctx, look) {
+        ctx.clearRect(0, 0, 108, 104);
+        const carrying = Object.assign({}, look, {
+            carry: true
+        });
+        for (const d of [0, 1, 3]) {
+            for (let f = 0; f < 6; f++) {
+                const parts = humanFrame(f < 3 ? look : carrying, f % 3, d);
                 paintCell(ctx, parts, f * 18, d * 26, false);
                 if (d === 1)
                     paintCell(ctx, parts, f * 18, 52, true);
             }
         }
+    }
+
+    // The desk a mover carries in front of it: a monitor and a chair on it,
+    // legs down to the floor. It fits the mover's own figure, so it never
+    // covers anyone around it.
+    function paintLoad(ctx, chair) {
+        ctx.clearRect(0, 0, 16, 14);
+        const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
+        const O = page.outline;
+        R(O, 1, 9, 4, 5);
+        R(O, 11, 9, 4, 5);
+        R("#7a5530", 2, 10, 2, 4);
+        R("#7a5530", 12, 10, 2, 4);
+        R(O, 0, 6, 16, 5);
+        R("#c99a64", 1, 7, 14, 2);
+        R("#8f6538", 1, 9, 14, 1);
+        R(O, 1, 0, 9, 7);
+        R("#2b2f39", 2, 1, 7, 5);
+        R("#141a24", 3, 2, 5, 3);
+        R(O, 10, 1, 6, 6);
+        R(chair, 11, 2, 4, 4);
+        R(shade(chair, 0.18), 11, 2, 4, 1);
     }
 
     function paintCell(ctx, parts, ox, oy, mirror) {
@@ -1222,8 +1389,11 @@ Item {
     //
     // Rows 0–2 are the wall, row 3 the furniture along it, then groups of desks
     // ("pods") from row 6: a pod is chairs, two rows of desks, chairs. Teams (a
-    // thread and the workers under it) share pods of 4×2 desks; a bigger team gets
-    // its own. The break room is behind a wall with a door on the right.
+    // thread and the workers under it) share pods of 4×2 desks; a bigger team
+    // takes several. The office keeps one size, so adding a person never
+    // repaints it: movers carry desks in through the entrance at the bottom
+    // left and back out again. The break room is behind a wall with a door on
+    // the right.
 
     function teamsOf(ids, byId) {
         const rootOf = id => {
@@ -1248,46 +1418,93 @@ Item {
         return roots.map(root => teams[root]);
     }
 
-    function podsFor(teams) {
-        const pods = [];
-        for (const team of teams) {
-            if (team.length > 8) {
-                for (let i = 0; i < team.length; i += 20) {
-                    const chunk = team.slice(i, i + 20);
-                    pods.push({
-                        cols: Math.max(4, Math.min(10, Math.ceil(chunk.length / 2))),
-                        members: chunk,
-                        shared: false
-                    });
-                }
-            } else {
-                let pod = pods.find(p => p.shared && p.members.length + team.length <= 8);
-                if (!pod) {
-                    pod = {
-                        cols: 4,
-                        members: [],
-                        shared: true
-                    };
-                    pods.push(pod);
-                }
-                pod.members = pod.members.concat(team);
+    // Seats the teams at the office's pods, as id → seat. Everyone keeps the
+    // seat they had while they stay, wherever it is, so nobody moves along
+    // when someone else comes or goes. A newcomer takes a free
+    // seat in its team's pod, or the nearest pod with room when that is full;
+    // a new team takes a pod with room for all of it, and small teams share.
+    // A team bigger than a pod takes as many as it needs. Whoever is left over
+    // when every desk is taken has none, and spends the time in the break room.
+    function seatTeams(teams) {
+        const w = page.world;
+        const size = w.pods[0].seats.length;
+        const before = w.seatOf ?? {};
+        const seatOf = {};
+        const taken = {};
+        const room = pod => w.pods[pod].seats.filter(seat => !taken[seat.index]).length;
+        const sit = (id, pod) => {
+            const seat = w.pods[pod].seats.find(seat => !taken[seat.index]);
+            taken[seat.index] = id;
+            seatOf[id] = seat;
+        };
+        const chunks = [], teamOf = [];
+        teams.forEach((team, t) => {
+            for (let i = 0; i < team.length; i += size) {
+                chunks.push(team.slice(i, i + size));
+                teamOf.push(t);
             }
+        });
+        // Everyone seated keeps their seat, wherever it is; a chunk's pod is
+        // where its first seated member sat, and a team's is its first
+        // chunk's with one.
+        const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        const teamHome = {};
+        homes.forEach((home, c) => {
+            if (home >= 0 && teamHome[teamOf[c]] === undefined)
+                teamHome[teamOf[c]] = home;
+        });
+        // The pod with room for `need` nearest pod `near`, the first of those
+        // as near (or the first with room when there is no `near`); -1 when
+        // none has room. Ties go by index, since sort() need not be stable.
+        const away = (i, near) => near < 0 ? 0 : Math.abs(w.pods[i].x - w.pods[near].x) + Math.abs(w.pods[i].y - w.pods[near].y);
+        const nearest = (near, need) => {
+            const open = w.pods.map((_, i) => i).filter(i => room(i) >= need);
+            open.sort((a, b) => away(a, near) - away(b, near) || a - b);
+            return open.length ? open[0] : -1;
+        };
+        chunks.forEach(chunk => {
+            for (const id of chunk) {
+                const seat = before[id];
+                if (seat && !taken[seat.index]) {
+                    taken[seat.index] = id;
+                    seatOf[id] = seat;
+                }
+            }
+        });
+        const spill = [];
+        chunks.forEach((chunk, c) => {
+            const home = homes[c];
+            const near = teamHome[teamOf[c]] ?? -1;
+            const pod = home >= 0 ? home : nearest(near, chunk.length);
+            for (const id of chunk) {
+                if (seatOf[id])
+                    continue;
+                if (pod >= 0 && room(pod) > 0)
+                    sit(id, pod);
+                else
+                    spill.push([id, pod >= 0 ? pod : near]);
+            }
+        });
+        // Those who did not fit sit at the nearest pod with a free desk.
+        for (const [id, near] of spill) {
+            const pod = nearest(near, 1);
+            if (pod < 0)
+                break;
+            sit(id, pod);
         }
-        return pods;
+        return seatOf;
     }
 
-    function buildWorld(pods) {
-        const n = pods.length;
-        const perRow = n <= 2 ? Math.max(1, n) : n <= 6 ? 3 : n <= 12 ? 4 : 5;
-        const podRows = [];
-        for (let i = 0; i < n; i += perRow)
-            podRows.push(pods.slice(i, i + perRow));
-        const rowWidth = row => row.reduce((sum, pod) => sum + pod.cols, 0) + 2 * (row.length - 1);
-        const workW = Math.max(16, ...podRows.map(rowWidth));
+    // The office: six pods of 4×2 desks, three across and two down, the walls,
+    // the furniture along them and the break room. Every desk starts out
+    // carried away (see furnish()).
+    function buildWorld() {
+        const podCols = 4, across = 3, down = 2;
+        const workW = across * podCols + 2 * (across - 1);
         const xd = 3 + workW + 2;
         const bx = xd + 1;
         const cols = bx + 11;
-        const rows = Math.max(17, 6 + 6 * Math.max(1, podRows.length) + 1);
+        const rows = 6 + 6 * down + 1;
         const grid = new Array(cols * rows).fill(0);
         const at = (x, y) => y * cols + x;
         const block = (x, y, w, h) => {
@@ -1303,7 +1520,7 @@ Item {
         grid[at(xd, 5)] = 0;
         grid[at(xd, 6)] = 0;
 
-        const props = [], screens = [], boards = [], seats = [], spots = [];
+        const props = [], units = [], screens = [], boards = [], seats = [], spots = [];
         const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
             key: kind + ":" + x + ":" + y,
             kind: kind,
@@ -1315,62 +1532,80 @@ Item {
             seed: hash(kind + x + "," + y)
         }, extra ?? {}));
 
-        // Pods.
+        // Pods: a row of chairs, two rows of desks, a row of chairs. Each seat
+        // has its own desk and chair, which come and go together. A desk's
+        // place is kept for it while it is out, so the way around the pods
+        // never changes; a seat is stepped onto only by whoever is going there.
         const placed = [];
-        podRows.forEach((row, k) => {
+        for (let k = 0; k < down; k++) {
             const y0 = 6 + 6 * k;
-            let x = 3 + Math.floor((workW - rowWidth(row)) / 2);
-            for (const pod of row) {
+            for (let c = 0; c < across; c++) {
+                const x = 3 + c * (podCols + 2);
                 const index = placed.length;
                 const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
-                block(x, y0 + 1, pod.cols, 2);
                 const podSeats = [];
-                for (let i = 0; i < pod.cols; i++) {
-                    podSeats.push({
-                        x: x + i,
-                        y: y0,
-                        face: 0,
-                        offY: 5,
-                        pod: index
-                    });
-                    podSeats.push({
-                        x: x + i,
-                        y: y0 + 3,
-                        face: 3,
-                        offY: -3,
-                        pod: index
-                    });
-                    grid[at(x + i, y0)] = 2;
-                    grid[at(x + i, y0 + 3)] = 2;
-                    screens.push({
-                        key: index + ":" + i,
-                        seat: seats.length + podSeats.length - 1,
-                        x: (x + i) * 16 + 4,
-                        y: (y0 + 1) * 16 + 16,
-                        z: (y0 + 3) * 16 + 1
-                    });
+                for (let i = 0; i < podCols; i++) {
+                    for (const north of [true, false]) {
+                        const seat = {
+                            index: seats.length + podSeats.length,
+                            x: x + i,
+                            y: north ? y0 : y0 + 3,
+                            deskY: north ? y0 + 1 : y0 + 2,
+                            face: north ? 0 : 3,
+                            offY: north ? 5 : -3,
+                            pod: index,
+                            chair: chair,
+                            screen: north ? "" : index + ":" + i,
+                            state: "out",
+                            mover: ""
+                        };
+                        podSeats.push(seat);
+                        grid[at(seat.x, seat.deskY)] = 1;
+                        grid[at(seat.x, seat.y)] = 2;
+                        units.push({
+                            key: "desk:" + seat.index,
+                            kind: north ? "deskN" : "deskS",
+                            seat: seat.index,
+                            x: seat.x * 16,
+                            y: seat.deskY * 16,
+                            w: 16,
+                            h: 16,
+                            z: (y0 + 3) * 16,
+                            seed: hash("desk" + seat.index)
+                        });
+                        units.push({
+                            key: "chair:" + seat.index,
+                            kind: north ? "chairsN" : "chairsS",
+                            seat: seat.index,
+                            x: seat.x * 16,
+                            y: seat.y * 16,
+                            w: 16,
+                            h: 16,
+                            z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
+                            color: chair,
+                            seed: hash("chair" + seat.index)
+                        });
+                        if (!north)
+                            screens.push({
+                                key: seat.screen,
+                                seat: seat.index,
+                                x: seat.x * 16 + 4,
+                                y: seat.deskY * 16 + 1,
+                                z: (y0 + 3) * 16 + 1
+                            });
+                    }
                 }
-                prop("chairsN", x * 16, y0 * 16, pod.cols * 16, 16, (y0 + 1) * 16 - 2, {
-                    color: chair
-                });
-                prop("desks", x * 16, (y0 + 1) * 16, pod.cols * 16, 32, (y0 + 3) * 16, {
-                    cols: pod.cols
-                });
-                prop("chairsS", x * 16, (y0 + 3) * 16, pod.cols * 16, 16, (y0 + 4) * 16 + 1, {
-                    color: chair
-                });
                 placed.push({
                     x: x,
                     y: y0,
-                    cols: pod.cols,
-                    members: pod.members,
+                    cols: podCols,
+                    members: [],
                     seats: podSeats
                 });
                 for (const seat of podSeats)
                     seats.push(seat);
-                x += pod.cols + 2;
             }
-        });
+        }
 
         // Along the top wall: bookshelves, whiteboards and plants.
         const sequence = ["plant", "shelf", "board", "shelf", "board", "plant", "shelf", "board"];
@@ -1417,11 +1652,10 @@ Item {
             wx += w + 1;
         }
 
-        // Corners of the work area.
-        for (const x of [1, xd - 1]) {
-            block(x, rows - 2, 1, 1);
-            prop("plant", x * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
-        }
+        // The far corner of the work area; the doorway and the floor around it
+        // stay clear so people and movers meeting there can step aside.
+        block(xd - 1, rows - 2, 1, 1);
+        prop("plant", (xd - 1) * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
 
         // The break room.
         block(bx, 3, 10, 1);
@@ -1551,13 +1785,14 @@ Item {
             bx: bx,
             pods: placed,
             seats: seats,
+            seatOf: {},
             spots: spots,
             props: props,
+            units: units,
             screens: screens,
             boards: boards,
             door: [xd, 5],
-            entrance: [2, rows - 2],
-            signature: JSON.stringify([cols, rows, placed.map(p => [p.x, p.y, p.cols])])
+            entrance: [2, rows - 2]
         };
     }
 
@@ -1570,15 +1805,34 @@ Item {
 
     // ── Who is in the office ────────────────────────────────────────────────
 
+    // Another machine's office: everyone leaves at once and its people come
+    // in where they belong, at desks that are simply there. The room stays,
+    // its whiteboards wiped.
     function reset() {
         for (const id of Object.keys(page.actors))
             removeActor(id);
+        for (const id of Object.keys(page.movers))
+            removeMover(id);
+        page.jobs = [];
+        page.outside = [];
+        if (page.world) {
+            page.world.seatOf = {};
+            for (const seat of page.world.seats) {
+                seat.mover = "";
+                setDesk(seat, false);
+            }
+        }
+        for (const board of Object.values(page.boardViews))
+            board.progress = board.blank;
+        countMoves();
         page.seen = {};
         page.arrival = {};
         page.claims = {};
         page.primed = false;
-        page.world = null;
-        take(page.office);
+        page.settled = false;
+        // `office` still holds the last machine's value while its change is
+        // handled here.
+        take(page.byEnvironment[page.environment] ?? null);
     }
 
     function take(value) {
@@ -1587,9 +1841,20 @@ Item {
         hear(value?.talks ?? []);
         page.primed = value !== null && value !== undefined;
         updateWalking();
+        settle(value);
+    }
+
+    // The office is settled once `value`, this machine's office, has been
+    // drawn. Asked only where the people match `value`: after taking it and
+    // after a paint, never from a binding, which sees the steps in between.
+    function settle(value) {
+        if (!page.settled && page.world && value && page.floorPaints > 0 && page.sheetsPending === 0)
+            page.settled = true;
     }
 
     function sync(people) {
+        if (!page.world)
+            build();
         const byId = {};
         for (const person of people)
             byId[person.id] = person;
@@ -1602,7 +1867,7 @@ Item {
                 page.arrival[person.id] = page.arrivals++;
         }
         const order = people.map(p => p.id).sort((a, b) => page.arrival[a] - page.arrival[b]);
-        layout(podsFor(teamsOf(order, byId)));
+        layout(teamsOf(order, byId));
         for (const person of people) {
             let actor = page.actors[person.id];
             if (!actor) {
@@ -1625,48 +1890,267 @@ Item {
         }
     }
 
-    function layout(pods) {
-        const next = buildWorld(pods);
-        const changed = !page.world || page.world.signature !== next.signature;
-        if (changed) {
-            for (const id of Object.keys(page.claims))
-                delete page.claims[id];
-            page.world = next;
-            page.occupied = new Array(next.cols * next.rows).fill("");
-            page.worldCols = next.cols;
-            page.worldRows = next.rows;
-            page.props = next.props;
-            page.screens = next.screens;
-            page.boards = next.boards;
-            page.deskCount = next.seats.length;
-            floor.requestPaint();
-            for (const id of Object.keys(page.actors)) {
-                const actor = page.actors[id];
-                actor.goal = null;
-                actor.path = [];
-                actor.next = -1;
-                actor.claim = -1;
-                if (actor.tx >= 0)
-                    place(actor, actor.tx, actor.ty, true);
-            }
-        }
-        // Seats by team, in order: the lead first.
-        page.world.seatOf = {};
-        next.pods.forEach((pod, i) => {
-            const seats = page.world.pods[i].seats;
-            pod.members.forEach((id, k) => {
-                if (k < seats.length)
-                    page.world.seatOf[id] = seats[k];
-            });
-        });
-        // Seats move between people even when the floor stays the same; whoever
-        // was headed for a desk that is no longer theirs plans again.
+    function build() {
+        const w = buildWorld();
+        page.world = w;
+        page.occupied = new Array(w.cols * w.rows).fill("");
+        page.worldCols = w.cols;
+        page.worldRows = w.rows;
+        page.props = w.props;
+        page.units = w.units;
+        page.screens = w.screens;
+        page.boards = w.boards;
+        page.deskCount = 0;
+        floor.requestPaint();
+    }
+
+    function layout(teams) {
+        const w = page.world;
+        const seatOf = seatTeams(teams);
+        const at = {};
+        for (const id of Object.keys(seatOf))
+            at[seatOf[id].index] = id;
+        for (const pod of w.pods)
+            pod.members = pod.seats.filter(seat => at[seat.index]).map(seat => at[seat.index]);
+        w.seatOf = seatOf;
+        furnish();
+        // Seats move between people as people come and go; whoever was headed
+        // for a desk, or waiting for one, that is no longer theirs plans again,
+        // and so does whoever waited in the break room for want of a desk and
+        // now has one.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
-            const seat = page.world.seatOf[id];
-            if (actor.goal?.kind === "desk" && (!seat || seat.x !== actor.goal.x || seat.y !== actor.goal.y))
+            const goal = actor.goal;
+            if (goal?.deskless && seatOf[id]) {
+                actor.goal = null;
+                continue;
+            }
+            if (goal?.kind !== "desk" && goal?.kind !== "wait")
+                continue;
+            const seat = seatOf[id];
+            if (!seat || seat.index !== goal.desk || (goal.kind === "wait") !== (seat.state !== "in"))
                 actor.goal = null;
         }
+    }
+
+    // ── Desks and the movers who carry them ─────────────────────────────────
+
+    // Brings in the desks people have been given and takes out the ones nobody
+    // has. Before the office is first shown the desks are simply there.
+    function furnish() {
+        const w = page.world;
+        const needed = {};
+        for (const seat of Object.values(w.seatOf))
+            needed[seat.index] = true;
+        for (const seat of w.seats) {
+            const need = !!needed[seat.index];
+            if (!page.primed) {
+                setDesk(seat, need);
+            } else if (need && seat.state === "out") {
+                seat.state = "coming";
+                page.jobs.push(seat.index);
+            } else if (need && seat.state === "leaving") {
+                seat.state = "in";
+                callOff(seat);
+            } else if (!need && seat.state === "in") {
+                seat.state = "leaving";
+                page.jobs.push(seat.index);
+            } else if (!need && seat.state === "coming") {
+                // A mover already carrying it takes it back out.
+                seat.state = "out";
+                callOff(seat);
+            }
+        }
+        countMoves();
+        if (page.jobs.length)
+            page.walking = true;
+    }
+
+    // A move that is no longer wanted: not started, or its mover heads out.
+    function callOff(seat) {
+        page.jobs = page.jobs.filter(i => i !== seat.index);
+        const mover = page.movers[seat.mover];
+        seat.mover = "";
+        if (mover) {
+            mover.job = -1;
+            leave(mover);
+        }
+    }
+
+    // Sets a desk down at its seat or takes it away; its owner, if waiting for
+    // it, sits down.
+    function setDesk(seat, on) {
+        const w = page.world;
+        const was = deskShown(seat);
+        seat.state = on ? "in" : "out";
+        if (on !== was)
+            page.deskCount += on ? 1 : -1;
+        showDesk(seat);
+        if (!on)
+            return;
+        const owner = Object.keys(w.seatOf).find(id => w.seatOf[id] === seat);
+        const actor = owner ? page.actors[owner] : null;
+        if (actor && actor.goal?.kind === "wait")
+            decide(actor, true);
+    }
+
+    function deskShown(seat) {
+        return seat.state === "in" || seat.state === "leaving";
+    }
+
+    function showDesk(seat) {
+        const shown = deskShown(seat);
+        for (const key of ["desk:" + seat.index, "chair:" + seat.index]) {
+            const view = page.unitViews[key];
+            if (view)
+                view.visible = shown;
+        }
+        const screen = seat.screen ? page.screenViews[seat.screen] : null;
+        if (screen)
+            screen.visible = shown;
+    }
+
+    function everyone() {
+        return Object.values(page.actors).concat(Object.values(page.movers));
+    }
+
+    function countMoves() {
+        page.moves = page.jobs.length + Object.keys(page.movers).length;
+    }
+
+    // Someone to carry a desk walks in when the doorway is clear; four work
+    // at once.
+    function hire() {
+        const w = page.world;
+        const e = w.entrance;
+        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !doorClear())
+            return;
+        const seat = w.seats[page.jobs.shift()];
+        const id = "mover:" + page.moversHired++;
+        const mover = newActor({
+            id: id
+        });
+        mover.look = moverLook(id);
+        mover.job = seat.index;
+        mover.carrying = seat.state === "coming";
+        mover.chair = seat.chair;
+        seat.mover = id;
+        page.movers[id] = mover;
+        place(mover, e[0], e[1], false);
+        mover.goal = {
+            x: seat.x,
+            y: seat.y,
+            face: seat.face,
+            offY: 0,
+            pose: "stand",
+            kind: "move"
+        };
+        route(mover, false);
+        moverModel.append({
+            moverId: id
+        });
+        countMoves();
+    }
+
+    // A mover walks to the desk's seat, waits for the desk's place to be clear,
+    // sets the desk down or picks it up, and walks out again.
+    function stepMover(mover, dt) {
+        const w = page.world;
+        const seat = mover.job >= 0 ? w.seats[mover.job] : null;
+        const there = mover.goal && mover.tx === mover.goal.x && mover.ty === mover.goal.y && mover.next < 0;
+        if (there && !seat) {
+            removeMover(mover.id);
+            return false;
+        }
+        if (there) {
+            mover.path = [];
+            mover.dir = seat.face;
+            if (seat.state === "coming") {
+                mover.carrying = false;
+                finish(mover, seat);
+                setDesk(seat, true);
+            } else {
+                setDesk(seat, false);
+                mover.carrying = true;
+                finish(mover, seat);
+            }
+        } else if (mover.next < 0 && mover.path.length === 0 && page.ticks % 8 === 0) {
+            route(mover, true);
+        }
+        const moving = step(mover, dt);
+        mover.frame = mover.next >= 0 ? [1, 0, 2, 0][Math.floor(mover.dist / 5) % 4] : 0;
+        renderMover(mover);
+        return moving || mover.path.length > 0;
+    }
+
+    function finish(mover, seat) {
+        seat.mover = "";
+        mover.job = -1;
+        leave(mover);
+    }
+
+    function leave(mover) {
+        const e = page.world.entrance;
+        mover.goal = {
+            x: e[0],
+            y: e[1],
+            face: 0,
+            offY: 0,
+            pose: "stand",
+            kind: "leave"
+        };
+        route(mover, false);
+    }
+
+    function removeMover(id) {
+        const mover = page.movers[id];
+        if (!mover)
+            return;
+        const w = page.world;
+        for (const i of [mover.ty * w.cols + mover.tx, mover.next]) {
+            if (i >= 0 && page.occupied[i] === id)
+                page.occupied[i] = "";
+        }
+        if (mover.job >= 0 && w.seats[mover.job].mover === id)
+            w.seats[mover.job].mover = "";
+        delete page.movers[id];
+        for (let i = 0; i < moverModel.count; i++) {
+            if (moverModel.get(i).moverId === id) {
+                moverModel.remove(i);
+                break;
+            }
+        }
+        countMoves();
+    }
+
+    function renderMover(mover) {
+        const v = page.moverViews[mover.id];
+        if (!v)
+            return;
+        v.x = mover.px;
+        v.y = mover.py - 8;
+        v.z = mover.py + 16;
+        v.frame = mover.frame;
+        v.dir = mover.dir;
+        v.carrying = mover.carrying;
+    }
+
+    // Movers wear the moving company's orange and its navy cap.
+    function moverLook(id) {
+        return Object.assign(lookFor({
+            id: id,
+            parentId: null
+        }), {
+            top: "tee",
+            shirt: "#d9822b",
+            accent: "#2f4a6b",
+            pants: "#2f4a6b",
+            shoes: "#3a2a20",
+            hat: "cap",
+            headphones: false,
+            bow: false,
+            lanyard: false
+        });
     }
 
     function newActor(person) {
@@ -1696,6 +2180,7 @@ Item {
             talk: null,
             queue: [],
             blocked: 0,
+            waitingFor: "",
             heldBy: "",
             face: -1,
             faceUntil: 0,
@@ -1703,8 +2188,8 @@ Item {
         };
     }
 
-    // A new person walks in through the door; the first people on the page are
-    // already where they belong.
+    // A new person walks in through the door, waiting outside while someone is
+    // in the doorway; the first people on the page are already where they belong.
     function arrive(actor) {
         if (!page.primed) {
             decide(actor, true);
@@ -1715,8 +2200,29 @@ Item {
                 return;
             }
         }
+        if (!page.outside.includes(actor.id))
+            page.outside.push(actor.id);
+    }
+
+    // Whether nobody stands in the doorway or on the floor next to it, so
+    // whoever comes in can step off it.
+    function doorClear() {
+        const w = page.world;
+        const [x, y] = w.entrance;
+        return [[0, 0], [1, 0], [-1, 0], [0, -1]].every(([dx, dy]) => !walkable(x + dx, y + dy) || !page.occupied[(y + dy) * w.cols + x + dx]);
+    }
+
+    // The next person waiting outside walks in once the doorway is clear.
+    function letIn() {
+        while (page.outside.length && !page.actors[page.outside[0]])
+            page.outside.shift();
+        if (!page.outside.length || !doorClear())
+            return;
+        const actor = page.actors[page.outside.shift()];
         const e = page.world.entrance;
-        place(actor, e[0], e[1], true);
+        place(actor, e[0], e[1], false);
+        decide(actor, true);
+        page.walking = true;
     }
 
     function place(actor, x, y, snap) {
@@ -1736,7 +2242,9 @@ Item {
         page.occupied[y * w.cols + x] = actor.id;
     }
 
-    function nearestFree(x, y, self) {
+    // The nearest floor tile nobody stands on, nor, when `unclaimed`, is headed
+    // for; with `unclaimed` and no such tile, null.
+    function nearestFree(x, y, self, unclaimed) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
         const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
@@ -1744,7 +2252,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self))
+            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self) && (!unclaimed || !page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;
@@ -1754,7 +2262,7 @@ Item {
                 }
             }
         }
-        return [w.entrance[0], w.entrance[1]];
+        return unclaimed ? null : [w.entrance[0], w.entrance[1]];
     }
 
     function removeActor(id) {
@@ -1809,8 +2317,14 @@ Item {
 
     function seatGoal(actor, pose) {
         const seat = page.world.seatOf[actor.id];
-        if (!seat)
-            return breakGoal(actor, true);
+        if (!seat) {
+            // No desk yet: it waits in the break room, until it gets one.
+            const goal = breakGoal(actor, true);
+            goal.deskless = true;
+            return goal;
+        }
+        if (seat.state !== "in")
+            return waitGoal(actor, seat);
         release(actor);
         return {
             x: seat.x,
@@ -1819,8 +2333,44 @@ Item {
             offY: pose === "ask" ? (seat.face === 0 ? 2 : 0) : seat.offY,
             pose: pose,
             kind: "desk",
-            seat: true
+            seat: true,
+            desk: seat.index
         };
+    }
+
+    // Beside the pod, out of the way of its seats, while the desk is carried in.
+    function waitGoal(actor, seat) {
+        const w = page.world;
+        const pod = w.pods[seat.pod];
+        const options = [];
+        for (const y of [pod.y + 1, pod.y + 2]) {
+            for (const x of [pod.x - 1, pod.x + pod.cols, pod.x - 2, pod.x + pod.cols + 1]) {
+                if (walkable(x, y) && free({
+                    x: x,
+                    y: y
+                }, actor))
+                    options.push([x, y]);
+            }
+        }
+        const far = ([x, y]) => Math.abs(x - seat.x) + Math.abs(y - seat.y);
+        options.sort((a, b) => far(a) - far(b));
+        const spot = options[0] ?? nearestFree(pod.x - 1, pod.y + 1, actor.id, true);
+        // With nowhere to wait, it plans again in a moment (see tick()).
+        if (!spot) {
+            release(actor);
+            return null;
+        }
+        const goal = {
+            x: spot[0],
+            y: spot[1],
+            face: spot[0] < pod.x ? 2 : 1,
+            offY: 0,
+            pose: "stand",
+            kind: "wait",
+            desk: seat.index
+        };
+        claim(actor, goal);
+        return goal;
     }
 
     function spotGoal(actor, kind, pose) {
@@ -1906,19 +2456,23 @@ Item {
         let plan = state;
         let goal = null;
         actor.icon = state === "asking" ? "ask" : state === "failed" ? "fail" : state === "working" && (p.activity === "thinking" || p.activity === "delegating") ? "think" : "";
-        if (state === "asking") {
-            goal = seatGoal(actor, "ask");
-        } else if (state === "failed") {
-            goal = seatGoal(actor, "sit");
+        if (state === "asking" || state === "failed") {
+            actor.cup = false;
+            // Plans again only when it changed: a new goal claims a new spot.
+            if (!force && actor.plan === plan && actor.goal)
+                return;
+            goal = seatGoal(actor, state === "asking" ? "ask" : "sit");
         } else if (state === "working") {
             const activity = p.activity ?? "";
             plan = "working:" + activity;
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
-            if (activity === "planning")
+            // Without a desk it waits in the break room whatever it does.
+            const seated = !!page.world.seatOf[actor.id];
+            if (seated && activity === "planning")
                 goal = spotGoal(actor, "board");
-            else if (activity === "reading")
+            else if (seated && activity === "reading")
                 goal = spotGoal(actor, "shelf");
             if (!goal)
                 goal = seatGoal(actor, activity === "typing" || activity === "running" || activity === "testing" || activity === "browsing" ? "type" : "sit");
@@ -1933,11 +2487,6 @@ Item {
             actor.until = Infinity;
             if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
                 actor.cup = false;
-        }
-        if (state !== "working" && plan !== "break") {
-            actor.cup = false;
-            if (!force && actor.plan === plan && actor.goal)
-                return;
         }
         actor.plan = plan;
         setGoal(actor, goal);
@@ -2056,13 +2605,24 @@ Item {
             const from = page.actors[talk.from];
             if (!from || !page.actors[talk.to] || talk.from === talk.to)
                 continue;
+            // A speaker keeps at most three talks waiting. When they are full, a
+            // talk to someone inside takes the place of the oldest one to
+            // someone still outside the door.
+            const outside = from.queue.findIndex(t => page.actors[t.to]?.tx < 0);
+            if (from.queue.length >= 3 && outside >= 0 && !(page.actors[talk.to].tx < 0))
+                from.queue.splice(outside, 1);
             if (from.queue.length < 3)
                 from.queue.push(talk);
         }
     }
 
+    // Starts the speaker's first talk whose listener is inside. One to someone
+    // still outside the door waits its turn without holding up the rest.
     function startTalk(actor) {
-        const talk = actor.queue.shift();
+        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0));
+        if (next < 0)
+            return;
+        const talk = actor.queue.splice(next, 1)[0];
         if (!page.actors[talk.to])
             return;
         actor.talk = {
@@ -2193,6 +2753,8 @@ Item {
                 startTalk(actor);
             if (actor.talk)
                 stepTalk(actor);
+            else if (!actor.goal && actor.tx >= 0 && page.ticks % 8 === 0)
+                decide(actor, true);
             else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity) {
                     actor.until = page.now + actor.stay;
@@ -2209,13 +2771,25 @@ Item {
             pose(actor);
             render(actor);
         }
+        letIn();
+        hire();
+        for (const id of Object.keys(page.movers)) {
+            if (stepMover(page.movers[id], dt))
+                moving = true;
+        }
         if (page.ticks % 6 === 0)
             updateScreens();
-        page.walking = moving;
+        page.walking = moving || page.jobs.length > 0 || page.outside.length > 0;
     }
 
     function updateWalking() {
-        page.walking = Object.values(page.actors).some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
+        page.walking = page.jobs.length > 0 || page.outside.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
+    }
+
+    // The walkable tiles beside a person that nobody holds.
+    function freeSides(actor) {
+        const W = page.world.cols;
+        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
     }
 
     // Moves a person along its path, two pixels a tick, holding the tile it
@@ -2229,11 +2803,21 @@ Item {
             const there = page.occupied[n];
             if (there && there !== actor.id) {
                 actor.blocked++;
-                if (actor.blocked % 8 === 0 && actor.blocked < 30)
+                actor.waitingFor = there;
+                // Two people walking into each other would both step around the
+                // same way and meet again, so only one gives way: the one with
+                // room to step aside, the first by id when both have it.
+                const other = page.actors[there] ?? page.movers[there];
+                const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
+                const sides = freeSides(actor);
+                const yields = !headOn || sides.length > 0 && (actor.id < other.id || freeSides(other).length === 0);
+                if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
                     route(actor, true);
                 if (actor.blocked >= 30) {
-                    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-                    if (sides.length) {
+                    // Stepping aside makes room for someone waiting on this
+                    // person; anyone else in the way is waited for, not paced
+                    // in front of.
+                    if (headOn && yields) {
                         const s = pick(page.rng, sides);
                         actor.path = [s[1] * W + s[0]];
                         actor.sideStep = true;
@@ -2249,6 +2833,7 @@ Item {
             actor.dir = nx < actor.tx ? 1 : nx > actor.tx ? 2 : ny < actor.ty ? 3 : 0;
             actor.offY = 0;
             actor.blocked = 0;
+            actor.waitingFor = "";
         }
         if (actor.next < 0)
             return false;
@@ -2350,8 +2935,10 @@ Item {
     }
 
     function render(actor) {
+        const inside = actor.tx >= 0;
         const v = page.views[actor.id];
         if (v) {
+            v.visible = inside;
             v.x = actor.px;
             v.y = actor.py - 8 + actor.offY;
             v.z = actor.py + 16;
@@ -2360,6 +2947,7 @@ Item {
         }
         const o = page.overlays[actor.id];
         if (o) {
+            o.visible = inside;
             o.anchorX = actor.px + 8;
             o.anchorY = actor.py - 8 + actor.offY + (page.seated(actor.frame) ? 2 : 0);
             o.icon = actor.bubble ? "" : iconOf(actor);
@@ -2376,6 +2964,7 @@ Item {
             if (!view)
                 continue;
             const seat = page.world.seats[screen.seat];
+            view.visible = deskShown(seat);
             const owner = page.occupied[seat.y * page.world.cols + seat.x];
             const actor = owner ? page.actors[owner] : null;
             let mode = "off";
@@ -2570,60 +3159,47 @@ Item {
         const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
         const O = page.outline;
         switch (p.kind) {
-        case "desks":
+        case "deskN":
+            // A north seat's desk: its keyboard by the chair, the back of its
+            // monitor and the low divider to the desk across.
+            R(O, 0, 0, 16, 16);
+            R("#c99a64", 1, 1, 14, 11);
+            R("#ddb27c", 1, 1, 14, 1);
+            R("#6f8584", 1, 12, 14, 3);
+            R("#8aa09f", 1, 12, 14, 1);
+            R("#d7dbe2", 4, 1, 8, 2);
+            R("#b9bec8", 4, 2, 8, 1);
+            R(O, 3, 3, 10, 9);
+            R("#3b404d", 4, 4, 8, 7);
+            R("#4b5160", 4, 4, 8, 1);
+            if (r() < 0.3) {
+                R(O, 13, 4, 3, 4);
+                R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
+            }
+            break;
+        case "deskS":
             {
-                const W = p.w;
-                R("rgba(0,0,0,0.25)", 1, 30, W - 2, 2);
-                R(O, 0, 0, W, 30);
-                R("#c99a64", 1, 1, W - 2, 25);
-                R("#ddb27c", 1, 1, W - 2, 1);
-                R("#8f6538", 1, 26, W - 2, 3);
-                R("#7a5530", 1, 28, W - 2, 1);
-                R("#b88a55", 1, 13, W - 2, 1);
-                for (let i = 1; i < p.cols; i++) {
-                    R("rgba(0,0,0,0.12)", i * 16, 1, 1, 25);
-                    R("#7a5530", i * 16, 26, 1, 3);
-                }
-                // The low divider between the two rows.
-                R("#6f8584", 1, 12, W - 2, 3);
-                R("#8aa09f", 1, 12, W - 2, 1);
-                for (let i = 0; i < p.cols; i++) {
-                    const x = i * 16;
-                    // North: a monitor's back and a keyboard by the chair.
-                    R(O, x + 3, 3, 10, 9);
-                    R("#3b404d", x + 4, 4, 8, 7);
-                    R("#4b5160", x + 4, 4, 8, 1);
-                    R("#2b2f39", x + 7, 10, 2, 2);
-                    R("#d7dbe2", x + 4, 1, 8, 2);
-                    R("#b9bec8", x + 4, 2, 8, 1);
-                    // South: a monitor's front, a keyboard and a mouse.
-                    R(O, x + 2, 14, 12, 10);
-                    R("#2b2f39", x + 3, 15, 10, 8);
-                    R("#141a24", x + 4, 16, 8, 6);
-                    R("#2b2f39", x + 7, 23, 2, 2);
-                    R("#5d6372", x + 6, 24, 4, 1);
-                    R(O, x + 3, 25, 9, 1);
-                    R("#e3e6ec", x + 3, 24, 8, 2);
-                    R("#b9bec8", x + 4, 25, 6, 1);
-                    R("#e3e6ec", x + 12, 24, 2, 2);
-                    // Something on each desk.
-                    const thing = r();
-                    if (thing < 0.25) {
-                        R(O, x + 0, 19, 4, 5);
-                        R(pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), x + 1, 20, 2, 3);
-                        R("#6b4226", x + 1, 20, 2, 1);
-                    } else if (thing < 0.45) {
-                        R("#7a4a2a", x + 13, 18, 3, 3);
-                        R("#4fbf85", x + 12, 15, 5, 3);
-                        R("#3a9a68", x + 13, 14, 3, 2);
-                    } else if (thing < 0.6) {
-                        R("#f6f3ea", x + 12, 17, 4, 5);
-                        R("#d9d3c4", x + 12, 19, 4, 1);
-                    }
-                    if (r() < 0.3) {
-                        R(O, x + 13, 4, 3, 4);
-                        R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), x + 13, 5, 2, 2);
-                    }
+                // A south seat's desk: the front of its monitor (its screen
+                // is drawn over it), a keyboard and a mouse.
+                R("rgba(0,0,0,0.25)", 1, 14, 14, 2);
+                R(O, 0, 0, 16, 14);
+                R("#c99a64", 1, 1, 14, 10);
+                R("#8f6538", 1, 11, 14, 2);
+                R("#7a5530", 1, 12, 14, 1);
+                R(O, 2, 0, 12, 9);
+                R("#2b2f39", 3, 0, 10, 8);
+                R("#141a24", 4, 1, 8, 6);
+                R("#5d6372", 6, 9, 4, 1);
+                R("#e3e6ec", 3, 10, 8, 1);
+                R("#e3e6ec", 12, 10, 2, 1);
+                const thing = r();
+                if (thing < 0.25) {
+                    R(O, 0, 3, 3, 5);
+                    R(pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), 1, 4, 1, 3);
+                } else if (thing < 0.45) {
+                    R("#3a9a68", 13, 2, 3, 2);
+                    R("#4fbf85", 13, 3, 3, 3);
+                    R("#7a4a2a", 14, 6, 2, 2);
                 }
                 break;
             }
@@ -2929,6 +3505,18 @@ Item {
         id: actorModel
     }
 
+    ListModel {
+        id: moverModel
+    }
+
+    Timer {
+        objectName: "officeSheetPainter"
+        interval: 16
+        repeat: true
+        running: page.visible && page.sheetsPending > 0
+        onTriggered: page.paintSheets()
+    }
+
     Timer {
         interval: page.walking ? 40 : 200
         repeat: true
@@ -2983,15 +3571,23 @@ Item {
             ShellButton {
                 text: "−"
                 toolTip: qsTr("Zoom out")
-                enabled: page.pixelScale > 1
-                onClicked: page.zoomStep -= 1
+                enabled: page.pixelScale > page.minScale + 0.001
+                onClicked: page.zoomBy(1 / 1.25)
             }
 
             ShellButton {
+                text: qsTr("Fit")
+                toolTip: qsTr("Fit the office to the view")
+                enabled: page.zoom !== 1
+                onClicked: page.zoom = 1
+            }
+
+            ShellButton {
+                objectName: "officeZoomIn"
                 text: "+"
                 toolTip: qsTr("Zoom in")
-                enabled: page.pixelScale < 8
-                onClicked: page.zoomStep += 1
+                enabled: page.pixelScale < page.topScale - 0.001
+                onClicked: page.zoomBy(1.25)
             }
         }
 
@@ -3012,230 +3608,367 @@ Item {
             Item {
                 id: stage
 
+                objectName: "officeStage"
+                // Hidden until set up; the people in it are out of reach until
+                // then too (see their MouseArea).
+                opacity: page.settled ? 1 : 0
                 x: Math.max(0, (scroller.width - width) / 2)
+                y: Math.max(0, (scroller.height - height) / 2)
                 width: page.worldCols * 16 * page.pixelScale
                 height: page.worldRows * 16 * page.pixelScale
 
                 Item {
-                    id: world
-
-                    width: page.worldCols * 16
-                    height: page.worldRows * 16
-                    scale: page.pixelScale
+                    objectName: "officeArt"
+                    width: page.worldCols * 16 * page.drawScale
+                    height: page.worldRows * 16 * page.drawScale
+                    scale: page.pixelScale / page.drawScale
                     transformOrigin: Item.TopLeft
+                    layer.enabled: page.resampled
+                    layer.smooth: true
 
-                    Canvas {
-                        id: floor
+                    Item {
+                        id: world
 
-                        z: -1
-                        width: Math.max(1, page.worldCols * 16)
-                        height: Math.max(1, page.worldRows * 16)
-                        smooth: false
-                        antialiasing: false
-                        onPaint: page.paintFloor(getContext("2d"))
-                    }
+                        width: page.worldCols * 16
+                        height: page.worldRows * 16
+                        scale: page.drawScale
+                        transformOrigin: Item.TopLeft
 
-                    Repeater {
-                        model: page.props
+                        Canvas {
+                            id: floor
 
-                        delegate: Canvas {
-                            required property var modelData
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: modelData.w
-                            height: modelData.h
+                            z: -1
+                            width: Math.max(1, page.worldCols * 16)
+                            height: Math.max(1, page.worldRows * 16)
                             smooth: false
                             antialiasing: false
-                            onPaint: page.paintProp(getContext("2d"), modelData)
-                        }
-                    }
-
-                    // The screens of the computers facing us.
-                    Repeater {
-                        model: page.screens
-
-                        delegate: Rectangle {
-                            id: screen
-
-                            required property var modelData
-                            property string mode: "off"
-                            property real phase: 0
-                            readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
-                            readonly property bool terminal: mode === "running" || mode === "testing"
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 8
-                            height: 6
-                            color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                            Component.onCompleted: page.screenViews[modelData.key] = screen
-                            Component.onDestruction: {
-                                if (page.screenViews[modelData.key] === screen)
-                                    delete page.screenViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: 3
-
-                                delegate: Rectangle {
-                                    required property int index
-
-                                    visible: screen.mode !== "off"
-                                    x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
-                                    y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
-                                    height: 1
-                                    width: {
-                                        if (screen.mode === "failed")
-                                            return index === 1 ? 6 : 0;
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
-                                        if (screen.mode === "idle")
-                                            return index === 1 ? 2 : 0;
-                                        return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
-                                    }
-                                    color: {
-                                        if (screen.mode === "failed")
-                                            return "#ffb3b3";
-                                        if (screen.mode === "browsing")
-                                            return index === 0 ? "#4a90d9" : "#9aa5b0";
-                                        if (screen.mode === "testing")
-                                            return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
-                                        if (screen.mode === "running")
-                                            return "#5fd38a";
-                                        if (screen.mode === "idle")
-                                            return "#9cc8ff";
-                                        return ["#c792ea", "#82aaff", "#f8c25c"][index];
-                                    }
-                                }
+                            onPaint: {
+                                page.floorPaints++;
+                                page.paintFloor(getContext("2d"));
+                                page.settle(page.office);
                             }
                         }
-                    }
 
-                    // What has been drawn on each whiteboard.
-                    Repeater {
-                        model: page.boards
+                        Repeater {
+                            model: page.props
 
-                        delegate: Item {
-                            id: board
+                            delegate: Canvas {
+                                required property var modelData
 
-                            required property var modelData
-                            property real progress: 0.15
-
-                            x: modelData.x
-                            y: modelData.y
-                            z: modelData.z
-                            width: 38
-                            height: 18
-                            Component.onCompleted: page.boardViews[modelData.key] = board
-                            Component.onDestruction: {
-                                if (page.boardViews[modelData.key] === board)
-                                    delete page.boardViews[modelData.key];
-                            }
-
-                            Repeater {
-                                model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
-
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    readonly property real start: index / 9
-
-                                    x: modelData[0]
-                                    y: modelData[1]
-                                    height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
-                                    width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
-                                    color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
-                                    border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
-                                    border.color: modelData[4]
-                                    visible: width > 0
-                                }
-                            }
-                        }
-                    }
-
-                    // The people.
-                    Repeater {
-                        model: actorModel
-
-                        delegate: Item {
-                            id: person
-
-                            required property string actorId
-                            property int frame: 0
-                            property int dir: 0
-                            readonly property var look: page.actors[actorId]?.look ?? null
-
-                            width: 16
-                            height: 24
-                            clip: true
-                            Component.onCompleted: {
-                                page.views[actorId] = person;
-                                const actor = page.actors[actorId];
-                                if (actor)
-                                    page.render(actor);
-                            }
-                            Component.onDestruction: {
-                                if (page.views[actorId] === person)
-                                    delete page.views[actorId];
-                            }
-
-                            Canvas {
-                                x: -person.frame * 18
-                                y: -person.dir * 26
-                                width: 270
-                                height: 104
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
                                 smooth: false
                                 antialiasing: false
-                                onPaint: {
-                                    if (person.look)
-                                        page.paintSheet(getContext("2d"), person.look);
+                                onPaint: page.paintProp(getContext("2d"), modelData)
+                            }
+                        }
+
+                        // Each seat's desk and chair, shown while it is in the office.
+                        Repeater {
+                            model: page.units
+
+                            delegate: Canvas {
+                                id: unit
+
+                                required property var modelData
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
+                                smooth: false
+                                antialiasing: false
+                                Component.onCompleted: {
+                                    page.unitViews[modelData.key] = unit;
+                                    visible = page.deskShown(page.world.seats[modelData.seat]);
+                                }
+                                Component.onDestruction: {
+                                    if (page.unitViews[modelData.key] === unit)
+                                        delete page.unitViews[modelData.key];
+                                }
+                                onPaint: page.paintProp(getContext("2d"), modelData)
+                            }
+                        }
+
+                        // The screens of the computers facing us.
+                        Repeater {
+                            model: page.screens
+
+                            delegate: Rectangle {
+                                id: screen
+
+                                required property var modelData
+                                property string mode: "off"
+                                property real phase: 0
+                                readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
+                                readonly property bool terminal: mode === "running" || mode === "testing"
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 8
+                                height: 6
+                                color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                                Component.onCompleted: {
+                                    page.screenViews[modelData.key] = screen;
+                                    visible = page.deskShown(page.world.seats[modelData.seat]);
+                                }
+                                Component.onDestruction: {
+                                    if (page.screenViews[modelData.key] === screen)
+                                        delete page.screenViews[modelData.key];
+                                }
+
+                                Repeater {
+                                    model: 3
+
+                                    delegate: Rectangle {
+                                        required property int index
+
+                                        visible: screen.mode !== "off"
+                                        x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
+                                        y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
+                                        height: 1
+                                        width: {
+                                            if (screen.mode === "failed")
+                                                return index === 1 ? 6 : 0;
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
+                                            if (screen.mode === "idle")
+                                                return index === 1 ? 2 : 0;
+                                            return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
+                                        }
+                                        color: {
+                                            if (screen.mode === "failed")
+                                                return "#ffb3b3";
+                                            if (screen.mode === "browsing")
+                                                return index === 0 ? "#4a90d9" : "#9aa5b0";
+                                            if (screen.mode === "testing")
+                                                return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                            if (screen.mode === "running")
+                                                return "#5fd38a";
+                                            if (screen.mode === "idle")
+                                                return "#9cc8ff";
+                                            return ["#c792ea", "#82aaff", "#f8c25c"][index];
+                                        }
+                                    }
                                 }
                             }
+                        }
 
-                            // Tab walks the people; a focused one shows its card as a
-                            // hovered one does, and Return or Space opens its thread.
-                            MouseArea {
-                                id: hit
+                        // What has been drawn on each whiteboard.
+                        Repeater {
+                            model: page.boards
 
-                                objectName: "officePerson:" + person.actorId
-                                Accessible.role: Accessible.Button
-                                Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
-                                Accessible.onPressAction: page.openPerson(person.actorId)
-                                activeFocusOnTab: true
-                                x: 2
-                                y: 2
-                                width: 12
-                                height: 21
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: page.hovered = person.actorId
-                                onExited: {
-                                    if (page.hovered === person.actorId && !activeFocus)
-                                        page.hovered = "";
+                            delegate: Item {
+                                id: board
+
+                                required property var modelData
+                                readonly property real blank: 0.15
+                                property real progress: blank
+
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: 38
+                                height: 18
+                                Component.onCompleted: page.boardViews[modelData.key] = board
+                                Component.onDestruction: {
+                                    if (page.boardViews[modelData.key] === board)
+                                        delete page.boardViews[modelData.key];
                                 }
-                                onActiveFocusChanged: {
-                                    if (activeFocus) {
-                                        page.hovered = person.actorId;
-                                        page.reveal(hit);
-                                    } else if (page.hovered === person.actorId && !containsMouse)
-                                        page.hovered = "";
+
+                                Repeater {
+                                    model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        required property int index
+                                        readonly property real start: index / 9
+
+                                        x: modelData[0]
+                                        y: modelData[1]
+                                        height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
+                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
+                                        color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
+                                        border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
+                                        border.color: modelData[4]
+                                        visible: width > 0
+                                    }
                                 }
-                                onClicked: page.openPerson(person.actorId)
-                                Keys.onReturnPressed: page.openPerson(person.actorId)
-                                Keys.onEnterPressed: page.openPerson(person.actorId)
-                                Keys.onSpacePressed: page.openPerson(person.actorId)
                             }
+                        }
 
-                            // The focus ring of the person Tab is on.
-                            Rectangle {
-                                visible: hit.activeFocus
-                                anchors.fill: hit
-                                color: "transparent"
-                                border.width: 1
-                                border.color: "#ffd84a"
+                        // The movers, and the desks they carry.
+                        Repeater {
+                            model: moverModel
+
+                            delegate: Item {
+                                id: mover
+
+                                required property string moverId
+                                property int frame: 0
+                                property int dir: 0
+                                property bool carrying: false
+                                readonly property var who: page.movers[moverId] ?? null
+
+                                objectName: "officeMover:" + moverId
+                                width: 16
+                                height: 24
+                                Component.onCompleted: {
+                                    page.moverViews[moverId] = mover;
+                                    if (who)
+                                        page.renderMover(who);
+                                }
+                                Component.onDestruction: {
+                                    if (page.moverViews[moverId] === mover)
+                                        delete page.moverViews[moverId];
+                                }
+
+                                Item {
+                                    width: 16
+                                    height: 24
+                                    clip: true
+
+                                    Canvas {
+                                        x: -(mover.frame + (mover.carrying ? 3 : 0)) * 18
+                                        y: -mover.dir * 26
+                                        width: 108
+                                        height: 104
+                                        smooth: false
+                                        antialiasing: false
+                                        onPaint: {
+                                            if (mover.who)
+                                                page.paintMoverSheet(getContext("2d"), mover.who.look);
+                                        }
+                                    }
+                                }
+
+                                Canvas {
+                                    objectName: "officeLoad:" + mover.moverId
+                                    visible: mover.carrying
+                                    // Seen from behind, the mover's back hides it.
+                                    z: mover.dir === 3 ? -1 : 0
+                                    y: 8
+                                    width: 16
+                                    height: 14
+                                    smooth: false
+                                    antialiasing: false
+                                    onPaint: page.paintLoad(getContext("2d"), mover.who?.chair ?? "#3d4a63")
+                                }
+                            }
+                        }
+
+                        // The people.
+                        Repeater {
+                            model: actorModel
+
+                            delegate: Item {
+                                id: person
+
+                                required property string actorId
+                                property int frame: 0
+                                property int dir: 0
+                                readonly property var look: page.actors[actorId]?.look ?? null
+                                // Its sprite sheet: "queued", "due" (asked to
+                                // paint) or "painted"; see paintSheets().
+                                property string sheet: ""
+                                readonly property bool paintable: sheetCanvas.available
+
+                                function requestSheet() {
+                                    sheetCanvas.requestPaint();
+                                }
+
+                                width: 16
+                                height: 24
+                                clip: true
+                                Component.onCompleted: {
+                                    page.views[actorId] = person;
+                                    page.queueSheet(person);
+                                    const actor = page.actors[actorId];
+                                    if (actor)
+                                        page.render(actor);
+                                }
+                                Component.onDestruction: {
+                                    page.dropSheet(person);
+                                    if (page.views[actorId] === person)
+                                        delete page.views[actorId];
+                                }
+
+                                Canvas {
+                                    id: sheetCanvas
+
+                                    x: -person.frame * 18
+                                    y: -[0, 26, 26, 52][person.dir]
+                                    width: 270
+                                    height: 78
+                                    smooth: false
+                                    antialiasing: false
+                                    transform: Scale {
+                                        origin.x: person.frame * 18 + 8
+                                        xScale: person.dir === 2 ? -1 : 1
+                                    }
+                                    onPaint: {
+                                        if (person.sheet === "queued")
+                                            return;
+                                        const start = Date.now();
+                                        if (person.look)
+                                            page.paintSheet(getContext("2d"), person.look);
+                                        page.sheetPainted(person, Date.now() - start);
+                                    }
+                                }
+
+                                // Tab walks the people; a focused one shows its card as a
+                                // hovered one does, and Return or Space opens its thread.
+                                // Nobody is reachable while the office is being set up.
+                                // (On this item, not the stage: under a stage whose
+                                // `enabled` changes, Ljós reports `visible` a change late,
+                                // hal-c2/ljos-ui#611.)
+                                MouseArea {
+                                    id: hit
+
+                                    enabled: page.settled
+
+                                    objectName: "officePerson:" + person.actorId
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
+                                    Accessible.onPressAction: page.openPerson(person.actorId)
+                                    activeFocusOnTab: true
+                                    x: 2
+                                    y: 2
+                                    width: 12
+                                    height: 21
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onEntered: page.hovered = person.actorId
+                                    onExited: {
+                                        if (page.hovered === person.actorId && !activeFocus)
+                                            page.hovered = "";
+                                    }
+                                    onActiveFocusChanged: {
+                                        if (activeFocus) {
+                                            page.hovered = person.actorId;
+                                            page.reveal(hit);
+                                        } else if (page.hovered === person.actorId && !containsMouse)
+                                            page.hovered = "";
+                                    }
+                                    onClicked: page.openPerson(person.actorId)
+                                    Keys.onReturnPressed: page.openPerson(person.actorId)
+                                    Keys.onEnterPressed: page.openPerson(person.actorId)
+                                    Keys.onSpacePressed: page.openPerson(person.actorId)
+                                }
+
+                                // The focus ring of the person Tab is on.
+                                Rectangle {
+                                    visible: hit.activeFocus
+                                    anchors.fill: hit
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: "#ffd84a"
+                                }
                             }
                         }
                     }
@@ -3279,24 +4012,33 @@ Item {
                                 visible: over.icon !== ""
                                 x: -5 * page.pixelScale
                                 y: (-11 - over.bob) * page.pixelScale
-                                width: 10
-                                height: 11
-                                scale: page.pixelScale
+                                width: 10 * page.drawScale
+                                height: 11 * page.drawScale
+                                scale: page.pixelScale / page.drawScale
                                 transformOrigin: Item.TopLeft
-                                clip: true
+                                layer.enabled: visible && page.resampled
+                                layer.smooth: true
 
-                                Canvas {
-                                    x: -({
-                                            ask: 0,
-                                            fail: 16,
-                                            think: 32,
-                                            nap: 48
-                                        }[over.icon] ?? 0)
-                                    width: 64
+                                Item {
+                                    width: 10
                                     height: 11
-                                    smooth: false
-                                    antialiasing: false
-                                    onPaint: page.paintIcons(getContext("2d"))
+                                    scale: page.drawScale
+                                    transformOrigin: Item.TopLeft
+                                    clip: true
+
+                                    Canvas {
+                                        x: -({
+                                                ask: 0,
+                                                fail: 16,
+                                                think: 32,
+                                                nap: 48
+                                            }[over.icon] ?? 0)
+                                        width: 64
+                                        height: 11
+                                        smooth: false
+                                        antialiasing: false
+                                        onPaint: page.paintIcons(getContext("2d"))
+                                    }
                                 }
                             }
 
@@ -3424,10 +4166,19 @@ Item {
             }
 
             Text {
+                objectName: "officeMessage"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 32, 420)
-                visible: page.office === null || page.people.length === 0
-                text: page.plugin.environments.length === 0 ? qsTr("No machine runs the Office plugin yet.") : page.office === null ? qsTr("Waiting for the office…") : qsTr("Nobody is in the office. Threads show up here as they work.")
+                visible: text.length > 0
+                text: {
+                    if (page.plugin.environments.length === 0)
+                        return qsTr("No machine runs the Office plugin yet.");
+                    if (page.office === null)
+                        return qsTr("Waiting for the office…");
+                    if (page.people.length === 0)
+                        return qsTr("Nobody is in the office. Threads show up here as they work.");
+                    return page.settled ? "" : qsTr("Setting up the office…");
+                }
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 color: page.muted

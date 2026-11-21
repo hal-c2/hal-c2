@@ -7,6 +7,8 @@ defmodule HalC2.Environment do
   caches and settings by it.
   """
 
+  require Logger
+
   @protocol 3
 
   @doc """
@@ -248,7 +250,7 @@ defmodule HalC2.Environment do
     agents = Enum.filter(ids, &HalC2.Acp.agent?/1)
 
     agents
-    |> Task.async_stream(&HalC2.Acp.reload/1, timeout: :infinity, max_concurrency: 4)
+    |> Task.async_stream(&read_agent(&1, models?), timeout: :infinity, max_concurrency: 4)
     |> Stream.run()
 
     # A sign-in a client has open lists the agent's methods anew.
@@ -256,6 +258,21 @@ defmodule HalC2.Environment do
 
     HalC2.Settings.notify_providers()
   end
+
+  # Antigravity's plain read only starts its runtime, so a model refresh of a
+  # signed-in instance reads the account's models in a disposable session, as
+  # a refresh of that one instance does. A failure keeps the earlier models.
+  defp read_agent(id, true = _models?) do
+    if HalC2.Acp.driver(id) == "antigravity" and HalC2.Acp.enabled?(id) and
+         HalC2.Acp.Antigravity.account(id) != nil do
+      with {:error, detail} <- HalC2.Acp.Antigravity.refresh_models(id),
+           do: Logger.warning("refreshing Antigravity models (#{id}) failed: #{detail}")
+    else
+      HalC2.Acp.reload(id)
+    end
+  end
+
+  defp read_agent(id, false), do: HalC2.Acp.reload(id)
 
   @doc """
   The client's `ServerConfig` for this MC. Only what an MC serves today is

@@ -334,12 +334,15 @@ impl McStreams {
                     connection.tell_started(engine);
                 }
                 let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
-                for (id, event) in run {
-                    let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
-                    if let Some(connection) = connection {
-                        connection.client.deliver(event);
+                // The run's shell frames tell the store's listeners once.
+                crate::store::batched(engine, || {
+                    for (id, event) in run {
+                        let connection = registry.borrow().get(&id).and_then(Weak::upgrade);
+                        if let Some(connection) = connection {
+                            connection.client.deliver(event);
+                        }
                     }
-                }
+                });
                 DELIVERING.with(|d| *d.borrow_mut() = outer);
             })
         };
@@ -936,6 +939,55 @@ mod reroute_tests {
             self.more.borrow_mut().push(id.0);
         }
         fn on_ready_changed(&self, _: OnReady) {}
+    }
+
+    /// The shell frames one drain of the "mc" stream carries tell each of
+    /// the store's listeners once, after the last: a burst of rows rebuilds
+    /// what shows them once, not once a frame.
+    #[test]
+    fn a_drain_of_shell_frames_tells_each_store_listener_once() {
+        let engine = ljos::App::new("test")
+            .register(crate::register)
+            .build_engine();
+        let mut pump = Pump::new(|| {});
+        let sides = McStreams::new(&mut pump);
+        let own = Connection::spawn(&sides);
+        // The id the store's `shell` subscription gets is the next one.
+        let id = own.client().handle().next_id() + 1;
+        let mc: Rc<dyn Mc> = own.clone();
+        crate::store::install(&engine, &mc, None);
+        let heard: Rc<RefCell<Vec<(&str, usize)>>> = Rc::default();
+        for name in ["first", "second"] {
+            let heard = heard.clone();
+            crate::store::on_changed(&engine, move |engine| {
+                let threads = crate::store::with(engine, |s| s.threads().len());
+                heard.borrow_mut().push((name, threads));
+            });
+        }
+        let thread = |id: &str| {
+            json!({"id": id, "projectId": "p1", "title": id,
+                   "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z"})
+        };
+        let frames = [
+            json!({
+                "t": "shell",
+                "mcs": [{"mc": "mc-a", "environment": {"environmentId": "env-a", "label": "env-a"},
+                         "online": true, "epoch": "e1", "rev": 4}],
+                "rows": [["mc-a", "t1", "thread", thread("t1")]],
+            }),
+            json!({"t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": 5,
+                   "rows": [["t2", "thread", thread("t2")]]}),
+            json!({"t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": 6,
+                   "rows": [["t3", "thread", thread("t3")]]}),
+        ];
+        for frame in frames {
+            let frame = frame.as_object().cloned().unwrap();
+            let sent = sides.events.send((own.id, McEvent::Frame { id, frame }));
+            assert!(sent.is_ok());
+        }
+        heard.borrow_mut().clear();
+        assert!(pump.pump(&engine) >= 3);
+        assert_eq!(*heard.borrow(), [("first", 3), ("second", 3)]);
     }
 
     #[test]

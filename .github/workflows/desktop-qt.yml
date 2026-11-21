@@ -71,9 +71,9 @@ jobs:
       # do not ship it: the app loads the user's own at run time.
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
+          "$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
             libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev dbus patchelf
 
       - name: Install build tools (macOS)

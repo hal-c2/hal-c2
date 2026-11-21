@@ -18,6 +18,10 @@ Window {
     // sets no machine up (the phone, which shows its pairing screen before
     // there is an MC to wait for) turns it off.
     property bool firstRunGate: true
+    // Whether the app frames the window: a frameless window's drag handle and
+    // buttons are then its own to draw (the layout, and the wizard over it). A
+    // root whose system frames the window (Android) turns it off.
+    property bool framesWindow: true
     // The window's own ConnectionNotice at its top edge. A root that has the
     // notice elsewhere turns it off: DefaultLayout then shows it in a strip of
     // its own, and the phone places it clear of the status bar.
@@ -93,7 +97,7 @@ Window {
     minimumWidth: 640
     minimumHeight: 400
     visible: true
-    title: route !== null && route.title ? qsTr("%1 — %2").arg(route.title, appName) : appName
+    title: route !== null && route.title ? qsTr("%1 — %2").arg(route.title).arg(appName) : appName
     color: Theme.windowTransparent ? "transparent" : Theme.palette.color("chrome", "#0b0b0d")
     opacity: Theme.windowOpacity
     flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window
@@ -105,6 +109,9 @@ Window {
         readonly property Item overlay: T.Overlay.overlay
 
         objectName: "shellBody"
+        // Not there while the first-run wizard covers the window: its
+        // controls would still take Tab and be read out from under it.
+        visible: !welcomeWizard.visible
         width: root.width / root.zoom
         height: root.height / root.zoom
         scale: root.zoom
@@ -184,6 +191,7 @@ Window {
 
         anchors.fill: parent
         visible: root.firstRunGate && welcomeWizard.active
+        framesWindow: root.framesWindow
     }
 
     ShellErrorOverlay {

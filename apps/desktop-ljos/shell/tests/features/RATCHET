@@ -625,6 +625,11 @@ desktop/stage.feature: The stage has a layout for one, two or four panes [single
 desktop/stage.feature: The stage survives a restart
 desktop/stage.feature: The stage survives a visit to settings
 desktop/stage.feature: The stage's shortcuts move the tab and put the timeline away
+desktop/user-shell.feature: A shell layout change applies without restarting, with what the window holds kept
+desktop/user-shell.feature: A shell layout change that does not load leaves the layout shown and says why
+desktop/user-shell.feature: Removing the user's shell layout gives the window back to the built-in one, working
+desktop/user-shell.feature: The released app finds every file its built-in layout loads
+desktop/user-shell.feature: The released app starts its built-in layout without compiling it
 files/adding-projects.feature: A clone on another machine of the cluster shows its progress too
 files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created
 files/adding-projects.feature: A finished clone offers to open its project
@@ -1391,6 +1396,8 @@ navigation/welcome-wizard.feature: The serving computer is already selected
 navigation/welcome-wizard.feature: The setup terminal cannot open
 navigation/welcome-wizard.feature: The setup terminal uses the provider's own home and environment
 navigation/welcome-wizard.feature: The user can skip configuring agents and importing projects
+navigation/welcome-wizard.feature: The wizard draws no window controls on a window its system frames
+navigation/welcome-wizard.feature: The wizard keeps a frameless window's controls in its corner
 navigation/welcome-wizard.feature: Unchecking a computer does not disconnect it
 navigation/welcome-wizard.feature: Unreadable settings are never replaced with defaults
 navigation/windows.feature: A restart skips a saved window that names another folder

@@ -4,11 +4,13 @@
 //! desktop-qt's ComposerSelectionRevisionSteps.cpp.
 
 use hal_c2_shell::controllers::composer::kept;
+use hal_c2_shell::controllers::settings::Settings;
 use serde_json::{Value, json};
 
 use crate::harness::{Outcome, Q, Steps, show, text};
+use crate::steps::launch::{FakeLaunches, launch_calls};
 use crate::steps::provider_settings::publish_providers_on;
-use crate::steps::settings::{fake_config, publish_providers};
+use crate::steps::settings::{fake_config, publish_providers, save_elsewhere};
 use crate::steps::stream::{
     FakeStreams, PEER, PEER_ENVIRONMENT, PEER_THREAD, PROJECT, THREAD, look,
 };
@@ -489,6 +491,83 @@ pub fn register(steps: &mut Steps) {
                 message["modelSelection"]["instanceId"] == json!("codex_work"),
                 "the message went with {}",
                 show(&message)
+            );
+            Ok(())
+        },
+    );
+
+    // A new thread's defaults come from its project's MC.
+    steps.step(
+        &format!("this machine starts new threads on {Q} with full access"),
+        |world, c, _| {
+            let engine = world.engine().clone();
+            world.wait_for("the shell to read the settings", move |_| {
+                Settings::of(&engine).ready()
+            })?;
+            save_elsewhere(
+                &mut world.mc,
+                "defaultModelSelection",
+                selection(instance_for(&c[0]), &c[0]),
+                false,
+            );
+            save_elsewhere(
+                &mut world.mc,
+                "defaultRuntimeMode",
+                json!("full-access"),
+                false,
+            );
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the project's machine starts new threads there on {Q} with (.+) access"),
+        |world, c, _| {
+            let mut row = world.mc.projects.get(PROJECT).cloned().unwrap_or(json!({}));
+            row["newThreadModelSelection"] = selection(instance_for(&c[0]), &c[0]);
+            row["newThreadRuntimeMode"] = if c[1] == "Supervised" {
+                json!("approval-required")
+            } else {
+                json!("full-access")
+            };
+            world.mc.projects.insert(PROJECT.into(), row.clone());
+            let name = world.mc.name.clone();
+            world
+                .mc
+                .send_rows(&name, vec![json!([PROJECT, "project", row])]);
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the draft is on {Q} with (.+) access"),
+        |world, c, _| {
+            world.wait_for_with(
+                |w| composer(w)["target"] == json!(w.draft_id),
+                |w| {
+                    format!(
+                        "the composer on the new thread; it shows {}",
+                        show(&composer(w))
+                    )
+                },
+            )?;
+            let mode = mode_of(world, &c[1])?;
+            expect_on(world, instance_for(&c[0]), &c[0])?;
+            let wanted = mode.clone();
+            world.wait_for_with(
+                move |w| composer(w)["runtimeMode"] == json!(wanted),
+                |w| format!("the draft in {mode}; it shows {}", show(&composer(w))),
+            )?;
+            // And it starts the thread on what it shows.
+            submit(world, "Add caching")?;
+            world.wait_for("the thread to launch", |w| {
+                !w.mc
+                    .peek::<FakeLaunches>()
+                    .is_none_or(|l| l.calls.is_empty())
+            })?;
+            let launch = launch_calls(world).pop().unwrap_or(Value::Null);
+            expect!(
+                model_of(&launch) == c[0] && launch["runtimeMode"] == json!(mode),
+                "the launch is {}",
+                show(&launch)
             );
             Ok(())
         },

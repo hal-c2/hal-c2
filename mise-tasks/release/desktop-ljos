@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build the desktop-ljos release into release/: hal-c2-ljos with the QML, desktop host, Node and MC (release:mc) it runs, laid out as it is installed"
+#MISE description="Build the desktop-ljos release into release/: hal-c2-ljos (its QML compiled in) with the desktop host, Node and MC (release:mc) it runs, laid out as it is installed"
 #MISE dir="{{config_root}}"
 #MISE depends=["release:mc"]
 set -euo pipefail
@@ -24,7 +24,8 @@ fi
 target="${CARGO_TARGET_DIR:-$PWD/apps/desktop-ljos/target}/release"
 
 # HAL_C2_RELEASE makes it the installed app (src/main.rs): its own app id, and
-# the QML, host and Node read from beside the executable instead of this checkout.
+# the host and Node read from beside the executable instead of this checkout. The
+# QML is compiled into it (build.rs's pack), so the release ships none.
 (cd apps/desktop-ljos && HAL_C2_RELEASE=1 mise exec -- cargo build --locked --release -q -p hal_c2_shell --bins)
 
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
@@ -68,10 +69,6 @@ fi
 
 # The host, Node, the MC and the licenses, as desktop-qt's packages stage them.
 node apps/desktop-qt/scripts/stage-runtime.mjs "$share"
-# One directory holding desktop-qt's bricks and this app's entry (qml::Roots::one).
-mkdir -p "$share/qml"
-cp -R apps/desktop-qt/qml/. apps/desktop-ljos/qml/. "$share/qml/"
-
 if [[ $os == Linux ]]; then
   # Snap Shot: GNOME's extension and the KDE Plasma and Hyprland capture helpers,
   # where src/snap_shot finds them beside bin/.
@@ -87,7 +84,6 @@ else
   codesign --force --deep --sign - "$out/HAL-C2 Ljós.app"
 fi
 
-# Fails when what it was given does not compile, read from where the release has it
-# (HAL_C2_QML_DIR would name another tree).
-env -u HAL_C2_QML_DIR "$bin/hal-c2-ljos" --check
+# Fails when a QML file of the checkout is missing from the pack the binary carries.
+"$bin/hal-c2-ljos" --check
 echo "$out"

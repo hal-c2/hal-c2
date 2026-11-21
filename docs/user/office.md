@@ -10,7 +10,7 @@ Put the `office` folder from this repository's `plugins/` into your MC's
 `plugins` folder. With the MC running, select **Look for plugins** beside the
 machine's name in **Settings → Plugins**, then turn Office on there. The **Office** page
 shows the machine's office; with more than one machine running the plugin, pick
-the machine at the top. **+** and **−** zoom.
+the machine at the top. **+** and **−** zoom, and **Fit** shows the whole office again.
 
 ## What you see
 
@@ -25,6 +25,9 @@ the machine at the top. **+** and **−** zoom.
   person to open the thread and answer. A red mark means its last turn failed.
 - When one agent hands work to another or sends it a message, the two walk up
   to each other and the message shows in a speech bubble.
+- New threads walk in through the door, and movers carry their desks in. Desks
+  nobody uses are carried back out. The office has 48 desks; past that,
+  threads without a desk wait in the break room.
 
 Hover a person, or move to it with Tab, for its thread, project, agent and what
 it is doing; click it or press Return to open the thread.
@@ -33,7 +36,9 @@ it is doing; click it or press Return to open the thread.
 
 - **Most people in the office**: threads asking you something come first, then
   working, waiting and idle ones.
-- **Keep idle threads for (hours)**: an idle thread leaves once it has been
-  quiet this long. Archived and settled threads leave at once.
+- **Keep idle threads for (hours)**: an idle thread leaves this long after its
+  agent stopped working. Archived and settled threads leave at once. Workers
+  leave with the thread that delegated to them, unless they are still working
+  or waiting on work of their own.
 
 The page stands still while it is hidden or the app is in the background.

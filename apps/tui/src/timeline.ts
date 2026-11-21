@@ -68,7 +68,7 @@ export function formatDuration(durationMs: number): string {
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
   if (durationMs < 10_000) {
     const tenths = Math.round(durationMs / 100) / 10;
-    return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
+    return tenths >= 10 ? "10s" : `${tenths.toFixed(1).replace(/\.0$/, "")}s`;
   }
   if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
   const totalSeconds = Math.round(durationMs / 1_000);
@@ -382,6 +382,20 @@ export function formatWorkingTimer(elapsedSeconds: number): string {
 export interface DiffStat {
   readonly additions: number;
   readonly deletions: number;
+}
+
+/**
+ * A diff count compactly: 940, 8.5k, 999k, 1m, 1b. A count that rounds up
+ * to the next unit reads in that unit, never "1000k" or "1000m".
+ */
+export function formatDiffCount(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0";
+  if (value < 1_000) return `${Math.round(value)}`;
+  if (value < 10_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  if (value < 999_500) return `${Math.round(value / 1_000)}k`;
+  if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+  if (value < 999_500_000) return `${Math.round(value / 1_000_000)}m`;
+  return `${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}b`;
 }
 
 export function diffStat(files: OrchestrationCheckpointSummary["files"]): DiffStat {

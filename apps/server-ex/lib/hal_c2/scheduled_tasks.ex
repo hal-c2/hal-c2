@@ -661,6 +661,8 @@ defmodule HalC2.ScheduledTasks do
 
     case result do
       {:ok, _} -> :ok
+      # The thread of a task that is gone: the user reads this, not the command's own id.
+      {:error, "unknown thread " <> _} -> {:error, "Thread not found."}
       {:error, %{"message" => message}} -> {:error, message}
       {:error, reason} when is_binary(reason) -> {:error, reason}
       other -> {:error, inspect(other)}

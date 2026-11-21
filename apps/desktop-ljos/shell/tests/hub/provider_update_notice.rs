@@ -288,3 +288,32 @@ fn an_update_that_changed_nothing_is_reported_as_outdated() {
         "Codex still appears outdated. Check provider settings for details."
     );
 }
+
+/// A thread's row changing says nothing about providers: the notice and its
+/// toast are left alone, so QML sees no write for it.
+#[test]
+fn a_row_change_leaves_the_notice_and_its_toast_alone() {
+    let hub = hub("rows");
+    providers(&hub, json!([behind("codex", "1.2.0")]));
+    assert_eq!(items(&hub).len(), 1);
+    let writes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let bridge = hal_c2_shell::bridge::Bridge::of(&hub.engine);
+    for key in ["providerUpdates", "toasts"] {
+        let writes = writes.clone();
+        bridge.watch(&hub.engine, key, move |_, _| writes.set(writes.get() + 1));
+    }
+    for rev in 2..12 {
+        hub.mc.frame(
+            &hub.engine,
+            "shell",
+            "",
+            json!({"t": "shell.rows", "mc": "a", "epoch": "e", "rev": rev, "rows": [
+                [format!("t{rev}"), "thread", {"id": format!("t{rev}"), "projectId": "p",
+                 "title": "x", "createdAt": "2026-09-23T09:00:00Z",
+                 "updatedAt": "2026-09-23T09:00:00Z"}],
+            ]}),
+        );
+    }
+    assert_eq!(writes.get(), 0);
+    assert_eq!(items(&hub).len(), 1);
+}
