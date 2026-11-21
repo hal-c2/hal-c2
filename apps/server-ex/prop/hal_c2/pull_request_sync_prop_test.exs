@@ -37,22 +37,26 @@ defmodule HalC2.PullRequestSyncPropTest do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         home = HalC2.Prop.scratch_home("pull-request-sync")
-        fake_host(home)
 
-        HalC2.Prop.start_services([
-          {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
-          HalC2.Settings,
-          HalC2.Streams,
-          HalC2.Shell,
-          {HalC2.PullRequests.Sync, interval: nil}
-        ])
+        {history, state, result} =
+          try do
+            fake_host(home)
 
-        project(home)
-        host(initial_state().host)
+            HalC2.Prop.start_services([
+              {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
+              HalC2.Settings,
+              HalC2.Streams,
+              HalC2.Shell,
+              {HalC2.PullRequests.Sync, interval: nil}
+            ])
 
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        HalC2.Prop.stop_services()
-        HalC2.Prop.restore_env()
+            project(home)
+            host(initial_state().host)
+            run_commands(__MODULE__, cmds)
+          after
+            HalC2.Prop.stop_services()
+            HalC2.Prop.restore_env()
+          end
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -198,32 +202,33 @@ defmodule HalC2.PullRequestSyncPropTest do
     settle()
     now = System.system_time(:millisecond)
 
-    :sys.replace_state(HalC2.PullRequests.Sync, fn state ->
-      %{
-        state
-        | last_synced: Map.new(state.last_synced, fn {key, _at} -> {key, now - @slow - 1} end)
-      }
+    asked(fn ->
+      :sys.replace_state(HalC2.PullRequests.Sync, fn state ->
+        %{
+          state
+          | last_synced: Map.new(state.last_synced, fn {key, _at} -> {key, now - @slow - 1} end)
+        }
+      end)
     end)
-
-    []
   end
 
   def restart do
     settle()
-    HalC2.Prop.restart_service(HalC2.PullRequests.Sync)
-    []
+    asked(fn -> HalC2.Prop.restart_service(HalC2.PullRequests.Sync) end)
   end
 
   def settle(thread) do
-    {:ok, _} = dispatch(thread, %{"type" => "thread.settle"})
-    settle()
-    []
+    asked(fn ->
+      {:ok, _} = dispatch(thread, %{"type" => "thread.settle"})
+      settle()
+    end)
   end
 
   def unsettle(thread) do
-    {:ok, _} = dispatch(thread, %{"type" => "thread.unsettle"})
-    settle()
-    []
+    asked(fn ->
+      {:ok, _} = dispatch(thread, %{"type" => "thread.unsettle"})
+      settle()
+    end)
   end
 
   defp dispatch(thread, command) do
@@ -277,7 +282,7 @@ defmodule HalC2.PullRequestSyncPropTest do
     :ok
   end
 
-  # The numbers the fake host was asked about while `fun` ran, in order.
+  # The numbers the fake host was asked about while `fun` ran, in order, one per read.
   defp asked(fun) do
     before = File.stat!(log()).size
     fun.()
@@ -291,7 +296,6 @@ defmodule HalC2.PullRequestSyncPropTest do
       query = JSON.decode!(call["stdin"])["query"] || ""
       if query =~ "PullRequestSummaries", do: numbers(query), else: []
     end)
-    |> Enum.uniq()
     |> Enum.sort()
   end
 
