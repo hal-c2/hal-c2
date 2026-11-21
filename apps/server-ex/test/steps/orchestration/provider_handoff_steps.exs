@@ -499,7 +499,7 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     assert context.usage_before["usedTokens"] > 0,
            "#{provider} reported no occupancy to start over from"
 
-    assert run["modelSelection"]["instanceId"] != provider,
+    assert run["providerInstanceId"] != provider,
            "the latest run is still on #{provider}"
 
     assert provider_thread["contextUsage"] in [nil, %{}] or
