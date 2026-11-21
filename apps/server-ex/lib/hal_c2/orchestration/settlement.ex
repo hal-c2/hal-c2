@@ -383,7 +383,8 @@ defmodule HalC2.Orchestration.Settlement do
 
   # A snoozed thread that woke early, on an error or finished work of a run that began
   # after the snooze, may settle; one still parked until its wake time may not. A run
-  # that began before the snooze ending later (a late failure) does not wake it.
+  # that began before the snooze ending later (a late failure) does not wake it, nor one
+  # that was interrupted or cancelled: that is the user stopping it, not news for them.
   defp awake?(row, now) do
     until = epoch_ms(row["snoozedUntil"])
     snoozed_at = epoch_ms(row["snoozedAt"])
@@ -396,7 +397,8 @@ defmodule HalC2.Orchestration.Settlement do
 
     woke_after_snooze? =
       snoozed_at != nil and completed != nil and completed > snoozed_at and
-        (began == nil or began > snoozed_at) and not quiet_wake?
+        (began == nil or began > snoozed_at) and not quiet_wake? and
+        row["status"] not in ~w(interrupted cancelled)
 
     until == nil or until <= now or woke_after_snooze? or
       (row["status"] == "failed" and snoozed_at == nil)
