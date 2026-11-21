@@ -489,11 +489,18 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   # and holds none of the occupancy Codex's did.
   step "the next run does not report the occupancy {string} had", %{args: [provider]} = context do
     thread = context.thread
-    run = World.state(context, thread).entities["run"] |> Map.values() |> Enum.max_by(& &1["ordinal"])
+
+    run =
+      World.state(context, thread).entities["run"] |> Map.values() |> Enum.max_by(& &1["ordinal"])
+
     provider_thread = provider_thread(context, thread, run)
     assert provider_thread, "the latest run has no provider thread"
-    assert context.usage_before["usedTokens"] > 0, "#{provider} reported no occupancy to start over from"
+
+    assert context.usage_before["usedTokens"] > 0,
+           "#{provider} reported no occupancy to start over from"
+
     refute provider_thread["contextUsage"] == context.usage_before
+
     assert provider_thread["contextUsage"] in [nil, %{}] or
              provider_thread["contextUsage"]["usedTokens"] != context.usage_before["usedTokens"]
 
