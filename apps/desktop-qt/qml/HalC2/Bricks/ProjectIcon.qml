@@ -22,7 +22,8 @@ Item {
     readonly property color monogramBackground: Qt.tint(Theme.palette.color("surfaceRaised", "#1c1f26"), Qt.alpha(tint, 0.22))
     // The project's colour, deepened or lightened in its own hue until the
     // letters stand out from their tile at 4.5:1 (WCAG 2.2 1.4.3): a vivid
-    // colour on its own tint is only about 2.5:1.
+    // colour on its own tint is only about 2.5:1. A tile its hue cannot
+    // clear (a mid grey) gets black or white, one of which always does.
     readonly property color monogramForeground: readableTint(tint, monogramBackground)
 
     function readableTint(foreground, background) {
@@ -50,7 +51,9 @@ Item {
             lightness = deepen ? Math.max(0.02, lightness - 0.04) : Math.min(0.98, lightness + 0.04);
             candidate = Qt.hsla(hue, saturation, lightness, 1);
         }
-        return candidate;
+        if (contrast(candidate, background) >= 4.5)
+            return candidate;
+        return deepen ? Qt.rgba(0, 0, 0, 1) : Qt.rgba(1, 1, 1, 1);
     }
 
     implicitWidth: size
