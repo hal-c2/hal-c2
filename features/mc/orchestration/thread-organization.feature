@@ -203,7 +203,7 @@ Feature: Organizing threads in the engine
     When a client settles "t1"
     Then thread "t1" is settled by override
 
-  @backlog @mc
+  @mc
   Scenario: Settling a settled thread again changes nothing
     Given thread "t1" is settled
     When a client settles "t1" again

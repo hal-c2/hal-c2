@@ -444,6 +444,60 @@ defmodule HalC2.Steps.Orchestration.Threads do
     context
   end
 
+  @changes %{
+    "record a visit to" => {"thread.visit", :now},
+    "rename" => {"thread.metadata.update", %{"title" => "Renamed"}},
+    "archive" => {"thread.archive", %{}},
+    "pin" => {"thread.pin", %{"orderKey" => "a0"}},
+    "snooze" => {"thread.snooze", :tomorrow},
+    "settle" => {"thread.settle", %{}},
+    "mark unread" => {"thread.mark-unread", %{}},
+    "change the model of" => {"thread.model-selection.set", :model},
+    "link a pull request to" =>
+      {"thread.pull-request.link",
+       %{
+         "host" => "github.com",
+         "repository" => "acme/demo",
+         "number" => 5,
+         "url" => "https://github.com/acme/demo/pull/5",
+         "source" => "manual"
+       }}
+  }
+
+  step ~r/^a client tries to (?<change>record a visit to|rename|archive|pin|snooze|settle|mark unread|change the model of|link a pull request to) "(?<thread>[^"]+)"$/,
+       %{args: [change, thread]} = context do
+    {type, fields} = Map.fetch!(@changes, change)
+
+    fields =
+      case fields do
+        :now -> %{"visitedAt" => World.iso_from_now(0)}
+        :tomorrow -> %{"snoozedUntil" => World.iso_from_now(86_400_000)}
+        :model -> %{"modelSelection" => @model}
+        fields -> fields
+      end
+
+    thread_command(context, type, thread, fields)
+  end
+
+  step ~r/^thread "(?<thread>[^"]+)" was deleted at (?<time>\d\d:\d\d)$/,
+       %{args: [thread, time]} = context do
+    context
+    |> World.named_thread(thread)
+    |> World.patch_thread(thread, %{"deletedAt" => today(time)})
+  end
+
+  step ~r/^a client deletes "(?<thread>[^"]+)" again at (?<time>\d\d:\d\d)$/,
+       %{args: [thread, _time]} = context do
+    thread_command(context, "thread.delete", thread)
+  end
+
+  step ~r/^thread "(?<thread>[^"]+)" still records (?<time>\d\d:\d\d) as the time it was deleted$/,
+       %{args: [thread, time]} = context do
+    assert {:ok, _} = context.reply
+    assert World.thread(context, thread)["deletedAt"] == today(time)
+    context
+  end
+
   step "thread {string} records when it was deleted", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
     assert is_binary(World.thread(context, thread)["deletedAt"])

@@ -170,6 +170,22 @@ defmodule HalC2.Steps.Providers.UsageLimits.Vendor do
       else: route(conn, conn.method, conn.request_path)
   end
 
+  defp route(conn, "GET", "/grok/billing-" <> unused) do
+    period =
+      case unused do
+        "weekly-unused" ->
+          %{"type" => "USAGE_PERIOD_TYPE_WEEKLY", "end" => "2026-10-05T00:00:00Z"}
+
+        "monthly-unused" ->
+          %{"type" => "USAGE_PERIOD_TYPE_MONTHLY", "end" => "2026-10-01T00:00:00Z"}
+
+        _incomplete ->
+          %{"type" => "USAGE_PERIOD_TYPE_MONTHLY"}
+      end
+
+    json(conn, %{"config" => %{"currentPeriod" => period}})
+  end
+
   defp route(conn, "GET", "/grok/billing") do
     json(conn, %{
       "config" => %{
@@ -1400,6 +1416,66 @@ defmodule HalC2.Steps.Providers.UsageLimits do
         assert window(limits, "go_rolling")["windowDurationMins"] == 300
     end
 
+    context
+  end
+
+  step "Grok is signed in with a subscription and has not used any metered credit yet",
+       context do
+    dir = Path.join(context.mc.home, "vendor-auth")
+
+    write_json(Path.join(dir, ".grok/auth.json"), %{
+      "https://accounts.x.ai/sign-in" => %{"key" => "vendor-token"}
+    })
+
+    context = vendor_instance(context, "grok", %{"GROK_HOME" => Path.join(dir, ".grok")})
+    World.put_app_env(:grok_billing_url, context.vendor <> "/grok/billing-incomplete")
+    context
+  end
+
+  step ~r/^xAI reports (?<period>a complete weekly billing period|a complete monthly billing period|an incomplete billing period) without a usage percentage$/,
+       %{args: [period]} = context do
+    path =
+      case period do
+        "a complete weekly billing period" -> "/grok/billing-weekly-unused"
+        "a complete monthly billing period" -> "/grok/billing-monthly-unused"
+        "an incomplete billing period" -> "/grok/billing-incomplete"
+      end
+
+    World.put_app_env(:grok_billing_url, context.vendor <> path)
+    context
+  end
+
+  step "the user opens Limits", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+
+    payload =
+      if context[:vendor_instance],
+        do: %{"instanceId" => context.vendor_instance},
+        else: %{}
+
+    {_, context} = World.call!(context, "server.refreshProviders", payload)
+    context
+  end
+
+  # Clients word limits with no windows and no refusal as this notice.
+  step "Grok's account is listed with the notice {string}", %{args: [_notice]} = context do
+    {limits, context} = usage_limits(context, "grok")
+    assert %{"windows" => []} = limits
+    refute Map.has_key?(limits, "unavailable")
+    Map.put(context, :grok_limits, limits)
+  end
+
+  step "it is not reported as not supported", context do
+    refute match?(%{"unavailable" => %{"reason" => "unsupported"}}, context.grok_limits)
+    context
+  end
+
+  step ~r/^Grok's (?<kind>weekly|monthly) window reads 0% used with its reset time$/,
+       %{args: [kind]} = context do
+    {limits, context} = usage_limits(context, "grok")
+    refute Map.has_key?(limits, "unavailable")
+    assert [%{"kind" => ^kind, "usedPercent" => 0, "resetsAt" => resets}] = limits["windows"]
+    assert is_binary(resets)
     context
   end
 

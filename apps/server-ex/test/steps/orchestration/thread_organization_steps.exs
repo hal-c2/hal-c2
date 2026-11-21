@@ -45,6 +45,23 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     organize(context, thread, "thread.settle")
   end
 
+  step "a client settles {string} again", %{args: [thread]} = context do
+    context
+    |> Map.put(:settled_before, World.thread(context, thread)["settledAt"])
+    |> organize(thread, "thread.settle")
+  end
+
+  step "no error is reported", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "thread {string} keeps its original settled time", %{args: [thread]} = context do
+    assert is_binary(context.settled_before)
+    assert World.thread(context, thread)["settledAt"] == context.settled_before
+    context
+  end
+
   step "thread {string} is settled by override", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
     assert World.thread(context, thread)["settledOverride"] == "settled"

@@ -186,6 +186,8 @@ defmodule HalC2.AgentSessions do
         [
           Path.join(home, "Downloads"),
           Path.join([home, "Documents", "Codex"]),
+          Path.join(home, ".hal-c2"),
+          Path.join(home, ".t3"),
           hal_c2_home
           | HalC2.Scratch.roots()
         ],

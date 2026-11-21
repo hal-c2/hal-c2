@@ -320,7 +320,7 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings

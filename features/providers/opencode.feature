@@ -600,7 +600,6 @@ Feature: OpenCode
     Then the thread still shows its model
     And if OpenCode rejects the model the user can pick another and retry
 
-  @backlog
   Scenario: Deleting a thread whose OpenCode turn was interrupted before its message was sent
     Given the user sent a message to an OpenCode thread
     And the turn was interrupted before OpenCode received the message
