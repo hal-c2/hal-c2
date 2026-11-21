@@ -155,7 +155,7 @@ Feature: Scheduled tasks
 
   # Upstream #29889: a run that failed to start recorded the error with a stack trace and the
   # server's file paths, shown in Settings and to agents listing tasks.
-  @backlog @mc
+  @mc
   Scenario: A failed run records only the error's message
     Given task "a" is bound to a thread that no longer exists
     When task "a" runs

@@ -485,6 +485,21 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  # The switch starts a new provider conversation: its provider thread is Claude's own
+  # and holds none of the occupancy Codex's did.
+  step "the next run does not report the occupancy {string} had", %{args: [provider]} = context do
+    thread = context.thread
+    run = World.state(context, thread).entities["run"] |> Map.values() |> Enum.max_by(& &1["ordinal"])
+    provider_thread = provider_thread(context, thread, run)
+    assert provider_thread, "the latest run has no provider thread"
+    assert context.usage_before["usedTokens"] > 0, "#{provider} reported no occupancy to start over from"
+    refute provider_thread["contextUsage"] == context.usage_before
+    assert provider_thread["contextUsage"] in [nil, %{}] or
+             provider_thread["contextUsage"]["usedTokens"] != context.usage_before["usedTokens"]
+
+    context
+  end
+
   step "the meter does not reset to zero until the provider reports new usage", context do
     thread = context.thread
     run = World.state(context, thread).entities["run"][context.running]

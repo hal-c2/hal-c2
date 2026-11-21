@@ -45,6 +45,59 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     organize(context, thread, "thread.settle")
   end
 
+  step "a client settles {string} again", %{args: [thread]} = context do
+    context
+    |> Map.put({:settled_before, thread}, World.thread(context, thread)["settledAt"])
+    |> organize(thread, "thread.settle")
+  end
+
+  step "no error is reported", context do
+    assert {:ok, _} = context.reply, "command failed: #{inspect(context.reply)}"
+    context
+  end
+
+  step "thread {string} keeps its original settled time", %{args: [thread]} = context do
+    before = context[{:settled_before, thread}]
+    assert is_binary(before)
+    assert World.thread(context, thread)["settledAt"] == before
+    context
+  end
+
+  # Codex's async question: an agent message carrying questions the turn does not wait
+  # on. The turn then ends, so only the question is left on the thread.
+  step "thread {string} waits only for an answer to a question the provider does not block on",
+       %{args: [thread]} = context do
+    context = context |> World.providers() |> World.running_turn(thread)
+    {_pid, runtime} = World.codex_runtime(context, thread)
+    item = "msg-async-#{System.unique_integer([:positive])}"
+    request = "runtime-request:codex:async:" <> item
+
+    context =
+      World.codex_notify(context, thread, "item/completed", %{
+        "threadId" => runtime.native_thread_id,
+        "turnId" => runtime.turn.native_turn_id,
+        "item" => %{
+          "type" => "agentMessage",
+          "id" => item,
+          "delivery" => "async",
+          "text" => "",
+          "questions" => [%{"title" => "Which color?", "options" => ["Red", "Blue"]}]
+        }
+      })
+
+    World.await_state(context, thread, fn state ->
+      get_in(state.entities, ["runtime-request", request, "status"]) == "pending"
+    end)
+
+    context = World.complete_codex_turn(context, thread)
+
+    World.await_state(context, thread, fn state ->
+      state.entities["run"][context.running]["status"] == "completed"
+    end)
+
+    Map.merge(context, %{child_request: request, question_thread: thread, thread: thread})
+  end
+
   step "thread {string} is settled by override", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
     assert World.thread(context, thread)["settledOverride"] == "settled"
