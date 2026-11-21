@@ -104,6 +104,8 @@ pub struct ProviderUpdateNotice {
     settling_since: Option<DateTime<Utc>>,
 
     sidebar: updates::Sidebar,
+    /// What the store showed when the notice was last worked out for it.
+    store_seen: Option<StoreView>,
 }
 
 impl Controller for ProviderUpdateNotice {
@@ -152,6 +154,7 @@ impl Controller for ProviderUpdateNotice {
             groups: Vec::new(),
             settling_since: None,
             sidebar: updates::Sidebar::default(),
+            store_seen: None,
         }
     }
 
@@ -165,7 +168,15 @@ impl Controller for ProviderUpdateNotice {
         });
         let me = self.me.clone();
         store::on_changed(engine, move |engine: &Engine| {
-            me.run(engine, |c, engine| c.evaluate(engine));
+            // Most store changes are rows; the notice reads only the
+            // environments, so it is worked out again when they change.
+            let seen = store_view(engine);
+            me.run(engine, |c, engine| {
+                if c.store_seen.as_ref() != Some(&seen) {
+                    c.store_seen = Some(seen);
+                    c.evaluate(engine);
+                }
+            });
         });
         self.publish(engine);
         self.evaluate(engine);
@@ -194,12 +205,29 @@ impl Controller for ProviderUpdateNotice {
 }
 
 fn providers_of(engine: &Engine) -> Vec<Json> {
-    Settings::of(engine)
-        .config()
-        .get("providers")
-        .and_then(Json::as_array)
-        .cloned()
-        .unwrap_or_default()
+    match Settings::of(engine).config_field("providers") {
+        Some(Json::Array(providers)) => providers,
+        _ => Vec::new(),
+    }
+}
+
+/// What [`ProviderUpdateNotice::evaluate`] reads of the store: whether it
+/// is synchronized, and each environment's label and whether it is online.
+type StoreView = (bool, Vec<(String, Json, bool)>);
+
+fn store_view(engine: &Engine) -> StoreView {
+    store::with(engine, |store| {
+        let environments = store
+            .environments()
+            .into_iter()
+            .map(|id| {
+                let label = store.environment(&id).get("label").cloned();
+                let online = store.environment_online(&id);
+                (id, label.unwrap_or_default(), online)
+            })
+            .collect();
+        (store.synchronized(), environments)
+    })
 }
 
 impl ProviderUpdateNotice {

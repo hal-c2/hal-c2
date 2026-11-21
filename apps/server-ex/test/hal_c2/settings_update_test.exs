@@ -59,6 +59,69 @@ defmodule HalC2.SettingsUpdateTest do
     assert JSON.decode!(File.read!(path)) == HalC2.Settings.settings()
   end
 
+  test "a hand edit that deletes a plugin's instance ends its hold on the id, on disk too" do
+    id = "plugin_probe_work"
+
+    {:ok, 1} =
+      HalC2.Settings.update(fn _ ->
+        %{
+          "providerInstances" => %{id => %{"driver" => "codex"}},
+          "plugins" => %{"probe" => %{"providerInstances" => [id]}}
+        }
+      end)
+
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+
+    File.write!(
+      path,
+      JSON.encode!(%{"plugins" => %{"probe" => %{"providerInstances" => [id]}}})
+    )
+
+    send(HalC2.Settings, :check)
+    :sys.get_state(HalC2.Settings)
+
+    assert get_in(JSON.decode!(File.read!(path)), ["plugins", "probe", "providerInstances"]) ==
+             []
+
+    # A later save starts from the file: the user's instance there is not the plugin's.
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), id], %{"driver" => "claude"})
+      )
+
+    assert get_in(HalC2.Settings.settings(), ["plugins", "probe", "providerInstances"]) == []
+  end
+
+  test "an instance deleted by hand while the MC was down ends its plugin's hold as it starts" do
+    id = "plugin_probe_work"
+    stop_supervised!(HalC2.Settings)
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(
+      path,
+      JSON.encode!(%{
+        "plugins" => %{
+          "probe" => %{"providerInstances" => [id], "releasedInstances" => ["plugin_probe_mine"]}
+        },
+        "providerInstances" => %{"plugin_probe_mine" => %{"driver" => "codex"}}
+      })
+    )
+
+    start_supervised!(HalC2.Settings)
+
+    assert %{"providerInstances" => [], "releasedInstances" => []} =
+             JSON.decode!(File.read!(path))["plugins"]["probe"]
+
+    # An instance the user adds under the id is theirs, not the plugin's.
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), id], %{"driver" => "claude"})
+      )
+
+    assert get_in(HalC2.Settings.settings(), ["plugins", "probe", "providerInstances"]) == []
+  end
+
   test "a save over a file that is not valid JSON is refused and leaves the text" do
     {:ok, 1} = HalC2.Settings.update(&Map.put(&1, "a", 1))
     path = Path.join(HalC2.Paths.config_dir(), "settings.json")

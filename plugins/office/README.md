@@ -27,7 +27,9 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   thread's id), so a person looks the same each time and on every client. The
   floor, each piece of furniture and one sprite sheet per person are painted
   once; the page then only moves them, on one timer that runs while the page is
-  shown.
+  shown. A sprite sheet is thousands of Canvas calls, so sheets are painted a few
+  a frame, within a budget the page learns from how long one took; until the
+  floor and everyone on it are drawn, the page says the office is being set up.
 - `test/tst_OfficePage.qml`: the page against a fake MC part.
 
 ## Running the tests
