@@ -653,6 +653,58 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  step "the Google account now offers another model", context do
+    [model] = @models
+
+    FakeAcp.configure(
+      context,
+      &Map.put(&1, "configOptions", [
+        %{
+          model
+          | "options" => model["options"] ++ [%{"value" => "fake/two", "name" => "Fake/Two"}]
+        }
+      ])
+    )
+  end
+
+  step "Antigravity cannot read the account's models", context do
+    FakeAcp.configure(
+      context,
+      &Map.put(&1, "sessionError", %{"code" => -32603, "message" => "no session"})
+    )
+
+    Map.put(context, :sessions_before, length(FakeAcp.received(context, "session/new")))
+  end
+
+  # A plain reload of the runtime opens no session; reading the models does.
+  step "Antigravity was asked for the account's models", context do
+    assert length(FakeAcp.received(context, "session/new")) > context.sessions_before
+    context
+  end
+
+  # `call!` fails the step on an error reply: a refresh of every provider still succeeds.
+  step "the user refreshes every provider's models", context do
+    {{_, context}, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        World.call!(context, "server.refreshProviders", %{"refreshModels" => true})
+      end)
+
+    Map.put(context, :refresh_log, log)
+  end
+
+  step "the failed read is logged", context do
+    assert context.refresh_log =~ "refreshing Antigravity models (#{@instance}) failed"
+    context
+  end
+
+  step "Antigravity lists the model the account now offers", context do
+    assert ["fake/one", "fake/two"] =
+             for(m <- Antigravity.account(@instance)["models"], do: m["slug"])
+
+    assert ["fake/one", "fake/two"] = for(m <- FakeAcp.entry(@instance)["models"], do: m["slug"])
+    context
+  end
+
   step ~r/^the user refreshes the Antigravity models and (?<problem>.+)$/,
        %{args: [problem]} = context do
     case problem do
