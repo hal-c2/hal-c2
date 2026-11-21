@@ -18,7 +18,7 @@ name: CI
 # (`park`), holding no runner, and when the last passes it marks them passed too
 # (merge-queue-stamp.sh), so the queue merges them together. When the last entry fails and
 # leaves, the watchdog starts the new last one's tests (merge-queue-watchdog.sh), as a
-# workflow_dispatch run with `queue_base` set, which then counts as a queue run.
+# workflow_dispatch run with `queue` set, which then counts as a queue run.
 
 on:
   pull_request:
@@ -33,18 +33,20 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
-      queue_base:
-        description: For the merge queue watchdog only, which sets it to test a parked entry; the queue's base commit
-        required: false
-        default: ""
+      queue:
+        description: For the merge queue watchdog only, which sets it to test a parked entry
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  # A promoted entry shares its commit with the parked run, which never ends by itself.
-  group: ci-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue_base && '-promoted' || '' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A promoted entry shares its commit with the parked run, which never ends by itself. A
+  # second promotion of the same entry (a watchdog that ran before the first showed up)
+  # replaces the first rather than running the suite twice.
+  group: ci-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.queue == true }}
 
 jobs:
   changes:
@@ -69,11 +71,12 @@ jobs:
           persist-credentials: false
 
       # A queue entry's HEAD^1 is the PR's last commit when the queue rebases, and the last
-      # entry tests every entry ahead of it: diff against what the queue builds on instead.
-      - if: github.event_name == 'merge_group' || inputs.queue_base
-        run: git fetch --no-tags --depth=1 --filter=blob:none origin "$BASE" && echo "CI_BASE=$BASE" >>"$GITHUB_ENV"
-        env:
-          BASE: ${{ github.event.merge_group.base_sha || inputs.queue_base }}
+      # entry tests every entry ahead of it: diff against main instead. Not the merge group's
+      # base_sha, nor the sha in its branch name: past the first entry, both are the entry
+      # ahead's commit. Main only fast-forwards to queue commits, so its tip is an ancestor
+      # of this one, and the entries ahead that have merged since were tested already.
+      - if: github.event_name == 'merge_group' || inputs.queue
+        run: git fetch --no-tags --depth=1 --filter=blob:none origin refs/heads/main && echo "CI_BASE=$(git rev-parse FETCH_HEAD)" >>"$GITHUB_ENV"
 
       - id: park
         if: github.event_name == 'merge_group'
@@ -86,7 +89,7 @@ jobs:
         # Naming the shell turns on pipefail. Without it a failed script is tee's success:
         # no outputs, every job skipped, and a run that tested nothing looks clean.
         shell: bash
-        run: .github/scripts/ci-changes.sh ${{ steps.park.outputs.park == 'true' && 'parked' || github.event_name == 'pull_request' && 'pr' || (github.event_name == 'merge_group' || inputs.queue_base) && 'queue' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
+        run: .github/scripts/ci-changes.sh ${{ steps.park.outputs.park == 'true' && 'parked' || github.event_name == 'pull_request' && 'pr' || (github.event_name == 'merge_group' || inputs.queue) && 'queue' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
 
   pr_assets:
     name: PR assets
@@ -282,7 +285,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       # In the queue one failure decides the entry; on a pull request, see them all.
-      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue_base) && true || false }}
+      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue) && true || false }}
       matrix:
         shard: [1, 2, 3, planner]
     env:
@@ -349,7 +352,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       # In the queue one failure decides the entry; on a pull request, see them all.
-      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue_base) && true || false }}
+      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue) && true || false }}
       matrix:
         proof: ${{ fromJSON(needs.changes.outputs.proofs) }}
     env:
@@ -383,7 +386,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       # In the queue one failure decides the entry; on a pull request, see them all.
-      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue_base) && true || false }}
+      fail-fast: ${{ (github.event_name == 'merge_group' || inputs.queue) && true || false }}
       matrix:
         dirs: ${{ fromJSON(needs.changes.outputs.scenarios) }}
     env:
@@ -516,7 +519,7 @@ jobs:
   stop_assets:
     name: Stop the queue run (PR assets)
     needs: pr_assets
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.pr_assets.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.pr_assets.result) }}
     permissions: &stop-permissions
       actions: write
     runs-on: ubuntu-24.04
@@ -529,7 +532,7 @@ jobs:
   stop_ledger:
     name: Stop the queue run (Ledger check)
     needs: ledger
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.ledger.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.ledger.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -538,7 +541,7 @@ jobs:
   stop_audit:
     name: Stop the queue run (MC audit)
     needs: mc_audit
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.mc_audit.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.mc_audit.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -547,7 +550,7 @@ jobs:
   stop_tui:
     name: Stop the queue run (TUI)
     needs: tui
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.tui.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.tui.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -556,7 +559,7 @@ jobs:
   stop_mc:
     name: Stop the queue run (MC tests)
     needs: mc
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.mc.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.mc.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -565,7 +568,7 @@ jobs:
   stop_props:
     name: Stop the queue run (MC properties)
     needs: mc_props
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.mc_props.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.mc_props.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -574,7 +577,7 @@ jobs:
   stop_proofs:
     name: Stop the queue run (MC proofs)
     needs: mc_proofs
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.mc_proofs.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.mc_proofs.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -583,7 +586,7 @@ jobs:
   stop_scenarios:
     name: Stop the queue run (MC scenarios)
     needs: mc_scenarios
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue_base) && contains(fromJSON('["failure","cancelled"]'), needs.mc_scenarios.result) }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || inputs.queue) && contains(fromJSON('["failure","cancelled"]'), needs.mc_scenarios.result) }}
     permissions: *stop-permissions
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -611,7 +614,7 @@ jobs:
     name: CI result
     needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui, park]
     # Also after a cancel in the queue, which the stop jobs cause: the queue needs an answer.
-    if: ${{ always() && (github.event_name == 'merge_group' || inputs.queue_base || !cancelled()) }}
+    if: ${{ always() && (github.event_name == 'merge_group' || inputs.queue || !cancelled()) }}
     permissions:
       contents: read
       checks: write # answering for the entries ahead
@@ -626,5 +629,5 @@ jobs:
       - run: .github/scripts/ci-result.sh
         env:
           NEEDS: ${{ toJSON(needs) }}
-          QUEUE: ${{ (github.event_name == 'merge_group' || inputs.queue_base) && 'true' || '' }}
+          QUEUE: ${{ (github.event_name == 'merge_group' || inputs.queue) && 'true' || '' }}
           GH_TOKEN: ${{ github.token }}

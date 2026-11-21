@@ -99,13 +99,8 @@ while IFS=$'\t' read -r _ _ sha number _; do
     echo "#$number passed; answering for the entries ahead"
     act "$here/merge-queue-stamp.sh" "$sha" "$url"
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
-    base=${branch##*-}
-    if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
-      echo "#$number: no base commit in $branch, so it cannot be tested"
-    else
-      echo "#$number is the last entry but its run $id parked: testing it"
-      act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue_base="$base"
-    fi
+    echo "#$number is the last entry but its run $id parked: testing it"
+    act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
   fi
   break
 done < <(tac <<<"$built")

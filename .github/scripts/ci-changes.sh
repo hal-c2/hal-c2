@@ -8,7 +8,7 @@
 # Run with HEAD a pull request's merge commit or a push to main, so HEAD^1..HEAD is the
 # whole change, unless a push to main holds several commits (a rebase merge). Then it is
 # the last one, and at worst that merge's build isn't saved until the next. A merge queue
-# entry sets CI_BASE to the queue's base, which replaces HEAD^1: the queue may rebase, and
+# entry sets CI_BASE to main's tip, which replaces HEAD^1: the queue may rebase, and
 # the last entry tests every entry ahead of it. The argument says how much to test:
 #   all       every job (the nightly run)
 #   merged    only mc_check, whose build is what every pull request restores: the merge's
