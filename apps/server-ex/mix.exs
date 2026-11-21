@@ -174,7 +174,9 @@ defmodule HalC2.MixProject do
   # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
   # `@backlog` and `@backlog-mc` ones. See test/support/features.ex. One scenario:
   # `mix features <file> --backlog -- --max-cases 1 --only "test:test <scenario name>"`;
-  # a user's `--only` replaces the `--only cucumber` the alias adds, since ExUnit ORs them.
+  # a user's `--only` (also `--only=...`) replaces the `--only cucumber` the alias adds,
+  # since ExUnit ORs them, so it sets the whole scope: use a scenario's `test:` name, not a
+  # tag plain tests in `test/` may carry too.
   defp features(args) do
     {ours, rest} = Enum.split_while(args, &(&1 != "--"))
     {flags, globs} = Enum.split_with(ours, &(&1 == "--backlog"))
@@ -186,7 +188,8 @@ defmodule HalC2.MixProject do
 
     Mix.env(:test)
     test_args = Enum.drop(rest, 1)
-    only = if "--only" in test_args, do: [], else: ["--only", "cucumber"]
+    user_only? = Enum.any?(test_args, &(&1 == "--only" or String.starts_with?(&1, "--only=")))
+    only = if user_only?, do: [], else: ["--only", "cucumber"]
     Mix.Task.run("test", only ++ test_args)
   end
 
