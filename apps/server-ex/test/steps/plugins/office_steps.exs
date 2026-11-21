@@ -158,12 +158,14 @@ defmodule HalC2.Steps.Plugins.Office do
 
   step ~r/^the user (?<how>unarchives|unsettles) "(?<title>[^"]+)"$/,
        %{args: [how, title]} = context do
-    patch =
-      if how == "unarchives",
-        do: %{"archivedAt" => nil},
-        else: %{"settledOverride" => "active"}
-
-    World.patch_thread(context, title, patch)
+    if how == "unarchives" do
+      World.patch_thread(context, title, %{"archivedAt" => nil})
+    else
+      id = World.thread_id(context, title)
+      {{:ok, _}, _} = World.dispatch(context, %{"type" => "thread.unsettle", "threadId" => id})
+      World.await_row(id, &(&1["settledOverride"] == "active"))
+      context
+    end
   end
 
   step "a thread {string} moved to another machine", %{args: [title]} = context do
