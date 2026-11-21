@@ -41,9 +41,9 @@ Feature: Clustering one person's machines
     And its cluster has only itself
 
   @mc
-  Scenario: A machine joins another with a pairing link
+  Scenario: A machine joins another with a cluster invite
     Given two MCs that are not clustered
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
     And the command lists both machines as connected
@@ -199,7 +199,7 @@ Feature: Clustering one person's machines
   @mc
   Scenario: A machine on another HAL-C2 version can join
     Given two MCs that are not clustered, the second on another HAL-C2 version
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
 

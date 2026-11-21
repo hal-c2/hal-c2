@@ -74,7 +74,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
   end
 
-  step "the user joins the second to the first with a pairing link from the first", context do
+  step "the user joins the second to the first with a cluster invite from the first", context do
     %{a: a, b: b} = context.machines
     Map.put(context, :joined, command(b, ["join", invite(a)]))
   end
