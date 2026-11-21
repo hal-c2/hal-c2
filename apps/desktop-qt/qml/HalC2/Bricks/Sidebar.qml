@@ -22,6 +22,10 @@ Rectangle {
     // Without the brand band, the stage ("Dev", "Nightly") is a pill at the
     // top; a shell that marks the stage itself turns it off.
     property bool showStage: true
+    // An empty list offers to add a project; a shell that says elsewhere
+    // where projects come from (a phone's, added on the MC's machine) turns
+    // it off.
+    property bool offersAddProject: true
     // A list that may be under a finger (a phone's, a tablet's): a finger
     // dragging a row scrolls the list instead of arranging the row, and its
     // long press opens the row's menu, which holds every row action and Move
@@ -1249,7 +1253,7 @@ Rectangle {
                 ShellButton {
                     objectName: "emptyAddProject"
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: sidebar.model !== null && sidebar.projects.length === 0
+                    visible: sidebar.offersAddProject && sidebar.model !== null && sidebar.projects.length === 0
                     subtle: true
                     iconName: "plus"
                     iconSize: Theme.icon.sm

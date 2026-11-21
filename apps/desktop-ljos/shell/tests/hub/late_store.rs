@@ -271,3 +271,26 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_session_that_names_its_environment_opens_expecting_it() {
+    let (hub, _kept) = late();
+    hal_c2_shell::open(
+        &hub.engine,
+        &Session {
+            origin: ORIGIN.into(),
+            token: "session".into(),
+            environment_id: "env-1".into(),
+            ..Session::default()
+        },
+    )
+    .expect("the MC opens");
+    assert_eq!(*hub.mc.expected.borrow(), ["env-1"]);
+
+    let (hub, _kept) = late();
+    open(&hub);
+    assert!(
+        hub.mc.expected.borrow().is_empty(),
+        "no environment is named"
+    );
+}

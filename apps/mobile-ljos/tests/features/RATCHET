@@ -1,0 +1,12 @@
+# The phone's scenarios that pass on mobile-ljos, one id per line.
+# `cargo test -p hal_c2_mobile --test features` fails when one of them stops
+# passing; `-- --raise` adds the ones that newly pass. Never remove a line to
+# make a run pass: fix the regression.
+mobile/pairing-and-environments.feature: A link that is not a pairing link is refused before any environment is paired
+mobile/pairing-and-environments.feature: A pairing link opened from outside the app fills the pairing form without pairing
+mobile/pairing-and-environments.feature: A session the phone cannot save is not paired with
+mobile/pairing-and-environments.feature: A spent or wrong pairing token is refused
+mobile/pairing-and-environments.feature: An unreachable address reports that the environment cannot be reached
+mobile/pairing-and-environments.feature: First launch with no environments invites the user to add one
+mobile/pairing-and-environments.feature: Pasting a pairing link adds the environment
+mobile/pairing-and-environments.feature: The user pairs with a link opened from outside the app

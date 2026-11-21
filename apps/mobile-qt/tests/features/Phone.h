@@ -12,9 +12,10 @@ QString pairingPhase(World& world);
 // The user enters `link` on the pairing screen and asks to pair; returns once
 // the phone has an answer.
 void enterPairingLink(World& world, const QString& link);
-// The device, paired with the environment through the pairing screen and
-// showing its threads.
-void pairWithEnvironment(World& world);
+// The device, paired with the environment through the pairing screen and,
+// with toThreadList, showing its threads (an empty tablet shows the
+// first-run wizard instead).
+void pairWithEnvironment(World& world, bool toThreadList = true);
 
 // The thread list on screen, in the layout the window has room for: the phone
 // layout's home screen or the desktop layout's sidebar. Waited for.

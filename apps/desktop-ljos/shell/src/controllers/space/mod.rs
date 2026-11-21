@@ -2421,8 +2421,13 @@ impl Space {
         }
     }
 
-    pub fn set_page_shown_by_steps(&mut self) {
-        self.page_shown_by_steps = true;
+    /// Whether the selected page is on show only once a step says so (the
+    /// phone's Space screen); a change follows the page's viewers again,
+    /// as set_page_shown does.
+    pub fn set_page_shown_by_steps(&mut self, engine: &Engine, on: bool) {
+        if std::mem::replace(&mut self.page_shown_by_steps, on) != on {
+            self.follow_viewers(engine);
+        }
     }
 
     pub fn set_viewers_retry_ms(&mut self, ms: i64) {
