@@ -872,7 +872,7 @@ Feature: Referencing files, skills, commands and context
       | £1,000 a month   |
 
   # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
     Given the provider offers the skills "1password" and "2fa"
     When the user types "<typed>" into the composer

@@ -222,7 +222,7 @@ Feature: Streaming the agent's reply
     Then only the work done after the second steer is shown
 
   # Upstream #22783: a steer that arrives before any output splits nothing.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A steer sent before the agent did any work splits nothing
     Given the user steered before the agent produced any output
     When the turn completes
@@ -259,7 +259,7 @@ Feature: Streaming the agent's reply
       | only spaces and blank lines       | shown in full       |
 
   # Upstream #16624: the length is measured on the text the user sees, not the hidden markup.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-desktop @priority-low
   Scenario Outline: A short message with references is measured by what it shows
     Given the user sent a 200 character message holding <reference>
     When the user looks at it in the conversation

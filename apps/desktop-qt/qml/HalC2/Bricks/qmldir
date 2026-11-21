@@ -183,6 +183,7 @@ PluginPages 1.0 PluginPages.qml
 PluginPage 1.0 PluginPage.qml
 PluginPart 1.0 PluginPart.qml
 PluginContext 1.0 PluginContext.qml
+singleton PluginChannel 1.0 PluginChannel.qml
 PluginThreadPart 1.0 PluginThreadPart.qml
 PluginSettings 1.0 PluginSettings.qml
 NotificationsSettings 1.0 NotificationsSettings.qml

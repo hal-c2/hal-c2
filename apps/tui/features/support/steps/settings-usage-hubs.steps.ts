@@ -303,9 +303,52 @@ step("usage says {string}", async (ctx: SettingsWorld, notice: string) => {
   expect(await paneWords(ctx)).toContain(notice);
 });
 
-step("the user uses the reset credit and confirms", async (ctx: SettingsWorld) => {
+type LimitsWorld = SettingsWorld & { resetOutcome?: string };
+
+/** Spending a credit spends only the credit the payload names in the fake's limits too. */
+function spendInFake(
+  ctx: SettingsWorld,
+  payload: { instanceId?: string; sourceId?: string; accountId?: string; creditId?: string },
+): void {
+  const server = ctx.fake!.settings;
+  const spend = (limits: Record<string, unknown>) => {
+    const credits = limits.resetCredits as
+      | { availableCount: number; nextCreditId?: string }
+      | undefined;
+    if (!credits) return;
+    const { nextCreditId, ...rest } = credits;
+    limits.resetCredits = {
+      ...rest,
+      availableCount: Math.max(0, credits.availableCount - 1),
+      ...(nextCreditId !== undefined && nextCreditId !== payload.creditId ? { nextCreditId } : {}),
+    };
+  };
+  if (payload.instanceId !== undefined) {
+    for (const provider of server.usageLimits.providers as unknown as Array<
+      Record<string, unknown>
+    >) {
+      if (provider.instanceId === payload.instanceId && provider.usageLimits)
+        spend(provider.usageLimits as Record<string, unknown>);
+    }
+  } else if (payload.sourceId !== undefined) {
+    for (const source of server.usageLimits.sources as unknown as Array<Record<string, unknown>>) {
+      if (source.id !== payload.sourceId) continue;
+      for (const account of (source.accounts ?? []) as Array<Record<string, unknown>>) {
+        if (account.id === payload.accountId && account.usageLimits)
+          spend(account.usageLimits as Record<string, unknown>);
+      }
+    }
+  }
+  server.emitUsageLimits();
+}
+
+step("the user uses the reset credit and confirms", async (ctx: LimitsWorld) => {
   fixture(ctx);
-  ctx.fake!.settings.on("provider.consumeResetCredit", () => ({ outcome: "reset" }));
+  ctx.fake!.settings.on("provider.consumeResetCredit", (payload) => {
+    const outcome = ctx.resetOutcome ?? "reset";
+    if (outcome === "reset") spendInFake(ctx, payload ?? {});
+    return { outcome };
+  });
   await openLimits(ctx);
   await chooseRow(ctx, "Use a reset credit for Codex");
   // Spending a credit asks first.
@@ -315,12 +358,111 @@ step("the user uses the reset credit and confirms", async (ctx: SettingsWorld) =
   await settle(ctx);
 });
 
+// --- settings/usage.feature: notices, leaving, and spending a credit ---
+
+step("Codex could not read its limits", (ctx: SettingsWorld) => {
+  setProviders(ctx, [
+    codexHere("sam@example.com", {
+      checkedAt: iso(NOW_MS),
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    }),
+  ]);
+});
+
+step("the user leaves usage", async (ctx: SettingsWorld) => {
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
+});
+
+step("limits are no longer followed", (ctx: SettingsWorld) => {
+  expect(sectionState(ctx).id).not.toBe("usageLimits");
+  expect(ctx.fake!.settings.usageLimitWatchers()).toBe(0);
+});
+
+step(
+  /^limits show (\d+) reset credits? banked for Codex$/,
+  async (ctx: SettingsWorld, count: string) => {
+    await settle(ctx);
+    const row = sectionState(ctx).rows.find((entry) => entry.id.startsWith("credit-"));
+    if (count === "0") {
+      expect(row).toBeUndefined();
+      expect(pageText(ctx)).not.toContain("banked");
+    } else {
+      expect(row?.text).toContain(`${count} banked`);
+      expect(await paneWords(ctx)).toContain(`${count} banked`);
+    }
+  },
+);
+
+step("the credit is spent on the Codex instance", (ctx: SettingsWorld) => {
+  expect(
+    ctx.fake!.settings.callsTo("provider.consumeResetCredit").map((call) => call.payload),
+  ).toEqual([{ instanceId: "codex" }]);
+});
+
+step("the user starts to use the reset credit but cancels", async (ctx: SettingsWorld) => {
+  await openLimits(ctx);
+  await chooseRow(ctx, "Use a reset credit for Codex");
+  expect(sectionState(ctx).confirm?.lines.join(" ")).toContain("Use a reset credit for Codex?");
+  await pressKey(ctx, "n");
+  await settle(ctx);
+});
+
+step("the credit is still banked", async (ctx: SettingsWorld) => {
+  expect(ctx.fake!.settings.callsTo("provider.consumeResetCredit")).toEqual([]);
+  expect(sectionState(ctx).confirm).toBeNull();
+  const row = sectionState(ctx).rows.find((entry) => entry.id.startsWith("credit-"));
+  expect(row?.text).toContain("1 banked");
+  expect(await paneWords(ctx)).toContain("1 banked");
+});
+
+const RESET_IN: Record<string, number> = {
+  "2 hours": 2 * 3_600_000,
+  "1 minute": 60_000,
+  "45 seconds": 45_000,
+  "1 second": 1_000,
+  "0 seconds": 0,
+};
+
+step(
+  new RegExp(`^a limit window that resets in (${Object.keys(RESET_IN).join("|")})$`),
+  (ctx: SettingsWorld, left: string) => {
+    setProviders(ctx, [
+      codexHere("sam@example.com", {
+        checkedAt: iso(NOW_MS),
+        windows: [limitsWindow(40, RESET_IN[left]!)],
+      }),
+    ]);
+  },
+);
+
+step("the limit says {string}", async (ctx: SettingsWorld, wording: string) => {
+  expect(codexLines(ctx).join("\n")).toContain(wording);
+  expect(await paneWords(ctx)).toContain(wording);
+});
+
+const RESET_OUTCOMES: Record<string, string> = {
+  "no rate-limit window is in use": "nothingToReset",
+  "the account has no credit left": "noCredit",
+  "the credit was redeemed on another device": "alreadyRedeemed",
+};
+
+step(
+  new RegExp(`^(${Object.keys(RESET_OUTCOMES).join("|")})$`),
+  (ctx: LimitsWorld, situation: string) => {
+    ctx.resetOutcome = RESET_OUTCOMES[situation]!;
+  },
+);
+
 step("the credit is spent through the hub", (ctx: SettingsWorld) => {
   // The hub's credit, not this machine's: only that clears the hub's own cooldown.
   expect(
     ctx.fake!.settings.callsTo("provider.consumeResetCredit").map((call) => call.payload),
   ).toEqual([{ sourceId: HUB_ID, accountId: "codex-ops.json", creditId: "credit-1" }]);
-  expect((ctx.host!.state.get("status") as { text: string }).text).toBe("Limits reset.");
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(
+    "Reset applied. Your windows have cleared.",
+  );
 });
 
 // A hub the user added: its entry in the settings, its key sealed on the MC, its account in limits.

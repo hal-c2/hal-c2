@@ -10,6 +10,7 @@ import {
   changedFilesByMessage,
   deriveTimelineEntries,
   diffStat,
+  formatDiffCount,
   formatDuration,
   formatWorkingTimer,
   isWorking,
@@ -263,6 +264,14 @@ describe("changed files", () => {
       checkpointTurnCount,
       files: files.map((f) => ({ ...f, kind: "file" })),
     }) as unknown as OrchestrationCheckpointSummary;
+
+  it("reads a diff count that rounds up to the next unit in that unit", () => {
+    expect(formatDiffCount(940)).toBe("940");
+    expect(formatDiffCount(8_500)).toBe("8.5k");
+    expect(formatDiffCount(999_499)).toBe("999k");
+    expect(formatDiffCount(999_500)).toBe("1m");
+    expect(formatDiffCount(999_950_000)).toBe("1b");
+  });
 
   it("sums additions and deletions across files", () => {
     const stat = diffStat(

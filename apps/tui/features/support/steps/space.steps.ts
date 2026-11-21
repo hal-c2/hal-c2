@@ -43,7 +43,7 @@ import {
   mermaidFence,
   serveMermaid,
 } from "../fakeMermaid.ts";
-import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
+import { fakeSpaceMc, FakeSpaceRefusal, type FakeSpaceMc } from "../fakeSpaceMc.ts";
 import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { chooseCommand, palette, selectThread } from "../threadUi.ts";
 import { message } from "../threadWorld.ts";
@@ -1380,7 +1380,13 @@ async function asAgent(
   input: object,
 ) {
   await openPage(ctx, page);
-  mc(ctx).run(method, { spaceId: currentSpaceId(ctx), ...input }, agent(ctx, thread));
+  try {
+    mc(ctx).run(method, { spaceId: currentSpaceId(ctx), ...input }, agent(ctx, thread));
+  } catch (error) {
+    // The MCP tool answers with the refusal; "the agent is refused" reads it.
+    if (!(error instanceof FakeSpaceRefusal)) throw error;
+    mc(ctx).refusals.push(error.message);
+  }
   await settle(ctx);
 }
 
@@ -1420,6 +1426,57 @@ step(
     return asAgent(ctx, thread, pageTitle(ctx, block.pageId), "space.block.delete", {
       blockId: block.id,
     });
+  },
+);
+
+step(
+  "the agent in {string} changes the block {string} to {string} and ticks it",
+  (ctx: SpaceWorld, thread: string, from: string, to: string) => {
+    const block = mc(ctx).blockNamed(from);
+    return asAgent(ctx, thread, pageTitle(ctx, block.pageId), "space.block.update", {
+      blockId: block.id,
+      text: to,
+      checked: true,
+    });
+  },
+);
+
+step("the agent is refused", (ctx: SpaceWorld) => {
+  expect(mc(ctx).refusals.at(-1)).toBeDefined();
+});
+
+step(
+  "the agent in {string} adds the heading {string} to {string}",
+  (ctx: SpaceWorld, thread: string, text: string, page: string) =>
+    asAgent(ctx, thread, page, "space.block.insert", {
+      pageId: pageId(ctx, page),
+      kind: "heading",
+      text,
+      level: 2,
+    }),
+);
+
+step(
+  "the agent in {string} makes {string} a level {int} heading",
+  (ctx: SpaceWorld, thread: string, text: string, level: number) => {
+    const block = mc(ctx).blockNamed(text);
+    return asAgent(ctx, thread, pageTitle(ctx, block.pageId), "space.block.update", {
+      blockId: block.id,
+      level,
+    });
+  },
+);
+
+step(
+  "the heading {string} is of level {int}",
+  async (ctx: SpaceWorld, text: string, level: number) => {
+    await settle(ctx);
+    expect(mc(ctx).blockNamed(text).level).toBe(level);
+    const heading = pane(ctx).rows.find(
+      (row) => row.blockKind === "heading" && row.text.includes(text),
+    );
+    // The row carries its author's thread after the heading's marks and text.
+    expect(heading && words(heading).startsWith(`${"#".repeat(level)} ${text}`)).toBe(true);
   },
 );
 
@@ -2815,6 +2872,36 @@ step(
   },
 );
 
+// markdown.feature: math is code in `math`; a terminal cannot typeset it.
+type MathWorld = SpaceWorld & { mathFence?: string | null };
+
+step(/^a page holding (.+)$/, (ctx: MathWorld, math: string) => {
+  if (math.startsWith("inline")) {
+    ctx.mathFence = null;
+    seedBlock(ctx, "Notes", "paragraph", "The area is $x^2$ here.");
+    return;
+  }
+  ctx.mathFence = math.includes("$$") ? "$$" : "```math";
+  mc(ctx).run("space.block.insert", {
+    spaceId: currentSpaceId(ctx),
+    pageId: seedPage(ctx, "Notes"),
+    kind: "code",
+    text: "x^2",
+    language: "math",
+    ...(math.includes("$$") ? { fence: "$$" } : {}),
+  });
+});
+
+step("it is shown typeset where the surface can, else as its source", async (ctx: MathWorld) => {
+  // The terminal shows the source: the formula as written, in its fence.
+  await settle(ctx);
+  const rows = pane(ctx)
+    .rows.map((row) => row.text)
+    .join("\n");
+  expect(rows).toContain("x^2");
+  expect(rows).toContain(ctx.mathFence ?? "The area is $x^2$ here.");
+});
+
 step("its language is named on it", (ctx: SpaceWorld) => {
   const block = mc(ctx).blockNamed(CODE.join("\n"));
   expect(drawnRows(ctx, CODE.join("\n"))[0]!.text.slice(2)).toBe(block.language);
@@ -3226,6 +3313,34 @@ step(
 );
 
 step("the user is browsing the files of {string}", browseFiles);
+
+type FilesAskedWorld = SpaceWorld & { fileAsks?: number };
+
+step("the thread's row changes 5 times", async (ctx: FilesAskedWorld) => {
+  ctx.fileAsks = ctx.fake!.settings.callsTo("space.files.list").length;
+  // A running turn updates its thread's row often: five shell updates of it.
+  for (let count = 0; count < 5; count += 1) {
+    change(ctx, () => {
+      const thread = threadNamed(ctx, "Docs of shop");
+      thread.session = count % 2 === 0 ? { status: "running" } : null;
+    });
+    await settle(ctx);
+  }
+});
+
+step(
+  "the MC is not asked for the files of {string} again",
+  (ctx: FilesAskedWorld, project: string) => {
+    const asks = ctx
+      .fake!.settings.callsTo("space.files.list")
+      .filter(
+        (call) =>
+          (call.payload as { projectId?: string }).projectId === projectNamed(ctx, project).id,
+      );
+    expect(asks.length).toBeGreaterThan(0);
+    expect(ctx.fake!.settings.callsTo("space.files.list")).toHaveLength(ctx.fileAsks!);
+  },
+);
 
 step("the user is reading {string} in the file viewer", async (ctx: SpaceWorld, path: string) => {
   await selectFile(ctx, path);

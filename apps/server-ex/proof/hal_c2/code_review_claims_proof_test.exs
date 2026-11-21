@@ -113,6 +113,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :unwatched" => @shown,
       "HalC2Plugins.CodeReview state :checked_at" => @shown,
       "HalC2Plugins.CodeReview state :threads" => @shown,
+      "HalC2Plugins.CodeReview state :snapshot" =>
+        "the `reviews` last sent to clients, so an unchanged one is not sent again; " <>
+          @shown,
       "HalC2Plugins.CodeReview state :paused_reason" => @shown,
       "HalC2Plugins.CodeReview state :failures" => @pause,
       "HalC2Plugins.CodeReview state :poll_backoff" =>
@@ -159,7 +162,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.project_threads/2" => @host,
       "HalC2.Plugins.Host.thread_project/2" => @host,
       "HalC2.Plugins.Host.feed_backlog/1" => @host,
-      "HalC2.Plugins.Host.run_active?/3" => @host
+      "HalC2.Plugins.Host.run_active?/3" => @host,
+      "HalC2.Plugins.Host.provider_instances/3" => @host,
+      "HalC2.Plugins.Host.added_instances/2" => @host,
+      "HalC2.Plugins.Host.released_instances/2" => @host,
+      "HalC2.Plugins.Host.seal_records/3" => @host
     },
     environment: %{
       "push" => "a commit is pushed to the pull request",
