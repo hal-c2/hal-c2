@@ -48,11 +48,13 @@ Feature: Clustering one person's machines
     And they are connected without restarting
     And the command lists both machines as connected
 
+  # Naming the certificate is not enough: only a cluster invite can add a machine,
+  # whatever scopes an ordinary pairing link grants.
   @mc
-  Scenario: Joining needs a link that grants access
+  Scenario: A pairing link that names the certificate does not join a cluster
     Given two MCs that are not clustered
-    When the user joins the second with a standard pairing link from the first that names the first's certificate
-    Then the join is refused because the link does not grant access:write
+    When the user joins the second with an admin pairing link from the first that names the first's certificate
+    Then the join is refused because the link cannot add machines
     And neither lists the other
 
   @mc
