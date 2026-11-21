@@ -9,7 +9,7 @@ use ljos::prelude::{ObjectId, Value};
 use serde_json::json;
 
 use crate::harness::{Outcome, Q, Steps};
-use crate::user_shell::{self, App};
+use crate::user_shell;
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -123,7 +123,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             user_shell::write(world, Some(&layout("one")))?;
             world.part::<Layout>().mark = "one".into();
-            user_shell::open(world, App::Running)?;
+            user_shell::open(world)?;
             shows_mark(world, "one")?;
             let size = user_shell::window_size(world);
             world.part::<Layout>().size = size;
@@ -140,10 +140,10 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| user_shell::write(world, None),
     );
     steps.step("the released app starts", |world, _, _| {
-        user_shell::open(world, App::Released)
+        user_shell::open(world)
     });
     steps.step(
-        &format!("the user typed {Q} in the layout's note field"),
+        &format!("the user has typed {Q} without sending it"),
         |world, c, _| {
             let note = named(world, "note")?;
             world
@@ -159,18 +159,21 @@ pub fn register(steps: &mut Steps) {
     // DECISION: the list is scrolled by its contentY, as a flick leaves it:
     // the wheel's distance depends on the platform's scroll speed, and the
     // scenario is about what a reload keeps, not how the list scrolls.
-    steps.step("the user scrolled the layout's list down", |world, _, _| {
-        let list = named(world, "list")?;
-        world
-            .engine()
-            .write_by_name(list, "contentY", Value::Real(300.0))
-            .map_err(|e| crate::harness::Failure(format!("contentY: {e:?}")))?;
-        world.pump()?;
-        let at = number(world, list, "contentY");
-        expect!(at > 0.0, "the list did not scroll: contentY {at}");
-        world.part::<Layout>().scrolled = Some(at);
-        Ok(())
-    });
+    steps.step(
+        "the user has scrolled down to read further",
+        |world, _, _| {
+            let list = named(world, "list")?;
+            world
+                .engine()
+                .write_by_name(list, "contentY", Value::Real(300.0))
+                .map_err(|e| crate::harness::Failure(format!("contentY: {e:?}")))?;
+            world.pump()?;
+            let at = number(world, list, "contentY");
+            expect!(at > 0.0, "the list did not scroll: contentY {at}");
+            world.part::<Layout>().scrolled = Some(at);
+            Ok(())
+        },
+    );
     steps.step(
         "the user saves a change to their shell layout(?: that loads)?",
         |world, _, _| next_change(world),
@@ -213,7 +216,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
-        &format!("the layout's note field reads {Q}"),
+        &format!("what the user typed still reads {Q}"),
         |world, c, _| {
             let note = named(world, "note")?;
             let text = read_text(world, note, "text");
@@ -221,16 +224,19 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the layout's list is still scrolled down", |world, _, _| {
-        let list = named(world, "list")?;
-        let at = number(world, list, "contentY");
-        let was = world.part::<Layout>().scrolled.unwrap_or(f64::NAN);
-        expect!(
-            at > 0.0 && (at - was).abs() < 0.5,
-            "the list is at contentY {at}, it was at {was}"
-        );
-        Ok(())
-    });
+    steps.step(
+        "the user is still as far down as they had read",
+        |world, _, _| {
+            let list = named(world, "list")?;
+            let at = number(world, list, "contentY");
+            let was = world.part::<Layout>().scrolled.unwrap_or(f64::NAN);
+            expect!(
+                at > 0.0 && (at - was).abs() < 0.5,
+                "the list is at contentY {at}, it was at {was}"
+            );
+            Ok(())
+        },
+    );
     steps.step("the window was not opened again", |world, _, _| {
         let windows = user_shell::windows(world);
         expect!(

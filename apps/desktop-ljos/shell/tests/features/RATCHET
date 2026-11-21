@@ -628,6 +628,7 @@ desktop/stage.feature: The stage's shortcuts move the tab and put the timeline a
 desktop/user-shell.feature: A shell layout change applies without restarting, with what the window holds kept
 desktop/user-shell.feature: A shell layout change that does not load leaves the layout shown and says why
 desktop/user-shell.feature: Removing the user's shell layout gives the window back to the built-in one, working
+desktop/user-shell.feature: The released app finds every file its built-in layout loads
 desktop/user-shell.feature: The released app starts its built-in layout without compiling it
 files/adding-projects.feature: A clone on another machine of the cluster shows its progress too
 files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created

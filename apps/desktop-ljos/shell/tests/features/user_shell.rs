@@ -1,8 +1,10 @@
 //! How the app runs the user's shell layout, `<config>/shell.qml`, for
-//! steps/user_shell.rs: as main.rs starts it, the shell's pack with the
-//! user's files over it (`App::user_qml`, whose session runs here at each
-//! frame), and a host that shows in the test window the window Main.qml's
-//! ShellLoader stands for.
+//! steps/user_shell.rs: as a release starts it (src/main.rs), the shell's
+//! pack with the user's files over it (`hal_c2_shell::user_qml`, whose
+//! session runs here at each frame), and a host that shows in the test
+//! window the window Main.qml's ShellLoader stands for, as Ljós's desktop
+//! host does: a visible `Window` other than the one shown would be a
+//! platform window of its own.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -13,7 +15,7 @@ use std::time::Duration;
 use hal_c2_shell::runtime::{self, ShellRuntime};
 use ljos::prelude::{Engine, LogLevel, ObjectId, Value};
 use ljos::testing::TestWindow;
-use ljos_dev::{Host, UserQml, UserSession};
+use ljos_dev::{Host, UserSession};
 use ljos_quick::roots::RootSwaps;
 use ljos_runtime::SystemClock;
 
@@ -23,30 +25,23 @@ use crate::world::World;
 /// How long a change may take to show: a compile of the shell's QML.
 pub const PATIENCE: Duration = Duration::from_secs(20);
 
-/// How the app was built.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum App {
-    /// As `mise run dev` runs it.
-    Running,
-    /// A release build.
-    Released,
-}
-
 /// What the host saw.
 #[derive(Default)]
 struct Run {
     /// The root the window shows.
     shown: Rc<Cell<Option<ObjectId>>>,
-    /// How often the host opened a window, not counting a root put in one
-    /// it had.
+    /// How often the host opened a window: the first, and each visible
+    /// `Window` it saw that was not the one shown (not a root put in the
+    /// window it had).
     opened: Rc<Cell<usize>>,
+    others: Rc<RefCell<Vec<ObjectId>>>,
     /// The script errors logged since [`mark_log`].
     errors: Rc<RefCell<Vec<String>>>,
     counting: Rc<Cell<bool>>,
     /// The files the shell asked for and did not find, since it started.
     missing: Rc<RefCell<Vec<String>>>,
-    /// What the app compiled while it started.
-    compiled: String,
+    /// What the app compiled since it started, as each frame saw it.
+    compiled: Rc<RefCell<Vec<&'static str>>>,
 }
 
 fn shell_path(world: &World) -> PathBuf {
@@ -81,9 +76,14 @@ pub fn save(world: &mut World, text: Option<&str>) -> Outcome {
     world.pump()
 }
 
-/// Starts the shell's window as main.rs does.
-pub fn open(world: &mut World, _app: App) -> Outcome {
+/// Starts the shell's window as a release does.
+pub fn open(world: &mut World) -> Outcome {
     let config = world.config_dir();
+    let launch = hal_c2_shell::Launch {
+        cache_dir: config.parent().map(|home| home.join("cache")),
+        config_dir: Some(config.clone()),
+        ..hal_c2_shell::Launch::default()
+    };
     let engine = world.engine().clone();
     // The app's shell gives every Window a platform window of its own, as
     // here: without that, the shell's Window would stay an item of the
@@ -94,7 +94,7 @@ pub fn open(world: &mut World, _app: App) -> Outcome {
     runtime::install(&engine, Some(&config));
     // main.rs: the pack build.rs made, and `App::user_qml` over it.
     engine.set_component_source(hal_c2_shell::pack());
-    let user = UserQml::dir(config).modules("qml").theme(false).watch(true);
+    let user = hal_c2_shell::user_qml(&launch).expect("a config dir");
     let mut session = UserSession::start(
         &engine,
         hal_c2_shell::pack(),
@@ -104,12 +104,23 @@ pub fn open(world: &mut World, _app: App) -> Outcome {
     );
     listen(world);
     let run = world.part::<Run>();
-    run.compiled = if session.is_compiling() {
-        "the user's files".into()
-    } else {
-        String::new()
-    };
     let (shown, opened) = (run.shown.clone(), run.opened.clone());
+    let (others, compiled) = (run.others.clone(), run.compiled.clone());
+    let note = move |session: &UserSession, compiled: &RefCell<Vec<&'static str>>| {
+        let mut said = compiled.borrow_mut();
+        for (now, what) in [
+            (
+                session.is_compiling() || session.reloads() > 0,
+                "the user's files",
+            ),
+            (session.compiles_texts(), "QML a script holds as text"),
+        ] {
+            if now && !said.contains(&what) {
+                said.push(what);
+            }
+        }
+    };
+    note(&session, &compiled);
     runtime::set_hot_reload_enabled(&engine, true);
     let loader = runtime::open(&engine).map_err(Failure)?;
     session.set_root(loader);
@@ -130,6 +141,7 @@ pub fn open(world: &mut World, _app: App) -> Outcome {
             shown: &shown,
         };
         let reports = session.pump(engine, &clock, &mut host);
+        note(&session, &compiled);
         if !reports.is_empty() {
             runtime::reloaded(engine);
         }
@@ -140,6 +152,14 @@ pub fn open(world: &mut World, _app: App) -> Outcome {
             let (now, _) = swaps.swap_in(engine, old, &mut |_, new| window.show(new).is_ok());
             any |= now != old;
             shown.set(Some(now));
+        }
+        let system = ljos_controls::WindowSystem::of(engine);
+        for each in system.windows(engine) {
+            let visible = system.spec(engine, each).is_some_and(|s| s.visible);
+            if visible && Some(each) != shown.get() && !others.borrow().contains(&each) {
+                others.borrow_mut().push(each);
+                opened.set(opened.get() + 1);
+            }
         }
         Ok(any)
     })?;
@@ -210,11 +230,11 @@ pub fn missing_files(world: &World) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// What the app compiled while it started; empty when nothing.
+/// What the app compiled since it started; empty when nothing.
 pub fn compiled_at_start(world: &World) -> String {
     world
         .peek_part::<Run>()
-        .map(|run| run.compiled.clone())
+        .map(|run| run.compiled.borrow().join(", "))
         .unwrap_or_default()
 }
 
@@ -316,12 +336,23 @@ fn last_error(world: &World) -> String {
         .to_string()
 }
 
-/// Whether the window shows the built-in layout.
+/// Whether the window shows the built-in layout: the window the loader
+/// stands for was made from DefaultShell.qml, and the shell says it is not
+/// the user's.
 pub fn built_in(world: &World) -> bool {
     let Some(root) = window(world) else {
         return false;
     };
-    runtime_says(world, "usingUserShell") == Value::Bool(false)
+    let engine = world.engine();
+    let Some(shell) = runtime::window(engine) else {
+        return false;
+    };
+    // The fallback Main.qml names, made from its file.
+    let default = engine
+        .document_url(shell)
+        .is_some_and(|url| url.as_str().ends_with("/HalC2/Bricks/DefaultShell.qml"));
+    default
+        && runtime_says(world, "usingUserShell") == Value::Bool(false)
         && find(world, root, "userShellMark").is_none()
 }
 

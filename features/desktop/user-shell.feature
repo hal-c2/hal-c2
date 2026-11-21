@@ -26,12 +26,12 @@ Feature: The desktop's shell layout follows the user's file while it runs
     @desktop
     Scenario: A shell layout change applies without restarting, with what the window holds kept
       Given the app is using the user's own shell layout
-      And the user typed "half a thought" in the layout's note field
-      And the user scrolled the layout's list down
+      And the user has typed "half a thought" without sending it
+      And the user has scrolled down to read further
       When the user saves a change to their shell layout
       Then the window shows the change
-      And the layout's note field reads "half a thought"
-      And the layout's list is still scrolled down
+      And what the user typed still reads "half a thought"
+      And the user is still as far down as they had read
       And the window was not opened again
 
     @desktop
@@ -62,4 +62,10 @@ Feature: The desktop's shell layout follows the user's file while it runs
       When the released app starts
       Then the built-in layout is used
       And no QML was compiled while it started
+
+    @desktop
+    Scenario: The released app finds every file its built-in layout loads
+      Given the HAL-C2 home has no shell layout of the user's
+      When the released app starts
+      Then the built-in layout is used
       And every file the built-in layout loads besides its QML is there
