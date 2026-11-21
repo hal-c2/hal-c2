@@ -19,7 +19,9 @@ const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"];
 /// the user's that replaces a brick resolves from the user's directory, so
 /// these stand only for the bricks as built.
 pub fn install(engine: &Engine) {
-    let pack = crate::pack();
+    // A pack carries no addresses, so its QML has the ones an empty source
+    // gives a key; an empty one is had without decoding the pack again.
+    let pack = ljos::MapSource::new();
     let platform = Platform::of(engine);
     let images = ljos_quick::ImageStore::of(engine);
     for (key, bytes) in FILES {
@@ -61,13 +63,17 @@ mod tests {
 
     #[test]
     fn a_file_has_the_address_its_brick_resolves_it_to() {
-        let pack = crate::pack();
+        let font = "HalC2/Bricks/fonts/SymbolsNerdFontMono-Regular.woff2";
+        let installed = url(&ljos::MapSource::new(), font);
         assert_eq!(
-            url(
-                &pack,
-                "HalC2/Bricks/fonts/SymbolsNerdFontMono-Regular.woff2"
-            ),
+            installed,
             "file:///HalC2/Bricks/fonts/SymbolsNerdFontMono-Regular.woff2"
+        );
+        // What install stands the pack's addresses with is what they are.
+        assert_eq!(url(&crate::pack(), font), installed);
+        assert_eq!(
+            crate::pack().url("HalC2/Bricks/TerminalSplits"),
+            ljos::MapSource::new().url("HalC2/Bricks/TerminalSplits")
         );
     }
 }
