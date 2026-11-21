@@ -2,15 +2,16 @@ defmodule HalC2.PullRequests.Sync do
   @moduledoc """
   Keeps every thread link's host snapshot and native stack current
   (`thread.pull-request-link.sync`), and links a stack's other layers to the thread
-  with `source: "stack"`. A
-  layer the user unlinked stays a tombstone and is never added again.
+  with `source: "stack"`. A layer the user unlinked stays a tombstone and is never
+  added again.
 
   A sweep a minute asks the host once per pull request however many threads link it,
   in one batch per host (`HalC2.PullRequests.summaries/1`), and only for links that are
-  due: unsynced, open on an unsettled thread, or closed less than a day ago and last read
-  15 minutes ago. Merged ones, a settled thread's and long-closed ones are left alone. The stack is read only when the snapshot changed. A newly linked
-  pull request and `request/1` (after an action or a refresh) sync at once. `sweep/0`
-  runs a sweep now and returns when it is done.
+  due: unsynced, open on an unsettled thread, or closed less than a day ago and last
+  read 15 minutes ago. Merged ones, a settled thread's and long-closed ones are left
+  alone. The stack is read only when the snapshot changed. A newly linked pull request
+  and `request/1` (after an action or a refresh) sync at once. `sweep/0` runs a sweep
+  now and returns when it is done.
   """
 
   use GenServer
