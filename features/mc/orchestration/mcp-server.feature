@@ -207,7 +207,7 @@ Feature: The HAL-C2 MCP server agents receive
     And no legacy or hidden model is listed unless it is a favourite, custom or the caller's own
 
   # Upstream #22889: these providers have few enough models to list every current one.
-  @backlog @mc
+  @mc
   Scenario Outline: The capabilities list every current model of a provider with a short catalog
     When the agent of "caller" asks for the orchestrator capabilities
     Then "<provider>" lists every current model it offers
@@ -215,6 +215,11 @@ Feature: The HAL-C2 MCP server agents receive
     Examples:
       | provider |
       | codex    |
+
+    # The scenario's test MC offers no model of these providers.
+    @backlog
+    Examples:
+      | provider |
       | claude   |
       | muse     |
       | grok     |
