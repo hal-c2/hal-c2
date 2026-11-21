@@ -61,6 +61,10 @@ pub struct PreviewAutomation {
 
 impl Controller for PreviewAutomation {
     fn new(init: Init<'_, Self>) -> Self {
+        // The browser brick reads `activity[tabId]` from its first frame,
+        // before any agent acted, before the MC's first snapshot, and in a
+        // build without the browser: an empty map then, never undefined.
+        publish_activity(init.engine, &Json::Object(Default::default()));
         PreviewAutomation {
             mc: init.mc,
             me: init.me,

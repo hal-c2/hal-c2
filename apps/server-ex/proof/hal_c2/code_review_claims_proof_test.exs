@@ -113,6 +113,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :unwatched" => @shown,
       "HalC2Plugins.CodeReview state :checked_at" => @shown,
       "HalC2Plugins.CodeReview state :threads" => @shown,
+      "HalC2Plugins.CodeReview state :snapshot" =>
+        "the `reviews` last sent to clients, so an unchanged one is not sent again; " <>
+          @shown,
       "HalC2Plugins.CodeReview state :paused_reason" => @shown,
       "HalC2Plugins.CodeReview state :failures" => @pause,
       "HalC2Plugins.CodeReview state :poll_backoff" =>

@@ -2,6 +2,8 @@
 // terminal back when it leaves. These run real processes on pipes (see
 // launchWorld.ts); the Ctrl+C key itself goes through the headless host.
 import { expect } from "bun:test";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { step } from "../../steps.ts";
 import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
@@ -441,6 +443,42 @@ step("the first ticket request was given up on only after 10 seconds", async (ct
   // means rerun first.
   expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_000);
   expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
+});
+
+// --- The diagnostic log's place ---
+
+type LogWorld = LaunchWorld & { logFile?: string };
+
+step("the environment variable {string} names a file", (ctx: LogWorld, name: string) => {
+  // A normal start, with an MC on this machine as the other launches arrange.
+  runningMc(ctx);
+  const file = NodePath.join(baseDir(ctx), "chosen.log");
+  NodeFS.writeFileSync(file, "already here\n");
+  launchSetup(ctx).env[name] = file;
+  ctx.logFile = file;
+});
+
+step("the terminal client appends its diagnostics to that file", async (ctx: LogWorld) => {
+  await connected(ctx);
+  expect((await leaveDirect(ctx)).code).toBe(0);
+  const log = NodeFS.readFileSync(ctx.logFile!, "utf8");
+  // What was in the file stays; the client's startup line follows it.
+  expect(log.startsWith("already here\n")).toBe(true);
+  expect(startupLine(log)).toContain("[color-caps startup]");
+});
+
+step("the diagnostic log's folder is not writable", (ctx: LaunchWorld) => {
+  runningMc(ctx);
+  const dir = NodePath.join(baseDir(ctx), "locked");
+  NodeFS.mkdirSync(dir);
+  NodeFS.chmodSync(dir, 0o500);
+  ctx.cleanups.push(() => NodeFS.chmodSync(dir, 0o700));
+  launchSetup(ctx).env.HAL_C2_TUI_LOG = NodePath.join(dir, "client.log");
+});
+
+step("the terminal client opens and works as usual", async (ctx: LaunchWorld) => {
+  await connected(ctx);
+  expect((await leaveDirect(ctx)).code).toBe(0);
 });
 
 // --- SSH ---

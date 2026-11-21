@@ -167,6 +167,10 @@ export function resolveGitQuickAction(
     if (!status.hasUpstream && !hasPrimaryRemote) {
       return { kind: "run_action", label: "Commit", action: "commit", disabled: false };
     }
+    // A push from behind its upstream could not fast-forward; commit only.
+    if (isBehind) {
+      return { kind: "run_action", label: "Commit", action: "commit", disabled: false };
+    }
     if (hasOpenPr || isDefaultRef) {
       return { kind: "run_action", label: "Commit & push", action: "commit_push", disabled: false };
     }
