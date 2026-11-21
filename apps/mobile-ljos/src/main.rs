@@ -571,9 +571,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
 #[cfg(not(feature = "dev-qml"))]
 fn with_user_files(app: App, options: &Options) -> App {
     match hal_c2_shell::user_qml(&options.launch) {
-        Some(user) => {
-            app.user_qml(user.on_fault(|fault| eprintln!("hal-c2-mobile-ljos: {fault}")))
-        }
+        Some(user) => app.user_qml(user.on_fault(|fault| eprintln!("hal-c2-mobile-ljos: {fault}"))),
         None => app,
     }
 }

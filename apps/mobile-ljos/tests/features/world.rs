@@ -118,10 +118,6 @@ impl World {
             .source(hal_c2_mobile::pack())
             .root("Main")
             .build_engine();
-        // The `Window` the loader shows gets a window of its own, where
-        // its popups find their overlay, as `--render`'s does. Before
-        // any Window is made: one made earlier is an item for good.
-        ljos_controls::WindowSystem::of(&engine).set_host(|| {});
         let mut window = TestWindow::new(&engine, self.size.0, self.size.1);
         let mut streams = Pump::new(|| {});
         let wired = hal_c2_shell::streams::wire(&engine, &mut streams);
@@ -150,6 +146,10 @@ impl World {
         Bridge::of(&engine).set_local_folder_import_enabled(&engine, false);
         hal_c2_mobile::start(&engine);
         hal_c2_shell::theme::set_application_font(&engine);
+        // The loader Main.qml makes, showing the phone's shell as its
+        // item in this window: unlike `--render`'s host it gets no
+        // platform window of its own, so the steps' touches and keys
+        // reach it here.
         let root = hal_c2_shell::runtime::open(&engine).map_err(Failure)?;
         window.show(root).map_err(|e| Failure(e.to_string()))?;
         self.shell = Some(Shell {

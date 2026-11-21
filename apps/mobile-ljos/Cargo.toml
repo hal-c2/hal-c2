@@ -68,8 +68,6 @@ ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef92
 # `testing`: a window without a platform, on a virtual clock, for the
 # features harness's touches.
 ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", default-features = false, features = ["testing"] }
-# The features harness's host for the shell's `Window`, as `--render`'s.
-ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 # The state machine properties (the pairing's, the terminal row's).
 proptest = "1.11"
 tempfile = "3"
