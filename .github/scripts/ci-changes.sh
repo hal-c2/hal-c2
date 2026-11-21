@@ -8,15 +8,16 @@
 # Run with HEAD a pull request's merge commit or a push to main, so HEAD^1..HEAD is the
 # whole change, unless a push to main holds several commits (a rebase merge). Then it is
 # the last one, and at worst that merge's build isn't saved until the next. A merge queue
-# entry sets CI_BASE to the queue's base, which replaces HEAD^1: the queue may rebase, and
-# in a group only the last entry runs. The argument
-# says how much to test:
+# entry sets CI_BASE to main's tip, which replaces HEAD^1: the queue may rebase, and
+# the last entry tests every entry ahead of it. The argument says how much to test:
 #   all       every job (the nightly run)
 #   merged    only mc_check, whose build is what every pull request restores: the merge's
 #             tests already ran on its pull request, and the nightly run covers the rest
 #   queue     what the change needs (a merge queue entry, the commit that lands)
 #   pr        what the change needs of the quick tier: mc_check, unit tests and the TUI.
 #             Properties, scenarios and proofs wait for the queue
+#   parked    nothing: a queue entry with another being built behind it, whose run tests
+#             this one's changes too (merge-queue-park.sh)
 #
 # Each path list names what a job cannot depend on, not what it does: a path no one
 # thought of runs everything.
@@ -73,7 +74,9 @@ scenario_groups_for() {
 }
 
 mode=${1:-pr}
-if [ "$mode" = all ] || ! git rev-parse -q --verify HEAD^1 >/dev/null; then
+if [ "$mode" = parked ]; then
+  mc=false unit=false props=false tui=false scenarios='' selected=''
+elif [ "$mode" = all ] || ! git rev-parse -q --verify HEAD^1 >/dev/null; then
   mc=true unit=true props=true tui=true selected=$proofs
   scenarios=$(printf '%s\n' "${scenario_groups[@]}")
 else
