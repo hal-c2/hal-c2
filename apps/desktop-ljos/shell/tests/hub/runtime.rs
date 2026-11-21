@@ -198,8 +198,10 @@ fn reload_shows_what_the_files_say_now() {
     compile(&hub, &dir);
     // As the error overlay's "Reload" does.
     let obj = hub.engine.singleton::<ShellRuntime>().unwrap();
+    let before = generation(&hub);
     crate::common::call(&hub.engine, obj, "reload", &[]);
-    assert!(generation(&hub) > 1);
+    // Made once: the built-in shell is not made on the way.
+    assert_eq!(generation(&hub), before + 1);
     assert_eq!(shown(&hub), "mine");
     assert_eq!(read(&hub, "usingUserShell"), "true");
     // The same loader shows it; no host shows the one it let go of, so it
@@ -219,6 +221,17 @@ fn reload_shows_what_the_files_say_now() {
     assert_eq!(read(&hub, "lastError"), "");
     hub.advance(1);
     assert!(!hub.engine.is_alive(second));
+
+    // And a reload after one: the source spelled as before still loads.
+    write(
+        &dir.path().join("config/shell.qml"),
+        "import QtQuick\nWindow { objectName: \"again\" }\n",
+    );
+    compile(&hub, &dir);
+    let before = generation(&hub);
+    runtime::reload(&hub.engine);
+    assert_eq!(generation(&hub), before + 1);
+    assert_eq!(shown(&hub), "again");
 }
 
 #[test]

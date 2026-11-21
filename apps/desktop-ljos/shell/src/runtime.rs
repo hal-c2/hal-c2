@@ -264,9 +264,22 @@ pub fn reload(engine: &Engine) {
         .map(|s| s.loader)
         .collect();
     for loader in loaders {
-        // A loader loads again when its source changes.
-        let _ = engine.write_by_name(loader, "source", Value::Url(Atom::from("")));
-        let _ = engine.write_by_name(loader, "source", Value::Url(Atom::from(USER_SHELL)));
+        // A ShellLoader loads again only when its source changes, and an
+        // empty source would make the built-in shell first. So the source
+        // goes between two spellings of the same file, the name and its
+        // address, and the user's shell is made once (the built-in one only
+        // when it fails).
+        let address = engine.resolve_url(loader, USER_SHELL);
+        let now = match engine.read_by_name(loader, "source") {
+            Value::Url(url) => url.as_str().to_owned(),
+            other => engine.to_js_string(&other).to_string(),
+        };
+        let next = if now == USER_SHELL {
+            address
+        } else {
+            USER_SHELL.to_owned()
+        };
+        let _ = engine.write_by_name(loader, "source", Value::Url(Atom::from(next.as_str())));
     }
 }
 
