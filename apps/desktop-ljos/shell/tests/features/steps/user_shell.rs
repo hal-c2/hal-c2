@@ -310,6 +310,20 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    steps.step(
+        "every file the built-in layout loads besides its QML is there",
+        |world, _, _| {
+            world.pump()?;
+            let missing = user_shell::missing_files(world);
+            expect!(
+                missing.is_empty(),
+                "{} files were not found, the first: {}",
+                missing.len(),
+                json!(missing.iter().take(5).collect::<Vec<_>>())
+            );
+            Ok(())
+        },
+    );
     steps.step("no QML was compiled while it started", |world, _, _| {
         let compiled = user_shell::compiled_at_start(world);
         expect!(

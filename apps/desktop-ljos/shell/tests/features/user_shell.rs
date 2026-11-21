@@ -43,6 +43,8 @@ struct Run {
     /// The script errors logged since [`mark_log`].
     errors: Rc<RefCell<Vec<String>>>,
     counting: Rc<Cell<bool>>,
+    /// The files the shell asked for and did not find, since it started.
+    missing: Rc<RefCell<Vec<String>>>,
     /// What the app compiled while it started.
     compiled: String,
 }
@@ -168,7 +170,14 @@ impl Host for TestHost<'_> {
 fn listen(world: &mut World) {
     let run = world.part::<Run>();
     let (errors, counting) = (run.errors.clone(), run.counting.clone());
+    let missing = run.missing.clone();
     world.engine().add_log_listener(move |entry| {
+        // As FontLoader and Image say a file is not there.
+        if entry.level == LogLevel::Warning
+            && (entry.message.contains("Cannot load") || entry.message.contains("Cannot open"))
+        {
+            missing.borrow_mut().push(entry.message.clone());
+        }
         if counting.get()
             && matches!(entry.level, LogLevel::Warning | LogLevel::Critical)
             && entry.message.contains("Error")
@@ -190,6 +199,14 @@ pub fn logged_errors(world: &World) -> Vec<String> {
     world
         .peek_part::<Run>()
         .map(|run| run.errors.borrow().clone())
+        .unwrap_or_default()
+}
+
+/// What the shell asked for and did not find since it started.
+pub fn missing_files(world: &World) -> Vec<String> {
+    world
+        .peek_part::<Run>()
+        .map(|run| run.missing.borrow().clone())
         .unwrap_or_default()
 }
 

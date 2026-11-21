@@ -2,6 +2,7 @@
 #   apps/desktop-ljos/qml/Main.qml (a ShellLoader: the user's shell.qml, else DefaultShell built ahead)
 #   apps/desktop-ljos/shell/src/runtime.rs (the user's shell, its error and its fallback, from the ShellLoader)
 #   apps/desktop-ljos/shell/src/main.rs (the shell's QML built ahead, the user's files over it while it runs)
+#   apps/desktop-ljos/shell/build.rs, src/assets.rs (the fonts, pictures and models beside the QML, built in)
 #   apps/desktop-ljos/shell/tests/features (runs these scenarios against a fake MC)
 #   Shared domain: navigation/layout.feature has the user's shell layout on every desktop.
 
@@ -10,8 +11,8 @@ Feature: The desktop's shell layout follows the user's file while it runs
   place of the built-in layout, and follows the file while it runs: a saved change is applied to
   the window with what the window holds kept, a change that does not load leaves the layout shown
   and says why, and removing the file gives the window back to the built-in layout, working as it
-  does at start. The built-in layout is built with the app, so a start without the user's file
-  compiles no QML.
+  does at start. The built-in layout is built with the app, with the fonts, pictures and models
+  it loads, so a start without the user's file compiles no QML and finds every file it loads.
 
   Background:
     Given the desktop's MC "mc-a" serves the environment "env-a"
@@ -61,3 +62,4 @@ Feature: The desktop's shell layout follows the user's file while it runs
       When the released app starts
       Then the built-in layout is used
       And no QML was compiled while it started
+      And every file the built-in layout loads besides its QML is there
