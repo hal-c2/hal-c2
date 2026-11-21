@@ -104,6 +104,22 @@ Item {
         }
     }
 
+    // A review of `number` in `status` for the topic.
+    function review(number, status, title, branch) {
+        return {
+            key: "acme/api#" + number,
+            number: number,
+            title: title,
+            repository: "acme/api",
+            author: "octocat",
+            headBranch: branch,
+            baseBranch: "main",
+            status: status,
+            headSha: "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            comments: []
+        };
+    }
+
     Loader {
         id: loader
 
@@ -143,6 +159,81 @@ Item {
 
         function approvals() {
             return plugin.calls.filter(each => each.method === "approve");
+        }
+
+        // The list narrows to what matches every word, once typing pauses.
+        function test_search_narrows_the_list() {
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(12, "running", "Add rate limits", "feature/limits"), review(83, "queued", "Cache the session", "fix/cache"), review(830, "failed", "Bump the parser", "chore/parser")]
+            });
+            const list = find("codeReviewList");
+            tryCompare(list, "count", 3);
+            const search = find("codeReviewSearch");
+            search.text = "#83";
+            tryCompare(list, "count", 1);
+            compare(list.model[0].number, 83, "a number matches only that pull request");
+            search.text = "cache SESSION";
+            tryCompare(list, "count", 1);
+            compare(list.model[0].number, 83);
+            search.text = "feature/limits";
+            tryVerify(() => list.count === 1 && list.model[0].number === 12, 1000, "a branch matches");
+            search.text = "83";
+            tryVerify(() => list.count === 1 && list.model[0].number === 83, 1000, "a bare number is its pull request, not one whose number holds it");
+            // A bare number also finds a branch or title that names it.
+            search.text = "1683";
+            tryCompare(list, "count", 0);
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(12, "running", "Add rate limits", "feature/limits"), review(83, "queued", "Cache the session", "fix/cache"), review(830, "failed", "Bump the parser", "fix/1683-resume")]
+            });
+            tryVerify(() => list.count === 1 && list.model[0].number === 830, 1000, "a bare number finds a branch naming it");
+            search.text = "nothing like it";
+            tryCompare(list, "count", 0);
+            search.text = "";
+            tryCompare(list, "count", 3);
+        }
+
+        // A pause says when it ends in the user's time, and can be ended now.
+        function test_a_paused_queue_resumes_now() {
+            const until = "2026-11-22T19:00:00Z";
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                problem: "Reviews are paused: the agent hit its usage limit.",
+                pausedUntil: until,
+                reviews: [review(83, "queued", "Cache the session", "fix/cache")]
+            });
+            const line = find("codeReviewProblem:local");
+            tryVerify(() => line.visible && line.text.includes("They start again at"));
+            verify(!line.text.includes("2026-11-22T19"), line.text);
+            const resume = find("codeReviewResume:local");
+            tryVerify(() => resume.visible);
+            mouseClick(resume);
+            compare(plugin.calls.filter(each => each.method === "resume").length, 1);
+        }
+
+        // A queued review can be started now.
+        function test_a_queued_review_starts_now() {
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(83, "queued", "Cache the session", "fix/cache")]
+            });
+            const now = find("codeReviewRetry");
+            tryVerify(() => now.visible && now.text === "Review now");
+            // Once the layout has made room for it, as for Approve.
+            tryVerify(() => now.width > 0 && now.mapToItem(find("codeReviewDetail").contentItem, 0, now.height).y <= find("codeReviewDetail").contentHeight);
+            mouseClick(now);
+            const asked = plugin.calls.filter(each => each.method === "retry");
+            compare(asked.length, 1);
+            compare(asked[0].input.key, "acme/api#83");
         }
 
         function test_approves_the_commit_shown() {
