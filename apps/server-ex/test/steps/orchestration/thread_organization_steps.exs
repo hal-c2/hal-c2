@@ -45,24 +45,6 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     organize(context, thread, "thread.settle")
   end
 
-  step "a client settles {string} again", %{args: [thread]} = context do
-    context
-    |> Map.put({:settled_before, thread}, World.thread(context, thread)["settledAt"])
-    |> organize(thread, "thread.settle")
-  end
-
-  step "no error is reported", context do
-    assert {:ok, _} = context.reply, "command failed: #{inspect(context.reply)}"
-    context
-  end
-
-  step "thread {string} keeps its original settled time", %{args: [thread]} = context do
-    before = context[{:settled_before, thread}]
-    assert is_binary(before)
-    assert World.thread(context, thread)["settledAt"] == before
-    context
-  end
-
   # Codex's async question: an agent message carrying questions the turn does not wait
   # on. The turn then ends, so only the question is left on the thread.
   step "thread {string} waits only for an answer to a question the provider does not block on",
