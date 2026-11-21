@@ -278,13 +278,16 @@ defmodule HalC2.SubprocessDurableTest do
     end
   end
 
-  # The shim's own shell variables must not overwrite what the caller exports; these
-  # are names it once used.
+  # The shim must not overwrite what the caller exports: these are names its watcher
+  # uses and names the shim itself once assigned.
   test "the program keeps the caller's variables whatever the shim names its own" do
+    names = ~w(dir err look wait_minutes shim watch status shim_dir)
+    script = "echo \"#{Enum.map_join(names, " ", &"$#{&1}")}\"; sleep 30"
+
     {:ok, sub} =
-      Subprocess.start(["sh", "-c", ~S'echo "$dir $err $look"; sleep 30'],
+      Subprocess.start(["sh", "-c", script],
         durable: "t1",
-        env: [{"dir", "a"}, {"err", "b"}, {"look", "c"}]
+        env: Enum.map(names, &{&1, "x" <> &1})
       )
 
     %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
@@ -293,7 +296,8 @@ defmodule HalC2.SubprocessDurableTest do
       System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
     end)
 
-    assert {["a b c"], _} = lines(sub, 1)
+    assert {[line], _} = lines(sub, 1)
+    assert line == Enum.map_join(names, " ", &("x" <> &1))
   end
 
   defp await_gone(_pid, 0), do: false

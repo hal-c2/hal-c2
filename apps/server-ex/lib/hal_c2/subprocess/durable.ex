@@ -62,42 +62,41 @@ defmodule HalC2.Subprocess.Durable do
   # before the helper has touched `alive`. It is in the group it signals, so it ignores
   # TERM to live to send the KILL, and only KILL stops it. The watcher reads its interval
   # and the shim then unsets it, so the program never inherits it (an MC started under
-  # one would pass it on). A shell variable named like an exported one overwrites it for
-  # the program, hence the `shim_` prefix on every name.
+  # one would pass it on). Assigning a variable that came in exported changes it for the
+  # program, so the shim assigns none: it keeps its values in `$1`..`$3` (the function's
+  # `shift` leaves them), and `command` keeps a program named `program` off the function.
   # `kill -s`, because dash reads `kill -TERM -- -1` as a bad pid.
   @shim ~S"""
   exec </dev/null >/dev/null 2>&1
-  shim_dir=$1; shim_wait=$2; shim_err=$3; shift 3
-  exec 3<>"$shim_dir/in"
-  touch "$shim_dir/alive"
+  exec 3<>"$1/in"
+  touch "$1/alive"
   trap : TERM INT HUP
-  shim_pid=$$
   (
-    shim_look=${HAL_C2_DURABLE_LOOK:-30}
+    dir=$1; wait_minutes=$2; shim=$$; look=${HAL_C2_DURABLE_LOOK:-30}
     trap '' TERM
-    shim_stale=0
-    while sleep "$shim_look"; do
-      if [ -z "$(find "$shim_dir/alive" -mmin -"$shim_wait" 2>/dev/null)" ]; then
-        shim_stale=$((shim_stale + 1))
+    stale=0
+    while sleep "$look"; do
+      if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
+        stale=$((stale + 1))
       else
-        shim_stale=0
+        stale=0
       fi
-      if [ "$shim_stale" -ge 2 ]; then
-        kill -s TERM -- "-$shim_pid" 2>/dev/null
+      if [ "$stale" -ge 2 ]; then
+        kill -s TERM -- "-$shim" 2>/dev/null
         sleep 5
-        kill -s KILL -- "-$shim_pid" 2>/dev/null
+        kill -s KILL -- "-$shim" 2>/dev/null
         exit 0
       fi
     done
   ) 3<&- &
-  shim_watch=$!
   unset HAL_C2_DURABLE_LOOK
-  "$@" <&3 >>"$shim_dir/out" 2>>"$shim_err" 3<&-
-  shim_status=$?
-  kill -KILL "$shim_watch" 2>/dev/null
-  printf '%s' "$shim_status" >"$shim_dir/status.tmp"
-  mv "$shim_dir/status.tmp" "$shim_dir/status"
-  printf '\n\001hal-c2-exit %s\n' "$shim_status" >>"$shim_dir/out"
+  program() { shift 3; command "$@"; }
+  program "$@" <&3 >>"$1/out" 2>>"$3" 3<&-
+  set -- "$?" "$1"
+  kill -KILL "$!" 2>/dev/null
+  printf '%s' "$1" >"$2/status.tmp"
+  mv "$2/status.tmp" "$2/status"
+  printf '\n\001hal-c2-exit %s\n' "$1" >>"$2/out"
   """
 
   # `in` opened read-write, so the open cannot block once the shim is gone. A shim gone
