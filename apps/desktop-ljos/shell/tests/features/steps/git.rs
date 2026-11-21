@@ -968,6 +968,29 @@ pub fn register(steps: &mut Steps) {
             "has uncommitted changes on a feature branch with a remote",
             |g| g.changed = vec!["src/cart.ts".into()],
         ),
+        (
+            "has uncommitted changes on the default branch that is behind its upstream",
+            |g| {
+                g.changed = vec!["src/cart.ts".into()];
+                g.branch = Some(g.default_branch.clone());
+                g.behind = 1;
+            },
+        ),
+        (
+            "has uncommitted changes on a branch with an open pull request that is behind its upstream",
+            |g| {
+                g.changed = vec!["src/cart.ts".into()];
+                g.pr = true;
+                g.behind = 1;
+            },
+        ),
+        (
+            "has uncommitted changes on a feature branch with a remote that is behind its upstream",
+            |g| {
+                g.changed = vec!["src/cart.ts".into()];
+                g.behind = 1;
+            },
+        ),
         ("has uncommitted changes", |g| {
             g.changed = vec!["src/cart.ts".into()];
             g.ahead_of_default = Some(1);
