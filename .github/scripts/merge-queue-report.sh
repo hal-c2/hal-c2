@@ -45,8 +45,16 @@ if [ "$result" != completed ]; then
   exit 0
 fi
 
-jobs=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100" \
-  --jq "$(cat "$(dirname "$0")/failed-jobs.jq") | .[] | [.id, .name, .url, .timed_out] | @tsv")
+listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
+
+# A run whose own CI result passed has nothing to report: a parked run, or one cancelled
+# after its entry left the queue (ci-result.sh).
+if [ "$(jq -r '.jobs[] | select(.name == "CI result") | .conclusion' <<<"$listing")" = success ]; then
+  echo "run $run's CI result passed"
+  exit 0
+fi
+
+jobs=$(jq -r "$(cat "$(dirname "$0")/failed-jobs.jq") | .[] | [.id, .name, .url, .timed_out] | @tsv" <<<"$listing")
 
 # A run cancelled before any job failed, most often because someone took the PR out of
 # the queue, has nothing to report.
@@ -79,7 +87,8 @@ excerpt() {
 }
 
 body="The merge queue run for this PR failed, so it left the queue: [run $run]"
-body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt)."$'\n'
+body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt). A queue run"
+body+=" also tests the PRs queued ahead, so if there were any, the cause may be one of theirs."$'\n'
 while IFS=$'\t' read -r id name url timed_out; do
   [ -n "$id" ] || continue
   if [ "$timed_out" = true ]; then

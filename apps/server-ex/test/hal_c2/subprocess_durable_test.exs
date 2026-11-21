@@ -222,6 +222,84 @@ defmodule HalC2.SubprocessDurableTest do
     assert await_gone(program.pid, 200)
   end
 
+  # An MC started inside an agent session has HAL_C2_DURABLE_LOOK set itself, and
+  # `Subprocess.start/2` blanks it for the program: the blank must not beat the shim's.
+  test "the watchdog keeps its look when the MC's own environment sets one" do
+    Application.put_env(:hal_c2, :durable_look_seconds, 1)
+    on_exit(fn -> Application.delete_env(:hal_c2, :durable_look_seconds) end)
+    put_mc_look("30")
+
+    {:ok, sub} =
+      Subprocess.start(["sh", "-c", "trap '' TERM; while :; do sleep 1; done"], durable: "t1")
+
+    %{"pid" => pid, "group" => group} =
+      JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+
+    on_exit(fn ->
+      System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
+    end)
+
+    # The helper touches `alive` while attached; let it go, as an MC gone for good does.
+    HalC2.Orchestration.Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    HalC2.Orchestration.Recovery.leaving(false)
+    Process.sleep(500)
+    long_ago = :calendar.system_time_to_universal_time(System.os_time(:second) - 3600, :second)
+    File.touch!(Path.join(sub.durable.dir, "alive"), long_ago)
+    assert await_gone(pid, 200)
+  end
+
+  # Sets the MC's own HAL_C2_DURABLE_LOOK for one test, restoring what it was: the
+  # suite itself may run inside an agent session that sets it.
+  defp put_mc_look(value) do
+    previous = System.get_env("HAL_C2_DURABLE_LOOK")
+    System.put_env("HAL_C2_DURABLE_LOOK", value)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("HAL_C2_DURABLE_LOOK", previous),
+        else: System.delete_env("HAL_C2_DURABLE_LOOK")
+    end)
+  end
+
+  # The shim exports its interval to the program only if it forgets to unset it.
+  if :os.type() == {:unix, :linux} do
+    test "the program does not inherit the shim's interval" do
+      put_mc_look("30")
+      script = ~S"tr '\0' '\n' </proc/$$/environ | grep -c '^HAL_C2_DURABLE_LOOK='; sleep 30"
+      {:ok, sub} = Subprocess.start(["sh", "-c", script], durable: "t1")
+      %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+
+      on_exit(fn ->
+        System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
+      end)
+
+      assert {["0"], _} = lines(sub, 1)
+    end
+  end
+
+  # The shim must not overwrite what the caller exports: these are names its watcher
+  # uses and names the shim itself once assigned.
+  test "the program keeps the caller's variables whatever the shim names its own" do
+    names = ~w(dir err look wait_minutes shim watch status shim_dir)
+    script = "echo \"#{Enum.map_join(names, " ", &"$#{&1}")}\"; sleep 30"
+
+    {:ok, sub} =
+      Subprocess.start(["sh", "-c", script],
+        durable: "t1",
+        env: Enum.map(names, &{&1, "x" <> &1})
+      )
+
+    %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+
+    on_exit(fn ->
+      System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true)
+    end)
+
+    assert {[line], _} = lines(sub, 1)
+    assert line == Enum.map_join(names, " ", &("x" <> &1))
+  end
+
   defp await_gone(_pid, 0), do: false
 
   defp await_gone(pid, tries) do

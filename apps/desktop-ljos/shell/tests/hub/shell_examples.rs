@@ -10,7 +10,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::Disconnected;
-use hal_c2_shell::qml::{self, Roots};
+use hal_c2_shell::qml::Roots;
 use hal_c2_shell::runtime::{self, ShellRuntime};
 use ljos::App;
 use ljos::dev::Severity;
@@ -18,7 +18,7 @@ use ljos::prelude::{Engine, ObjectId, Value};
 use ljos::testing::TestWindow;
 use tempfile::TempDir;
 
-use crate::common::{number, text};
+use crate::common::{compile_roots, number, text};
 
 /// 2026-10-25T12:00:00Z, the dashboard's today.
 const NOW_MS: f64 = 1_792_929_600_000.0;
@@ -50,7 +50,7 @@ impl Example {
         )
         .unwrap();
         let roots = Roots::checkout().with_user(config.clone());
-        let compiled = qml::compile(&roots).unwrap();
+        let compiled = compile_roots(&roots);
         let errors: Vec<String> = compiled
             .diagnostics
             .iter()
@@ -65,6 +65,9 @@ impl Example {
         let engine = App::new("test")
             .register(hal_c2_shell::register)
             .build_engine();
+        // As the app's shell: the shell's `Window` gets a window of its own,
+        // where its popups find their overlay.
+        ljos_controls::WindowSystem::of(&engine).set_host(|| {});
         engine.set_wall_clock_origin(Some(NOW_MS));
         // Before the shell starts, for its timers to start on the window's clock.
         let mut window = TestWindow::new(&engine, width, HEIGHT);
@@ -73,14 +76,16 @@ impl Example {
             &engine,
             &Launch {
                 config_dir: Some(config),
-                qml: Some(roots),
                 ..Launch::default()
             },
             mc.clone(),
         );
         engine.set_component_source(compiled.source);
         hal_c2_shell::theme::set_application_font(&engine);
-        let root = runtime::open(&engine, false).unwrap();
+        runtime::open(&engine).unwrap();
+        // The shell's `Window`, which the loader at the root shows as the
+        // window.
+        let root = runtime::window(&engine).unwrap();
         mc.deliver(&engine);
         window.show(root).unwrap();
         window.settle().unwrap();
@@ -369,21 +374,23 @@ fn the_macos_glass_example_falls_back_to_the_built_in_shell_elsewhere() {
         std::fs::copy(&path, config.join(path.file_name().unwrap())).unwrap();
     }
     let roots = Roots::checkout().with_user(config.clone());
-    let compiled = qml::compile(&roots).unwrap();
+    let compiled = compile_roots(&roots);
     let engine = App::new("test")
         .register(hal_c2_shell::register)
         .build_engine();
+    // As the app's shell: the shell's `Window` gets a window of its own,
+    // where its popups find their overlay.
+    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
     hal_c2_shell::start(
         &engine,
         &Launch {
             config_dir: Some(config),
-            qml: Some(roots),
             ..Launch::default()
         },
         Rc::new(Disconnected::default()),
     );
     engine.set_component_source(compiled.source);
-    runtime::open(&engine, false).unwrap();
+    runtime::open(&engine).unwrap();
     let runtime = engine.singleton::<ShellRuntime>().unwrap();
     let read = |name| {
         engine

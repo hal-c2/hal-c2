@@ -177,6 +177,7 @@ pub mod token_economizer;
 pub mod turn;
 pub mod usage;
 pub mod usage_limits_command;
+pub mod user_shell;
 pub mod viewing;
 pub mod window;
 pub mod workspace;
@@ -353,6 +354,7 @@ pub fn register(steps: &mut Steps) {
     turn::register(steps);
     usage::register(steps);
     usage_limits_command::register(steps);
+    user_shell::register(steps);
     viewing::register(steps);
     window::register(steps);
     workspace::register(steps);
