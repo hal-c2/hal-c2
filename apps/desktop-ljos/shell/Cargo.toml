@@ -64,6 +64,9 @@ ljos_runtime.workspace = true
 # `--render`'s host for the shell's `Window`: a window of its own, where its
 # popups find their overlay (src/main.rs render_to); the windows there are.
 ljos_controls.workspace = true
+# The pictures beside the QML, built in, where an Image finds them
+# (src/assets.rs); the roots an app puts in a window (tests).
+ljos_quick.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
 serde_json.workspace = true
@@ -153,7 +156,6 @@ ljos = { workspace = true, features = ["testing", "dev-qml"] }
 # The user's files over the app's (tests/features/user_shell.rs) and the
 # roots an app puts in a window.
 ljos_dev.workspace = true
-ljos_quick.workspace = true
 # The state machine properties (tests/hub, the store and cache properties).
 proptest = "1.11"
 # The fake notification service's signal bodies (tests/notifications.rs).

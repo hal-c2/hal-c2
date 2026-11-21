@@ -31,10 +31,64 @@ fn main() {
         (compiled, total) = (compiled + f.compiled, total + all);
         eprintln!("{}\t{all}\t{}", f.compiled, f.key);
     }
+    write_assets(&dirs, &out.join("assets.rs"));
     eprintln!("{compiled}\t{total}\tin {} files", files.len());
     for f in &files {
         for (expr, why) in &f.refused {
             eprintln!("{}#{expr}\t{why}", f.key);
+        }
+    }
+}
+
+/// What the QML loads besides QML and JavaScript, which the pack does not
+/// carry: a release has no checkout to read them from (src/assets.rs).
+const ASSETS: [&str; 15] = [
+    "woff2", "woff", "ttf", "otf", "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "glb",
+    "gltf", "bin", "ktx2",
+];
+
+/// Writes `out`, a list of each asset under `dirs` as (key, bytes), the key
+/// its path under its directory as the pack's keys are.
+fn write_assets(dirs: &[&Path], out: &Path) {
+    let mut found = Vec::new();
+    for dir in dirs {
+        // Its files are watched already: compile_dirs reports the directories.
+        walk(dir, dir, &mut found);
+    }
+    found.sort();
+    let mut text = String::from("&[\n");
+    for (key, path) in &found {
+        let path = path
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        text.push_str(&format!(
+            "    ({key:?}, include_bytes!({:?})),\n",
+            path.display().to_string()
+        ));
+    }
+    text.push_str("]\n");
+    std::fs::write(out, text).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
+}
+
+fn walk(root: &Path, dir: &Path, found: &mut Vec<(String, PathBuf)>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .path();
+        if path.is_dir() {
+            walk(root, &path, found);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| ASSETS.iter().any(|a| e.eq_ignore_ascii_case(a)))
+        {
+            let key = path.strip_prefix(root).expect("under its root");
+            let key = key
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>();
+            found.push((key.join("/"), path));
         }
     }
 }

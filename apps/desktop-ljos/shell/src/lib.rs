@@ -2,6 +2,7 @@
 //! module (`Shell`, `Theme`, `Runtime`) and the controllers behind it, for
 //! the bricks in apps/desktop-qt/qml.
 
+pub mod assets;
 pub mod attachment_files;
 pub mod bridge;
 pub mod browser;
@@ -276,6 +277,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     *kept.cache_dir.borrow_mut() = launch.cache_dir.clone();
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);
+    assets::install(engine);
     platform_window::install(engine);
     #[cfg(target_os = "macos")]
     macos_window::install(engine);
