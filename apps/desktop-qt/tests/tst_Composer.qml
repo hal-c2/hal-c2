@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import "../qml/HalC2/Bricks"
 import "../qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
@@ -450,6 +451,36 @@ Item {
             walk(strip);
             verify(bar !== null, "the strip has a vertical scroll bar");
             verify(bar.visible, "the vertical scroll bar shows while the strip overflows");
+            compare(bar.policy, ScrollBar.AlwaysOn, "the bar stays on, not only while scrolling");
+            verify(strip.availableWidth <= strip.width - bar.width, "the bar sits beside the chips, not over them");
+        }
+
+        // A row is as tall as its tallest child: a file chip sharing a row
+        // with an image does not let the strip stop partway down the image.
+        function test_theAttachmentStripEndsOnAWholeMixedRow() {
+            const item = (i, kind) => ({ id: "att-" + i, name: kind === "file" ? "f" + i + ".txt" : "i" + i + ".png", kind: kind, status: "ready", preview: kind === "file" ? undefined : "", source: null });
+            // Three chips, then an image beside a chip, then a chip beside
+            // an image whose bottom crosses the limit.
+            const kinds = ["file", "file", "file", "image", "file", "file", "image", "file"];
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: kinds.map((kind, i) => item(i, kind))
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 420 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            tryVerify(() => flow.implicitHeight > strip.rowLimit, 3000, "the draft overflows the strip: " + flow.implicitHeight);
+            tryVerify(() => strip.height > 0 && strip.height <= strip.rowLimit, 3000, "the strip is capped: " + strip.height);
+            const shown = Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
+            const straddles = shown.some(image => image.y + image.height > strip.rowLimit && shown.some(chip => chip !== image && chip.y === image.y && chip.y + chip.height <= strip.rowLimit));
+            verify(straddles, "a chip and an image share the row that crosses the limit: " + JSON.stringify(shown.map(kid => [kid.x, kid.y, kid.width, kid.height])));
+            const cut = [];
+            for (let i = 0; i < flow.children.length; ++i) {
+                const kid = flow.children[i];
+                if (kid.visible && kid.height > 0 && kid.y < strip.height && kid.y + kid.height > strip.height)
+                    cut.push(kid.y + "+" + kid.height);
+            }
+            compare(cut.length, 0, "no row is cut at " + strip.height + ": " + cut.join(", "));
         }
 
         function test_fastModeSaysItIsOn() {

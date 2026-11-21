@@ -1048,25 +1048,30 @@ Rectangle {
                         // between the rows).
                         readonly property real rowLimit: Theme.control.lg * 4 + Theme.space.sm
                         // The strip ends on a whole row, never mid-row: the
-                        // largest bottom edge of a shown child that fits the
-                        // limit, so mixed chip and image rows end whole too.
-                        // Reading the Flow's width, implicitHeight and its
-                        // children's geometry re-runs this as attachments
-                        // come and go and as the composer changes width.
+                        // bottom of the lowest row that fits the limit. A
+                        // row is as tall as its tallest child (children in
+                        // a row share a y), so a chip beside an image ends
+                        // where the image does. Reading the Flow's width,
+                        // implicitHeight and its children's geometry re-runs
+                        // this as attachments come and go and as the
+                        // composer changes width.
                         readonly property real cappedHeight: {
                             const total = attachmentsFlow.implicitHeight;
                             const flowWidth = attachmentsFlow.width;
                             if (total <= rowLimit)
                                 return total;
-                            let best = 0;
+                            const rows = {};
                             const kids = attachmentsFlow.children;
                             for (let i = 0; i < kids.length; ++i) {
                                 const kid = kids[i];
                                 if (!kid.visible || kid.height <= 0 || kid.width <= 0 || kid.width > flowWidth + 1)
                                     continue;
-                                const bottom = kid.y + kid.height;
-                                if (bottom <= rowLimit && bottom > best)
-                                    best = bottom;
+                                rows[kid.y] = Math.max(rows[kid.y] ?? 0, kid.y + kid.height);
+                            }
+                            let best = 0;
+                            for (const y in rows) {
+                                if (rows[y] <= rowLimit && rows[y] > best)
+                                    best = rows[y];
                             }
                             return best > 0 ? best : rowLimit;
                         }
@@ -1079,8 +1084,12 @@ Rectangle {
                         clip: true
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                        // Overflow says so: the bar stays while more is below.
+                        // Overflow says so: the bar stays while more is below,
+                        // beside the chips rather than over a row's last button.
+                        // Narrower only makes the rows taller, so an overflowing
+                        // strip stays overflowing once the bar takes its room.
                         ScrollBar.vertical.policy: overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                        rightPadding: overflowing ? ScrollBar.vertical.width : 0
 
                         Flow {
                             id: attachmentsFlow
