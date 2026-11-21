@@ -176,14 +176,21 @@ defmodule HalC2.Steps.Providers.UsageLimits.Vendor do
         "weekly-unused" ->
           %{"type" => "USAGE_PERIOD_TYPE_WEEKLY", "end" => "2026-10-05T00:00:00Z"}
 
-        "monthly-unused" ->
+        "monthly-" <> _ ->
           %{"type" => "USAGE_PERIOD_TYPE_MONTHLY", "end" => "2026-10-01T00:00:00Z"}
 
         _incomplete ->
           %{"type" => "USAGE_PERIOD_TYPE_MONTHLY"}
       end
 
-    json(conn, %{"config" => %{"currentPeriod" => period}})
+    config = %{"currentPeriod" => period}
+
+    config =
+      if unused == "monthly-malformed",
+        do: Map.put(config, "creditUsagePercent", "12.5"),
+        else: config
+
+    json(conn, %{"config" => config})
   end
 
   defp route(conn, "GET", "/grok/billing") do
@@ -1442,6 +1449,12 @@ defmodule HalC2.Steps.Providers.UsageLimits do
       end
 
     World.put_app_env(:grok_billing_url, context.vendor <> path)
+    context
+  end
+
+  step "xAI reports a complete monthly billing period with a usage percentage that is not a number",
+       context do
+    World.put_app_env(:grok_billing_url, context.vendor <> "/grok/billing-monthly-malformed")
     context
   end
 

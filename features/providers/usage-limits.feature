@@ -28,6 +28,7 @@
 #   https://github.com/pingdotgg/t3code/pull/23558
 #   https://github.com/pingdotgg/t3code/pull/28065
 #   https://github.com/pingdotgg/t3code/pull/28097
+#   https://github.com/hal-c2/hal-c2/pull/1712 (a usage percentage that is not a number is not read as unused)
 #   https://github.com/pingdotgg/t3code/pull/25579
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
@@ -426,6 +427,14 @@ Feature: Subscription limits
       | a complete weekly billing period  | Grok's weekly window reads 0% used with its reset time          |
       | a complete monthly billing period | Grok's monthly window reads 0% used with its reset time         |
       | an incomplete billing period      | Grok's account is listed with the notice "No limits reported."  |
+
+  # A percentage xAI sends that is not a number is not mistaken for one it left out.
+  @mc @priority-low
+  Scenario: A Grok usage percentage that is not a number is not read as unused
+    Given Grok is signed in with a subscription and has not used any metered credit yet
+    And xAI reports a complete monthly billing period with a usage percentage that is not a number
+    When the user opens Limits
+    Then Grok's limits are reported as not supported for this account
 
   @mc @backlog @priority-low
   Scenario: Grok names its limits by the signed-in account's email

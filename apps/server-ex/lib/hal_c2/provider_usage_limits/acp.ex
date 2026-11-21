@@ -87,7 +87,8 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
             # xAI omits the percentage until an account has metered use: a complete
             # period then reads as unused, and the account stays listed either way.
-            {:ok, %{"config" => config}} ->
+            {:ok, %{"config" => config}}
+            when is_map(config) and not is_map_key(config, "creditUsagePercent") ->
               case grok_period(config["currentPeriod"]) do
                 {:complete, period} -> limits(checked_at, [grok_window(0, period)])
                 :incomplete -> limits(checked_at, [])
