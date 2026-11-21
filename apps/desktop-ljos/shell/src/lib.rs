@@ -137,6 +137,9 @@ pub fn register(engine: &Engine) {
     highlighter::register(engine);
     code_highlighter::register(engine);
     browser::register(engine);
+    // Qt.labs.lottieqt, for a user shell's LottieAnimation (the dashboard
+    // example's cat); the bricks have none of their own.
+    ljos_lottie::register(engine);
     device::register(engine);
     device_screen::register(engine);
     local_transcriber::register(engine);
