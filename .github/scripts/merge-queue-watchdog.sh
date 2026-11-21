@@ -26,11 +26,11 @@ age_minutes() { echo $(((now - $(date -u -d "$1" +%s)) / 60)); }
 act() { if [ -n "${DRY_RUN:-}" ]; then echo "(dry run) $*"; else "$@"; fi; }
 
 # The latest ci.yml run for a commit, a queue run or a promoted one:
-#   id  status  created_at  event  head_branch  html_url
+#   id  status  created_at  event  head_branch  html_url  check_suite_id
 latest_run() {
   gh api "repos/$repo/actions/runs?head_sha=$1&per_page=20" \
     --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | max_by(.created_at) // empty
-          | [.id, .status, .created_at, .event, .head_branch, .html_url] | @tsv'
+          | [.id, .status, .created_at, .event, .head_branch, .html_url, .check_suite_id] | @tsv'
 }
 
 # The conclusion of a commit's latest `CI result`, or its status while it runs, or missing.
@@ -66,9 +66,10 @@ while IFS=$'\t' read -r _ _ sha number pr; do
   run=$(latest_run "$sha")
   why='' failed=''
   if [ -n "$run" ]; then
-    IFS=$'\t' read -r id status created _ <<<"$run"
+    IFS=$'\t' read -r id status created _ _ _ suite <<<"$run"
     if [ "$status" = completed ]; then
-      result=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=CI%20result" \
+      # This run's own: the commit's may hold a parked run's too, which a promoted run ended.
+      result=$(gh api "repos/$repo/check-suites/$suite/check-runs?check_name=CI%20result" \
         --jq '[.check_runs[].status] | if length == 0 then "missing" else (sort | last) end')
       # `completed` sorts first, so `last` is any status that has not finished.
       if [ "$result" != completed ]; then
@@ -104,7 +105,7 @@ while IFS=$'\t' read -r _ _ sha number _; do
   [ "$result" != failure ] && [ "$result" != cancelled ] || continue
   run=$(latest_run "$sha")
   [ -n "$run" ] || break # GitHub has not started it yet
-  IFS=$'\t' read -r id status _ event branch url <<<"$run"
+  IFS=$'\t' read -r id status _ event branch url _ <<<"$run"
   if [ "$result" = success ]; then
     echo "#$number passed; answering for the entries ahead"
     act "$here/merge-queue-stamp.sh" "$sha" "$url"
