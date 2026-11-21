@@ -3958,6 +3958,8 @@ timeline/streaming.feature: A duration is written in hours, minutes and seconds,
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [38 seconds, 38s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [4.26 seconds, 4.3s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [62 seconds, 1m 2s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7 seconds, 7s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7.4 seconds, 7.4s]
 timeline/streaming.feature: A finished turn folds its work behind how long it took
 timeline/streaming.feature: A folded turn can be opened and closed again
 timeline/streaming.feature: A long message can be expanded and collapsed
