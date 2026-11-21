@@ -35,7 +35,31 @@ defmodule HalC2.Steps.Connections.Pairing do
   end
 
   step "an operator asks for a pairing link for {string}", %{args: [base]} = context do
-    context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
+    case Mc.run_task(Mix.Tasks.HalC2.Pair, [base]) do
+      {:error, _} = refusal ->
+        context |> Map.put(:base, base) |> Map.put(:refusal, refusal)
+
+      [line, expires] ->
+        assert_expiry_line(expires)
+        context |> Map.put(:base, base) |> Map.put(:printed, line)
+    end
+  end
+
+  step "the command fails saying the address must start with http:// or https://", context do
+    assert {:error, message} = context.refusal
+    assert message =~ "must be an http or https address"
+    context
+  end
+
+  step "an operator asks the MC for a pairing link without naming an address", context do
+    assert [line, expires] = Mc.run_task(Mix.Tasks.HalC2.Pair, [])
+    assert_expiry_line(expires)
+    Map.put(context, :printed, line)
+  end
+
+  step "the port is the one the MC actually listens on", context do
+    assert URI.parse(context.printed).port == context.mc.port
+    context
   end
 
   step "an operator asks for a pairing link with the option {string}",
@@ -255,12 +279,12 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   # The host the listener binds, which is what the MC says it is reached at.
   step "the MC listens on its LAN address", context do
-    World.put_app_env(:host, Mc.lan_address())
+    listen_on(Mc.lan_address())
     context
   end
 
   step "the MC listens on every network interface", context do
-    World.put_app_env(:host, "0.0.0.0")
+    listen_on("0.0.0.0")
     context
   end
 
@@ -413,6 +437,13 @@ defmodule HalC2.Steps.Connections.Pairing do
   end
 
   # --- helpers -----------------------------------------------------------------------
+  # The bind, and the runtime record that names it, as an MC started with it writes it
+  # (`mix hal_c2.pair` reads a running MC's bind from its record).
+  defp listen_on(host) do
+    World.put_app_env(:host, host)
+    ExUnit.Callbacks.stop_supervised!(HalC2.RuntimeRecord)
+    ExUnit.Callbacks.start_supervised!(HalC2.RuntimeRecord)
+  end
 
   # `hal-c2.createPairingLink` over the administrator's socket, as Settings → Connections asks.
   defp ask_for_link(context, where) do

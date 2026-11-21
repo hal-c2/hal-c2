@@ -16,7 +16,7 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 4
+  @version 5
   @max_detail 32_768
   @truncated "\n… output truncated for transport"
   @cut_keys ~w(prompt progress result)
@@ -274,7 +274,10 @@ defmodule HalC2.Web.Wire do
   defp text_size(text) when is_binary(text), do: byte_size(text)
   defp text_size(_text), do: 0
 
-  # A command that failed says so without its output.
+  # A command that failed says so without its output. A reported exit code
+  # of 0 settles it, whatever its text was flagged for.
+  defp failed(item, 0, _flagged), do: Map.delete(item, "outputIndicatesFailure")
+
   defp failed(item, exit_code, flagged) do
     if flagged == true or (is_integer(exit_code) and exit_code != 0),
       do: Map.put(item, "outputIndicatesFailure", true),

@@ -132,7 +132,7 @@ Feature: Viewing and editing files
 
     # Upstream #24255: a preview cut at the 1 MiB limit inside a multibyte character ended in a
     # replacement character; the cut now falls before the split character.
-    @mc @backlog
+    @mc
     Scenario: A file cut at the size limit does not end in a broken character
       Given "notes/long.md" in "shop" is 3 MB of text with a multibyte character across the one-megabyte mark
       When a client reads "notes/long.md" from "shop"
@@ -1473,8 +1473,9 @@ Feature: Viewing and editing files
 
     # Upstream #20449: a save never lands in git's own folders, so the file editor cannot rewrite
     # a repository's config or hooks. A bare repository kept inside the project counts too.
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A save into git's own folders is refused
+      Given "shop" keeps a bare repository at "vendor/lib.git"
       When a client writes "<path>" in "shop"
       Then the MC refuses the save
       And nothing at "<path>" changed
@@ -1485,8 +1486,16 @@ Feature: Viewing and editing files
         | .git/hooks/pre-commit |
         | vendor/lib.git/config |
 
+    # A link that leads into git's folder is refused like the folder itself.
+    @mc @priority-high
+    Scenario: A save through a link into git's own folder is refused
+      Given "gitdir" in "shop" is a link to its folder ".git"
+      When a client writes "gitdir/config" in "shop"
+      Then the MC refuses the save
+      And nothing at ".git/config" changed
+
     # Upstream #20449: only git's folders are refused; files that merely start with .git save.
-    @backlog @mc
+    @mc
     Scenario Outline: A file named like git's own outside its folders still saves
       When a client writes "<path>" in "shop"
       Then "<path>" exists with the written contents
@@ -1495,12 +1504,13 @@ Feature: Viewing and editing files
         | path                     |
         | .gitignore               |
         | .github/workflows/ci.yml |
+        | site.git/index.html      |
 
     # Upstream #18819: saves no longer follow a link out of the project, or a link to nothing.
     # Upstream #20449: the deepest existing part of a save's path is resolved, and a link
     # that leads out of the project, or to nothing, is refused.
     # Likely already implemented: apps/server-ex/lib/hal_c2/workspace.ex (inside/3 resolves links with real/1 before a write).
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A save through a link that leaves the project is refused
       Given "<link>" in "shop" is a link to <target>
       When a client writes "<path>" in "shop"
@@ -1514,7 +1524,7 @@ Feature: Viewing and editing files
         | dangling.txt | a file that is not there   | dangling.txt           |
 
     # Upstream #18819: a link that stays inside the project still saves through it.
-    @backlog @mc
+    @mc
     Scenario: A save through a link that stays inside the project is written
       Given "docs" in "shop" is a link to its folder "notes"
       When a client writes "docs/todo.txt" in "shop"
