@@ -174,6 +174,16 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
+  # Marked as `HalC2.Plugins.Host.launch_thread/4` marks a thread a plugin started.
+  step "a review thread {string} the code-review plugin started", %{args: [title]} = context do
+    started(context, title, "code-review", "review")
+  end
+
+  step "a thread {string} the issue-tracker plugin started to implement an issue",
+       %{args: [title]} = context do
+    started(context, title, "issue-tracker", "implement")
+  end
+
   step "a thread {string} with a worker {string}", %{args: [lead, worker]} = context do
     context
     |> thread(lead)
@@ -402,6 +412,14 @@ defmodule HalC2.Steps.Plugins.Office do
     await_person(context, worker, &(&1["parentId"] == parent))
   end
 
+  step "the office has {string} as a reviewer", %{args: [title]} = context do
+    await_person(context, title, &(&1["kind"] == "reviewer"))
+  end
+
+  step "the office has {string}, not as a reviewer", %{args: [title]} = context do
+    await_person(context, title, &(Map.fetch(&1, "kind") == {:ok, nil}))
+  end
+
   step "the office has {string} and none of the others", %{args: [title]} = context do
     await_people(context, &(&1 == [title]))
   end
@@ -460,6 +478,23 @@ defmodule HalC2.Steps.Plugins.Office do
   # Makes a thread and waits until it is in the office.
   defp thread(context, title, project \\ @project) do
     context = World.create_thread(context, title, project)
+    {_, context} = await_topic(context, &person(&1, title))
+    Map.put(context, :thread, title)
+  end
+
+  # A thread a plugin started. It takes its title with the mark, so the office that has
+  # it by that title has heard the mark too.
+  defp started(context, title, plugin, kind) do
+    context =
+      context
+      |> World.create_thread(title, @project, %{"title" => "Starting"})
+      |> World.patch_thread(title, %{
+        "title" => title,
+        "plugin" => %{"id" => plugin, "kind" => kind, "listed" => true},
+        "createdBy" => "system",
+        "creationSource" => "server"
+      })
+
     {_, context} = await_topic(context, &person(&1, title))
     Map.put(context, :thread, title)
   end
