@@ -1043,15 +1043,48 @@ Rectangle {
                     ScrollView {
                         id: attachmentsScroll
 
+                        // Two image rows at most (a thumbnail tile is
+                        // Theme.control.lg * 2 tall, plus the Flow's spacing
+                        // between the rows).
+                        readonly property real rowLimit: Theme.control.lg * 4 + Theme.space.sm
+                        // The strip ends on a whole row, never mid-row: the
+                        // largest bottom edge of a shown child that fits the
+                        // limit, so mixed chip and image rows end whole too.
+                        // Reading the Flow's width, implicitHeight and its
+                        // children's geometry re-runs this as attachments
+                        // come and go and as the composer changes width.
+                        readonly property real cappedHeight: {
+                            const total = attachmentsFlow.implicitHeight;
+                            const flowWidth = attachmentsFlow.width;
+                            if (total <= rowLimit)
+                                return total;
+                            let best = 0;
+                            const kids = attachmentsFlow.children;
+                            for (let i = 0; i < kids.length; ++i) {
+                                const kid = kids[i];
+                                if (!kid.visible || kid.height <= 0 || kid.width <= 0 || kid.width > flowWidth + 1)
+                                    continue;
+                                const bottom = kid.y + kid.height;
+                                if (bottom <= rowLimit && bottom > best)
+                                    best = bottom;
+                            }
+                            return best > 0 ? best : rowLimit;
+                        }
+                        readonly property bool overflowing: attachmentsFlow.implicitHeight > height
+
+                        objectName: "attachmentsScroll"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(attachmentsFlow.implicitHeight, Theme.control.md * 3)
+                        Layout.preferredHeight: cappedHeight
                         visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || (composer.model.threadContexts ?? []).length > 0 || composer.citations.length > 0)
                         clip: true
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        // Overflow says so: the bar stays while more is below.
+                        ScrollBar.vertical.policy: overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
 
                         Flow {
                             id: attachmentsFlow
+                            objectName: "attachmentsFlow"
 
                             width: attachmentsScroll.availableWidth
                             spacing: Theme.space.sm

@@ -412,6 +412,46 @@ Item {
             verify(card.height <= Math.round(composer.Window.height * 0.4) + 1, "the card stays within 40% of the window");
         }
 
+        // The attachment strip ends on a whole row: two image rows show
+        // whole, a third scrolls instead of showing half a row, and the
+        // overflow is signalled.
+        function test_theAttachmentStripEndsOnAWholeRow() {
+            const image = i => ({ id: "att-" + i, name: "a-very-long-screenshot-name-" + i + ".png", kind: "image", status: "ready", preview: "", source: null });
+            const withImages = n => ({ composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: Array.from({ length: n }, (_, i) => image(i))
+            }), workspace: null });
+            const row = Theme.control.lg * 2;
+            const twoRows = row * 2 + Theme.space.sm;
+            Shell.state = withImages(2);
+            let composer = createTemporaryObject(composerComponent, root, { width: 320 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            tryVerify(() => flow.implicitHeight === twoRows, 3000, "two images take two rows: " + flow.implicitHeight);
+            tryCompare(strip, "height", twoRows, 3000, "two image rows show whole");
+            compare(strip.overflowing, false, "two rows do not overflow");
+            Shell.state = withImages(3);
+            tryVerify(() => flow.implicitHeight === row * 3 + Theme.space.sm * 2, 3000, "three images take three rows: " + flow.implicitHeight);
+            tryCompare(strip, "height", twoRows, 3000, "the strip still ends on the second whole row, not mid-row");
+            tryCompare(strip, "overflowing", true, 3000, "the third row overflows, so the scroll bar stays on");
+            let bar = null;
+            const walk = item => {
+                if (!item || bar !== null)
+                    return;
+                try {
+                    if (item.policy !== undefined && item.orientation === Qt.Vertical)
+                        bar = item;
+                } catch (e) {
+                }
+                const kids = item.children ?? [];
+                for (let i = 0; i < kids.length; ++i)
+                    walk(kids[i]);
+            };
+            walk(strip);
+            verify(bar !== null, "the strip has a vertical scroll bar");
+            verify(bar.visible, "the vertical scroll bar shows while the strip overflows");
+        }
+
         function test_fastModeSaysItIsOn() {
             const state = fast => ({ composer: Object.assign({}, Shell.defaultComposer(), {
                 options: [{ id: "fastMode", label: "Fast Mode", type: "boolean", value: fast, choices: [] }]
