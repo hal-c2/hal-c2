@@ -30,7 +30,8 @@ defmodule HalC2.Plugins.Package do
       "Add context to agents starting a new conversation, and turn some of their tools off",
     "threads:steer" => "Send messages to agents while they work",
     "threads:notice" => "Show notices in threads, with a button to stop the agent",
-    "textGeneration" => "Ask your text generation model to write for it"
+    "textGeneration" => "Ask your text generation model to write for it",
+    "providers:configure" => "Add provider instances of its own and keep them set up"
   }
 
   @setting_types ~w(text longText secret boolean number choice list object)

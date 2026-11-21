@@ -819,7 +819,7 @@ defmodule HalC2.Orchestration.TurnWriter do
           ids.thread,
           &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
         )
-      ]
+      ] ++ Orchestration.run_taken(stream, ids.run)
     end)
     |> tap(&if(&1 == :ok, do: observe_started(state)))
   end

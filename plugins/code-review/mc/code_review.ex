@@ -440,6 +440,7 @@ defmodule HalC2Plugins.CodeReview do
       looked: nil,
       polling: nil,
       threads: nil,
+      snapshot: nil,
       paused_until: loaded.paused_until,
       paused_reason: loaded.paused_reason,
       failures: 0,
@@ -1202,13 +1203,13 @@ defmodule HalC2Plugins.CodeReview do
 
     case for({key, other} <- on, other["claimed"] != true, do: key) do
       [] when on == [] and held? ->
-        {:noreply, announce(state)}
+        {:noreply, announce(state, :always)}
 
       [] when on == [] ->
         {:noreply, state}
 
       [] ->
-        {:noreply, announce(state)}
+        {:noreply, announce(state, :always)}
 
       keys ->
         reviews = Enum.reduce(keys, state.reviews, &put_in(&2[&1]["elsewhere"], nil))
@@ -1225,7 +1226,7 @@ defmodule HalC2Plugins.CodeReview do
          match?(%{"node" => ^back}, review["elsewhere"]) or
            back in List.wrap(get_in(review, ["limited", "apart"]))
        end),
-       do: {:noreply, announce(state)},
+       do: {:noreply, announce(state, :always)},
        else: {:noreply, state}
   end
 
@@ -3233,15 +3234,21 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # What clients follow: `reviews` for the Reviews page, and `threads` for each
-  # review thread's mark and header, by thread id, without the findings. A row mark
-  # is drawn per row, so `threads` is sent only when it changes.
-  defp announce(state) do
+  # review thread's mark and header, by thread id, without the findings. Each is
+  # sent only when it changed: `reviews` holds every review's findings, and a
+  # client makes a script value of every value it is sent. A machine coming or
+  # going sends `reviews` regardless (`:always`): what it shows reads the cluster.
+  defp announce(state, reviews \\ :changed) do
     share_claims(state)
     put_starts(state)
-    Host.publish(@id, "reviews", snapshot(state))
+    snapshot = snapshot(state)
+
+    if reviews == :always or snapshot != state.snapshot,
+      do: Host.publish(@id, "reviews", snapshot)
+
     threads = threads(state)
     if threads != state.threads, do: Host.publish(@id, "threads", threads)
-    %{state | threads: threads}
+    %{state | threads: threads, snapshot: snapshot}
   end
 
   @doc false
@@ -3389,7 +3396,7 @@ defmodule HalC2Plugins.CodeReview do
            -&1["number"]}
         )
         |> Enum.map(fn review ->
-          review = review |> safe() |> Map.drop(["root", "replaced"])
+          review = review |> safe() |> Map.drop(["root", "replaced", "previous"])
 
           review =
             if review["elsewhere"],

@@ -799,7 +799,6 @@ Feature: Project files edited as pages
 
     # A running turn updates its thread's row often; the files change only with the project.
     # Still so with the sidebar: it asks for the files as the file explorer does.
-    @backlog-tui
     Scenario: A client asks for a project's files once while its thread runs
       Given the user is browsing the files of "shop"
       When the thread's row changes 5 times

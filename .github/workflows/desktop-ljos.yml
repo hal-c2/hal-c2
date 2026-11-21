@@ -265,14 +265,15 @@ jobs:
 
   features:
     name: Features (${{ matrix.shard.name }})
-    # Two shards at a time, after the bricks compile, and none left running
-    # once one fails: the shards are the workflow's longest jobs and would
-    # otherwise hold every runner the repository has.
+    # Two shards at a time, after the bricks compile: the shards are the
+    # workflow's longest jobs and would otherwise hold every runner the
+    # repository has. One shard failing does not cancel the rest, so a
+    # stalled apt mirror in one costs a rerun of that shard, not of all five.
     needs: [check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 2
       matrix:
         # desktop-qt's scenarios, by domain (features/), about 400 to 550

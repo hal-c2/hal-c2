@@ -22,7 +22,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     and, once it read a thread's history after starting, any of the thread's turns
     that ended and are still in it, the uses dropped since it started aside (those
     it reads back as their conversation folds, which the model does not follow), and
-    the subagents' (which no history read shows);
+    the subagents' (which no history read shows), but for those heard with no project
+    whose saved file then could not be read (that hold denies nothing instead, till a
+    person's word);
   - it uses no tool no turn used;
   - no tool it must know is used is proposed, or turned off for a new conversation;
   - a new conversation is turned off no tool a segment it heard in part used, dropped
@@ -209,6 +211,19 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       apply_tools: [["CronCreate"]],
       down: [],
       up: [],
+      start: ["b", "r3", 2, true, false]
+    ],
+    # A use heard with no project, kept over a restart, whose file then cannot be read:
+    # its thread's next turn has nothing left to settle.
+    unreadable_stray: [
+      start: ["b", "r1", 1, true, true],
+      down: [],
+      up: [],
+      stray_use: ["b", "CronList"],
+      down: [],
+      corrupt_strays: [],
+      up: [],
+      finish: ["b", "r1", 1],
       start: ["b", "r3", 2, true, false]
     ],
     # a's r4 ends on the other MC, unheard here, and folds as the next conversation
@@ -700,7 +715,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :restore, [tools | _]}),
     do: %{s | named: s.named -- (tools || s.named), unreadable: s.unreadable and not s.up}
 
-  def next_state(s, _res, {:call, _, :corrupt_strays, []}), do: %{s | unreadable: true}
+  # The uses it kept are lost with the file: the hold stands in for them, denying
+  # nothing till a person's word, so no turn of their thread can settle them later.
+  def next_state(s, _res, {:call, _, :corrupt_strays, []}),
+    do: %{s | unreadable: true, strays: []}
 
   # The uses heard with no project are kept.
   def next_state(s, _res, {:call, _, :down, _}),
