@@ -76,6 +76,24 @@ defmodule HalC2.PluginsTest do
     refute_received {:hal_c2_plugin_topic, _, "notes", "t", _}
   end
 
+  # Found by the plugin host's property: the model forgot nothing while an update held it.
+  test "what a plugin published is forgotten once an update holds it for permissions" do
+    running("notes")
+    Plugins.publish("notes", "t", 1)
+    assert {:ok, 1} = Plugins.subscribe_topic(self(), "notes", "t")
+
+    # The same version, asking for a permission it was not granted: held, not running.
+    package("notes", "1", ["slack:read"])
+    Plugins.handle("rescan", %{})
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+
+    # Accepted, it runs again with nothing published.
+    assert {:ok, _} =
+             Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => ["slack:read"]})
+
+    assert {:ok, nil} = Plugins.subscribe_topic(follower(), "notes", "t")
+  end
+
   test "a plugin that was removed publishes nothing, and what it published is forgotten" do
     running("notes")
     Plugins.publish("notes", "t", 1)
@@ -132,6 +150,73 @@ defmodule HalC2.PluginsTest do
 
     assert {:ok, _} = save("notes", %{"token" => @marker, "count" => 2})
     assert stored("notes") == %{"count" => 2}
+  end
+
+  test "the instances of a plugin that is gone are released once settings.json takes the save" do
+    Application.put_env(:hal_c2, :plugin_release_retry_ms, 10)
+    on_exit(fn -> Application.delete_env(:hal_c2, :plugin_release_retry_ms) end)
+    stop_supervised!(Plugins)
+    id = "plugin_gone_work"
+
+    {:ok, _} =
+      HalC2.Settings.update(fn _ ->
+        %{
+          "providerInstances" => %{id => %{"driver" => "codex"}},
+          "plugins" => %{"gone" => %{"providerInstances" => [id]}}
+        }
+      end)
+
+    # The file check is off: only the host trying again notices the file is fixed.
+    File.write!(settings_file(), "{ not json")
+    start_supervised!(Plugins)
+    _ = :sys.get_state(Plugins)
+    :ok = HalC2.Settings.watch(self())
+    File.rm!(settings_file())
+
+    assert_receive {:hal_c2_settings, _, settings}, 5_000
+    assert settings["providerInstances"] == %{}
+
+    assert settings["plugins"]["gone"] == %{
+             "providerInstances" => [],
+             "releasedInstances" => [id]
+           }
+  end
+
+  test "a host updated in place from before instances were released retries a refused release" do
+    # The first try's retry is not what the test waits on.
+    Application.put_env(:hal_c2, :plugin_release_retry_ms, 60_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :plugin_release_retry_ms) end)
+    stop_supervised!(Plugins)
+    id = "plugin_gone_work"
+
+    {:ok, _} =
+      HalC2.Settings.update(fn _ ->
+        %{
+          "providerInstances" => %{id => %{"driver" => "codex"}},
+          "plugins" => %{"gone" => %{"providerInstances" => [id]}}
+        }
+      end)
+
+    File.write!(settings_file(), "{ not json")
+    start_supervised!(Plugins)
+    host = Process.whereis(Plugins)
+
+    # What the version before kept: no retry of a release, as it released nothing.
+    :ok = :sys.suspend(Plugins)
+    _ = :sys.replace_state(Plugins, &Map.delete(&1, :release_retry))
+    :ok = :sys.change_code(Plugins, Plugins, nil, :hot)
+    :ok = :sys.resume(Plugins)
+
+    Application.put_env(:hal_c2, :plugin_release_retry_ms, 10)
+    :ok = HalC2.Settings.watch(self())
+    send(Plugins, :release_instances)
+    _ = :sys.get_state(Plugins)
+    File.rm!(settings_file())
+
+    assert_receive {:hal_c2_settings, _, settings}, 5_000
+    assert settings["providerInstances"] == %{}
+    assert settings["plugins"]["gone"]["releasedInstances"] == [id]
+    assert Process.whereis(Plugins) == host
   end
 
   test "a toggle or save that settings.json refuses is answered with why, and the host stays" do
@@ -767,8 +852,9 @@ defmodule HalC2.PluginsTest do
     assert {:ok, _} = Plugins.handle("enable", %{"id" => id, "acceptPermissions" => []})
   end
 
-  # A package of UI parts only, with a number and a secret among its settings.
-  defp package(id, version) do
+  # A package of UI parts only, with a number and a secret among its settings, asking
+  # for `permissions`.
+  defp package(id, version, permissions \\ []) do
     dir = Path.join(plugins_dir(), id)
     File.mkdir_p!(Path.join(dir, "ui"))
     File.write!(Path.join(dir, "ui/main.qml"), "#{id} #{version}")
@@ -781,6 +867,7 @@ defmodule HalC2.PluginsTest do
         "version" => version,
         "description" => "A package of UI parts only.",
         "apiVersion" => 1,
+        "permissions" => for(p <- permissions, do: %{"id" => p, "reason" => "The test."}),
         "settings" => [
           %{"key" => "count", "label" => "Count", "type" => "number", "default" => 1},
           %{"key" => "token", "label" => "Token", "type" => "secret"}

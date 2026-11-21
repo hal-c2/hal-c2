@@ -1188,7 +1188,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         ),
         # Codex answering `turn/start` took the prompt.
         confirmed(stream, ids)
-      ]
+      ] ++ Orchestration.run_taken(stream, ids.run)
     end)
     |> case do
       :ok ->
@@ -1199,7 +1199,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
       # The run ended while Codex started its turn: nothing wants the turn now. Codex
       # took the prompt all the same, which the run's start says: a run that ended
-      # unstarted sent nothing (`HalC2.Orchestration.Handoff.plan/6`).
+      # unstarted sent nothing (`HalC2.Orchestration.Handoff.plan/6`). The agent got
+      # the message, so it closes what it answers, as the boot repair would.
       :ended ->
         commit(state, fn stream ->
           [
@@ -1209,7 +1210,7 @@ defmodule HalC2.Codex.ThreadRuntime do
               ids.run,
               &(&1 && Map.update(&1, "startedAt", at, fn started -> started || at end))
             )
-          ]
+          ] ++ Orchestration.run_taken(stream, ids.run)
         end)
 
         Connection.call(state.conn, "turn/interrupt", %{
@@ -3216,7 +3217,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           ids.thread,
           &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
         )
-      ]
+      ] ++ Orchestration.run_taken(stream, ids.run)
     end)
     |> case do
       :ok ->

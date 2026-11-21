@@ -892,6 +892,9 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   resolvedAt: Schema.NullOr(Schema.DateTimeUtc),
   decision: Schema.optional(ProviderApprovalDecision),
   answers: Schema.optional(ProviderUserInputAnswers),
+  // A question answered by message that the user's next message closed (`cancelled`):
+  // the agent read that message instead of answers.
+  closedBy: Schema.optional(Schema.Literal("message")),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
