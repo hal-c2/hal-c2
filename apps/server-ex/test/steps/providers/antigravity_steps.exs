@@ -673,6 +673,12 @@ defmodule HalC2.Steps.Providers.Antigravity do
       &Map.put(&1, "sessionError", %{"code" => -32603, "message" => "no session"})
     )
 
+    Map.put(context, :sessions_before, length(FakeAcp.received(context, "session/new")))
+  end
+
+  # A plain reload of the runtime opens no session; reading the models does.
+  step "Antigravity was asked for the account's models", context do
+    assert length(FakeAcp.received(context, "session/new")) > context.sessions_before
     context
   end
 

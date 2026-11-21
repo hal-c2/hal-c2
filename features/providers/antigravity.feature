@@ -522,7 +522,8 @@ Feature: Antigravity
     Given Antigravity lists the models it loaded earlier
     And Antigravity cannot read the account's models
     When the user refreshes every provider's models
-    Then the earlier models are still listed
+    Then Antigravity was asked for the account's models
+    And the earlier models are still listed
 
   Scenario Outline: A model refresh that fails keeps the previous models
     Given Antigravity lists the models it loaded earlier
