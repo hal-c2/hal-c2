@@ -49,6 +49,48 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     launch(context, nil, %{"commandId" => command, "initialMessage" => message(text)})
   end
 
+  step "a client launches a thread in {string} asking to reuse an existing thread without naming one",
+       %{args: [project]} = context do
+    input =
+      context |> input(project, %{"reuseExistingThread" => true}) |> Map.delete("threadId")
+
+    {reply, context} = World.call(context, "orchestration.launchThread", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "a client launches thread {string} in {string} asking to reuse it",
+       %{args: [thread, project]} = context do
+    input =
+      input(context, project, %{
+        "threadId" => World.thread_id(context, thread),
+        "reuseExistingThread" => true,
+        "initialMessage" => message("Look")
+      })
+
+    context = Map.put(context, :thread_before, World.thread(context, thread))
+    {reply, context} = World.call(context, "orchestration.launchThread", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "thread {string} is deleted", %{args: [thread]} = context do
+    context = ensure_thread(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{"type" => "thread.delete", "threadId" => thread})
+
+    context
+  end
+
+  step "thread {string} already has a message", %{args: [thread]} = context do
+    context |> ensure_thread(thread) |> World.send_turn(thread, "Hi")
+  end
+
+  step "thread {string} already has a run", %{args: [thread]} = context do
+    context = ensure_thread(context, thread)
+    assert World.finish_turn(context, thread, "Hi")["status"] == "completed"
+    context
+  end
+
   step "a new thread exists in {string}", %{args: [project]} = context do
     assert World.thread(context, "new")["projectId"] == World.project(context, project).id
     context
@@ -523,6 +565,12 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     if Map.values(context.threads) |> Enum.member?(id),
       do: context,
       else: context |> put_in([:threads, "new"], id) |> Map.put(:thread, "new")
+  end
+
+  defp ensure_thread(context, thread) do
+    if Map.has_key?(context[:threads] || %{}, thread),
+      do: context,
+      else: World.named_thread(context, thread, "demo")
   end
 
   defp launch_in_worktree(context, project, text) do

@@ -114,6 +114,64 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     end
   end
 
+  # The stamps are backdated first, so a stamp set anew is told from one kept even
+  # when both commands fall in the same millisecond.
+  step "a client settles {string} again", %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"settledAt" => World.iso_from_now(-3_600_000)})
+
+    context
+    |> Map.put(:stamp_before, World.thread(context, thread)["settledAt"])
+    |> organize(thread, "thread.settle")
+  end
+
+  step "no error is reported", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "thread {string} keeps its original settled time", %{args: [thread]} = context do
+    assert World.thread(context, thread)["settledAt"] == context.stamp_before
+    context
+  end
+
+  step ~r/^a client snoozes "(?<thread>[^"]+)" until tomorrow 09:00 again$/,
+       %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"snoozedAt" => World.iso_from_now(-3_600_000)})
+
+    command = %{
+      "type" => "thread.snooze",
+      "commandId" => "cmd-snooze-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, thread),
+      "snoozedUntil" => wake_time("tomorrow 09:00")
+    }
+
+    context = Map.merge(context, %{thread: thread, snooze_command: command})
+
+    context
+    |> Map.put(:stamp_before, World.thread(context, thread)["snoozedAt"])
+    |> Map.put(:reply, HalC2.Orchestration.dispatch_once(command) |> World.normalize_reply())
+  end
+
+  step "thread {string} gets a new snoozed-at time", %{args: [thread]} = context do
+    assert {:ok, _} = context.reply
+    assert World.thread(context, thread)["snoozedAt"] != context.stamp_before
+    context
+  end
+
+  step "a retry of that same snooze command is applied once", context do
+    thread = context.thread
+    stamped = World.thread(context, thread)["snoozedAt"]
+    old = World.iso_from_now(-7_200_000)
+    context = World.patch_thread(context, thread, %{"snoozedAt" => old})
+
+    assert {:ok, _} = HalC2.Orchestration.dispatch_once(context.snooze_command)
+    assert World.thread(context, thread)["snoozedAt"] == old
+    assert old != stamped
+    context
+  end
+
   step "thread {string} records when it was snoozed", %{args: [thread]} = context do
     assert is_binary(World.thread(context, thread)["snoozedAt"])
     context

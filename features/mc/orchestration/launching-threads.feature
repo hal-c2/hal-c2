@@ -171,12 +171,12 @@ Feature: Launching a thread with its first message
     Then the run is interrupted
     And no setup progress is reported for that thread
 
-  @backlog @mc
+  @mc
   Scenario: Reusing an existing thread needs its id
     When a client launches a thread in "demo" asking to reuse an existing thread without naming one
     Then it fails with "Reusing an existing thread requires a thread id."
 
-  @backlog @mc
+  @mc
   Scenario Outline: Only an empty, active thread of the project can be reused by a launch
     Given thread "t1" <state>
     When a client launches thread "t1" in "demo" asking to reuse it

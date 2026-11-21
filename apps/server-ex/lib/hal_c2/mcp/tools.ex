@@ -614,7 +614,16 @@ defmodule HalC2.Mcp.Tools do
     case HalC2.Shell.row(node(), id) do
       {"thread", %{"deletedAt" => nil} = row} -> {:ok, row}
       {"thread", _} -> {:error, "thread_not_found", "Thread #{id} is no longer available."}
-      _ -> {:error, "thread_not_found", "The thread was not found."}
+      _ -> {:error, "thread_not_found", "The thread was not found." <> did_you_mean(id)}
+    end
+  end
+
+  # An agent that names a thread by the bare part of its `mcp:` id is pointed at the
+  # full id, but only when that thread exists.
+  defp did_you_mean(id) do
+    case HalC2.Shell.row(node(), "mcp:" <> id) do
+      {"thread", %{"deletedAt" => nil}} -> " Did you mean `mcp:#{id}`?"
+      _ -> ""
     end
   end
 
