@@ -667,6 +667,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
     )
   end
 
+  step "Antigravity cannot read the account's models", context do
+    FakeAcp.configure(
+      context,
+      &Map.put(&1, "sessionError", %{"code" => -32603, "message" => "no session"})
+    )
+
+    context
+  end
+
+  # `call!` fails the step on an error reply: a refresh of every provider still succeeds.
   step "the user refreshes every provider's models", context do
     {_, context} = World.call!(context, "server.refreshProviders", %{"refreshModels" => true})
     context
