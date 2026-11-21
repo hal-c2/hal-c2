@@ -321,7 +321,7 @@ Feature: Snoozing threads
   # Upstream #22202: a completed run no longer ends a snooze, so a thread that wakes itself
   # for background work stays shelved until its wake time.
   # Replaces the scenario above once desktop and mobile carry it.
-  @backlog @mc @desktop @mobile @priority-high
+  @backlog-mc @backlog-mobile @mc @desktop @mobile @priority-high
   Scenario Outline: A snoozed thread wakes early only when it needs the user
     Given "Refactor cart" is snoozed until tomorrow
     When <event>
