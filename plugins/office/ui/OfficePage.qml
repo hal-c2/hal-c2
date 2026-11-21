@@ -15,7 +15,9 @@ import HalC2.Bricks
 //
 // Everything is drawn once into canvases (the floor, each piece of furniture,
 // and a sprite sheet per person) and animated by moving them on one timer that
-// runs only while the page is shown.
+// runs only while the page is shown. The sprite sheets are painted a few a
+// frame; until the floor and everyone on it are drawn, the page says the office
+// is being set up.
 Item {
     id: page
 
@@ -145,6 +147,19 @@ Item {
     property real now: 0
     property int ticks: 0
     property var rng: random(0x0ff1ce)
+
+    // The people whose sprite sheets wait to be painted, in order. A full
+    // office's sheets painted at once block the page for a tenth of a second
+    // on Qt and for seconds on Ljós, so paintSheets() paints as many each
+    // frame as fit sheetBudget milliseconds, by what the last ones took.
+    property var sheetQueue: []
+    property int sheetsPending: 0
+    property real sheetCost: 0
+    readonly property real sheetBudget: 10
+    // Whether this machine's office has been drawn once: its floor and the
+    // sprite sheet of everyone in it. Until then the page says it is being set
+    // up; newcomers after that just walk in. See settle().
+    property bool settled: false
 
     readonly property var frame: ({
             stand: 0,
@@ -1248,17 +1263,62 @@ Item {
 
     // Draws a whole sprite sheet into a canvas: 16×24 frames on an 18×26 grid,
     // so a scaled frame never samples the frame next to it.
+    // A person's sheet: facing us, facing left and facing away, one row each;
+    // facing right is the left row mirrored where it is shown.
     function paintSheet(ctx, look) {
-        ctx.clearRect(0, 0, 270, 104);
-        // Row 2 faces the other way: row 1's frames, mirrored.
-        for (const d of [0, 1, 3]) {
+        ctx.clearRect(0, 0, 270, 78);
+        for (const [row, d] of [[0, 0], [1, 1], [2, 3]]) {
             for (let f = 0; f < 15; f++) {
                 const parts = look.pet ? petFrame(look, f, d) : humanFrame(look, f, d);
-                paintCell(ctx, parts, f * 18, d * 26, false);
-                if (d === 1)
-                    paintCell(ctx, parts, f * 18, 52, true);
+                paintCell(ctx, parts, f * 18, row * 26, false);
             }
         }
+    }
+
+    // A person's sheet waits its turn to be painted.
+    function queueSheet(view) {
+        view.sheet = "queued";
+        page.sheetQueue.push(view);
+        page.sheetsPending++;
+    }
+
+    function dropSheet(view) {
+        const i = page.sheetQueue.indexOf(view);
+        if (i >= 0)
+            page.sheetQueue.splice(i, 1);
+        if (view.sheet === "queued" || view.sheet === "due")
+            page.sheetsPending--;
+        view.sheet = "";
+    }
+
+    // Asks the next sheets in the queue to be painted, one before it is known
+    // what a sheet takes, then as many as the budget allows; a sheet whose
+    // canvas cannot paint yet keeps its place.
+    function paintSheets() {
+        let n = page.sheetCost > 0 ? Math.max(1, Math.floor(page.sheetBudget / page.sheetCost)) : 1;
+        const waiting = [];
+        while (n > 0 && page.sheetQueue.length) {
+            const view = page.sheetQueue.shift();
+            if (!view.paintable) {
+                waiting.push(view);
+                continue;
+            }
+            view.sheet = "due";
+            view.requestSheet();
+            n--;
+        }
+        page.sheetQueue = waiting.concat(page.sheetQueue);
+    }
+
+    function sheetPainted(view, ms) {
+        if (view.sheet !== "due")
+            return;
+        view.sheet = "painted";
+        // Date.now() counts whole milliseconds; a sheet takes at least one.
+        const cost = Math.max(1, ms);
+        page.sheetCost = page.sheetCost > 0 ? 0.7 * page.sheetCost + 0.3 * cost : cost;
+        page.sheetsPending--;
+        settle(page.office);
     }
 
     // A mover's sheet: standing and two walking frames, empty-handed and then
@@ -1899,7 +1959,10 @@ Item {
         page.arrival = {};
         page.claims = {};
         page.primed = false;
-        take(page.office);
+        page.settled = false;
+        // `office` still holds the last machine's value while its change is
+        // handled here.
+        take(page.byEnvironment[page.environment] ?? null);
     }
 
     function take(value) {
@@ -1912,6 +1975,15 @@ Item {
         hear(value?.talks ?? []);
         page.primed = value !== null && value !== undefined;
         updateWalking();
+        settle(value);
+    }
+
+    // The office is settled once `value`, this machine's office, has been
+    // drawn. Asked only where the people match `value`: after taking it and
+    // after a paint, never from a binding, which sees the steps in between.
+    function settle(value) {
+        if (!page.settled && page.world && value && page.floorPaints > 0 && page.sheetsPending === 0)
+            page.settled = true;
     }
 
     // The size in tiles of an office `across` pods wide and `down` deep.
@@ -4107,6 +4179,14 @@ Item {
     }
 
     Timer {
+        objectName: "officeSheetPainter"
+        interval: 16
+        repeat: true
+        running: page.visible && page.sheetsPending > 0
+        onTriggered: page.paintSheets()
+    }
+
+    Timer {
         interval: page.walking ? 40 : 200
         repeat: true
         running: page.animating
@@ -4209,6 +4289,9 @@ Item {
                 id: stage
 
                 objectName: "officeStage"
+                // Hidden until set up; the people in it are out of reach until
+                // then too (see their MouseArea).
+                opacity: page.settled ? 1 : 0
                 x: Math.max(0, (scroller.width - width) / 2)
                 y: Math.max(0, (scroller.height - height) / 2)
                 width: page.worldCols * 16 * page.pixelScale
@@ -4242,6 +4325,7 @@ Item {
                             onPaint: {
                                 page.floorPaints++;
                                 page.paintFloor(getContext("2d"));
+                                page.settle(page.office);
                             }
                         }
 
@@ -4548,38 +4632,64 @@ Item {
                                 property int frame: 0
                                 property int dir: 0
                                 readonly property var look: page.actors[actorId]?.look ?? null
+                                // Its sprite sheet: "queued", "due" (asked to
+                                // paint) or "painted"; see paintSheets().
+                                property string sheet: ""
+                                readonly property bool paintable: sheetCanvas.available
+
+                                function requestSheet() {
+                                    sheetCanvas.requestPaint();
+                                }
 
                                 width: 16
                                 height: 24
                                 clip: true
                                 Component.onCompleted: {
                                     page.views[actorId] = person;
+                                    page.queueSheet(person);
                                     const actor = page.actors[actorId];
                                     if (actor)
                                         page.render(actor);
                                 }
                                 Component.onDestruction: {
+                                    page.dropSheet(person);
                                     if (page.views[actorId] === person)
                                         delete page.views[actorId];
                                 }
 
                                 Canvas {
+                                    id: sheetCanvas
+
                                     x: -person.frame * 18
-                                    y: -person.dir * 26
+                                    y: -[0, 26, 26, 52][person.dir]
                                     width: 270
-                                    height: 104
+                                    height: 78
                                     smooth: false
                                     antialiasing: false
+                                    transform: Scale {
+                                        origin.x: person.frame * 18 + 8
+                                        xScale: person.dir === 2 ? -1 : 1
+                                    }
                                     onPaint: {
+                                        if (person.sheet === "queued")
+                                            return;
+                                        const start = Date.now();
                                         if (person.look)
                                             page.paintSheet(getContext("2d"), person.look);
+                                        page.sheetPainted(person, Date.now() - start);
                                     }
                                 }
 
                                 // Tab walks the people; a focused one shows its card as a
                                 // hovered one does, and Return or Space opens its thread.
+                                // Nobody is reachable while the office is being set up.
+                                // (On this item, not the stage: under a stage whose
+                                // `enabled` changes, Ljós reports `visible` a change late,
+                                // hal-c2/ljos-ui#611.)
                                 MouseArea {
                                     id: hit
+
+                                    enabled: page.settled
 
                                     objectName: "officePerson:" + person.actorId
                                     Accessible.role: Accessible.Button
@@ -4830,10 +4940,19 @@ Item {
             }
 
             Text {
+                objectName: "officeMessage"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 32, 420)
-                visible: page.office === null || page.people.length === 0
-                text: page.plugin.environments.length === 0 ? qsTr("No machine runs the Office plugin yet.") : page.office === null ? qsTr("Waiting for the office…") : qsTr("Nobody is in the office. Threads show up here as they work.")
+                visible: text.length > 0
+                text: {
+                    if (page.plugin.environments.length === 0)
+                        return qsTr("No machine runs the Office plugin yet.");
+                    if (page.office === null)
+                        return qsTr("Waiting for the office…");
+                    if (page.people.length === 0)
+                        return qsTr("Nobody is in the office. Threads show up here as they work.");
+                    return page.settled ? "" : qsTr("Setting up the office…");
+                }
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 color: page.muted

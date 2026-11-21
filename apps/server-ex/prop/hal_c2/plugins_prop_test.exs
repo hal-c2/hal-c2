@@ -487,16 +487,17 @@ defmodule HalC2.PluginsPropTest do
   defp act(s, {:call, _, :release, [id, n]}),
     do: {update_in(s.queue[id], &tl/1), {:exactly, {:heard, n}}}
 
-  # A package that hears Slack installed and turned on, as `install/2` then `enable/2`.
+  # A package that hears Slack installed and turned on, as `install/2` then `enable/2`:
+  # two steps, so what an install holds forgets what the plugin published.
   defp act(s, {:call, _, :listen, [id, version]}) do
-    {s, :ok} = act(s, {:call, nil, :install, [id, {:ok, version, ["slack:read"]}]})
+    {s, :ok} = step(s, {:call, nil, :install, [id, {:ok, version, ["slack:read"]}]})
     act(s, {:call, nil, :enable, [id, ["slack:read"]]})
   end
 
   # `{next state, the reply expected}`.
   # A package that hears and shapes turns installed and turned on, as `listen/2`.
   defp act(s, {:call, _, :hook, [id, version]}) do
-    {s, :ok} = act(s, {:call, nil, :install, [id, {:ok, version, @hooks}]})
+    {s, :ok} = step(s, {:call, nil, :install, [id, {:ok, version, @hooks}]})
     act(s, {:call, nil, :enable, [id, @hooks]})
   end
 

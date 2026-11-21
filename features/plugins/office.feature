@@ -549,6 +549,32 @@ Feature: Office
       Then each person sits at a desk that is already there
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A full office says it is being set up until everyone in it is drawn
+      Given the office has 40 threads
+      When the office page opens
+      Then its header is laid out and the office says "Setting up the office…"
+      And the page keeps drawing frames while the people are drawn a few at a time
+      When everyone is drawn
+      Then the office shows with each person at a desk, and the message is gone
+      When it has another thread
+      Then the office does not say it is being set up again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office that has not arrived yet is not being set up
+      Given the office page is open on a machine whose office has not arrived
+      Then the office says "Waiting for the office…"
+      When its office arrives with no threads
+      Then the office says "Nobody is in the office. Threads show up here as they work."
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Another machine's office is set up afresh, with its people already at their desks
+      Given the office page is open and set up on a machine with 4 threads
+      When the user picks another machine with 6 threads
+      Then the office says it is being set up until those 6 are drawn
+      When the user picks the first machine again
+      Then the office says it is being set up, and its 4 people are at their desks, not walking in
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Movers carry in the desk of a new worker, who walks in and waits for it
       Given the office has 4 threads
       When it has a 5th thread working, typing

@@ -967,6 +967,8 @@ impl Composer {
         if mode == self.interaction_mode_of(engine, target) {
             return;
         }
+        // The mode is picked here now, so the next carry leaves it be; a
+        // carried model is not picked by this (`model_carried` stays).
         kept::edit_draft(engine, target, |kept| {
             kept.interaction_mode = mode.to_owned();
             kept.carried = false;
@@ -1060,6 +1062,7 @@ impl Composer {
             kept.model_selection = Some(chosen);
             kept.multiple_models = None;
             kept.carried = false;
+            kept.model_carried = false;
         });
         self.forget_taken_picks(engine);
         kept::save(engine);
@@ -1130,6 +1133,7 @@ impl Composer {
                 }
                 kept.multiple_models = None;
                 kept.carried = false;
+                kept.model_carried = false;
             });
         } else {
             // Each model's thread starts in a worktree of its own.
@@ -1137,7 +1141,10 @@ impl Composer {
                 self.bridge
                     .dispatch(engine, "workspace.envMode.set", json!({"mode": "worktree"}));
             }
-            kept::edit_draft(engine, target, |kept| kept.multiple_models = Some(models));
+            kept::edit_draft(engine, target, |kept| {
+                kept.multiple_models = Some(models);
+                kept.model_carried = false;
+            });
         }
         crate::controllers::workspace::refresh(engine);
         kept::save(engine);
@@ -1254,6 +1261,7 @@ impl Composer {
         kept::edit_draft(engine, target, |kept| {
             kept.model_selection = Some(chosen);
             kept.carried = false;
+            kept.model_carried = false;
         });
         self.forget_taken_picks(engine);
         kept::save(engine);

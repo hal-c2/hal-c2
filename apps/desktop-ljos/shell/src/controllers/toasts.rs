@@ -320,6 +320,11 @@ impl Toasts {
         )
     }
 
+    /// Whether the toast `id` is still shown.
+    pub fn shows(&self, id: &str) -> bool {
+        self.toasts.iter().any(|t| t.id == id)
+    }
+
     pub fn dismiss(&mut self, engine: &Engine, id: &str) {
         let before = self.toasts.len();
         self.toasts.retain(|t| t.id != id);

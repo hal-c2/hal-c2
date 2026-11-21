@@ -491,11 +491,23 @@ defmodule HalC2.Settings do
           {Shared.apply(%{}, shared), true}
       end
 
+    # A plugin's record of an instance deleted by hand while the MC was down ends now: a
+    # later save starts from the file, and the record would hand the id back.
+    sealed = HalC2.Plugins.Host.seal_records(settings, settings, false)
+    {settings, records_changed} = {sealed, sealed != settings}
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = HalC2.UsageLimitSources.seal_keys(settings, %{})
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
     {settings, password_changed} = HalC2.ProviderSecrets.seal_server_passwords(settings, settings)
-    if changed or secrets_changed or password_changed, do: write!(path, settings)
+
+    # Taken before the startup write below replaces the file: what changed while this
+    # MC was down is stamped at the time its file changed, not at this restart, or an
+    # offline edit would outrank a member's newer one (`start_shared/1`).
+    document_at = file_ms(path)
+
+    if records_changed or changed or secrets_changed or password_changed,
+      do: write!(path, settings)
+
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
@@ -507,6 +519,7 @@ defmodule HalC2.Settings do
       version: 0,
       watchers: %{},
       stamp: stamp(path),
+      document_at: document_at,
       id: HalC2.Environment.id(),
       shared: shared,
       held: held
@@ -530,7 +543,13 @@ defmodule HalC2.Settings do
           Map.drop(state.shared, Shared.document_keys())
 
         true ->
-          local_shared(state.shared, state.settings, Shared.document_keys(), state, state.path)
+          local_shared(
+            state.shared,
+            state.settings,
+            Shared.document_keys(),
+            state,
+            state.document_at
+          )
       end
 
     file = HalC2.Keybindings.path()
@@ -543,7 +562,7 @@ defmodule HalC2.Settings do
             keybindings(HalC2.Keybindings.rules()),
             ["keybindings"],
             state,
-            file
+            file_ms(file)
           ),
         else: Map.delete(shared, "keybindings")
 
@@ -553,15 +572,22 @@ defmodule HalC2.Settings do
   end
 
   # `records` with a local write for each of `units` whose value in `values` is not the
-  # one its record holds, stamped now, or at `file`'s time when given.
-  defp local_shared(records, values, units, state, file \\ nil) do
-    at =
-      case file && File.stat(file, time: :posix) do
-        {:ok, %{mtime: seconds}} -> seconds * 1000
-        _ -> System.os_time(:millisecond)
-      end
+  # one its record holds, stamped now, or at `at` (a file's time) when given.
+  defp local_shared(records, values, units, state, at \\ nil) do
+    Shared.local(
+      records,
+      values,
+      units,
+      Shared.stamp(records, at || System.os_time(:millisecond)),
+      state.id
+    )
+  end
 
-    Shared.local(records, values, units, Shared.stamp(records, at), state.id)
+  defp file_ms(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %{mtime: seconds}} -> seconds * 1000
+      _ -> nil
+    end
   end
 
   # A rules file that cannot be written fails the edit, not the table every service reads.
@@ -695,7 +721,16 @@ defmodule HalC2.Settings do
   @impl true
   def handle_call({:put, settings, version}, from, %{version: version} = state) do
     {:reply, reply, state} =
-      handle_call({:update, &carry_over(settings, state.settings, &1)}, from, state)
+      handle_call(
+        {:update,
+         &carry_over(
+           HalC2.Plugins.Host.seal_records(settings, state.settings, true),
+           state.settings,
+           &1
+         )},
+        from,
+        state
+      )
 
     # A client is answered with the error type it knows (`ServerSettingsError`).
     reply =
@@ -848,13 +883,17 @@ defmodule HalC2.Settings do
   # `shared` is what the records are before this document's shared keys are compared
   # with them: a member's newer records, saved together with the keys they change.
   defp save(state, settings, write?, shared \\ nil) do
+    # A record trimmed here is written even when adopting a hand edit: a later save
+    # starts from the file (`disk/1`), and a stale record would hand the id back.
+    sealed = HalC2.Plugins.Host.seal_records(settings, state.settings, false)
+    {settings, records_changed} = {sealed, sealed != settings}
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
 
     {settings, password_changed} =
       HalC2.ProviderSecrets.seal_server_passwords(settings, state.settings)
 
-    if write? or keys_changed or secrets_changed or password_changed,
+    if write? or records_changed or keys_changed or secrets_changed or password_changed,
       do: write!(state.path, settings)
 
     state =

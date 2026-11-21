@@ -86,6 +86,10 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_cast {:worker, _, _}" =>
         "a worker announced before an update in place, its supervisor unknown: ignored",
       "HalC2.Plugins handle_info _" => "ignores what it does not know",
+      "HalC2.Plugins handle_info :release_instances" =>
+        "saves a plugin's provider instances out of the settings again after a save that failed; starts and stops nothing",
+      "HalC2.Plugins state :release_retry" =>
+        "the timer of that next try, so one failed save sets one; starts and stops nothing",
       "HalC2.Plugins state :dir" =>
         "where plugins are scanned from; the model has two fixed plugins",
       "HalC2.Plugins state :supervisor" =>
