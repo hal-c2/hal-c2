@@ -111,14 +111,17 @@ impl World {
             return self.pump();
         }
         let home = self.home.path().to_path_buf();
-        let roots = hal_c2_mobile::roots().with_user(home.join("config/shell"));
-        let dirs = roots.dirs().map_err(Failure)?;
+        // main.rs: the pack build.rs made, its Main the ShellLoader.
         let engine = App::new("features-mobile")
             .locale("en_US")
             .register(hal_c2_mobile::register)
-            .qml_dirs(dirs, "Main")
-            .map_err(|e| Failure(e.to_string()))?
+            .source(hal_c2_mobile::pack())
+            .root("Main")
             .build_engine();
+        // The `Window` the loader shows gets a window of its own, where
+        // its popups find their overlay, as `--render`'s does. Before
+        // any Window is made: one made earlier is an item for good.
+        ljos_controls::WindowSystem::of(&engine).set_host(|| {});
         let mut window = TestWindow::new(&engine, self.size.0, self.size.1);
         let mut streams = Pump::new(|| {});
         let wired = hal_c2_shell::streams::wire(&engine, &mut streams);
@@ -128,7 +131,6 @@ impl World {
         }
         let launch = Launch {
             config_dir: Some(home.join("config/shell")),
-            qml: Some(roots),
             cache_dir: Some(home.join("cache")),
             data_dir: Some(home.join("data")),
             state_dir: Some(home.join("state")),
@@ -148,7 +150,7 @@ impl World {
         Bridge::of(&engine).set_local_folder_import_enabled(&engine, false);
         hal_c2_mobile::start(&engine);
         hal_c2_shell::theme::set_application_font(&engine);
-        let root = hal_c2_shell::runtime::open(&engine, false).map_err(Failure)?;
+        let root = hal_c2_shell::runtime::open(&engine).map_err(Failure)?;
         window.show(root).map_err(|e| Failure(e.to_string()))?;
         self.shell = Some(Shell {
             engine,

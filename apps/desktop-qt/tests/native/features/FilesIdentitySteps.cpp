@@ -4,12 +4,15 @@
 // and an environment theme. The MC's side: `assets.createUrl` for a project's
 // favicon and `/api/auth/session` for what this session may do.
 
+#include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickItem>
 #include <QTcpSocket>
 #include <QTest>
+
+#include <algorithm>
 
 #include "Brick.h"
 #include "FakeConfig.h"
@@ -125,6 +128,16 @@ void type(World& world, const QString& field, const QString& text) {
   QQuickItem* item = world.brick->item(field);
   expect(item->hasActiveFocus(), QStringLiteral("%1 did not take the keyboard").arg(field));
   QMetaObject::invokeMethod(item, "selectAll");
+  // Characters no key types (a fullwidth letter) arrive by input method, as
+  // a real keyboard's would; QTest::keyClick asserts on them.
+  const bool byKey = std::all_of(text.begin(), text.end(), [](QChar character) { return character.toLatin1() != 0; });
+  if (!byKey) {
+    QInputMethodEvent event;
+    event.setCommitString(text);
+    QCoreApplication::sendEvent(item, &event);
+    world.sync();
+    return;
+  }
   for (const QChar character : text) QTest::keyClick(&world.brick->window(), character.toLatin1());
 }
 

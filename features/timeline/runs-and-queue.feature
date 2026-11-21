@@ -141,14 +141,19 @@ Feature: Runs, interruptions and the queue
   # Upstream #21474: a sent message that had waited in the queue carries no marker; steers and
   # queued messages promoted to steers keep theirs. Replaces the scenario above once the clients
   # carry it.
-  @backlog @shared @priority-high
+  @shared @priority-high
   Scenario Outline: A sent message is marked only when it steered the agent
     When the user's message was <how>
     Then the message is <marked>
 
+    @backlog
+    Examples:
+      | how                           | marked     |
+      | queued behind the active turn | not marked |
+
+    @backlog-desktop @backlog-mobile
     Examples:
       | how                                  | marked                                                              |
-      | queued behind the active turn        | not marked                                                          |
       | sent as a steer                      | marked "Steered the active turn"                                    |
       | queued and later promoted to a steer | marked "Originally queued, then promoted to steer the active turn" |
 
@@ -534,7 +539,7 @@ Feature: Runs, interruptions and the queue
       | 999,500   | 1m used   |
       | 1,000,000 | 1m used   |
   # Upstream #23723: the diff's compact counts had the same rollover and read "+1000k", and "1000m" below a billion.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-desktop @priority-low
   Scenario Outline: A diff count that rounds up to the next unit reads in that unit
     Given a diff adds <lines> lines
     Then its summary and file row read "<reading>"

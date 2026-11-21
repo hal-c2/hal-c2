@@ -1,17 +1,20 @@
 //! The shell's QML: desktop-qt's bricks (`apps/desktop-qt/qml`) and this
 //! app's own (`apps/desktop-ljos/qml`: the entry and the QML half of
-//! `HalC2.Shell`), with the user's (`<config>/qml` and `<config>/shell.qml`)
-//! when there is a config dir, compiled at start-up as one import path
-//! (`App::qml_dirs`) and again for each reload (src/runtime.rs).
+//! `HalC2.Shell`), as one import path. build.rs compiles them into the pack
+//! a release runs; a `dev-qml` build compiles them at start-up instead
+//! (`App::qml_dirs`), with the user's (`<config>/qml` and
+//! `<config>/shell.qml`) when there is a config dir, and so do the tests.
 
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "dev-qml")]
 use ljos::dev::Compiled;
 
-/// The key of the built-in shell, `qml/Main.qml`.
+/// The key of the entry, `qml/Main.qml`: the ShellLoader that shows the
+/// user's shell, else the built-in `HalC2/Bricks/DefaultShell.qml`.
 pub const DEFAULT_SHELL: &str = "Main";
 
-/// The key of `<config>/shell.qml` in what [`compile`] makes.
+/// The key of `<config>/shell.qml` among the directories' files.
 pub const USER_SHELL: &str = "shell";
 
 /// The import path: the user's modules, the bricks' root, this app's, any
@@ -93,27 +96,12 @@ impl Roots {
         }
         Ok(once)
     }
-
-    /// What a reload follows: all of the config dir (its `qml` and
-    /// `shell.qml` may be made later) and the roots.
-    pub fn watched(&self) -> Vec<PathBuf> {
-        let mut dirs: Vec<PathBuf> = self.user.iter().cloned().collect();
-        dirs.push(self.bricks.clone());
-        if self.shell != self.bricks {
-            dirs.push(self.shell.clone());
-        }
-        for root in &self.extra {
-            if !dirs.contains(root) {
-                dirs.push(root.clone());
-            }
-        }
-        dirs
-    }
 }
 
 /// Compiles the roots against the standard modules and `HalC2.Shell`, as
-/// `App::qml_dirs` does for the app, printing nothing: for `--check`, the
-/// runtime's reloads and the tests, which show what it found themselves.
+/// `App::qml_dirs` does for the app, printing nothing: for a `dev-qml`
+/// build's `--check`, which shows what it found itself.
+#[cfg(feature = "dev-qml")]
 pub fn compile(roots: &Roots) -> Result<Compiled, String> {
     let dirs = roots.dirs()?;
     let snapshot = ljos::engine();
@@ -147,6 +135,5 @@ mod tests {
             roots.dirs().unwrap(),
             [bricks.clone(), shell.clone(), phone.clone(), user.clone()]
         );
-        assert_eq!(roots.watched(), [user, bricks, shell, phone]);
     }
 }

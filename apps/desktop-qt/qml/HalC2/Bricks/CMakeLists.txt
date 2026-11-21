@@ -148,6 +148,7 @@ set(hal_c2_bricks_qml_files
     PluginPage.qml
     PluginPart.qml
     PluginContext.qml
+    PluginChannel.qml
     PluginThreadPart.qml
     PluginSettings.qml
     NotificationsSettings.qml

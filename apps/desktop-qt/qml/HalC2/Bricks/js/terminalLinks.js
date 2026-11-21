@@ -33,6 +33,13 @@ function isRange(value) {
     return value.split("/").some(part => part !== ".." && part.includes(".."));
 }
 
+// A logged request route carries its query ("GET /api/users?page=2"), and an
+// address with a scheme other than http ("redis://127.0.0.1:6379/0") leaves
+// the scheme's tail looking like a drive or a rooted path: neither is a file.
+function isRouteOrScheme(line, start, value) {
+    return value.includes("://") || value.includes("?") || (value.startsWith("//") && start > 0 && line[start - 1] === ":");
+}
+
 // [{kind: "url"|"path", text, start, end}] in order.
 function extract(line) {
     const matches = [];
@@ -45,7 +52,7 @@ function extract(line) {
                 continue;
             }
             const text = trimClosingDelimiters(raw[0]);
-            if (text.length === 0 || text.length > MAX_LINK || (kind === "path" && (isUrl(text) || isRange(text))))
+            if (text.length === 0 || text.length > MAX_LINK || (kind === "path" && (isUrl(text) || isRange(text) || isRouteOrScheme(line, raw.index, text))))
                 continue;
             const candidate = { kind: kind, text: text, start: raw.index, end: raw.index + text.length };
             if (!matches.some(other => candidate.start < other.end && other.start < candidate.end))

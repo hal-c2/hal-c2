@@ -625,10 +625,25 @@ desktop/stage.feature: The stage has a layout for one, two or four panes [single
 desktop/stage.feature: The stage survives a restart
 desktop/stage.feature: The stage survives a visit to settings
 desktop/stage.feature: The stage's shortcuts move the tab and put the timeline away
+desktop/user-shell.feature: A shell layout change applies without restarting, with what the window holds kept
+desktop/user-shell.feature: A shell layout change that does not load leaves the layout shown and says why
+desktop/user-shell.feature: Removing the user's shell layout gives the window back to the built-in one, working
+desktop/user-shell.feature: The released app finds every file its built-in layout loads
+desktop/user-shell.feature: The released app starts its built-in layout without compiling it
 files/adding-projects.feature: A clone on another machine of the cluster shows its progress too
 files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created
 files/adding-projects.feature: A finished clone offers to open its project
 files/adding-projects.feature: A folder the environment refuses to add says why
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [https://github.com:8443]
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [https://github.com]
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [ssh://git@host:22]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [git@github.com:acme/shop.git, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://dev.azure.com/org/proj/_git/shop, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop.git, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop/, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop?tab=readme, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://host/acme/123, 123]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [ssh://git@host:22/acme/shop, shop]
 files/adding-projects.feature: A user with no projects is invited to add one
 files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
 files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
@@ -654,6 +669,9 @@ files/file-explorer.feature: File actions available from a file entry [reveal in
 files/file-explorer.feature: Filtering the tree can hide entries that do not match
 files/file-explorer.feature: The tree follows the file open in the viewer
 files/file-explorer.feature: The tree refreshes when the agent changes files
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.csv, application/octet-stream, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.csv, binary/octet-stream, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.tsv, application/unknown, the file is shown as a tab table]
 files/file-viewer-and-editing.feature: A Mermaid file that cannot be drawn shows its source and says why
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [JSON, Show accessibility JSON]
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [text, Show extracted text]
@@ -840,6 +858,7 @@ files/project-file.feature: An invalid hal-c2.json is reported and ignored
 files/project-file.feature: Importing skips actions that already exist
 files/project-file.feature: hal-c2.json may contain comments
 files/project-file.feature: hal-c2.json sets the default workspace for new threads
+files/project-identity.feature: A monogram is tidied before it is checked
 files/project-identity.feature: A picked icon still shows on environments that do not know monograms
 files/project-identity.feature: A project without an icon shows a two-character monogram [M7 Forge, M7]
 files/project-identity.feature: A project without an icon shows a two-character monogram [Nebula, NA]
@@ -2006,6 +2025,11 @@ settings/notifications.feature: The notification mode decides what happens when 
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Notifications with sound, a system notification is shown and the sound plays]
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Off, nothing is shown or played]
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Sound only, the completion sound plays]
+settings/notifications.feature: The sound depends on what the thread needs [asks a question, input]
+settings/notifications.feature: The sound depends on what the thread needs [asks for approval, input]
+settings/notifications.feature: The sound depends on what the thread needs [fails, input]
+settings/notifications.feature: The sound depends on what the thread needs [finishes, completion]
+settings/notifications.feature: The sound depends on what the thread needs [hits its usage limit, input]
 settings/notifications.feature: The thread on screen does not notify
 settings/notifications.feature: The title says what the thread needs [asks a question, Input needed]
 settings/notifications.feature: The title says what the thread needs [asks for approval, Approval needed]
@@ -2675,6 +2699,9 @@ source-control/git-actions.feature: The recommended action is withheld with a re
 source-control/git-actions.feature: The recommended action is withheld with a reason [has no upstream and no local commits, No local commits to push.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is running another git action, Git action in progress.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is up to date with nothing to do, Branch is up to date. No action needed.]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a branch with an open pull request]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a feature branch with a remote]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [the default branch]
 source-control/pull-request-actions.feature: Merging from the review
 source-control/pull-request-list.feature: A list the MC cannot read can be retried
 source-control/pull-request-list.feature: A pull request list beside the thread
@@ -3164,9 +3191,11 @@ terminal/composer-context.feature: Selecting only blank lines adds nothing
 terminal/composer-context.feature: The draft lists its terminal excerpts
 terminal/composer-context.feature: The terminal's menu offers selection actions only once something is selected
 terminal/composer-context.feature: The user adds selected terminal output to the draft
-terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [one terminal excerpt, Expired terminal context omitted from message]
-terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [two terminal excerpts, Expired terminal contexts omitted from message]
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [one terminal excerpt, Expired terminal context omitted from message, Re-add it if you want that terminal output included.]
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [two terminal excerpts, Expired terminal contexts omitted from message, Re-add them if you want that terminal output included.]
 terminal/composer-context.feature: The user removes a terminal excerpt from the draft
+terminal/composer-context.feature: Toasts about several expired terminal excerpts say "them" [is otherwise empty, Expired terminal contexts won't be sent, Remove them or re-add them to include terminal output.]
+terminal/composer-context.feature: Toasts about several expired terminal excerpts say "them" [reads "Why did this fail?", Expired terminal contexts omitted from message, Re-add them if you want that terminal output included.]
 terminal/drawer.feature: A draft thread has a terminal in its project
 terminal/drawer.feature: A new terminal takes the lowest free number
 terminal/drawer.feature: A script runs in a new terminal when the active one is busy
@@ -3273,13 +3302,20 @@ terminal/io.feature: What an input method is composing shows at the cursor
 terminal/io.feature: With history above it, the prompt sits flush with the bottom edge
 terminal/links-and-graphics.feature: A Ctrl-click that moves a little still follows the link
 terminal/links-and-graphics.feature: A branch range in git's output is not a file path
+terminal/links-and-graphics.feature: A file path beside a non-web address is still a link
 terminal/links-and-graphics.feature: A file path in the output opens in the editor
 terminal/links-and-graphics.feature: A link cut off by the edge of the screen is not offered
 terminal/links-and-graphics.feature: A link is not offered while a program has the mouse
 terminal/links-and-graphics.feature: A link replaced before the pointer is released is not followed
 terminal/links-and-graphics.feature: A plain click on a file path does not open it
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
+terminal/links-and-graphics.feature: A request route in a log line is not a file path [GET /api/trpc/post.list,user.me?batch=1 200, /api/trpc/post.list,user.me?batch=1]
+terminal/links-and-graphics.feature: A request route in a log line is not a file path [proxying /api/users?page=2 to localhost:4000, /api/users?page=2]
 terminal/links-and-graphics.feature: A tap on a link on a touch screen follows it
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [Connected to redis://127.0.0.1:6379/0, s://127.0.0.1:6379/0]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [at main (file:///Users/me/app/src/index.mjs:3:7), e:///Users/me/app/src/index.mjs:3:7]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [postgres://app@localhost:5432/shop, s://app@localhost:5432/shop]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [uploaded to s3://bucket/key, //bucket/key]
 terminal/links-and-graphics.feature: Clicking a link twice or three times selects a word or a line
 terminal/links-and-graphics.feature: Ctrl still follows a link while a program has the mouse
 terminal/links-and-graphics.feature: Dragging from a link selects text instead of following it
@@ -3953,6 +3989,8 @@ timeline/streaming.feature: A duration is written in hours, minutes and seconds,
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [38 seconds, 38s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [4.26 seconds, 4.3s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [62 seconds, 1m 2s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7 seconds, 7s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7.4 seconds, 7.4s]
 timeline/streaming.feature: A finished turn folds its work behind how long it took
 timeline/streaming.feature: A folded turn can be opened and closed again
 timeline/streaming.feature: A long message can be expanded and collapsed

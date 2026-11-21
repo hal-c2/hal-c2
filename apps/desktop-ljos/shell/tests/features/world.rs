@@ -196,7 +196,14 @@ struct Shell {
     /// The side streams, drained by [`World::pump`] as a window's frames
     /// drain them.
     streams: Pump,
+    /// What a host does at the start of each frame besides (the user's
+    /// shell files it follows: user_shell.rs); each says whether it did
+    /// anything.
+    frames: Vec<FrameHook>,
 }
+
+/// One of [`Shell::frames`].
+pub type FrameHook = Box<dyn FnMut(&Engine, &mut TestWindow) -> Outcome<bool>>;
 
 pub type Question = Rc<dyn Fn(&mut World, bool) -> Outcome>;
 pub type ToldInPlace = Rc<dyn Fn(&World) -> Vec<String>>;
@@ -441,6 +448,7 @@ impl World {
             window,
             connection,
             streams,
+            frames: Vec::new(),
         });
         let now = self.now;
         self.set_time(now);
@@ -820,6 +828,18 @@ impl World {
     /// gave up on. The shell's clock moves with the time it takes.
     pub fn wait_for_with(
         &mut self,
+        condition: impl FnMut(&World) -> bool,
+        what: impl Fn(&World) -> String,
+    ) -> Outcome {
+        self.wait_within(WAIT, condition, what)
+    }
+
+    /// [`World::wait_for_with`] for up to `patience`: for what the shell
+    /// does on a thread of its own that takes longer than an answer (a
+    /// compile).
+    pub fn wait_within(
+        &mut self,
+        patience: Duration,
         mut condition: impl FnMut(&World) -> bool,
         what: impl Fn(&World) -> String,
     ) -> Outcome {
@@ -834,7 +854,7 @@ impl World {
             }
             charged += pass.elapsed().min(PASS);
             pass = Instant::now();
-            if charged >= WAIT {
+            if charged >= patience {
                 return Err(Failure(format!("timed out waiting for {}", what(self))));
             }
             let waited = started.elapsed();
@@ -849,7 +869,7 @@ impl World {
             // Until something arrives, or the shell's next timer is due.
             // An animation is no timer, so a frame at a time: the shell's
             // clock moves only when this loop moves it.
-            let mut timeout = (WAIT - charged).min(FRAME);
+            let mut timeout = (patience - charged).min(FRAME);
             if let Some(shell) = &self.shell
                 && let Some(due) = shell.engine.next_timer_deadline()
             {
@@ -967,6 +987,33 @@ impl World {
         Ok(item)
     }
 
+    /// Runs `hook` at the start of every frame from now on, as a host does
+    /// with what it follows besides the MC.
+    pub fn on_frame(
+        &mut self,
+        hook: impl FnMut(&Engine, &mut TestWindow) -> Outcome<bool> + 'static,
+    ) -> Outcome {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        shell.frames.push(Box::new(hook));
+        Ok(())
+    }
+
+    /// Hands the window to `f`, as a host showing a root of its own does.
+    pub fn with_window<R>(&mut self, f: impl FnOnce(&Engine, &mut TestWindow) -> R) -> Outcome<R> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        Ok(f(&shell.engine, &mut shell.window))
+    }
+
+    /// A sender that wakes a step's wait, from any thread.
+    pub fn waker(&self) -> impl Fn() + Send + Sync + 'static {
+        let signal = self.signal.clone();
+        move || signal.notify()
+    }
+
     /// How many things the window painted for `item` itself (its glyphs,
     /// fills and borders) at its last frame.
     pub fn painted(&self, item: ljos::ObjectId) -> usize {
@@ -1081,6 +1128,9 @@ impl World {
                     hal_c2_shell::controllers::desktop_update::deliver(engine);
                 });
                 any |= Platform::of(engine).deliver(engine) > 0;
+                for frame in &mut shell.frames {
+                    any |= frame(engine, &mut shell.window)?;
+                }
                 shell.window.settle().map_err(|e| Failure(e.to_string()))?;
             }
             if !any {

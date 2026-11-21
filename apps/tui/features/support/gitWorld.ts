@@ -71,6 +71,20 @@ export const CHECKOUTS: Readonly<Record<string, Partial<VcsStatusResult>>> = {
   "has uncommitted changes on the default branch": { ...CHANGED, ...ON_MAIN },
   "has uncommitted changes on a branch with an open pull request": { ...CHANGED, pr: openPr },
   "has uncommitted changes on a feature branch with a remote": CHANGED,
+  "has uncommitted changes on the default branch that is behind its upstream": {
+    ...CHANGED,
+    ...ON_MAIN,
+    behindCount: 1,
+  },
+  "has uncommitted changes on a branch with an open pull request that is behind its upstream": {
+    ...CHANGED,
+    pr: openPr,
+    behindCount: 1,
+  },
+  "has uncommitted changes on a feature branch with a remote that is behind its upstream": {
+    ...CHANGED,
+    behindCount: 1,
+  },
   "has commits on a feature branch with no upstream": { hasUpstream: false, aheadCount: 2 },
   "is ahead of its upstream with an open pull request": { aheadCount: 1, pr: openPr },
   "is pushed and ahead of the default branch with no pull request": { aheadOfDefaultCount: 2 },

@@ -21,7 +21,17 @@
 //! `--render` and `--screenshot` take a picture without a window, as
 //! desktop-ljos's do: `--action` dispatches a shell action and `--key`
 //! presses a window shortcut, in the order given. `--check` only
-//! compiles the QML, and fails when a file does not.
+//! checks the QML, and fails when a file does not compile: the pack
+//! build.rs made, or with the `dev-qml` feature the directories.
+//!
+//! The phone runs the QML build.rs compiled into it (its pack), with
+//! the user's `<config>/qml` and `<config>/shell.qml` laid over it, as
+//! desktop-ljos does: Main.qml is a ShellLoader of `shell.qml`, the
+//! built-in MobileShell when there is none, and each save is applied
+//! as the app runs (desktop-ljos's src/runtime.rs). A build with the
+//! `dev-qml` feature compiles the QML at start-up instead, from this
+//! checkout (`hal_c2_mobile::roots`), with the user's files as they
+//! are then; it does not follow saves.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -31,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::mc::Connection;
+#[cfg(feature = "dev-qml")]
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::storage::{Profile, StoragePaths};
@@ -40,13 +51,16 @@ use ljos::prelude::{Engine, LogLevel, Platform};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
 
-const ROOT: &str = qml::DEFAULT_SHELL;
+/// The entry: Main.qml, the ShellLoader (desktop-ljos's src/runtime.rs).
+const ROOT: &str = hal_c2_shell::runtime::MAIN;
 /// How long a render waits for a paired MC's first snapshot before it
 /// shows what the cache kept.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Options {
     launch: Launch,
+    /// Where a `dev-qml` build compiles the QML from.
+    #[cfg(feature = "dev-qml")]
     roots: Roots,
     steps: Vec<Step>,
     check: bool,
@@ -81,6 +95,7 @@ fn parse_size(text: &str) -> Option<(u32, u32)> {
 fn parse() -> Result<Options, String> {
     let mut o = Options {
         launch: Launch::default(),
+        #[cfg(feature = "dev-qml")]
         roots: hal_c2_mobile::roots(),
         steps: Vec::new(),
         check: false,
@@ -162,7 +177,7 @@ fn main() -> ExitCode {
         }
     };
     if options.check {
-        return check(&options.roots);
+        return check(&options);
     }
     // A phone keeps everything in the app's own storage. On a desktop
     // the binary is a development build of the phone's UI, and the
@@ -193,14 +208,11 @@ fn main() -> ExitCode {
             eprintln!("hal-c2-mobile-ljos: browser tabs open in the system browser: {why}")
         }
     }
-    let app = match options.roots.dirs().and_then(|dirs| {
-        App::new("HAL-C2")
-            .desktop_file_name("hal-c2-mobile")
-            .quit_on_last_window_closed(false)
-            .register(hal_c2_mobile::register)
-            .qml_dirs(dirs, ROOT)
-            .map_err(|e| e.to_string())
-    }) {
+    let app = App::new("HAL-C2")
+        .desktop_file_name("hal-c2-mobile")
+        .quit_on_last_window_closed(false)
+        .register(hal_c2_mobile::register);
+    let app = match with_qml(app, &options) {
         Ok(app) => app,
         Err(e) => {
             eprintln!("hal-c2-mobile-ljos: {e}");
@@ -225,10 +237,62 @@ fn main() -> ExitCode {
     }
 }
 
+/// The QML the phone runs: the pack build.rs compiled, which the run
+/// lays the user's files over (run).
+#[cfg(not(feature = "dev-qml"))]
+fn with_qml(app: App, options: &Options) -> Result<App, String> {
+    // A picture is of the shell as built: only a run follows the user's
+    // files, and a picture taken here would pass as the user's shell.
+    let picture = options.screenshot.is_some() || options.render.is_some();
+    if let Some(config) = options.launch.config_dir.as_deref()
+        && picture
+        && config.join(hal_c2_shell::runtime::USER_SHELL).is_file()
+    {
+        eprintln!(
+            "hal-c2-mobile-ljos: the picture is of the built-in shell, not {}",
+            config.join(hal_c2_shell::runtime::USER_SHELL).display()
+        );
+    }
+    Ok(app.source(hal_c2_mobile::pack()).root(ROOT))
+}
+
+/// The QML compiled from the directories now, with the user's files as
+/// they are: a `dev-qml` build's, which does not follow saves.
+#[cfg(feature = "dev-qml")]
+fn with_qml(app: App, options: &Options) -> Result<App, String> {
+    // A brick with an error fails only what makes an object of it, as in Qt.
+    let dirs = options.roots.dirs()?;
+    app.qml_dirs(dirs, ROOT).map_err(|e| e.to_string())
+}
+
+/// `--check` of a phone built without `dev-qml`: whether the pack
+/// build.rs made holds every QML file build.rs found.
+#[cfg(not(feature = "dev-qml"))]
+fn check(_: &Options) -> ExitCode {
+    let pack = hal_c2_mobile::pack();
+    let failed = hal_c2_mobile::unpacked(&pack);
+    for (key, why) in &failed {
+        eprintln!("hal-c2-mobile-ljos: {key}: {why}");
+    }
+    let files = hal_c2_mobile::QML_FILES
+        .len()
+        .max(pack.keys().count() + failed.len());
+    eprintln!(
+        "hal-c2-mobile-ljos: {} of {files} QML files compiled",
+        files - failed.len()
+    );
+    if failed.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 /// `--check`: whether every QML file compiles, what the compiler said a
 /// line each, then how many of the files compiled.
-fn check(roots: &Roots) -> ExitCode {
-    let compiled = match qml::compile(roots) {
+#[cfg(feature = "dev-qml")]
+fn check(options: &Options) -> ExitCode {
+    let compiled = match qml::compile(&options.roots) {
         Ok(compiled) => compiled,
         Err(e) => {
             eprintln!("hal-c2-mobile-ljos: {e}");
@@ -261,8 +325,12 @@ fn connect_to(options: &mut Options, home: PathBuf) -> Result<(), Vec<String>> {
     }
     let config_dir = paths.shell.clone();
     let _ = std::fs::create_dir_all(&config_dir);
-    options.roots = options.roots.clone().with_user(config_dir.clone());
-    options.launch.qml = Some(options.roots.clone());
+    // A `dev-qml` build compiles its `qml` and `shell.qml` with the rest;
+    // otherwise the run lays them over the pack (run).
+    #[cfg(feature = "dev-qml")]
+    {
+        options.roots = options.roots.clone().with_user(config_dir.clone());
+    }
     options.launch.config_dir = Some(config_dir);
     options.launch.cache_dir = Some(paths.cache);
     options.launch.data_dir = Some(paths.data);
@@ -319,6 +387,11 @@ fn report_warnings(engine: &Engine) {
 fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
+    // As the window's shell does: the `Window` Main.qml's loader shows
+    // gets a window of its own, where its popups find their overlay.
+    // Before it is made: a `Window` made unhosted stays an item of the
+    // loader for good.
+    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
     let settle = if options.screenshot.is_some() {
         scripted_run::timetable(options.steps.len()).1.as_millis() as u64
     } else {
@@ -343,7 +416,12 @@ fn render_to(app: App, options: &Options, out: &PathBuf) -> Result<(), String> {
     start_shell(&engine, options, connection.clone());
     hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
     hal_c2_shell::theme::set_application_font(&engine);
-    let root = hal_c2_shell::runtime::open(&engine, false)?;
+    hal_c2_shell::runtime::open(&engine)?;
+    // The window a picture is of: what Main.qml's ShellLoader shows.
+    let root = hal_c2_shell::runtime::window(&engine).ok_or_else(|| {
+        let why = hal_c2_shell::runtime::user_shell_failed(&engine).unwrap_or_default();
+        format!("no shell to draw: {why}")
+    })?;
     // A paired phone waits for its MC's first snapshot (or a `--url`
     // pairing to land); the pairing screen is all an unpaired one shows.
     // The shell starts with no MC of its own (the phone opens the one it
@@ -451,7 +529,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
         .with_size(options.size.0 as f32, options.size.1 as f32)
         .with_color_space(ColorSpace::Untagged);
     let headless = std::env::var("QT_QPA_PLATFORM").is_ok_and(|v| v == "offscreen");
-    let app = app
+    let app = with_user_files(app, &options)
         .shell_config(config)
         .on_message(|_: &Engine, _: Message| {});
     let options = Rc::new(options);
@@ -468,7 +546,17 @@ fn run(app: App, options: Options) -> Result<(), String> {
         let steps = options.steps.clone();
         hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
         hal_c2_shell::theme::set_application_font(&engine);
-        hal_c2_shell::runtime::open(&engine, true).map_err(Into::into)
+        // Each save of the user's files that was applied, or failed:
+        // Runtime's lastError and the window's shell follow it.
+        let weak = engine.downgrade();
+        setup.on_user_report(move |_| {
+            if let Some(engine) = weak.upgrade() {
+                hal_c2_shell::runtime::reloaded(&engine);
+            }
+        });
+        hal_c2_shell::runtime::set_hot_reload_enabled(&engine, cfg!(not(feature = "dev-qml")));
+        // Main.qml's ShellLoader: the user's shell or the built-in one.
+        hal_c2_shell::runtime::open(&engine).map_err(Into::into)
     };
     let result = if headless {
         app.run_headless_with(setup)
@@ -476,4 +564,22 @@ fn run(app: App, options: Options) -> Result<(), String> {
         app.run_with(setup)
     };
     result.map_err(|e| e.to_string())
+}
+
+/// The user's `<config>` over the pack, followed as it is saved
+/// (`hal_c2_shell::user_qml`), as desktop-ljos's run lays it.
+#[cfg(not(feature = "dev-qml"))]
+fn with_user_files(app: App, options: &Options) -> App {
+    match hal_c2_shell::user_qml(&options.launch) {
+        Some(user) => {
+            app.user_qml(user.on_fault(|fault| eprintln!("hal-c2-mobile-ljos: {fault}")))
+        }
+        None => app,
+    }
+}
+
+/// A `dev-qml` build compiled the user's files with the rest (with_qml).
+#[cfg(feature = "dev-qml")]
+fn with_user_files(app: App, _: &Options) -> App {
+    app
 }

@@ -2954,7 +2954,8 @@ bool ComposerController::stopForExpiredExcerpts(const QString& text, const Draft
   NativeShell::of(this)->controller<ToastController>()->show(
       QStringLiteral("warning"),
       expired == 1 ? QStringLiteral("Expired terminal context won't be sent") : QStringLiteral("Expired terminal contexts won't be sent"),
-      QStringLiteral("Remove it or re-add it to include terminal output."));
+      expired == 1 ? QStringLiteral("Remove it or re-add it to include terminal output.")
+                   : QStringLiteral("Remove them or re-add them to include terminal output."));
   return true;
 }
 
@@ -2964,7 +2965,8 @@ void ComposerController::warnOfExpiredExcerpts(const QList<Excerpt>& contexts) {
   NativeShell::of(this)->controller<ToastController>()->show(
       QStringLiteral("warning"),
       expired == 1 ? QStringLiteral("Expired terminal context omitted from message") : QStringLiteral("Expired terminal contexts omitted from message"),
-      QStringLiteral("Re-add it if you want that terminal output included."));
+      expired == 1 ? QStringLiteral("Re-add it if you want that terminal output included.")
+                   : QStringLiteral("Re-add them if you want that terminal output included."));
 }
 
 // Each excerpt is an inline link in the text

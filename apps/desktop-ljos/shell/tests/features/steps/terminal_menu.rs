@@ -261,13 +261,17 @@ pub(crate) fn point_on(
 /// The shell prints a line with `link` in it; where the link is drawn.
 fn show_link(world: &mut World, printed: &str, link: &str) -> Outcome<(f64, f64)> {
     let (brick, terminal) = drawn_terminal(world)?;
-    let thread_id = shown_thread(world);
-    print(
-        &mut world.mc,
-        &thread_id,
-        "term-1",
-        &format!("{printed}\r\n"),
-    );
+    // A line the Given step already printed holds the link; click it there
+    // rather than printing a second line of its own.
+    if !call(world, terminal, "text").contains(link) {
+        let thread_id = shown_thread(world);
+        print(
+            &mut world.mc,
+            &thread_id,
+            "term-1",
+            &format!("{printed}\r\n"),
+        );
+    }
     let wanted = link.to_owned();
     let shown = printed.to_owned();
     world.wait_for_with(
@@ -743,6 +747,22 @@ pub fn register(steps: &mut Steps) {
             let asked = editor_call(world).unwrap_or_default();
             expect!(
                 asked["editor"] == "zed" && text(&asked["cwd"]).ends_with("/src/app.ts:12:4"),
+                "the editor was asked for {asked}"
+            );
+            expect!(world.opened_urls().is_empty(), "the browser was opened");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} opens in the editor at line (\\d+)"),
+        |world, c, _| {
+            world.wait_for("the editor to be asked for the file", |w| {
+                editor_call(w).is_some()
+            })?;
+            let asked = editor_call(world).unwrap_or_default();
+            let wanted = format!("/{}:{}", c[0], c[1]);
+            expect!(
+                text(&asked["cwd"]).ends_with(&wanted),
                 "the editor was asked for {asked}"
             );
             expect!(world.opened_urls().is_empty(), "the browser was opened");

@@ -159,6 +159,10 @@ defmodule HalC2.Projects do
         nil ->
           {[], {:error, "unknown project #{id}"}}
 
+        # A deleted project is as good as gone: it cannot be updated or deleted again.
+        %{"deletedAt" => at} when is_binary(at) ->
+          {[], {:error, "unknown project #{id}"}}
+
         current ->
           next = fun.(current)
 

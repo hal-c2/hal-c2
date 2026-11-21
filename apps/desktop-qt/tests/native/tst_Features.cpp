@@ -186,6 +186,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("terminal/composer-context.feature:An excerpt whose text is gone*"),
     QStringLiteral("terminal/composer-context.feature:The user is told when expired*"),
     QStringLiteral("terminal/composer-context.feature:A draft holding only expired*"),
+    QStringLiteral("terminal/composer-context.feature:Toasts about several expired*"),
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the MC rejects*"),
@@ -276,6 +277,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("plugins/plugin-contributions.feature"),
     QStringLiteral("plugins/turn-hooks.feature"),
     QStringLiteral("plugins/token-economizer-*.feature"),
+    QStringLiteral("plugins/cliproxyapi.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),
@@ -635,6 +637,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     // The desktop's git actions (GitController); the rest of these files is the MC's and the TUI's.
     QStringLiteral("source-control/git-actions.feature:The recommended action*"),
+    QStringLiteral("source-control/git-actions.feature:Uncommitted changes on a branch behind*"),
     QStringLiteral("source-control/git-actions.feature:A detached checkout*"),
     QStringLiteral("source-control/git-actions.feature:A repository without a remote*"),
     QStringLiteral("source-control/git-actions.feature:A menu entry that cannot run*"),

@@ -30,6 +30,11 @@ test = false
 [features]
 # Ljós's inspector, as the desktop shell's (LJOS_MCP).
 mcp = ["hal_c2_shell/mcp"]
+# Compiles the QML from the checkout's directories at start-up instead
+# of running the pack build.rs made, as the desktop shell's: for
+# development only; a release runs the pack, with the user's `<config>`
+# files over it (user-qml).
+dev-qml = ["hal_c2_shell/dev-qml", "ljos/dev-qml"]
 
 [dependencies]
 # The desktop shell as it is: its controllers, its MC client and the
@@ -38,10 +43,15 @@ mcp = ["hal_c2_shell/mcp"]
 hal_c2_shell = { path = "../desktop-ljos/shell" }
 hal_c2_mc = { path = "../desktop-ljos/mc" }
 # The app, its window and `--render`, as the desktop shell's main uses
-# them; pinned as desktop-ljos pins Ljós.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4", default-features = false, features = ["shell", "dev-qml", "render"] }
+# them; pinned as desktop-ljos pins Ljós. user-qml: the app runs the
+# QML build.rs compiled (its pack), with the user's files in the config
+# dir laid over it (src/main.rs).
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", default-features = false, features = ["shell", "user-qml", "render"] }
+# `--render`'s host for the shell's `Window`, as the desktop shell's
+# main: a window of its own, where its popups find their overlay.
+ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 # Whether the browser tabs can draw here at all (main's one question).
-ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4", features = ["cef"] }
+ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", features = ["cef"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # A pairing link's origin, as hal_c2_mc takes it.
@@ -49,10 +59,17 @@ url = "2"
 # The credential's expiry the MC renews by (pairing.json's expiresAt).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# build.rs: the phone's QML compiled into its pack, and its bindings
+# and handlers to Rust, as desktop-ljos's.
+[build-dependencies]
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", default-features = false, features = ["build"] }
+
 [dev-dependencies]
 # `testing`: a window without a platform, on a virtual clock, for the
 # features harness's touches.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4", default-features = false, features = ["testing"] }
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", default-features = false, features = ["testing"] }
+# The features harness's host for the shell's `Window`, as `--render`'s.
+ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 # The state machine properties (the pairing's, the terminal row's).
 proptest = "1.11"
 tempfile = "3"

@@ -47,10 +47,49 @@ pub fn roots_at(apps: &Path) -> Roots {
     }
 }
 
+/// The phone's QML as build.rs compiled it, with its sources: what the
+/// app runs (`App::source`), and what the user's files in the config
+/// dir are compiled against (`App::user_qml`), as the desktop shell's
+/// pack (`hal_c2_shell::pack`) for its QML.
+pub fn pack() -> ljos::MapSource {
+    ljos::include_qml!("qml.pack")
+}
+
+/// The key of every QML file build.rs found, compiled or not.
+pub const QML_FILES: &[&str] = include!(concat!(env!("OUT_DIR"), "/qml_files.rs"));
+
+/// The QML files `pack` does not run, each with why: a release's
+/// `--check`, as `hal_c2_shell::unpacked` for the desktop's pack.
+pub fn unpacked(pack: &ljos::MapSource) -> Vec<(String, String)> {
+    let mut failed: Vec<(String, String)> = pack
+        .failures()
+        .map(|(key, why)| (key.to_owned(), why.to_owned()))
+        .collect();
+    let packed: std::collections::HashSet<&str> = pack.keys().collect();
+    for key in QML_FILES {
+        if !packed.contains(key) && !failed.iter().any(|(k, _)| k == key) {
+            failed.push((
+                (*key).to_owned(),
+                "not in the pack: it did not compile when the app was built".to_owned(),
+            ));
+        }
+    }
+    failed.sort();
+    failed
+}
+
 /// Registers `HalC2.Shell` as the desktop shell does; the phone's own
 /// types are QML (qml/HalC2/Shell) beside them, one module to the bricks.
+///
+/// Also gives the engine the phone's bindings and handlers as build.rs
+/// compiled them, beside the desktop's the shell's register gave it: a
+/// file runs that code while it is as built, and dynamically once a
+/// user's file replaces it.
 pub fn register(engine: &Engine) {
     hal_c2_shell::register(engine);
+    if let Err(e) = engine.register_compiled(ljos::include_compiled!("qml.rs")) {
+        engine.warn(e.to_string());
+    }
 }
 
 /// The phone's controllers beside the shell's, for

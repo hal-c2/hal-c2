@@ -13,16 +13,24 @@ publish = false
 # Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
-ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4", default-features = false }
-ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4" }
-ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4" }
-ljos_secrets = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4" }
+ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a", default-features = false }
+ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
+ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
+ljos_secrets = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 # The side streams' own inbox where no ljos::Setup runs them (`--render`, the
 # tests): streams::Pump. Ljós's facade hands out a Setup's streams only.
-ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4" }
+ljos_runtime = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 # `--audit`: Ljós's design audit (`ljos audit`) of the shell as it shows,
 # which needs HalC2.Shell's native types the plain `ljos` command lacks.
-ljos_audit = { git = "https://github.com/hal-c2/ljos-ui", rev = "18f6d6eca7929e8e6c4dd0722c242533bac4b2d4" }
+ljos_audit = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
+# The tests' host of the shell's windows (tests/features/user_shell.rs): the
+# user's files laid over the app's, as `App::user_qml` lays them, and the
+# roots an app puts in a window.
+ljos_dev = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
+ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
+# The host of the shell's `Window` where no platform window shows it
+# (`--render`, the tests), and the windows there are.
+ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "43c5ce23313ca0c8bef929ff8b514faba1af7c3a" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

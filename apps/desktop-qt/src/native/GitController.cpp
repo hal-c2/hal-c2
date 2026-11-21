@@ -187,6 +187,8 @@ GitController::Quick GitController::quick() const {
   }
   if (changes) {
     if (!upstream && !remote) return runAction(QStringLiteral("Commit"), QStringLiteral("commit"));
+    // A push from behind its upstream could not fast-forward; commit only.
+    if (behind) return runAction(QStringLiteral("Commit"), QStringLiteral("commit"));
     if (pr || defaultRef) return runAction(QStringLiteral("Commit & push"), QStringLiteral("commit_push"));
     return runAction(QStringLiteral("Commit, push & %1").arg(t.shortLabel), QStringLiteral("commit_push_pr"));
   }

@@ -21,11 +21,12 @@ export function accountName(account: LimitAccount): string {
 
 const PACE = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
+// The same words the desktop and the MC use for each outcome.
 const OUTCOME: Record<string, string> = {
-  reset: "Limits reset.",
-  nothingToReset: "Nothing to reset; the credit was kept.",
-  noCredit: "There is no reset credit to use.",
-  alreadyRedeemed: "That reset credit was already used.",
+  reset: "Reset applied. Your windows have cleared.",
+  nothingToReset: "Nothing to reset right now.",
+  noCredit: "No reset credit left.",
+  alreadyRedeemed: "That credit was already redeemed.",
 };
 
 /**

@@ -1370,9 +1370,36 @@ export function fakeSpaceMc(options: {
       if (found.kind === "generated") {
         refuse("invalid", "What a page's update wrote cannot be edited by hand.");
       }
-      if (typeof input.text !== "string") refuse("invalid", "A block's text is a string.");
+      // As HalC2.Space.Blocks.edit/4: every change is checked, then all land or none.
+      if (input.text !== undefined && typeof input.text !== "string") {
+        refuse("invalid", "A block's text is a string.");
+      }
+      if (input.checked !== undefined) {
+        if (typeof input.checked !== "boolean") refuse("invalid", "checked is true or false.");
+        if (found.kind !== "checklist") {
+          refuse("invalid", "Only a checklist item can be ticked.");
+        }
+      }
+      if (input.level !== undefined) {
+        if (found.kind !== "heading") refuse("invalid", "Only a heading has a level.");
+        if (!(Number.isInteger(input.level) && input.level >= 1 && input.level <= 6)) {
+          refuse("invalid", "A heading's level is 1 to 6.");
+        }
+      }
       commit(`space:${input.spaceId}`, [
-        ["block", found.id, { s: { text: input.text, updatedBy: by, updatedAt: now() } }],
+        [
+          "block",
+          found.id,
+          {
+            s: {
+              ...(input.text !== undefined ? { text: input.text } : {}),
+              ...(input.checked !== undefined ? { checked: input.checked } : {}),
+              ...(input.level !== undefined ? { level: input.level } : {}),
+              updatedBy: by,
+              updatedAt: now(),
+            },
+          },
+        ],
       ]);
       return { block: table(input.spaceId, "block").get(found.id) };
     },

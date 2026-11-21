@@ -171,23 +171,28 @@ Feature: Formatted messages
     And the question card, its choices and their numbers sit on the right
     And the card does not flip side while the user steps through the questions
 
-  @shared @backlog @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ordered list past 99 keeps its whole numbers
     When the agent answers with an ordered list numbered 96 to 103
     Then every item shows its whole number, from "96." to "103."
 
-  @shared @backlog
+  @shared
   Scenario Outline: A table right under a line of text is shown as a table
     When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
     Then the table is shown as a table and not as a run-on paragraph
 
+    @backlog-desktop @backlog-mobile
     Examples:
-      | where                 |
-      | at the top level      |
-      | inside a quote        |
-      | inside a list item    |
+      | where              |
+      | at the top level   |
+      | inside a list item |
 
-  @shared @backlog
+    @backlog
+    Examples:
+      | where          |
+      | inside a quote |
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: Character references in a reply are shown as their characters
     When the agent answers with "Tom &amp; Jerry &copy; 2026"
     Then the reply reads "Tom & Jerry © 2026"
@@ -316,7 +321,7 @@ Feature: Formatted messages
   # Upstream #13807: a trailing "_" or "~" is part of a bare web address.
   # Upstream #27794: the same fix again, for bare and "www." addresses only; explicit links and
   # emphasis keep their own rules.
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: A bare web address in a reply keeps a trailing underscore or tilde
     When the reply contains the bare address "<address>"
     Then the link is "<address>" in full
@@ -328,7 +333,7 @@ Feature: Formatted messages
       | https://example.com/a_b_                |
 
   # Upstream #13807: sentence punctuation after a bare web address is left outside the link.
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: Punctuation after a bare web address stays outside the link
     When the reply contains the bare address "<address>" followed by "<punctuation>"
     Then the link is "<address>"
@@ -842,13 +847,13 @@ Feature: Formatted messages
 
   # Upstream #22787: an image alone on its line keeps that line instead of joining the label
   # above it; inline images in a sentence stay inline.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An image alone on its line is shown below its label
     When the agent's reply has a line "**Command palette**" with an image alone on the next line
     Then the image is shown below "Command palette", not beside it
 
   # Upstream #22787: an image inside a sentence stays inline.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An image inside a sentence stays in the sentence
     When the agent's reply has a sentence with a badge image in the middle of it
     Then the badge is shown inline within the sentence
@@ -1629,7 +1634,7 @@ Feature: Formatted messages
     Then the link opens "https://cdn.example.com/clip.mp4" and not a file on the phone
 
   # Upstream #13795: bare addresses with a port or a one-word host were not links.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario Outline: A bare address with a port or a one-word host in a reply is one link
     When the agent's reply contains "<address>"
     Then "<address>" is shown as one link
@@ -1770,7 +1775,7 @@ Feature: Formatted messages
   # Upstream #21069: a backslash inside a drive path is kept even before punctuation; escapes
   # outside paths still work, and collapsed thinking previews follow the same rule.
   # Upstream #21454: the phone's own renderer lost them as well.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: Windows paths in a message's text keep their backslashes
     When the agent's reply reads "<text>"
     Then the reply shows "<shown>"

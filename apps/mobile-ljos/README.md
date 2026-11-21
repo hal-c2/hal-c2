@@ -32,6 +32,17 @@ in `Cargo.toml` and follows desktop-ljos's when it moves. The phone's QML
 is read where it lives (`apps/mobile-qt/qml`), so both clients show the
 same files; the bricks are desktop-qt's until they move.
 
+As desktop-ljos, the app runs the QML its `build.rs` compiled into it
+(its pack: the bricks, `qml/` and mobile-qt's `HalC2.Mobile`), with the
+user's `<config>/qml` and `<config>/shell.qml` laid over it; `qml/Main.qml`
+is a ShellLoader of `shell.qml`, else the built-in `MobileShell`. A build
+with `--features dev-qml` compiles the checkout's directories at
+start-up instead and does not follow saves. The bricks' fonts, icons and
+models beside their QML are desktop-ljos's assets list's, as before; the
+phone's QML directories carry no such files. There is no Android
+packaging of this host build yet (above), so nothing else looks for the
+QML on disk.
+
 ## Run, check and render
 
 Ljós needs rustc 1.98; `mise.toml` here pins it, as desktop-ljos's does.

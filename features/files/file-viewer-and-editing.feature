@@ -617,7 +617,7 @@ Feature: Viewing and editing files
 
     # Upstream #30601: a CSV or TSV labelled with a generic type other than application/octet-stream
     # opened as raw text.
-    @backlog @desktop @mobile @priority-low
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario Outline: A CSV or TSV under a generic file type is shown as a table
       When the user opens "<path>" of type "<type>" rendered
       Then <outcome>

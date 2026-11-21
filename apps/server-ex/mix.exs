@@ -172,7 +172,11 @@ defmodule HalC2.MixProject do
   # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@mc`
   # Gherkin scenarios (`features/`) and nothing else. Globs are relative to `features/`
   # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
-  # `@backlog` and `@backlog-mc` ones. See test/support/features.ex.
+  # `@backlog` and `@backlog-mc` ones. See test/support/features.ex. One scenario:
+  # `mix features <file> --backlog -- --max-cases 1 --only "test:test <scenario name>"`;
+  # a user's `--only` (also `--only=...`) replaces the `--only cucumber` the alias adds,
+  # since ExUnit ORs them, so it sets the whole scope: use a scenario's `test:` name, not a
+  # tag plain tests in `test/` may carry too.
   defp features(args) do
     {ours, rest} = Enum.split_while(args, &(&1 != "--"))
     {flags, globs} = Enum.split_with(ours, &(&1 == "--backlog"))
@@ -183,7 +187,10 @@ defmodule HalC2.MixProject do
       do: System.put_env("HAL_C2_FEATURES_BACKLOG", "1")
 
     Mix.env(:test)
-    Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
+    test_args = Enum.drop(rest, 1)
+    user_only? = Enum.any?(test_args, &(&1 == "--only" or String.starts_with?(&1, "--only=")))
+    only = if user_only?, do: [], else: ["--only", "cucumber"]
+    Mix.Task.run("test", only ++ test_args)
   end
 
   # `mix prop [mix test args]` runs the stateful property tests in prop/. They are

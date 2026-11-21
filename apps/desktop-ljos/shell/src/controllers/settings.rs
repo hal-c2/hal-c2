@@ -385,6 +385,11 @@ impl Settings {
         self.0.state.borrow().config.clone()
     }
 
+    /// One field of [`Settings::config`], without copying the rest.
+    pub fn config_field(&self, key: &str) -> Option<Json> {
+        self.0.state.borrow().config.get(key).cloned()
+    }
+
     /// EnvironmentTheme[] the MC publishes (`config.themes`).
     pub fn themes(&self) -> Vec<Json> {
         self.0.state.borrow().themes.clone()

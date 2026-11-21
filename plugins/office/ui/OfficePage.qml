@@ -15,7 +15,9 @@ import HalC2.Bricks
 //
 // Everything is drawn once into canvases (the floor, each piece of furniture,
 // and a sprite sheet per person) and animated by moving them on one timer that
-// runs only while the page is shown.
+// runs only while the page is shown. The sprite sheets are painted a few a
+// frame; until the floor and everyone on it are drawn, the page says the office
+// is being set up.
 Item {
     id: page
 
@@ -100,9 +102,14 @@ Item {
     property var units: []
     property var screens: []
     property var boards: []
+    property var deskMarks: []
     property int deskCount: 0
-    // How many times the floor has been painted.
+    // How many times the floor, and the desks' project marks, have been
+    // painted.
     property int floorPaints: 0
+    property int markPaints: 0
+    // The sidebar's project icons; a desk shows its sitter's.
+    readonly property var projectIcons: Shell.state.projectIcons ?? null
     property string hovered: ""
 
     // The simulation, mutated in place each tick; nothing binds to these.
@@ -112,6 +119,7 @@ Item {
     property var overlays: ({})
     property var screenViews: ({})
     property var unitViews: ({})
+    property var markViews: ({})
     property var moverViews: ({})
     property var boardViews: ({})
     property var occupied: []
@@ -128,6 +136,19 @@ Item {
     property real now: 0
     property int ticks: 0
     property var rng: random(0x0ff1ce)
+
+    // The people whose sprite sheets wait to be painted, in order. A full
+    // office's sheets painted at once block the page for a tenth of a second
+    // on Qt and for seconds on Ljós, so paintSheets() paints as many each
+    // frame as fit sheetBudget milliseconds, by what the last ones took.
+    property var sheetQueue: []
+    property int sheetsPending: 0
+    property real sheetCost: 0
+    readonly property real sheetBudget: 10
+    // Whether this machine's office has been drawn once: its floor and the
+    // sprite sheet of everyone in it. Until then the page says it is being set
+    // up; newcomers after that just walk in. See settle().
+    property bool settled: false
 
     readonly property var frame: ({
             stand: 0,
@@ -190,6 +211,7 @@ Item {
 
     onEnvironmentChanged: reset()
     onOfficeChanged: take(office)
+    onProjectIconsChanged: updateMarks()
     Component.onCompleted: follow()
 
     Connections {
@@ -1230,17 +1252,62 @@ Item {
 
     // Draws a whole sprite sheet into a canvas: 16×24 frames on an 18×26 grid,
     // so a scaled frame never samples the frame next to it.
+    // A person's sheet: facing us, facing left and facing away, one row each;
+    // facing right is the left row mirrored where it is shown.
     function paintSheet(ctx, look) {
-        ctx.clearRect(0, 0, 270, 104);
-        // Row 2 faces the other way: row 1's frames, mirrored.
-        for (const d of [0, 1, 3]) {
+        ctx.clearRect(0, 0, 270, 78);
+        for (const [row, d] of [[0, 0], [1, 1], [2, 3]]) {
             for (let f = 0; f < 15; f++) {
                 const parts = look.pet ? petFrame(look, f, d) : humanFrame(look, f, d);
-                paintCell(ctx, parts, f * 18, d * 26, false);
-                if (d === 1)
-                    paintCell(ctx, parts, f * 18, 52, true);
+                paintCell(ctx, parts, f * 18, row * 26, false);
             }
         }
+    }
+
+    // A person's sheet waits its turn to be painted.
+    function queueSheet(view) {
+        view.sheet = "queued";
+        page.sheetQueue.push(view);
+        page.sheetsPending++;
+    }
+
+    function dropSheet(view) {
+        const i = page.sheetQueue.indexOf(view);
+        if (i >= 0)
+            page.sheetQueue.splice(i, 1);
+        if (view.sheet === "queued" || view.sheet === "due")
+            page.sheetsPending--;
+        view.sheet = "";
+    }
+
+    // Asks the next sheets in the queue to be painted, one before it is known
+    // what a sheet takes, then as many as the budget allows; a sheet whose
+    // canvas cannot paint yet keeps its place.
+    function paintSheets() {
+        let n = page.sheetCost > 0 ? Math.max(1, Math.floor(page.sheetBudget / page.sheetCost)) : 1;
+        const waiting = [];
+        while (n > 0 && page.sheetQueue.length) {
+            const view = page.sheetQueue.shift();
+            if (!view.paintable) {
+                waiting.push(view);
+                continue;
+            }
+            view.sheet = "due";
+            view.requestSheet();
+            n--;
+        }
+        page.sheetQueue = waiting.concat(page.sheetQueue);
+    }
+
+    function sheetPainted(view, ms) {
+        if (view.sheet !== "due")
+            return;
+        view.sheet = "painted";
+        // Date.now() counts whole milliseconds; a sheet takes at least one.
+        const cost = Math.max(1, ms);
+        page.sheetCost = page.sheetCost > 0 ? 0.7 * page.sheetCost + 0.3 * cost : cost;
+        page.sheetsPending--;
+        settle(page.office);
     }
 
     // A mover's sheet: standing and two walking frames, empty-handed and then
@@ -1365,7 +1432,12 @@ Item {
     // a new team takes a pod with room for all of it, and small teams share.
     // A team bigger than a pod takes as many as it needs. Whoever is left over
     // when every desk is taken has none, and spends the time in the break room.
-    function seatTeams(teams) {
+    // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
+    // own kind) sit in the review corner, and once it is full at the desks
+    // nearest it that nobody else needs, giving one up when someone else
+    // needs it after all. The corner is theirs alone: nobody else ever takes
+    // a desk there, and whoever sits there and is no reviewer leaves it.
+    function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
         const before = w.seatOf ?? {};
@@ -1377,67 +1449,116 @@ Item {
             taken[seat.index] = id;
             seatOf[id] = seat;
         };
-        const chunks = [], teamOf = [];
+        // Each member goes by its own kind: a team's reviewers and the rest
+        // are chunked apart, though still one team for where they sit.
+        const chunks = [], teamOf = [], reviewing = [];
         teams.forEach((team, t) => {
-            for (let i = 0; i < team.length; i += size) {
-                chunks.push(team.slice(i, i + size));
-                teamOf.push(t);
+            for (const review of [false, true]) {
+                const part = team.filter(id => (byId?.[id]?.kind === "reviewer") === review);
+                for (let i = 0; i < part.length; i += size) {
+                    chunks.push(part.slice(i, i + size));
+                    teamOf.push(t);
+                    reviewing.push(review);
+                }
             }
         });
-        // Everyone seated keeps their seat, wherever it is; a chunk's pod is
-        // where its first seated member sat, and a team's is its first
-        // chunk's with one.
-        const homes = chunks.map(chunk => before[chunk.find(id => before[id])]?.pod ?? -1);
+        // A pod is a chunk's own when it is the review corner exactly when the
+        // chunk reviews.
+        const own = (pod, c) => !!w.pods[pod].review === reviewing[c];
+        // Everyone seated keeps their seat, but for an ordinary person in the
+        // corner; a chunk's pod is where its first member keeping a seat sat,
+        // and a team's home for each kind is its first chunk of that kind with
+        // one.
+        const keeps = (id, c) => !!before[id] && (reviewing[c] || !w.pods[before[id].pod].review);
+        const homes = chunks.map((chunk, c) => before[chunk.find(id => keeps(id, c))]?.pod ?? -1);
+        const kindOf = c => teamOf[c] + (reviewing[c] ? ":review" : ":floor");
         const teamHome = {};
         homes.forEach((home, c) => {
-            if (home >= 0 && teamHome[teamOf[c]] === undefined)
-                teamHome[teamOf[c]] = home;
+            if (home >= 0 && teamHome[kindOf(c)] === undefined)
+                teamHome[kindOf(c)] = home;
         });
-        // The pod with room for `need` nearest pod `near`, the first of those
-        // as near (or the first with room when there is no `near`); -1 when
-        // none has room. Ties go by index, since sort() need not be stable.
+        // Where any seated part of team `t` sits, its floor part first.
+        const seatedPart = t => teamHome[t + ":floor"] ?? teamHome[t + ":review"];
+        // The pod with room for `need` nearest pod `near` (or the first with
+        // room when there is no `near`), one of chunk `c`'s own kind first, or
+        // only those when `only`; -1 when none has room. Ties go by index,
+        // since sort() need not be stable.
         const away = (i, near) => near < 0 ? 0 : Math.abs(w.pods[i].x - w.pods[near].x) + Math.abs(w.pods[i].y - w.pods[near].y);
-        const nearest = (near, need) => {
-            const open = w.pods.map((_, i) => i).filter(i => room(i) >= need);
-            open.sort((a, b) => away(a, near) - away(b, near) || a - b);
+        const nearest = (near, need, c, only) => {
+            const open = w.pods.map((_, i) => i).filter(i => room(i) >= need && (!only || own(i, c)));
+            open.sort((a, b) => (own(b, c) - own(a, c)) || away(a, near) - away(b, near) || a - b);
             return open.length ? open[0] : -1;
         };
-        chunks.forEach(chunk => {
+        chunks.forEach((chunk, c) => {
             for (const id of chunk) {
                 const seat = before[id];
-                if (seat && !taken[seat.index]) {
+                if (keeps(id, c) && !taken[seat.index]) {
                     taken[seat.index] = id;
                     seatOf[id] = seat;
                 }
             }
         });
         const spill = [];
+        const corner = w.pods.findIndex(pod => pod.review);
         chunks.forEach((chunk, c) => {
-            const home = homes[c];
-            const near = teamHome[teamOf[c]] ?? -1;
-            const pod = home >= 0 ? home : nearest(near, chunk.length);
+            const home = homes[c] >= 0 && own(homes[c], c) ? homes[c] : -1;
+            // Near the team's own kind: reviewers under an ordinary lead seated
+            // on the floor start from the corner, not from their lead; the
+            // rest start from wherever their team sits.
+            const near = teamHome[kindOf(c)] ?? (reviewing[c] ? corner : seatedPart(teamOf[c]) ?? -1);
+            let pod = home >= 0 ? home : nearest(near, chunk.length, c, true);
+            // Reviewers who do not all fit in the corner still fill it first.
+            if (pod < 0 && reviewing[c] && room(corner) > 0)
+                pod = corner;
             for (const id of chunk) {
                 if (seatOf[id])
                     continue;
                 if (pod >= 0 && room(pod) > 0)
                     sit(id, pod);
                 else
-                    spill.push([id, pod >= 0 ? pod : near]);
+                    spill.push([id, pod >= 0 ? pod : homes[c] >= 0 ? homes[c] : near, c]);
             }
         });
-        // Those who did not fit sit at the nearest pod with a free desk.
-        for (const [id, near] of spill) {
-            const pod = nearest(near, 1);
-            if (pod < 0)
-                break;
-            sit(id, pod);
+        // Reviewers hot-desk: one on a floor desk gives it up to someone else
+        // who has no desk of its own kind, the one nearest `near`, and spills
+        // again from the corner.
+        const chunkOf = {};
+        chunks.forEach((chunk, c) => chunk.forEach(id => chunkOf[id] = c));
+        const yieldTo = (id, near) => {
+            const held = Object.keys(seatOf).filter(r => reviewing[chunkOf[r]] && !w.pods[seatOf[r].pod].review);
+            if (!held.length)
+                return;
+            held.sort((a, b) => away(seatOf[a].pod, near) - away(seatOf[b].pod, near) || seatOf[a].index - seatOf[b].index);
+            const r = held[0], seat = seatOf[r];
+            delete seatOf[r];
+            taken[seat.index] = id;
+            seatOf[id] = seat;
+            spill.push([r, corner, chunkOf[r]]);
+        };
+        // Those who did not fit sit at the nearest pod with a free desk, the
+        // rest before reviewers, so a reviewer past the corner takes only a
+        // floor desk nobody else needs: reviewers at one of their own kind
+        // first, the rest never in the corner, and at a reviewer's floor desk
+        // when there is no other.
+        for (const review of [false, true]) {
+            for (const [id, near, c] of spill) {
+                if (reviewing[c] !== review)
+                    continue;
+                const pod = nearest(near, 1, c, !review);
+                if (pod >= 0)
+                    sit(id, pod);
+                else if (!review)
+                    yieldTo(id, near);
+            }
         }
         return seatOf;
     }
 
     // The office: six pods of 4×2 desks, three across and two down, the walls,
-    // the furniture along them and the break room. Every desk starts out
-    // carried away (see furnish()).
+    // the furniture along them and the break room. The top pod by the break
+    // room is the review corner, on a carpet of its own under a review sign
+    // and the whiteboard where reviews are worked through. Every desk starts
+    // out carried away (see furnish()).
     function buildWorld() {
         const podCols = 4, across = 3, down = 2;
         const workW = across * podCols + 2 * (across - 1);
@@ -1460,7 +1581,8 @@ Item {
         grid[at(xd, 5)] = 0;
         grid[at(xd, 6)] = 0;
 
-        const props = [], units = [], screens = [], boards = [], seats = [], spots = [];
+        const props = [], units = [], screens = [], boards = [], seats = [], spots = [], marks = [];
+        const corner = across - 1;
         const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
             key: kind + ":" + x + ":" + y,
             kind: kind,
@@ -1533,6 +1655,17 @@ Item {
                                 y: seat.deskY * 16 + 1,
                                 z: (y0 + 3) * 16 + 1
                             });
+                        // Its sitter's project: on the back of the monitor
+                        // facing us, or on the back of the chair facing away.
+                        marks.push({
+                            key: "mark:" + seat.index,
+                            seat: seat.index,
+                            x: seat.x * 16 + 3,
+                            y: north ? seat.deskY * 16 + 4 : seat.y * 16 + 5,
+                            w: 9,
+                            h: 7,
+                            z: north ? (y0 + 3) * 16 + 1 : (y0 + 4) * 16 + 2
+                        });
                     }
                 }
                 placed.push({
@@ -1540,7 +1673,8 @@ Item {
                     y: y0,
                     cols: podCols,
                     members: [],
-                    seats: podSeats
+                    seats: podSeats,
+                    review: index === corner
                 });
                 for (const seat of podSeats)
                     seats.push(seat);
@@ -1571,11 +1705,14 @@ Item {
                     });
             } else {
                 const key = "board:" + boards.length;
+                const reviewPod = placed[corner];
+                const review = wx + w > reviewPod.x && wx < reviewPod.x + reviewPod.cols;
                 boards.push({
                     key: key,
                     x: wx * 16 + 5,
                     y: 64 - 40 + 5,
-                    z: 64.5
+                    z: 64.5,
+                    review: review
                 });
                 prop("board", wx * 16, 64 - 40, 48, 40, 64);
                 for (let j = 0; j < 3; j++)
@@ -1586,7 +1723,8 @@ Item {
                         offY: 0,
                         kind: "board",
                         pose: "board",
-                        board: key
+                        board: key,
+                        review: review
                     });
             }
             wx += w + 1;
@@ -1717,6 +1855,7 @@ Item {
             prop("plant", x * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
         }
 
+        const review = placed[corner];
         return {
             cols: cols,
             rows: rows,
@@ -1724,6 +1863,15 @@ Item {
             xd: xd,
             bx: bx,
             pods: placed,
+            // The review corner's carpet, in tiles: from beside the pod to
+            // the break room's wall, the whiteboard to the walkway below.
+            review: {
+                x: review.x - 1,
+                y: 4,
+                w: xd - review.x + 1,
+                h: review.y + 5 - 4
+            },
+            marks: marks,
             seats: seats,
             seatOf: {},
             spots: spots,
@@ -1769,7 +1917,10 @@ Item {
         page.arrival = {};
         page.claims = {};
         page.primed = false;
-        take(page.office);
+        page.settled = false;
+        // `office` still holds the last machine's value while its change is
+        // handled here.
+        take(page.byEnvironment[page.environment] ?? null);
     }
 
     function take(value) {
@@ -1778,6 +1929,15 @@ Item {
         hear(value?.talks ?? []);
         page.primed = value !== null && value !== undefined;
         updateWalking();
+        settle(value);
+    }
+
+    // The office is settled once `value`, this machine's office, has been
+    // drawn. Asked only where the people match `value`: after taking it and
+    // after a paint, never from a binding, which sees the steps in between.
+    function settle(value) {
+        if (!page.settled && page.world && value && page.floorPaints > 0 && page.sheetsPending === 0)
+            page.settled = true;
     }
 
     function sync(people) {
@@ -1795,7 +1955,7 @@ Item {
                 page.arrival[person.id] = page.arrivals++;
         }
         const order = people.map(p => p.id).sort((a, b) => page.arrival[a] - page.arrival[b]);
-        layout(teamsOf(order, byId));
+        layout(teamsOf(order, byId), byId);
         for (const person of people) {
             let actor = page.actors[person.id];
             if (!actor) {
@@ -1816,6 +1976,7 @@ Item {
             decide(actor, false);
             render(actor);
         }
+        updateMarks();
     }
 
     function build() {
@@ -1828,13 +1989,14 @@ Item {
         page.units = w.units;
         page.screens = w.screens;
         page.boards = w.boards;
+        page.deskMarks = w.marks;
         page.deskCount = 0;
         floor.requestPaint();
     }
 
-    function layout(teams) {
+    function layout(teams, byId) {
         const w = page.world;
-        const seatOf = seatTeams(teams);
+        const seatOf = seatTeams(teams, byId);
         const at = {};
         for (const id of Object.keys(seatOf))
             at[seatOf[id].index] = id;
@@ -1845,11 +2007,12 @@ Item {
         // Seats move between people as people come and go; whoever was headed
         // for a desk, or waiting for one, that is no longer theirs plans again,
         // and so does whoever waited in the break room for want of a desk and
-        // now has one.
+        // now has one, or left its desk for a whiteboard or a shelf and has
+        // none now.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
             const goal = actor.goal;
-            if (goal?.deskless && seatOf[id]) {
+            if (goal?.deskless && seatOf[id] || (goal?.kind === "board" || goal?.kind === "shelf") && !seatOf[id]) {
                 actor.goal = null;
                 continue;
             }
@@ -1936,6 +2099,88 @@ Item {
         const screen = seat.screen ? page.screenViews[seat.screen] : null;
         if (screen)
             screen.visible = shown;
+        const mark = page.world.marks[seat.index];
+        if (mark)
+            updateMark(mark);
+    }
+
+    // ── The project on each desk ────────────────────────────────────────────
+
+    function updateMarks() {
+        const w = page.world;
+        if (!w)
+            return;
+        const owners = {};
+        for (const id of Object.keys(w.seatOf))
+            owners[w.seatOf[id].index] = id;
+        for (const mark of w.marks)
+            updateMark(mark, owners[mark.seat] ?? "");
+    }
+
+    // Shows the project of whoever has the desk, while it is in the office.
+    // Reviewers hot-desk, so the corner's desks and any desk a reviewer has
+    // show none. A mark is painted again only when its project's look changes.
+    function updateMark(mark, owner) {
+        const view = page.markViews[mark.key];
+        if (!view)
+            return;
+        const w = page.world;
+        const seat = w.seats[mark.seat];
+        const id = owner ?? Object.keys(w.seatOf).find(each => w.seatOf[each] === seat) ?? "";
+        const person = id ? page.actors[id]?.person : null;
+        const hot = person?.kind === "reviewer" || !!w.pods[seat.pod]?.review;
+        const sign = person && !hot ? signOf(person) : null;
+        view.visible = !!sign?.kind && deskShown(seat);
+        if (!sign)
+            return;
+        view.kind = sign.kind;
+        view.label = sign.label;
+        view.tint = sign.tint;
+        view.emoji = sign.emoji;
+        view.url = sign.url;
+    }
+
+    // A person's project as the sidebar draws it: its monogram in its colour,
+    // its emoji, or its logo over the monogram. A symbol shows as the
+    // project's colour with its first letter, and a project the sidebar has
+    // no icon for as its first letter, uncoloured.
+    function signOf(person) {
+        const icon = page.projectIcons?.[page.environment + ":" + person.projectId] ?? null;
+        const first = String(person.project ?? "").trim().charAt(0).toUpperCase();
+        const kind = icon?.kind === "emoji" || icon?.kind === "image" ? icon.kind : "tile";
+        let tint = String(icon?.tint ?? "");
+        if (/^#[0-9a-fA-F]{8}$/.test(tint))
+            tint = "#" + tint.slice(3);
+        return {
+            kind: icon || first ? kind : "",
+            label: String(icon?.kind === "lucide" ? "" : icon?.text ?? "") || first,
+            tint: /^#[0-9a-fA-F]{6}$/.test(tint) ? tint.toLowerCase() : "#8b919e",
+            emoji: kind === "emoji" ? String(icon.emoji ?? "") : "",
+            url: kind === "image" ? String(icon.url ?? "") : ""
+        };
+    }
+
+    // A hex colour `k` of the way from `a` to `b`.
+    function mix(a, b, k) {
+        const x = parseInt(a.slice(1), 16), y = parseInt(b.slice(1), 16);
+        return "#" + [16, 8, 0].map(at => Math.round(((x >> at) & 255) * (1 - k) + ((y >> at) & 255) * k).toString(16).padStart(2, "0")).join("");
+    }
+
+    // A desk's mark: the sidebar's raised tile in the project's colour, with
+    // its letters in pixels. An emoji is drawn over it by its delegate.
+    function paintMark(ctx, view) {
+        const w = view.width, h = view.height;
+        ctx.clearRect(0, 0, w, h);
+        if (!view.kind)
+            return;
+        rect(ctx, mix("#1c1f26", view.tint, 0.22), 0, 0, w, h);
+        if (view.kind === "emoji")
+            return;
+        const glyphs = letters(view.label)?.slice(0, 2);
+        if (glyphs?.length)
+            paintLetters(ctx, glyphs, Math.floor((w - glyphs.length * 4 + 1) / 2), Math.floor((h - 5) / 2), view.tint);
+        else
+            rect(ctx, view.tint, Math.floor(w / 2) - 1, Math.floor(h / 2) - 1, 3, 3);
     }
 
     function everyone() {
@@ -2302,7 +2547,12 @@ Item {
     }
 
     function spotGoal(actor, kind, pose) {
-        const options = page.world.spots.filter(s => s.kind === kind && free(s, actor));
+        let options = page.world.spots.filter(s => s.kind === kind && free(s, actor));
+        // Reviewers plan at the review corner's whiteboard and everyone else
+        // at the others, each at the other's when its own is taken.
+        const own = options.filter(s => !!s.review === (actor.person?.kind === "reviewer"));
+        if (own.length)
+            options = own;
         if (!options.length)
             return null;
         const current = options.find(s => s.x === actor.goal?.x && s.y === actor.goal?.y);
@@ -2392,7 +2642,8 @@ Item {
             goal = seatGoal(actor, state === "asking" ? "ask" : "sit");
         } else if (state === "working") {
             const activity = p.activity ?? "";
-            plan = "working:" + activity;
+            // A planner whose kind changes goes to its own kind's whiteboard.
+            plan = "working:" + activity + (activity === "planning" ? ":" + (p.kind ?? "") : "");
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
@@ -2945,6 +3196,73 @@ Item {
         ctx.fillRect(x, y, w, h);
     }
 
+    // A 3×5 pixel letter, as five rows of three bits (the left one 4), or
+    // undefined for one the office has no letter for.
+    readonly property var glyphs: ({
+            A: [2, 5, 7, 5, 5],
+            B: [6, 5, 6, 5, 6],
+            C: [3, 4, 4, 4, 3],
+            D: [6, 5, 5, 5, 6],
+            E: [7, 4, 6, 4, 7],
+            F: [7, 4, 6, 4, 4],
+            G: [3, 4, 5, 5, 3],
+            H: [5, 5, 7, 5, 5],
+            I: [7, 2, 2, 2, 7],
+            J: [1, 1, 1, 5, 2],
+            K: [5, 5, 6, 5, 5],
+            L: [4, 4, 4, 4, 7],
+            M: [5, 7, 7, 5, 5],
+            N: [6, 5, 5, 5, 5],
+            O: [2, 5, 5, 5, 2],
+            P: [6, 5, 6, 4, 4],
+            Q: [2, 5, 5, 7, 3],
+            R: [6, 5, 6, 5, 5],
+            S: [3, 4, 2, 1, 6],
+            T: [7, 2, 2, 2, 2],
+            U: [5, 5, 5, 5, 7],
+            V: [5, 5, 5, 5, 2],
+            W: [5, 5, 7, 7, 5],
+            X: [5, 5, 2, 5, 5],
+            Y: [5, 5, 2, 2, 2],
+            Z: [7, 1, 2, 4, 7],
+            "0": [7, 5, 5, 5, 7],
+            "1": [2, 6, 2, 2, 7],
+            "2": [6, 1, 2, 4, 7],
+            "3": [6, 1, 2, 1, 6],
+            "4": [5, 5, 7, 1, 1],
+            "5": [7, 4, 6, 1, 6],
+            "6": [3, 4, 6, 5, 2],
+            "7": [7, 1, 1, 2, 2],
+            "8": [2, 5, 2, 5, 2],
+            "9": [2, 5, 3, 1, 6]
+        })
+
+    // The pixel letters of `text`, accents dropped, or null when one has
+    // none.
+    function letters(text) {
+        const out = [];
+        for (const ch of String(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()) {
+            const glyph = page.glyphs[ch];
+            if (!glyph)
+                return null;
+            out.push(glyph);
+        }
+        return out;
+    }
+
+    // Draws pixel letters (from letters()) at x, y, a column apart.
+    function paintLetters(ctx, glyphs, x, y, c) {
+        ctx.fillStyle = c;
+        glyphs.forEach((glyph, i) => {
+            for (let row = 0; row < 5; row++) {
+                for (let col = 0; col < 3; col++) {
+                    if (glyph[row] & (4 >> col))
+                        ctx.fillRect(x + i * 4 + col, y + row, 1, 1);
+                }
+            }
+        });
+    }
+
     function sky(hour) {
         if (hour >= 7 && hour < 17)
             return ["#7cc4f2", "#a8dbfa", "#ffffff"];
@@ -2987,6 +3305,15 @@ Item {
         };
         rug((bx + 5) * 16 + 4, 6 * 16 + 8, 5 * 16 - 8, 4 * 16 + 2, "#9b4d5a", "#7a3442");
         rug((bx + 1) * 16 + 2, 7 * 16 + 4, 4 * 16 - 4, 4 * 16 - 6, "#4d7a6b", "#365a4e");
+        // The review corner's carpet, green with a border.
+        const v = w.review;
+        for (let y = v.y; y < v.y + v.h; y++) {
+            for (let x = v.x; x < v.x + v.w; x++)
+                rect(ctx, (x + y) % 2 ? "#4b6a5f" : "#507065", x * 16, y * 16, 16, 16);
+        }
+        rect(ctx, "#3b5449", v.x * 16, v.y * 16, v.w * 16, 2);
+        rect(ctx, "#3b5449", v.x * 16, (v.y + v.h) * 16 - 2, v.w * 16, 2);
+        rect(ctx, "#3b5449", v.x * 16, v.y * 16, 2, v.h * 16);
         // Shadow under the top wall.
         rect(ctx, "rgba(0,0,0,0.18)", 0, 48, W, 3);
         rect(ctx, "rgba(0,0,0,0.08)", 0, 51, W, 3);
@@ -3058,6 +3385,17 @@ Item {
             rect(ctx, "#f2efe8", qx + 3, 16, 8, 3);
             rect(ctx, "#f2efe8", qx + 5, 21, 4, 8);
         }
+        // The review corner's sign, on the wall beside its whiteboard.
+        const sx = (xd - 2) * 16 + 1, sy = 14;
+        rect(ctx, "#2f2a28", sx + 6, sy - 5, 1, 5);
+        rect(ctx, "#2f2a28", sx + 23, sy - 5, 1, 5);
+        rect(ctx, page.outline, sx - 1, sy - 1, 32, 13);
+        rect(ctx, "#2f7a55", sx, sy, 30, 11);
+        rect(ctx, "#3f9a6c", sx, sy, 30, 1);
+        paintLetters(ctx, page.letters("REVIEW"), sx + 4, sy + 3, "#f2efe8");
+        // A check mark under it.
+        for (const [dx, dy] of [[0, 1], [1, 2], [2, 1], [3, 0], [4, -1]])
+            rect(ctx, "#5fd38a", sx + 12 + dx, sy + 20 + dy, 2, 2);
         // The side, bottom and middle walls.
         const wall = (x, y, ww, hh) => {
             rect(ctx, "#4a4038", x, y, ww, hh);
@@ -3097,9 +3435,9 @@ Item {
             R("#8aa09f", 1, 12, 14, 1);
             R("#d7dbe2", 4, 1, 8, 2);
             R("#b9bec8", 4, 2, 8, 1);
-            R(O, 3, 3, 10, 9);
-            R("#3b404d", 4, 4, 8, 7);
-            R("#4b5160", 4, 4, 8, 1);
+            R(O, 2, 3, 11, 9);
+            R("#3b404d", 3, 4, 9, 7);
+            R("#4b5160", 3, 4, 9, 1);
             if (r() < 0.3) {
                 R(O, 13, 4, 3, 4);
                 R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
@@ -3146,9 +3484,9 @@ Item {
                     } else {
                         R("#2b2f39", x + 4, 14, 8, 1);
                         R("#2b2f39", x + 7, 12, 2, 2);
-                        R(O, x + 3, 5, 10, 8);
-                        R(p.color, x + 4, 6, 8, 6);
-                        R(shade(p.color, 0.18), x + 4, 6, 8, 1);
+                        R(O, x + 2, 4, 11, 9);
+                        R(p.color, x + 3, 5, 9, 7);
+                        R(shade(p.color, 0.18), x + 3, 5, 9, 1);
                     }
                 }
                 break;
@@ -3438,6 +3776,14 @@ Item {
     }
 
     Timer {
+        objectName: "officeSheetPainter"
+        interval: 16
+        repeat: true
+        running: page.visible && page.sheetsPending > 0
+        onTriggered: page.paintSheets()
+    }
+
+    Timer {
         interval: page.walking ? 40 : 200
         repeat: true
         running: page.animating
@@ -3529,6 +3875,9 @@ Item {
                 id: stage
 
                 objectName: "officeStage"
+                // Hidden until set up; the people in it are out of reach until
+                // then too (see their MouseArea).
+                opacity: page.settled ? 1 : 0
                 x: Math.max(0, (scroller.width - width) / 2)
                 y: Math.max(0, (scroller.height - height) / 2)
                 width: page.worldCols * 16 * page.pixelScale
@@ -3562,6 +3911,7 @@ Item {
                             onPaint: {
                                 page.floorPaints++;
                                 page.paintFloor(getContext("2d"));
+                                page.settle(page.office);
                             }
                         }
 
@@ -3675,6 +4025,81 @@ Item {
                             }
                         }
 
+                        // The project on each desk, for whoever has it.
+                        Repeater {
+                            model: page.deskMarks
+
+                            delegate: Item {
+                                id: mark
+
+                                required property var modelData
+                                property string kind: ""
+                                property string label: ""
+                                property string tint: ""
+                                property string emoji: ""
+                                property string url: ""
+                                readonly property string sign: [kind, label, tint, emoji].join("\n")
+
+                                objectName: "officeDeskMark"
+                                x: modelData.x
+                                y: modelData.y
+                                z: modelData.z
+                                width: modelData.w
+                                height: modelData.h
+                                visible: false
+                                onSignChanged: tile.requestPaint()
+                                Component.onCompleted: {
+                                    page.markViews[modelData.key] = mark;
+                                    page.updateMark(modelData);
+                                }
+                                Component.onDestruction: {
+                                    if (page.markViews[modelData.key] === mark)
+                                        delete page.markViews[modelData.key];
+                                }
+
+                                Canvas {
+                                    id: tile
+
+                                    anchors.fill: parent
+                                    smooth: false
+                                    antialiasing: false
+                                    onPaint: {
+                                        page.markPaints++;
+                                        page.paintMark(getContext("2d"), mark);
+                                    }
+                                }
+                                // An emoji, drawn at the mark's own few pixels.
+                                Item {
+                                    anchors.fill: parent
+                                    visible: mark.kind === "emoji"
+                                    layer.enabled: visible
+                                    layer.smooth: false
+                                    layer.textureSize: Qt.size(width, height)
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: mark.emoji
+                                        font.pixelSize: mark.height
+                                        Accessible.ignored: true
+                                    }
+                                }
+                                // A logo, drawn at the mark's own few pixels.
+                                Image {
+                                    objectName: "officeDeskLogo"
+                                    Accessible.ignored: true
+                                    x: Math.floor((mark.width - mark.height) / 2)
+                                    width: mark.height
+                                    height: mark.height
+                                    visible: mark.kind === "image" && status === Image.Ready
+                                    source: mark.kind === "image" ? mark.url : ""
+                                    sourceSize: Qt.size(mark.height, mark.height)
+                                    fillMode: Image.PreserveAspectFit
+                                    smooth: false
+                                    asynchronous: true
+                                }
+                            }
+                        }
+
                         // What has been drawn on each whiteboard.
                         Repeater {
                             model: page.boards
@@ -3685,6 +4110,9 @@ Item {
                                 required property var modelData
                                 readonly property real blank: 0.15
                                 property real progress: blank
+                                // Doodles, or on the review corner's board a
+                                // checklist beside a diff.
+                                readonly property var marks: modelData.review ? [[1, 1, 3, 3, "#3d4451"], [2, 2, 1, 1, "#3fa560"], [6, 2, 12, 1, "#3d4451"], [1, 7, 3, 3, "#3d4451"], [2, 8, 1, 1, "#3fa560"], [6, 8, 9, 1, "#3d4451"], [1, 13, 3, 3, "#3d4451"], [6, 14, 11, 1, "#3d4451"], [22, 2, 12, 1, "#3fa560"], [22, 5, 9, 1, "#e05d5d"], [22, 8, 13, 1, "#3fa560"], [22, 11, 7, 1, "#3fa560"], [22, 14, 10, 1, "#e05d5d"]] : [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
 
                                 x: modelData.x
                                 y: modelData.y
@@ -3698,17 +4126,18 @@ Item {
                                 }
 
                                 Repeater {
-                                    model: [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
+                                    model: board.marks
 
                                     delegate: Rectangle {
                                         required property var modelData
                                         required property int index
-                                        readonly property real start: index / 9
+                                        readonly property int count: board.marks.length
+                                        readonly property real start: index / count
 
                                         x: modelData[0]
                                         y: modelData[1]
                                         height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
-                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * 9)))
+                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * count)))
                                         color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
                                         border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
                                         border.color: modelData[4]
@@ -3789,38 +4218,64 @@ Item {
                                 property int frame: 0
                                 property int dir: 0
                                 readonly property var look: page.actors[actorId]?.look ?? null
+                                // Its sprite sheet: "queued", "due" (asked to
+                                // paint) or "painted"; see paintSheets().
+                                property string sheet: ""
+                                readonly property bool paintable: sheetCanvas.available
+
+                                function requestSheet() {
+                                    sheetCanvas.requestPaint();
+                                }
 
                                 width: 16
                                 height: 24
                                 clip: true
                                 Component.onCompleted: {
                                     page.views[actorId] = person;
+                                    page.queueSheet(person);
                                     const actor = page.actors[actorId];
                                     if (actor)
                                         page.render(actor);
                                 }
                                 Component.onDestruction: {
+                                    page.dropSheet(person);
                                     if (page.views[actorId] === person)
                                         delete page.views[actorId];
                                 }
 
                                 Canvas {
+                                    id: sheetCanvas
+
                                     x: -person.frame * 18
-                                    y: -person.dir * 26
+                                    y: -[0, 26, 26, 52][person.dir]
                                     width: 270
-                                    height: 104
+                                    height: 78
                                     smooth: false
                                     antialiasing: false
+                                    transform: Scale {
+                                        origin.x: person.frame * 18 + 8
+                                        xScale: person.dir === 2 ? -1 : 1
+                                    }
                                     onPaint: {
+                                        if (person.sheet === "queued")
+                                            return;
+                                        const start = Date.now();
                                         if (person.look)
                                             page.paintSheet(getContext("2d"), person.look);
+                                        page.sheetPainted(person, Date.now() - start);
                                     }
                                 }
 
                                 // Tab walks the people; a focused one shows its card as a
                                 // hovered one does, and Return or Space opens its thread.
+                                // Nobody is reachable while the office is being set up.
+                                // (On this item, not the stage: under a stage whose
+                                // `enabled` changes, Ljós reports `visible` a change late,
+                                // hal-c2/ljos-ui#611.)
                                 MouseArea {
                                     id: hit
+
+                                    enabled: page.settled
 
                                     objectName: "officePerson:" + person.actorId
                                     Accessible.role: Accessible.Button
@@ -4019,15 +4474,30 @@ Item {
                                 font.weight: Font.DemiBold
                             }
 
-                            Text {
-                                objectName: "officeCardProject"
+                            Row {
                                 width: parent.width
-                                visible: text.length > 0
-                                text: [card.person?.project ?? "", card.actor?.look.pet ? card.actor.look.breed : ""].filter(s => s).join(" · ")
-                                textFormat: Text.PlainText
-                                color: "#bdb6c9"
-                                elide: Text.ElideRight
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                spacing: 5
+                                visible: projectText.text.length > 0
+
+                                ProjectIcon {
+                                    objectName: "officeCardProjectIcon"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    size: Math.round(12 * Theme.fontScale)
+                                    icon: card.person ? page.projectIcons?.[page.environment + ":" + card.person.projectId] ?? null : null
+                                    name: card.person?.project ?? ""
+                                }
+
+                                Text {
+                                    id: projectText
+
+                                    objectName: "officeCardProject"
+                                    width: parent.width - parent.spacing - Math.round(12 * Theme.fontScale)
+                                    text: [card.person?.project ?? "", card.person?.kind === "reviewer" ? qsTr("reviewing") : "", card.actor?.look.pet ? card.actor.look.breed : ""].filter(s => s).join(" · ")
+                                    textFormat: Text.PlainText
+                                    color: "#bdb6c9"
+                                    elide: Text.ElideRight
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                }
                             }
 
                             Text {
@@ -4056,10 +4526,19 @@ Item {
             }
 
             Text {
+                objectName: "officeMessage"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 32, 420)
-                visible: page.office === null || page.people.length === 0
-                text: page.plugin.environments.length === 0 ? qsTr("No machine runs the Office plugin yet.") : page.office === null ? qsTr("Waiting for the office…") : qsTr("Nobody is in the office. Threads show up here as they work.")
+                visible: text.length > 0
+                text: {
+                    if (page.plugin.environments.length === 0)
+                        return qsTr("No machine runs the Office plugin yet.");
+                    if (page.office === null)
+                        return qsTr("Waiting for the office…");
+                    if (page.people.length === 0)
+                        return qsTr("Nobody is in the office. Threads show up here as they work.");
+                    return page.settled ? "" : qsTr("Setting up the office…");
+                }
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 color: page.muted
