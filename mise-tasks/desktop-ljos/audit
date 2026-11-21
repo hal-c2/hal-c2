@@ -22,8 +22,12 @@ audit() {
     mkdir -p "$home/config/shell"
     echo '{"onboardingCompletedAt":"2026-01-01T00:00:00.000Z"}' >"$home/config/shell/preferences.json"
   fi
+  # A shell.qml is audited from its files, which only a dev-qml build compiles.
+  local features=()
+  [[ " ${args[*]} " != *" --config-dir"* ]] || features=(--features dev-qml)
   # No MC but one named by --mc-origin: not the one the caller's env names.
-  env -u HAL_C2_MC_ORIGIN -u HAL_C2_MC_TOKEN "${cargo[@]}" run --release -q -p hal_c2_shell -- \
+  env -u HAL_C2_MC_ORIGIN -u HAL_C2_MC_TOKEN "${cargo[@]}" run --release -q -p hal_c2_shell \
+    "${features[@]+"${features[@]}"}" -- \
     --audit --home-dir "$home" --allow audit/allow "${args[@]}"
 }
 if [[ " $* " == *" --action"* || " $* " == *" --config-dir"* ]]; then
