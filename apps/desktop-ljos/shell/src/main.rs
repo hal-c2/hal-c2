@@ -882,13 +882,23 @@ fn render_to(
         None if load => {
             // The audit's MC: the store waits on its snapshot as on any.
             launch.mc_origin = Some(loaded::ORIGIN.into());
-            let mc = loaded::Loaded::new();
+            let mc = loaded::Loaded::new()?;
             hal_c2_shell::start(&engine, &launch, mc.clone());
+            hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
             hal_c2_shell::theme::set_application_font(&engine);
             let root = shown(&engine)?;
+            // A picture has no frame loop to drain the cache's stream, so
+            // each tick of the loaded clock drains it instead: a thread
+            // an action opens is audited restored, not still waiting on
+            // its cache read.
+            mc.on_tick(|engine| hal_c2_shell::controllers::threads::drain(engine));
             mc.start(&engine);
             if !capture.play_after_snapshot {
                 play(&engine, &capture.steps);
+                mc.deliver(&engine);
+                hal_c2_shell::controllers::threads::drain(&engine);
+                mc.deliver(&engine);
+                pump.pump(&engine);
             }
             root
         }
