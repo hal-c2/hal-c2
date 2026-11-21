@@ -1646,6 +1646,23 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     capabilities(context, caller, args)
   end
 
+  # A provider with a short catalog is listed whole, none of it cut short.
+  step "{string} lists every current model it offers", %{args: [instance]} = context do
+    own =
+      HalC2.Environment.providers()
+      |> Enum.find(&(&1["instanceId"] == instance))
+      |> Map.fetch!("models")
+      |> Enum.map(& &1["slug"])
+
+    assert own != [], "the test MC offers no models on #{instance}"
+    provider = provider(context, instance)
+    assert provider, "#{instance} is not listed"
+    refute provider["modelsTruncated"]
+    assert provider["modelCount"] == length(own)
+    assert Enum.sort(Enum.map(provider["models"], & &1["id"])) == Enum.sort(own)
+    context
+  end
+
   step "each provider lists at most 25 models, each with an id and a label", context do
     assert {:ok, %{"providers" => providers}} = context.mcp_result
 
