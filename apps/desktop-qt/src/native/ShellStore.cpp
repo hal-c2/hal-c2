@@ -123,6 +123,7 @@ void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
     Mc& entry = m_mcs[mc.mc];
     entry.epoch = mc.epoch;
     entry.rev = mc.rev;
+    entry.listed = !mc.epoch.isEmpty();
     for (const cache::ShellRow& row : mc.rows) {
       if (auto* rows = rowsOf(entry, row.kind)) rows->insert(row.id, row.fields);
     }
@@ -243,6 +244,13 @@ std::optional<sidebar::Project> ShellStore::project(const QString& key) const {
 bool ShellStore::servesEnvironment(const QString& environmentId) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId == environmentId) return true;
+  }
+  return false;
+}
+
+bool ShellStore::listsEnvironment(const QString& environmentId) const {
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId == environmentId) return mc.listed;
   }
   return false;
 }
@@ -473,6 +481,8 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
       m_mcs[name].trying = mc.value(QLatin1String("trying")).toBool(true);
       setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
+      // A member described before its rows came is sent without a version.
+      m_mcs[name].listed = !m_mcs[name].epoch.isEmpty();
     }
     // Only the MCs this client speaks for: another link's are its own.
     for (const QString& name : m_mcs.keys()) {
@@ -513,6 +523,7 @@ void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
     QSet<QString> replaced;
     if (frame.value(QLatin1String("reset")).toBool()) resetRows(mc, replaced);
     putRows(mc, frame.value(QLatin1String("rows")).toArray());
+    m_mcs[mc].listed = true;
     // They bring the MC's rows to this version; a frame without one leaves none to resume from.
     setVersion(mc, frame.value(QLatin1String("epoch")), frame.value(QLatin1String("rev")));
     forgetThreads(replaced);

@@ -326,6 +326,13 @@ defmodule HalC2.StreamState do
   @spec get(t, String.t()) :: %{String.t() => Patch.entity()}
   def get(state, kind), do: Map.get(state.entities, kind, %{})
 
+  @doc """
+  The seq at which an entity first appeared, which orders the entities of a stream by
+  when they were written; nil for one that is not in memory.
+  """
+  @spec created(t, String.t(), String.t()) :: non_neg_integer | nil
+  def created(state, kind, id), do: Map.get(state.created, {kind, id})
+
   @doc "One entity by kind and id, read from the cold rows when it is not in memory."
   @spec fetch(t, String.t(), String.t()) :: Patch.entity() | nil
   def fetch(state, kind, id) do

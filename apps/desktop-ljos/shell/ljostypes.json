@@ -18050,7 +18050,7 @@
               "notify": "binormalsChanged"
             },
             {
-              "name": "uv0",
+              "name": "uv0s",
               "type": "var",
               "kind": "value",
               "list": false,
@@ -18059,10 +18059,10 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "uv0Changed"
+              "notify": "uv0sChanged"
             },
             {
-              "name": "uv1",
+              "name": "uv1s",
               "type": "var",
               "kind": "value",
               "list": false,
@@ -18071,7 +18071,7 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "uv1Changed"
+              "notify": "uv1sChanged"
             },
             {
               "name": "colors",

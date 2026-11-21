@@ -484,12 +484,20 @@ fn environments(world: &World) -> Vec<String> {
 
 /// Removes the cluster member the scenario saved, as Cluster settings does;
 /// the MC then drops the member for every client. False when there is none.
+/// The answer lands before the member's rows go, the order in which a window
+/// once landed on a fresh draft of the removed environment (#1589).
 pub fn remove_saved_environment(world: &mut World) -> Outcome<bool> {
     let environment = watched(world).saved_environment.clone();
     if environment.is_empty() {
         return Ok(false);
     }
     world.dispatch("cluster.remove", json!({"id": environment}))?;
+    world.wait_for("the removal to be answered", |w| {
+        w.state("cluster")["notice"]["text"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("Removed "))
+    })?;
+    world.pump()?;
     world.mc.remove(&environment);
     Ok(true)
 }
@@ -3673,7 +3681,8 @@ fn register_kept(steps: &mut Steps) {
 }
 
 /// The whole window as the user's shell draws it, `qml` being that shell;
-/// connected, with a project so the welcome wizard stays away.
+/// connected and set up (a project, or setup finished), so the welcome
+/// wizard stays away.
 fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
     if let Some(brick) = world.part::<crate::brick::Shown>().0 {
         return Ok(brick);
@@ -3687,6 +3696,23 @@ fn window(world: &mut World, qml: &str) -> Outcome<Brick> {
         }
         world.connect()?;
         world.sync()?;
+    } else {
+        // Connected already (a Background), to an MC with nothing in it: the
+        // first-run gate settled on the wizard, which covers the window and
+        // stays until setup finishes. This window is a desktop already set
+        // up, so its user has finished setup, skipping the rest.
+        let gate = |w: &World| text(&w.state("onboarding")["gate"]);
+        world.wait_for_with(
+            move |w| gate(w) != "pending",
+            move |w| format!("the first-run gate to settle (it is {:?})", gate(w)),
+        )?;
+        if gate(world) == "wizard" {
+            world.dispatch("onboarding.skip", json!(null))?;
+            world.wait_for_with(
+                move |w| gate(w) == "app",
+                move |w| format!("setup to finish (the gate is {:?})", gate(w)),
+            )?;
+        }
     }
     Brick::show(world, qml, 1200.0, 800.0)?;
     crate::brick::shown(world)
@@ -3717,10 +3743,22 @@ fn reconnecting_notice(world: &mut World, brick: Brick) -> Outcome<ObjectId> {
             field(w, "state") == "retrying"
                 && shown_named(w, brick, "connectionNotice").is_ok_and(|f| !f.is_empty())
         },
-        |w| {
+        move |w| {
+            let onboarding = w.state("onboarding");
             format!(
-                "the notice of a reconnect; the connection is {}",
-                show(&connection(w))
+                "the notice of a reconnect; the connection is {}, the onboarding gate {} \
+                 (recovery {}) with the wizard {}",
+                show(&connection(w)),
+                onboarding["gate"],
+                onboarding["recovery"],
+                if brick
+                    .find_visible(w, "welcomeWizard")
+                    .is_ok_and(|f| f.is_some())
+                {
+                    "shown"
+                } else {
+                    "hidden"
+                }
             )
         },
     )?;

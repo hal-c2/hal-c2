@@ -1077,6 +1077,9 @@ defmodule HalC2.Orchestration do
 
         case ask_steer(instance, thread_id, target["id"], steer_input(message)) do
           answer when answer in [:ok, :held] ->
+            :ok =
+              HalC2.Streams.transact(thread_id, :thread, &{written_over(&1, message), :ok})
+
             {:ok,
              Map.merge(
                %{"sequence" => sequence(thread_id), "confirmed" => answer == :ok},
@@ -1366,7 +1369,103 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  defp resolve_message_request(state, request, status, answer) do
+  # Whether the user wrote `message` (a stored message, or a `message.dispatch` command):
+  # typed (`HalC2.Search.typed?/2`), and not one the MC sent as the user, such as the
+  # continuation after a usage limit.
+  defp user_wrote?(message, thread) do
+    HalC2.Search.typed?(Map.put_new(message, "role", "user"), thread) and
+      message["createdBy"] in [nil, :null, "user"] and
+      message["usageLimitContinuationOfRunId"] in [nil, :null]
+  end
+
+  # The changes that close the questions the agent asked in the background (answered with
+  # a message) still open from before the user wrote to the thread. `written` says when:
+  # `{:created, seq, ms}` for a message in the stream (`written/2`), unix ms for one
+  # read back at start, nil for none. A question asked after the message stays open:
+  # the user did not see it. The agent reads what the user wrote, so that is the answer.
+  # They close as a dismissed question does, saying so (`closedBy`), never as answered
+  # with answers nobody gave.
+  defp close_written_over(_state, nil), do: []
+
+  defp close_written_over(state, written) do
+    for request <- StreamState.list(state, "runtime-request"),
+        request["status"] == "pending",
+        HalC2.Orchestration.TurnWriter.message_request?(request),
+        asked_before?(state, request, written),
+        change <-
+          resolve_message_request(state, request, "cancelled", nil, %{"closedBy" => "message"}),
+        do: change
+  end
+
+  # A question with no seq of its own (one from before a stream's v1 migration) goes
+  # by the clock.
+  defp asked_before?(state, request, {:created, written, ms}) do
+    case StreamState.created(state, "runtime-request", request["id"]) do
+      nil -> asked_before?(state, request, ms)
+      asked -> asked < written
+    end
+  end
+
+  defp asked_before?(_state, request, written) when is_integer(written) do
+    case HalC2.Projection.JS.epoch_ms(request["createdAt"]) do
+      asked when is_integer(asked) -> asked < written
+      nil -> false
+    end
+  end
+
+  defp asked_before?(_state, _request, nil), do: false
+
+  # When the user wrote `message`, a message of the stream, for `close_written_over/2`:
+  # its seq, and its time for a question with no seq.
+  defp written(state, message) do
+    if seq = StreamState.created(state, "message", message["id"]),
+      do: {:created, seq, HalC2.Projection.JS.epoch_ms(message["createdAt"])}
+  end
+
+  @doc """
+  The changes that close what a message the user writes closes, for a thread whose
+  questions asked in the background stayed open while the user wrote to it, as they did
+  before a message closed them: those asked before the newest message the user wrote
+  and the agent got, cold ones included (a run of the MC's own messages can push it out
+  of memory). One whose run has not started, still queued or refused before its
+  provider took it, closes nothing (`run_taken/2`).
+  """
+  def close_stale_questions(state, thread_id) do
+    thread = StreamState.get(state, "thread")[thread_id] || %{}
+
+    # A message is in the run it went to last: a queued one promoted into the running
+    # turn is in that turn, though the run it was queued as never started.
+    unstarted =
+      for run <- StreamState.all(state, "run"),
+          run["startedAt"] in [nil, :null],
+          into: MapSet.new(),
+          do: run["id"]
+
+    delivered =
+      for message <- StreamState.all(state, "message"),
+          not MapSet.member?(unstarted, message["runId"]),
+          user_wrote?(message, thread),
+          do: message
+
+    # Ordered as the live close orders them, by when each entered the stream, while the
+    # newest is in memory (the window keeps the newest); by the clock otherwise, which
+    # cannot tell a question asked in the same millisecond apart.
+    written =
+      case Enum.flat_map(delivered, &List.wrap(written(state, &1))) do
+        [] ->
+          delivered
+          |> Enum.map(&HalC2.Projection.JS.epoch_ms(&1["createdAt"]))
+          |> Enum.filter(&is_integer/1)
+          |> Enum.max(fn -> nil end)
+
+        seqs ->
+          Enum.max_by(seqs, fn {:created, seq, _ms} -> seq end)
+      end
+
+    close_written_over(state, written)
+  end
+
+  defp resolve_message_request(state, request, status, answer, closed \\ %{}) do
     at = Entities.now()
     item_status = if status == "resolved", do: "completed", else: "cancelled"
 
@@ -1374,6 +1473,7 @@ defmodule HalC2.Orchestration do
       upsert(state, "runtime-request", request["id"], fn request ->
         request
         |> Map.merge(%{"status" => status, "resolvedAt" => at})
+        |> Map.merge(closed)
         |> then(&if(answer, do: Map.put(&1, "answers", answer["answers"]), else: &1))
       end),
       upsert(state, "turn-item", question_item(request), fn
@@ -3763,14 +3863,48 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # The steer the provider took answers the questions asked in the background, as any
+  # message the user writes does as its run starts (`new_run/5`).
   defp steer_taken(state, message_id) do
+    message = StreamState.fetch(state, "message", message_id)
+
     taken =
       upsert(state, "message", message_id, fn
         nil -> nil
         message -> Map.delete(message, "steer")
       end)
 
-    {List.wrap(taken), :ok}
+    {List.wrap(taken) ++ written_over(state, message), :ok}
+  end
+
+  @doc """
+  The changes that close the questions asked in the background that the message of run
+  `run_id` answers, when the user wrote it, for the transaction that marks the run
+  running: the agent gets a message when its provider takes the run, not while it waits
+  in the queue, where the user can still take it back, nor when the run is refused
+  before the provider has it. A steer closes them once its provider takes it
+  (`steer_taken/2`).
+  """
+  @spec run_taken(StreamState.t(), String.t()) :: [tuple]
+  def run_taken(state, run_id) do
+    case StreamState.fetch(state, "run", run_id) do
+      %{"userMessageId" => id} when is_binary(id) ->
+        written_over(state, StreamState.fetch(state, "message", id))
+
+      _ ->
+        []
+    end
+  end
+
+  # The changes that close the questions `message`, which the provider took (a run it
+  # started, a steer or promoted queued message in its running turn), answers, when the
+  # user wrote it.
+  # Those asked after it was written stay open: the provider call runs outside the
+  # transaction that wrote it.
+  defp written_over(state, message) do
+    if message && user_wrote?(message, %{}),
+      do: close_written_over(state, written(state, message)),
+      else: []
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,

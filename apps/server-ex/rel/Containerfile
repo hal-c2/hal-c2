@@ -1,0 +1,90 @@
+# The MC in a container, built from a checkout by `mise run mc:container`, which
+# stages the build context (the tracked and new files release:mc reads) and passes
+# HAL_C2_MC_VERSION. Ubuntu 24.04, as the published linux bundles are built on
+# (release-mc.yml), so the MC can still move to a published release from inside it.
+
+FROM docker.io/library/ubuntu:24.04 AS build
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      autoconf build-essential ca-certificates curl git libncurses-dev libssl-dev m4 unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# mise, pinned by version and checksum as .devcontainer/on-create.sh pins it; bump both together.
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) arch=x64; sha=bd481434a65ede6b2ec6162b88f129e5c6b94cf9de808b8ee7c6f027b13b4589 ;; \
+      arm64) arch=arm64; sha=e98b7644f8fe908c7b6b9086de215eaa422736d44f8a72d8bb39cb73f7477720 ;; \
+      *) echo "no pinned mise for $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/jdx/mise/releases/download/v2026.9.9/mise-v2026.9.9-linux-$arch" -o /usr/local/bin/mise; \
+    echo "$sha  /usr/local/bin/mise" | sha256sum -c -; \
+    chmod +x /usr/local/bin/mise
+
+# The toolchain mise.toml names that the release build runs: OTP and Elixir, Node for
+# the Cursor sidecar (and pnpm to install what its bundler needs), Rust for priv/bin.
+WORKDIR /src
+ENV MISE_TRUSTED_CONFIG_PATHS=/src PATH=/root/.local/share/mise/shims:$PATH
+COPY mise.toml ./
+RUN mise install erlang elixir node rust && npm install -g pnpm@11.10.0 && mise reshim
+
+COPY . .
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts --filter "@hal-c2/cursor-acp..."
+
+ARG HAL_C2_MC_VERSION
+ENV MIX_ENV=prod HAL_C2_MC_VERSION=$HAL_C2_MC_VERSION
+WORKDIR /src/apps/server-ex
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.hex \
+    test -n "$HAL_C2_MC_VERSION" \
+    && mix local.hex --force --if-missing \
+    && mix local.rebar --force --if-missing \
+    && mix deps.get --only prod \
+    && mix release \
+    && mix hal_c2.bundle /out \
+    && cp "$(find /out -maxdepth 1 -name "hal-c2-mc-$HAL_C2_MC_VERSION-*" ! -name '*.sha256' ! -name '*.tar.gz')" /out/hal-c2-mc \
+    && cp -r "$(mise where node)" /out/node
+
+FROM docker.io/library/ubuntu:24.04
+# What the MC and its agents expect of a machine. Provider CLIs are not included:
+# install them into the volume (`npm install -g`, or a provider's own installer,
+# which writes to ~/.local/bin), and they survive a reinstall.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git less libncursesw6 libssl3t64 openssh-client procps ripgrep unzip \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/node /opt/node
+COPY --from=build /out/hal-c2-mc /usr/local/bin/hal-c2-mc
+
+# An account for the uid the task runs the container as, homed on the volume: ssh
+# finds ~/.ssh through the passwd entry, not $HOME, and refuses a uid with none.
+# The image's own ubuntu user would otherwise claim uid 1000, and root keeps its
+# account with the volume's home.
+ARG HAL_C2_UID=1000
+ARG HAL_C2_GID=1000
+RUN set -eu; \
+    userdel ubuntu; \
+    if [ "$HAL_C2_UID" = 0 ]; then \
+      usermod -d /data/home root; \
+    else \
+      getent group "$HAL_C2_GID" >/dev/null || groupadd -g "$HAL_C2_GID" hal-c2; \
+      useradd -o -u "$HAL_C2_UID" -g "$HAL_C2_GID" -d /data/home -M -s /bin/bash hal-c2; \
+    fi
+
+# Everything the MC and its agents keep lives on the /data volume: the MC's files
+# (HAL_C2_HOME), and a home for provider logins and CLIs. World-writable, as the
+# container runs as whoever runs the task; a new volume copies this mode.
+RUN mkdir -m 1777 /data
+# erlexec, which runs the MC's subprocesses, refuses to start without SHELL.
+ENV HOME=/data/home \
+    LANG=C.UTF-8 \
+    SHELL=/bin/bash \
+    HAL_C2_HOME=/data/hal-c2 \
+    HAL_C2_MC_HOST=0.0.0.0 \
+    HAL_C2_MC_PORT=3790 \
+    NPM_CONFIG_PREFIX=/data/home/.npm-global \
+    PATH=/data/home/.local/bin:/data/home/.npm-global/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+VOLUME /data
+EXPOSE 3790
+# The first start unpacks the MC onto the volume; later ones run whatever version
+# it last moved to (rel/hal-c2-mc.sh). Its service script restarts it to finish an update.
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p -m 700 \"$HOME\" && exec hal-c2-mc \"$@\"", "hal-c2-mc"]

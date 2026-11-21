@@ -135,6 +135,9 @@ ShellWindow {
     // window with no thread lands on a draft in the desktop layout and stays
     // on the thread list in the phone's, which has its terminal on a screen.
     firstRunGate: layout === "desktop" && connected
+    // Android frames the window itself: nothing here (the desktop layout, the
+    // wizard) is its drag handle or carries its buttons.
+    framesWindow: false
     contextMenus: layout === "desktop"
     onLayoutChanged: {
         Shell.dispatch("layout.desktop", { shown: layout === "desktop" });
@@ -233,9 +236,6 @@ ShellWindow {
                     // A tablet's or a touchscreen laptop's list is under a
                     // finger as well as a pointer.
                     sidebar.touchRows: true
-                    // Android frames the window itself: nothing here is its
-                    // drag handle or carries its buttons.
-                    framesWindow: false
                     // The notice is above the layouts (this shell's own).
                     connectionNotice: false
                 }

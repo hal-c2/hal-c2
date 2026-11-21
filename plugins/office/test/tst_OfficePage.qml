@@ -2690,6 +2690,7 @@ Item {
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.settled);
             page.zoom = page.maxScale / page.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
@@ -2732,6 +2733,7 @@ Item {
             compare(page.iconOf(actor("ask")), "ask");
             verify(find("officeIcon:ask").visible);
             verify(!find("officeIcon:busy").visible);
+            tryVerify(() => page.settled);
             waitForRendering(loader.item);
             mouseClick(find("officePerson:ask"));
             compare(plugin.opened, ["local/ask"]);
@@ -2740,6 +2742,7 @@ Item {
         function test_hovering_a_person_names_it_and_what_it_does() {
             plugin.publish([person("t", "Fix the parser", "working", "testing")]);
             runUntil(() => arrived(actor("t")));
+            tryVerify(() => page.settled);
             waitForRendering(loader.item);
             mouseMove(find("officePerson:t"));
             tryVerify(() => find("officeCard").visible);
@@ -2752,6 +2755,7 @@ Item {
         function test_the_keyboard_reaches_a_person() {
             plugin.publish([person("ask", "Fix the parser", "asking")]);
             runUntil(() => arrived(actor("ask")));
+            tryVerify(() => page.settled);
             const hit = find("officePerson:ask");
             hit.forceActiveFocus();
             compare(page.hovered, "ask");
@@ -3115,6 +3119,92 @@ Item {
             wait(50);
             compare(page.floorPaints, paints);
             verify(page.props === props && page.units === units, "the furniture is the same");
+        }
+
+        function message() {
+            return find("officeMessage").visible ? find("officeMessage").text : "";
+        }
+
+        // A full office opens on a page that says it is being set up, with its
+        // header laid out; the sprite sheets are painted a few a frame, and the
+        // office shows once everyone is drawn.
+        function test_a_full_office_says_it_is_being_set_up_until_it_is_drawn() {
+            plugin.publish(many(40, "t", "idle"));
+            compare(message(), "Setting up the office…");
+            compare(find("officeStage").opacity, 0, "nothing half drawn shows");
+            verify(!find("officePerson:t0").enabled, "nobody can be hovered, reached with Tab or clicked yet");
+            compare(page.sheetsPending, 40);
+            // The sheets are painted a few a frame, not all at once.
+            tryVerify(() => page.sheetsPending < 40);
+            verify(page.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
+            waitForRendering(page);
+            const summary = find("officeSummary");
+            verify(find("officeZoomIn").x >= summary.x + summary.width, "the zoom buttons sit beside the summary");
+            tryVerify(() => page.settled, 5000);
+            compare(page.sheetsPending, 0);
+            compare(message(), "");
+            compare(find("officeStage").opacity, 1);
+            verify(find("officePerson:t0").enabled);
+            verify(page.sheetCost > 0, "what a sheet takes is known");
+            // The first people are already where they belong.
+            for (const id of Object.keys(page.actors))
+                verify(!page.outside.includes(id), id + " is not waiting outside");
+        }
+
+        // Before a machine's office arrives the page waits for it, which is not
+        // the same as setting it up; an empty office says nobody is in.
+        function test_waiting_for_the_office_and_an_empty_office_are_not_setting_up() {
+            compare(message(), "Waiting for the office…");
+            verify(!page.settled);
+            plugin.publish([]);
+            compare(message(), "Nobody is in the office. Threads show up here as they work.");
+            tryVerify(() => page.settled);
+            plugin.publish(many(3, "t", "working", "typing"));
+            compare(message(), "", "newcomers to a settled office just walk in");
+            tryVerify(() => page.sheetsPending === 0);
+            compare(message(), "");
+        }
+
+        // Another machine's office is set up afresh; one whose office has not
+        // arrived waits for it.
+        function test_another_machine_is_set_up_afresh() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            tryVerify(() => page.settled);
+            plugin.environments = ["local", "lab"];
+            page.environment = "lab";
+            compare(message(), "Waiting for the office…");
+            plugin.watchers["lab/office"]({
+                people: many(6, "x", "idle"),
+                talks: []
+            });
+            compare(message(), "Setting up the office…");
+            tryVerify(() => page.settled);
+            compare(message(), "");
+            page.environment = "local";
+            compare(message(), "Setting up the office…");
+            // Its people are where they belong, not walking in from the door.
+            compare(Object.keys(page.actors).sort(), ["t0", "t1", "t2", "t3"]);
+            for (const id of Object.keys(page.actors))
+                verify(page.actors[id].tx >= 0 && !page.outside.includes(id), id + " is already in");
+            tryVerify(() => page.settled);
+        }
+
+        // A page hidden while it is set up waits to be shown again; once
+        // shown, hiding it, zooming and Fit leave the office as drawn.
+        function test_setting_up_waits_while_the_page_is_not_shown() {
+            plugin.publish(many(8, "t", "idle"));
+            page.visible = false;
+            verify(!find("officeSheetPainter").running, "no sheet is asked for while hidden");
+            compare(page.sheetsPending, 8);
+            page.visible = true;
+            tryVerify(() => page.settled);
+            page.visible = false;
+            page.visible = true;
+            find("officeZoomIn").clicked();
+            page.zoom = 1;
+            compare(page.sheetsPending, 0);
+            compare(message(), "");
+            verify(page.settled);
         }
 
         function test_the_office_holds_still_while_it_is_not_shown() {

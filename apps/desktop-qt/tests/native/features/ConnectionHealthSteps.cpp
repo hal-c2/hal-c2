@@ -255,8 +255,16 @@ ConnectionWatch& watch(World& world) {
 bool removeSavedEnvironment(World& world) {
   const QString environment = fake(world).savedEnvironment;
   if (environment.isEmpty()) return false;
-  // From Cluster settings; the MC then drops the member for every client.
+  // From Cluster settings; the MC then drops the member for every client. The
+  // answer lands before the member's rows go, the order in which a window once
+  // landed on a fresh draft of the removed environment (#1589).
   world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), environment}});
+  world.waitFor(
+      [&world] {
+        const QVariantMap notice = world.state(QStringLiteral("cluster")).toMap().value(QStringLiteral("notice")).toMap();
+        return notice.value(QStringLiteral("text")).toString().startsWith(QLatin1String("Removed "));
+      },
+      QStringLiteral("the removal to be answered"));
   world.mc.remove(environment);
   return true;
 }
