@@ -620,12 +620,14 @@ defmodule HalC2.Mcp.Tools do
 
   # An agent that names a thread by the bare part of its `mcp:` id is pointed at the
   # full id, but only when that thread exists.
-  defp did_you_mean(id) do
+  defp did_you_mean(id) when is_binary(id) do
     case HalC2.Shell.row(node(), "mcp:" <> id) do
       {"thread", %{"deletedAt" => nil}} -> " Did you mean `mcp:#{id}`?"
       _ -> ""
     end
   end
+
+  defp did_you_mean(_id), do: ""
 
   @doc """
   A thread the caller may change: of its project, with the caller running and the

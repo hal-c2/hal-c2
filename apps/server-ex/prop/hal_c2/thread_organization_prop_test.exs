@@ -385,6 +385,10 @@ defmodule HalC2.ThreadOrganizationPropTest do
           not stamps_set[stamp] ->
             real[stamp] == nil
 
+          # A snooze replaces the stamp it finds, even when it snoozes to the same wake time.
+          stamp == "snoozedAt" and fun == :snooze and stamp in fresh ->
+            is_binary(real[stamp]) and real[stamp] != before.fields[stamp]
+
           stamp in fresh or before == %{} ->
             is_binary(real[stamp])
 
@@ -418,8 +422,18 @@ defmodule HalC2.ThreadOrganizationPropTest do
   def settle(tid), do: organize(tid, "thread.settle")
   def unsettle(tid), do: organize(tid, "thread.unsettle")
 
-  def snooze(tid, until),
-    do: organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until)})
+  # A snooze found already stamped is backdated first, so a stamp set anew is told
+  # from one kept.
+  def snooze(tid, until) do
+    if is_binary(JS.get(StreamState.get(current(tid), "thread")[tid] || %{}, "snoozedAt")) do
+      {:ok, _} =
+        HalC2.Streams.commit(tid, :thread, [
+          {"thread", tid, %{"s" => %{"snoozedAt" => "2020-01-01T00:00:00.000Z"}}}
+        ])
+    end
+
+    organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until)})
+  end
 
   def unsnooze(tid), do: organize(tid, "thread.unsnooze")
 
