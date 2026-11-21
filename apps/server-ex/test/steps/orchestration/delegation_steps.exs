@@ -2818,19 +2818,14 @@ defmodule HalC2.Steps.Orchestration.Delegation do
                    "threadId" => World.thread_id(context, "subagent")
                  })
 
+      # Codex ends the turn: a message the user wrote would answer the question.
       "completed" ->
-        World.send_turn(context, "subagent", "say Done")
+        end_child_turn(context, %{"status" => "completed"})
 
       "failed" ->
-        {_pid, runtime} = World.codex_runtime(context, "subagent")
-
-        World.codex_notify(context, "subagent", "turn/completed", %{
-          "threadId" => runtime.native_thread_id,
-          "turn" => %{
-            "id" => runtime.turn.native_turn_id,
-            "status" => "failed",
-            "error" => %{"message" => "the turn failed"}
-          }
+        end_child_turn(context, %{
+          "status" => "failed",
+          "error" => %{"message" => "the turn failed"}
         })
     end
 
@@ -2842,12 +2837,22 @@ defmodule HalC2.Steps.Orchestration.Delegation do
        %{args: [state]} = context do
     status = if state == "dismissed", do: "cancelled", else: "pending"
 
-    World.await_state(context, "subagent", fn child ->
+    World.await_state(context, Map.get(context, :question_thread, "subagent"), fn child ->
       get_in(StreamState.get(child, "runtime-request"), [context.child_request, "status"]) ==
         status
     end)
 
     context
+  end
+
+  # The child's Codex ends its running turn as `turn` says.
+  defp end_child_turn(context, turn) do
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+
+    World.codex_notify(context, "subagent", "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => Map.put(turn, "id", runtime.turn.native_turn_id)
+    })
   end
 
   # The child's Codex asks a question without stopping its turn (an async question,

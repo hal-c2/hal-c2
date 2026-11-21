@@ -12,6 +12,7 @@ folder to install it, or start your own from one of them.
 | [maintenance](maintenance/)           | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.                                           | pull requests, threads, agent tools                           |
 | [token-economizer](token-economizer/) | Spends fewer tokens on the same work: redirects an agent stuck in a loop, and turns tools a project never uses off at the next conversation. | turns, threads, runs, text generation                         |
 | [office](office/)                     | Your threads as people in a pixel-art office: who works, waits, talks to whom and asks you something.                                        | threads, turns                                                |
+| [cliproxyapi](cliproxyapi/)           | Runs CLIProxyAPI and routes Claude and Codex through it: several subscriptions taking turns, or your own API keys.                           | provider instances                                            |
 
 ## Writing one
 

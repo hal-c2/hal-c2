@@ -163,6 +163,15 @@ impl Hub {
         }
     }
 
+    /// Gives every `Window` made from here on a platform window of its own,
+    /// as the app's shell does: a window's popups find their overlay in it.
+    /// Unhosted, the `Window` a ShellLoader shows stays an item of the
+    /// loader, and `parent: Overlay.overlay` reads null.
+    pub fn hosted(self) -> Hub {
+        ljos_controls::WindowSystem::of(&self.engine).set_host(|| {});
+        self
+    }
+
     pub fn published(&self, key: &str) -> Json {
         Bridge::of(&self.engine)
             .published(&self.engine, key)

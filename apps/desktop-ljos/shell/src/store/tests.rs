@@ -683,3 +683,178 @@ fn the_thread_list_is_built_once_per_change_of_the_rows() {
     kept(&mut store);
     assert!(titles(&store).is_empty());
 }
+
+/// An MC that keeps the store's `shell` subscription, so a test hands it
+/// frames as the MC's deliveries would.
+#[derive(Default)]
+struct Feeder {
+    on_frame: RefCell<Option<crate::mc::OnFrame>>,
+}
+
+impl Feeder {
+    fn send(&self, engine: &Engine, frame: &Frame) {
+        let mut on_frame = self.on_frame.borrow_mut();
+        (on_frame.as_mut().expect("subscribed"))(engine, frame);
+    }
+}
+
+impl Mc for Feeder {
+    fn is_ready(&self) -> bool {
+        true
+    }
+    fn environment(&self) -> String {
+        "env-a".into()
+    }
+    fn call(&self, _: &str, _: &str, _: crate::json::Json, _: crate::mc::Reply) {}
+    fn subscribe(
+        &self,
+        _: crate::json::Json,
+        on_frame: crate::mc::OnFrame,
+        _: Option<crate::mc::Resume>,
+    ) -> SubId {
+        *self.on_frame.borrow_mut() = Some(on_frame);
+        SubId(1)
+    }
+    fn unsubscribe(&self, _: SubId) {}
+    fn more(&self, _: SubId, _: u32) {}
+    fn on_ready_changed(&self, _: crate::mc::OnReady) {}
+}
+
+/// A store fed by a [`Feeder`], and how many times its change listener ran
+/// with the thread count it saw each time.
+fn fed() -> (Engine, Rc<Feeder>, Rc<RefCell<Vec<usize>>>) {
+    let engine = ljos::App::new("test")
+        .register(crate::register)
+        .build_engine();
+    let feeder = Rc::new(Feeder::default());
+    let own: Rc<dyn Mc> = feeder.clone();
+    install(&engine, &own, None);
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let seen = heard.clone();
+    on_changed(&engine, move |engine| {
+        seen.borrow_mut()
+            .push(with(engine, |s: &ShellStore| s.threads().len()));
+    });
+    (engine, feeder, heard)
+}
+
+/// The thread `t{n}` put at revision `rev`.
+fn put(n: usize, rev: usize) -> Frame {
+    frame(json!({
+        "t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": rev,
+        "rows": [[format!("t{n}"), "thread", thread(&format!("t{n}"))]],
+    }))
+}
+
+#[test]
+fn frames_delivered_in_one_run_tell_each_listener_once() {
+    let (engine, feeder, heard) = fed();
+    // Outside a run, as before: once per frame that changed something.
+    feeder.send(&engine, &snapshot());
+    assert_eq!(*heard.borrow(), [2]);
+    heard.borrow_mut().clear();
+
+    // Fifty frames in one of the MC's runs: one call, after the last.
+    batched(&engine, || {
+        for n in 0..50 {
+            feeder.send(&engine, &put(n + 10, n + 5));
+        }
+        assert!(heard.borrow().is_empty(), "held until the run ends");
+    });
+    assert_eq!(*heard.borrow(), [52]);
+
+    // A run whose frames changed nothing tells nobody.
+    heard.borrow_mut().clear();
+    batched(&engine, || {
+        for _ in 0..5 {
+            feeder.send(&engine, &frame(json!({"t": "unknown"})));
+        }
+    });
+    assert!(heard.borrow().is_empty());
+}
+
+#[test]
+fn a_run_that_panics_does_not_mute_the_listeners() {
+    let (engine, feeder, heard) = fed();
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        batched(&engine, || {
+            feeder.send(&engine, &snapshot());
+            panic!("a handler failed");
+        })
+    }));
+    assert!(run.is_err());
+    // The hold let go: the next frame tells at once, with what was held.
+    feeder.send(&engine, &put(9, 5));
+    assert_eq!(*heard.borrow(), [3]);
+}
+
+#[test]
+fn a_change_made_during_a_run_tells_what_the_run_held_with_it() {
+    let (engine, feeder, heard) = fed();
+    let origins = Rc::new(Cell::new(0));
+    let seen = origins.clone();
+    on_origin_changed(&engine, move |_| seen.set(seen.get() + 1));
+    open(&engine, ORIGIN);
+    batched(&engine, || {
+        feeder.send(&engine, &snapshot());
+        // Opening at another MC tells at once, origin first, and with it
+        // the frame held.
+        open(&engine, "http://10.0.0.2:3773");
+        assert_eq!(heard.borrow().len(), 1);
+        assert_eq!(origins.get(), 1);
+        feeder.send(&engine, &snapshot());
+    });
+    // The frame after the open is told once the run ends.
+    assert_eq!(*heard.borrow(), [0, 2]);
+    assert_eq!(origins.get(), 1);
+}
+
+/// A frame that puts a new thread when `changes`, else one that changes
+/// nothing.
+fn send(engine: &Engine, feeder: &Feeder, rev: &mut usize, changes: bool) {
+    if changes {
+        feeder.send(engine, &put(*rev + 10, *rev));
+        *rev += 1;
+    } else {
+        feeder.send(engine, &frame(json!({"t": "unknown"})));
+    }
+}
+
+proptest::proptest! {
+    /// Any mix of runs and lone frames: each listener hears of every run
+    /// that changed the store once, and of every lone frame that did, and
+    /// each time sees everything applied so far.
+    #[test]
+    fn listeners_hear_once_per_run_and_see_every_frame(
+        runs in proptest::collection::vec(
+            (proptest::bool::ANY, proptest::collection::vec(proptest::bool::ANY, 0..6)),
+            0..12,
+        ),
+    ) {
+        let (engine, feeder, heard) = fed();
+        feeder.send(&engine, &snapshot());
+        heard.borrow_mut().clear();
+        let (mut rev, mut expected) = (5, Vec::new());
+        let threads = |engine: &Engine| with(engine, |s: &ShellStore| s.threads().len());
+        for (in_run, frames) in runs {
+            if in_run {
+                batched(&engine, || {
+                    for changes in &frames {
+                        send(&engine, &feeder, &mut rev, *changes);
+                    }
+                });
+                if frames.iter().any(|c| *c) {
+                    expected.push(threads(&engine));
+                }
+            } else {
+                for changes in frames {
+                    send(&engine, &feeder, &mut rev, changes);
+                    if changes {
+                        expected.push(threads(&engine));
+                    }
+                }
+            }
+        }
+        proptest::prop_assert_eq!(&*heard.borrow(), &expected);
+    }
+}

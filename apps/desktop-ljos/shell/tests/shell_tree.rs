@@ -6,10 +6,10 @@ mod common;
 use std::path::Path;
 use std::rc::Rc;
 
-use common::{shell_with, text};
+use common::{compile_roots, shell_with, text};
 use hal_c2_shell::Launch;
 use hal_c2_shell::mc::Disconnected;
-use hal_c2_shell::qml::{self, Roots};
+use hal_c2_shell::qml::Roots;
 use ljos::dev::Severity;
 use ljos::render::{Fonts, Picture, set_fonts};
 use ljos::{App, ComponentSource as _};
@@ -37,7 +37,7 @@ fn native_and_qml_singletons_share_the_module() {
 
 #[test]
 fn the_desktop_shell_loads_from_the_checkout() {
-    let compiled = qml::compile(&Roots::checkout()).expect("the roots are there");
+    let compiled = compile_roots(&Roots::checkout());
     let errors: Vec<String> = compiled
         .diagnostics
         .iter()
@@ -56,6 +56,9 @@ fn the_desktop_shell_loads_from_the_checkout() {
         .register(hal_c2_shell::register)
         .source(source)
         .build_engine();
+    // As the app's shell: the shell's `Window` gets a window of its own,
+    // where its popups find their overlay.
+    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
     let picture = Picture::new(640, 400).settle(200);
     picture.install(&engine);
     let mc = Rc::new(Disconnected::default());
@@ -65,9 +68,14 @@ fn the_desktop_shell_loads_from_the_checkout() {
         "usage.open",
         serde_json::Value::Null,
     );
-    let root = hal_c2_shell::bridge::Bridge::main(&engine)
+    let loader = hal_c2_shell::bridge::Bridge::main(&engine)
         .in_scope(&engine, || engine.create_from_url("Main", None, Vec::new()))
         .expect("Main is made");
+    // Main is the loader; the built-in shell is the `Window` it shows.
+    let root = engine
+        .read_by_name(loader, "item")
+        .as_object()
+        .expect("the built-in shell is shown");
     mc.deliver(&engine);
     let png = picture.png(&engine, root).expect("a picture");
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");

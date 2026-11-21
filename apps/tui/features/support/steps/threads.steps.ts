@@ -627,6 +627,17 @@ step(/^the user (?:opens|opened) the menu for "([^"]*)"$/, async (ctx: World, ti
   await openMenu(ctx, title);
 });
 
+// search.feature: find works on the open thread only, never from the list's menu.
+step("the user opens a thread's menu in the sidebar", async (ctx: World) => {
+  await openMenu(ctx, "Fix OAuth loop");
+});
+
+step("it does not offer {string}", async (ctx: World, label: string) => {
+  const menu = contextMenu(ctx)!;
+  expect(menu.items.map((item) => item.label)).not.toContain(label);
+  expect(await snapshot(ctx)).not.toContain(label);
+});
+
 // keymap.feature: the menu's keys, on a thread with or without a workspace folder.
 async function openTargetMenu(ctx: ThreadsWorld, workspace: boolean): Promise<void> {
   if (!workspace) addProject(ctx, "scratch").workspaceRoot = "";

@@ -535,6 +535,21 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     context
   end
 
+  step "its last error reads {string}", %{args: [message]} = context do
+    task = current(context, only_task(context))
+    assert task["lastRunStatus"] == "failed"
+    assert task["lastRunError"] == message
+    context
+  end
+
+  step "the error has no stack trace or server file paths", context do
+    error = current(context, only_task(context))["lastRunError"]
+    refute error =~ ~r/\n\s+(\(|at |[\w.]+\.ex:)/, "stack trace in #{inspect(error)}"
+    refute error =~ ~r{(^|\s)/[\w.-]+/[\w./-]+}, "server path in #{inspect(error)}"
+    refute error =~ ~r/\.exs?:\d+/
+    context
+  end
+
   step "task {string} last failed with {string}", %{args: [name, message]} = context do
     assert %{"lastRunStatus" => "failed", "lastRunError" => ^message} = current(context, name)
     context
@@ -833,6 +848,9 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
         Map.put(context, :reply, reply)
     end
   end
+
+  # The one task the scenario made.
+  defp only_task(context), do: context.tasks |> Map.keys() |> then(fn [name] -> name end)
 
   defp task_id(context, name), do: context.tasks[name] || name
 

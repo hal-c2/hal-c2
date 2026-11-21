@@ -4,11 +4,13 @@
 #![allow(dead_code)]
 
 use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Frame, Mc, OnFrame, OnReady, Reply, Resume, SubId};
+use hal_c2_shell::qml::Roots;
 use ljos::App;
 use ljos::MapSource;
 use ljos::dev::OnError;
@@ -33,6 +35,17 @@ pub fn compile(files: &[(&str, &str)], qmldirs: &[(&str, &str)]) -> MapSource {
     let snapshot = ljos::engine();
     hal_c2_shell::register(&snapshot);
     ljos::dev::compile(dir.path(), Some(&snapshot), OnError::Fail).unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// The shell's QML in `roots`, with the user's files, compiled against the
+/// standard modules and `HalC2.Shell` as a `--qml-dir` run compiles it
+/// (`qml::compile`, which only a `dev-qml` build has), printing nothing.
+pub fn compile_roots(roots: &Roots) -> ljos::dev::Compiled {
+    let dirs = roots.dirs().unwrap_or_else(|e| panic!("{e}"));
+    let snapshot = ljos::engine();
+    hal_c2_shell::register(&snapshot);
+    let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    ljos::dev::compile_quiet(&paths, Some(&snapshot)).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The engine of an app with `source`, the shell started over `mc`.

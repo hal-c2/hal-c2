@@ -205,7 +205,7 @@ Feature: Searching threads
     Then the find bar opens on the open thread with the cursor in its field
 
   # Upstream #22352: find works on the open thread only.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: The sidebar's thread menu does not offer find in thread
     When the user opens a thread's menu in the sidebar
     Then it does not offer "Find in thread"
