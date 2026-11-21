@@ -27,6 +27,7 @@ class NativeShell;
 class ShellBridge;
 class ShellStore;
 class TimelineModel;
+class ToastController;
 namespace sidebar {
 struct Thread;
 }
@@ -209,6 +210,18 @@ public:
   // What the sidebar shows for a draft with something in it: the text's first
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
+  // A launch from the draft is kept until its answer: a failed one's prompt
+  // comes back into the draft, a background one's too.
+  bool awaitsLaunch(const QString& draftId) const;
+  // Whether a toast offers a failed background prompt back to the draft
+  // (it held a newer one): kept for it while empty, not past a removal.
+  bool offersLaunch(const QString& draftId) const;
+  // How many offers are noted: each goes once its toast is closed or its
+  // Restore is chosen.
+  int offerCount() const;
+  // The ids of what `target`'s draft carries besides its text: its
+  // attachments, then its excerpts.
+  QStringList carried(const QString& target) const;
   // The threads (keys) whose composer holds something unsent, the rows the
   // sidebar marks "Unsent draft".
   QSet<QString> unsentThreads() const;
@@ -245,6 +258,8 @@ signals:
   void outboxRetryScheduled(const QString& target, int delayMs);
 
 private:
+  void offerClosed(const QString& toastId);
+  void forgetGoneOffers();
   struct Attachment {
     QString id;
     QString name;
@@ -685,6 +700,12 @@ private:
   // holdsFiles() of the target, as last published.
   bool m_heldFiles = false;
   // What every window's composer keeps.
+  // A failed background prompt the toast `toastId` offers back to its draft.
+  struct Offer {
+    QString draftId;
+    QPointer<ToastController> toasts;
+    QString toastId;
+  };
   struct Kept {
     QHash<QString, Draft> drafts;
     // Newest first.
@@ -709,6 +730,8 @@ private:
     // The threads whose `queue.resume` the MC has not answered: one request
     // at a time per thread, whichever window asks.
     QSet<QString> resuming;
+    // Not saved: a toast lasts the run.
+    QList<Offer> offers;
   };
   // Where the drafts' images are kept: shell-composer-images.json beside them.
   QString imagesPath() const;

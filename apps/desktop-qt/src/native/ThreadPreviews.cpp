@@ -660,17 +660,27 @@ void ThreadPreviews::close(const QString& tabId) {
   const int row = rowOf(tabId);
   if (row < 0 || m_thread.isEmpty()) return;
   const QJsonObject snapshot = m_rows.at(row);
+  QSet<QString> before;
+  for (int at = 0; at < row; ++at) before.insert(m_rows.at(at).value(QLatin1String("tabId")).toString());
   m_closing.insert(tabId);
   remove(tabId);
   m_client->call(this, m_environment, QStringLiteral("preview.close"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}},
-                 [this, row, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, before, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
                    // Another thread, opened since, forgot what it was closing.
                    if (!m_closing.remove(tabId)) return;
                    if (!error) return;
-                   // It is still open on the MC: it comes back where it was.
+                   // It is still open on the MC: it comes back where it was, after the last
+                   // of the tabs before it that is still shown. Tabs come in the MC's order,
+                   // and any opened since are after it.
                    if (rowOf(tabId) < 0) {
-                     const int at = std::min(row, int(m_rows.size()));
+                     int at = 0;
+                     for (int r = int(m_rows.size()) - 1; r >= 0; --r) {
+                       if (before.contains(m_rows.at(r).value(QLatin1String("tabId")).toString())) {
+                         at = r + 1;
+                         break;
+                       }
+                     }
                      beginInsertRows({}, at, at);
                      m_rows.insert(at, snapshot);
                      endInsertRows();

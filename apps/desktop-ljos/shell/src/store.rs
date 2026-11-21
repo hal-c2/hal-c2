@@ -64,6 +64,9 @@ struct McRows {
     /// The version of its rows; no epoch when the MC gave none.
     epoch: String,
     rev: i64,
+    /// Its rows have come: in a `shell.rows`, or a snapshot or the cache with
+    /// a version.
+    listed: bool,
     threads: BTreeMap<String, Row>,
     projects: BTreeMap<String, Row>,
 }
@@ -328,6 +331,7 @@ impl ShellStore {
         self.rows_changed();
         self.set_environment(&mc.mc, mc.environment);
         let entry = self.mcs.entry(mc.mc).or_default();
+        entry.listed = !mc.epoch.is_empty();
         entry.epoch = mc.epoch;
         entry.rev = mc.rev;
         for row in mc.rows {
@@ -595,6 +599,10 @@ impl ShellStore {
                     entry.online = mc.get("online").and_then(Value::as_bool).unwrap_or(false);
                     entry.given_up = mc.get("trying").and_then(Value::as_bool) == Some(false);
                     self.set_version(&name, mc.get("epoch"), mc.get("rev"));
+                    // A member described before its rows came is sent
+                    // without a version.
+                    let entry = self.mcs.entry(name.clone()).or_default();
+                    entry.listed = !entry.epoch.is_empty();
                 }
                 // Only the MCs this client speaks for: another link's are its own.
                 let gone: Vec<String> = self
@@ -662,6 +670,7 @@ impl ShellStore {
                     let at = |i: usize| row.get(i);
                     self.put_row(&mc, &text(at(0)), &text(at(1)), object(at(2)));
                 }
+                self.mcs.entry(mc.clone()).or_default().listed = true;
                 // They bring the MC's rows to this version; a frame without
                 // one leaves none to resume from.
                 self.set_version(&mc, frame.get("epoch"), frame.get("rev"));
@@ -1049,6 +1058,14 @@ impl ShellStore {
     /// Whether an MC of the cluster serves this environment.
     pub fn serves_environment(&self, environment_id: &str) -> bool {
         self.serving(environment_id).is_some()
+    }
+
+    /// Whether the MC serving the environment has sent its rows. A member
+    /// that joins (or comes back) is described before its rows come, and
+    /// until they do, a project it does not list may only not have come yet.
+    pub fn lists_environment(&self, environment_id: &str) -> bool {
+        self.serving(environment_id)
+            .is_some_and(|(_, mc)| mc.listed)
     }
 
     /// Whether the MC whose row lists this thread is online; false while none

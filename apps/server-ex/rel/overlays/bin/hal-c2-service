@@ -34,19 +34,37 @@ export HAL_C2_SERVICE=1
 # whatever else is left once this script is gone.
 child=
 stopping=
-trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT
+repeater=
+# The BEAM drops a TERM that comes before it can handle one, early in its boot, so a stop
+# tells the MC again each second until it has exited, from beside this script, whatever
+# this script is doing meanwhile. It ignores the stop itself, which may reach it too.
+stop() {
+  stopping=1
+  [ -n "$child" ] && [ -z "$repeater" ] || return 0
+  (
+    trap '' TERM INT
+    while kill -TERM "$child" 2>/dev/null; do sleep 1; done
+  ) >/dev/null 2>&1 &
+  repeater=$!
+}
+trap stop TERM INT
 
 while :; do
   "$here/hal_c2" start "$@" &
   child=$!
   # A signal that arrived before this MC had a pid to send it to.
-  [ -n "$stopping" ] && kill -TERM "$child" 2>/dev/null
+  [ -n "$stopping" ] && stop
   # A trapped signal interrupts `wait`; wait again until the MC itself has exited.
   while :; do
     wait "$child"
     status=$?
     kill -0 "$child" 2>/dev/null || break
   done
+  # This MC is gone, so its pid may be another process's: a stop from here on is for the
+  # next MC, and the repeater, which ignores TERM, must not signal the pid again.
+  child=
+  [ -n "$repeater" ] && kill -KILL "$repeater" 2>/dev/null
+  repeater=
   [ -n "$stopping" ] && exit "$status"
   [ "$status" -eq 75 ] && continue
   if [ "$status" -ne 0 ] && [ -f "$releases/start_erl.data.previous" ]; then

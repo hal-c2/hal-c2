@@ -16,7 +16,9 @@ use serde_json::{Map, json};
 
 use super::text::{self, images_signature};
 use crate::composer_model::utf16_len;
+use crate::controller;
 use crate::controllers::drafts;
+use crate::controllers::toasts::Toasts;
 use crate::json::Json;
 use crate::thread_view::summary::{Obj, as_object};
 
@@ -96,6 +98,11 @@ pub struct Draft {
     /// The model and mode came with a new thread from the thread it was
     /// started on, not from a pick here; the next new thread replaces them.
     pub carried: bool,
+    /// The model alone came with that carry: a pick of anything else
+    /// (the interaction mode is the one that clears `carried`) leaves it
+    /// set, so the model still gives way where a project names the model
+    /// a new thread starts on (`drop_carried_models`).
+    pub model_carried: bool,
     /// The thread's selectionRevision the model pick was made against: it
     /// gives way to any change the thread takes after it but this client's
     /// own (`pick_own`, `Composer::next_pick`). None from an MC that counts
@@ -140,6 +147,7 @@ impl Draft {
     /// Drops the model pick, which the thread has moved past.
     pub fn drop_picks(&mut self) {
         self.model_selection = None;
+        self.model_carried = false;
         self.pick_base = None;
         self.pick_own.clear();
     }
@@ -246,6 +254,25 @@ pub fn model_options(engine: &Engine, instance: &str, model: &str) -> Option<Jso
     })
 }
 
+/// A failed background prompt the toast `toast_id` of window `window`
+/// offers back to the draft `draft_id`.
+#[derive(Clone)]
+pub struct Offer {
+    pub draft_id: String,
+    pub window: String,
+    pub toast_id: String,
+}
+
+impl Offer {
+    /// Whether its toast is still shown; a toast busy now counts as shown.
+    pub fn shown(&self, engine: &Engine) -> bool {
+        controller::in_window(engine, &self.window, || {
+            controller::with::<Toasts, _>(engine, |t, _| t.shows(&self.toast_id)).unwrap_or(true)
+        })
+        .unwrap_or(false)
+    }
+}
+
 #[derive(Default)]
 pub struct Data {
     pub drafts: HashMap<String, Draft>,
@@ -273,6 +300,11 @@ pub struct Data {
     /// The threads whose `queue.resume` the MC has not answered: one request
     /// at a time per thread, whichever window asks.
     pub resuming: HashSet<String>,
+    /// Failed background prompts a toast offers back to their drafts. Not
+    /// saved: a toast lasts the run.
+    pub offers: Vec<Offer>,
+    /// The windows whose toasts tell the offers when one is closed.
+    offers_heard: HashSet<String>,
     path: Option<PathBuf>,
     /// The images last written beside the drafts, so a keystroke does not
     /// rewrite them.
@@ -336,6 +368,72 @@ pub fn draft_preview(engine: &Engine, target: &str) -> Option<String> {
     text::preview_of(&text, carried)
 }
 
+/// A launch from the draft is kept until its answer: a failed one's prompt
+/// comes back into the draft, a background one's too.
+pub fn awaits_launch(engine: &Engine, draft_id: &str) -> bool {
+    read(engine, |d| {
+        d.unsent
+            .iter()
+            .any(|u| u.target == draft_id && u.thread != draft_id)
+    })
+}
+
+/// Whether a toast offers a failed background prompt back to the draft (it
+/// held a newer one): kept for it while empty, not past a removal.
+pub fn offers_launch(engine: &Engine, draft_id: &str) -> bool {
+    let offers: Vec<Offer> = read(engine, |d| {
+        d.offers
+            .iter()
+            .filter(|o| o.draft_id == draft_id)
+            .cloned()
+            .collect()
+    });
+    offers.iter().any(|o| o.shown(engine))
+}
+
+/// Notes that a toast offers a failed background prompt back to `draft_id`,
+/// forgetting offers whose toasts are gone.
+pub fn offer(engine: &Engine, draft_id: &str, toast_id: String) {
+    let window = controller::window_id(engine);
+    if write(engine, |d| d.offers_heard.insert(window.clone())) {
+        // An offer closed by hand gives nothing back: its draft may go. One
+        // listener for the window's toasts.
+        let heard = window.clone();
+        controller::with::<Toasts, _>(engine, |t, _| {
+            t.on_closed_by_user(move |engine, id| {
+                let gone = write(engine, |d| {
+                    let before = d.offers.len();
+                    d.offers
+                        .retain(|o| !(o.window == heard && o.toast_id == id));
+                    d.offers.len() != before
+                });
+                if gone {
+                    drafts::reconcile(engine);
+                }
+            });
+        });
+    }
+    forget_gone_offers(engine);
+    write(engine, |d| {
+        d.offers.push(Offer {
+            draft_id: draft_id.to_owned(),
+            window,
+            toast_id,
+        });
+    });
+}
+
+/// Forgets the offers whose toasts are gone: a chosen Restore takes its
+/// toast with it.
+pub fn forget_gone_offers(engine: &Engine) {
+    let offers = write(engine, |d| std::mem::take(&mut d.offers));
+    let mut offers: Vec<Offer> = offers.into_iter().filter(|o| o.shown(engine)).collect();
+    write(engine, |d| {
+        offers.append(&mut d.offers);
+        d.offers = offers;
+    });
+}
+
 /// A draft that became a thread: what the user typed after sending its
 /// first message goes on in the thread's composer.
 pub fn adopt(engine: &Engine, draft_id: &str, thread_key: &str, text: &str) {
@@ -396,6 +494,21 @@ pub fn attachments(engine: &Engine, target: &str) -> Vec<Json> {
                     "sizeBytes": a.size_bytes,
                     "source": a.source,
                 })
+            })
+            .collect()
+    })
+}
+
+/// The ids of what `target`'s draft carries besides its text: its
+/// attachments, then its excerpts.
+pub fn carried(engine: &Engine, target: &str) -> Vec<String> {
+    read(engine, |d| {
+        d.drafts
+            .get(target)
+            .into_iter()
+            .flat_map(|k| {
+                let attachments = k.attachments.iter().map(|a| a.id.clone());
+                attachments.chain(k.excerpts.iter().map(|e| e.id.clone()))
             })
             .collect()
     })
@@ -624,6 +737,8 @@ pub fn load(engine: &Engine, path: Option<PathBuf>) {
                 .unwrap_or_default()
                 .to_owned();
             kept.carried = entry["carried"].as_bool().unwrap_or(false);
+            // Kept by an older build: `carried` then covered the model too.
+            kept.model_carried = entry["modelCarried"].as_bool().unwrap_or(kept.carried);
         }
         let mut unsent_images = Map::new();
         if let Some(images) = &images {
@@ -739,6 +854,11 @@ pub fn saved(engine: &Engine) -> bool {
             }
             if kept.carried {
                 entry.insert("carried".into(), json!(true));
+            }
+            // Written whenever either is set: a missing `modelCarried` reads
+            // back as `carried`, which would undo a model picked after the carry.
+            if kept.carried || kept.model_carried {
+                entry.insert("modelCarried".into(), json!(kept.model_carried));
             }
             if !entry.is_empty() {
                 targets.insert(key.clone(), Json::Object(entry));
