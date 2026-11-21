@@ -684,7 +684,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   # `call!` fails the step on an error reply: a refresh of every provider still succeeds.
   step "the user refreshes every provider's models", context do
-    {_, context} = World.call!(context, "server.refreshProviders", %{"refreshModels" => true})
+    {{_, context}, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        World.call!(context, "server.refreshProviders", %{"refreshModels" => true})
+      end)
+
+    Map.put(context, :refresh_log, log)
+  end
+
+  step "the failed read is logged", context do
+    assert context.refresh_log =~ "refreshing Antigravity models (#{@instance}) failed"
     context
   end
 
