@@ -547,7 +547,7 @@ Feature: Changing model and provider mid-thread
     Then the send is refused because background work is still running
     And once that work ends, sending again starts "claude-work" and stops "claude"
 
-  @backlog @mc
+  @mc
   Scenario: Context occupancy starts over on a new provider conversation
     Given "t1" has used 80 percent of its provider context
     When the user switches "t1" to "claudeAgent" and sends a message
