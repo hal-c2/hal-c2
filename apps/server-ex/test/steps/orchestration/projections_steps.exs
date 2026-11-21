@@ -1301,14 +1301,13 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
-  step ~r/^a command in "(?<thread>[^"]+)" exited with code 0 but its output reports an error$/,
+  step ~r/^a command in "(?<thread>[^"]+)" reported no exit code but its output reports an error$/,
        %{args: [thread]} = context do
     item = %{
       "id" => "cmd-1",
       "runId" => "run-1",
       "type" => "command_execution",
       "command" => "make",
-      "exitCode" => 0,
       "output" => "error: build failed",
       "outputIndicatesFailure" => true
     }

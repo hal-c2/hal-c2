@@ -131,7 +131,7 @@ Feature: Terminal sessions
         | any variable starting with ERL_     |
 
     # Upstream #13359: shells no longer inherit the terminal multiplexer session the server was started from.
-    @backlog @mc
+    @mc
     Scenario Outline: A shell does not join the multiplexer session the MC was started from
       Given the MC was started inside a terminal multiplexer that set <variable>
       When a terminal opens
@@ -148,7 +148,7 @@ Feature: Terminal sessions
         | ZELLIJ_PANE_ID      |
 
     # Upstream #13359: only per-session variables are dropped; the user's multiplexer settings pass.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A multiplexer's own settings still reach the shell
       Given the MC runs with ZELLIJ_CONFIG_DIR set
       When a terminal opens

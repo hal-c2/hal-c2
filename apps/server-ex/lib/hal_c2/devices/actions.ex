@@ -273,8 +273,12 @@ defmodule HalC2.Devices.Actions do
     end
   end
 
-  defp android(serial, %{"type" => "openUrl", "url" => url}),
-    do: shell(serial, ["am", "start", "-a", "android.intent.action.VIEW", "-d", url], "open url")
+  # `adb shell` joins its arguments into one line the device's shell parses again, so
+  # the URL goes single-quoted: whole, and never a second command.
+  defp android(serial, %{"type" => "openUrl", "url" => url}) do
+    quoted = "'" <> String.replace(url, "'", "'\\''") <> "'"
+    shell(serial, ["am", "start", "-a", "android.intent.action.VIEW", "-d", quoted], "open url")
+  end
 
   defp android(serial, %{"type" => "launchApp", "appId" => app}),
     do:
