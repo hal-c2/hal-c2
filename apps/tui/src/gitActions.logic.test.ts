@@ -61,6 +61,14 @@ describe("resolveGitQuickAction", () => {
     expect(action).toMatchObject({ kind: "open_pr", label: "View PR" });
   });
 
+  it("Given changes on a branch behind its upstream, then it offers only Commit", () => {
+    const action = resolveGitQuickAction(
+      status({ hasWorkingTreeChanges: true, behindCount: 1 }),
+      false,
+    );
+    expect(action).toMatchObject({ kind: "run_action", action: "commit", label: "Commit" });
+  });
+
   it("Given behind upstream, then it offers Pull", () => {
     const action = resolveGitQuickAction(status({ behindCount: 1 }), false);
     expect(action).toMatchObject({ kind: "run_pull", label: "Pull" });

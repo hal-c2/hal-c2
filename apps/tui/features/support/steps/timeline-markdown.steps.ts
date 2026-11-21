@@ -569,6 +569,162 @@ step(
   },
 );
 
+// --- bare addresses, lists and tables under text (backlog hookup) ---------------------
+
+/** The reply's link chunks: their shown text and where they point. */
+const linksOf = (ctx: MarkdownWorld) =>
+  reply(ctx)
+    .lines.flatMap((line) => line.text.chunks)
+    .filter((part) => part.link)
+    .map((part) => ({ text: part.text, url: part.link!.url }));
+
+step("the agent answers with {string}", async (ctx: MarkdownWorld, text: string) => {
+  await answer(ctx, text);
+});
+
+step("the reply reads {string}", async (ctx: MarkdownWorld, text: string) => {
+  expect(linesOf(reply(ctx))[0]).toBe(text);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("the agent's reply reads {string}", async (ctx: MarkdownWorld, text: string) => {
+  await answer(ctx, text);
+});
+
+step("the reply shows {string}", async (ctx: MarkdownWorld, text: string) => {
+  expect(linesOf(reply(ctx))[0]).toBe(text);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step(
+  "the reply contains the bare address {string}",
+  async (ctx: MarkdownWorld, address: string) => {
+    await answer(ctx, `See ${address} for the rates.`);
+  },
+);
+
+step(
+  "the reply contains the bare address {string} followed by {string}",
+  async (ctx: MarkdownWorld, address: string, punctuation: string) => {
+    await answer(ctx, `See ${address}${punctuation} Then carry on.`);
+  },
+);
+
+step("the link is {string} in full", async (ctx: MarkdownWorld, address: string) => {
+  expect(linksOf(ctx)).toContainEqual({ text: address, url: address });
+  expect(await snapshot(ctx)).toContain(address);
+});
+
+step("the link is {string}", (ctx: MarkdownWorld, address: string) => {
+  expect(linksOf(ctx)).toContainEqual({ text: address, url: address });
+});
+
+step("{string} is shown after it", async (ctx: MarkdownWorld, punctuation: string) => {
+  const line = reply(ctx).lines[0]!;
+  const at = line.text.chunks.findIndex((part) => part.link);
+  expect(at).toBeGreaterThan(-1);
+  const after = line.text.chunks
+    .slice(at + 1)
+    .map((part) => part.text)
+    .join("");
+  expect(after.startsWith(punctuation)).toBe(true);
+  expect(line.text.chunks[at]!.link!.url.endsWith(punctuation)).toBe(false);
+});
+
+step("the agent's reply contains {string}", async (ctx: MarkdownWorld, address: string) => {
+  await answer(ctx, `Open ${address} in the browser.`);
+});
+
+step("{string} is shown as one link", async (ctx: MarkdownWorld, address: string) => {
+  expect(linksOf(ctx)).toEqual([{ text: address, url: address }]);
+  expect(await snapshot(ctx)).toContain(address);
+});
+
+step(
+  "the agent answers with an ordered list numbered {int} to {int}",
+  async (ctx: MarkdownWorld, from: number, to: number) => {
+    const items = Array.from({ length: to - from + 1 }, (_, i) => `${from + i}. Item ${from + i}`);
+    await answer(ctx, items.join("\n"));
+  },
+);
+
+step(
+  "every item shows its whole number, from {string} to {string}",
+  async (ctx: MarkdownWorld, first: string, last: string) => {
+    const from = Number.parseInt(first, 10);
+    const to = Number.parseInt(last, 10);
+    const lines = linesOf(reply(ctx)).filter((line) => /^\d+\. /.test(line));
+    expect(lines).toHaveLength(to - from + 1);
+    lines.forEach((line, i) => expect(line.startsWith(`${from + i}. `)).toBe(true));
+    expect(await snapshot(ctx)).toContain(`${to}. Item ${to}`);
+  },
+);
+
+const TABLE_UNDER_TEXT: Record<string, string> = {
+  "at the top level": "Rates follow\n| Region | Rate |\n|---|---|\n| EU | 21% |",
+  "inside a quote": "> Rates follow\n> | Region | Rate |\n> |---|---|\n> | EU | 21% |",
+  "inside a list item": "- Rates follow\n  | Region | Rate |\n  |---|---|\n  | EU | 21% |",
+};
+
+step(
+  /^the agent answers with a line of text and, on the next line with no blank line between, a table (.+)$/,
+  async (ctx: MarkdownWorld, where: string) => {
+    const text = TABLE_UNDER_TEXT[where];
+    if (!text) throw new Error(`unknown place for a table under text: ${where}`);
+    await answer(ctx, text);
+  },
+);
+
+step("the table is shown as a table and not as a run-on paragraph", async (ctx: MarkdownWorld) => {
+  const lines = linesOf(reply(ctx));
+  // Boxed as a table (borders and cells), never the raw pipe rows.
+  expect(lines.some((line) => line.startsWith("┌"))).toBe(true);
+  expect(tableRows(ctx).length).toBeGreaterThan(0);
+  expect(lines.join("\n")).not.toContain("| Region | Rate |");
+  expect(await snapshot(ctx)).toContain("EU");
+});
+
+step(
+  "the agent's reply has a line {string} with an image alone on the next line",
+  async (ctx: MarkdownWorld, label: string) => {
+    await answer(ctx, `${label}\n![palette](https://example.com/palette.png)`);
+  },
+);
+
+step(
+  "the image is shown below {string}, not beside it",
+  async (ctx: MarkdownWorld, label: string) => {
+    const lines = linesOf(reply(ctx));
+    const at = lines.findIndex((line) => line === label);
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("palette");
+    expect(linksOf(ctx)).toContainEqual({
+      text: "palette",
+      url: "https://example.com/palette.png",
+    });
+    const rows = (await snapshot(ctx)).split("\n");
+    const labelRow = rows.findIndex((row) => row.includes(label));
+    expect(rows[labelRow + 1]).toContain("palette");
+  },
+);
+
+step(
+  "the agent's reply has a sentence with a badge image in the middle of it",
+  async (ctx: MarkdownWorld) => {
+    await answer(ctx, "Builds are ![passing](https://example.com/badge.svg) on main today.");
+  },
+);
+
+step("the badge is shown inline within the sentence", async (ctx: MarkdownWorld) => {
+  // The whole sentence is one drawn line, the badge's name inside it.
+  expect(linesOf(reply(ctx))).toContain("Builds are passing on main today.");
+  expect(linksOf(ctx)).toContainEqual({
+    text: "passing",
+    url: "https://example.com/badge.svg",
+  });
+  expect(await snapshot(ctx)).toContain("Builds are passing on main today.");
+});
+
 step("the diagram is drawn", async (ctx: MarkdownWorld) => {
   await settleUi(ctx);
   const { source } = ctx.diagram!;

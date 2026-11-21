@@ -74,6 +74,12 @@ describe("pace", () => {
     expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
       "resets now",
     );
+    expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T12:00:45.000Z" }, now)).toBe(
+      "resets momentarily",
+    );
+    expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T12:01:00.000Z" }, now)).toBe(
+      "resets in 1m",
+    );
   });
 });
 

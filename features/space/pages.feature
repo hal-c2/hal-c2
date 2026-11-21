@@ -335,20 +335,17 @@ Feature: Pages in a Space
       And the agent in "Work" deletes the block "Shipped"
       Then the blocks of "Roadmap" read ""
 
-    @backlog-tui
     Scenario: An agent's refused edit changes nothing
       When the agent in "Work" changes the block "Ship it" to "Shipped" and ticks it
       Then the agent is refused
       And the blocks of "Roadmap" read "Ship it"
 
-    @backlog-tui
     Scenario: An agent cannot edit a trashed page
       Given the page "Roadmap" is in the trash
       When the agent in "Work" adds the block "Agent note" to "Roadmap"
       Then the agent is refused
 
     # https://github.com/hal-c2/hal-c2/issues/854
-    @backlog-tui
     Scenario: An agent changes a heading's level
       When the agent in "Work" adds the heading "Goals" to "Roadmap"
       And the agent in "Work" makes "Goals" a level 4 heading

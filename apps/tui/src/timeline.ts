@@ -385,6 +385,20 @@ export interface DiffStat {
   readonly deletions: number;
 }
 
+/**
+ * A diff count compactly: 940, 8.5k, 999k, 1m, 1b. A count that rounds up
+ * to the next unit reads in that unit, never "1000k" or "1000m".
+ */
+export function formatDiffCount(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0";
+  if (value < 1_000) return `${Math.round(value)}`;
+  if (value < 10_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  if (value < 999_500) return `${Math.round(value / 1_000)}k`;
+  if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+  if (value < 999_500_000) return `${Math.round(value / 1_000_000)}m`;
+  return `${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}b`;
+}
+
 export function diffStat(files: OrchestrationCheckpointSummary["files"]): DiffStat {
   let additions = 0;
   let deletions = 0;

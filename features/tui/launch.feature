@@ -65,13 +65,13 @@ Feature: Launching and leaving the terminal client
     Then the terminal client writes its diagnostics to a log file next to the server's runtime record
     And the screen is never used for diagnostics
 
-  @backlog @tui @priority-low
+  @tui @priority-low
   Scenario: The user chooses where the terminal client writes its diagnostic log
     Given the environment variable "HAL_C2_TUI_LOG" names a file
     When the user starts the terminal client
     Then the terminal client appends its diagnostics to that file
 
-  @backlog @tui @priority-low
+  @tui @priority-low
   Scenario: A diagnostic log that cannot be written never breaks the terminal client
     Given the diagnostic log's folder is not writable
     When the user starts the terminal client

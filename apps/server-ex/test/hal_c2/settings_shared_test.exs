@@ -287,6 +287,42 @@ defmodule HalC2.SettingsSharedTest do
       assert JSON.decode!(File.read!(path)) == %{"defaultRuntimeMode" => "approval-required"}
     end
 
+    test "a startup cleanup write does not restamp an edit made while the MC was down", %{
+      path: path,
+      id: id
+    } do
+      {:ok, 1} = Settings.put(%{"defaultRuntimeMode" => "full-access"}, 0)
+      %{"defaultRuntimeMode" => %{"at" => at}} = Settings.shared_records()
+      :ok = stop_supervised(Settings)
+
+      # The offline edit, with a plugin record the startup write ends (its instance
+      # was deleted by hand while the MC was down).
+      File.write!(
+        path,
+        JSON.encode!(%{
+          "defaultRuntimeMode" => "approval-required",
+          "plugins" => %{"probe" => %{"providerInstances" => ["plugin_probe_work"]}}
+        })
+      )
+
+      later = div(at, 1000) + 3600
+      File.touch!(path, later)
+      start_supervised!(Settings)
+
+      assert get_in(JSON.decode!(File.read!(path)), ["plugins", "probe", "providerInstances"]) ==
+               []
+
+      assert %{
+               "defaultRuntimeMode" => %{
+                 "at" => stamped,
+                 "by" => ^id,
+                 "value" => "approval-required"
+               }
+             } = Settings.shared_records()
+
+      assert stamped == later * 1000
+    end
+
     test "settings from before stamps keep every value and are stamped once", %{
       path: path,
       records: records

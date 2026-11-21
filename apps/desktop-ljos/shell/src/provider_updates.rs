@@ -794,6 +794,10 @@ pub struct Sidebar {
 impl Sidebar {
     /// Whether the notice changed.
     pub fn set_providers(&mut self, providers: &[Json], now: DateTime<Utc>) -> bool {
+        // The same providers make the same notice: nothing to work out.
+        if self.providers == providers {
+            return false;
+        }
         // Updates that finished before the providers were first seen
         // happened before this app was looking; they are not news.
         if self.visible_after.is_none() && !providers.is_empty() {
