@@ -105,7 +105,8 @@ defmodule HalC2.CodeReviewPropTest do
     File.write!(ssh, """
     #!/bin/sh
     for last; do :; done
-    if [ -e '#{fx}/fetch.hold' ]; then
+    # The submodule acme/lib is not held: a hold is on the fetch of a pull request.
+    if [ -e '#{fx}/fetch.hold' ] && ! echo "$last" | grep -q 'acme/lib'; then
       marker='#{fx}/holds/'$$
       echo $PPID > "$marker.tmp" && mv "$marker.tmp" "$marker"
       while [ -e '#{fx}/fetch.hold' ] && [ ! -e '#{fx}/holds/go-'$PPID ] && [ -d '#{fx}' ]; do sleep 0.05; done
@@ -610,6 +611,8 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: [],
       checkouts: checkouts(m),
       orphans: [],
+      leaked: [],
+      unchecked: [],
       unstopped: [],
       posts: Enum.sort(m.posts),
       starts: if(m.enabled, do: m.starts, else: :off),
@@ -1982,6 +1985,8 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: Enum.filter(Process.get(:cr_discarded), &thread(&1)["plugin"]["listed"]),
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
+      leaked: leaked(),
+      unchecked: unchecked(),
       unstopped: unstopped(view),
       posts: posts(),
       starts: if(pid, do: starts(), else: :off),
@@ -2090,6 +2095,31 @@ defmodule HalC2.CodeReviewPropTest do
       end
 
     Enum.reject(checkout_dirs(), &(Path.expand(&1) in saved))
+  end
+
+  # The worktrees the clones still list for a checkout no longer on disk: what a
+  # checkout's removal left behind, its submodules' repositories among it.
+  defp leaked do
+    for admin <- Path.wildcard(Path.join([data_dir(), "repos", "**", "*.git", "worktrees", "*"])),
+        {:ok, gitdir} <- [File.read(Path.join(admin, "gitdir"))],
+        not File.exists?(gitdir |> String.trim() |> Path.dirname()),
+        do: admin
+  end
+
+  # Saved checkouts of acme/web, made here rather than in a sandbox, without its
+  # submodule `lib` checked out.
+  defp unchecked do
+    case File.read(Path.join(data_dir(), "reviews.json")) do
+      {:ok, text} ->
+        for {"acme/web" <> _, r} <- JSON.decode!(text)["reviews"],
+            is_binary(r["checkout"]) and r["sandboxed"] != true,
+            File.dir?(r["checkout"]),
+            not File.regular?(Path.join(r["checkout"], "lib/README.md")),
+            do: r["checkout"]
+
+      _ ->
+        []
+    end
   end
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
@@ -2692,8 +2722,20 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # The fake remotes: `acme/api` and `acme/web`, each pull request with two head
-  # commits off `main` that change `src/limits.ts`. Returns `{key, i}` → sha.
+  # commits off `main` that change `src/limits.ts`. `acme/web` has `acme/lib` as its
+  # submodule `lib`. Returns `{key, i}` → sha.
   defp remotes(fx) do
+    lib_bare = Path.join([fx, "remotes", "acme", "lib.git"])
+    File.mkdir_p!(Path.dirname(lib_bare))
+    git!(fx, ["init", "-q", "--bare", "-b", "main", lib_bare])
+    lib = Path.join(fx, "seed-lib")
+    git!(fx, ["init", "-q", "-b", "main", lib])
+    File.write!(Path.join(lib, "README.md"), "# lib\n")
+    git!(lib, ["add", "README.md"])
+    git!(lib, ["commit", "-q", "-m", "Start"])
+    git!(lib, ["push", "-q", lib_bare, "main:main"])
+    lib_sha = git!(lib, ["rev-parse", "HEAD"])
+
     for repo <- ~w(api web), reduce: %{} do
       shas ->
         bare = Path.join([fx, "remotes", "acme", "#{repo}.git"])
@@ -2703,6 +2745,17 @@ defmodule HalC2.CodeReviewPropTest do
         git!(fx, ["init", "-q", "-b", "main", seed])
         File.write!(Path.join(seed, "README.md"), "# #{repo}\n")
         git!(seed, ["add", "README.md"])
+
+        if repo == "web" do
+          File.write!(
+            Path.join(seed, ".gitmodules"),
+            "[submodule \"lib\"]\n\tpath = lib\n\turl = https://github.com/acme/lib.git\n"
+          )
+
+          git!(seed, ["add", ".gitmodules"])
+          git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{lib_sha},lib"])
+        end
+
         git!(seed, ["commit", "-q", "-m", "Start"])
         git!(seed, ["push", "-q", bare, "main:main"])
 

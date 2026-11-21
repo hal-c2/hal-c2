@@ -2122,6 +2122,9 @@ defmodule HalC2Plugins.CodeReview do
            {:ok, checkout} <-
              Checkout.prepare(clone, path, remote, review["number"], review["baseBranch"]),
            :ok <- approved_head(settings, review, checkout, clone),
+           # A sandbox gets the two refs alone, so only a checkout the agent works in
+           # here gets its submodules.
+           checkout = if(sandboxed, do: checkout, else: submodules(clone, checkout, remote)),
            :ok <-
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
@@ -2132,7 +2135,10 @@ defmodule HalC2Plugins.CodeReview do
                "sandboxed" => sandboxed
              }),
            :ok <-
-             if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok) do
+             if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok),
+           # The sandbox, if any, is made from the checkout's refs by now: they go before
+           # the thread is made, so a thread never sees a clone still holding them.
+           :ok <- Checkout.release() do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
         review = Map.merge(review, pull_request_context(review))
         started = %{"root" => clone, "checkout" => checkout["path"]}
@@ -2159,7 +2165,7 @@ defmodule HalC2Plugins.CodeReview do
         end
       end
 
-    # The sandbox, if any, is made from the checkout's refs by now.
+    # And those of a run that went no further.
     Checkout.release()
 
     case result do
@@ -2201,6 +2207,15 @@ defmodule HalC2Plugins.CodeReview do
       listed: listed?(settings),
       sandboxed: sandboxed
     )
+  end
+
+  # The checkout with its submodules, or with why some are missing for the agent to
+  # report: a review without them still reads the change.
+  defp submodules(clone, checkout, remote) do
+    case Checkout.submodules(clone, checkout["path"], remote) do
+      :ok -> checkout
+      {:error, reason} -> Map.put(checkout, "submodules", reason)
+    end
   end
 
   # A pull request the watch does not trust is reviewed only at the commit the user
@@ -2538,6 +2553,8 @@ defmodule HalC2Plugins.CodeReview do
       review_md && "The repository's REVIEW.md says:\n#{review_md}",
       body,
       review["checksLine"],
+      checkout["submodules"] &&
+        "The checkout's submodules could not all be fetched on the reviewing machine, so checks that need them are blocked there: #{checkout["submodules"]}",
       existing,
       previous,
       @report

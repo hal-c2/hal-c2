@@ -175,6 +175,180 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     :ok
   end
 
+  @doc """
+  Checks out the submodules of the worktree at `path`, of the bare clone at `clone`,
+  at the commits its head pins, nested ones included; `remote` signs in as for
+  `prepare/5`. Answers `:ok` at once when the head has no `.gitmodules`, else `:ok`
+  or `{:error, reason}`: a checkout missing some submodules is still reviewed.
+
+  Git keeps a worktree's submodule repositories under its own admin directory in the
+  clone, which `remove/2` takes with it. Each is cloned with the clone's shared store
+  of submodule objects as an alternate, and what it fetched goes into the store after,
+  so the next review downloads only what is new. Nothing is written to the clone's
+  config, which every review of the repository shares: the submodules are made active
+  and cloned from the head's `.gitmodules` for this command alone, each at its pinned
+  commit whatever update strategy it names and in full whatever `shallow` says, over a
+  checked certificate whatever the MC's environment configures. Only HTTP(S) and SSH
+  are used, so a `.gitmodules` cannot point git at a local path, run a command through
+  `ext::` or reach a `git://` server, which nothing times out. A transfer that stalls is
+  dropped (HTTP under 1 KB/s for a minute, SSH that stops answering), and the whole
+  update has `@submodules_ms` before it and what it started are killed.
+  """
+  def submodules(clone, path, %{"url" => url} = remote) do
+    if File.regular?(Path.join(path, ".gitmodules")) do
+      store = Path.join(clone, "hal-c2-submodules")
+
+      with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
+           {:ok, {credentials, env}} <- credentials(clone, remote, url),
+           {:ok, checked} <- checked_config(path) do
+        updated =
+          bounded_git(
+            path,
+            credentials ++
+              [
+                "-c",
+                "submodule.active=.",
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=60",
+                "submodule",
+                "update",
+                # A `.gitmodules` entry's `update = none` (or another strategy) is
+                # not followed: every submodule gets the commit the head pins.
+                "--checkout",
+                # A `shallow = true` entry is not followed either: the store a shallow
+                # clone feeds turns shallow, and git refuses a shallow `--reference`.
+                "--no-recommend-shallow",
+                "--recursive",
+                "--reference",
+                store
+              ],
+            [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env]
+          )
+
+        # What the update fetched before it failed or ran out of time still reaches the
+        # store, as removing the checkout takes it; the error still tells the agent.
+        store(store, path)
+
+        with {:ok, _} <- updated, do: :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @submodules_ms 15 * 60_000
+
+  # The command-scope configuration the MC's environment hands git (`GIT_CONFIG_COUNT`,
+  # `GIT_CONFIG_PARAMETERS` and the files they include), as git itself reads it, minus
+  # every `sslVerify`, given back as `GIT_CONFIG_COUNT` entries that replace it. The
+  # token's helper answers for every submodule on its server, nested ones too, whose
+  # URLs are not known before the update fetches them: with no `http.<url>.sslVerify`
+  # left for any of them, and the file-based configuration already left out, a token
+  # only goes over a checked certificate.
+  defp checked_config(path) do
+    with {:ok, listed} <- git(path, ["config", "--list", "--show-scope", "-z"]) do
+      entries =
+        listed
+        |> String.split(<<0>>)
+        |> Enum.chunk_every(2, 2, :discard)
+        |> Enum.flat_map(fn
+          ["command", entry] ->
+            case String.split(entry, "\n", parts: 2) do
+              [key, value] -> [{key, value}]
+              # A key with no value is true; an empty one would be false.
+              [key] -> [{key, "true"}]
+            end
+
+          _ ->
+            []
+        end)
+        # Includes are already expanded into what they hold. An `includeIf` that would
+        # match only a submodule's gitdir is lost on purpose: re-exported, its file could
+        # turn `sslVerify` off again.
+        |> Enum.reject(fn {key, _} ->
+          String.ends_with?(key, ".sslverify") or String.starts_with?(key, "include.") or
+            String.starts_with?(key, "includeif.")
+        end)
+
+      count = String.to_integer(System.get_env("GIT_CONFIG_COUNT") || "0")
+
+      stale =
+        for n <- length(entries)..(count - 1)//1,
+            name <- ["GIT_CONFIG_KEY_#{n}", "GIT_CONFIG_VALUE_#{n}"],
+            do: {name, nil}
+
+      set =
+        entries
+        |> Enum.with_index()
+        |> Enum.flat_map(fn {{key, value}, n} ->
+          [{"GIT_CONFIG_KEY_#{n}", key}, {"GIT_CONFIG_VALUE_#{n}", value}]
+        end)
+
+      {:ok,
+       [
+         {"GIT_CONFIG_PARAMETERS", nil},
+         {"GIT_CONFIG_COUNT", Integer.to_string(length(entries))} | set ++ stale
+       ]}
+    end
+  rescue
+    ArgumentError -> {:error, "GIT_CONFIG_COUNT in the MC's environment is not a number."}
+  end
+
+  # SSH that gives up on a server that does not connect or stops answering, unless the
+  # MC's environment names its own SSH command or program (`GIT_SSH_COMMAND` or
+  # `GIT_SSH`, a wrapper ours would override), which the overall timeout still bounds.
+  defp ssh_env do
+    if System.get_env("GIT_SSH_COMMAND") in [nil, ""] and System.get_env("GIT_SSH") in [nil, ""],
+      do: [
+        {"GIT_SSH_COMMAND",
+         "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"}
+      ],
+      else: []
+  end
+
+  # Puts the objects of the checkout's submodules into the store, under refs named for
+  # each one's remote so a later clone of it finds them, as far as it can: the checkout
+  # is whole without them. Git never collects garbage in the store (`gc.auto=0`), as the
+  # checkouts borrowing its objects do not hold its refs. Paths come NUL-separated, as a
+  # submodule's path can hold any character but NUL, leading and trailing spaces included,
+  # so that output is read untrimmed.
+  defp store(store, path) do
+    with {:ok, paths} <-
+           raw_git(path, [
+             "submodule",
+             "foreach",
+             "--recursive",
+             "--quiet",
+             ~S(printf '%s\0' "$displaypath")
+           ]) do
+      for sub <- paths |> String.split(<<0>>) |> Enum.drop(-1),
+          sub = Path.join(path, sub),
+          {:ok, from} <- [git(sub, ["config", "remote.origin.url"])] do
+        key = :crypto.hash(:sha256, from) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+
+        git(
+          store,
+          [
+            "-c",
+            "gc.auto=0",
+            "fetch",
+            "-q",
+            "--no-tags",
+            "--no-write-fetch-head",
+            sub,
+            "+HEAD:refs/hal-c2/submodules/#{key}/head",
+            "+refs/remotes/origin/*:refs/hal-c2/submodules/#{key}/remotes/*"
+          ],
+          [{"GIT_ALLOW_PROTOCOL", "file"}]
+        )
+      end
+    end
+
+    :ok
+  end
+
   @doc "Removes the worktree at `path` from the repository at `root`, if it is there."
   def remove(root, path) do
     alone(root, fn ->
@@ -365,7 +539,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # A token goes only to the server it was issued for (`server`, else `url`'s), and over
   # a checked certificate: the configuration the MC's environment hands git
   # (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`) can rewrite `url` to another server
-  # or turn the check off, and is refused when it does. The helper is configured for
+  # or turn the check off, and is refused when it does; a submodule update drops every
+  # such `sslVerify` (`checked_config/1`). The helper is configured for
   # that origin alone (`credential.<url>.helper`), so git asks it about no other: a
   # fetch redirected elsewhere gets nothing.
   defp credentials(clone, %{"token" => token} = remote, url)
@@ -423,34 +598,55 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                GIT_TRACE2_EVENT GIT_TRACE2_PERF)
 
   defp git(cwd, args, env \\ []) do
-    case System.cmd("git", args,
-           cd: cwd,
-           stderr_to_stdout: true,
-           env:
-             [
-               {"GIT_TERMINAL_PROMPT", "0"},
-               {"GIT_CONFIG_GLOBAL", "/dev/null"},
-               {"GIT_CONFIG_NOSYSTEM", "1"},
-               {"GIT_CONFIG", nil},
-               {"GIT_SSL_NO_VERIFY", nil},
-               {"GIT_TRACE_REDACT", "1"}
-             ] ++ Enum.map(@untraced, &{&1, nil}) ++ env
-         ) do
-      {out, 0} ->
-        {:ok, String.trim(out)}
+    with {:ok, out} <- raw_git(cwd, args, env), do: {:ok, String.trim(out)}
+  end
 
-      {out, _} ->
-        said =
-          out
-          |> redact(env)
-          |> String.split("\n", trim: true)
-          |> Enum.map_join(" ", &String.trim/1)
-
-        {:error, "git #{command(args)} failed: #{said}"}
+  # `git/3` answering its output as git wrote it.
+  defp raw_git(cwd, args, env \\ []) do
+    case System.cmd("git", args, cd: cwd, stderr_to_stdout: true, env: git_env() ++ env) do
+      {out, 0} -> {:ok, out}
+      {out, _} -> {:error, failed(args, out, env)}
     end
   rescue
     e in [ErlangError, File.Error] ->
       {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
+  end
+
+  defp git_env do
+    [
+      {"GIT_TERMINAL_PROMPT", "0"},
+      {"GIT_CONFIG_GLOBAL", "/dev/null"},
+      {"GIT_CONFIG_NOSYSTEM", "1"},
+      {"GIT_CONFIG", nil},
+      {"GIT_SSL_NO_VERIFY", nil},
+      {"GIT_TRACE_REDACT", "1"}
+    ] ++ Enum.map(@untraced, &{&1, nil})
+  end
+
+  defp failed(args, out, env) do
+    said =
+      out
+      |> redact(env)
+      |> String.split("\n", trim: true)
+      |> Enum.map_join(" ", &String.trim/1)
+
+    "git #{command(args)} failed: #{said}"
+  end
+
+  # `git/3` under `@submodules_ms`: past it git and the programs it started are killed.
+  defp bounded_git(cwd, args, env) do
+    {unset, set} = Enum.split_with(git_env() ++ env, &match?({_, nil}, &1))
+
+    case HalC2.Git.run(cwd, args,
+           env: set,
+           unset: Enum.map(unset, &elem(&1, 0)),
+           timeout: @submodules_ms,
+           stop_children: {__MODULE__, cwd}
+         ) do
+      {:ok, %{status: 0, out: out}} -> {:ok, String.trim(out)}
+      {:ok, %{out: out, err: err}} -> {:error, failed(args, out <> err, env)}
+      {:error, reason} -> {:error, redact(reason, env)}
+    end
   end
 
   defp redact(out, env) do

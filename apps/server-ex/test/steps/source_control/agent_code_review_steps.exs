@@ -864,6 +864,54 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the head of \#{int} pins the submodule {string} of {string} behind its newest commit",
+       %{args: [number, path, repository]} = context do
+    # The fake GitHub serves every repository from the directory acme/api's remote is in.
+    remotes =
+      context.source |> World.git!(~w(remote get-url origin)) |> Path.dirname() |> Path.dirname()
+
+    bare = Path.join(remotes, "#{repository}.git")
+    World.git!(remotes, ["init", "-q", "--bare", "-b", "main", bare])
+    seed = Path.join(Mc.tmp_dir(context.mc, "submodule-source"), "repo")
+    World.git!(Path.dirname(seed), ["init", "-q", "-b", "main", seed])
+    pinned = World.commit!(seed, %{"README.md" => "pinned\n"}, "Pinned")
+    World.commit!(seed, %{"README.md" => "newer\n"}, "Newer")
+    World.git!(seed, ["push", "-q", bare, "main:main"])
+
+    source = context.source
+    World.git!(source, ~w(fetch -q origin))
+    World.git!(source, ~w(checkout -q --detach origin/main))
+
+    File.write!(
+      Path.join(source, ".gitmodules"),
+      "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = https://github.com/#{repository}.git\n"
+    )
+
+    World.git!(source, ~w(add .gitmodules))
+    World.git!(source, ["update-index", "--add", "--cacheinfo", "160000,#{pinned},#{path}"])
+    World.git!(source, ["commit", "-q", "-m", "Pull request #{number}"])
+    head = World.git!(source, ~w(rev-parse HEAD))
+    World.git!(source, ["push", "-q", "--force", "origin", "HEAD:refs/pull/#{number}/head"])
+
+    context
+    |> put_in([:heads, number], head)
+    |> Map.put(:pinned, pinned)
+  end
+
+  step "the checkout of \#{int} has {string} at the commit its head pins",
+       %{args: [number, path]} = context do
+    {review, context} = await_review(context, number, & &1["checkout"])
+    submodule = Path.join(review["checkout"], path)
+    assert World.git!(submodule, ~w(rev-parse HEAD)) == context.pinned
+    assert File.read!(Path.join(submodule, "README.md")) == "pinned\n"
+
+    # Every review of the repository shares the plugin's clone: nothing of this one's
+    # submodules is registered in its config.
+    clone = World.git!(review["checkout"], ~w(rev-parse --path-format=absolute --git-common-dir))
+    refute File.read!(Path.join(clone, "config")) =~ "submodule"
+    context
+  end
+
   step "the user's own checkout of {string} is not touched", context do
     assert checkout_state(context.root) == context.untouched
     context
