@@ -291,6 +291,36 @@ Feature: Office
       And then walks back to its desk, sometimes with a cup
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Waiting people slack off on their screens
+      Given the office has a thread waiting, at its desk
+      Then most of the time its screen shows solitaire, snake, falling blocks, a cat video, a meme or some shopping
+      And which one is picked at random, and changes every few seconds
+      And the screen changes at most once a second
+      When the thread is idle
+      Then its screen shows one only now and then
+      When the thread is working, typing
+      Then its screen shows its work again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A person asking the user something does not slack off
+      Given the office has a thread asking, at its desk
+      Then its screen never shows a game, a video, a meme or shopping
+
+    # The page ticks every 40 ms while anyone walks and every 200 ms otherwise.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A whiteboard fills at the same pace whether anyone walks or not
+      Given the office has a thread working, planning, at a whiteboard
+      When 2.4 seconds pass with people walking, and again with nobody walking
+      Then the whiteboard fills by a fifth each time
+
+    # Only screens showing work follow the clock.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Quiet screens stay still
+      Given the office has 16 threads idle, at their desks
+      When the office runs for a while
+      Then a screen showing the idle screen does not change
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The break room never holds more than its cap
       Given the office has 70 threads waiting
       When the office runs for a while

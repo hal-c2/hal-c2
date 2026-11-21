@@ -1958,6 +1958,163 @@ Item {
             verify(["coffee", "cooler", "couch", "table", "arcade", "chat", "vending", "fridge", "armchair"].filter(k => kinds[k]).length >= 4, "breaks go to different places");
         }
 
+        // Every slacking frame fits on the 8×6 screen in the six blocks a
+        // screen has for it.
+        function test_every_slacking_frame_fits_on_a_screen() {
+            for (const name of Object.keys(page.slackArt)) {
+                const art = page.slackArt[name];
+                verify(art.frames.length >= 2, name + " has frames to change between");
+                for (const frame of art.frames) {
+                    verify(frame.length >= 1 && frame.length <= 6, name + " has one to six blocks a frame");
+                    for (const [x, y, w, h] of frame)
+                        verify(x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= 8 && y + h <= 6, name + " stays on the screen");
+                }
+            }
+        }
+
+        // Waiting people slack off on their screens most of the time, idle
+        // ones now and then, each picking at random and changing every so
+        // often; working people keep to their work, and a screen changes at
+        // most once a second.
+        function test_waiting_people_slack_off_on_their_screens() {
+            const people = many(24, "w", "waiting").concat(many(24, "i", "idle"), many(8, "k", "working", "typing"));
+            plugin.publish(people);
+            const seen = {}, picks = {}, last = {};
+            const on = {
+                w: 0,
+                i: 0
+            }, at = {
+                w: 0,
+                i: 0
+            };
+            for (let t = 0; t < 1500; t++) {
+                page.advance(1);
+                for (const p of people) {
+                    const seat = page.world.seatOf[p.id];
+                    const view = seat && page.screenViews[seat.screen];
+                    if (!view || view.mode === "off") {
+                        delete last[p.id];
+                        continue;
+                    }
+                    const kind = p.id[0];
+                    if (kind === "k") {
+                        compare(view.slack, "", p.id + " keeps to its work");
+                        continue;
+                    }
+                    // A frame that follows another frame of the same slacking
+                    // was up for a second; the first after a pick may be shorter.
+                    const was = last[p.id];
+                    if (was && (was.slack !== view.slack || was.scene !== view.scene)) {
+                        const next = was.slack === view.slack;
+                        if (next && was.frame)
+                            verify(page.ticks - was.since >= 24, p.id + "'s screen changes at most once a second");
+                        last[p.id] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            since: page.ticks,
+                            frame: next
+                        };
+                    } else if (!was) {
+                        last[p.id] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            since: page.ticks,
+                            frame: false
+                        };
+                    }
+                    at[kind]++;
+                    if (view.slack) {
+                        on[kind]++;
+                        seen[view.slack] = true;
+                        picks[p.id] = Object.assign(picks[p.id] ?? {}, {
+                            [view.slack]: true
+                        });
+                    }
+                }
+            }
+            compare(Object.keys(seen).sort(), Object.keys(page.slackArt).sort(), "every kind of slacking shows up");
+            verify(Object.keys(picks).some(id => Object.keys(picks[id]).length >= 2), "someone switches to something else");
+            const waiting = on.w / at.w, idle = on.i / at.i;
+            verify(waiting > 0.5 && waiting < 0.95, "waiting people mostly slack, but not always: " + waiting);
+            verify(idle > 0.1 && idle < waiting, "idle people slack less: " + idle);
+        }
+
+        // Someone asking the user something keeps its screen on the question.
+        function test_a_person_asking_does_not_slack_off() {
+            plugin.publish(many(16, "a", "asking"));
+            for (let t = 0; t < 600; t++) {
+                page.advance(1);
+                for (const view of Object.values(page.screenViews))
+                    compare(view.slack, "");
+            }
+        }
+
+        // A person slacking while it waits drops it as soon as its agent asks
+        // something, or gets to work, even with nothing in particular to do.
+        function test_slacking_stops_as_soon_as_the_state_changes_data() {
+            return [
+                {
+                    tag: "asking",
+                    state: "asking"
+                },
+                {
+                    tag: "working with no activity",
+                    state: "working"
+                }
+            ];
+        }
+
+        function test_slacking_stops_as_soon_as_the_state_changes(data) {
+            plugin.publish(many(16, "a", "waiting"));
+            let slacking = 0;
+            for (let t = 0; t < 300; t++) {
+                page.advance(1);
+                slacking += Object.values(page.screenViews).filter(view => view.slack).length;
+            }
+            verify(slacking > 0, "they slack off while waiting");
+            plugin.publish(many(16, "a", data.state));
+            page.advance(5);
+            for (let t = 0; t < 600; t++) {
+                for (const view of Object.values(page.screenViews))
+                    compare(view.slack, "", data.tag + " people do not slack");
+                page.advance(1);
+            }
+        }
+
+        // While nobody walks the clock ticks slower, and a slacking frame still
+        // lasts a second.
+        function test_a_slacking_frame_lasts_a_second_on_the_slow_clock() {
+            plugin.publish(many(24, "w", "waiting"));
+            runUntil(() => !page.walking, 4000, "everyone sits down");
+            const last = {};
+            let changes = 0;
+            for (let t = 0; t < 600; t++) {
+                page.tick(200);
+                for (const [key, view] of Object.entries(page.screenViews)) {
+                    const was = last[key];
+                    if (was && view.slack && was.slack === view.slack && was.scene !== view.scene) {
+                        if (was.changed)
+                            compare(page.now - was.at, 1000, "a frame is up for a second");
+                        changes++;
+                        last[key] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            at: page.now,
+                            changed: true
+                        };
+                    } else if (!was || was.slack !== view.slack) {
+                        last[key] = {
+                            slack: view.slack,
+                            scene: view.scene,
+                            at: page.now,
+                            changed: false
+                        };
+                    }
+                }
+            }
+            verify(changes > 50, "frames change: " + changes);
+        }
+
         function test_two_agents_that_talk_walk_up_to_each_other() {
             const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing")].concat(many(6, "o", "working", "typing"));
             plugin.publish(people);
@@ -2855,6 +3012,50 @@ Item {
             runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while the others wait outside");
             compare(actor("t0").talk.to, "t1");
             page.doorOpensAt = 0;
+        }
+
+        // A whiteboard fills by the time spent drawing on it, the same on
+        // the walking clock's 40 ms ticks as on the quiet clock's 200 ms
+        // ones: 12 s from blank to full.
+        function test_a_whiteboard_fills_by_time_on_either_clock() {
+            plugin.publish([person("lead", "Lead", "working", "planning")]);
+            runUntil(() => arrived(actor("lead")));
+            const board = page.boardViews[actor("lead").goal.board];
+            runUntil(() => board.progress > 0.05, 2000, "the planner draws");
+            // From just after the screens changed, so both runs count the
+            // same 2.4 s.
+            const settle = () => {
+                for (let i = 0; i < 10 && page.screensAt !== page.now + 200; i++)
+                    page.tick(40);
+                compare(page.screensAt, page.now + 200, "the screens just changed");
+            };
+            settle();
+            const start = board.progress;
+            for (let i = 0; i < 60; i++)
+                page.tick(40);
+            const walking = board.progress - start;
+            settle();
+            board.progress = start;
+            for (let i = 0; i < 12; i++)
+                page.tick(200);
+            const quiet = board.progress - start;
+            verify(arrived(actor("lead")), "the planner stays at the board");
+            fuzzyCompare(walking, 0.2, 0.02, "2.4 s on the walking clock fills a fifth");
+            fuzzyCompare(quiet, walking, 0.02, "and as much on the quiet clock");
+        }
+
+        // A quiet office touches no screen: idle and waiting screens only
+        // change when their picture does, never just because time passes.
+        function test_quiet_screens_do_not_change_with_the_clock() {
+            plugin.publish(many(16, "t", "idle"));
+            runUntil(() => Object.values(page.actors).every(arrived), 6000, "everyone sits down");
+            page.advance(10);
+            const views = Object.values(page.screenViews).filter(v => v.mode === "idle" && !v.slacking);
+            verify(views.length > 0, "some screens show the idle screen");
+            const phases = views.map(v => v.phase);
+            for (let i = 0; i < 10; i++)
+                page.tick(200);
+            compare(views.map(v => v.phase), phases, "their phase stays put");
         }
 
         // Another machine's office starts with clean whiteboards.
