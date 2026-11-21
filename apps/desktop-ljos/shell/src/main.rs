@@ -891,7 +891,7 @@ fn render_to(
             // each tick of the loaded clock drains it instead: a thread
             // an action opens is audited restored, not still waiting on
             // its cache read.
-            mc.on_tick(|engine| hal_c2_shell::controllers::threads::drain(engine));
+            mc.on_tick(hal_c2_shell::controllers::threads::drain);
             mc.start(&engine);
             if !capture.play_after_snapshot {
                 play(&engine, &capture.steps);

@@ -191,6 +191,9 @@ struct Subscription {
     on_frame: Rc<RefCell<OnFrame>>,
 }
 
+/// Work the loaded clock runs after each tick's frames ([`Loaded::on_tick`]).
+type TickWork = dyn Fn(&Engine);
+
 /// The loaded MC; [`Loaded::start`] after the shell starts.
 pub struct Loaded {
     plugin_dir: PathBuf,
@@ -208,7 +211,7 @@ pub struct Loaded {
     replies: RefCell<Vec<(Reply, Result<Json, McError>)>>,
     /// Run on every tick after the tick's frames, for work the picture
     /// has no frame loop for (the caller drains the shell's cache).
-    after_tick: RefCell<Option<Rc<dyn Fn(&Engine)>>>,
+    after_tick: RefCell<Option<Rc<TickWork>>>,
 }
 
 impl Loaded {
@@ -449,7 +452,6 @@ impl Mc for Loaded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hal_c2_shell::mc::Mc as _;
 
     fn loaded() -> Rc<Loaded> {
         Rc::new(Loaded {
