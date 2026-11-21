@@ -74,6 +74,44 @@ pub fn pack() -> ljos::MapSource {
     ljos::include_qml!("qml.pack")
 }
 
+/// The user's `<config>` over the pack, as a release lays it (`App::user_qml`):
+/// its `qml` as modules on the import path, `shell.qml` what Main.qml's
+/// ShellLoader shows, and the MC's plugins in the cache loaded beside them.
+/// hal-c2 reads `theme.json` itself (src/theme.rs). None without a config
+/// dir.
+pub fn user_qml(launch: &Launch) -> Option<ljos::UserQml> {
+    let config = launch.config_dir.clone()?;
+    let mut user = ljos::UserQml::dir(config).modules("qml").theme(false);
+    if let Some(cache) = &launch.cache_dir {
+        user = user.loads_from(cache.join("mc-plugins"));
+    }
+    Some(user)
+}
+
+/// The key of every QML file build.rs found, compiled or not.
+pub const QML_FILES: &[&str] = include!(concat!(env!("OUT_DIR"), "/qml_files.rs"));
+
+/// The QML files `pack` does not run, each with why: a release's
+/// `--check`. A pack holds only the files that compiled and says nothing
+/// of the rest, so a file build.rs found and the pack lacks did not.
+pub fn unpacked(pack: &ljos::MapSource) -> Vec<(String, String)> {
+    let mut failed: Vec<(String, String)> = pack
+        .failures()
+        .map(|(key, why)| (key.to_owned(), why.to_owned()))
+        .collect();
+    let packed: std::collections::HashSet<&str> = pack.keys().collect();
+    for key in QML_FILES {
+        if !packed.contains(key) && !failed.iter().any(|(k, _)| k == key) {
+            failed.push((
+                (*key).to_owned(),
+                "not in the pack: it did not compile when the app was built".to_owned(),
+            ));
+        }
+    }
+    failed.sort();
+    failed
+}
+
 /// Registers the native half of `HalC2.Shell` and makes its singletons, so
 /// `Shell.state` holds its keys before any QML reads it. The rest of the
 /// module is QML (qml/HalC2/Shell); a qmldir naming those files beside
@@ -471,5 +509,28 @@ mod launch_tests {
             [here.join("src"), here.clone()].map(|p| p.to_string_lossy().into_owned())
         );
         assert_eq!(rest, ["--mc-port=1", "no-such-folder"]);
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::{QML_FILES, pack, unpacked};
+
+    #[test]
+    fn the_pack_holds_every_qml_file() {
+        assert!(QML_FILES.contains(&"Main"), "{QML_FILES:?}");
+        assert_eq!(unpacked(&pack()), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn a_file_the_pack_lacks_did_not_compile() {
+        let missing = unpacked(&ljos::MapSource::new());
+        assert_eq!(missing.len(), QML_FILES.len());
+        assert!(
+            missing
+                .iter()
+                .any(|(key, why)| key == "Main" && why.contains("did not compile")),
+            "{missing:?}"
+        );
     }
 }

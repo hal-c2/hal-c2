@@ -477,16 +477,18 @@ fn with_qml(app: App, options: &Options) -> Result<App, String> {
     app.qml_dirs(dirs, ROOT).map_err(|e| e.to_string())
 }
 
-/// `--check` of a shell built without `dev-qml`: the pack build.rs made,
-/// which records a file that did not compile as failing.
+/// `--check` of a shell built without `dev-qml`: whether the pack build.rs
+/// made holds every QML file build.rs found.
 #[cfg(not(feature = "dev-qml"))]
 fn check(_: &Options) -> ExitCode {
     let pack = hal_c2_shell::pack();
-    let failed: Vec<(&str, &str)> = pack.failures().collect();
+    let failed = hal_c2_shell::unpacked(&pack);
     for (key, why) in &failed {
         eprintln!("hal-c2-ljos: {key}: {why}");
     }
-    let files = pack.keys().count() + failed.len();
+    let files = hal_c2_shell::QML_FILES
+        .len()
+        .max(pack.keys().count() + failed.len());
     eprintln!(
         "hal-c2-ljos: {} of {files} QML files compiled",
         files - failed.len()
@@ -1246,23 +1248,14 @@ fn run(app: App, options: Options) -> Result<(), String> {
     result
 }
 
-/// The user's `<config>` over the pack, followed as it is saved: its `qml`
-/// as modules on the import path, `shell.qml` what Main.qml's ShellLoader
-/// shows, and the MC's plugins in the cache loaded beside them. hal-c2
-/// reads `theme.json` itself (src/theme.rs).
+/// The user's `<config>` over the pack, followed as it is saved
+/// (`hal_c2_shell::user_qml`, which the features run as well).
 #[cfg(not(feature = "dev-qml"))]
 fn with_user_files(app: App, options: &Options) -> App {
-    let Some(config) = options.launch.config_dir.clone() else {
-        return app;
-    };
-    let mut user = ljos::UserQml::dir(config)
-        .modules("qml")
-        .theme(false)
-        .on_fault(|fault| eprintln!("hal-c2-ljos: {fault}"));
-    if let Some(cache) = &options.launch.cache_dir {
-        user = user.loads_from(cache.join("mc-plugins"));
+    match hal_c2_shell::user_qml(&options.launch) {
+        Some(user) => app.user_qml(user.on_fault(|fault| eprintln!("hal-c2-ljos: {fault}"))),
+        None => app,
     }
-    app.user_qml(user)
 }
 
 /// A `dev-qml` build compiled the user's files with the rest (with_qml).

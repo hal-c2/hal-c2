@@ -32,6 +32,7 @@ fn main() {
         eprintln!("{}\t{all}\t{}", f.compiled, f.key);
     }
     write_assets(&dirs, &out.join("assets.rs"));
+    write_qml_files(&dirs, &out.join("qml_files.rs"));
     eprintln!("{compiled}\t{total}\tin {} files", files.len());
     for f in &files {
         for (expr, why) in &f.refused {
@@ -70,18 +71,43 @@ fn write_assets(dirs: &[&Path], out: &Path) {
     std::fs::write(out, text).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
 }
 
+/// Writes `out`, the key of each QML file under `dirs`: what a pack that
+/// compiled them all holds, so a release's `--check` can tell a file left
+/// out (`hal_c2_shell::unpacked`).
+fn write_qml_files(dirs: &[&Path], out: &Path) {
+    let mut found = Vec::new();
+    for dir in dirs {
+        walk_ext(dir, dir, &["qml"], &mut found);
+    }
+    let mut keys: Vec<String> = found
+        .into_iter()
+        .map(|(key, _)| key.strip_suffix(".qml").unwrap_or(&key).to_owned())
+        .collect();
+    keys.sort();
+    let mut text = String::from("&[\n");
+    for key in &keys {
+        text.push_str(&format!("    {key:?},\n"));
+    }
+    text.push_str("]\n");
+    std::fs::write(out, text).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
+}
+
 fn walk(root: &Path, dir: &Path, found: &mut Vec<(String, PathBuf)>) {
+    walk_ext(root, dir, &ASSETS, found);
+}
+
+fn walk_ext(root: &Path, dir: &Path, exts: &[&str], found: &mut Vec<(String, PathBuf)>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     for entry in entries {
         let path = entry
             .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
             .path();
         if path.is_dir() {
-            walk(root, &path, found);
+            walk_ext(root, &path, exts, found);
         } else if path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| ASSETS.iter().any(|a| e.eq_ignore_ascii_case(a)))
+            .is_some_and(|e| exts.iter().any(|a| e.eq_ignore_ascii_case(a)))
         {
             let key = path.strip_prefix(root).expect("under its root");
             let key = key
