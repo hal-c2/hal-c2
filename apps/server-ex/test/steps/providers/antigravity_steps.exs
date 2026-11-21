@@ -653,6 +653,33 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  step "the Google account now offers another model", context do
+    [model] = @models
+
+    FakeAcp.configure(
+      context,
+      &Map.put(&1, "configOptions", [
+        %{
+          model
+          | "options" => model["options"] ++ [%{"value" => "fake/two", "name" => "Fake/Two"}]
+        }
+      ])
+    )
+  end
+
+  step "the user refreshes every provider's models", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{"refreshModels" => true})
+    context
+  end
+
+  step "Antigravity lists the model the account now offers", context do
+    assert ["fake/one", "fake/two"] =
+             for(m <- Antigravity.account(@instance)["models"], do: m["slug"])
+
+    assert ["fake/one", "fake/two"] = for(m <- FakeAcp.entry(@instance)["models"], do: m["slug"])
+    context
+  end
+
   step ~r/^the user refreshes the Antigravity models and (?<problem>.+)$/,
        %{args: [problem]} = context do
     case problem do
