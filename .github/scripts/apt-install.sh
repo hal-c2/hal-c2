@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs apt packages for a CI step: `apt-install.sh <package>...`.
-# The Azure mirror sometimes stalls mid-update and apt-get waits on it forever, so each
+# A regional mirror sometimes stalls mid-update and apt-get waits on it forever, so each
 # attempt is bounded, and a failed or timed-out attempt is retried once.
 set -uo pipefail
 
@@ -8,9 +8,12 @@ apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquir
 
 # At most 90+120 per attempt, 465s in all (515s with every kill grace), so the steps'
 # `timeout-minutes: 10` only fires if this script itself hangs.
+# A failed or timed-out update still goes on to the install: apt keeps each source's
+# lists as they arrive, so one stalled source (security.ubuntu.com, say) leaves the
+# others fresh. The attempt fails only if the install does.
 attempt() {
-  timeout -k 10 90 "${apt[@]}" update &&
-    timeout -k 10 120 "${apt[@]}" install -y "$@"
+  timeout -k 10 90 "${apt[@]}" update
+  timeout -k 10 120 "${apt[@]}" install -y "$@"
 }
 
 # A package the runner image already has needs no mirror at all.
@@ -27,7 +30,9 @@ sleep 15
 # A killed install can leave dpkg half-configured, which would fail the retry.
 timeout -k 10 30 sudo dpkg --configure -a
 # The retry goes straight to the Ubuntu archive: the runner's mirror list falls back to
-# it only after the stalled Azure mirror's timeouts have used up the attempt.
-sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+# it only after the stalled regional mirror's timeouts have used up the attempt. Any
+# regional host (`<region>.archive.ubuntu.com`) is rewritten; `//archive.ubuntu.com`
+# and `security.ubuntu.com` have no dot before `archive`, so they are left alone.
+sudo sed -i -E 's#[a-z0-9.-]+\.archive\.ubuntu\.com#archive.ubuntu.com#g' \
   /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 attempt "$@"

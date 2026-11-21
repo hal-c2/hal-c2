@@ -1391,6 +1391,8 @@ navigation/welcome-wizard.feature: The serving computer is already selected
 navigation/welcome-wizard.feature: The setup terminal cannot open
 navigation/welcome-wizard.feature: The setup terminal uses the provider's own home and environment
 navigation/welcome-wizard.feature: The user can skip configuring agents and importing projects
+navigation/welcome-wizard.feature: The wizard draws no window controls on a window its system frames
+navigation/welcome-wizard.feature: The wizard keeps a frameless window's controls in its corner
 navigation/welcome-wizard.feature: Unchecking a computer does not disconnect it
 navigation/welcome-wizard.feature: Unreadable settings are never replaced with defaults
 navigation/windows.feature: A restart skips a saved window that names another folder

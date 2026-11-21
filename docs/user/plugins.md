@@ -85,8 +85,8 @@ format, and one bound to `Format.relative` moves on once a minute.
 
 Some plugins do work on a machine rather than in one app, such as
 [agent code review](code-review.md), the [planner](planner.md), the
-[issue tracker](issue-tracker.md), [maintenance](maintenance.md) and the
-[office](office.md). They are
+[issue tracker](issue-tracker.md), [maintenance](maintenance.md), the
+[office](office.md) and [CLIProxyAPI](#cliproxyapi). They are
 folders with a `plugin.json`, and each MC runs its own: put the folder in
 `plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
@@ -231,6 +231,44 @@ listed apart and holds nothing off. If tool uses saved earlier cannot be read,
 pruning is held for that agent until you apply or give back its tools, or
 change **Tool pruning** in **Settings → Plugins → TokenEconomizer**, where all
 of its settings are.
+
+### CLIProxyAPI
+
+CLIProxyAPI routes Claude and Codex through
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), a proxy that signs in
+to several Claude or Codex subscriptions and takes turns between them, or sends your
+own API keys upstream. Turned on, it runs the proxy on the machine, listening on
+127.0.0.1 only, and adds **Claude via CLIProxyAPI** and **Codex via CLIProxyAPI**
+to **Settings → Providers**. Agents you start with those use the proxy; your own
+Claude and Codex instances and logins are left as they are.
+
+To start, turn the plugin on, open its **CLIProxyAPI** tab and click **Sign in to
+Claude** or **Sign in to Codex**. Open the address it shows in a browser on any
+device and sign in. The browser then ends on a localhost page that does not load:
+copy that page's whole address, paste it into the page and click **Finish**. Sign
+in again to add another account. The page also shows what each account and model
+used over the last 7 days, the upstream API keys (add or remove them there), and
+the proxy's log.
+
+- **Which proxy.** The plugin runs the `cli-proxy-api` you set in its settings,
+  or the one on PATH, or else downloads CLIProxyAPI 8.0.79, the version it was
+  tested with, and checks it against the release's checksums. A newer release is
+  shown on the page but never installed. To use a proxy you run yourself, set
+  **Proxy** to **Connect** and give its address and management key. The key goes
+  with every call, so a proxy on another machine needs an `https://` address with a
+  valid certificate; `http://` works only for one on this machine.
+- **The provider instances are yours to change.** Rename or switch them off and
+  the plugin keeps that. Delete one and it stays deleted until you click **Add
+  back** on the page. Turn the plugin off or remove it and both leave, your
+  changes to them too; turn it on and they come back as the plugin first adds
+  them. An instance of your own already under `plugin_cliproxyapi_claude` or
+  `plugin_cliproxyapi_codex` stays yours, and the page says it was not added. Each
+  machine runs its own proxy and instances: the plugin does not change instances on
+  other machines of a cluster.
+- **A refused management key** (with **Connect**) is not tried again by itself,
+  since the proxy locks out an address that keeps failing. Fix the key in the
+  plugin's settings, or click **Retry** on the page.
+- Errors from the proxy, such as a key it refuses, show its own message.
 
 ## Connect Slack for plugins
 
