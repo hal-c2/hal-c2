@@ -280,7 +280,7 @@ pub fn shows_text(world: &World, item: ObjectId, text: &str) -> bool {
     let engine = world.engine();
     under(engine, item).into_iter().any(|each| {
         let value = engine.read_by_name(each, "text");
-        matches!(value, Value::String(_)) && engine.to_js_string(&value).to_string() == text
+        matches!(value, Value::String(_)) && engine.to_js_string(&value) == text
     })
 }
 
