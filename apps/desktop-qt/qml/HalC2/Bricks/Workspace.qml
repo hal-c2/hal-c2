@@ -145,11 +145,15 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 24
                 Layout.maximumWidth: Math.min(Math.ceil(implicitWidth), 160)
+                // A full control's height to press, though the letters
+                // themselves are shorter: the name is a button.
+                Layout.preferredHeight: Theme.control.sm
                 visible: strip.showProject
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
+                verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
@@ -233,7 +237,9 @@ Rectangle {
                 implicitWidth: titleRow.implicitWidth
                 activeFocusOnTab: !editing && strip.ready && !strip.model.isDraft
                 Accessible.role: Accessible.Button
-                Accessible.name: threadLabel.text
+                // Named by what it opens, so a thread titled "New thread"
+                // is not the sidebar's New thread button.
+                Accessible.name: qsTr("%1, thread options").arg(threadLabel.text)
                 // A draft's title opens nothing.
                 Accessible.focusable: activeFocusOnTab
                 Accessible.onPressAction: openMenu()

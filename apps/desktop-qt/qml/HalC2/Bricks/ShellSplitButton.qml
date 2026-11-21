@@ -49,6 +49,9 @@ Item {
             id: action
             objectName: "splitAction"
 
+            // The pill is a small control; say so, or the layout lays the
+            // button out below its own implicit height.
+            implicitHeight: Theme.control.sm
             Layout.fillHeight: true
             Layout.maximumWidth: split.maximumTextWidth
             subtle: true
@@ -75,6 +78,7 @@ Item {
 
         ShellButton {
             objectName: "menu"
+            implicitHeight: Theme.control.sm
             Layout.fillHeight: true
             Layout.preferredWidth: Theme.control.sm
             subtle: true
