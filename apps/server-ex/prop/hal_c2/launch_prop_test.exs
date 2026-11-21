@@ -76,13 +76,33 @@ defmodule HalC2.LaunchPropTest do
   def initial_state, do: %{launched: MapSet.new()}
 
   # `retry_at`: the stream call of the launch at which a retry of it lands, or nil.
-  def command(_state),
-    do: {:call, __MODULE__, :launch, [oneof(@threads), oneof([nil | Enum.to_list(1..6)])]}
+  def command(_state) do
+    frequency([
+      {6, {:call, __MODULE__, :launch, [oneof(@threads), oneof([nil | Enum.to_list(1..6)])]}},
+      {1, {:call, __MODULE__, :reuse_without_id, [oneof([:absent, nil, ""])]}}
+    ])
+  end
 
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :launch, [tid, _]}),
     do: %{state | launched: MapSet.put(state.launched, tid)}
+
+  def next_state(state, _result, {:call, _, :reuse_without_id, _}), do: state
+
+  # A reuse launch that names no thread is refused and changes nothing.
+  def postcondition(_state, {:call, _, :reuse_without_id, _}, {reply, before, now}) do
+    ok? =
+      reply == {:error, "Reusing an existing thread requires a thread id."} and before == now
+
+    unless ok?,
+      do:
+        IO.puts(
+          "reuse without id: #{inspect(reply)} before=#{inspect(before)} now=#{inspect(now)}"
+        )
+
+    ok?
+  end
 
   def postcondition(state, {:call, _, :launch, [tid, _]}, {launch, retry, projection}) do
     # The one launch that made the thread reports it new: the first launch of the
@@ -109,6 +129,23 @@ defmodule HalC2.LaunchPropTest do
   end
 
   # --- the real thing -------------------------------------------------------------
+
+  def reuse_without_id(id) do
+    input = %{
+      "projectId" => "demo",
+      "title" => "Launched",
+      "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+      "runtimeMode" => "full-access",
+      "interactionMode" => "default",
+      "reuseExistingThread" => true,
+      "initialMessage" => %{"messageId" => "msg-reuse", "text" => "Hello", "attachments" => []}
+    }
+
+    input = if id == :absent, do: input, else: Map.put(input, "threadId", id)
+    before = Map.new(@threads, &{&1, projection(&1)})
+    reply = HalC2.Orchestration.launch_thread(input)
+    {reply, before, Map.new(@threads, &{&1, projection(&1)})}
+  end
 
   def launch(tid, retry_at) do
     input = %{

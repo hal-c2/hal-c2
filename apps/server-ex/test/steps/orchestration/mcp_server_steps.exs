@@ -326,10 +326,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     World.create_thread(context, thread, project)
   end
 
+  # A name the scenario never made is passed on as the id it was given, as an agent
+  # naming a thread it only half remembers.
   step "the agent of {string} reads {string}", %{args: [caller, thread]} = context do
     result =
       World.mcp_tool(context, caller, "hal_c2_thread_read", %{
-        "threadId" => World.thread_id(context, thread)
+        "threadId" => Map.get(context[:threads] || %{}, thread, thread)
       })
 
     Map.put(context, :mcp_result, result)

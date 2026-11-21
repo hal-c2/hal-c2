@@ -2228,6 +2228,12 @@ defmodule HalC2.Orchestration do
   """
   @spec launch_thread(map, keyword) :: {:ok, map} | {:error, String.t()}
   def launch_thread(input, opts \\ []) do
+    if input["reuseExistingThread"] == true and input["threadId"] in [nil, ""],
+      do: {:error, "Reusing an existing thread requires a thread id."},
+      else: do_launch_thread(input, opts)
+  end
+
+  defp do_launch_thread(input, opts) do
     thread_id = input["threadId"] || HalC2.Environment.uuid4()
     strategy = input["workspaceStrategy"] || %{"type" => "root"}
     at = Entities.now()
@@ -4108,15 +4114,11 @@ defmodule HalC2.Orchestration do
     %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => unsettled_at}
   end
 
-  # Snoozing again until the same time keeps when it was snoozed. A snooze the user
-  # chose replaces the one a usage limit asked for.
+  # Every snooze is stamped afresh, even to the wake time the thread already has; a
+  # retried command is applied once (`dispatch_once/1`). A snooze the user chose
+  # replaces the one a usage limit asked for.
   defp thread_fields("thread.snooze", command, thread, at) do
-    until = command["snoozedUntil"]
-
-    same? =
-      thread["snoozedUntil"] != nil and JS.epoch_ms(thread["snoozedUntil"]) == JS.epoch_ms(until)
-
-    fields = %{"snoozedUntil" => until, "snoozedAt" => (same? && thread["snoozedAt"]) || at}
+    fields = %{"snoozedUntil" => command["snoozedUntil"], "snoozedAt" => at}
 
     case thread["limitRecovery"] do
       %{} = recovery -> Map.put(fields, "limitRecovery", Map.put(recovery, "snooze", false))

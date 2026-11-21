@@ -11,8 +11,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
   its settled override, wake time, pin and its two order keys, and whether each time
   stamp is set. After every command the test compares the thread entity with the
   model, checks that every time stamp the command does not set anew kept its value
-  (re-settling keeps when it settled, re-snoozing until the same time keeps when it
-  snoozed, a re-pin and a reorder keep when it was pinned), that a refused command
+  (re-settling keeps when it settled, a re-pin and a reorder keep when it was pinned;
+  every snooze is stamped afresh, even to the same wake time), that a refused command
   and the other threads changed nothing, and that the sidebar row shows the same
   organization as the thread.
 
@@ -289,8 +289,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
   defp fresh(thread, :unsettle, _),
     do: if(thread.override == "active", do: [], else: ["unsettledAt"])
 
-  defp fresh(thread, :snooze, [_, until]),
-    do: if(thread.until == until, do: [], else: ["snoozedAt"])
+  defp fresh(_thread, :snooze, _), do: ["snoozedAt"]
 
   defp fresh(thread, :pin, _), do: if(thread.pinned, do: [], else: ["pinnedAt"])
 
@@ -386,6 +385,10 @@ defmodule HalC2.ThreadOrganizationPropTest do
           not stamps_set[stamp] ->
             real[stamp] == nil
 
+          # A snooze replaces the stamp it finds, even when it snoozes to the same wake time.
+          stamp == "snoozedAt" and fun == :snooze and stamp in fresh ->
+            is_binary(real[stamp]) and real[stamp] != before.fields[stamp]
+
           stamp in fresh or before == %{} ->
             is_binary(real[stamp])
 
@@ -419,8 +422,18 @@ defmodule HalC2.ThreadOrganizationPropTest do
   def settle(tid), do: organize(tid, "thread.settle")
   def unsettle(tid), do: organize(tid, "thread.unsettle")
 
-  def snooze(tid, until),
-    do: organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until)})
+  # A snooze found already stamped is backdated first, so a stamp set anew is told
+  # from one kept.
+  def snooze(tid, until) do
+    if is_binary(JS.get(StreamState.get(current(tid), "thread")[tid] || %{}, "snoozedAt")) do
+      {:ok, _} =
+        HalC2.Streams.commit(tid, :thread, [
+          {"thread", tid, %{"s" => %{"snoozedAt" => "2020-01-01T00:00:00.000Z"}}}
+        ])
+    end
+
+    organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until)})
+  end
 
   def unsnooze(tid), do: organize(tid, "thread.unsnooze")
 
