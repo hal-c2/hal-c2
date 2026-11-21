@@ -60,8 +60,9 @@
 //! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
 //! toggles, popups) from running the shell's handlers.
 //!
-//! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
-//! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
+//! The QML is read from `--qml-dir`, else HAL_C2_QML_DIR, else a release's
+//! `share/hal-c2/qml` beside its executable (src/qml.rs) or this checkout,
+//! with the user's `<config>/qml` and `<config>/shell.qml`.
 //! The window makes its shell again as they change (src/runtime.rs).
 
 use std::path::{Path, PathBuf};
@@ -92,9 +93,10 @@ use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
 
 const ROOT: &str = qml::DEFAULT_SHELL;
-/// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
-/// names it.
-const APP_ID: &str = "hal-c2";
+/// The desktop entry the release installs (hal-c2-ljos.desktop,
+/// mise-tasks/release/install/desktop-ljos): its own, beside desktop-qt's
+/// hal-c2.
+const APP_ID: &str = "hal-c2-ljos";
 /// A development shell's (main.cpp).
 const DEV_APP_ID: &str = "hal-c2-dev";
 /// A packaged build sets HAL_C2_RELEASE as it builds, as CMake's Release
@@ -148,10 +150,18 @@ fn usage() -> ExitCode {
 }
 
 fn parse() -> Result<Options, String> {
-    // main.cpp: `--qml-dir`, else HAL_C2_QML_DIR, else the source tree.
+    let executable_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    // main.cpp: `--qml-dir`, else HAL_C2_QML_DIR, else the release's or the
+    // source tree's.
     let roots = std::env::var_os("HAL_C2_QML_DIR")
         .filter(|d| !d.is_empty())
-        .map_or_else(Roots::checkout, |dir| Roots::one(dir.into()));
+        .map_or_else(
+            || Roots::default_for(&executable_dir, RELEASE),
+            |dir| Roots::one(dir.into()),
+        );
     let mut o = Options {
         launch: Launch {
             mc_origin: std::env::var("HAL_C2_MC_ORIGIN")
@@ -178,10 +188,6 @@ fn parse() -> Result<Options, String> {
         folders: Vec::new(),
         state_dir: PathBuf::new(),
     };
-    let executable_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_default();
     let mut host_entry = None;
     let mut node = None;
     let mut positional = Vec::new();
