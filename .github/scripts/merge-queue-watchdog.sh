@@ -39,6 +39,16 @@ ci_result() {
     --jq '.check_runs | max_by(.id) // {} | .conclusion // .status // "missing"'
 }
 
+# Waits up to two minutes for a commit's promoted run to be listed. Watchdog runs are serial,
+# so the next one then finds it as the latest run and doesn't promote the entry again.
+promoted() {
+  for _ in $(seq 24); do
+    [ "$(latest_run "$1" | cut -f4)" = workflow_dispatch ] && return 0
+    sleep 5
+  done
+  return 1
+}
+
 # Whether a run parked: its wait job ran or still waits, rather than being skipped.
 parked() {
   [ -n "$(gh api "repos/$repo/actions/runs/$1/jobs?per_page=100" \
@@ -101,6 +111,8 @@ while IFS=$'\t' read -r _ _ sha number _; do
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
     echo "#$number is the last entry but its run $id parked: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
+    [ -n "${DRY_RUN:-}" ] || promoted "$sha" ||
+      echo "::warning::#$number's promoted run is not listed yet; the next watchdog may start it again"
   fi
   break
 done < <(tac <<<"$built")

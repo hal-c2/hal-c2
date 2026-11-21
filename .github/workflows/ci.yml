@@ -42,11 +42,11 @@ permissions:
   contents: read
 
 concurrency:
-  # A promoted entry shares its commit with the parked run, which never ends by itself. A
-  # second promotion of the same entry (a watchdog that ran before the first showed up)
-  # replaces the first rather than running the suite twice.
+  # A promoted entry shares its commit with the parked run, which never ends by itself. Never
+  # cancel a queue run: its `CI result` still runs, and lands on the commit red or green
+  # while another run tests it.
   group: ci-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.queue == true }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
