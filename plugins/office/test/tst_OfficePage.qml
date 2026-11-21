@@ -158,8 +158,10 @@ Item {
             return a.goal && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0 && a.path.length === 0;
         }
 
-        // The tiles each person held when the floor was last checked.
+        // The tiles each person held when the floor was last checked, and the
+        // width and break-room wall of the floor then.
         property var stood: ({})
+        property var stoodOn: null
 
         // Nobody, people or movers, stands on a wall or furniture or off the
         // floor, a seat is only stepped onto as where a person is going (a
@@ -169,6 +171,13 @@ Item {
         // tile. A carried desk is drawn within its mover's figure.
         function checkFloor() {
             const w = page.world;
+            // A floor built again at another width keeps every tile west of
+            // the break room's wall and shifts the rest (see rearrange()).
+            const [cols, xd] = this.stoodOn ?? [w.cols, w.xd];
+            const moved = t => {
+                const x = t % cols, y = (t - x) / cols;
+                return y * w.cols + (x >= xd ? x + w.xd - xd : x);
+            };
             const stopped = {};
             const stood = {};
             const everyone = Object.assign({}, page.actors, page.movers);
@@ -188,7 +197,7 @@ Item {
                     const x = t % w.cols, y = (t - x) / w.cols;
                     const cell = w.grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
-                    const stayed = (this.stood[id] ?? []).includes(t);
+                    const stayed = (this.stood[id] ?? []).map(moved).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
                 }
                 if (a.next < 0 && a.path.length === 0) {
@@ -200,6 +209,7 @@ Item {
                 stood[id] = tiles;
             }
             this.stood = stood;
+            this.stoodOn = [w.cols, w.xd];
             for (const m of Object.values(page.movers)) {
                 if (!m.carrying)
                     continue;
@@ -504,23 +514,24 @@ Item {
             verify(!board(actor("t").goal.board).review, "the other goes to another whiteboard");
         }
 
-        // The corner's desks are reviewers' alone: with the rest of the floor
-        // full, anyone else goes without a desk rather than sit there.
-        function test_a_full_floor_never_seats_others_in_the_review_corner() {
-            plugin.publish(many(46, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
+        // The corner's desks are for reviewers only: past the floor's desks,
+        // the office grows instead.
+        function test_others_never_sit_in_the_review_corner() {
+            plugin.publish(many(40, "t", "working", "typing"));
             const review = corner();
-            const seated = Object.keys(page.world.seatOf).filter(id => id !== "r");
-            compare(seated.length, 40, "the floor's 40 desks are taken");
-            for (const id of seated)
-                verify(page.world.seatOf[id].pod !== review, id + " sits on the floor");
+            const pods = page.world.pods.length;
+            for (let i = 0; i < 40; i++)
+                verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
+            plugin.publish(many(42, "t", "working", "typing").concat([reviewer("r", "Review #12")]));
+            verify(page.world.pods.length > pods, "the office grows");
+            for (let i = 0; i < 42; i++)
+                verify(page.world.seatOf["t" + i].pod !== review, "t" + i + " sits on the floor");
             compare(page.world.seatOf["r"].pod, review, "the reviewer has a corner desk");
-            for (let i = 40; i < 46; i++)
-                verify(!page.world.seatOf["t" + i], "t" + i + " has no desk");
-            compare(page.world.pods[review].members, ["r"], "nobody else sits in the corner");
         }
 
         // Someone in the corner who is no reviewer leaves it at the next
-        // seating, for a desk on the floor or none when the floor is full.
+        // seating, for a desk on the floor, which the office grows for when
+        // the floor is full.
         function test_someone_in_the_corner_who_is_no_reviewer_leaves_it() {
             const review = corner();
             plugin.publish([reviewer("a", "Review #12"), reviewer("b", "Review #13")]);
@@ -533,13 +544,13 @@ Item {
             plugin.publish(many(40, "t", "working", "typing").concat([reviewer("a", "Review #12")]));
             compare(page.world.seatOf["a"].pod, review);
             plugin.publish(many(40, "t", "working", "typing").concat([person("a", "Review #12", "working", "typing")]));
-            verify(!page.world.seatOf["a"], "with the floor full, a has no desk");
+            verify(page.world.seatOf["a"] && page.world.seatOf["a"].pod !== review, "with the floor full, the office grows and a sits on the floor");
             compare(page.world.pods[review].members, [], "the corner is empty");
         }
 
-        // Reviewers past the corner's desks take a floor desk only when no
-        // other thread needs it, wherever they come in the list.
-        function test_reviewers_past_the_corner_take_no_desk_others_need() {
+        // Reviewers past the corner's desks take floor desks, and every other
+        // thread still has one, wherever they come in the list.
+        function test_reviewers_past_the_corner_sit_on_the_floor() {
             const reviewers = [];
             for (let i = 0; i < 10; i++)
                 reviewers.push(reviewer("r" + i, "Review #" + i));
@@ -553,13 +564,14 @@ Item {
             for (const p of teams)
                 verify(page.world.seatOf[p.id] && page.world.seatOf[p.id].pod !== review, p.id + " has a floor desk");
             compare(reviewers.filter(r => page.world.seatOf[r.id]?.pod === review).length, 8, "the corner is full of reviewers");
-            compare(reviewers.filter(r => !page.world.seatOf[r.id]).length, 2, "the other 2 reviewers have no desk");
+            compare(reviewers.filter(r => page.world.seatOf[r.id] && page.world.seatOf[r.id].pod !== review).length, 2, "the other 2 reviewers sit on the floor");
         }
 
-        // A reviewer on a floor desk hot-desks: it gives the desk up to
-        // someone else who has none, and takes a free corner desk if there is
-        // one, or none. The reviewers in the corner keep theirs.
-        function test_reviewers_on_the_floor_give_their_desks_up_to_others() {
+        // A reviewer on a floor desk counts as one more desk the office needs,
+        // so when threads fill the floor the office grows instead of taking
+        // the desk from it: the reviewers keep their desks, and every thread
+        // has one on the floor.
+        function test_reviewers_on_the_floor_keep_their_desks_as_the_office_grows() {
             const reviewers = [];
             for (let i = 0; i < 10; i++)
                 reviewers.push(reviewer("r" + i, "Review #" + i));
@@ -567,30 +579,92 @@ Item {
             const review = corner();
             const seats = {};
             for (const r of reviewers)
-                seats[r.id] = page.world.seatOf[r.id];
-            verify(seats["r8"].pod !== review && seats["r9"].pod !== review, "r8 and r9 sit on the floor");
+                seats[r.id] = page.world.seatOf[r.id].index;
+            verify(page.world.seatOf["r8"].pod !== review && page.world.seatOf["r9"].pod !== review, "r8 and r9 sit on the floor");
             // r0 leaves the corner, and 40 threads need every floor desk.
             plugin.publish(reviewers.slice(1).concat(many(40, "t", "working", "typing")));
+            verify(page.world.pods.length > 6, "the office grows");
             for (let i = 0; i < 40; i++)
-                verify(page.world.seatOf["t" + i] && page.world.seatOf["t" + i].pod !== review, "t" + i + " has a floor desk");
-            for (let i = 1; i < 8; i++)
-                verify(page.world.seatOf["r" + i] === seats["r" + i], "r" + i + " keeps its corner desk");
-            const moved = ["r8", "r9"].filter(id => page.world.seatOf[id]);
-            compare(moved.length, 1, "one of r8 and r9 has a desk");
-            verify(page.world.seatOf[moved[0]] === seats["r0"], moved[0] + " takes the corner desk r0 left");
+                verify(page.world.seatOf["t" + i] && page.world.seatOf["t" + i].pod !== corner(), "t" + i + " has a floor desk");
+            for (let i = 1; i < 10; i++)
+                compare(page.world.seatOf["r" + i]?.index, seats["r" + i], "r" + i + " keeps its desk");
         }
 
         // Someone reading at a shelf who loses its corner desk on a full floor
-        // waits in the break room, rather than read on without a desk.
-        function test_a_reader_who_leaves_the_corner_on_a_full_floor_waits_in_the_break_room() {
+        // gets a desk on the floor, the office growing for it, and reads on.
+        function test_a_reader_who_leaves_the_corner_on_a_full_floor_gets_a_floor_desk() {
             const reading = p => Object.assign(p, {
                     activity: "reading"
                 });
             plugin.publish(many(40, "t", "working", "typing").concat([reading(reviewer("a", "Review #12"))]));
             compare(actor("a").goal.kind, "shelf", "a reads at a shelf");
+            const pods = page.world.pods.length;
             plugin.publish(many(40, "t", "working", "typing").concat([reading(person("a", "Review #12", "working"))]));
-            verify(!page.world.seatOf["a"], "a has no desk");
-            verify(actor("a").goal.x > page.world.xd, "a waits in the break room, not at a " + actor("a").goal.kind);
+            verify(page.world.pods.length > pods, "the office grows");
+            verify(page.world.seatOf["a"] && page.world.seatOf["a"].pod !== corner(), "a sits on the floor");
+            compare(actor("a").goal.kind, "shelf", "a reads on");
+        }
+
+        // An office that grows so everyone has a desk keeps the review corner
+        // for reviewers on every tick: no other thread sits or steps on its
+        // seats, every one has a floor desk, the reviewers past the corner
+        // hot-desk on the floor, and one in the corner that is a reviewer no
+        // more leaves it at once for the floor.
+        function test_an_office_growing_for_everyone_keeps_the_corner_for_reviewers() {
+            icons({
+                "local:p-api": {
+                    kind: "monogram",
+                    text: "AP",
+                    tint: "#4A90D9"
+                }
+            });
+            const reviewers = [];
+            for (let i = 0; i < 12; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const leaving = {};
+            const run = (people, ticks, full) => {
+                const ordinary = people.filter(p => p.kind !== "reviewer");
+                for (let i = 0; i < ticks; i++) {
+                    const w = page.world, review = corner();
+                    const tiles = {};
+                    for (const seat of w.pods[review].seats)
+                        tiles[seat.y * w.cols + seat.x] = true;
+                    for (const p of ordinary) {
+                        const seat = w.seatOf[p.id], a = actor(p.id);
+                        verify(seat && seat.pod !== review, p.id + " has a floor desk");
+                        const on = tiles[a.ty * w.cols + a.tx] || a.next >= 0 && tiles[a.next];
+                        if (!leaving[p.id])
+                            verify(!on, p.id + " never sits in the review corner");
+                        else if (!on)
+                            delete leaving[p.id];
+                    }
+                    const inCorner = reviewers.filter(r => people.includes(r) && w.seatOf[r.id]?.pod === review);
+                    compare(inCorner.length, full, "the corner holds " + full + " reviewers");
+                    for (const r of people.filter(p => p.kind === "reviewer")) {
+                        verify(w.seatOf[r.id], r.id + " has a desk");
+                        verify(!markOf(r.id).visible, r.id + "'s desk shows no project");
+                    }
+                    page.advance(1);
+                }
+            };
+            const first = many(36, "t", "working", "typing").concat(reviewers);
+            plugin.publish(first);
+            const pods = page.world.pods.length;
+            run(first, 300, 8);
+            // Fifty threads and twelve reviewers need more desks than six pods.
+            const grown = many(50, "t", "working", "typing").concat(reviewers);
+            plugin.publish(grown);
+            verify(page.world.pods.length > pods, "the office grows");
+            run(grown, 400, 8);
+            // A reviewer in the corner that is a reviewer no more.
+            const was = reviewers.find(r => page.world.seatOf[r.id].pod === corner());
+            const demoted = grown.map(p => p === was ? person(was.id, was.title, "working", "typing") : p);
+            reviewers.splice(reviewers.indexOf(was), 1);
+            leaving[was.id] = true;
+            plugin.publish(demoted);
+            // The reviewers on the floor keep their desks there.
+            run(demoted, 600, 7);
+            verify(!leaving[was.id], was.id + " has left the corner");
         }
 
         // Reviewers hot-desk: no desk of theirs shows a project, in the corner
@@ -784,11 +858,11 @@ Item {
             compare(page.jobs.length, 1, "one desk comes in");
             // Someone who sat down at another pod keeps that seat, even when
             // newcomers fill every other pod near it.
-            const aside = page.world.seatOf["aw6"];
+            const aside = page.world.seatOf["aw6"].index;
             const z = [person("z", "Z", "working", "typing")].concat(many(31, "zw", "working", "typing", "z"));
             plugin.publish([person("x", "X", "working", "typing")].concat(team(7), z));
-            verify(page.world.seatOf["aw6"] === aside, "aw6 keeps its seat");
-            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id] === aside), ["aw6"]);
+            compare(page.world.seatOf["aw6"].index, aside, "aw6 keeps its seat");
+            compare(Object.keys(page.world.seatOf).filter(id => page.world.seatOf[id].index === aside), ["aw6"]);
         }
 
         // A team that outgrows its pod with nobody of the new lot seated yet
@@ -811,42 +885,782 @@ Item {
             compare(page.world.seatOf["aw7"].pod, 4, "the newcomer sits at the free pod nearest its team");
         }
 
-        // A worker without a desk that asks or fails keeps the break room spot
-        // it heads for, so nobody else is sent there.
-        function test_a_worker_without_a_desk_keeps_its_spot_while_it_asks() {
-            for (const state of ["asking", "failed"]) {
-                init();
-                plugin.publish(many(40, "t", "working", "typing").concat([person("q", "Q", state)]));
-                const q = actor("q");
-                verify(page.world.seatOf["q"] === undefined, "q has no desk");
-                for (let i = 0; i < 20; i++) {
-                    page.decide(q, false);
-                    compare(q.claim, q.goal.y * page.world.cols + q.goal.x, state + ": q holds the spot it heads for");
-                    compare(page.claims[q.claim], "q", state + ": the spot is q's");
-                }
+        // Everyone has a desk: the office is six pods in two rows, 48 desks,
+        // and grows when people outnumber its desks, to the grid of pods that
+        // shows biggest in the view: in this wide one, a pod to each row
+        // first. It shrinks only once a pod's worth of desks would still be
+        // free in a smaller grid, after the desks in the pods it loses are
+        // carried out, and is painted again only when it changes size.
+        function test_the_office_grows_by_pods_and_shrinks_back() {
+            const seated = n => {
+                for (let i = 0; i < n; i++)
+                    verify(page.world.seatOf["t" + i] !== undefined, "t" + i + " has a desk");
+            };
+            const grid = () => [page.world.across, page.world.pods.length];
+            // Six pods hold 40 people; the review corner's 8 desks are for
+            // reviewers only.
+            plugin.publish(many(40, "t", "working", "typing"));
+            const cols = page.worldCols, rows = page.worldRows;
+            compare(grid(), [3, 6]);
+            compare(page.world.seats.length, 48);
+            seated(40);
+            const seats = {};
+            for (let i = 0; i < 40; i++)
+                seats["t" + i] = page.world.seatOf["t" + i].index;
+            walk(50);
+            wait(50);
+            const paints = page.floorPaints;
+
+            plugin.publish(many(41, "t", "working", "typing"));
+            compare(grid(), [4, 8], "a pod more to each row");
+            compare(page.worldRows, rows, "as deep as before");
+            compare(page.world.seats.length, 64);
+            seated(41);
+            for (const id of Object.keys(seats))
+                compare(page.world.seatOf[id].index, seats[id], id + " keeps its seat");
+            compare(page.world.seatOf["t40"].pod >= 6, true, "the newcomer sits in a new pod");
+            wait(50);
+            compare(page.floorPaints, paints + 1, "the floor is painted once for the new size");
+            walk(300);
+            plugin.publish(many(56, "t", "working", "typing"));
+            compare(grid(), [4, 8], "56 people fit");
+            plugin.publish(many(70, "t", "working", "typing"));
+            compare(grid(), [4, 12], "a row of pods more");
+            compare(page.worldRows, rows + 6);
+            compare(page.world.entrance, [2, rows + 4], "the entrance moves down with the wall");
+            seated(70);
+            walk(300);
+            wait(50);
+            compare(page.floorPaints, paints + 2, "painted only when the size changed");
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+
+            // 57 people would leave less than a pod free in a smaller grid,
+            // 56 a pod: the desks in the pods it loses are carried out, then
+            // it shrinks.
+            plugin.publish(many(57, "t", "working", "typing"));
+            compare(page.closeTo, 0, "57 people keep twelve pods");
+            plugin.publish(many(56, "t", "working", "typing"));
+            compare(grid(), [4, 12], "the office waits for the desks to go");
+            compare(page.closeTo, 9);
+            for (const id of Object.keys(page.world.seatOf))
+                verify(page.world.seatOf[id].pod < 9, id + " moves out of the closing pods");
+            runUntil(() => page.world.pods.length === 9, 6000, "the office shrinks");
+            compare(grid(), [3, 9]);
+            seated(56);
+            walk(600);
+            plugin.publish(many(49, "t", "working", "typing"));
+            compare(page.closeTo, 0, "49 people keep nine pods");
+            plugin.publish(many(32, "t", "working", "typing"));
+            compare(page.closeTo, 6, "32 people leave a pod free in six");
+            runUntil(() => page.world.pods.length === 6, 6000, "the office shrinks back to its first size");
+            compare([page.worldCols, page.worldRows], [cols, rows]);
+            seated(32);
+            walk(400);
+            // Past 40 people again, it grows at once.
+            plugin.publish(many(41, "t", "working", "typing"));
+            compare(grid(), [4, 8]);
+            walk(200);
+        }
+
+        // Gives the page a view of `w` by `h` and waits for its layout.
+        function resize(w, h) {
+            const scroller = find("officeScroller");
+            loader.width = w;
+            loader.height = h;
+            tryVerify(() => scroller.width > w - 100 && scroller.width <= w && scroller.height > h - 200 && scroller.height <= h, 1000, "the view is " + w + " by " + h);
+            // The office fits itself to the view once the resize is done.
+            wait(0);
+        }
+
+        // How big an office of `cols` by `rows` tiles shows, fitted to the view.
+        function fitOf(cols, rows) {
+            const scroller = find("officeScroller");
+            return Math.min((scroller.width - 8) / (cols * 16), (scroller.height - 8) / (rows * 16));
+        }
+
+        // A big office takes the grid of pods that shows it biggest: wider in
+        // a wide view than in a tall one, and in a wide one bigger than rows
+        // of three pods would. In a view that wants another grid everyone
+        // keeps its desk and walks there from where it was.
+        function test_a_big_office_is_wider_in_a_wide_view_than_a_tall_one() {
+            resize(1600, 900);
+            plugin.publish(many(70, "t", "working", "typing"));
+            const wide = page.world.across;
+            // Rows of three pods: four rows for 70 people.
+            verify(page.fitScale > fitOf(33, 31), "it shows bigger than in rows of three: " + page.fitScale + " against " + fitOf(33, 31));
+            const seats = {}, at = {};
+            for (const id of Object.keys(page.actors)) {
+                seats[id] = page.world.seatOf[id].index;
+                at[id] = [actor(id).tx, actor(id).ty];
+            }
+            resize(700, 1300);
+            const tall = page.world.across;
+            verify(wide > tall, "more pods to a row in a wide view: " + wide + " against " + tall);
+            for (const id of Object.keys(seats)) {
+                const a = actor(id);
+                compare(page.world.seatOf[id].index, seats[id], id + " keeps its desk");
+                // Those where the break room now is step to the office's
+                // floor by its wall.
+                if (at[id][0] < page.world.xd && at[id][1] < page.world.rows)
+                    verify(Math.abs(a.tx - at[id][0]) + Math.abs(a.ty - at[id][1]) <= 2, id + " is still near where it was");
+                else
+                    verify(a.tx < page.world.xd, id + " stays out of the break room");
+            }
+            for (const id of Object.keys(seats)) {
+                const seat = page.world.seatOf[id];
+                runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 1500, id + " walks to its desk");
+            }
+            checkFloor();
+        }
+
+        // The six pods an office starts with stay two rows of three in an
+        // ordinary window.
+        function test_the_first_six_pods_stay_two_rows_of_three() {
+            for (const size of [[1200, 760], [1024, 700], [1920, 1080]]) {
+                resize(size[0], size[1]);
+                open();
+                plugin.publish(many(12, "t", "working", "typing"));
+                compare([page.world.across, page.world.pods.length, page.worldCols, page.worldRows], [3, 6, 33, 19], size.join("×"));
             }
         }
 
-        // The office holds 48 desks whoever is in it, 8 of them the review
-        // corner's; anyone past that takes a break.
-        function test_the_office_keeps_its_size_as_people_come_and_go() {
-            plugin.publish(many(4, "t", "working", "typing"));
-            const cols = page.worldCols, rows = page.worldRows;
-            const world = page.world;
-            const reviewers = [0, 1, 2, 3, 4, 5, 6, 7].map(i => reviewer("r" + i, "Review #" + i));
-            plugin.publish(many(42, "t", "working", "typing").concat(reviewers));
-            compare([page.worldCols, page.worldRows], [cols, rows]);
-            verify(page.world === world, "the same office");
-            compare(Object.keys(page.world.seatOf).length, 48);
-            compare(page.world.seats.length, 48);
-            for (const id of ["t40", "t41"]) {
-                verify(page.world.seatOf[id] === undefined, id + " has no desk");
-                verify(actor(id).goal && actor(id).goal.x > page.world.xd, id + " takes a break");
+        // In a tall, narrow view the pods stack in a single column, the
+        // review corner on top by the break room.
+        function test_a_narrow_view_stacks_the_pods_in_one_column() {
+            resize(300, 1000);
+            plugin.publish(many(12, "t", "working", "typing").concat([reviewer("r0", "Review 0")]));
+            compare([page.world.across, page.world.pods.length], [1, 6]);
+            verify(page.fitScale > fitOf(27, 25), "it shows bigger than two across: " + page.fitScale + " against " + fitOf(27, 25));
+            const corner = page.world.pods.find(pod => pod.review);
+            compare(corner.y, Math.min(...page.world.pods.map(pod => pod.y)), "the review corner is the top pod");
+            compare(page.world.seatOf["r0"].pod, page.world.pods.indexOf(corner), "the reviewer sits there");
+            verify(page.boards.some(board => board.review), "under its whiteboard");
+            for (const id of Object.keys(page.actors)) {
+                const seat = page.world.seatOf[id];
+                runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 3000, id + " gets to its desk");
             }
-            walk(100);
-            plugin.publish(many(2, "t", "working", "typing"));
-            compare([page.worldCols, page.worldRows], [cols, rows]);
             checkFloor();
+        }
+
+        // Two talking when the office takes another grid talk on from the
+        // same tiles, and keep them for the rest of the talk.
+        function test_a_talk_keeps_its_tiles_through_a_resize() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            page.takeBreak(c);
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 3000, "C gets to the break room");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            const across = page.world.across;
+            resize(300, 1000);
+            verify(page.world.across !== across, "the office takes another grid");
+            compare(Math.abs(a.tx - c.tx) + Math.abs(a.ty - c.ty), 1, "the two are still side by side");
+            const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
+            checkFloor();
+            runUntil(() => {
+                if (!a.talk)
+                    return true;
+                compare(page.claims[side], "lead", "the lead keeps the side it talks from");
+                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                checkFloor();
+                return false;
+            }, 400, "the talk ends");
+        }
+
+        // Whatever clears the claims mid-talk, the next step of the talk
+        // claims the speaker's side and the listener's tile again.
+        function test_a_talk_claims_its_tiles_again_when_they_go_missing() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
+            delete page.claims[side];
+            delete page.claims[here];
+            a.claim = -1;
+            c.hold = -1;
+            page.advance(1);
+            compare([page.claims[side], page.claims[here]], ["lead", "c"], "both are claimed again");
+            compare([a.claim, c.hold], [side, here]);
+        }
+
+        // A speaker walking up to a listener talks from beside it, even from
+        // straight below, where the side below would be nearer, so neither's
+        // speech bubble covers the other.
+        function test_a_speaker_walks_up_beside_the_listener() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "working", "planning")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
+            const W = page.world.cols;
+            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.walkable(x, y) && page.claims[y * W + x] === undefined);
+            verify(beside.length > 0, "a side beside C is free");
+            let below = 0;
+            while (below < 3 && page.walkable(c.tx, c.ty + below + 1))
+                below++;
+            verify(below >= 2, "the floor below C is open");
+            standAt(a, c.tx, c.ty + below);
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "go" && a.goal?.kind === "talk", 400, "Lead sets out for C");
+            compare(a.goal.y, c.ty, "Lead heads for a side beside C, not the one below");
+            runUntil(() => {
+                checkFloor();
+                return a.talk?.phase === "say";
+            }, 3000, "the talk starts");
+            compare(a.ty, c.ty, "Lead talks from beside C");
+        }
+
+        // A speaker whose side someone else took while the claims were gone
+        // walks to the nearest other free side of the listener and talks from
+        // there, and nobody stops on one tile with someone else.
+        function test_a_speaker_whose_side_was_taken_moves_to_another() {
+            // C plans at a whiteboard, out in the open, so the talk can move
+            // to either side of it.
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "working", "planning"), person("x", "X", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c"), x = actor("x");
+            runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            checkFloor();
+            const W = page.world.cols, side = a.ty * W + a.tx;
+            delete page.claims[side];
+            a.claim = -1;
+            x.goal = {
+                x: a.tx,
+                y: a.ty,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "stand"
+            };
+            page.claim(x, x.goal);
+            const [ox, oy] = [a.tx, a.ty];
+            page.advance(1);
+            verify(a.claim !== side, "the speaker gives the taken side up");
+            compare(Math.abs(a.goal.x - c.tx) + Math.abs(a.goal.y - c.ty), 1, "it heads for another side of the listener");
+            // The nearest free side is one of the two beside its old one, two
+            // steps away; the one across the listener is a walk of four
+            // around it.
+            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.walkable(sx, sy) && [undefined, "lead"].includes(page.claims[sy * W + sx]));
+            const across = [2 * c.tx - ox, 2 * c.ty - oy];
+            verify(free.some(([sx, sy]) => sx === across[0] && sy === across[1]), "the side across the listener is free");
+            verify(free.some(([sx, sy]) => sx !== across[0] || sy !== across[1]), "and so is one beside the old one");
+            verify(a.goal.x !== across[0] || a.goal.y !== across[1], "it takes a side beside its old one, not the one across the listener");
+            compare(Math.abs(a.goal.x - ox) + Math.abs(a.goal.y - oy), 2, "two steps away");
+            compare(page.claims[a.claim], "lead", "and claims it");
+            compare(a.talk.phase, "go");
+            runUntil(() => {
+                checkFloor();
+                return a.talk?.phase === "say";
+            }, 3000, "it talks from the other side");
+            compare(a.ty * W + a.tx, a.claim, "it stands on the side it claimed");
+            runUntil(() => {
+                checkFloor();
+                return !a.talk;
+            }, 12000, "the talk ends");
+        }
+
+        // A speaker with no free side left by the listener ends the talk.
+        function test_a_speaker_with_no_free_side_ends_the_talk() {
+            const people = [person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")];
+            plugin.publish(people);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols;
+            a.claim = -1;
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
+                page.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
+            page.advance(1);
+            verify(!a.talk, "the talk ends");
+            compare(c.heldBy, "", "the listener is let go");
+            compare(c.hold, -1, "and holds no tile");
+        }
+
+        // Someone stepping through the break room's door when the door moves
+        // moves with it and goes on with the step, never back out to the
+        // office's floor nor straight through what lies between.
+        function test_a_step_through_the_door_goes_on_after_a_resize() {
+            plugin.publish([person("c", "C", "working", "typing")]);
+            const c = actor("c");
+            plugin.publish([person("c", "C", "waiting")]);
+            page.takeBreak(c);
+            const xd = page.world.xd, W = page.world.cols;
+            runUntil(() => c.next >= 0 && c.tx === xd - 1 && c.next % W === xd, 3000, "C steps through the door");
+            page.advance(2);
+            const y = c.ty, offset = c.px - c.tx * 16;
+            resize(300, 1000);
+            const w = page.world;
+            verify(w.xd !== xd, "the door moves");
+            compare([c.tx, c.ty, c.next], [w.xd - 1, y, y * w.cols + w.xd], "C goes on stepping through the door where it is now");
+            compare(c.px - c.tx * 16, offset, "from as far as it got");
+            checkFloor();
+            runUntil(() => {
+                checkFloor();
+                verify(c.tx >= page.world.xd - 1, "C is never put back on the office's floor, at " + c.tx + "," + c.ty);
+                return arrived(c) && c.tx > page.world.xd;
+            }, 3000, "C goes on to the break room");
+        }
+
+        // Someone stepping out of the break room's door when the door moves
+        // moves with it too and goes on with the step to the office.
+        function test_a_step_out_of_the_door_goes_on_after_a_resize() {
+            plugin.publish([person("c", "C", "working", "typing")]);
+            const c = actor("c");
+            plugin.publish([person("c", "C", "waiting")]);
+            page.takeBreak(c);
+            runUntil(() => arrived(c) && c.tx > page.world.xd && c.until !== Infinity, 3000, "C gets to the break room");
+            c.until = page.now;
+            const xd = page.world.xd, W = page.world.cols;
+            runUntil(() => c.next >= 0 && c.tx === xd && c.next % W === xd - 1, 3000, "C steps out through the door");
+            page.advance(2);
+            const y = c.ty, offset = c.px - c.tx * 16;
+            resize(300, 1000);
+            const w = page.world;
+            verify(w.xd !== xd, "the door moves");
+            compare([c.tx, c.ty, c.next], [w.xd, y, y * w.cols + w.xd - 1], "C goes on stepping out of the door where it is now");
+            compare(c.px - c.tx * 16, offset, "from as far as it got");
+            checkFloor();
+            const seat = page.world.seatOf["c"];
+            runUntil(() => {
+                checkFloor();
+                return arrived(c) && c.tx === seat.x && c.ty === seat.y;
+            }, 3000, "C gets back to its desk");
+        }
+
+        // Someone mid-step when a resize puts the office's south wall on the
+        // tile it steps from goes on from the nearest floor, not from inside
+        // the wall.
+        function test_a_step_from_where_a_wall_comes_goes_on_from_the_floor() {
+            resize(300, 1000);
+            plugin.publish(many(70, "t", "working", "typing"));
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.across, 1);
+            // The south wall of an office of three rows of pods.
+            const y = 6 * 3 + 7 - 1, W = page.world.cols;
+            let x = 1;
+            while (x < page.world.xd && !(page.walkable(x, y) && page.walkable(x, y - 1)))
+                x++;
+            verify(x < page.world.xd, "the floor is open where the wall will be");
+            const a = actor("t0");
+            standAt(a, x, y);
+            send(a, x, y - 1);
+            page.advance(2);
+            compare([a.tx, a.ty, a.next], [x, y, (y - 1) * W + x], "t0 steps north from where the wall will be");
+            resize(1200, 760);
+            compare([page.world.across, page.world.rows], [4, y + 1], "the south wall is where t0 steps from");
+            const w = page.world;
+            verify(w.grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
+            if (a.next >= 0)
+                verify(w.grid[a.next] !== 1, "nor steps into one");
+            else
+                compare([a.px, a.py], [a.tx * 16, a.ty * 16], "t0 stands on its tile");
+            const seat = w.seatOf["t0"];
+            runUntil(() => arrived(a) && a.tx === seat.x && a.ty === seat.y, 3000, "t0 gets to its desk");
+        }
+
+        // When a resize moves the break room's wall west, over where people
+        // sit and walk, those in the office stay out of the break room: they
+        // step to the office's floor by the wall and walk to their desks.
+        function test_a_resize_that_moves_the_break_room_keeps_the_office_out_of_it() {
+            resize(1200, 760);
+            plugin.publish(many(70, "t", "working", "typing"));
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.across, 4);
+            const xd = page.world.xd;
+            const office = Object.keys(page.actors).filter(id => actor(id).tx < xd);
+            compare(office.length, 70, "everyone is in the office");
+            // One of them is mid-step where the wall will be.
+            const a = actor("t0"), W = page.world.cols, wall = 3 + 4 + 2;
+            let y = 3;
+            while (y < page.world.rows && !(page.walkable(wall, y) && page.walkable(wall + 1, y)))
+                y++;
+            standAt(a, wall + 1, y);
+            send(a, wall, y);
+            page.advance(2);
+            compare(a.next, y * W + wall, "t0 steps onto where the wall will be");
+            checkFloor();
+            resize(300, 1000);
+            compare([page.world.across, page.world.xd], [1, wall], "the wall moves west of where people sat");
+            const w = page.world;
+            for (const id of office) {
+                const p = actor(id);
+                verify(p.tx < w.xd, id + " stays out of the break room, not at " + p.tx + "," + p.ty);
+                if (p.next >= 0)
+                    verify(p.next % w.cols < w.xd, id + " steps no further than the office");
+            }
+            checkFloor();
+            walk(100);
+        }
+
+        // A resize while the office is closing pods closes it down to what
+        // the new view needs, with everyone seated and on the floor.
+        function test_a_resize_while_the_office_shrinks() {
+            resize(1600, 900);
+            plugin.publish(many(70, "t", "working", "typing"));
+            walk(200);
+            plugin.publish(many(40, "t", "working", "typing"));
+            verify(page.closeTo > 0, "40 people leave a pod free");
+            resize(700, 1300);
+            verify(page.closeTo > 0, "the office is still closing pods");
+            const pods = page.gridFor(Math.max(6, Math.ceil(48 / 8) + 1)).pods;
+            compare(page.closeTo, pods, "down to what the new view needs");
+            runUntil(() => !page.closeTo, 6000, "the office shrinks");
+            compare([page.world.across, page.world.pods.length], [page.gridFor(pods).across, pods]);
+            for (let i = 0; i < 40; i++)
+                verify(page.world.seatOf["t" + i] !== undefined && page.world.seatOf["t" + i].pod < pods, "t" + i + " has a desk");
+            checkFloor();
+            for (const id of Object.keys(page.actors)) {
+                const seat = page.world.seatOf[id];
+                runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 3000, id + " gets to its desk");
+            }
+            checkFloor();
+        }
+
+        // Someone resting at its desk that a resize leaves where it sits
+        // rests on to the same moment, so resizing never puts a break off;
+        // one it moves rests 15 to 45 seconds from when it sits again.
+        function test_a_resize_keeps_the_rest_of_someone_still_at_its_desk() {
+            // Sixteen fill the first two pods. Going from three pods to a row
+            // to two keeps the first pod where it is and moves the second
+            // down a row.
+            const people = many(16, "t", "waiting");
+            plugin.publish(people);
+            for (const p of people)
+                actor(p.id).restless = 0;
+            runUntil(() => people.every(p => arrived(actor(p.id)) && actor(p.id).until !== Infinity), 1500, "everyone sits and rests");
+            compare(page.world.across, 3);
+            const before = {};
+            for (const p of people)
+                before[p.id] = [actor(p.id).tx, actor(p.id).ty, actor(p.id).until];
+            const stay = people.filter(p => page.world.seatOf[p.id].pod === 0);
+            const move = people.filter(p => page.world.seatOf[p.id].pod === 1);
+            compare([stay.length, move.length], [8, 8], "eight sit in each of the first two pods");
+            resize(700, 1000);
+            compare(page.world.across, 2, "the office takes two pods to a row");
+            for (const p of stay) {
+                const a = actor(p.id), seat = page.world.seatOf[p.id];
+                compare([seat.x, seat.y, a.tx, a.ty], before[p.id].slice(0, 2).concat(before[p.id].slice(0, 2)), p.id + " keeps its desk and sits at it");
+                verify(arrived(a), p.id + " still sits");
+                compare(a.until, before[p.id][2], p.id + " rests on to the same moment");
+            }
+            const sat = {};
+            for (const p of move) {
+                const seat = page.world.seatOf[p.id];
+                verify(seat.x !== before[p.id][0] || seat.y !== before[p.id][1], p.id + " has a desk somewhere else");
+                compare(actor(p.id).until, Infinity, p.id + " rests only once it sits again");
+            }
+            // Each that moves rests 15 to 45 seconds from the tick it sits.
+            runUntil(() => {
+                for (const p of move) {
+                    const a = actor(p.id);
+                    if (sat[p.id] || a.until === Infinity)
+                        continue;
+                    verify(arrived(a) && a.tx === page.world.seatOf[p.id].x && a.ty === page.world.seatOf[p.id].y, p.id + " rests only at its new desk");
+                    verify(a.until - page.now >= 15000 && a.until - page.now <= 45000, p.id + " rests 15 to 45 seconds, not " + (a.until - page.now));
+                    sat[p.id] = true;
+                }
+                for (const p of stay)
+                    compare(actor(p.id).until, before[p.id][2], p.id + " rests on to the same moment");
+                return move.every(p => sat[p.id]);
+            }, 1500, "everyone who moves sits again");
+        }
+
+        // A resize that keeps the office's grid still works out again how
+        // many pods a closing office closes down to, for the new view.
+        function test_a_resize_that_keeps_the_grid_retargets_a_closure() {
+            resize(1150, 900);
+            plugin.publish(many(70, "t", "working", "typing"));
+            walk(200);
+            compare([page.world.across, page.world.pods.length], [4, 12]);
+            plugin.publish(many(40, "t", "working", "typing"));
+            compare(page.closeTo, 9, "40 people close the office down to nine pods");
+            const world = page.world;
+            resize(1450, 900);
+            compare(page.gridFor(12).across, 4, "the wider view keeps the office's grid");
+            verify(page.world === world, "so the office is not built again");
+            compare(page.closeTo, 8, "but it closes down to eight pods, as the wider view fits best");
+            runUntil(() => !page.closeTo, 6000, "the office shrinks");
+            compare(page.world.pods.length, 8);
+            checkFloor();
+        }
+
+        // Someone listening at a desk in a pod the office closes stays for the
+        // talk, then goes to its new desk; the pod closes after, and no tile
+        // stays claimed for the talk or past the office's new end.
+        function test_a_listener_in_a_closing_pod_finishes_the_talk() {
+            resize(1200, 760);
+            const all = many(70, "t", "working", "typing");
+            plugin.publish(all);
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.pods.length, 12);
+            const listener = all.find(p => page.world.seatOf[p.id].pod >= 9);
+            verify(listener, "someone sits in a pod a smaller office would close");
+            const speaker = all.find(p => page.world.seatOf[p.id].pod < 9);
+            const stay = all.filter(p => page.world.seatOf[p.id].pod < 9).slice(0, 55).concat([listener]);
+            verify(stay.includes(listener) && stay.length === 56, "56 people stay, the listener among them");
+            const talks = [
+                {
+                    id: "talk-1",
+                    from: speaker.id,
+                    to: listener.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(all, talks);
+            const s = actor(speaker.id), l = actor(listener.id);
+            runUntil(() => s.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, held = l.ty * W + l.tx;
+            compare(l.hold, held, "the listener holds the tile it listens on");
+            checkFloor();
+            plugin.publish(stay, talks);
+            compare(page.closeTo, 9, "the office closes the pods past nine");
+            verify(page.world.seatOf[listener.id].pod < 9, "the listener has a desk in a pod that stays");
+            let ended = false;
+            runUntil(() => {
+                checkFloor();
+                if (s.talk)
+                    compare(page.claims[held], listener.id, "the listener keeps its tile while it listens");
+                else
+                    ended = true;
+                return ended && !page.closeTo;
+            }, 6000, "the talk ends and the office shrinks");
+            compare(page.world.pods.length, 9);
+            compare([l.hold, l.heldBy], [-1, ""], "nothing is held for the talk");
+            const tiles = page.world.cols * page.world.rows;
+            const mine = Object.values(page.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.claims)) {
+                verify(Number(tile) < tiles, "tile " + tile + " is past the office's end");
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+            }
+            const seat = page.world.seatOf[listener.id];
+            runUntil(() => {
+                checkFloor();
+                return arrived(l) && l.tx === seat.x && l.ty === seat.y;
+            }, 3000, "the listener gets to its new desk");
+        }
+
+        // Movers may carry out the desk someone listens at, the last in the
+        // pods the office closes, before it replies; the office waits for the
+        // talk before it closes them.
+        function test_the_office_closes_a_pod_only_once_its_talks_are_over() {
+            resize(1200, 760);
+            const all = many(70, "t", "working", "typing");
+            plugin.publish(all);
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare(page.world.pods.length, 12);
+            const listener = all.find(p => page.world.seatOf[p.id].pod >= 9);
+            const speaker = all.find(p => page.world.seatOf[p.id].pod < 9);
+            const stay = all.filter(p => page.world.seatOf[p.id].pod < 9).slice(0, 55).concat([listener]);
+            const talks = [
+                {
+                    id: "talk-1",
+                    from: speaker.id,
+                    to: listener.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(all, talks);
+            const s = actor(speaker.id), l = actor(listener.id);
+            runUntil(() => s.talk?.phase === "say", 3000, "the talk starts");
+            const W = page.world.cols, held = l.ty * W + l.tx;
+            // The speaker goes on until it is let go.
+            s.talk.until = Infinity;
+            plugin.publish(stay, talks);
+            compare(page.closeTo, 9);
+            const first = 9 * page.world.pods[0].seats.length;
+            const closing = page.world.seats.slice(first);
+            runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
+            page.advance(50);
+            compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
+            compare([s.talk?.phase, l.hold, page.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
+            s.talk.until = page.now;
+            runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
+            compare(page.world.pods.length, 9);
+            const seat = page.world.seatOf[listener.id];
+            runUntil(() => arrived(l) && l.tx === seat.x && l.ty === seat.y, 3000, "the listener gets to its new desk");
+        }
+
+        // Someone listening on the floor in the rows a shorter office loses
+        // keeps the office from shrinking until the talk is over, as one
+        // listening at a closing desk does.
+        function test_the_office_shrinks_only_once_nobody_listens_where_it_ends() {
+            resize(900, 900);
+            compare([page.gridFor(12).across, page.gridFor(9).across], [3, 3], "the office keeps three pods to a row as it shrinks");
+            const all = many(70, "t", "working", "typing");
+            plugin.publish(all);
+            runUntil(() => page.moves === 0, 6000, "every desk is in");
+            compare([page.world.across, page.world.pods.length], [3, 12]);
+            const end = page.officeRows(3) - 1;
+            const listener = all.find(p => page.world.seatOf[p.id].pod >= 9);
+            const speaker = all.find(p => page.world.seatOf[p.id].pod < 9);
+            const stay = all.filter(p => page.world.seatOf[p.id].pod < 9).slice(0, 55).concat([listener]);
+            // The listener stands on the floor past where the shorter office ends.
+            const l = actor(listener.id), s = actor(speaker.id);
+            let x = 1, y = end + 1;
+            while (!(page.walkable(x, y) && page.world.grid[y * page.world.cols + x] === 0 && page.claims[y * page.world.cols + x] === undefined)) {
+                if (++x >= page.world.xd) {
+                    x = 1;
+                    y++;
+                }
+            }
+            verify(y < page.world.rows - 1, "there is floor in the rows the office loses");
+            standAt(l, x, y);
+            runUntil(() => arrived(l), 1500, "the listener stands there");
+            const talks = [
+                {
+                    id: "talk-1",
+                    from: speaker.id,
+                    to: listener.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(all, talks);
+            runUntil(() => s.talk?.phase === "say", 3000, "the talk starts");
+            const held = y * page.world.cols + x;
+            compare([l.tx, l.ty, l.hold], [x, y, held], "the listener listens on the floor there");
+            s.talk.until = Infinity;
+            plugin.publish(stay, talks);
+            compare(page.closeTo, 9);
+            const closing = page.world.seats.slice(9 * page.world.pods[0].seats.length);
+            runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
+            page.advance(50);
+            compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
+            compare([s.talk?.phase, l.tx, l.ty, l.hold, page.claims[held]], ["say", x, y, held, listener.id], "the listener listens on where it was");
+            s.talk.until = page.now;
+            runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
+            compare(page.world.pods.length, 9);
+            const seat = page.world.seatOf[listener.id];
+            runUntil(() => arrived(l) && l.tx === seat.x && l.ty === seat.y, 3000, "the listener gets to its new desk");
+        }
+
+        // A resize that keeps the same best grid leaves the office as it is.
+        function test_a_resize_that_keeps_the_grid_keeps_the_office() {
+            resize(1600, 900);
+            plugin.publish(many(70, "t", "working", "typing"));
+            walk(20);
+            wait(50);
+            const world = page.world, paints = page.floorPaints;
+            const at = Object.keys(page.actors).map(id => [actor(id).px, actor(id).py]);
+            resize(1700, 950);
+            resize(1550, 880);
+            verify(page.world === world, "the office is not built again");
+            wait(50);
+            compare(page.floorPaints, paints, "nor painted again");
+            compare(Object.keys(page.actors).map(id => [actor(id).px, actor(id).py]), at, "nobody moves");
+        }
+
+        // Reviewers fill the review corner without the office growing; those
+        // past its eight desks need ordinary ones.
+        function test_the_office_grows_for_reviewers_only_past_the_corner() {
+            const reviewers = n => {
+                const list = [];
+                for (let i = 0; i < n; i++)
+                    list.push(reviewer("r" + i, "Review " + i));
+                return list;
+            };
+            plugin.publish(many(40, "t", "working", "typing").concat(reviewers(8)));
+            compare(page.world.seats.length, 48, "40 people and 8 reviewers fit in six pods");
+            plugin.publish(many(40, "t", "working", "typing").concat(reviewers(9)));
+            verify(page.world.seats.length > 48, "a ninth reviewer takes an ordinary desk");
+            walk(100);
+        }
+
+        // A worker at an ordinary desk whose lead turns out to be a reviewer
+        // keeps that desk, so the office counts it among the ordinary ones.
+        function test_a_reviewer_at_an_ordinary_desk_counts_as_one() {
+            const others = many(39, "t", "working", "typing");
+            plugin.publish(others.concat([person("w", "W", "working", "typing", "lead")]));
+            const floor = page.world.seatOf["w"];
+            verify(!page.world.pods[floor.pod].review, "W sits at an ordinary desk");
+            plugin.publish(others.concat([reviewer("lead", "Lead"), reviewer("w", "W", "lead")]));
+            compare(page.world.seatOf["w"], floor, "W keeps its desk");
+            plugin.publish(others.concat([reviewer("lead", "Lead"), reviewer("w", "W", "lead"), person("t39", "t 39", "working", "typing")]));
+            for (const id of Object.keys(page.actors))
+                verify(page.world.seatOf[id] !== undefined, id + " has a desk");
+            walk(200);
+        }
+
+        // People going in and out of the rows an office is closing keep to
+        // the floor, and those on their way when it shrinks go on from the
+        // nearest floor of the smaller office.
+        function test_people_and_movers_carry_on_when_the_office_shrinks() {
+            plugin.publish(many(75, "t", "working", "typing"));
+            walk(200);
+            plugin.publish(many(30, "t", "working", "typing"));
+            compare(page.closeTo, 6);
+            walk(4000);
+            compare([page.world.pods.length, page.worldRows], [6, 19]);
+            compare(page.closeTo, 0);
+            runUntil(() => Object.keys(page.movers).length === 0 && page.jobs.length === 0, 4000, "the movers are done");
+            for (const id of Object.keys(page.actors))
+                runUntil(() => arrived(actor(id)), 1500, id + " gets where it is going");
+        }
+
+        // An office that empties before its new desks arrive closes the pods
+        // at once: there is nothing to carry out, and with nobody in it the
+        // clock may not run again.
+        function test_an_office_emptied_before_its_desks_arrive_closes_at_once() {
+            plugin.publish([]);
+            plugin.publish(many(75, "t", "working", "typing"));
+            verify(page.world.pods.length > 6, "75 people need more pods");
+            plugin.publish([]);
+            compare(page.closeTo, 0, "no closure is left pending");
+            compare([page.world.pods.length, page.worldRows], [6, 19], "the office is back to six pods");
         }
 
         function test_a_break_lasts_from_when_the_person_gets_there() {
@@ -854,6 +1668,8 @@ Item {
             plugin.publish(people);
             const resting = people.slice(0, 8).map(p => person(p.id, p.title, "waiting"));
             plugin.publish(resting.concat(people.slice(8)));
+            for (const p of resting)
+                page.takeBreak(actor(p.id));
             const first = {}, since = {};
             runUntil(() => {
                 let done = 0;
@@ -1002,6 +1818,9 @@ Item {
             checkFloor();
             const people = many(16, "t", "waiting");
             plugin.publish(people);
+            // More than the break room has places for go at once.
+            for (const id of Object.keys(page.actors))
+                page.takeBreak(actor(id));
             const stops = {};
             for (const id of Object.keys(page.actors)) {
                 const g = actor(id).goal;
@@ -1031,18 +1850,112 @@ Item {
             compare(actor("lead").frame, page.frame.book);
         }
 
-        function test_waiting_people_take_a_break_and_come_back() {
-            plugin.publish([person("lead", "Lead", "working", "typing")]);
-            runUntil(() => arrived(actor("lead")));
+        // A waiting or idle person stays at its desk, and now and then, by its
+        // own restlessness, takes a short break and comes back.
+        function test_waiting_people_stay_at_their_desks_and_now_and_then_take_a_break() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("calm", "Calm", "working", "typing")]);
+            runUntil(() => arrived(actor("lead")) && arrived(actor("calm")));
             const desk = [actor("lead").tx, actor("lead").ty];
 
-            plugin.publish([person("lead", "Lead", "waiting")]);
-            verify(actor("lead").goal.area === "break" || actor("lead").goal.kind === "floor");
-            runUntil(() => arrived(actor("lead")) && actor("lead").tx > page.world.xd, 2000, "the person reaches the break room");
-
-            plugin.publish([person("lead", "Lead", "working", "typing")]);
-            runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the person walks back to its desk");
+            plugin.publish([person("lead", "Lead", "waiting"), person("calm", "Calm", "idle")]);
+            for (const id of ["lead", "calm"]) {
+                compare(actor(id).goal.kind, "desk", id + " stays at its desk");
+                compare(actor(id).plan, "rest");
+            }
+            page.advance(1);
+            compare(actor("lead").frame, page.frame.sit, "the lead sits back");
+            actor("lead").restless = 1;
+            actor("calm").restless = 0;
+            runUntil(() => arrived(actor("lead")) && actor("lead").tx > page.world.xd, 2500, "the lead gets up for a break");
+            runUntil(() => arrived(actor("lead")) && actor("lead").plan === "rest", 2500, "the lead comes back");
             compare([actor("lead").tx, actor("lead").ty], desk);
+            const calm = actor("calm");
+            compare(calm.goal.kind, "desk", "someone never restless never leaves its desk");
+            compare(calm.plan, "rest");
+
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("calm", "Calm", "idle")]);
+            compare(actor("lead").goal.kind, "desk");
+            compare(actor("lead").cup, false, "back to work, the cup is put away");
+        }
+
+        // With 70 people waiting, most stay at their desks, and the break room
+        // never holds more than its cap.
+        function test_the_break_room_never_holds_more_than_its_cap() {
+            const people = many(70, "t", "waiting");
+            plugin.publish(people);
+            for (const id of Object.keys(page.actors))
+                actor(id).restless = 1;
+            let most = 0;
+            for (let i = 0; i < 3000; i++) {
+                page.advance(1);
+                let away = 0, inside = 0;
+                for (const id of Object.keys(page.actors)) {
+                    if (actor(id).plan === "break")
+                        away++;
+                    if (actor(id).tx > page.world.xd)
+                        inside++;
+                }
+                verify(away <= page.breakRoomCap, away + " on a break");
+                verify(inside <= page.breakRoomCap, inside + " in the break room");
+                most = Math.max(most, away);
+                if (i % 50 === 0)
+                    checkFloor();
+            }
+            compare(most, page.breakRoomCap, "the break room fills up to its cap");
+        }
+
+        // Someone whose break is over still fills the break room until it
+        // walks out, so nobody else gets in meanwhile.
+        function test_a_place_in_the_break_room_is_kept_until_its_taker_leaves() {
+            const people = many(9, "t", "waiting");
+            plugin.publish(people);
+            runUntil(() => people.every(p => arrived(actor(p.id))), 2500, "everyone sits down");
+            const away = people.slice(0, page.breakRoomCap).map(p => actor(p.id));
+            for (const a of away) {
+                page.takeBreak(a);
+                a.stay = 1e9;
+            }
+            runUntil(() => away.every(a => arrived(a)), 2500, "the break room fills up");
+            const first = away[0];
+            runUntil(() => {
+                if (first.plan === "break" && first.until !== Infinity)
+                    first.until = page.now;
+                return first.plan === "rest";
+            }, 200, "a break ends");
+            verify(first.tx > page.world.xd, "it is still in the break room");
+            const last = actor(people[page.breakRoomCap].id);
+            last.restless = 1;
+            page.restless(last);
+            compare(last.plan, "rest", "nobody else gets in while it is still there");
+            runUntil(() => first.tx <= page.world.xd, 1500, "it walks out");
+            page.restless(last);
+            compare(last.plan, "break", "then there is room again");
+        }
+
+        // People differ: over the same time, some take breaks and others
+        // don't, and the ones that do go to different places. A break is
+        // counted once, however many places it takes in (coffee, then the
+        // couch); every place goes towards the variety.
+        function test_breaks_come_at_random_per_person() {
+            plugin.publish(many(40, "t", "idle"));
+            const breaks = {}, plans = {}, goals = {}, kinds = {};
+            for (let i = 0; i < 6000; i++) {
+                page.advance(1);
+                for (const id of Object.keys(page.actors)) {
+                    const a = actor(id);
+                    if (a.plan === "break" && plans[id] !== "break")
+                        breaks[id] = (breaks[id] ?? 0) + 1;
+                    plans[id] = a.plan;
+                    if (a.plan === "break" && a.goal && a.goal !== goals[id])
+                        kinds[a.goal.kind] = true;
+                    goals[id] = a.goal;
+                }
+            }
+            const counts = Object.keys(page.actors).map(id => breaks[id] ?? 0);
+            verify(counts.some(n => n === 0), "someone stayed at its desk");
+            verify(counts.some(n => n >= 2), "someone took more than one break");
+            verify(new Set(counts).size >= 3, "how often differs");
+            verify(["coffee", "cooler", "couch", "table", "arcade", "chat", "vending", "fridge", "armchair"].filter(k => kinds[k]).length >= 4, "breaks go to different places");
         }
 
         function test_two_agents_that_talk_walk_up_to_each_other() {
@@ -1079,6 +1992,8 @@ Item {
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
             compare(Math.abs(actor("lead").tx - actor("c").tx) + Math.abs(actor("lead").ty - actor("c").ty), 1);
             // C heads for a break just as the lead speaks to it.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")]);
+            page.takeBreak(actor("c"));
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
                 {
                     id: "talk-1",
@@ -1106,6 +2021,8 @@ Item {
         // speaker talks from the side it claimed, never where it happens to pass.
         function test_a_talk_stops_people_only_where_nobody_else_has_claimed() {
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")]);
+            page.takeBreak(actor("c"));
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
                 {
                     id: "talk-1",
@@ -1141,6 +2058,8 @@ Item {
         // so the listener stays put and the talk reaches its reply.
         function test_a_listener_keeps_its_tile_until_the_talk_ends() {
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")]);
+            page.takeBreak(actor("c"));
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
                 {
                     id: "talk-1",
@@ -1320,10 +2239,13 @@ Item {
                 verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
         }
 
-        // A reviewer listening at a floor desk that goes to someone else keeps
-        // the tile until the talk ends; the desk's new owner waits beside the
-        // pod meanwhile, and sits down once the reviewer has gone.
-        function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
+        // A reviewer listening at a floor desk when a thread comes in to a full
+        // floor keeps its desk: the office grows for the thread rather than
+        // take the desk (see seatTeams()), and nobody ends up on a tile
+        // someone else holds while the floor is laid out again. Were the desk
+        // given away, its new owner would wait for the talk to end (see
+        // seatGoal()).
+        function test_a_reviewer_listening_at_a_floor_desk_keeps_it_when_the_floor_fills() {
             const reviewers = [];
             for (let i = 0; i < 9; i++)
                 reviewers.push(reviewer("r" + i, "Review #" + i));
@@ -1348,20 +2270,74 @@ Item {
             compare(r8.hold, tile, "r8 listens at its desk");
             checkFloor();
             plugin.publish(reviewers.concat(threads));
-            compare(page.world.seatOf["t39"], seat, "t39 is given r8's desk");
+            verify(page.world.pods.length > 6, "the office grows");
+            compare(page.world.seatOf["r8"].index, seat.index, "r8 keeps its desk");
             const t39 = actor("t39");
+            verify(page.world.seatOf["t39"].index !== seat.index, "t39 has a desk of its own");
+            runUntil(() => {
+                checkFloor();
+                const at = (a, s) => arrived(a) && a.tx === s.x && a.ty === s.y;
+                return !t0.talk && at(r8, page.world.seatOf["r8"]) && at(t39, page.world.seatOf["t39"]);
+            }, 9000, "r8 and t39 each sit at their own desk");
+        }
+
+        // A floor desk given away while its reviewer listens there stays the
+        // reviewer's until the talk ends: the new owner waits beside the pod
+        // meanwhile (see seatGoal()), and sits down as soon as the reviewer
+        // lets the tile go (see letGo()). No publish reaches the yieldTo()
+        // fallback in seatTeams() that gives such a desk away: sync() grows
+        // the office first, counting the whole review corner and every
+        // reviewer on a floor desk, gridFor() never gives fewer pods than
+        // asked, the office has no size cap, and pods being closed leave
+        // room for the same count. So the test gives the desk away by hand.
+        function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            plugin.publish(reviewers.concat(many(39, "t", "working", "typing")));
+            const r8 = actor("r8"), t0 = actor("t0"), t1 = actor("t1");
+            const w = page.world;
+            verify(w.seatOf["r8"].pod !== corner(), "r8 sits on the floor");
+            runUntil(() => arrived(r8) && arrived(t0) && arrived(t1), 6000, "everyone sits down");
+            const seat = w.seatOf["r8"], other = w.seatOf["t1"];
+            const tile = seat.y * w.cols + seat.x;
+            plugin.publish(reviewers.concat(many(39, "t", "working", "typing")), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "r8",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => t0.talk?.phase === "say", 3000, "t0 talks to r8");
+            compare(r8.hold, tile, "r8 listens at its desk");
+            checkFloor();
+            // r8's desk goes to t1, and t1's to r8, as layout() and sync() do.
+            w.seatOf["t1"] = seat;
+            w.seatOf["r8"] = other;
+            for (const a of [t1, r8]) {
+                a.goal = null;
+                page.decide(a, false);
+            }
+            compare(t1.goal.kind, "wait", "t1 waits for the desk r8 listens at");
+            const pod = w.pods[seat.pod];
+            verify(t1.goal.x < pod.x || t1.goal.x >= pod.x + pod.cols, "beside the pod");
             runUntil(() => {
                 if (t0.talk) {
                     compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
                     compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
+                    compare(t1.goal.kind, "wait", "while t1 waits");
                 }
                 checkFloor();
                 return !t0.talk;
             }, 3000, "the talk runs to its end");
+            compare(t1.goal.kind, "desk", "t1 heads for its desk as soon as r8 lets it go");
             runUntil(() => {
                 checkFloor();
-                return arrived(t39) && t39.tx === seat.x && t39.ty === seat.y;
-            }, 6000, "t39 sits at its desk once r8 has gone");
+                return arrived(t1) && t1.tx === seat.x && t1.ty === seat.y && arrived(r8) && r8.tx === other.x && r8.ty === other.y;
+            }, 6000, "t1 and r8 each sit at their new desk");
         }
 
         // A speaker that finds every side of its listener taken keeps the spot
@@ -1665,6 +2641,41 @@ Item {
             compare(Object.keys(page.movers).length, 0);
         }
 
+        // A waiting person whose desk is still being carried in waits for it,
+        // and its breaks count from when it sits down.
+        function test_a_break_waits_until_the_person_has_sat_down() {
+            const busy = many(40, "w", "working", "typing");
+            plugin.publish(busy);
+            const people = many(30, "t", "waiting");
+            plugin.publish(busy.concat(people));
+            for (const p of people)
+                actor(p.id).restless = 1;
+            const sat = {};
+            const armed = {};
+            let late = 0;
+            runUntil(() => {
+                for (const p of people) {
+                    const a = actor(p.id), seat = page.world.seatOf[p.id];
+                    if (a.tx === seat.x && a.ty === seat.y) {
+                        sat[p.id] = sat[p.id] ?? page.now;
+                        // The first rest after it sits, before a break
+                        // replaces it, is 15 to 45 seconds from then; the
+                        // tick after it sits sets it.
+                        if (armed[p.id] === undefined && a.plan === "rest" && a.until !== Infinity) {
+                            armed[p.id] = a.until;
+                            verify(a.until >= sat[p.id] + 15000 && a.until <= sat[p.id] + 45040, p.id + " rests 15 to 45 seconds from when it sat down, not until " + (a.until - sat[p.id]) + " ms after");
+                        }
+                    } else if (sat[p.id] === undefined) {
+                        verify(a.plan !== "break", p.id + " goes on a break before it ever sat down");
+                        if (seat.state !== "in" && page.now > 15000)
+                            late++;
+                    }
+                }
+                return people.every(p => armed[p.id] !== undefined);
+            }, 3000, "everyone sits down and rests");
+            verify(late > 0, "some desks arrive after a rest would have ended");
+        }
+
         // When a team leaves, movers carry its desks out and leave.
         function test_a_desk_is_carried_out_after_its_pod_empties() {
             const a = [person("a", "A", "working", "typing")].concat(many(5, "aw", "working", "typing", "a"));
@@ -1765,36 +2776,6 @@ Item {
             for (let i = 0; i < 400; i++) {
                 page.advance(1);
                 check();
-            }
-        }
-
-        // A worker who came in when every desk it may take was taken waits in
-        // the break room and sits down once a desk is free; one on a break
-        // stays on it.
-        function test_a_worker_without_a_desk_sits_down_once_it_gets_one() {
-            const office = many(42, "t", "working", "typing");
-            office[1] = person("t1", "t 1", "waiting");
-            plugin.publish(office);
-            verify(page.world.seatOf["t40"] === undefined, "t40 has no desk");
-            verify(actor("t40").goal.x > page.world.xd, "t40 waits in the break room");
-            const resting = actor("t1").goal;
-            verify(resting.x > page.world.xd, "t1 takes a break");
-            plugin.publish(office.filter(p => p.id !== "t0"));
-            const seat = page.world.seatOf["t40"];
-            verify(seat !== undefined, "t40 gets the desk t0 left");
-            compare(actor("t40").goal.kind, "desk", "t40 heads for its desk");
-            verify(actor("t1").goal === resting, "t1 stays on its break");
-            runUntil(() => arrived(actor("t40")), 1500, "t40 reaches its desk");
-            compare([actor("t40").tx, actor("t40").ty], [seat.x, seat.y]);
-        }
-
-        // Without a desk, a worker that plans or reads waits in the break room
-        // too, rather than at a whiteboard or a bookshelf.
-        function test_a_planner_without_a_desk_waits_in_the_break_room() {
-            plugin.publish(many(40, "t", "working", "typing").concat([person("p", "Planner", "working", "planning"), person("r", "Reader", "working", "reading")]));
-            for (const id of ["p", "r"]) {
-                verify(page.world.seatOf[id] === undefined, id + " has no desk");
-                verify(actor(id).goal.x > page.world.xd, id + " waits in the break room, not at a " + actor(id).goal.kind);
             }
         }
 
