@@ -32,11 +32,19 @@ defmodule HalC2.Upgrade.PlanRegressionTest do
   end
 
   # `app` at `vsn` in `<dir>/<app>-<vsn>`, holding the supervisor compiled from
-  # `source`, which stays unloaded so the plan reads it from disk.
+  # `source`, which stays unloaded so the plan reads it from disk. The MC's holds its
+  # running modules too: the plan reads every module the running `:hal_c2` lists, and
+  # one gone from the new version (a loaded `HalC2.Frozen` one) asks for a restart.
   defp lib(dir, app, vsn, source) do
     lib_dir = Path.join(dir, "#{app}-#{vsn}")
     ebin = Path.join(lib_dir, "ebin")
     File.mkdir_p!(ebin)
+
+    if app == :hal_c2 do
+      for beam <- Path.wildcard(Path.join(Application.app_dir(:hal_c2, "ebin"), "*.beam")),
+          do: File.ln_s!(beam, Path.join(ebin, Path.basename(beam)))
+    end
+
     Code.put_compiler_option(:ignore_module_conflict, true)
 
     try do
