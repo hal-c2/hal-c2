@@ -12,7 +12,8 @@ defmodule HalC2.Git do
   @type result :: %{status: integer | term, out: binary, err: binary, truncated: boolean}
 
   @doc """
-  Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
+  Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:unset` (names of
+  variables of the MC's environment git does not see), `:input` (stdin),
   `:max_bytes` (default 50 MB), `:timeout` (ms; none by default), `:on_stderr` (called
   with each chunk of stderr as it arrives) and `:stop_children` (a key: a git that does not
   finish takes the programs it started with it before this returns; see
@@ -27,13 +28,18 @@ defmodule HalC2.Git do
     # meant is named: `GIT_DIR`). Reads never take the index lock a user's git needs.
     # A checkout's own `core.fsmonitor` names a program `git status` would run:
     # repository configuration never picks a program for the MC to execute.
-    argv = [
-      Application.get_env(:hal_c2, :git_command, "git"),
-      "-c",
-      "safe.bareRepository=explicit",
-      "-c",
-      "core.fsmonitor=false" | args
-    ]
+    # `env -u` execs git in its place, so a pid or group taken for git stays git's.
+    unset = Enum.flat_map(opts[:unset] || [], &["-u", &1])
+
+    argv =
+      if(unset == [], do: [], else: ["env" | unset]) ++
+        [
+          Application.get_env(:hal_c2, :git_command, "git"),
+          "-c",
+          "safe.bareRepository=explicit",
+          "-c",
+          "core.fsmonitor=false" | args
+        ]
 
     opts =
       Keyword.update(
