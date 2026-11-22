@@ -286,7 +286,9 @@ defmodule HalC2.Steps.Space.Sites do
   end
 
   step "the link names one of the machine's non-loopback addresses", context do
-    %{host: host} = URI.parse(context.last_site["url"])
+    # A site's link, or a printed pairing link (`context.printed`).
+    url = if context[:last_site], do: context.last_site["url"], else: context.printed
+    %{host: host} = URI.parse(url)
     {:ok, ip} = :inet.parse_address(String.to_charlist(host))
     {:ok, interfaces} = :inet.getifaddrs()
     assert ip in for({_, opts} <- interfaces, {:addr, addr} <- opts, do: addr)

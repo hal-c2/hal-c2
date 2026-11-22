@@ -48,8 +48,17 @@ fn thread_titled(world: &mut World, title: &str, fields: Value) -> Outcome<Strin
     let minute = world.mc.threads.len();
     let mut row = fields;
     row["title"] = json!(title);
-    row["projectId"] = json!(PROJECT);
-    row["createdAt"] = json!(format!("2026-09-23T09:{minute:02}:00Z"));
+    // In the scenario's own project when the Background made one; otherwise
+    // (threads/sidebar-list.feature) in the MC's first project.
+    let project = if world.mc.projects.contains_key(PROJECT) {
+        PROJECT.to_owned()
+    } else {
+        world.mc.projects.keys().next().cloned().unwrap_or_default()
+    };
+    row["projectId"] = json!(project);
+    if row.get("createdAt").is_none() {
+        row["createdAt"] = json!(format!("2026-09-23T09:{minute:02}:00Z"));
+    }
     put_thread(world, &title_id(title), row)?;
     world.sync()?;
     key_of(world, title)
@@ -104,6 +113,10 @@ fn focus_list(world: &mut World, brick: Brick) -> Outcome<ObjectId> {
 struct Scenario {
     /// The centre of the row whose menu Shift+F10 asks for.
     row_centre: (f64, f64),
+    /// The list's rows that can be acted on, in order, and the one the
+    /// keyboard cursor was on, when a step put it there.
+    row_keys: Vec<String>,
+    focused_key: String,
     terminal_was_open: bool,
     /// The notification actions that ran, as "<title>/<label>".
     ran: Rc<RefCell<Vec<String>>>,
@@ -236,7 +249,18 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the thread list has keyboard focus on {Q}"),
         |world, c, _| {
-            let key = thread_titled(world, &c[0], json!({}))?;
+            // Rows above and below, so the cursor has somewhere to go.
+            thread_titled(
+                world,
+                "Older neighbour",
+                json!({"createdAt": "2026-09-23T08:00:00Z"}),
+            )?;
+            thread_titled(
+                world,
+                "Newer neighbour",
+                json!({"createdAt": "2026-09-23T09:59:00Z"}),
+            )?;
+            let key = thread_titled(world, &c[0], json!({"createdAt": "2026-09-23T09:30:00Z"}))?;
             world.dispatch("thread.open", json!({"key": key}))?;
             let brick = show_sidebar(world)?;
             let row = row_of(world, brick, &key)?;
@@ -244,9 +268,149 @@ pub fn register(steps: &mut Steps) {
             let cursor = brick.text_of(world, list, "cursorKey");
             expect!(cursor == key, "the keyboard cursor is on {cursor}");
             world.part::<Scenario>().row_centre = brick.at(world, row, 0.5, 0.5)?;
+            world.part::<Scenario>().focused_key = key.clone();
+            let root = brick.root(world);
+            world.part::<Scenario>().row_keys = root
+                .map(|root| brick.read(world, root, "rows"))
+                .map(|rows| hal_c2_shell::json::from_value(world.engine(), &rows))
+                .and_then(|rows| rows.as_array().cloned())
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| text(&entry["rowKey"]))
+                .filter(|row_key| !row_key.is_empty())
+                .collect();
             Ok(())
         },
     );
+    // Where the keyboard cursor went (threads/sidebar-list.feature).
+    fn focused_is(world: &mut World, expected: &str, what: &str) -> Outcome {
+        let brick = shown(world)?;
+        let list = brick.item(world, "list")?;
+        let expected = expected.to_owned();
+        world.wait_for_with(
+            move |w| {
+                brick.flag(w, list, "activeFocus")
+                    && brick.text_of(w, list, "cursorKey") == expected
+            },
+            move |w| {
+                format!(
+                    "{what}; the cursor is on {}",
+                    brick.text_of(w, list, "cursorKey")
+                )
+            },
+        )
+    }
+    steps.step("the next row is focused", |world, _, _| {
+        let (keys, focused) = {
+            let s = world.part::<Scenario>();
+            (s.row_keys.clone(), s.focused_key.clone())
+        };
+        let at = keys.iter().position(|k| k == &focused);
+        expect!(
+            at.is_some_and(|at| at + 1 < keys.len()),
+            "there is no row after {focused} in [{}]",
+            keys.join(", ")
+        );
+        focused_is(world, &keys[at.unwrap() + 1], "the next row to be focused")
+    });
+    steps.step("the previous row is focused", |world, _, _| {
+        let (keys, focused) = {
+            let s = world.part::<Scenario>();
+            (s.row_keys.clone(), s.focused_key.clone())
+        };
+        let at = keys.iter().position(|k| k == &focused);
+        expect!(
+            at.is_some_and(|at| at > 0),
+            "there is no row before {focused} in [{}]",
+            keys.join(", ")
+        );
+        focused_is(
+            world,
+            &keys[at.unwrap() - 1],
+            "the previous row to be focused",
+        )
+    });
+    steps.step("the first row is focused", |world, _, _| {
+        let first = world.part::<Scenario>().row_keys.first().cloned();
+        expect!(first.is_some(), "the list has no rows");
+        focused_is(world, &first.unwrap(), "the first row to be focused")
+    });
+    steps.step("the last row is focused", |world, _, _| {
+        let last = world.part::<Scenario>().row_keys.last().cloned();
+        expect!(last.is_some(), "the list has no rows");
+        focused_is(world, &last.unwrap(), "the last row to be focused")
+    });
+    steps.step(
+        "the thread list has keyboard focus on the settled section header",
+        |world, _, _| {
+            thread_titled(
+                world,
+                "Settled neighbour",
+                json!({"settledOverride": "settled", "settledAt": "2026-09-23T09:40:00Z"}),
+            )?;
+            wait_for_section(world, "Settled neighbour", "settled")?;
+            let brick = show_sidebar(world)?;
+            let list = focus_list(world, brick)?;
+            brick.write(
+                world,
+                list,
+                "cursorKey",
+                ljos::prelude::Value::from("header:settled"),
+            )?;
+            world.wait_for("the keyboard cursor on the settled section header", |w| {
+                brick.text_of(w, list, "cursorKey") == "header:settled"
+            })
+        },
+    );
+    steps.step("the settled section collapses", |world, _, _| {
+        let brick = shown(world)?;
+        world.wait_for("the settled section to collapse", |w| {
+            let Some(root) = brick.root(w) else {
+                return false;
+            };
+            let rows = hal_c2_shell::json::from_value(w.engine(), &brick.read(w, root, "rows"));
+            rows.as_array().into_iter().flatten().any(|row| {
+                text(&row["kind"]) == "header"
+                    && text(&row["key"]) == "settled"
+                    && row["open"] == false
+            })
+        })
+    });
+    // The menu has no thread field, so the thread binding is its position: the menu is requested at
+    // the centre of the focused row, which "the thread list has keyboard focus on" records first.
+    fn menu_beside(menu: &serde_json::Value, (x, y): (f64, f64)) -> bool {
+        let (mx, my) = (
+            menu["x"].as_f64().unwrap_or(f64::NAN),
+            menu["y"].as_f64().unwrap_or(f64::NAN),
+        );
+        menu.is_object()
+            && !menu["items"].as_array().is_none_or(Vec::is_empty)
+            && (mx - x).abs() < 1.0
+            && (my - y).abs() < 1.0
+    }
+    fn row_centre(world: &mut World, title: &str) -> Outcome<(f64, f64)> {
+        let centre = world.part::<Scenario>().row_centre;
+        expect!(
+            centre != (0.0, 0.0),
+            "no row centre recorded for {title}; focus its row first"
+        );
+        Ok(centre)
+    }
+    steps.step(&format!("the menu for {Q} opens"), |world, c, _| {
+        let centre = row_centre(world, &c[0])?;
+        world.wait_for_with(
+            |w| menu_beside(&w.state("menu"), centre),
+            |w| {
+                format!(
+                    "a menu for {} beside its row at {}, {}; the shell shows {}",
+                    c[0],
+                    centre.0,
+                    centre.1,
+                    show(&w.state("menu"))
+                )
+            },
+        )
+    });
     steps.step(
         &format!("the menu for {Q} is requested beside that thread"),
         |world, c, _| {
@@ -256,15 +420,15 @@ pub fn register(steps: &mut Steps) {
                 "no menu opened for {}",
                 c[0]
             );
-            let (x, y) = world.part::<Scenario>().row_centre;
-            let (mx, my) = (
-                menu["x"].as_f64().unwrap_or(f64::NAN),
-                menu["y"].as_f64().unwrap_or(f64::NAN),
-            );
+            let centre = row_centre(world, &c[0])?;
             expect!(
-                (mx - x).abs() < 1.0 && (my - y).abs() < 1.0,
-                "the menu is at {mx}, {my}, not beside {} at {x}, {y}",
-                c[0]
+                menu_beside(&menu, centre),
+                "the menu is at {}, {}, not beside {} at {}, {}",
+                menu["x"],
+                menu["y"],
+                c[0],
+                centre.0,
+                centre.1
             );
             Ok(())
         },

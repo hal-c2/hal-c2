@@ -1,7 +1,11 @@
 # Sources:
 #   plugins/office/plugin.json (permissions, settings, the page)
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking)
+#   plugins/office/mc/floor.ex (the office topic's people, reviewers among them, and talks)
+#   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
+#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking, the review corner, project marks)
+#   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
+#   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md
 #
@@ -75,6 +79,27 @@ Feature: Office
       Given a thread "Lead" in the project "api"
       When its agent delegates "Write the tests" to a worker
       Then the office has the worker "Write the tests" whose parent is "Lead"
+
+    @mc
+    Scenario: A thread the code-review plugin started to review a pull request is a reviewer
+      Given a review thread "Review #12 Fix login" the code-review plugin started
+      Then the office has "Review #12 Fix login" as a reviewer
+
+    @mc
+    Scenario: A worker a reviewer delegated to is a reviewer too
+      Given a review thread "Review #12 Fix login" the code-review plugin started
+      When its agent delegates "Check the tests" to a worker
+      Then the office has "Check the tests" as a reviewer
+
+    @mc
+    Scenario: A thread titled like a review that no review started is not a reviewer
+      Given a thread "Review #12 Fix login" in the project "api"
+      Then the office has "Review #12 Fix login", not as a reviewer
+
+    @mc
+    Scenario: A thread another plugin started is not a reviewer
+      Given a thread "Implement #7" the issue-tracker plugin started to implement an issue
+      Then the office has "Implement #7", not as a reviewer
 
     @mc
     Scenario: Archived, deleted and settled threads have left the office
@@ -455,3 +480,160 @@ Feature: Office
       Given the office page is open
       When the user switches to the Threads tab
       Then the office stops animating until its page is shown again
+
+  Rule: Reviewers sit in a corner of their own
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers sit in the review corner
+      Given the office has 4 threads and a reviewer
+      Then the reviewer sits in the review corner, under its sign and by its whiteboard
+      And the 4 threads sit on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer's workers sit with it in the review corner
+      Given the office has a reviewer and 2 workers it delegated to
+      Then the workers sit in the review corner with it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Movers carry a new reviewer's desk into the review corner
+      Given the office has 2 threads
+      When it has a reviewer too
+      Then a mover carries a desk into the review corner and the reviewer sits down at it
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner's desks sit at the nearest desks on the floor
+      Given the office has 10 reviewers
+      Then 8 of them sit in the review corner and the other 2 at the pod next to it
+      When a reviewer in the corner leaves
+      Then the others keep their desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer team out of a full corner seats its newcomers by its own desks
+      Given the review corner is full and a reviewer with a worker sits at the pod under it
+      And the pod beside the corner empties
+      When the reviewer delegates to another worker
+      Then the new worker sits at the pod under the corner with its team
+      And everyone else keeps their desks
+      When the team grows past that pod's desks
+      Then its newcomers who do not fit sit at the pod beside it, not the one beside the corner
+
+    # A worker can come in before the row of the reviewer that delegated to it, and is
+    # no reviewer until then. Seats already taken stay put, so nobody moves while they
+    # stay; the team sits split until the worker leaves, or gives its floor desk up to
+    # a thread that needs it.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A team that turns out to be reviewers keeps its seats on the floor
+      Given the office has 2 threads and a worker on the floor whose lead is not in yet
+      When its lead comes in as a reviewer, making the worker one too
+      Then the worker keeps its desk on the floor and the lead sits in the review corner
+      When the lead delegates to another worker
+      Then the new worker sits in the review corner with the lead
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer delegated to by a thread that is no reviewer sits in the review corner
+      Given the office has a thread with a worker and a reviewer it delegated to
+      Then the reviewer sits in the review corner
+      And the thread and its other worker sit together on the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer delegated to by a thread that is no reviewer sits next to a full corner
+      Given the review corner is full and a thread with a worker sits across the office from it
+      When the thread delegates to a reviewer
+      Then the reviewer sits at the pod next to the review corner, not by the thread
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A planner that turns out to be a reviewer goes to the review whiteboard
+      Given the office has a worker planning whose lead is not in yet
+      When its lead comes in as a reviewer, making the worker one too
+      Then the worker plans at the review corner's whiteboard and keeps its desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Nobody but reviewers sits in the review corner, even with the floor full
+      Given the office has 46 threads and a reviewer
+      Then 40 of the threads sit on the floor and the other 6 have no desk
+      And the reviewer sits alone in the review corner
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone in the review corner who is no reviewer leaves it
+      Given the office has 2 reviewers in the review corner
+      When one of them is a reviewer no more
+      Then it sits on the floor and the other keeps its corner desk
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Reviewers past the corner take only floor desks nobody else needs
+      Given the office has 10 reviewers and 8 teams of 5 threads, the reviewers listed first
+      Then every thread in the teams has a desk on the floor
+      And 8 of the reviewers sit in the review corner and the other 2 have no desk
+
+    # Reviewers hot-desk: a floor desk is theirs only while no other thread needs it.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer on a floor desk gives it up to a thread that has none
+      Given the office has 10 reviewers, 8 in the review corner and 2 on the floor
+      When a reviewer in the corner leaves and 40 threads come in
+      Then every thread has a desk on the floor
+      And one of the reviewers on the floor takes the free corner desk and the other has none
+      And the reviewers in the corner keep their desks
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Someone reading who leaves the review corner on a full floor waits in the break room
+      Given the office has 40 threads and a reviewer reading at a shelf
+      When the reviewer is a reviewer no more
+      Then it has no desk and waits in the break room
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The review whiteboard shows a checklist beside a diff
+      Given the office has a reviewer working, planning
+      Then the reviewer draws a checklist and a diff on the whiteboard in the review corner
+
+  Rule: Each desk shows its project
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's monogram in its colour
+      Given the project "api" has the monogram "AP" in blue in the sidebar
+      And the office has a thread in "api"
+      Then its desk shows "AP" in blue, in pixels, on the back of its monitor or chair
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's emoji
+      Given the project "fun" has the emoji "🎉" in the sidebar
+      And the office has a thread in "fun"
+      Then its desk shows "🎉" in pixels
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk shows its project's logo in pixels, over its monogram while it loads
+      Given the project "logo" has a logo in the sidebar
+      And the office has a thread in "logo"
+      Then its desk shows the project's monogram in its colour until the logo loads
+      And then the logo, a few pixels across
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk for a project the sidebar has no icon for shows its first letter
+      Given the office has a thread in "web", which has no icon in the sidebar
+      Then its desk shows "W", uncoloured
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A project's new icon reaches its desks
+      Given the office has a thread in "api"
+      When the project "api" gets the monogram "AX" in green
+      Then its desk shows "AX" in green, and no other desk is drawn again
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A desk nobody has shows no project
+      Given the office has threads "A" and "B"
+      When "A" leaves
+      Then the desk being carried out shows no project
+
+    # Reviewers hot-desk: the review corner's desks belong to no project.
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A reviewer's desk shows no project
+      Given the project "api" has the monogram "AP" in blue in the sidebar
+      And the office has 9 reviewers in "api" and a thread in "api"
+      Then the desks of the 8 reviewers in the review corner show no project
+      And neither does the desk of the reviewer at the pod next to it
+      And the thread's desk shows "AP" in blue
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Hovering a person shows its project's icon and that it is reviewing
+      Given the office has a reviewer in "api"
+      When the user hovers its person
+      Then the card shows the project's sidebar icon beside "api · reviewing"

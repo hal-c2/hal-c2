@@ -215,7 +215,7 @@ Feature: Tablet layout and hardware keyboards
     When the user chooses "Add search" in the thread list before going anywhere else
     Then "Add search" is shown
 
-  @backlog @mobile
+  @mobile
   Scenario: The thread's header starts a new task beside the thread
     Given the layout is split
     And the user is reading "Fix checkout"
@@ -245,7 +245,7 @@ Feature: Tablet layout and hardware keyboards
     Then the detail pane says no environments are connected
     And the user is offered to add an environment
 
-  @backlog @mobile
+  @mobile
   Scenario: Choosing the thread already shown does nothing
     Given the layout is split
     And the user is reading "Fix checkout"

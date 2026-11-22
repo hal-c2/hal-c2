@@ -88,12 +88,12 @@ Feature: Adding terminal output to a message
     Given the draft reads "Why did this fail?" and holds <count> whose text is gone
     When the user sends the message
     Then the message is sent without them
-    And the user sees a "warning" toast "<title>" saying "Re-add it if you want that terminal output included."
+    And the user sees a "warning" toast "<title>" saying "<description>"
 
     Examples:
-      | count                 | title                                        |
-      | one terminal excerpt  | Expired terminal context omitted from message  |
-      | two terminal excerpts | Expired terminal contexts omitted from message |
+      | count                 | title                                          | description                                            |
+      | one terminal excerpt  | Expired terminal context omitted from message  | Re-add it if you want that terminal output included.   |
+      | two terminal excerpts | Expired terminal contexts omitted from message | Re-add them if you want that terminal output included. |
 
   @desktop
   Scenario: A draft holding only expired terminal excerpts is not sent
@@ -104,7 +104,7 @@ Feature: Adding terminal output to a message
 
   # Upstream #24251: with several expired excerpts the toasts said "it". This replaces the
   # two-excerpt description of the passing outline above.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: Toasts about several expired terminal excerpts say "them"
     Given the draft <draft> and holds two terminal excerpts whose text is gone
     When the user sends the message

@@ -983,11 +983,13 @@ Rectangle {
             border.width: 1
 
             // A press anywhere in the card that no control takes, around
-            // or under a short prompt, goes to the prompt.
+            // or under a short prompt, goes to the prompt. To assistive
+            // technology this is the prompt itself, which takes the focus.
             MouseArea {
                 anchors.fill: parent
                 enabled: input.enabled
                 cursorShape: Qt.IBeamCursor
+                Accessible.ignored: true
                 onPressed: input.forceActiveFocus(Qt.MouseFocusReason)
             }
 
@@ -2057,7 +2059,9 @@ Rectangle {
                             font.pixelSize: Theme.type.meta.size
                             font.weight: Theme.type.meta.weight
                             text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
-                            Accessible.name: qsTr("Switch branch")
+                            // Begins with the text it shows, so someone who
+                            // says what they see reaches it.
+                            Accessible.name: text.length > 0 ? qsTr("%1, switch branch").arg(text) : qsTr("Switch branch")
                             onClicked: branchPicker.open()
 
                             // "Copy branch name", on the secondary button

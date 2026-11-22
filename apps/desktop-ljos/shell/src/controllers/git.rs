@@ -237,6 +237,10 @@ fn quick_action(status: Option<&Status>, busy: bool) -> Quick {
         if !upstream && !remote {
             return Quick::run("Commit", "commit");
         }
+        // A push from behind its upstream could not fast-forward; commit only.
+        if behind {
+            return Quick::run("Commit", "commit");
+        }
         if pr || default_ref {
             return Quick::run("Commit & push", "commit_push");
         }
@@ -1372,6 +1376,11 @@ mod tests {
         );
         assert_eq!(
             quick(json!({"hasWorkingTreeChanges": true, "hasUpstream": false, "hasPrimaryRemote": false})).2,
+            "commit"
+        );
+        // Changes on a branch behind its upstream: only a commit can run.
+        assert_eq!(
+            quick(json!({"hasWorkingTreeChanges": true, "behindCount": 1})).2,
             "commit"
         );
         assert_eq!(

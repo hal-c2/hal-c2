@@ -419,9 +419,11 @@ Feature: What the engine projects for clients
     Then the item arrives without the tool's raw output
     And it still carries the ids the result named and whether it failed
 
+  # A reported exit code of 0 settles a command whatever its output says (timeline/tool-calls.feature,
+  # upstream #23351), so the failure the output shows is one with no exit code.
   @mc
   Scenario: A command whose output shows a failure is still sent as failed
-    Given a command in "t1" exited with code 0 but its output reports an error
+    Given a command in "t1" reported no exit code but its output reports an error
     When a client reads or follows "t1"
     Then the command arrives without its output
     And it is marked as having failed

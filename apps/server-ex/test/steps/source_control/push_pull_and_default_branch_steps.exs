@@ -145,6 +145,20 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
     context
   end
 
+  step "{string} has uncommitted changes and is behind its upstream", %{args: [name]} = context do
+    context = context |> branch(name) |> track() |> behind(1)
+    File.write!(Path.join(context.cwd, "cart.ts"), "export const cart = 1\n")
+    assert HalC2.Vcs.remote_status(context.cwd)["behindCount"] == 1
+    context
+  end
+
+  step "the commit is made and the result offers no Push", context do
+    %{"commit" => commit, "toast" => %{"cta" => cta}} = result(context)
+    assert commit["status"] == "created"
+    assert cta == %{"kind" => "none"}
+    context
+  end
+
   # --- pulling -----------------------------------------------------------------------
 
   step "{string} is 2 commits behind its upstream and has no local commits",

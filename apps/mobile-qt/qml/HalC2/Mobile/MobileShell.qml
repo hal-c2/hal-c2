@@ -48,13 +48,15 @@ ShellWindow {
     // beside its thread is 736 wide (LayoutController's 256 and 480, inside
     // Android's medium window width class), and under 480 tall is that
     // platform's compact height class, a phone on its side.
-    property bool roomy: width / zoom >= 736 && fullHeight / zoom >= 480
+    readonly property bool fits: width / zoom >= 736 && fullHeight / zoom >= 480
+    // `fits`, applied a beat late (see the Binding below).
+    property bool roomy: fits
     // A turned phone hears its new width before its new height, and for that
     // moment is square: the layouts, and a terminal, must not be built for it.
     Binding {
         target: root
         property: "roomy"
-        value: root.width / root.zoom >= 736 && root.fullHeight / root.zoom >= 480
+        value: root.fits
         delayed: true
     }
     // The tablet layout is only ever as narrow as `roomy` lets it be, and

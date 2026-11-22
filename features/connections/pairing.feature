@@ -111,7 +111,7 @@ Feature: Pairing a client with an environment
     And no pairing link is listed
 
   # Upstream #23343: `t3 auth pairing create --base-url` without http(s):// is refused before a token is issued.
-  @backlog @mc
+  @mc
   Scenario Outline: A pairing link for an address that is not http or https is refused before a token is issued
     Given an administrator's client
     When an operator asks for a pairing link for "<address>"
@@ -214,7 +214,7 @@ Feature: Pairing a client with an environment
     Then the output holds the link, its token and a QR code of the link
     And the QR code is drawn in the terminal with block characters
 
-  @backlog @mc
+  @mc
   Scenario: An MC listening on every interface prints an address a device can reach
     Given the MC listens on every network interface
     When an operator asks the MC for a pairing link without naming an address

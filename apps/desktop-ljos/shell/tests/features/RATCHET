@@ -634,6 +634,16 @@ files/adding-projects.feature: A clone on another machine of the cluster shows i
 files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created
 files/adding-projects.feature: A finished clone offers to open its project
 files/adding-projects.feature: A folder the environment refuses to add says why
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [https://github.com:8443]
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [https://github.com]
+files/adding-projects.feature: A pasted address that names no repository proposes no folder [ssh://git@host:22]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [git@github.com:acme/shop.git, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://dev.azure.com/org/proj/_git/shop, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop.git, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop/, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://github.com/acme/shop?tab=readme, shop]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [https://host/acme/123, 123]
+files/adding-projects.feature: A pasted clone address proposes the folder git would have chosen [ssh://git@host:22/acme/shop, shop]
 files/adding-projects.feature: A user with no projects is invited to add one
 files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
 files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
@@ -659,6 +669,9 @@ files/file-explorer.feature: File actions available from a file entry [reveal in
 files/file-explorer.feature: Filtering the tree can hide entries that do not match
 files/file-explorer.feature: The tree follows the file open in the viewer
 files/file-explorer.feature: The tree refreshes when the agent changes files
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.csv, application/octet-stream, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.csv, binary/octet-stream, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: A CSV or TSV under a generic file type is shown as a table [data/a.tsv, application/unknown, the file is shown as a tab table]
 files/file-viewer-and-editing.feature: A Mermaid file that cannot be drawn shows its source and says why
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [JSON, Show accessibility JSON]
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [text, Show extracted text]
@@ -845,6 +858,7 @@ files/project-file.feature: An invalid hal-c2.json is reported and ignored
 files/project-file.feature: Importing skips actions that already exist
 files/project-file.feature: hal-c2.json may contain comments
 files/project-file.feature: hal-c2.json sets the default workspace for new threads
+files/project-identity.feature: A monogram is tidied before it is checked
 files/project-identity.feature: A picked icon still shows on environments that do not know monograms
 files/project-identity.feature: A project without an icon shows a two-character monogram [M7 Forge, M7]
 files/project-identity.feature: A project without an icon shows a two-character monogram [Nebula, NA]
@@ -1333,6 +1347,7 @@ navigation/palette-add-project.feature: Relative paths need a current project
 navigation/palette-add-project.feature: The folder browser names what Enter does
 navigation/palette-add-project.feature: The user chooses which environment receives the project
 navigation/palette-add-project.feature: mod+Enter adds the highlighted folder
+navigation/qt-scenarios.feature: The header's terminal toggle opens and closes the terminal drawer
 navigation/qt-shell-backlog.feature: A device tab streams a device screen
 navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
 navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
@@ -2011,6 +2026,11 @@ settings/notifications.feature: The notification mode decides what happens when 
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Notifications with sound, a system notification is shown and the sound plays]
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Off, nothing is shown or played]
 settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Sound only, the completion sound plays]
+settings/notifications.feature: The sound depends on what the thread needs [asks a question, input]
+settings/notifications.feature: The sound depends on what the thread needs [asks for approval, input]
+settings/notifications.feature: The sound depends on what the thread needs [fails, input]
+settings/notifications.feature: The sound depends on what the thread needs [finishes, completion]
+settings/notifications.feature: The sound depends on what the thread needs [hits its usage limit, input]
 settings/notifications.feature: The thread on screen does not notify
 settings/notifications.feature: The title says what the thread needs [asks a question, Input needed]
 settings/notifications.feature: The title says what the thread needs [asks for approval, Approval needed]
@@ -2680,6 +2700,9 @@ source-control/git-actions.feature: The recommended action is withheld with a re
 source-control/git-actions.feature: The recommended action is withheld with a reason [has no upstream and no local commits, No local commits to push.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is running another git action, Git action in progress.]
 source-control/git-actions.feature: The recommended action is withheld with a reason [is up to date with nothing to do, Branch is up to date. No action needed.]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a branch with an open pull request]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [a feature branch with a remote]
+source-control/git-actions.feature: Uncommitted changes on a branch behind its upstream recommend only a commit [the default branch]
 source-control/pull-request-actions.feature: Merging from the review
 source-control/pull-request-list.feature: A list the MC cannot read can be retried
 source-control/pull-request-list.feature: A pull request list beside the thread
@@ -3169,9 +3192,11 @@ terminal/composer-context.feature: Selecting only blank lines adds nothing
 terminal/composer-context.feature: The draft lists its terminal excerpts
 terminal/composer-context.feature: The terminal's menu offers selection actions only once something is selected
 terminal/composer-context.feature: The user adds selected terminal output to the draft
-terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [one terminal excerpt, Expired terminal context omitted from message]
-terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [two terminal excerpts, Expired terminal contexts omitted from message]
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [one terminal excerpt, Expired terminal context omitted from message, Re-add it if you want that terminal output included.]
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [two terminal excerpts, Expired terminal contexts omitted from message, Re-add them if you want that terminal output included.]
 terminal/composer-context.feature: The user removes a terminal excerpt from the draft
+terminal/composer-context.feature: Toasts about several expired terminal excerpts say "them" [is otherwise empty, Expired terminal contexts won't be sent, Remove them or re-add them to include terminal output.]
+terminal/composer-context.feature: Toasts about several expired terminal excerpts say "them" [reads "Why did this fail?", Expired terminal contexts omitted from message, Re-add them if you want that terminal output included.]
 terminal/drawer.feature: A draft thread has a terminal in its project
 terminal/drawer.feature: A new terminal takes the lowest free number
 terminal/drawer.feature: A script runs in a new terminal when the active one is busy
@@ -3278,13 +3303,20 @@ terminal/io.feature: What an input method is composing shows at the cursor
 terminal/io.feature: With history above it, the prompt sits flush with the bottom edge
 terminal/links-and-graphics.feature: A Ctrl-click that moves a little still follows the link
 terminal/links-and-graphics.feature: A branch range in git's output is not a file path
+terminal/links-and-graphics.feature: A file path beside a non-web address is still a link
 terminal/links-and-graphics.feature: A file path in the output opens in the editor
 terminal/links-and-graphics.feature: A link cut off by the edge of the screen is not offered
 terminal/links-and-graphics.feature: A link is not offered while a program has the mouse
 terminal/links-and-graphics.feature: A link replaced before the pointer is released is not followed
 terminal/links-and-graphics.feature: A plain click on a file path does not open it
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
+terminal/links-and-graphics.feature: A request route in a log line is not a file path [GET /api/trpc/post.list,user.me?batch=1 200, /api/trpc/post.list,user.me?batch=1]
+terminal/links-and-graphics.feature: A request route in a log line is not a file path [proxying /api/users?page=2 to localhost:4000, /api/users?page=2]
 terminal/links-and-graphics.feature: A tap on a link on a touch screen follows it
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [Connected to redis://127.0.0.1:6379/0, s://127.0.0.1:6379/0]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [at main (file:///Users/me/app/src/index.mjs:3:7), e:///Users/me/app/src/index.mjs:3:7]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [postgres://app@localhost:5432/shop, s://app@localhost:5432/shop]
+terminal/links-and-graphics.feature: An address with a scheme other than http is not a file path [uploaded to s3://bucket/key, //bucket/key]
 terminal/links-and-graphics.feature: Clicking a link twice or three times selects a word or a line
 terminal/links-and-graphics.feature: Ctrl still follows a link while a program has the mouse
 terminal/links-and-graphics.feature: Dragging from a link selects text instead of following it
@@ -3360,6 +3392,7 @@ threads/creating.feature: A new thread started while the list is scoped to a pro
 threads/creating.feature: A new thread starts in the project the user is looking at
 threads/creating.feature: A new thread uses the project default model when the project has one
 threads/creating.feature: A new worktree needs a base branch
+threads/creating.feature: A request to several models cut off by a quit comes back to its draft once
 threads/creating.feature: A thread cannot start from an empty task
 threads/creating.feature: A thread whose start fails gets its prompt back without touching a newer draft
 threads/creating.feature: Changing a draft's project picks an environment that has it
@@ -3448,6 +3481,7 @@ threads/menu-and-selection.feature: Selecting several threads [selects "A" and t
 threads/menu-and-selection.feature: The selection cannot be archived while one of its threads is running
 threads/menu-and-selection.feature: The selection menu counts what each action affects
 threads/menu-and-selection.feature: The thread menu offers its actions in a fixed order
+threads/migration-and-handoffs.feature: The user is told about threads migrated while the app is open
 threads/migration-and-handoffs.feature: The user is told threads were migrated
 threads/moving-between-machines.feature: A client looking at the thread follows it to its new machine
 threads/moving-between-machines.feature: A client sees that a thread is moving
@@ -3497,6 +3531,11 @@ threads/pinning-and-order.feature: Unpinning asks first when the user wants conf
 threads/pull-request-links.feature: An environment that cannot find pull requests says it needs an update
 threads/pull-request-links.feature: Choosing a different pull request from a pull request link
 threads/pull-request-links.feature: Unlinking returns the thread to its branch pull request
+threads/qt-scenarios.feature: A new thread starts in the project in scope
+threads/qt-scenarios.feature: A snoozed thread offers to wake instead of settle
+threads/qt-scenarios.feature: Arrow keys and Enter open another thread
+threads/qt-scenarios.feature: Settling a thread from the list
+threads/qt-scenarios.feature: Shift+F10 opens the focused thread's menu beside it
 threads/search.feature: An offline environment is left out of the search
 threads/search.feature: Leaving a search
 threads/search.feature: Moving through search results with the keyboard
@@ -3537,9 +3576,16 @@ threads/sidebar-list.feature: A thread with unsent text in its composer is marke
 threads/sidebar-list.feature: A thread's status has a spoken name
 threads/sidebar-list.feature: Active threads are listed newest first
 threads/sidebar-list.feature: An open settled plugin thread stays listed
+threads/sidebar-list.feature: Enter on a shelf header folds the shelf
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
 threads/sidebar-list.feature: Leaving the thread list for settings keeps the project filter
+threads/sidebar-list.feature: Moving through the list with the keyboard [Down, the next row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [End, the last row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Enter, "Beta" opens]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Home, the first row is focused]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Shift+F10, the menu for "Beta" opens]
+threads/sidebar-list.feature: Moving through the list with the keyboard [Up, the previous row is focused]
 threads/sidebar-list.feature: Opening a draft from the list
 threads/sidebar-list.feature: Opening a thread from the list
 threads/sidebar-list.feature: Projects are dragged into place only when they are sorted by hand
@@ -3581,6 +3627,9 @@ threads/snooze.feature: A custom snooze time must be in the future and exist [a 
 threads/snooze.feature: A custom snooze time must be in the future and exist [an unreadable date]
 threads/snooze.feature: A failed snooze is reported
 threads/snooze.feature: A snoozable thread offers snoozing from the list
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [a run that started after the snooze fails]
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [the agent asks for an approval]
+threads/snooze.feature: A snoozed thread wakes early only when it needs the user [the agent asks the user a question]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [a run that started after the snooze finishes]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [the agent asks for an approval]
 threads/snooze.feature: A snoozed thread wakes early when it needs the user [the agent asks the user a question]
@@ -3731,6 +3780,7 @@ timeline/markdown.feature: The user copies a code block
 timeline/markdown.feature: The user copies a table [CSV]
 timeline/markdown.feature: The user copies a table [Markdown]
 timeline/notifications.feature: A newer alert for a thread replaces its older one
+timeline/notifications.feature: A notification's action runs it
 timeline/notifications.feature: A system notification is not shown without permission
 timeline/notifications.feature: A thread that changes state raises an alert [asks for approval, Approval needed]
 timeline/notifications.feature: A thread that changes state raises an alert [asks the user a question, Input needed]
@@ -3740,6 +3790,7 @@ timeline/notifications.feature: A thread that changes state raises an alert [sto
 timeline/notifications.feature: Clicking a system notification opens its own thread
 timeline/notifications.feature: Clicking a system notification opens its thread in the window last used
 timeline/notifications.feature: Coming back to the window clears its system notifications
+timeline/notifications.feature: Dismissing the last notification hides the notifications
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications only, shown, not played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications with sound, shown, played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Off, not shown, not played]
@@ -3958,6 +4009,8 @@ timeline/streaming.feature: A duration is written in hours, minutes and seconds,
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [38 seconds, 38s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [4.26 seconds, 4.3s]
 timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [62 seconds, 1m 2s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7 seconds, 7s]
+timeline/streaming.feature: A duration under ten seconds drops a trailing zero [7.4 seconds, 7.4s]
 timeline/streaming.feature: A finished turn folds its work behind how long it took
 timeline/streaming.feature: A folded turn can be opened and closed again
 timeline/streaming.feature: A long message can be expanded and collapsed
