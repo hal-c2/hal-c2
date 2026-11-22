@@ -22,19 +22,26 @@ fi
 
 sha=$(gh api "repos/$repo/actions/runs/$run" --jq .head_sha)
 
-# A group rebuilt because a PR ahead left the queue: its old run may fail or be cancelled
-# while this PR waits on in a newer group, so the run is not this PR's to report.
-queued=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -f query='
-  query($owner: String!, $name: String!) {
+# A run that is not this PR's answer: its group was rebuilt because a PR ahead left the
+# queue, so the PR waits on in a newer one, or a later entry's run passed it first
+# (merge-queue-stamp.sh), so it is mergeable or merged.
+moot=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -F number="$number" -f query='
+  query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) { mergeCommit { oid } }
       mergeQueue(branch: "main") {
-        entries(first: 100) { nodes { headCommit { oid } pullRequest { number } } }
+        entries(first: 100) { nodes { state headCommit { oid } pullRequest { number } } }
       }
     }
-  }' --jq ".data.repository.mergeQueue.entries.nodes[]
-           | select(.pullRequest.number == $number and .headCommit.oid != \"$sha\") | .headCommit.oid")
-if [ -n "$queued" ]; then
-  echo "#$number is still queued as $queued; run $run belonged to an older group"
+  }' --jq ".data.repository
+           | if .pullRequest.mergeCommit.oid == \"$sha\" then \"merged as that commit\"
+             else .mergeQueue.entries.nodes[] | select(.pullRequest.number == $number)
+               | if .headCommit.oid != \"$sha\" then \"is still queued as \(.headCommit.oid)\"
+                 elif .state == \"MERGEABLE\" then \"passed with a later entry's run\"
+                 else empty end
+             end")
+if [ -n "$moot" ]; then
+  echo "#$number $moot; run $run is not its answer"
   exit 0
 fi
 
