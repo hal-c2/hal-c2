@@ -19,6 +19,7 @@
 #include "McClient.h"
 #include "NativeShell.h"
 #include "PairingExchange.h"
+#include "SavedEnvironmentsController.h"
 #include "Phone.h"
 #include "ShellStore.h"
 #include "World.h"
@@ -341,6 +342,38 @@ const Steps steps([] {
     leaveEnvironment(world);
     threadRow(world, S("Tax line"));
     threadRow(world, world.another(c[1]).threadTitle());
+  });
+
+  // An interrupted promote or re-pair (#1746): pairing.json was written,
+  // the saved copy never removed, so the phone's own environment is in
+  // the catalog beside itself too, on a connection of its own.
+  step(S("the phone also keeps %1 beside itself").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.label == c[0], S("the environment is %1").arg(world.mc.label));
+    auto* saved = world.native().shared<SavedEnvironmentsController>();
+    expect(saved != nullptr && saved->catalog() != nullptr, S("the phone has no catalog of saved environments"));
+    const SavedEnvironment copy{world.mc.environmentId, world.mc.label, world.mc.origin(), {}};
+    expect(!saved->catalog()->save(copy, world.environment.sessions.last()).has_value(), S("the copy beside itself could not be saved"));
+    saved->connectTo(world.mc.environmentId);
+    expect(!besideEntry(world, c[0]).isEmpty(), S("the phone lists %1").arg(show(world.state(S("savedEnvironments")))));
+  });
+
+  step(S("the app is closed and opened again"), [](World& world, const Captures&, const Table&) {
+    world.close();
+    world.open();
+  });
+
+  // Kept once: the pairing, on the session it had, and nothing beside it.
+  step(S("%1 is kept once, as the phone's own environment").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    awaitConnection(world);
+    const QVariantMap pairing = world.state(S("pairing")).toMap();
+    expect(pairing.value(S("label")) == c[0] && pairing.value(S("origin")) == world.mc.origin().toString(),
+           S("the phone is paired with %1").arg(show(pairing)));
+    expect(besideEntry(world, c[0]).isEmpty(), S("the phone keeps it beside itself too: %1").arg(show(world.state(S("savedEnvironments")))));
+    expect(keptPairing(world).value(QLatin1String("token")).toString() == world.environment.sessions.last(),
+           S("the phone keeps %1").arg(show(keptPairing(world).toVariantMap())));
+    expect(world.native().store()->environments() == QStringList{world.mc.environmentId},
+           S("the phone holds %1").arg(world.native().store()->environments().join(S(", "))));
+    threadRow(world, S("Tax line"));
   });
 
   // The phone was paired with it before it moved on to another protocol, and is opened again.
