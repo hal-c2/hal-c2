@@ -189,6 +189,19 @@ defmodule HalC2.Steps.Terminal.Io do
   # --- what a terminal is running -----------------------------------------------------
 
   step "the user starts {string} in it", %{args: [command]} = context do
+    command =
+      if String.starts_with?(command, "/") do
+        # An application by its path: a stand-in executable of that name (spaces
+        # and all) under the scenario's host root, started as a user starts it.
+        path = HalC2.Test.Mc.Host.path(context, command)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, "#!/bin/sh\nread _\n")
+        File.chmod!(path, 0o755)
+        ~s("#{path}")
+      else
+        command
+      end
+
     Terminal.write(context, "default", command <> "\n")
   end
 
@@ -203,6 +216,15 @@ defmodule HalC2.Steps.Terminal.Io do
   end
 
   step "its label becomes {string}", %{args: [label]} = context do
+    context =
+      if context[:activity] do
+        context
+      else
+        {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "activity"))
+        assert event["hasRunningSubprocess"] == true
+        Map.put(context, :activity, event)
+      end
+
     assert context.activity["label"] == label
     assert_hub_label(context, label)
   end

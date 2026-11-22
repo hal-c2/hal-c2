@@ -102,6 +102,8 @@ defmodule HalC2.EnvironmentThemes do
       with {:ok, %File.Stat{type: :regular, size: size}} when size <= @max_file_bytes <-
              File.lstat(path),
            {:ok, raw} <- File.read(path),
+           # A file saved as "UTF-8 with BOM" (Windows editors) is the same JSON.
+           raw = String.trim_leading(raw, "\uFEFF"),
            {:ok, %{} = file} <- JSON.decode(raw),
            %{} = theme <- theme(id, file) do
         total = total + byte_size(raw)

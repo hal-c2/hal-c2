@@ -233,7 +233,7 @@ Feature: Organizing threads in the engine
     Then thread "t1" gets a new snoozed-at time
     And a retry of that same snooze command is applied once
 
-  @backlog @mc
+  @mc
   Scenario: Manual settling dismisses a question the provider is not waiting on
     Given thread "t1" waits only for an answer to a question the provider does not block on
     When a client settles "t1"

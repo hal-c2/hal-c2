@@ -175,6 +175,38 @@ defmodule HalC2.OrchestrationProviderSwitchTest do
     assert %{"status" => "failed"} = StreamState.get(current(thread_id), "run")["prep-run"]
   end
 
+  # The property's counterexample (`prop/hal_c2/orchestration_prop_test.exs`): a held
+  # queue resumed after the project turned its first message's instance off. That run
+  # fails as it starts, inside the resume, and the next starts once its end returns.
+  test "a resumed queue goes on past a message whose provider the project turned off",
+       %{thread_id: thread_id} do
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, ["providerInstances"], %{
+          "codex" => %{},
+          "codex-work" => %{"driver" => "codex", "enabled" => true}
+        })
+      )
+
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2", nil, "queue_after_active", "codex-work")
+    {:ok, _} = send_message(thread_id, "m3", nil, "queue_after_active", "codex")
+    await_statuses(thread_id, ["running", "queued", "queued"])
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    await_statuses(thread_id, ["interrupted", "queued", "queued"])
+    turn_off("codex-work")
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+    [_, failed, running] = await_statuses(thread_id, ["interrupted", "failed", "running"])
+
+    assert %{"userMessageId" => "m2", "failure" => "Codex is turned off for this project." <> _} =
+             failed
+
+    assert %{"userMessageId" => "m3", "providerInstanceId" => "codex"} = running
+  end
+
   # The running turn's agent asks a question it is answered by message.
   defp ask_by_message(thread_id, rid) do
     [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
@@ -214,15 +246,27 @@ defmodule HalC2.OrchestrationProviderSwitchTest do
     end
   end
 
-  defp send_message(thread_id, message_id, text \\ nil, mode \\ "queue_after_active") do
-    Orchestration.dispatch(%{
+  defp send_message(
+         thread_id,
+         message_id,
+         text \\ nil,
+         mode \\ "queue_after_active",
+         instance \\ nil
+       ) do
+    command = %{
       "type" => "message.dispatch",
       "threadId" => thread_id,
       "messageId" => message_id,
       "text" => text || "wait #{message_id}",
       "attachments" => [],
       "dispatchMode" => %{"type" => mode}
-    })
+    }
+
+    Orchestration.dispatch(
+      if instance,
+        do: Map.put(command, "modelSelection", %{"instanceId" => instance, "model" => "gpt-5.4"}),
+        else: command
+    )
   end
 
   defp turn_off(instance) do

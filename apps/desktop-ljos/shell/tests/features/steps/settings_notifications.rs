@@ -242,6 +242,15 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    steps.step("the input sound plays", |world, _, _| {
+        let seen = alerts_seen(world)?;
+        expect!(
+            seen.sounds.last().is_some_and(|s| s == "input") && seen.shown.is_empty(),
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
     steps.step(
         "a system notification is shown and the sound plays",
         |world, _, _| {

@@ -74,7 +74,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
   end
 
-  step "the user joins the second to the first with a pairing link from the first", context do
+  step "the user joins the second to the first with a cluster invite from the first", context do
     %{a: a, b: b} = context.machines
     Map.put(context, :joined, command(b, ["join", invite(a)]))
   end
@@ -106,11 +106,13 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the user joins the second with a standard pairing link from the first that names the first's certificate",
+  step "the user joins the second with an admin pairing link from the first that names the first's certificate",
        context do
     %{a: a, b: b} = context.machines
-    store = :peer.call(a.peer, HalC2.Store, :home_path, [])
-    token = :peer.call(a.peer, HalC2.Auth, :create_pairing_token, [store])
+
+    {:ok, %{"credential" => token}} =
+      auth(a, :create_pairing_link, [%{"scopes" => ["access:write"], "label" => "Admin"}])
+
     link = "#{origin(a)}/?token=#{token}#fingerprint=#{fingerprint(a)}"
     Map.put(context, :joined, command(b, ["join", link]))
   end
@@ -236,7 +238,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the join is refused because the link does not grant access:write", context do
+  step "the join is refused because the link cannot add machines", context do
     assert {:error, message} = context.joined
     assert message =~ "cannot add machines to a cluster"
     context

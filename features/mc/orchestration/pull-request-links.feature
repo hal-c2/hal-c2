@@ -310,14 +310,12 @@ Feature: Pull requests linked to a thread
       | state  | thread    | after      | asked          |
       | open   | active    | a minute   | is asked       |
       | open   | settled   | a minute   | is not asked   |
-      | open   | settled   | 15 minutes | is asked       |
       | closed | active    | a minute   | is not asked   |
       | closed | active    | 15 minutes | is asked       |
 
-  # Upstream #16762: a settled thread's links leave the sweep altogether. Replaces the
-  # "open | settled | 15 minutes" row above once the MC carries it. A link never synced, or a
-  # read a client asks for, still goes.
-  @backlog @mc
+  # Upstream #16762: a settled thread's links leave the sweep altogether. A link never
+  # synced, or a read a client asks for, still goes.
+  @mc
   Scenario Outline: A settled thread's pull requests are not read on the sweep
     Given pull request "acme/app#12" is linked to "t1" and <synced>
     And "t1" is settled
@@ -329,13 +327,13 @@ Feature: Pull requests linked to a thread
       | its last read said open        | is not asked |
       | it has never been read         | is asked     |
 
-  @backlog @mc
+  @mc
   Scenario: A settled thread's pull request is still read when a client asks
     Given pull request "acme/app#12" is linked to the settled thread "t1"
     When a client asks to refresh "acme/app#12"
     Then the MC reads "acme/app#12" from the host
 
-  @backlog @mc
+  @mc
   Scenario: Unsettling a thread brings its pull requests back to the sweep
     Given pull request "acme/app#12" is linked to the settled thread "t1"
     When the user unsettles "t1"
@@ -371,9 +369,9 @@ Feature: Pull requests linked to a thread
     Then thread "t1" shows "acme/app#12" as open
 
   # Upstream #30071: closed links on unsettled threads were read every 15 minutes for as long as
-  # the thread stayed unsettled. Replaces the "closed | active | 15 minutes" row above, and the
-  # sweep in "A closed pull request that was reopened is noticed", for links closed over a day ago.
-  @backlog @mc
+  # the thread stayed unsettled. The "closed | active | 15 minutes" row above and the sweep in
+  # "A closed pull request that was reopened is noticed" hold for links closed under a day ago.
+  @mc
   Scenario Outline: A pull request closed over a day ago leaves the sweep
     Given pull request "acme/app#12" is linked to the active thread "t1" and its last read said closed <when>
     When the sync sweep runs 15 minutes after the last read

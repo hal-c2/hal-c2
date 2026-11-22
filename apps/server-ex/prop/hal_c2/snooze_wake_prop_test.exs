@@ -3,7 +3,8 @@ defmodule HalC2.SnoozeWakePropTest do
   A state machine over one thread's snooze and the runs that come and go around it
   (`features/threads/snooze.feature`): snooze, unsnooze, a queued message of the user's
   or one the MC sent for the agent (a notification, a delegated result), a run starting
-  (the oldest queued one, or a run of its own), and a run ending completed or failed.
+  (the oldest queued one, or a run of its own), and a run ending completed, failed,
+  interrupted or cancelled.
 
   The model keeps, for the latest run made, the snooze it began in and the one
   it ended in. After every command the test compares the real thread with it:
@@ -12,8 +13,9 @@ defmodule HalC2.SnoozeWakePropTest do
     queued wake of the agent's does not stop it;
   - a snoozed thread is awake to automatic settlement (`Settlement.blocker/2`) exactly
     when its latest run both began and ended after the snooze; a run that began before
-    it and fails or finishes later (a late failure) leaves the snooze alone, and so does a
-    wake the MC sent for the agent when it finishes (its failure wakes the thread).
+    it and fails or finishes later (a late failure) leaves the snooze alone, and so do a
+    run that was interrupted or cancelled and a wake the MC sent for the agent when it
+    finishes (its failure wakes the thread).
 
   The runs are written as the turn writer would leave them, with times placed against
   the snooze's own time stamp; no provider is behind them.
@@ -64,8 +66,9 @@ defmodule HalC2.SnoozeWakePropTest do
 
   # snoozed, epoch: the number of the snooze in force (counts every snooze);
   # runs: %{id, ord, kind :user | :notification | :delegated | :direct, status :queued |
-  #   :running | :completed | :failed, began, ended} where began and ended are the epoch
-  #   whose snooze the run was in when it began and ended, nil when it was not snoozed.
+  #   :running | :completed | :failed | :interrupted | :cancelled, began, ended} where
+  #   began and ended are the epoch whose snooze the run was in when it began and ended,
+  #   nil when it was not snoozed.
   def initial_state, do: %{snoozed: false, epoch: 0, runs: [], next: 1}
 
   def command(state) do
@@ -89,7 +92,9 @@ defmodule HalC2.SnoozeWakePropTest do
         if(running == [],
           do: [],
           else: [
-            {5, {:call, __MODULE__, :finish, [hd(running).id, oneof(~w(completed failed)a)]}}
+            {5,
+             {:call, __MODULE__, :finish,
+              [hd(running).id, oneof(~w(completed failed interrupted cancelled)a)]}}
           ]
         )
     )
@@ -163,8 +168,8 @@ defmodule HalC2.SnoozeWakePropTest do
   # of the run before it.
   defp latest(state), do: Enum.max_by(state.runs, & &1.ord, fn -> nil end)
 
-  # The model's answer to whether the snoozed thread is awake: its latest run ended and
-  # both its start and its end fall after this snooze.
+  # The model's answer to whether the snoozed thread is awake: its latest run completed or
+  # failed, and both its start and its end fall after this snooze.
   defp awake?(state) do
     case latest(state) do
       # A wake the MC sent for the agent that finishes is not news; its failure is.

@@ -1,12 +1,14 @@
 name: Merge queue watchdog
 
-# GitHub sometimes wedges a merge queue run: the run ends while `CI result` never got a
-# runner, or the run never gets a job. The queue then holds the entry, and everything
-# behind it, for its 120-minute check timeout. This drops such an entry with a comment
-# saying why (.github/scripts/merge-queue-watchdog.sh), and its owner re-queues it.
+# Keeps the merge queue moving (.github/scripts/merge-queue-watchdog.sh). GitHub sometimes
+# wedges a queue run: the run ends while `CI result` never got a runner, or the run never
+# gets a job, and the queue holds the entry and everything behind it for its check timeout.
+# This drops such an entry with a comment saying why, and its owner re-queues it. Entries
+# ahead of the last one park (ci.yml's `park`): when the last one fails and leaves, this
+# starts the new last one's tests, and it cancels runs no entry reads any more.
 #
-# A CI run that ends is when the first wedge shows; the schedule catches a run that never
-# starts.
+# A queue run that ends is when a wedge or a departure shows; the schedule catches a run
+# that never starts, and whatever a missed event left.
 #
 # A queue run that fails also gets the PR a comment naming the jobs that failed or timed
 # out and their failed tests (.github/scripts/merge-queue-report.sh): the queue itself
@@ -17,7 +19,7 @@ on:
     workflows: [CI]
     types: [completed]
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -25,15 +27,16 @@ permissions: {}
 jobs:
   watch:
     name: Drop wedged queue entries
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group'
+    # A queue run, or a parked entry's run the watchdog started on its queue branch.
+    if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/')
     # Job-level, so a pending watch replacing another never drops a report.
     concurrency:
       group: merge-queue-watchdog
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      actions: read
-      checks: read
+      actions: write # starting a parked entry's tests, cancelling unread runs
+      checks: write # answering for the entries ahead of a passed one
       contents: write # dequeuePullRequest
       pull-requests: write # the comment
     steps:
@@ -48,7 +51,8 @@ jobs:
   report:
     name: Report a failed queue run on its PR
     if: >-
-      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group'
+      github.event_name == 'workflow_run'
+      && startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/')
       && github.event.workflow_run.conclusion != 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

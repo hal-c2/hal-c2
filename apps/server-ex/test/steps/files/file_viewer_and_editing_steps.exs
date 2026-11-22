@@ -239,16 +239,99 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     refused(context, "operation_failed", "'#{Host.path(context, file)}' is larger than #{mb} MB.")
   end
 
-  step "nothing at {string} changed", %{args: [file]} = context do
-    path = Host.path(context, file)
+  step "{string} in {string} is {int} MB of text with a multibyte character across the one-megabyte mark",
+       %{args: [file, project, mb]} = context do
+    # One byte short of the read limit, then a two-byte character across it.
+    head = String.duplicate("a", 1_048_575)
+    rest = String.duplicate("b", mb * 1_048_576)
+    write(context, project, file, head <> "é" <> rest)
+  end
 
-    case context.host_before do
-      nil -> refute File.exists?(path)
-      :directory -> assert File.dir?(path)
-      contents -> assert File.read!(path) == contents
-    end
+  step "the returned text ends before that character", context do
+    assert {:ok, %{"contents" => contents, "truncated" => true}} = context.reply
+    assert contents == String.duplicate("a", 1_048_575)
+    context
+  end
+
+  step "it does not end in a replacement character", context do
+    assert {:ok, %{"contents" => contents}} = context.reply
+    refute String.ends_with?(contents, "\uFFFD")
+    assert String.valid?(contents)
+    context
+  end
+
+  step "the MC refuses the save", context do
+    assert {:error, _message, %{"_tag" => "ProjectWriteFileError"}} = context.reply
+    context
+  end
+
+  step ~r/^"(?<link>[^"]+)" in "(?<project>[^"]+)" is a link to (?<target>the user's home folder|a folder that is not there|a file that is not there)$/,
+       %{args: [link, project, target]} = context do
+    root = World.project(context, project).root
+
+    {target_path, guard} =
+      case target do
+        "the user's home folder" ->
+          home = Host.home(context)
+          File.mkdir_p!(home)
+          {home, Path.join(home, "notes.txt")}
+
+        "a folder that is not there" ->
+          {"gone-dir", Path.join(root, "gone-dir")}
+
+        "a file that is not there" ->
+          {"gone.txt", Path.join(root, "gone.txt")}
+      end
+
+    File.ln_s!(target_path, Path.join(root, link))
+    Map.put(context, :link_guard, guard)
+  end
+
+  step "{string} keeps a bare repository at {string}", %{args: [project, folder]} = context do
+    path = Path.join(World.project(context, project).root, folder)
+    # No user or system git config: a template there could seed the repository.
+    {_, 0} =
+      System.cmd("git", ["init", "-q", "--bare", path],
+        env: %{"GIT_CONFIG_GLOBAL" => "/dev/null", "GIT_CONFIG_NOSYSTEM" => "1"},
+        stderr_to_stdout: true
+      )
 
     context
+  end
+
+  step "{string} in {string} is a link to its folder {string}",
+       %{args: [link, project, folder]} = context do
+    root = World.project(context, project).root
+    File.mkdir_p!(Path.join(root, folder))
+    File.ln_s!(folder, Path.join(root, link))
+    context
+  end
+
+  step "nothing outside {string} changed", context do
+    refute File.exists?(context.link_guard)
+    context
+  end
+
+  step "nothing at {string} changed", %{args: [file]} = context do
+    if Path.type(file) == :relative do
+      # A path in the project, the save's own target or the one its links led to:
+      # the refused save left it as it was.
+      path = Host.resolved(World.project(context).root, file)
+      assert {^path, before} = context[:written_before]
+      assert File.read(path) == before
+
+      context
+    else
+      path = Host.path(context, file)
+
+      case context.host_before do
+        nil -> refute File.exists?(path)
+        :directory -> assert File.dir?(path)
+        contents -> assert File.read!(path) == contents
+      end
+
+      context
+    end
   end
 
   step "{string} exists with the written contents", %{args: [file]} = context do
