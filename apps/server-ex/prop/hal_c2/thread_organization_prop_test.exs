@@ -12,7 +12,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
   stamp is set. After every command the test compares the thread entity with the
   model, checks that every time stamp the command does not set anew kept its value
   (re-settling keeps when it settled, a re-pin and a reorder keep when it was pinned;
-  every snooze is stamped afresh, even to the same wake time), that a refused command
+  every snooze is stamped afresh, even to the same wake time, and one retried with no
+  receipt, as after a stop between commit and receipt, is not), that a refused command
   and the other threads changed nothing, and that the sidebar row shows the same
   organization as the thread.
 
@@ -86,8 +87,9 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
   # threads: id -> %{status: :live | :archived | :deleted, running, override: nil |
   #   "settled" | "active", unsettled (whether unsettledAt is set), until: nil | :tomorrow
-  #   | :next_week, pinned, pin_key, active_key, auto_off (auto-settle turned off)}
-  # next: numbers the messages sent.
+  #   | :next_week, snooze (the command id of the last snooze), pinned, pin_key,
+  #   active_key, auto_off (auto-settle turned off)}
+  # next: numbers the messages and snoozes sent.
   def initial_state, do: %{threads: %{}, next: 1}
 
   def command(%{threads: threads, next: next}) do
@@ -98,7 +100,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
       {3, {:call, __MODULE__, :create, [tid]}},
       {4, {:call, __MODULE__, :settle, [tid]}},
       {3, {:call, __MODULE__, :unsettle, [tid]}},
-      {4, {:call, __MODULE__, :snooze, [tid, oneof([:tomorrow, :next_week])]}},
+      {4, {:call, __MODULE__, :snooze, [tid, oneof([:tomorrow, :next_week]), "s#{next}"]}},
       {3, {:call, __MODULE__, :unsnooze, [tid]}},
       {4, {:call, __MODULE__, :pin, [tid, oneof([nil, key])]}},
       {3, {:call, __MODULE__, :unpin, [tid]}},
@@ -114,9 +116,14 @@ defmodule HalC2.ThreadOrganizationPropTest do
     idle = for {t, %{running: false}} <- threads, t in live, do: t
     running = for {t, %{running: true}} <- threads, do: t
     candidates = for t <- idle, threads[t].status == :live, not threads[t].pinned, do: t
+    snoozed = for t <- live, threads[t].until != nil, do: [t, threads[t].until, threads[t].snooze]
 
     frequency(
       always ++
+        if(snoozed == [],
+          do: [],
+          else: [{16, {:call, __MODULE__, :retry_snooze, oneof(snoozed)}}]
+        ) ++
         if(idle == [], do: [], else: [{3, {:call, __MODULE__, :send, [oneof(idle), "m#{next}"]}}]) ++
         if(running == [], do: [], else: [{3, {:call, __MODULE__, :interrupt, [oneof(running)]}}]) ++
         if(candidates == [],
@@ -142,6 +149,9 @@ defmodule HalC2.ThreadOrganizationPropTest do
   def precondition(%{threads: threads}, {:call, _, :auto_settle, [tid]}),
     do: match?(%{status: :live, running: false, pinned: false}, threads[tid])
 
+  def precondition(%{threads: threads}, {:call, _, :retry_snooze, [tid, until, id]}),
+    do: match?(%{until: ^until, snooze: ^id, status: s} when s != :deleted, threads[tid])
+
   def precondition(%{threads: threads}, {:call, _, :restart, []}),
     do: threads != %{} and not Enum.any?(threads, fn {_, t} -> t.running end)
 
@@ -157,6 +167,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
           override: nil,
           unsettled: false,
           until: nil,
+          snooze: nil,
           pinned: false,
           pin_key: nil,
           active_key: nil,
@@ -164,7 +175,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
         })
   end
 
-  def next_state(state, _result, {:call, _, :send, _} = call),
+  def next_state(state, _result, {:call, _, fun, _} = call) when fun in [:send, :snooze],
     do: %{apply_command(state, call) | next: state.next + 1}
 
   def next_state(state, _result, {:call, _, :restart, []}), do: state
@@ -186,7 +197,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
   defp organized(thread, :unsettle, _),
     do: %{thread | override: "active", unsettled: true}
 
-  defp organized(thread, :snooze, [_, until]), do: %{thread | until: until}
+  defp organized(thread, :snooze, [_, until, id]), do: %{thread | until: until, snooze: id}
+  defp organized(thread, :retry_snooze, _), do: thread
   defp organized(thread, :unsnooze, _), do: %{thread | until: nil}
 
   defp organized(thread, :pin, [_, key]) do
@@ -259,6 +271,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
               :settle,
               :unsettle,
               :snooze,
+              :retry_snooze,
               :unsnooze,
               :pin,
               :unpin,
@@ -427,15 +440,27 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
   # A snooze found already stamped is backdated first, so a stamp set anew is told
   # from one kept.
-  def snooze(tid, until) do
+  def snooze(tid, until, id) do
+    backdate_snooze(tid)
+    send_snooze(tid, until, id)
+  end
+
+  # The same command decided again: `dispatch/1` reads no receipt, as after a lost one.
+  def retry_snooze(tid, until, id) do
+    backdate_snooze(tid)
+    send_snooze(tid, until, id)
+  end
+
+  defp send_snooze(tid, until, id),
+    do: organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until), "commandId" => id})
+
+  defp backdate_snooze(tid) do
     if is_binary(JS.get(StreamState.get(current(tid), "thread")[tid] || %{}, "snoozedAt")) do
       {:ok, _} =
         HalC2.Streams.commit(tid, :thread, [
           {"thread", tid, %{"s" => %{"snoozedAt" => "2020-01-01T00:00:00.000Z"}}}
         ])
     end
-
-    organize(tid, "thread.snooze", %{"snoozedUntil" => wake_time(until)})
   end
 
   def unsnooze(tid), do: organize(tid, "thread.unsnooze")

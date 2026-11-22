@@ -4114,11 +4114,20 @@ defmodule HalC2.Orchestration do
     %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => unsettled_at}
   end
 
-  # Every snooze is stamped afresh, even to the wake time the thread already has; a
-  # retried command is applied once (`dispatch_once/1`). A snooze the user chose
-  # replaces the one a usage limit asked for.
+  # Every snooze is stamped afresh, even to the wake time the thread already has. The
+  # thread records the command that snoozed it, so that command retried keeps the stamp
+  # when the MC stopped before saving its receipt (`dispatch_once/1`). A snooze the user
+  # chose replaces the one a usage limit asked for.
   defp thread_fields("thread.snooze", command, thread, at) do
-    fields = %{"snoozedUntil" => command["snoozedUntil"], "snoozedAt" => at}
+    id = command["commandId"]
+    until = command["snoozedUntil"]
+    retried? = id != nil and thread["snoozeCommandId"] == id and thread["snoozedUntil"] == until
+
+    fields = %{
+      "snoozedUntil" => until,
+      "snoozedAt" => (retried? && thread["snoozedAt"]) || at,
+      "snoozeCommandId" => id
+    }
 
     case thread["limitRecovery"] do
       %{} = recovery -> Map.put(fields, "limitRecovery", Map.put(recovery, "snooze", false))

@@ -219,6 +219,11 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
 
     assert {:ok, _} = HalC2.Orchestration.dispatch_once(context.snooze_command)
     assert World.thread(context, thread)["snoozedAt"] == old
+
+    # Also when the MC stopped after committing the snooze and before saving its receipt.
+    :ok = HalC2.Store.delete_meta("command-receipt:" <> context.snooze_command["commandId"])
+    assert {:ok, _} = HalC2.Orchestration.dispatch_once(context.snooze_command)
+    assert World.thread(context, thread)["snoozedAt"] == old
     context
   end
 
