@@ -9924,6 +9924,259 @@
       ]
     },
     {
+      "uri": "Qt.labs.lottieqt",
+      "versions": [
+        "1.0"
+      ],
+      "types": [
+        {
+          "name": "LottieAnimation",
+          "since": "1.0",
+          "base": "PaintedItem",
+          "baseModule": "QtQuick",
+          "singleton": false,
+          "enums": [
+            {
+              "name": "Status",
+              "keys": [
+                [
+                  "Null",
+                  0
+                ],
+                [
+                  "Loading",
+                  1
+                ],
+                [
+                  "Ready",
+                  2
+                ],
+                [
+                  "Error",
+                  3
+                ]
+              ]
+            },
+            {
+              "name": "Quality",
+              "keys": [
+                [
+                  "LowQuality",
+                  0
+                ],
+                [
+                  "MediumQuality",
+                  1
+                ],
+                [
+                  "HighQuality",
+                  2
+                ]
+              ]
+            },
+            {
+              "name": "Direction",
+              "keys": [
+                [
+                  "Forward",
+                  1
+                ],
+                [
+                  "Reverse",
+                  -1
+                ]
+              ]
+            },
+            {
+              "name": "LoopCount",
+              "keys": [
+                [
+                  "Infinite",
+                  -1
+                ]
+              ]
+            }
+          ],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "source",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "sourceChanged"
+            },
+            {
+              "name": "status",
+              "type": "Status",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "frameRate",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "frameRateChanged"
+            },
+            {
+              "name": "autoPlay",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "autoPlayChanged"
+            },
+            {
+              "name": "loops",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loopsChanged"
+            },
+            {
+              "name": "quality",
+              "type": "Quality",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "qualityChanged"
+            },
+            {
+              "name": "direction",
+              "type": "Direction",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "directionChanged"
+            },
+            {
+              "name": "startFrame",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "startFrameChanged"
+            },
+            {
+              "name": "endFrame",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "endFrameChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "finished",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "start",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "play",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "pause",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "togglePause",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "stop",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "gotoAndPlay",
+              "parameters": [
+                {
+                  "name": "frame",
+                  "type": "var"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "gotoAndStop",
+              "parameters": [
+                {
+                  "name": "frame",
+                  "type": "var"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "getDuration",
+              "parameters": [
+                {
+                  "name": "inFrames",
+                  "type": "var"
+                }
+              ],
+              "returnType": "real"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "uri": "QtQuick3D",
       "versions": [
         "6.0"
