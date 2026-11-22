@@ -726,7 +726,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 13
+    assert state.v == 12
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -775,12 +775,12 @@ defmodule HalC2.UpgradeTest do
     assert {:push, _, migrated} =
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
-    assert migrated.v == 13
+    assert migrated.v == 12
     assert_receive :recheck_session, 1_000
 
     refute_received :recheck_session
 
-    assert {:push, _, %{v: 13}} =
+    assert {:push, _, %{v: 12}} =
              HalC2.Web.Socket.handle_info(
                {:hal_c2_keybindings, node(), []},
                %{state | session: nil}
@@ -815,7 +815,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 13
+    assert migrated.v == 12
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
@@ -889,6 +889,26 @@ defmodule HalC2.UpgradeTest do
     assert_receive {:unwatched, nil}
   end
 
+  # Going back in place keeps sockets: the version before this one reads only v12, and
+  # no version can read one from after it, whose callbacks would call themselves for good.
+  test "a socket is left readable by the version before, and one from a newer is closed" do
+    assert {:push, _hello, state} = HalC2.Web.Socket.init([])
+    assert state.v == 12
+
+    newer = %{state | v: state.v + 1}
+    ping = {~s({"t":"ping"}), [opcode: :text]}
+
+    for handle <- [
+          fn -> HalC2.Web.Socket.handle_in(ping, newer) end,
+          fn -> HalC2.Web.Socket.handle_info(:flush, newer) end
+        ] do
+      # Not answering is how it fails, so it is asked from a process of its own.
+      {pid, ref} = spawn_monitor(fn -> exit({:answered, handle.()}) end)
+      assert_receive {:DOWN, ^ref, :process, ^pid, answer}, 5_000, "the socket never answered"
+      assert {:answered, {:stop, :normal, {1012, _reason}, ^newer}} = answer
+    end
+  end
+
   test "a message without a tag is only for a stream followed before an upgrade" do
     tag = {node(), make_ref()}
 
@@ -906,11 +926,11 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v13, so the returned state is that migration
+    # v7 state is first migrated to v12, so the returned state is that migration
     # (less `opened_at`, the clock at migration).
     migrated =
       Map.merge(state, %{
-        v: 13,
+        v: 12,
         terminals: %{},
         lost: %{},
         unreached: %{},

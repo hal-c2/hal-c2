@@ -28,6 +28,9 @@ hand. What that asks of the MC's code:
 - **State that changes shape needs `code_change/3`.** A changed module of a process behaviour is
   `{update, M, {advanced, []}}`: its processes are suspended, migrate their state, and resume. A
   GenServer that keeps a new shape without a clause for the old one crashes at the upgrade.
+- **A client socket gets no `code_change/3`.** It migrates on its next callback, and an MC taken
+  back in place hands it to the older code. So a key the version before can ignore does not bump
+  the socket's state version: that code would not know the number.
 - **The release handler finds processes through the supervision tree.** It suspends the processes
   whose child spec lists the module (`modules: [M]`, the default). A process started outside a
   supervisor, or one running a module its spec does not name, is not suspended and switches code

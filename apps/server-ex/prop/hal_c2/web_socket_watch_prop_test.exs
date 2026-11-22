@@ -23,7 +23,9 @@ defmodule HalC2.WebSocketWatchPropTest do
   An MC that parted from the socket's comes back (`ready/1`, as the socket hears of
   the old member once it can answer): every subscription watching it, and every one
   that failed there (`away`: its Slack, which it doesn't run), is told to resync and
-  forgotten, and no other is told anything.
+  forgotten, and no other is told anything. A watch that fails between the socket
+  hearing of the member and the member's services answering (`sub_starting/2`) is one
+  of them, whether or not anything was watched there before it.
 
   The socket is upgraded in place from before it heard MCs come back (`upgrade/1`): on
   its first message it treats the old member as just back for what it watches there,
@@ -146,6 +148,11 @@ defmodule HalC2.WebSocketWatchPropTest do
         {1, {:call, __MODULE__, :ready, [state.subs.old != []]}},
         {1, {:call, __MODULE__, :upgrade, [state.subs.old != []]}},
         {2, let(id <- oneof(@ids.away), do: {:call, __MODULE__, :sub_away, [id]})},
+        {2,
+         let(
+           id <- oneof(@ids.away),
+           do: {:call, __MODULE__, :sub_starting, [id, state.subs.old != []]}
+         )},
         {3,
          let(kind <- oneof(@kinds), do: {:call, __MODULE__, :change, [kind, state.values[kind]]})}
       ] ++
@@ -201,6 +208,9 @@ defmodule HalC2.WebSocketWatchPropTest do
   def precondition(state, {:call, _, :sub_away, [id]}), do: id not in state.unreached
   def precondition(state, {:call, _, :unsub_away, [id]}), do: id in state.unreached
 
+  def precondition(state, {:call, _, :sub_starting, [id, held]}),
+    do: id not in state.unreached and held == (state.subs.old != [])
+
   def next_state(state, _result, {:call, _, :sub, [kind, id]}),
     do: update_in(state.subs[kind], &[id | &1])
 
@@ -220,6 +230,9 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   def next_state(state, _result, {:call, _, :sub_away, [id]}),
     do: %{state | unreached: [id | state.unreached]}
+
+  def next_state(state, _result, {:call, _, :sub_starting, _}),
+    do: %{put_in(state.subs.old, []) | unreached: []}
 
   def next_state(state, _result, {:call, _, :unsub_away, [id]}),
     do: %{state | unreached: List.delete(state.unreached, id)}
@@ -267,6 +280,11 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   def postcondition(_state, {:call, _, :sub_away, [id]}, frames), do: frames == [{:error, id}]
   def postcondition(_state, {:call, _, :unsub_away, _}, frames), do: frames == []
+
+  def postcondition(state, {:call, _, :sub_starting, [id, held]}, result) do
+    resyncs = for i <- [id | state.subs.old ++ state.unreached], do: {:resync, i}
+    result == {[{:error, id}], Enum.sort(resyncs), held}
+  end
 
   defp steps(:slack, "off"), do: ["connecting", "connected"]
   defp steps(:slack, _connected), do: ["off"]
@@ -331,6 +349,37 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   def unsub_away(id), do: send_frame(%{"t" => "unsub", "id" => id})
 
+  # The socket hears the old member come back, and `id`'s watch fails there before its
+  # supervisor answers: what it was told of each, and whether the member was let go of.
+  def sub_starting(id, held) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(Process.get({__MODULE__, :web}))
+    :ok = :erpc.call(old(), :sys, :suspend, [HalC2.Supervisor])
+
+    failed =
+      try do
+        send(socket, {:nodeup, old(), []})
+        frames() ++ sub_away(id)
+      after
+        :ok = :erpc.call(old(), :sys, :resume, [HalC2.Supervisor])
+      end
+
+    client = Process.get({__MODULE__, :client})
+    resync? = &(&1["t"] == "resync" and &1["id"] == id)
+    {resync, before, client} = WsClient.recv_until(client, resync?, 10_000)
+    Process.put({__MODULE__, :client}, client)
+    told = for frame <- before ++ [resync], value = value(frame), value != nil, do: value
+    wait = if held, do: 10_000, else: 0
+
+    let_go =
+      receive do
+        {:old_mc_unsubscribed, _socket} -> true
+      after
+        wait -> false
+      end
+
+    {failed, Enum.sort(told ++ frames()), let_go}
+  end
+
   # The socket hears that the old member can answer again, and whether it was told
   # to let go of it: `held` says it watched something there.
   def ready(held) do
@@ -360,7 +409,18 @@ defmodule HalC2.WebSocketWatchPropTest do
       {io, %{handler | connection: %{connection | websock_state: v12}}}
     end)
 
+    :erlang.trace(socket, true, [:receive])
     send(socket, :after_upgrade)
+    # It asks whether or not it watches anything there, so the answer is waited for.
+    member = old()
+
+    receive do
+      {:trace, ^socket, :receive, {:hal_c2_mc_ready, ^member}} -> :ok
+    after
+      10_000 -> exit({:never, :ready})
+    end
+
+    untrace(socket)
     wait = if held, do: 10_000, else: 0
 
     told =
@@ -371,6 +431,23 @@ defmodule HalC2.WebSocketWatchPropTest do
       end
 
     {frames(), told}
+  end
+
+  defp untrace(socket) do
+    :erlang.trace(socket, false, [:receive])
+    delivered = :erlang.trace_delivered(socket)
+
+    receive do
+      {:trace_delivered, ^socket, ^delivered} -> drop_traced(socket)
+    end
+  end
+
+  defp drop_traced(socket) do
+    receive do
+      {:trace, ^socket, :receive, _} -> drop_traced(socket)
+    after
+      0 -> :ok
+    end
   end
 
   def change(kind, value) do

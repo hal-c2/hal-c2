@@ -864,6 +864,16 @@ defmodule HalC2.Steps.Platform.Upgrades do
     Map.put(context, :old_state, state |> Map.delete(:scopes) |> Map.put(:v, 1))
   end
 
+  step "a client connected to a newer version of the MC", context do
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    Map.put(context, :old_state, %{state | v: state.v + 1})
+  end
+
+  step "it is closed for the client to connect again", context do
+    assert {:stop, :normal, {1012, _reason}, _state} = context.handled
+    context
+  end
+
   step "the socket handles its next frame", context do
     Map.put(
       context,
@@ -877,7 +887,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert JSON.decode!(IO.iodata_to_binary(pong)) == %{"t" => "pong"}
 
     assert %{
-             v: 13,
+             v: 12,
              following: %{},
              scopes: :all,
              monitors: %{},

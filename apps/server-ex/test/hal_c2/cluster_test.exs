@@ -477,7 +477,7 @@ defmodule HalC2.ClusterTest do
     {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
     assert %{"t" => "plugin", "value" => "before"} = first
 
-    part(c)
+    part_watched(peer, c, id)
     publish(peer, id, "while parted")
     true = Node.connect(c)
 
@@ -508,7 +508,7 @@ defmodule HalC2.ClusterTest do
     assert %{"t" => "plugin", "value" => "before"} = first
 
     socket = as_v12(web)
-    part(c)
+    part_watched(peer, c, id)
     publish(peer, id, "while parted")
     true = Node.connect(c)
     # Any message after the upgrade is the first its new code handles.
@@ -564,6 +564,36 @@ defmodule HalC2.ClusterTest do
     assert now["value"] == "now"
   end
 
+  test "a first watch that fails as a member starts is asked again once it has started",
+       %{tmp_dir: dir, port: port, peer: second} do
+    {peer, c} = pair(second, dir)
+    id = topic_plugin(peer)
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+
+    :ok = :peer.call(peer, Supervisor, :terminate_child, [HalC2.Supervisor, HalC2.Plugins])
+    :ok = :peer.call(peer, :sys, :suspend, [HalC2.Supervisor])
+    true = Node.connect(c)
+    # The socket has heard it come back, watching nothing of it yet.
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, _, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 30_000)
+
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "error"} = error
+
+    :ok = :peer.call(peer, :sys, :resume, [HalC2.Supervisor])
+    {:ok, _} = :peer.call(peer, Supervisor, :restart_child, [HalC2.Supervisor, HalC2.Plugins])
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+
+    publish(peer, topic_plugin(peer), "now")
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {now, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "now"
+  end
+
   # A plugin of the member's that may publish, as a running one does.
   defp topic_plugin(peer) do
     state = :peer.call(peer, :sys, :get_state, [HalC2.Plugins])
@@ -595,6 +625,14 @@ defmodule HalC2.ClusterTest do
   defp part(c) do
     _ = Node.disconnect(c)
     refute c in Node.list()
+  end
+
+  # Parted from `c`'s side, and not back until `c`'s host watches nothing for this MC.
+  defp part_watched(peer, c, id) do
+    true = Node.monitor(c, true)
+    args = [node(), id, "watched"]
+    :ok = :peer.call(peer, HalC2.Test.RunningPlugin, :part, args, 60_000)
+    assert_receive {:nodedown, ^c}, 30_000
   end
 
   defp publish(peer, id, value) do

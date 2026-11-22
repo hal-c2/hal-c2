@@ -427,6 +427,13 @@ Feature: MC self-update and release upgrades
     When the socket handles its next frame
     Then its state is migrated to the new version's shape
 
+  # Older code cannot read a newer socket's state: it would hold the socket for good.
+  @mc
+  Scenario: A socket from a newer version is closed as its MC goes back in place
+    Given a client connected to a newer version of the MC
+    When the socket handles its next frame
+    Then it is closed for the client to connect again
+
   @mc
   Scenario: A release MC advertises that it can update itself
     When a client reads the descriptor of an MC running from a release

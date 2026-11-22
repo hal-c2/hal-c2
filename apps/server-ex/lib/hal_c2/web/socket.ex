@@ -46,8 +46,16 @@ defmodule HalC2.Web.Socket do
   @max_held_progress 512
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
-  # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 13
+  # `code_change/3` for them: each callback first brings an older state up to date. A key
+  # the version before can ignore keeps the number, so going back in place still reads
+  # the state: `unreached` is such a key, and its absence is what is migrated.
+  @state_version 12
+  defguardp outdated(state)
+            when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version or
+                   not is_map_key(state, :unreached)
+
+  defguardp newer(state)
+            when is_map_key(state, :v) and :erlang.map_get(:v, state) > @state_version
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -151,9 +159,8 @@ defmodule HalC2.Web.Socket do
   end
 
   @impl true
-  def handle_in(frame, state)
-      when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version,
-      do: handle_in(frame, migrate(state))
+  def handle_in(_frame, state) when newer(state), do: from_newer(state)
+  def handle_in(frame, state) when outdated(state), do: handle_in(frame, migrate(state))
 
   def handle_in({frame, [opcode: :text]}, state) do
     case Protocol.decode(frame, known_mcs()) do
@@ -191,9 +198,8 @@ defmodule HalC2.Web.Socket do
   def handle_in(_binary, state), do: {:ok, state}
 
   @impl true
-  def handle_info(message, state)
-      when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version,
-      do: handle_info(message, migrate(state))
+  def handle_info(_message, state) when newer(state), do: from_newer(state)
+  def handle_info(message, state) when outdated(state), do: handle_info(message, migrate(state))
 
   # One for a subscription followed before this one, still on its way, is not this
   # one's. A follow that gave up may yet be taken: that subscription goes live, and is
@@ -403,9 +409,9 @@ defmodule HalC2.Web.Socket do
     do: terminal_down(state, mc, key, reason)
 
   # An MC is back: its terminals lost with it are attached again, and what is
-  # watched on it is followed again once it can answer (`await_ready/2`).
+  # watched on it is followed again once it can answer (`await_ready/1`).
   def handle_info({:nodeup, mc, _info}, state) do
-    await_ready(state, mc)
+    await_ready(mc)
 
     case Map.pop(state.lost, mc) do
       {nil, _} ->
@@ -961,19 +967,21 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # A newer version's state, left by an MC that went back in place: the client connects again.
+  defp from_newer(state), do: {:stop, :normal, {1012, "MC went back a version"}, state}
+
   # An MC that parted from this one dropped every watcher here (their monitors went down
   # with the connection), so what this socket watches there would show its last value for
   # good. Once the MC is back and its services are up (its supervisor answers only then),
-  # those subscriptions, and those that could not reach it, are told to resync.
-  defp await_ready(state, mc) do
-    if watched_on(state, mc) != [] do
-      socket = self()
+  # those subscriptions, and those that could not reach it, are told to resync. It is
+  # asked with nothing watched there too: a first watch can fail as it starts.
+  defp await_ready(mc) do
+    socket = self()
 
-      spawn(fn ->
-        with {:ok, _} <- remote(mc, Supervisor, :count_children, [HalC2.Supervisor], :infinity),
-             do: send(socket, {:hal_c2_mc_ready, mc})
-      end)
-    end
+    spawn(fn ->
+      with {:ok, _} <- remote(mc, Supervisor, :count_children, [HalC2.Supervisor], :infinity),
+           do: send(socket, {:hal_c2_mc_ready, mc})
+    end)
 
     :ok
   end
@@ -1385,16 +1393,15 @@ defmodule HalC2.Web.Socket do
       |> Map.put(:v, 11)
       |> migrate()
 
-  # Version 13: every socket hears MCs come back. One that awaited a lost terminal
-  # heard them already, and would hear each twice. A parting before this may have
+  # Version 12 with `unreached`: every socket hears MCs come back. One that awaited a lost
+  # terminal heard them already, and would hear each twice. A parting before this may have
   # ended what it watches on the MCs here now, so that is followed again as if they
   # had just come back.
-  defp migrate(%{v: 12} = state) do
+  defp migrate(%{v: 12} = state) when not is_map_key(state, :unreached) do
     :ok = :net_kernel.monitor_nodes(false, node_type: :all)
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-    state = Map.merge(state, %{unreached: %{}, v: 13})
-    for mc <- Node.list(), do: await_ready(state, mc)
-    migrate(state)
+    for mc <- Node.list(), do: await_ready(mc)
+    Map.put(state, :unreached, %{})
   end
 
   # Version 12: a socket with a session rechecks it on a timer, started here for one

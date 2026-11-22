@@ -2264,6 +2264,21 @@ Item {
             checkFloor();
         }
 
+        function test_a_talk_said_just_as_the_office_is_shown_again_is_played() {
+            const people = many(3, "t", "working", "typing");
+            plugin.publish(people);
+            page.tickedAt = Date.now() - 600000;
+            page.applicationActive = true;
+            // Said before the clock's first tick.
+            plugin.publish(people, [message_to("now", "t0", "t1")]);
+            wait(300);
+            page.applicationActive = false;
+            const a = actor("t0");
+            verify(a.talk || a.queue.length, "it is not taken for one from before");
+            runUntil(() => a.talk?.phase === "say", 2000, "it is played");
+            compare(a.talk.text, "now");
+        }
+
         function test_a_glance_away_leaves_the_walks_and_talks_under_way() {
             plugin.publish(many(4, "t", "working", "typing"));
             plugin.publish(many(5, "t", "working", "typing"), [message_to("now", "t0", "t1")]);

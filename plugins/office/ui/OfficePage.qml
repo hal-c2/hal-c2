@@ -260,6 +260,9 @@ Item {
 
     onEnvironmentChanged: reset()
     onOfficeChanged: take(office)
+    // As it is shown again, not at the clock's first tick: what is said between is now.
+    onApplicationActiveChanged: if (visible && applicationActive) checkClock()
+    onVisibleChanged: if (visible && applicationActive) checkClock()
     onProjectIconsChanged: updateMarks()
     Component.onCompleted: follow()
 
@@ -2017,6 +2020,14 @@ Item {
         page.primed = value !== null && value !== undefined;
         updateWalking();
         settle(value);
+    }
+
+    function checkClock() {
+        const now = Date.now();
+        const stood = now - page.tickedAt > 5000;
+        page.tickedAt = now;
+        if (stood)
+            catchUp();
     }
 
     // The clock stood still, the page out of sight or the machine asleep: what
@@ -4316,10 +4327,7 @@ Item {
         repeat: true
         running: page.animating
         onTriggered: {
-            const now = Date.now();
-            if (now - page.tickedAt > 5000)
-                page.catchUp();
-            page.tickedAt = now;
+            page.checkClock();
             page.tick(interval);
         }
     }
