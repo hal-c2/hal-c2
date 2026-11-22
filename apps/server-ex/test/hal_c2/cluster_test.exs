@@ -251,8 +251,8 @@ defmodule HalC2.ClusterTest do
   # answer is seen as that process sends it: a suspended process's receive trace waits
   # until something makes it handle its signals.
   test "a client whose follow is answered as the MCs part and meet again is told it failed",
-       %{tmp_dir: dir, port: port, b: b} do
-    {peer, c} = member(dir)
+       %{tmp_dir: dir, port: port, peer: second} do
+    {peer, c} = pair(second, dir)
     true = Node.connect(c)
     {:ok, _} = :peer.call(peer, HalC2.Streams, :commit, ["split-th", :thread, [note("n1")]])
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
@@ -281,7 +281,7 @@ defmodule HalC2.ClusterTest do
     true = :erlang.suspend_process(socket)
     :ok = :erpc.call(c, :sys, :resume, [stream])
     assert_receive {:trace, _follow, :send, {:hal_c2_followed, _, {:ok, _}}, ^socket}, 5_000
-    true = Node.disconnect(c)
+    part(c)
     true = Node.connect(c)
     assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
     true = :erlang.resume_process(socket)
@@ -289,13 +289,6 @@ defmodule HalC2.ClusterTest do
 
     {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error
-
-    # Parting here alone leaves b connected to c, which `global` repairs by cutting
-    # the overlap, sometimes after the reconnect above. The three meet in full and
-    # `global` settles before the follow is asked again, or it can be cut again.
-    true = :erpc.call(b, Node, :connect, [c])
-    for node <- [node(), b, c], do: :ok = :erpc.call(node, :global, :sync, [])
-    true = c in Node.list() and c in :erpc.call(b, Node, :list, [])
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
     {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
@@ -411,7 +404,8 @@ defmodule HalC2.ClusterTest do
     for {key, value} <- [start_mc: true, home: Path.join(dir, "c"), port: 0],
         do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2])
+    # A boot on a busy machine takes longer than the call's own 5 seconds.
+    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], :infinity)
     {peer, c}
   end
 
@@ -466,5 +460,100 @@ defmodule HalC2.ClusterTest do
     assert version.reset
     assert version.epoch != epoch
     assert for({id, {"thread", _}} <- rows, do: id) |> Enum.sort() == ~w(th-1 th-2)
+  end
+
+  test "a plugin topic watched on a member is followed again once the MCs meet again",
+       %{tmp_dir: dir, port: port, peer: second} do
+    {peer, c} = pair(second, dir)
+    true = Node.connect(c)
+    id = topic_plugin(peer)
+    publish(peer, id, "before")
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "plugin", "value" => "before"} = first
+
+    part(c)
+    publish(peer, id, "while parted")
+    true = Node.connect(c)
+
+    {resync, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {now, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "while parted"
+
+    publish(peer, id, "after")
+    {later, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert later["value"] == "after"
+  end
+
+  test "a plugin topic asked for while its MC was away is asked again once it has started",
+       %{tmp_dir: dir, port: port, peer: second} do
+    {peer, c} = pair(second, dir)
+    true = Node.connect(c)
+    id = topic_plugin(peer)
+    publish(peer, id, "now")
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    # Asked for and let go, so the socket knows the member before it goes away.
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {_, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+
+    cookie = Node.get_cookie()
+    Node.set_cookie(c, :elsewhere)
+    on_exit(fn -> Node.set_cookie(c, cookie) end)
+    part(c)
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {error, _, client} = WsClient.recv_until(client, &(&1["t"] == "error"), 30_000)
+    assert %{"id" => 2, "reason" => "MC unavailable: noconnection"} = error
+
+    # Still starting: it is not asked until its services are up.
+    :ok = :peer.call(peer, :sys, :suspend, [HalC2.Supervisor])
+    Node.set_cookie(c, cookie)
+    true = Node.connect(c)
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, before, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 30_000)
+    refute Enum.any?(before, &(&1["t"] == "resync"))
+
+    :ok = :peer.call(peer, :sys, :resume, [HalC2.Supervisor])
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
+    assert resync == %{"t" => "resync", "id" => 2}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
+    {now, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "now"
+  end
+
+  # A plugin of the member's that may publish, as a running one does.
+  defp topic_plugin(peer) do
+    state = :peer.call(peer, :sys, :get_state, [HalC2.Plugins])
+    {id, _plugin} = Enum.at(state.plugins, 0)
+    :ok = :peer.call(peer, HalC2.Test.RunningPlugin, :mark, [id])
+    id
+  end
+
+  # A member with no third MC: parting one of three from another leaves an overlap,
+  # which `global` cuts whenever it gets to it, after they have met again too.
+  defp pair(second, dir) do
+    :ok = :peer.stop(second)
+    member(dir)
+  end
+
+  defp part(c) do
+    _ = Node.disconnect(c)
+    refute c in Node.list()
+  end
+
+  defp publish(peer, id, value) do
+    :ok = :peer.call(peer, HalC2.Plugins, :publish, [id, "watched", value])
+    # Told once the host answers.
+    _ = :peer.call(peer, :sys, :get_state, [HalC2.Plugins])
+    :ok
   end
 end

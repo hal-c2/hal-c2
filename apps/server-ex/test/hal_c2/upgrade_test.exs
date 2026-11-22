@@ -905,13 +905,14 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v12, so the returned state is that migration
+    # v7 state is first migrated to v13, so the returned state is that migration
     # (less `opened_at`, the clock at migration).
     migrated =
       Map.merge(state, %{
-        v: 12,
+        v: 13,
         terminals: %{},
         lost: %{},
+        unreached: %{},
         terminal_windows: %{},
         following: %{},
         trace: nil

@@ -19,6 +19,11 @@ defmodule HalC2.WebSocketWatchPropTest do
   the socket sent before the pong answering a ping must be exactly the model's: a
   snapshot for a sub, nothing for an unsub, each step of a change for each subscription
   to that shape, and only where it ended for one made during it.
+
+  An MC that parted from the socket's comes back (`ready/1`, as the socket hears of
+  the old member once it can answer): every subscription watching it, and every one
+  that failed there (`away`: its Slack, which it doesn't run), is told to resync and
+  forgotten, and no other is told anything.
   """
 
   use ExUnit.Case, async: false
@@ -32,7 +37,7 @@ defmodule HalC2.WebSocketWatchPropTest do
   @moduletag capture_log: true
 
   @kinds [:slack, :refreshes, :old]
-  @ids %{slack: [1, 2, 3], refreshes: [4, 5, 6], old: [7, 8]}
+  @ids %{slack: [1, 2, 3], refreshes: [4, 5, 6], old: [7, 8], away: [9, 10]}
   # The kinds the socket watches under refs; an old member's late unsubscribe is its own.
   @late [:slack, :refreshes]
   @services %{slack: HalC2.Slack, refreshes: Refreshes}
@@ -93,6 +98,7 @@ defmodule HalC2.WebSocketWatchPropTest do
     [port] =
       for {HalC2.Web, pid, _, _} <- Supervisor.which_children(sup) do
         {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
+        Process.put({__MODULE__, :web}, pid)
         port
       end
 
@@ -116,11 +122,12 @@ defmodule HalC2.WebSocketWatchPropTest do
   # --- model ------------------------------------------------------------------------
 
   # subs: the ids subscribed to each shape. values: each service's state, the Slack
-  # status's or the refresh revision.
+  # status's or the refresh revision. unreached: the ids whose watch failed on the old member.
   def initial_state,
     do: %{
       subs: %{slack: [], refreshes: [], old: []},
-      values: %{slack: "off", refreshes: 0, old: 0}
+      values: %{slack: "off", refreshes: 0, old: 0},
+      unreached: []
     }
 
   def command(state) do
@@ -131,6 +138,8 @@ defmodule HalC2.WebSocketWatchPropTest do
 
     frequency(
       [
+        {1, {:call, __MODULE__, :ready, [state.subs.old != []]}},
+        {2, let(id <- oneof(@ids.away), do: {:call, __MODULE__, :sub_away, [id]})},
         {3,
          let(kind <- oneof(@kinds), do: {:call, __MODULE__, :change, [kind, state.values[kind]]})}
       ] ++
@@ -148,6 +157,10 @@ defmodule HalC2.WebSocketWatchPropTest do
                do: {:call, __MODULE__, :resub_changing, [kind, id, state.values[kind]]}
              )}
           ],
+          else: []
+        ) ++
+        if(state.unreached != [],
+          do: [{1, let(id <- oneof(state.unreached), do: {:call, __MODULE__, :unsub_away, [id]})}],
           else: []
         ) ++
         if(state.subs.old != [],
@@ -177,6 +190,9 @@ defmodule HalC2.WebSocketWatchPropTest do
     do: id in state.subs[kind] and value == state.values[kind]
 
   def precondition(state, {:call, _, :change, [kind, value]}), do: value == state.values[kind]
+  def precondition(state, {:call, _, :ready, [held]}), do: held == (state.subs.old != [])
+  def precondition(state, {:call, _, :sub_away, [id]}), do: id not in state.unreached
+  def precondition(state, {:call, _, :unsub_away, [id]}), do: id in state.unreached
 
   def next_state(state, _result, {:call, _, :sub, [kind, id]}),
     do: update_in(state.subs[kind], &[id | &1])
@@ -188,6 +204,15 @@ defmodule HalC2.WebSocketWatchPropTest do
     do: update_in(state.subs.old, &List.delete(&1, id))
 
   def next_state(state, _result, {:call, _, :resub, _}), do: state
+
+  def next_state(state, _result, {:call, _, :ready, [_held]}),
+    do: %{put_in(state.subs.old, []) | unreached: []}
+
+  def next_state(state, _result, {:call, _, :sub_away, [id]}),
+    do: %{state | unreached: [id | state.unreached]}
+
+  def next_state(state, _result, {:call, _, :unsub_away, [id]}),
+    do: %{state | unreached: List.delete(state.unreached, id)}
 
   def next_state(state, _result, {:call, _, :resub_changing, [kind, _, value]}),
     do: put_in(state.values[kind], List.last(steps(kind, value)))
@@ -222,6 +247,13 @@ defmodule HalC2.WebSocketWatchPropTest do
 
     frames == Enum.sort([{kind, id, List.last(steps(kind, value))} | others])
   end
+
+  def postcondition(state, {:call, _, :ready, [held]}, result),
+    do:
+      result == {Enum.sort(for id <- state.subs.old ++ state.unreached, do: {:resync, id}), held}
+
+  def postcondition(_state, {:call, _, :sub_away, [id]}, frames), do: frames == [{:error, id}]
+  def postcondition(_state, {:call, _, :unsub_away, _}, frames), do: frames == []
 
   defp steps(:slack, "off"), do: ["connecting", "connected"]
   defp steps(:slack, _connected), do: ["off"]
@@ -268,6 +300,31 @@ defmodule HalC2.WebSocketWatchPropTest do
   def unsub_old(id, last) do
     frames = unsub(:old, id)
     wait = if last, do: 10_000, else: 0
+
+    told =
+      receive do
+        {:old_mc_unsubscribed, _socket} -> true
+      after
+        wait -> false
+      end
+
+    {frames, told}
+  end
+
+  def sub_away(id) do
+    shape = %{"type" => "slack", "mc" => Atom.to_string(old())}
+    send_frame(%{"t" => "sub", "id" => id, "shape" => shape})
+  end
+
+  def unsub_away(id), do: send_frame(%{"t" => "unsub", "id" => id})
+
+  # The socket hears that the old member can answer again, and whether it was told
+  # to let go of it: `held` says it watched something there.
+  def ready(held) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(Process.get({__MODULE__, :web}))
+    send(socket, {:hal_c2_mc_ready, old()})
+    frames = frames()
+    wait = if held, do: 10_000, else: 0
 
     told =
       receive do
@@ -342,5 +399,7 @@ defmodule HalC2.WebSocketWatchPropTest do
   defp value(%{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}),
     do: {if(id in @ids.old, do: :old, else: :refreshes), id, revision}
 
+  defp value(%{"t" => "resync", "id" => id}), do: {:resync, id}
+  defp value(%{"t" => "error", "id" => id}), do: {:error, id}
   defp value(_frame), do: nil
 end

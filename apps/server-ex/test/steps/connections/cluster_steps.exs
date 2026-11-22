@@ -996,6 +996,43 @@ defmodule HalC2.Steps.Connections.Cluster do
     follow_second(context, %{"environment" => context.second.environment})
   end
 
+  step "a client connected to the first of two members that can lose each other", context do
+    # Held over stdio: one held over distribution halts as it parts.
+    context = second_member(context, nil, [], :standard_io)
+    World.put_client(context, Mc.connect(context.mc))
+  end
+
+  step "it watches the second member's settings", context do
+    {_, client} = watch_second_settings(context, World.client(context))
+    World.put_client(context, client)
+  end
+
+  step "the members lose each other, the second's settings change and they meet again",
+       context do
+    true = Node.disconnect(context.second.mc)
+    code = ~S|HalC2.Settings.update(&Map.put(&1, "addProjectBaseDirectory", "/garden"))|
+    _ = :peer.call(context.second.peer, Code, :eval_string, [code], 15_000)
+    true = Node.connect(context.second.mc)
+    context
+  end
+
+  step "the client is told to resync what it watches of the second member", context do
+    {resync, client} = Mc.await(World.client(context), &(&1["t"] == "resync"), 30_000)
+    assert resync == %{"t" => "resync", "id" => 4}
+    World.put_client(context, client)
+  end
+
+  step "watching it again shows the settings as they are now", context do
+    {config, client} = watch_second_settings(context, World.client(context))
+    assert config["config"]["settings"]["addProjectBaseDirectory"] == "/garden"
+    World.put_client(context, client)
+  end
+
+  defp watch_second_settings(context, client) do
+    shape = %{"type" => "config", "mc" => Atom.to_string(context.second.mc)}
+    Mc.await(Mc.sub(client, 4, shape), &(&1["t"] == "config" and &1["id"] == 4), 30_000)
+  end
+
   defp follow_second(context, target) do
     shape = Map.merge(%{"type" => "stream", "stream" => "remote-th"}, target)
     client = Mc.sub(World.client(context), 2, shape)
@@ -1869,28 +1906,32 @@ defmodule HalC2.Steps.Connections.Cluster do
     :ok
   end
 
-  defp second_member(context, home \\ nil, env \\ [])
+  defp second_member(context, home \\ nil, env \\ [], connection \\ nil)
 
-  defp second_member(%{second: _} = context, _home, _env), do: context
+  defp second_member(%{second: _} = context, _home, _env, _connection), do: context
 
-  defp second_member(context, home, env) do
+  defp second_member(context, home, env, connection) do
     distribute()
     context = %{context | mc: Mc.restart(context.mc)}
     name = :"hal_c2_member#{System.unique_integer([:positive])}"
-    start_second(context, name, home || Mc.tmp_dir(context.mc, "second"), env)
+    start_second(context, name, home || Mc.tmp_dir(context.mc, "second"), env, connection)
   end
 
   # The second machine: a peer running the whole MC, labelled "garden-box". Returns
   # once the connected MC knows its environment.
-  defp start_second(context, name, home, env \\ []) do
+  defp start_second(context, name, home, env \\ [], connection \\ nil) do
+    options = if connection, do: %{connection: connection}, else: %{}
+
     {:ok, peer, mc} =
-      :peer.start_link(%{
-        name: name,
-        host: ~c"127.0.0.1",
-        longnames: true,
-        args: code_path_args(),
-        env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
-      })
+      :peer.start_link(
+        Map.merge(options, %{
+          name: name,
+          host: ~c"127.0.0.1",
+          longnames: true,
+          args: code_path_args(),
+          env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
+        })
+      )
 
     for {key, value} <- [start_mc: true, home: home, port: 0],
         do: :ok = :erpc.call(mc, Application, :put_env, [:hal_c2, key, value])

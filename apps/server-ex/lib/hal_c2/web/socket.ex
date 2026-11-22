@@ -47,7 +47,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 12
+  @state_version 13
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -109,6 +109,9 @@ defmodule HalC2.Web.Socket do
       "socket open (trace #{trace || "none"}, #{if session, do: "paired session", else: "MC token"})"
     )
 
+    # Other MCs coming back: what this socket watched there is gone (`mc_ready/2`).
+    :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+
     state = %{
       v: @state_version,
       session: session,
@@ -129,6 +132,8 @@ defmodule HalC2.Web.Socket do
       terminals: %{},
       # MC => the keys of its terminals lost with it, attached again when it is back.
       lost: %{},
+      # A subscription to a service of an MC that could not be reached => that MC.
+      unreached: %{},
       # The subscription of a terminal client that acknowledges => its output window.
       terminal_windows: %{},
       buffers: %{},
@@ -156,6 +161,7 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
       {:ok, {:sub, id, shape, offset}} ->
+        state = %{state | unreached: Map.delete(state.unreached, id)}
         scope = Enum.find(List.wrap(shape_scope(shape)), &(not allowed?(state, &1)))
 
         if scope == nil,
@@ -396,22 +402,24 @@ defmodule HalC2.Web.Socket do
   def handle_info({:hal_c2_terminal_down, mc, key, reason}, state),
     do: terminal_down(state, mc, key, reason)
 
-  # An MC whose terminals were lost with it is back: they are attached again.
+  # An MC is back: its terminals lost with it are attached again, and what is
+  # watched on it is followed again once it can answer (`await_ready/2`).
   def handle_info({:nodeup, mc, _info}, state) do
+    await_ready(state, mc)
+
     case Map.pop(state.lost, mc) do
       {nil, _} ->
         {:ok, state}
 
       {keys, lost} ->
-        # The last lost MC is back: no more cluster news is wanted.
-        if lost == %{}, do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
-
         {frames, state} =
           Enum.flat_map_reduce(keys, %{state | lost: lost}, &resync_terminal(&2, &1))
 
         if frames == [], do: {:ok, state}, else: {:push, frames, state}
     end
   end
+
+  def handle_info({:hal_c2_mc_ready, mc}, state), do: mc_ready(state, mc)
 
   # A stream's server stopped, and its subscribers with it. What it sent first is
   # already here and goes out, then the client follows the stream again from what
@@ -428,7 +436,9 @@ defmodule HalC2.Web.Socket do
       when is_map_key(monitors, ref) do
     {id, _server} = monitors[ref]
     {frames, state} = flush(state)
+    shape = state.subs[id]
     state = forget_stream(%{state | monitors: Map.delete(monitors, ref)}, id)
+    state = if reason == :noconnection, do: unreached(state, id, shape), else: state
 
     frame =
       if reason == :noconnection,
@@ -738,7 +748,8 @@ defmodule HalC2.Web.Socket do
        [Protocol.encode(frame), Protocol.encode(themes_frame), Protocol.encode(sources_frame)],
        state}
     else
-      {:error, reason} -> {:push, Protocol.encode(error_frame(id, reason)), state}
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), unreached(state, id, shape)}
     end
   end
 
@@ -946,7 +957,58 @@ defmodule HalC2.Web.Socket do
         end
 
       {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
+        {:push, Protocol.encode(error_frame(id, reason)), unreached(state, id, shape)}
+    end
+  end
+
+  # An MC that parted from this one dropped every watcher here (their monitors went down
+  # with the connection), so what this socket watches there would show its last value for
+  # good. Once the MC is back and its services are up (its supervisor answers only then),
+  # those subscriptions, and those that could not reach it, are told to resync.
+  defp await_ready(state, mc) do
+    if watched_on(state, mc) != [] do
+      socket = self()
+
+      spawn(fn ->
+        with {:ok, _} <- remote(mc, Supervisor, :count_children, [HalC2.Supervisor], :infinity),
+             do: send(socket, {:hal_c2_mc_ready, mc})
+      end)
+    end
+
+    :ok
+  end
+
+  defp watched_on(state, mc) do
+    watched =
+      for {id, shape} <- state.subs,
+          {_, ^mc, _, _, _, _} <- [watch_spec(shape)],
+          do: id
+
+    watched ++ for {id, ^mc} <- state.unreached, do: id
+  end
+
+  defp mc_ready(state, mc) do
+    case Enum.uniq(watched_on(state, mc)) do
+      [] ->
+        {:ok, state}
+
+      ids ->
+        {frames, state} = flush(state)
+        state = Enum.reduce(ids, state, &unsubscribe(&2, &1))
+        resyncs = for id <- ids, do: Protocol.encode(%{"t" => "resync", "id" => id})
+        {:push, frames ++ resyncs, state}
+    end
+  end
+
+  # Any failure on another MC, whatever the reason: it may have parted and met again
+  # within the call, or still be starting. One that refuses just refuses again.
+  defp unreached(state, id, shape) do
+    case watch_spec(shape) do
+      {_, mc, _, _, _, _} when mc != node() ->
+        %{state | unreached: Map.put(state.unreached, id, mc)}
+
+      _local_or_not_watched ->
+        state
     end
   end
 
@@ -1323,6 +1385,14 @@ defmodule HalC2.Web.Socket do
       |> Map.put(:v, 11)
       |> migrate()
 
+  # Version 13: every socket hears MCs come back. One that awaited a lost terminal
+  # heard them already, and would hear each twice.
+  defp migrate(%{v: 12} = state) do
+    :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+    :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+    state |> Map.merge(%{unreached: %{}, v: 13}) |> migrate()
+  end
+
   # Version 12: a socket with a session rechecks it on a timer, started here for one
   # opened before, which no recheck reaches otherwise.
   defp migrate(%{v: 11} = state) do
@@ -1590,17 +1660,13 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # Nothing here follows the terminal any more: it is no longer awaited either,
-  # and cluster news stops with the last one that was.
+  # Nothing here follows the terminal any more: it is no longer awaited either.
   defp unwatch_terminal(state, key) do
     gone = for {ref, {_, ^key, _}} <- state.terminals, do: ref
     for ref <- gone, do: Process.demonitor(ref, [:flush])
 
     lost =
       for {mc, keys} <- state.lost, (left = keys -- [key]) != [], into: %{}, do: {mc, left}
-
-    if state.lost != %{} and lost == %{},
-      do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
 
     %{state | terminals: Map.drop(state.terminals, gone), lost: lost}
   end
@@ -1627,9 +1693,6 @@ defmodule HalC2.Web.Socket do
     do: {:ok, state}
 
   defp lose_terminal(state, mc, key) do
-    # The 3-tuple messages of `node_type`, which a stream follow's `{:nodedown, mc}` is not.
-    # Turned off by the `nodeup` that empties `lost`.
-    if state.lost == %{}, do: :ok = :net_kernel.monitor_nodes(true, node_type: :all)
     lost = Map.update(state.lost, mc, [key], &Enum.uniq([key | &1]))
 
     {thread_id, terminal_id} = key
@@ -1646,7 +1709,7 @@ defmodule HalC2.Web.Socket do
         Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event})
       end
 
-    # Back before the monitor started: no nodeup is coming.
+    # Back before this was heard: no nodeup is coming.
     if mc in Node.list(), do: send(self(), {:nodeup, mc, []})
 
     if frames == [],
@@ -1751,7 +1814,11 @@ defmodule HalC2.Web.Socket do
   # `ordered?` is the terminal detach's: only an unsubscribe a later attach on
   # this socket could follow pays for the ordered call.
   defp unsubscribe(state, id, ordered? \\ true) do
-    state = %{state | terminal_windows: Map.delete(state.terminal_windows, id)}
+    state = %{
+      state
+      | terminal_windows: Map.delete(state.terminal_windows, id),
+        unreached: Map.delete(state.unreached, id)
+    }
 
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->

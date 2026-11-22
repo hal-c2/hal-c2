@@ -310,6 +310,16 @@ Feature: Clustering one person's machines
     Then the client is told to resync the thread and follows it again
     And the thread streams over the client's one socket
 
+  # Parting drops every watch on the other member; without this, what a client showed
+  # of it (a plugin's topic, its settings) would stay as it was at the parting.
+  @mc
+  Scenario: A client watching another member watches it again once the members meet again
+    Given a client connected to the first of two members that can lose each other
+    And it watches the second member's settings
+    When the members lose each other, the second's settings change and they meet again
+    Then the client is told to resync what it watches of the second member
+    And watching it again shows the settings as they are now
+
   @mc
   Scenario: A client follows a thread on another member by its environment
     Given a client connected to the first member
