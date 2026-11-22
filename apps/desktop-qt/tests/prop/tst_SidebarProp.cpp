@@ -170,7 +170,7 @@ bool applyCommand(Row& row, const Cmd& cmd, int now) {
     row.override = "active";
     row.settled.reset();
   } else if (cmd.type == "thread.snooze") {
-    if (!(row.snoozedUntil && row.snoozedUntil == cmd.until && row.snoozedAt)) row.snoozedAt = now;
+    row.snoozedAt = now;
     row.snoozedUntil = cmd.until;
   } else if (cmd.type == "thread.unsnooze") {
     row.snoozedUntil.reset();
@@ -2043,6 +2043,37 @@ private slots:
         RC_ASSERT(sidebar::status(thread) != QLatin1String("waiting"));
         if (limited) RC_ASSERT(sidebar::status(thread) == QLatin1String("limited"));
       }
+    }));
+  }
+
+  // The state machine's rows have no run, so nothing there wakes one early.
+  void snoozingAWokenThreadShelvesItAgain() {
+    QVERIFY(rc::check("a thread a finished run woke is shelved when snoozed again", [] {
+      const int snoozed = *rc::gen::inRange(0, 100);
+      const int finished = snoozed + *rc::gen::inRange(1, 100);
+      const int again = finished + *rc::gen::inRange(1, 100);
+      const int until = again + *rc::gen::inRange(1, 100);
+      const bool sameTime = *rc::gen::arbitrary<bool>();
+      RC_TAG(std::string(sameTime ? "same wake time" : "later wake time"));
+
+      Row row;
+      row.project = "p1";
+      const auto shelved = [&row, finished](int now) {
+        QJsonObject json = threadJson("t1", row, now);
+        json.insert(QStringLiteral("latestRunId"), QStringLiteral("r1"));
+        json.insert(QStringLiteral("status"), QStringLiteral("completed"));
+        json.insert(QStringLiteral("latestRunCompletedAt"), iso(finished));
+        const sidebar::Thread thread = sidebar::threadFromRow(QStringLiteral("env-a"), json);
+        return sidebar::effectiveSnoozed(thread, kT0.toMSecsSinceEpoch() + qint64(now) * 60000);
+      };
+
+      applyCommand(row, Cmd{"thread.snooze", until, std::nullopt}, snoozed);
+      row.updated = finished;
+      RC_ASSERT(!shelved(finished));
+
+      applyCommand(row, Cmd{"thread.snooze", sameTime ? until : until + 1, std::nullopt}, again);
+      row.updated = again;
+      RC_ASSERT(shelved(again));
     }));
   }
 
