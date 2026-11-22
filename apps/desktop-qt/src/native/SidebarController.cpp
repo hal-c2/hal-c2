@@ -199,9 +199,10 @@ void SidebarController::refresh() {
 
 void SidebarController::announceMigratedThreads() {
   static const QString kAnnounced = QStringLiteral("migratedThreadsAnnounced");
-  if (!m_store->synchronized()) return;
+  if (m_migrationWriteFailed || !m_store->synchronized()) return;
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
-  // Announced once per device; the notice still showing counts the threads
+  // Announced once per device; a device that cannot keep the note is told so
+  // once a run, not at every change of the store; the notice still showing counts the threads
   // that arrive after it.
   if (!settings || (m_migrationToast.isEmpty() && settings->deviceSettings().value(kAnnounced).toBool())) return;
   // Counted when a snapshot lands or the list grows, not on every row change:
@@ -224,7 +225,11 @@ void SidebarController::announceMigratedThreads() {
     if (!toasts()->update(m_migrationToast, title, description)) m_migrationToast.clear();
     return;
   }
-  if (migrated == 0 || !settings->writeDevice(kAnnounced, true)) return;
+  if (migrated == 0) return;
+  if (!settings->writeDevice(kAnnounced, true)) {
+    m_migrationWriteFailed = true;
+    return;
+  }
   m_migrationToast = toasts()->show(QStringLiteral("info"), title, description);
 }
 

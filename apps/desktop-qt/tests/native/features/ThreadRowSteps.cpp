@@ -91,12 +91,34 @@ const Steps steps([] {
   step(QStringLiteral("threads are migrated from the first version while the app is open"), [migrated](World& world, const Captures&, const Table&) {
     world.connect();
     world.sync();
+    const auto told = [&world] {
+      QVariantList matching;
+      for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        if (item.toMap().value(QStringLiteral("title")) == QLatin1String("Your threads were brought over")) matching.append(item);
+      }
+      return matching;
+    };
+    // The notice exists after the first row; the second recounts that same notice.
+    QString firstNotice;
     for (const QJsonObject& row : migrated()) {
       const QString id = row.value(QLatin1String("id")).toString();
       world.mc.threads.insert(id, row);
       world.mc.sendRow(id, row);
+      world.sync();
+      if (firstNotice.isEmpty()) {
+        world.waitFor([&] { return told().size() == 1; }, [&] { return QStringLiteral("the one-thread notice; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+        expect(told().first().toMap().value(QStringLiteral("description")).toString().startsWith(QLatin1String("1 thread ")),
+               QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+        firstNotice = told().first().toMap().value(QStringLiteral("id")).toString();
+      }
     }
-    world.sync();
+    world.waitFor(
+        [&] {
+          const QVariantList now = told();
+          return !now.isEmpty() && now.first().toMap().value(QStringLiteral("id")).toString() == firstNotice &&
+                 now.first().toMap().value(QStringLiteral("description")).toString().startsWith(QLatin1String("2 threads"));
+        },
+        [&] { return QStringLiteral("the same notice recounted to two; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
   });
   step(QStringLiteral("the user is told the threads were brought over"), [](World& world, const Captures&, const Table&) {
     const auto told = [&] {

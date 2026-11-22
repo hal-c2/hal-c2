@@ -1483,8 +1483,55 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "{string} says reviews are paused until the limit resets", %{args: [@id]} = context do
     assert review(context.snapshot, 12)
     {reply, context} = plugin(context, "reviews", %{})
-    assert {:ok, %{"problem" => problem}} = reply
+    assert {:ok, %{"problem" => problem, "pausedUntil" => until}} = reply
     assert problem =~ "usage limit"
+    assert {:ok, until, _} = DateTime.from_iso8601(until)
+    assert DateTime.compare(until, DateTime.utc_now()) == :gt
+    context
+  end
+
+  step "reviews of \#{int} and \#{int} are running", %{args: numbers} = context do
+    Enum.reduce(numbers, context, &running(&2, &1))
+  end
+
+  step "the user resumes the reviews", context do
+    {reply, context} = plugin(context, "resume", %{})
+    assert {:ok, snapshot} = reply
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "the user picks another model for {string}", %{args: [@id]} = context do
+    save(context, %{"model" => "fake/two"})
+  end
+
+  step "{string} no longer says reviews are paused", %{args: [@id]} = context do
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, %{"problem" => nil, "pausedUntil" => nil}} = reply
+    context
+  end
+
+  step "the review of \#{int} is running again", %{args: [number]} = context do
+    old = context.thread
+    {review, context} = await_review(context, number, &(&1["threadId"] not in [nil, old]))
+    assert review["status"] == "running"
+    context
+  end
+
+  step "the user asked for reviews of \#{int} and \#{int}, which wait in the queue",
+       %{args: numbers} = context do
+    context =
+      Enum.reduce(numbers, context, fn number, context ->
+        context |> open(number) |> start(number)
+      end)
+
+    Enum.reduce(numbers, context, &await_review!(&2, &1, fn r -> r["status"] == "queued" end))
+  end
+
+  step "the review of \#{int} is running and \#{int} still waits in the queue",
+       %{args: [asked, other]} = context do
+    {_, context} = await_review(context, asked, &(&1["status"] == "running"))
+    # The frame that showed the asked review running, not an earlier snapshot.
+    assert %{"status" => "queued"} = review(context.reviews_last, other)
     context
   end
 
@@ -2106,6 +2153,32 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         "exit" => 1
       }
     ])
+  end
+
+  step "GitHub turns reviews away for its rate limit", context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method POST", "pulls/12/reviews"],
+        "stderr" => "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n",
+        "stdout" => ~s({"message":"API rate limit exceeded for user ID 1."}),
+        "exit" => 1
+      }
+    ])
+  end
+
+  step "the review of \#{int} waits, saying GitHub's rate limit turned it away",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["publishError"])
+    assert %{"status" => "waiting", "comments" => [_, _]} = review
+    assert review["publishError"] =~ "rate limit exceeded"
+    context
+  end
+
+  step "GitHub takes reviews again", context do
+    rules = context.cli.rules |> File.read!() |> JSON.decode!()
+    kept = Enum.reject(rules, &((&1["stderr"] || "") =~ "rate limit exceeded"))
+    File.write!(context.cli.rules, JSON.encode!(kept))
+    context
   end
 
   step "the user publishes the review of \#{int}", %{args: [number]} = context do

@@ -192,6 +192,42 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
     context |> link("t1") |> sync("t1", "merged", 0)
   end
 
+  step "thread {string} was made {int} days ago and has no message or run",
+       %{args: [thread, days]} = context do
+    context
+    |> ensure_thread(thread)
+    |> World.patch_thread(thread, %{"createdAt" => World.iso_from_now(-World.days(days) - 60_000)})
+  end
+
+  step "its settled time is when it was made", context do
+    row = World.row(context, "t1")
+    assert row["settledAt"] != nil
+
+    assert HalC2.Projection.JS.epoch_ms(row["settledAt"]) ==
+             HalC2.Projection.JS.epoch_ms(row["createdAt"])
+
+    context
+  end
+
+  step "thread {string} was snoozed and a run was interrupted after the snooze",
+       %{args: [thread]} = context do
+    context
+    |> ensure_thread(thread)
+    |> World.patch_thread(thread, %{
+      "createdAt" => World.iso_from_now(-2 * @hour),
+      "snoozedAt" => World.iso_from_now(-@hour),
+      "snoozedUntil" => World.iso_from_now(World.days(1))
+    })
+    |> World.add_run(thread, "interrupted", World.iso_from_now(-div(@hour, 2)))
+  end
+
+  step "thread {string} is still snoozed and not settled", %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["settledOverride"] != "settled"
+    assert row["snoozedUntil"] != nil
+    context
+  end
+
   step "the MC sweeps for threads to settle", context do
     Mc.ensure({Settlement, interval: nil})
     :ok = Settlement.sweep()

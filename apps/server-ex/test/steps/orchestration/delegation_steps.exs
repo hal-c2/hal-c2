@@ -2837,7 +2837,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
        %{args: [state]} = context do
     status = if state == "dismissed", do: "cancelled", else: "pending"
 
-    World.await_state(context, "subagent", fn child ->
+    World.await_state(context, Map.get(context, :question_thread, "subagent"), fn child ->
       get_in(StreamState.get(child, "runtime-request"), [context.child_request, "status"]) ==
         status
     end)

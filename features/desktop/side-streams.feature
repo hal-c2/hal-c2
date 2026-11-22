@@ -73,7 +73,6 @@ Feature: What the shell's own threads hand its window is bounded
         | plugin-downloads  | 16   |
         | local-transcriber | 64   |
         | theme             | 1    |
-        | shell-files       | 1    |
         | settings          | 1    |
         | desktop-update    | 1    |
         | local-cache       | 1    |

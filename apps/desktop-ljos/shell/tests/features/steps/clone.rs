@@ -652,6 +652,73 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 
+    // A pasted clone address proposes the folder git would have chosen.
+    steps.step(
+        "the user pastes (.+) as the Git URL to clone",
+        |world, c, _| {
+            fake(world).source = "a Git URL".to_owned();
+            open_sources(world)?;
+            run_row(world, "Git URL")?;
+            remember(world)?;
+            enter(world, Some(&c[0].clone()))?;
+            world.wait_for_with(
+                |w| palette(w, |p, _| p.mode() == "browse").unwrap_or(false),
+                describe,
+            )?;
+            remember(world)
+        },
+    );
+    steps.step(
+        &format!("the proposed folder is named {Q}"),
+        |world, c, _| {
+            let asked = fake(world).asked.clone();
+            expect!(
+                asked
+                    .get(1)
+                    .is_some_and(|a| *a == format!("browse: ~/{}", c[0])),
+                "{}",
+                asked.join("; ")
+            );
+            Ok(())
+        },
+    );
+    steps.step("no folder name is proposed", |world, _, _| {
+        let asked = fake(world).asked.clone();
+        expect!(
+            asked.get(1).is_some_and(|a| a == "browse: ~/"),
+            "{}",
+            asked.join("; ")
+        );
+        Ok(())
+    });
+    steps.step(
+        "the destination is the folder the user browsed to",
+        |world, _, _| {
+            // Browse on from the home folder to another one, as the user
+            // does, rather than accept the folder browsing began at.
+            let files = fake_files(&mut world.mc);
+            let home = files.home.clone();
+            files.folders.insert(format!("{home}/code"));
+            enter(world, Some("~/code/"))?;
+            world.wait_for_with(
+                |w| {
+                    w.mc.peek::<FakeClones>()
+                        .is_some_and(|f| f.calls.iter().any(|(m, _)| m == "projectClone.start"))
+                },
+                |_| "the clone to start".into(),
+            )?;
+            let start = started(world);
+            let destination = text(&start["destinationPath"]);
+            expect!(
+                destination.trim_end_matches('/') == format!("{HOME}/code")
+                    || destination.trim_end_matches('/') == "~/code",
+                "the clone started with {}",
+                show(&start)
+            );
+            Ok(())
+        },
+    );
+
     // Failures.
     steps.step(
         "adding a project will fail at (the clone|the repository lookup|registration)",

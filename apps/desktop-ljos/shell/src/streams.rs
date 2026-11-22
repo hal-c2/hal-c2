@@ -26,7 +26,7 @@ use ljos::{BatchPolicy, BatchSender, CoalesceKey, Drain, DrainBudget};
 
 use crate::controllers::{desktop_update, plugin, settings, snap_shot, threads};
 use crate::mc::McStreams;
-use crate::{clock, device, folders, local_transcriber, runtime, theme};
+use crate::{clock, device, folders, local_transcriber, theme};
 
 /// The streams [`wire`] made whose senders are given later than the wiring:
 /// the MC's, for each connection; the local cache's, once the shell has
@@ -59,8 +59,6 @@ pub fn wire(engine: &Engine, wire: &mut impl Wire) -> Wired {
     local_transcriber::wire(engine, wire);
     let theme = Tick::new(wire, "theme", theme::deliver);
     theme::set_wake(engine, theme.waker());
-    let shell_files = Tick::new(wire, "shell-files", runtime::deliver);
-    runtime::set_wake(engine, shell_files.waker());
     let settings = Tick::new(wire, "settings", settings::deliver);
     settings::set_wake(engine, settings.waker());
     let update = Tick::new(wire, "desktop-update", desktop_update::deliver);

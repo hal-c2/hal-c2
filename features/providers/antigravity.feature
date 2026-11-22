@@ -509,6 +509,23 @@ Feature: Antigravity
     Then the runtime is not launched and no Google request is made
     And account access is reported as not checked yet
 
+  # Settings refreshes every provider's models at once, and that refresh only
+  # started Antigravity's runtime, so models the account gained since its last
+  # session (Gemini 4 Neon) never appeared.
+  Scenario: Refreshing every provider's models reads Antigravity's models again
+    Given Antigravity lists the models it loaded earlier
+    And the Google account now offers another model
+    When the user refreshes every provider's models
+    Then Antigravity lists the model the account now offers
+
+  Scenario: Refreshing every provider's models keeps Antigravity's models when it cannot read them
+    Given Antigravity lists the models it loaded earlier
+    And Antigravity cannot read the account's models
+    When the user refreshes every provider's models
+    Then Antigravity was asked for the account's models
+    And the failed read is logged
+    And the earlier models are still listed
+
   Scenario Outline: A model refresh that fails keeps the previous models
     Given Antigravity lists the models it loaded earlier
     When the user refreshes the Antigravity models and <problem>

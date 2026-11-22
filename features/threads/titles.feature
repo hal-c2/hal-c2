@@ -35,7 +35,7 @@ Feature: Thread titles
     When the user renames "Fix login" to "Fix OAuth login"
     Then the thread is listed as "Fix OAuth login"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: A thread title cannot be empty
     When the user renames "Fix login" to an empty title
     Then the title stays "Fix login"
@@ -119,7 +119,7 @@ Feature: Thread titles
     Then the thread keeps its previous title
 
   # Upstream #27483: a generated title longer than 120 characters was cut through an emoji.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A long generated title is cut before an emoji, not through it
     Given the title generator answers a title longer than 120 characters with an emoji where it is cut
     When the user sends the first message of a new thread

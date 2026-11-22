@@ -17,6 +17,9 @@ defmodule HalC2.OfficePropTest do
     changing its state (`touch`) is no less quiet;
   - each is in its row's state since that time, shows what its agent last did only
     while working, and has a question exactly while asking;
+  - each is a reviewer exactly when code-review started its thread to review, or one
+    of its parents, however far up and wherever they are, was (a lineage that loops
+    included);
   - the next change it names is the first of those: an idle thread in it going long
     idle, or a talk growing too old;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
@@ -128,7 +131,7 @@ defmodule HalC2.OfficePropTest do
     ])
   end
 
-  defp put_row(id, state),
+  defp put_row(id, state, mark \\ elements([nil, :review, :other])),
     do:
       {:call, __MODULE__, :put_row,
        [
@@ -136,14 +139,16 @@ defmodule HalC2.OfficePropTest do
          state,
          elements([:none, :archived, :moved, :settled, :unsettled]),
          elements([nil, "t1", "t2"]),
-         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000])
+         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000]),
+         mark
        ]}
 
   # A row the office has, changed without changing its state: archived, settled or
   # back, or a later run ended. Mostly an idle or failed one, whose quiet time is what
   # such a change moves or must not move.
   defp again(s) do
-    case for {id, %{state: state}} <- s.rows, do: {state in ~w(idle failed), put_row(id, state)} do
+    case for {id, %{state: state, mark: mark}} <- s.rows,
+             do: {state in ~w(idle failed), put_row(id, state, mark)} do
       [] -> put_row(elements(@ids), elements(~w(failed idle)))
       rows -> frequency(for {quiet?, call} <- rows, do: {if(quiet?, do: 4, else: 1), call})
     end
@@ -162,9 +167,9 @@ defmodule HalC2.OfficePropTest do
 
   # --- the system: the floor and the time, in the case's process ----------------------
 
-  def put_row(id, state, flag, parent, age) do
+  def put_row(id, state, flag, parent, age, mark) do
     now = Process.get(:now)
-    step(&Floor.rows(&1, [row(id, state, flag, parent, now - age)], now))
+    step(&Floor.rows(&1, [row(id, state, flag, parent, now - age, mark)], now))
   end
 
   # The row changed now and nothing it says of its state did: a provider session
@@ -267,11 +272,17 @@ defmodule HalC2.OfficePropTest do
     }
   end
 
-  defp row(id, state, flag, parent, at) do
+  defp row(id, state, flag, parent, at, mark \\ nil) do
     ran = if state in ~w(waiting idle failed), do: Floor.iso(at - @ran_ms)
     at = Floor.iso(at)
 
     %{
+      "plugin" =>
+        case mark do
+          :review -> %{"id" => "code-review", "kind" => "review", "listed" => false}
+          :other -> %{"id" => "issue-tracker", "kind" => "implement", "listed" => true}
+          nil -> nil
+        end,
       "id" => id,
       "title" => "Thread #{id}",
       "projectId" => "p",
@@ -307,7 +318,7 @@ defmodule HalC2.OfficePropTest do
 
   # --- the model --------------------------------------------------------------------------
 
-  def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age]}) do
+  def next_state(s, _result, {:call, _, :put_row, [id, state, flag, parent, age, mark]}) do
     parent = if parent != id, do: parent
     at = s.now - age
     ran = if state in ~w(waiting idle failed), do: at - @ran_ms
@@ -332,7 +343,7 @@ defmodule HalC2.OfficePropTest do
           s.now
       end
 
-    entry = %{state: state, flag: flag, parent: parent, at: at, since: since}
+    entry = %{state: state, flag: flag, parent: parent, at: at, since: since, mark: mark}
 
     s =
       if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
@@ -460,6 +471,13 @@ defmodule HalC2.OfficePropTest do
     |> Enum.take(s.max)
   end
 
+  defp reviewer?(s, id, seen) do
+    case s.rows[id] do
+      nil -> false
+      r -> r.mark == :review or (id not in seen and reviewer?(s, r.parent, [id | seen]))
+    end
+  end
+
   # A thread is here unless archived or moved; working or waiting it always is, and
   # otherwise only while its parent is (a parent with no row is not), then asking, or
   # recently idle and not settled. A lineage that loops stops where it does.
@@ -480,6 +498,7 @@ defmodule HalC2.OfficePropTest do
       Floor.ms(person["since"]) == r.since and
       person["activity"] == if(r.state == "working", do: s.activity[id]) and
       person["question"] != nil == (r.state == "asking") and
+      person["kind"] == if(reviewer?(s, id, []), do: "reviewer") and
       person["provider"] in ["claudeAgent", "codex"] and
       person["project"] == "api" and person["model"] == "gpt-5.4"
   end

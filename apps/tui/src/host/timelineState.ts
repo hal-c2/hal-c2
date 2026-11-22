@@ -25,6 +25,7 @@ import {
   changedFilesByMessage,
   deriveTimelineEntries,
   diffStat,
+  formatDiffCount,
   type FoldableRow,
   formatWorkingTimer,
   isWorking,
@@ -1283,8 +1284,8 @@ function changedFilesLines(
   const allCollapsed = allDirs.length > 0 && allDirs.every((path) => collapsed.has(path));
   const nameRoom = Math.max(8, width - 20);
   const stats = (add: number, del: number) => [
-    chunk(`  +${add}`, { fg: palette.success }),
-    chunk(` -${del}`, { fg: palette.error }),
+    chunk(`  +${formatDiffCount(add)}`, { fg: palette.success }),
+    chunk(` -${formatDiffCount(del)}`, { fg: palette.error }),
   ];
   const lines: TimelineLine[] = [
     line(

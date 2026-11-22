@@ -369,6 +369,33 @@ const Steps steps([] {
            fake(world).asked.join(u"; "));
   });
 
+  // A pasted clone address proposes the folder git would have chosen.
+  step(QStringLiteral("the user pastes (.+) as the Git URL to clone"), [](World& world, const Captures& c, const Table&) {
+    fake(world).source = QStringLiteral("a Git URL");
+    openSources(world);
+    runRow(world, QStringLiteral("Git URL"));
+    remember(world);
+    enter(world, c[0]);
+    world.waitFor([&] { return palette(world).mode() == u"browse"; }, [&] { return describe(world); });
+    remember(world);
+  });
+  step(QStringLiteral("the proposed folder is named %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(fake(world).asked.value(1) == QStringLiteral("browse: ~/") + c[0], fake(world).asked.join(u"; "));
+  });
+  step(QStringLiteral("no folder name is proposed"), [](World& world, const Captures&, const Table&) {
+    expect(fake(world).asked.value(1) == u"browse: ~/", fake(world).asked.join(u"; "));
+  });
+  step(QStringLiteral("the destination is the folder the user browsed to"), [](World& world, const Captures&, const Table&) {
+    // Browse on from the home folder to another one, as the user does, rather than accept the folder browsing began at.
+    fakeFiles(world.mc).folders << fakeFiles(world.mc).home + QStringLiteral("/code");
+    enter(world, QStringLiteral("~/code/"));
+    world.waitFor([&] { return !started(world).isEmpty(); }, QStringLiteral("the clone to start"));
+    QString destination = started(world).value(QLatin1String("destinationPath")).toString();
+    while (destination.endsWith(QLatin1Char('/'))) destination.chop(1);
+    expect(destination == u"~/code" || destination == fakeFiles(world.mc).home + QStringLiteral("/code"),
+           QStringLiteral("the clone started with %1").arg(show(started(world).toVariantMap())));
+  });
+
   // Failures.
   step(QStringLiteral("adding a project will fail at (the clone|the repository lookup|registration)"), [](World& world, const Captures& c, const Table&) {
     if (c[0] == u"registration") {

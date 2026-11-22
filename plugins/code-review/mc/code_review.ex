@@ -218,8 +218,9 @@ defmodule HalC2Plugins.CodeReview do
      %{"settings" => context.settings, "providers" => providers, "repositories" => repositories}}
   end
 
+  # Asking to look is the user's say-so, as a start is: it ends a pause too.
   def call("refresh", _input, context) do
-    server({:looked, look(context.settings, server(:reviews))})
+    server({:looked, look(context.settings, server(:reviews)), :asked})
     {:ok, server(:snapshot)}
   end
 
@@ -230,6 +231,10 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   def call("retry", %{"key" => key}, _context), do: server({:start, key, "retry"})
+
+  # Ends a pause now: the user may know the limit that set it no longer holds, as
+  # after signing in to another account.
+  def call("resume", _input, _context), do: server(:resume)
 
   # The user's say-so for a pull request the watch does not trust, at the commit they
   # looked at: that commit is reviewed, as if they had asked. A new push needs it again.
@@ -440,6 +445,7 @@ defmodule HalC2Plugins.CodeReview do
       looked: nil,
       polling: nil,
       threads: nil,
+      snapshot: nil,
       paused_until: loaded.paused_until,
       paused_reason: loaded.paused_reason,
       failures: 0,
@@ -516,6 +522,38 @@ defmodule HalC2Plugins.CodeReview do
 
   defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
 
+  # The agent and model reviews start with; another has a usage limit of its own.
+  defp selection(settings), do: Map.take(settings, ~w(provider model))
+
+  # A run its agent's usage limit stopped waits in the queue. The limit pauses the
+  # queue only when it is the agent and model reviews start with now: one the user
+  # has since moved off says nothing of the next run's.
+  defp limited(state, review, failure) do
+    state = queue(state, review, review["trigger"] || "automatic")
+
+    if review["selection"] in [nil, selection(state.settings)],
+      do: pause(state, failure),
+      else: pump(state)
+  end
+
+  # A queued review the user asks for is theirs from then on: it is followed, the
+  # review limits do not hold it back, and it starts next (`askedAt`), before every
+  # other queued review not asked for since.
+  defp ask_queued(state, key, trigger) when trigger in ~w(user retry) do
+    case state.reviews[key] do
+      %{"status" => "queued"} = review ->
+        put(
+          state,
+          Map.merge(review, %{"trigger" => trigger, "following" => true, "askedAt" => now()})
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  defp ask_queued(state, _key, _trigger), do: state
+
   # A review queued on an approval it no longer has goes back to not started.
   defp unqueue(review, settings) do
     if review["status"] == "queued" and gated(settings, review),
@@ -554,15 +592,28 @@ defmodule HalC2Plugins.CodeReview do
       end
 
     state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
+
+    # A pause is the agent's that hit its limit: another agent, or model, has its own.
+    state =
+      if selection(settings) != selection(old),
+        do: unpause(state),
+        else: state
+
     state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
     {:reply, :ok, state |> pump() |> changed()}
   end
 
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
+
+  def handle_call(:resume, _from, state),
+    do:
+      {:reply, {:ok, nil}, %{unpause(state) | failures: 0} |> pump() |> changed()}
+      |> reply_snapshot()
+
   def handle_call(:reviews, _from, state), do: {:reply, state.reviews, state}
 
-  def handle_call({:looked, found}, _from, state) do
-    {:reply, :ok, state |> apply_look(found) |> pump() |> changed()}
+  def handle_call({:looked, found, :asked}, _from, state) do
+    {:reply, :ok, state |> unpause() |> apply_look(found) |> pump() |> republish() |> changed()}
   end
 
   def handle_call({:start, key, trigger}, _from, state) when is_binary(key) do
@@ -571,9 +622,11 @@ defmodule HalC2Plugins.CodeReview do
         {:reply, {:error, "There is no review #{key}."}, state}
 
       # Two asks before either sees the other's leave one run. An ask of the
-      # user's also ends a pause: they may know the limit no longer holds.
+      # user's also ends a pause: they may know the limit no longer holds. A queued
+      # review asked for goes ahead of the watch's own (`ask_queued/3`).
       %{"status" => status} when status in ~w(queued running) ->
-        {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()}
+        {:reply, {:ok, nil},
+         state |> unpause() |> ask_queued(key, trigger) |> pump() |> changed()}
 
       review ->
         case gated(state.settings, review) do
@@ -609,7 +662,9 @@ defmodule HalC2Plugins.CodeReview do
          state}
 
       review["status"] in ~w(queued running) ->
-        {:reply, {:ok, nil}, state |> unpause() |> pump() |> changed()} |> reply_snapshot()
+        {:reply, {:ok, nil},
+         state |> unpause() |> ask_queued(review["key"], trigger) |> pump() |> changed()}
+        |> reply_snapshot()
 
       why = gated(state.settings, review) ->
         {:reply, {:error, why}, state |> put(Map.put_new(review, "status", "ready")) |> changed()}
@@ -832,7 +887,13 @@ defmodule HalC2Plugins.CodeReview do
              state}
 
           true ->
-            review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
+            review =
+              Map.merge(review, %{
+                "status" => "publishing",
+                "publishError" => nil,
+                "autoPost" => false
+              })
+
             settings = state.settings
             spawn_link(fn -> GenServer.reply(from, publish(review, settings, verdict)) end)
             {:noreply, state |> put(review) |> changed()}
@@ -980,7 +1041,8 @@ defmodule HalC2Plugins.CodeReview do
             "report" => @report,
             "finishedAt" => now(),
             "error" => nil,
-            "publishError" => nil
+            "publishError" => nil,
+            "autoPost" => mode == "automatic"
           })
 
         state = %{state | failures: 0} |> put(review) |> pump() |> changed()
@@ -1055,7 +1117,7 @@ defmodule HalC2Plugins.CodeReview do
         if limited?(failure) do
           # The reviews behind this one would only hit the same limit: this one
           # waits in the queue and nothing starts until the limit resets.
-          state = state |> queue(review, review["trigger"] || "automatic") |> pause(failure)
+          state = limited(state, review, failure)
           close_sandbox(review)
           settle(thread_id)
           {:noreply, state |> changed()}
@@ -1123,10 +1185,7 @@ defmodule HalC2Plugins.CodeReview do
         settle(thread_id)
 
         if limited?(%{"message" => message}) do
-          state =
-            state
-            |> queue(review, review["trigger"] || "automatic")
-            |> pause(%{"message" => message})
+          state = limited(state, review, %{"message" => message})
 
           {:noreply, state |> changed()}
         else
@@ -1156,7 +1215,7 @@ defmodule HalC2Plugins.CodeReview do
   def handle_info(:poll, state), do: {:noreply, state}
 
   def handle_info({:polled, found}, state),
-    do: {:noreply, state |> apply_look(found) |> pump() |> changed()}
+    do: {:noreply, state |> apply_look(found) |> pump() |> republish() |> changed()}
 
   # A wake is named for the pause it was armed under; one left over from a pause
   # since ended or replaced does nothing.
@@ -1202,13 +1261,13 @@ defmodule HalC2Plugins.CodeReview do
 
     case for({key, other} <- on, other["claimed"] != true, do: key) do
       [] when on == [] and held? ->
-        {:noreply, announce(state)}
+        {:noreply, announce(state, :always)}
 
       [] when on == [] ->
         {:noreply, state}
 
       [] ->
-        {:noreply, announce(state)}
+        {:noreply, announce(state, :always)}
 
       keys ->
         reviews = Enum.reduce(keys, state.reviews, &put_in(&2[&1]["elsewhere"], nil))
@@ -1225,7 +1284,7 @@ defmodule HalC2Plugins.CodeReview do
          match?(%{"node" => ^back}, review["elsewhere"]) or
            back in List.wrap(get_in(review, ["limited", "apart"]))
        end),
-       do: {:noreply, announce(state)},
+       do: {:noreply, announce(state, :always)},
        else: {:noreply, state}
   end
 
@@ -1903,6 +1962,7 @@ defmodule HalC2Plugins.CodeReview do
         "following" => trigger in @asks or followed?(review),
         "previous" => previous,
         "queuedAt" => now(),
+        "askedAt" => nil,
         "startedAt" => nil,
         "finishedAt" => nil,
         "threadId" => nil,
@@ -1939,7 +1999,7 @@ defmodule HalC2Plugins.CodeReview do
         pause(
           state,
           %{},
-          "Reviews are paused after repeated failures; they start again at the next look."
+          "Reviews are paused after repeated failures."
         ),
       else: state
   end
@@ -1950,7 +2010,7 @@ defmodule HalC2Plugins.CodeReview do
 
     reason =
       reason ||
-        "Reviews are paused: the agent hit its usage limit#{if failure["resetAt"], do: ", which resets at #{failure["resetAt"]}"}. Queued reviews wait instead of failing one by one."
+        "Reviews are paused: the agent hit its usage limit. Queued reviews wait instead of failing one by one."
 
     %{state | paused_until: until, paused_reason: reason, failures: 0}
   end
@@ -2018,11 +2078,13 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   defp rate_limited?(problem) when is_binary(problem),
-    do: problem =~ ~r/rate.?limit|429|too many requests/i
+    do: problem =~ ~r/rate.?limit|429|too many requests|quota/i
 
   defp rate_limited?(_problem), do: false
 
-  # Starts queued reviews, oldest first, while fewer than `concurrency` run.
+  # Starts queued reviews while fewer than `concurrency` run: those the user asked to
+  # start now first, in the order asked, then the rest oldest first. The run keeps the
+  # agent and model it starts with (`selection/1`).
   defp pump(state) do
     if paused?(state) do
       state
@@ -2037,7 +2099,7 @@ defmodule HalC2Plugins.CodeReview do
     state.reviews
     |> Map.values()
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(& &1["queuedAt"])
+    |> Enum.sort_by(&{&1["askedAt"] == nil, &1["askedAt"], &1["queuedAt"]})
     |> Enum.take(max(trunc(state.settings["concurrency"]) - running, 0))
     |> Enum.reduce(state, fn review, state ->
       thread_id = uuid()
@@ -2046,7 +2108,9 @@ defmodule HalC2Plugins.CodeReview do
         Map.merge(review, %{
           "status" => "running",
           "threadId" => thread_id,
-          "startedAt" => now()
+          "startedAt" => now(),
+          "askedAt" => nil,
+          "selection" => selection(state.settings)
         })
 
       settings = state.settings
@@ -2124,6 +2188,9 @@ defmodule HalC2Plugins.CodeReview do
            # A sandbox gets the two refs alone, so only a checkout the agent works in
            # here gets its submodules.
            checkout = if(sandboxed, do: checkout, else: submodules(clone, checkout, remote)),
+           # The attempt's refs are done with once nothing is made from them: at once
+           # for a worktree, after its sandbox for a sandboxed review.
+           :ok <- if(sandboxed, do: :ok, else: Checkout.release()),
            :ok <-
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
@@ -2135,8 +2202,6 @@ defmodule HalC2Plugins.CodeReview do
              }),
            :ok <-
              if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok),
-           # The sandbox, if any, is made from the checkout's refs by now: they go before
-           # the thread is made, so a thread never sees a clone still holding them.
            :ok <- Checkout.release() do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
         review = Map.merge(review, pull_request_context(review))
@@ -2925,6 +2990,30 @@ defmodule HalC2Plugins.CodeReview do
 
   # --- publishing ----------------------------------------------------------------------
 
+  # A post its repository publishes on its own that the host's rate limit turned
+  # away is tried again at the next look that the limit lets through. One the user
+  # asked for (`autoPost` false) was checked against what they saw, so it waits for
+  # them, as does any other refusal: they may have to change the review first.
+  defp republish(state) do
+    settings = state.settings
+
+    if rate_limited?(state.problem) do
+      state
+    else
+      for {_key, %{"status" => "waiting", "publishError" => error} = review} <- state.reviews,
+          review["autoPost"] != false,
+          rate_limited?(error),
+          publishing(settings, review["repository"]) == "automatic",
+          untrusted(settings, review) == nil,
+          reduce: state do
+        state ->
+          review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
+          spawn_link(fn -> publish(review, settings, nil) end)
+          put(state, review)
+      end
+    end
+  end
+
   defp publishing(settings, repository) do
     Enum.find_value(settings["publishingByRepository"] || %{}, settings["publishing"], fn {repo,
                                                                                            mode} ->
@@ -3250,15 +3339,21 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # What clients follow: `reviews` for the Reviews page, and `threads` for each
-  # review thread's mark and header, by thread id, without the findings. A row mark
-  # is drawn per row, so `threads` is sent only when it changes.
-  defp announce(state) do
+  # review thread's mark and header, by thread id, without the findings. Each is
+  # sent only when it changed: `reviews` holds every review's findings, and a
+  # client makes a script value of every value it is sent. A machine coming or
+  # going sends `reviews` regardless (`:always`): what it shows reads the cluster.
+  defp announce(state, reviews \\ :changed) do
     share_claims(state)
     put_starts(state)
-    Host.publish(@id, "reviews", snapshot(state))
+    snapshot = snapshot(state)
+
+    if reviews == :always or snapshot != state.snapshot,
+      do: Host.publish(@id, "reviews", snapshot)
+
     threads = threads(state)
     if threads != state.threads, do: Host.publish(@id, "threads", threads)
-    %{state | threads: threads}
+    %{state | threads: threads, snapshot: snapshot}
   end
 
   @doc false
@@ -3406,7 +3501,7 @@ defmodule HalC2Plugins.CodeReview do
            -&1["number"]}
         )
         |> Enum.map(fn review ->
-          review = review |> safe() |> Map.drop(["root", "replaced"])
+          review = review |> safe() |> Map.drop(["root", "replaced", "previous"])
 
           review =
             if review["elsewhere"],
@@ -3430,6 +3525,8 @@ defmodule HalC2Plugins.CodeReview do
           [] -> nil
           problems -> Enum.join(problems, " ")
         end,
+      # When a pause ends on its own; the page offers to end it now.
+      "pausedUntil" => if(paused?(state), do: DateTime.to_iso8601(state.paused_until)),
       "unwatched" => state.unwatched,
       "watching" => state.settings["repositories"] || [],
       "activation" => state.settings["activation"],

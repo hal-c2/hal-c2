@@ -173,7 +173,7 @@ Feature: Thread notifications
       Then a system notification titled "Thread completed" is shown once
       And an alert shown before the connection dropped is not shown again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The sound depends on what the thread needs
       Given the notification mode is "Sound only"
       When "Fix login" <event>

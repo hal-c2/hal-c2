@@ -827,7 +827,66 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
 
   step ~r/^pull request "(?<pr>[^"]+)" is linked to "(?<thread>[^"]+)" and its last read said (?<state>open|closed)$/,
        %{args: [pr, thread, state]} = context do
-    snapshot = %{"state" => state, "title" => "PR", "syncedAt" => World.iso_from_now(0)}
+    read_link(context, pr, thread, state, nil)
+  end
+
+  step ~r/^pull request "(?<pr>[^"]+)" is linked to (?:the active thread )?"(?<thread>[^"]+)" and its last read said closed (?<when>8 days ago|an hour ago|without saying when)$/,
+       %{args: [pr, thread, closed]} = context do
+    ago =
+      case closed do
+        "8 days ago" -> 8 * 24 * 3_600_000
+        "an hour ago" -> 3_600_000
+        "without saying when" -> nil
+      end
+
+    read_link(context, pr, thread, "closed", ago)
+  end
+
+  step ~r/^pull request "(?<pr>[^"]+)" is linked to "(?<thread>[^"]+)" and it has never been read$/,
+       %{args: [pr, thread]} = context do
+    # The sync service is down while the link appears, so nothing reads it at once and
+    # it stays unsynced for the sweep. A service started later begins from the
+    # links that exist then.
+    _ = ExUnit.Callbacks.stop_supervised(HalC2.PullRequests.Sync)
+
+    context =
+      context
+      |> github_checkout()
+      |> serve_state(pr, "OPEN")
+      |> link(thread, pr, "manual")
+      |> ok!()
+
+    flush(context)
+    HalC2.Test.Mc.ensure({HalC2.PullRequests.Sync, interval: nil})
+    Map.put(context, :sync_pr, pr)
+  end
+
+  step "pull request {string} is linked to the settled thread {string}",
+       %{args: [pr, thread]} = context do
+    context = read_link(context, pr, thread, "open", nil)
+    id = World.thread_id(context, thread)
+    {{:ok, _}, _} = World.dispatch(context, %{"type" => "thread.settle", "threadId" => id})
+    World.await_row(id, &(&1["settledOverride"] == "settled"))
+    flush(context)
+    context
+  end
+
+  step "the MC reads {string} from the host", %{args: [pr]} = context do
+    before = context[:asked_before] || 0
+    await_cli(context, &(summary_calls(&1, pr) > before))
+    context
+  end
+
+  # A link whose last read, a real sweep, said `state`; `closed_ago` is how long
+  # ago a closed one closed in ms, or nil when the read did not say.
+  defp read_link(context, pr, thread, state, closed_ago) do
+    snapshot =
+      %{"state" => state, "title" => "PR", "syncedAt" => World.iso_from_now(0)}
+      |> then(fn snapshot ->
+        if closed_ago,
+          do: Map.put(snapshot, "closedAt", World.iso_from_now(-closed_ago)),
+          else: snapshot
+      end)
 
     context =
       context
@@ -842,7 +901,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     flush(context)
     # The last read: a real sweep, which starts the cadence clock.
     :ok = HalC2.PullRequests.Sync.sweep()
-    Map.put(context, :sync_pr, pr)
+    context |> Map.put(:sync_pr, pr) |> Map.put(:asked_before, summary_calls(context, pr))
   end
 
   step "{string} is active", %{args: [thread]} = context do
@@ -1500,7 +1559,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
       "baseRefName" => "main",
       "updatedAt" => "2026-09-01T00:00:00Z",
       "mergedAt" => if(state == "MERGED", do: "2026-09-01T00:00:00Z"),
-      "closedAt" => if(state == "CLOSED", do: "2026-09-01T00:00:00Z"),
+      "closedAt" => if(state == "CLOSED", do: World.iso_from_now(-3_600_000)),
       "author" => %{"login" => "octocat"},
       "commits" => %{"nodes" => []},
       "comments" => %{"nodes" => []},

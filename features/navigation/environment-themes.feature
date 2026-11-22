@@ -24,7 +24,7 @@ Feature: Environment themes and the desktop shell theme
 
     # Upstream #32405: a theme file saved as "UTF-8 with BOM", as Windows PowerShell 5 writes it, was
     # skipped by the watcher and refused by "theme set", though the MC's other JSON files read fine.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A theme file that starts with a byte-order mark is published
       When "notepad.json", a valid theme saved with a UTF-8 byte-order mark, is written into the themes folder
       Then within a few seconds the MC publishes a theme with the id "notepad"
@@ -234,7 +234,7 @@ Feature: Environment themes and the desktop shell theme
       Then the command fails saying the settings cannot be read
       And the settings file is left exactly as it was
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario Outline: Showing the default theme says when nothing is set or published
       Given <state>
       When the server operator runs "hal-c2 theme show"

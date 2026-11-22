@@ -232,6 +232,113 @@ defmodule HalC2.Steps.Orchestration.Projects do
     context
   end
 
+  step "a client deleted {string} with force and the MC stopped after deleting some of its threads",
+       %{args: [id]} = context do
+    context =
+      context
+      |> World.create_project(id)
+      |> World.create_thread("first", id)
+      |> World.create_thread("second", id)
+
+    # A forced delete deletes the threads one by one, then the project; the MC stopping
+    # between them leaves exactly this. The retry skips threads already deleted, so the
+    # first thread's deletedAt must survive it.
+    first = World.thread_id(context, "first")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "threadId" => first,
+        "commandId" => "interrupted-delete-#{first}"
+      })
+
+    World.await_row(first, &is_binary(&1["deletedAt"]))
+    Map.put(context, :first_deleted, thread_deleted(context, "first"))
+  end
+
+  step "a client deletes {string} with force again", %{args: [id]} = context do
+    mutate(context, %{"type" => "project.delete", "projectId" => id, "force" => true})
+  end
+
+  step "the remaining threads are deleted without repeating the cleanup of the deleted ones",
+       context do
+    assert thread_deleted(context, "first") == context.first_deleted
+    assert is_binary(thread_deleted(context, "second"))
+    context
+  end
+
+  step "then the project is deleted", context do
+    assert {:ok, %{"deletedAt" => deleted}} = context.reply
+    assert is_binary(deleted)
+    assert stored("p1")["deletedAt"] == deleted
+    context
+  end
+
+  step "project {string} had the folder {string} and was deleted",
+       %{args: [id, folder]} = context do
+    context =
+      World.create_project(context, id, %{
+        "workspaceRoot" => path(home(context), folder),
+        "createWorkspaceRootIfMissing" => true
+      })
+
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => id})
+    context
+  end
+
+  step "project {string} exists with that folder", %{args: [id]} = context do
+    assert {:ok, %{"id" => ^id, "workspaceRoot" => root}} = context.reply
+    assert root == path(context, "~/code/app")
+    context
+  end
+
+  step "a client updates the title of {string} and names the same folder",
+       %{args: [id]} = context do
+    mutate(context, %{
+      "type" => "project.update",
+      "projectId" => id,
+      "title" => "Renamed",
+      "workspaceRoot" => "~/code/app"
+    })
+  end
+
+  step "the update is accepted", context do
+    assert {:ok, %{"title" => "Renamed"}} = context.reply
+    context
+  end
+
+  step "project {string} was deleted", %{args: [id]} = context do
+    context = World.create_project(context, id)
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => id})
+    Map.put(context, :project_id, id)
+  end
+
+  step "a client updates or deletes {string}", %{args: [id]} = context do
+    {updated, context} =
+      World.call(context, "projects.mutate", %{
+        "type" => "project.update",
+        "projectId" => id,
+        "title" => "Renamed",
+        "commandId" => "update-again"
+      })
+
+    {deleted, context} =
+      World.call(context, "projects.mutate", %{
+        "type" => "project.delete",
+        "projectId" => id,
+        "commandId" => "delete-again"
+      })
+
+    # The shared "it fails with" reads one reply: both must be the same refusal.
+    reply =
+      case {updated, deleted} do
+        {{:error, message, _} = reply, {:error, message, _}} -> reply
+        {updated, deleted} -> {:error, "unlike replies: #{inspect({updated, deleted})}", nil}
+      end
+
+    Map.put(context, :reply, reply)
+  end
+
   # --- which project owns a folder --------------------------------------------------
 
   step "thread {string} of project {string} works in a worktree outside the project folder",

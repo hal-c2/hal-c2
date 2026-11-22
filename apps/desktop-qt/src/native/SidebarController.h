@@ -195,6 +195,8 @@ private:
   std::pair<quint64, qsizetype> m_migrationChecked{0, -1};
   // The migrated-threads notice while it shows, so later arrivals update its count.
   QString m_migrationToast;
+  // The device could not keep the note this run: not tried again.
+  bool m_migrationWriteFailed = false;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");

@@ -30,6 +30,7 @@ mod fake_mc;
 mod gherkin;
 mod harness;
 mod steps;
+mod user_shell;
 mod world;
 
 use std::cell::RefCell;

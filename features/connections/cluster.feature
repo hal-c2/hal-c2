@@ -41,18 +41,20 @@ Feature: Clustering one person's machines
     And its cluster has only itself
 
   @mc
-  Scenario: A machine joins another with a pairing link
+  Scenario: A machine joins another with a cluster invite
     Given two MCs that are not clustered
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
     And the command lists both machines as connected
 
+  # Naming the certificate is not enough: only a cluster invite can add a machine,
+  # whatever scopes an ordinary pairing link grants.
   @mc
-  Scenario: Joining needs a link that grants access
+  Scenario: A pairing link that names the certificate does not join a cluster
     Given two MCs that are not clustered
-    When the user joins the second with a standard pairing link from the first that names the first's certificate
-    Then the join is refused because the link does not grant access:write
+    When the user joins the second with an admin pairing link from the first that names the first's certificate
+    Then the join is refused because the link cannot add machines
     And neither lists the other
 
   @mc
@@ -197,7 +199,7 @@ Feature: Clustering one person's machines
   @mc
   Scenario: A machine on another HAL-C2 version can join
     Given two MCs that are not clustered, the second on another HAL-C2 version
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
 

@@ -139,9 +139,8 @@ Feature: Streaming the agent's reply
       | 62 seconds        | 1m 2s   |
       | 1 hour 5 seconds  | 1h 5s   |
 
-  # Upstream #27316: a whole number of seconds under ten read "Worked for 7.0s". Kept apart from the
-  # passing outline above until every surface is checked.
-  @backlog @shared @priority-low
+  # Upstream #27316: a whole number of seconds under ten read "Worked for 7.0s".
+  @shared @priority-low
   Scenario Outline: A duration under ten seconds drops a trailing zero
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
@@ -223,7 +222,7 @@ Feature: Streaming the agent's reply
     Then only the work done after the second steer is shown
 
   # Upstream #22783: a steer that arrives before any output splits nothing.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A steer sent before the agent did any work splits nothing
     Given the user steered before the agent produced any output
     When the turn completes
@@ -260,7 +259,7 @@ Feature: Streaming the agent's reply
       | only spaces and blank lines       | shown in full       |
 
   # Upstream #16624: the length is measured on the text the user sees, not the hidden markup.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-desktop @priority-low
   Scenario Outline: A short message with references is measured by what it shows
     Given the user sent a 200 character message holding <reference>
     When the user looks at it in the conversation
