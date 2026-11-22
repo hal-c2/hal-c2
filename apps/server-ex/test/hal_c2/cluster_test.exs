@@ -525,6 +525,50 @@ defmodule HalC2.ClusterTest do
     assert later["value"] == "after"
   end
 
+  # Older code kept `unreached` and stopped node news as its last lost terminal came back.
+  test "a socket back from older code follows again what a parting ended as it is upgraded",
+       %{tmp_dir: dir, port: port, web: web, peer: second} do
+    {peer, c} = pair(second, dir)
+    true = Node.connect(c)
+    id = topic_plugin(peer)
+    publish(peer, id, "before")
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "plugin", "value" => "before"} = first
+
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    part_let_go(peer, c, :from_topic, [id, "watched"])
+    publish(peer, id, "while parted")
+    true = Node.connect(c)
+
+    # An HTTP/2 connection has no clause for a message it doesn't know.
+    http2 = http2_connection(port)
+    assert {:ok, _changes} = HalC2.Upgrade.Tree.sync()
+
+    {resync, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+    # It answers once it has handled whatever the install sent it.
+    assert {_socket, _state} = :sys.get_state(http2, 30_000)
+
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {now, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "while parted"
+
+    publish(peer, id, "after")
+    {later, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert later["value"] == "after"
+  end
+
   test "a plugin topic asked for while its MC was away is asked again once it has started",
        %{tmp_dir: dir, port: port, peer: second} do
     {peer, c} = pair(second, dir)
@@ -607,6 +651,21 @@ defmodule HalC2.ClusterTest do
   defp pair(second, dir) do
     :ok = :peer.stop(second)
     member(dir)
+  end
+
+  # The process serving an HTTP/2 connection of the test's, once it has answered the preface.
+  defp http2_connection(port) do
+    test = self()
+    event = [:thousand_island, :connection, :start]
+    on_start = fn _, _, _, _ -> send(test, {:accepted, self()}) end
+    :ok = :telemetry.attach({__MODULE__, test}, event, on_start, nil)
+    {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+    assert_receive {:accepted, pid}, 30_000
+    :ok = :telemetry.detach({__MODULE__, test})
+    empty_settings = <<0::24, 4, 0, 0::32>>
+    :ok = :gen_tcp.send(tcp, ["PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", empty_settings])
+    assert {:ok, <<_::24, 4, _::binary>>} = :gen_tcp.recv(tcp, 0, 30_000)
+    pid
   end
 
   # The test's one socket as version 12 kept it: deaf to MCs coming back.

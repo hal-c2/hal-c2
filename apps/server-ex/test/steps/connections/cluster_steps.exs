@@ -1033,8 +1033,22 @@ defmodule HalC2.Steps.Connections.Cluster do
     Map.put(context, :older_socket, socket)
   end
 
+  step "older code stopped its socket hearing members come back", context do
+    {:ok, supervisor} = ExUnit.fetch_test_supervisor()
+    [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    Map.put(context, :older_socket, socket)
+  end
+
   step "the client's MC is upgraded in place", context do
-    # A socket's state moves to the code it runs with the first message it handles.
+    # The install's last instruction; a socket it can't tell moves with its next message.
+    {:ok, _changes} = HalC2.Upgrade.Tree.sync()
     send(context.older_socket, :after_upgrade)
     context
   end

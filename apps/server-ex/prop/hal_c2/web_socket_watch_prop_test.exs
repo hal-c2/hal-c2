@@ -29,7 +29,10 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   The socket is upgraded in place from before it heard MCs come back (`upgrade/1`): on
   its first message it treats the old member as just back for what it watches there,
-  and no longer knows what had failed there, which that version didn't keep.
+  and no longer knows what had failed there, which that version didn't keep. It also
+  goes back in place to code that stops its node news and keeps its state, and up again
+  (`reinstall/1`): the install ending has it treat the old member as just back, for all
+  it watches and all that had failed there.
   """
 
   use ExUnit.Case, async: false
@@ -147,6 +150,7 @@ defmodule HalC2.WebSocketWatchPropTest do
       [
         {1, {:call, __MODULE__, :ready, [state.subs.old != []]}},
         {1, {:call, __MODULE__, :upgrade, [state.subs.old != []]}},
+        {1, {:call, __MODULE__, :reinstall, [state.subs.old != []]}},
         {2, let(id <- oneof(@ids.away), do: {:call, __MODULE__, :sub_away, [id]})},
         {2,
          let(
@@ -205,6 +209,7 @@ defmodule HalC2.WebSocketWatchPropTest do
   def precondition(state, {:call, _, :change, [kind, value]}), do: value == state.values[kind]
   def precondition(state, {:call, _, :ready, [held]}), do: held == (state.subs.old != [])
   def precondition(state, {:call, _, :upgrade, [held]}), do: held == (state.subs.old != [])
+  def precondition(state, {:call, _, :reinstall, [held]}), do: held == (state.subs.old != [])
   def precondition(state, {:call, _, :sub_away, [id]}), do: id not in state.unreached
   def precondition(state, {:call, _, :unsub_away, [id]}), do: id in state.unreached
 
@@ -226,6 +231,9 @@ defmodule HalC2.WebSocketWatchPropTest do
     do: %{put_in(state.subs.old, []) | unreached: []}
 
   def next_state(state, _result, {:call, _, :upgrade, [_held]}),
+    do: %{put_in(state.subs.old, []) | unreached: []}
+
+  def next_state(state, _result, {:call, _, :reinstall, [_held]}),
     do: %{put_in(state.subs.old, []) | unreached: []}
 
   def next_state(state, _result, {:call, _, :sub_away, [id]}),
@@ -277,6 +285,10 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   def postcondition(state, {:call, _, :upgrade, [held]}, result),
     do: result == {Enum.sort(for id <- state.subs.old, do: {:resync, id}), held}
+
+  def postcondition(state, {:call, _, :reinstall, [held]}, result),
+    do:
+      result == {Enum.sort(for id <- state.subs.old ++ state.unreached, do: {:resync, id}), held}
 
   def postcondition(_state, {:call, _, :sub_away, [id]}, frames), do: frames == [{:error, id}]
   def postcondition(_state, {:call, _, :unsub_away, _}, frames), do: frames == []
@@ -409,8 +421,24 @@ defmodule HalC2.WebSocketWatchPropTest do
       {io, %{handler | connection: %{connection | websock_state: v12}}}
     end)
 
+    hears_back(socket, held, fn -> send(socket, :after_upgrade) end)
+  end
+
+  # Older code stops the socket's node news and keeps its state, then an install ends.
+  def reinstall(held) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(Process.get({__MODULE__, :web}))
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    hears_back(socket, held, &HalC2.Web.Socket.code_installed/0)
+  end
+
+  defp hears_back(socket, held, installed) do
     :erlang.trace(socket, true, [:receive])
-    send(socket, :after_upgrade)
+    installed.()
     # It asks whether or not it watches anything there, so the answer is waited for.
     member = old()
 
