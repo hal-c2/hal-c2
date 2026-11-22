@@ -962,9 +962,9 @@ fn settle_and_output(
             hal_c2_shell::theme::set_application_font(&engine);
             let (loader, root) = shown(&engine)?;
             // A picture has no frame loop to drain the cache's stream, so
-            // each tick of the loaded clock drains it instead: a thread
-            // an action opens is audited restored, not still waiting on
-            // its cache read.
+            // each tick of the loaded clock drains it instead: the store
+            // asks the MC for a thread an action opens only once the cache
+            // has answered.
             mc.on_tick(hal_c2_shell::controllers::threads::drain);
             mc.start(&engine);
             if !capture.play_after_snapshot {

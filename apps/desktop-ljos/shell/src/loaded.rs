@@ -2,7 +2,8 @@
 //! does, so the audit judges the shell loaded rather than empty. It serves
 //! one environment of [`PROJECTS`] projects and [`THREADS`] threads (some
 //! pinned, some running, one waiting on a question) and the code-review
-//! plugin, read from the checkout's `plugins/code-review`; then, every
+//! plugin, read from the checkout's `plugins/code-review`, and, for a
+//! thread that is opened, one finished turn ([`timeline`]); then, every
 //! [`TICK`] of the engine's clock, a `shell.rows` frame that moves a few
 //! threads along and a publish of the plugin's `threads` topic, a value of
 //! one entry a thread, with the flat fields its MC part publishes (`key`,
@@ -81,6 +82,43 @@ fn thread(t: usize, tick: usize) -> Json {
         row["plugin"] = json!({"id": PLUGIN, "kind": "review", "listed": true});
     }
     row
+}
+
+/// Thread `t`'s stream: a question and its answer as a snapshot, then
+/// `live`, which is what ends a timeline's "Loading…". The news doesn't
+/// touch it.
+fn timeline(t: usize) -> Vec<Json> {
+    let run = format!("run-{t}-history");
+    let (asked, answered) = (at(t), at(t + 1));
+    let item = |id: &str, kind: &str, ordinal: usize, text: &str| {
+        json!(["turn-item", id, {
+            "id": id, "type": kind, "runId": run, "ordinal": ordinal, "text": text,
+            "status": "completed", "startedAt": asked, "updatedAt": answered,
+        }])
+    };
+    let rows = [
+        json!(["run", run, {
+            "id": run, "ordinal": 1, "status": "completed",
+            "startedAt": asked, "completedAt": answered,
+        }]),
+        item(
+            "question",
+            "user_message",
+            1,
+            "What is left to do on this branch?",
+        ),
+        item(
+            "answer",
+            "assistant_message",
+            2,
+            "The tests pass. What is left is the review.",
+        ),
+    ];
+    vec![
+        json!({"t": "snapshot", "part": 0, "rows": rows, "done": true,
+               "offset": 1, "handle": "audit", "floor": null}),
+        json!({"t": "live", "offset": 1, "handle": "audit"}),
+    ]
 }
 
 /// The code-review plugin's `threads` topic at `tick`: a review a review
@@ -282,9 +320,13 @@ impl Loaded {
         });
     }
 
-    fn first_frame(&self, shape: &Json) -> Option<Json> {
+    /// What a new subscription is sent before any news.
+    fn first_frames(&self, shape: &Json) -> Vec<Json> {
         let tick = self.tick.get();
-        match shape["type"].as_str()? {
+        match shape["type"].as_str().unwrap_or_default() {
+            "stream" if shape["environment"] == ENVIRONMENT => (0..THREADS)
+                .find(|t| shape["stream"] == format!("t{t}"))
+                .map_or_else(Vec::new, timeline),
             "shell" => {
                 let mut rows: Vec<Json> = (0..PROJECTS)
                     .map(|p| json!([MC, format!("p{p}"), "project", project(p)]))
@@ -292,16 +334,16 @@ impl Loaded {
                 rows.extend(
                     (0..THREADS).map(|t| json!([MC, format!("t{t}"), "thread", thread(t, tick)])),
                 );
-                Some(json!({
+                vec![json!({
                     "t": "shell",
                     "mcs": [{"mc": MC, "environment": {"environmentId": ENVIRONMENT, "capabilities": {}},
                              "online": true, "epoch": "e1", "rev": tick + 1}],
                     "rows": rows,
-                }))
+                })]
             }
             "plugins" => {
                 let m = &self.manifest;
-                Some(json!({"t": "plugins", "plugins": [{
+                vec![json!({"t": "plugins", "plugins": [{
                     "id": PLUGIN,
                     "name": m["name"],
                     "version": m["version"],
@@ -310,12 +352,12 @@ impl Loaded {
                     "icon": m["icon"],
                     "contributes": m["contributes"],
                     "settings": m["settings"],
-                }]}))
+                }]})]
             }
             "plugin" if shape["topic"] == "threads" => {
-                Some(json!({"t": "plugin", "value": reviews(tick)}))
+                vec![json!({"t": "plugin", "value": reviews(tick)})]
             }
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -378,8 +420,14 @@ impl Loaded {
                 let Some((shape, handler)) = found else {
                     continue;
                 };
-                if let Some(Json::Object(frame)) = self.first_frame(&shape) {
-                    (handler.borrow_mut())(engine, &frame);
+                for frame in self.first_frames(&shape) {
+                    // An earlier frame's handler may have unsubscribed it.
+                    if !self.subscriptions.borrow().iter().any(|s| s.id == id) {
+                        break;
+                    }
+                    if let Json::Object(frame) = frame {
+                        (handler.borrow_mut())(engine, &frame);
+                    }
                 }
             }
         }
@@ -533,6 +581,29 @@ mod tests {
             &json!({"t": "shell.rows"}),
         );
         assert_eq!(seen.get(), 0);
+    }
+
+    #[test]
+    fn an_opened_thread_loads() {
+        use hal_c2_shell::thread_view::timeline::Timeline;
+
+        let engine = ljos::engine();
+        let mc = loaded();
+        let opened = Rc::new(RefCell::new(Timeline::new("env-audit:t7")));
+        let frames = opened.clone();
+        // The shape `ThreadStore::follow` subscribes with.
+        mc.subscribe(
+            json!({
+                "type": "stream", "environment": ENVIRONMENT, "stream": "t7",
+                "kinds": Timeline::stream_kinds(),
+            }),
+            Box::new(move |_, frame| frames.borrow_mut().receive(frame)),
+            None,
+        );
+        assert_eq!(opened.borrow().status(), "loading");
+        mc.deliver(&engine);
+        assert_eq!(opened.borrow().status(), "live");
+        assert!(opened.borrow().row_count() >= 2);
     }
 
     #[test]
