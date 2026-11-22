@@ -187,6 +187,11 @@ pub trait Mc {
     fn open_expecting(&self, origin: &str, token: &str, _environment: &str) -> Result<(), String> {
         self.open(origin, token)
     }
+    /// The environment it is open for, said hello or not; empty from
+    /// [`Mc::close`] on.
+    fn open_for(&self) -> String {
+        self.environment()
+    }
     /// Closes the socket for good: no retry follows.
     fn close(&self) {}
     /// Sends calls and subscriptions addressed to an environment another
@@ -765,6 +770,10 @@ impl Mc for Connection {
         let origin = url::Url::parse(origin).map_err(|e| format!("{origin}: {e}"))?;
         self.client.open_expecting(origin, token, environment);
         Ok(())
+    }
+
+    fn open_for(&self) -> String {
+        self.client.open_for()
     }
 
     fn close(&self) {

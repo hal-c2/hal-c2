@@ -814,8 +814,20 @@ impl Pairing {
         // A fresh link ConnectionHealth is spending for it opens nothing:
         // the session it bought would be remembered as this device's.
         controller::with::<ConnectionHealth, _>(engine, |c, engine| c.cancel_pairing(engine));
-        if had && let Some(mc) = controller::mc(engine) {
-            mc.close();
+        if had {
+            let (me, at) = (self.me.clone(), self.core.forgets);
+            hal_c2_shell::close(engine, move |engine, emptied| {
+                if emptied {
+                    return;
+                }
+                // The session is gone, so it is forgotten all the same.
+                me.run_after(engine, move |c: &mut Pairing, engine| {
+                    if c.core.forgets == at {
+                        c.core.error = "The environment is forgotten, but what this device kept of its threads could not be deleted.".into();
+                        c.publish(engine);
+                    }
+                });
+            });
         }
         // A saved copy of it (an interrupted promote or re-pair left one)
         // is forgotten too, credential and all, before another takes its
@@ -836,6 +848,11 @@ impl Pairing {
         // when removing its saved copy did not take.
         if !self.promote(engine, forgotten_id.as_deref()) {
             self.publish(engine);
+        }
+        // Closing emptied the rows of those still beside it too: they are
+        // sent again.
+        if had {
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| c.reconnect(engine));
         }
     }
 

@@ -14,6 +14,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller as shell_controller;
 use hal_c2_shell::controllers::saved_environments as controller;
+use hal_c2_shell::controllers::{drafts, threads};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Connection, Mc};
 use hal_c2_shell::saved_environments::{
@@ -122,6 +123,67 @@ impl Phone {
         }
     }
 
+    /// Saves `id` as Settings > Connections does, with its link listing
+    /// thread t-<id>.
+    fn listed_beside(&self, id: &str) {
+        let saved = SavedEnvironment {
+            id: id.into(),
+            label: id.into(),
+            origin: "http://127.0.0.1:9".into(),
+            expires_at: String::new(),
+        };
+        shell_controller::with::<controller::SavedEnvironments, _>(&self.engine, |c, engine| {
+            c.save(engine, saved, &format!("session-{id}"))
+        })
+        .expect("the controller")
+        .expect("saved");
+        let listed = serde_json::json!({
+            "t": "shell",
+            "mcs": [{"mc": format!("mc-{id}"), "environment": {"environmentId": id}, "online": true}],
+            "rows": [[format!("mc-{id}"), format!("t-{id}"), "thread", {"id": format!("t-{id}"), "title": id}]],
+        });
+        let rows = store::get(&self.engine).expect("the store");
+        rows.borrow_mut().apply_from(
+            listed.as_object().expect("a frame"),
+            &Client::Link(id.into()),
+        );
+        assert!(self.shows(id));
+    }
+
+    /// The own MC lists thread t-env-b, and it is kept on disk.
+    fn listed_by_own(&self) {
+        let listed = serde_json::json!({
+            "t": "shell",
+            "mcs": [{"mc": "mc-env-b", "environment": {"environmentId": "env-b"}, "online": true}],
+            "rows": [["mc-env-b", "t-env-b", "thread", {"id": "t-env-b", "title": "Tax line"}]],
+        });
+        let rows = store::get(&self.engine).expect("the store");
+        rows.borrow_mut()
+            .apply(listed.as_object().expect("a frame"));
+        store::flush(&self.engine);
+        assert!(self.shows("env-b"));
+        assert!(self.keeps("Tax line"), "the threads were not kept");
+    }
+
+    /// Whether a file of the client cache names `text`.
+    fn keeps(&self, text: &str) -> bool {
+        if let Some(cache) = store::cache(&self.engine) {
+            cache.drain();
+        }
+        std::fs::read_dir(self._home.path().join("cache"))
+            .expect("the cache")
+            .filter_map(|file| std::fs::read(file.ok()?.path()).ok())
+            .any(|kept| kept.windows(text.len()).any(|at| at == text.as_bytes()))
+    }
+
+    fn shows(&self, id: &str) -> bool {
+        store::get(&self.engine)
+            .expect("the store")
+            .borrow()
+            .thread_row_on(id, &format!("t-{id}"))
+            .is_some()
+    }
+
     fn dispatch(&mut self, action: &str, key: &str, value: &str) {
         let payload: Json = [(key, value)].into_iter().collect();
         Bridge::of(&self.engine).dispatch(&self.engine, action, payload);
@@ -208,31 +270,9 @@ fn starting_keeps_a_saved_copy_with_another_session() {
 #[test]
 fn pairing_again_beside_itself_keeps_what_it_showed() {
     let mut phone = Phone::start("again", "session-refused", &[]);
-    let engine = &phone.engine;
     // A tablet's Settings > Connections saves a fresh session beside it,
     // and that link lists the threads.
-    let saved = SavedEnvironment {
-        id: "env-b".into(),
-        label: "env-b".into(),
-        origin: "http://127.0.0.1:9".into(),
-        expires_at: String::new(),
-    };
-    shell_controller::with::<controller::SavedEnvironments, _>(engine, |c, engine| {
-        c.save(engine, saved, "session-env-b")
-    })
-    .expect("the controller")
-    .expect("saved");
-    let listed = serde_json::json!({
-        "t": "shell",
-        "mcs": [{"mc": "mc-b", "environment": {"environmentId": "env-b"}, "online": true}],
-        "rows": [["mc-b", "t-b", "thread", {"id": "t-b", "title": "thread of env-b"}]],
-    });
-    let rows = store::get(engine).expect("the store");
-    rows.borrow_mut().apply_from(
-        listed.as_object().expect("a frame"),
-        &Client::Link("env-b".into()),
-    );
-    assert!(rows.borrow().thread_row_on("env-b", "t-b").is_some());
+    phone.listed_beside("env-b");
 
     phone.dispatch("pairing.pair", "link", "http://127.0.0.1:9/?token=again");
     Platform::of(&phone.engine).finish(&phone.engine);
@@ -242,8 +282,146 @@ fn pairing_again_beside_itself_keeps_what_it_showed() {
         phone.left(),
         (Some(format!("env-b {FRESH}")), vec![], vec![])
     );
-    assert!(
-        rows.borrow().thread_row_on("env-b", "t-b").is_some(),
-        "pairing again erased the threads"
+    assert!(phone.shows("env-b"), "pairing again erased the threads");
+}
+
+#[test]
+fn removing_own_saved_copy_in_settings_keeps_what_it_showed() {
+    // Its own MC never answered, so only the pairing says whose it is.
+    let mut phone = Phone::start("remove-copy", "session-own", &[]);
+    phone.listed_beside("env-b");
+
+    phone.dispatch("savedEnvironments.remove", "id", "env-b");
+
+    assert_eq!(
+        phone.left(),
+        (Some("env-b session-own".into()), vec![], vec![])
     );
+    assert!(phone.shows("env-b"), "removing the copy erased the threads");
+}
+
+#[test]
+fn removing_another_in_settings_erases_what_it_showed() {
+    let mut phone = Phone::start("remove-other", "session-own", &[]);
+    phone.listed_beside("env-c");
+
+    phone.dispatch("savedEnvironments.remove", "id", "env-c");
+
+    assert!(!phone.shows("env-c"), "removing it kept the threads");
+}
+
+#[test]
+fn forgetting_own_also_saved_erases_what_it_showed() {
+    let mut phone = Phone::start("forget-copy", "session-own", &[]);
+    phone.listed_beside("env-b");
+
+    // Closing the own connection ends on the pump, after the copy is removed.
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    assert!(!phone.shows("env-b"), "forgetting kept the threads");
+}
+
+#[test]
+fn forgetting_own_closes_its_connection() {
+    let mut phone = Phone::start("forget-closes", "session-own", &[]);
+    let mc = shell_controller::mc(&phone.engine).expect("the MC");
+    assert_eq!(mc.open_for(), "env-b");
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    assert_eq!(mc.open_for(), "", "forgetting left the connection open");
+}
+
+#[test]
+fn forgetting_own_erases_what_it_kept() {
+    let mut phone = Phone::start("forget-kept", "session-own", &[]);
+    phone.listed_by_own();
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    assert!(!phone.shows("env-b"), "forgetting kept the threads listed");
+    assert!(
+        !phone.keeps("Tax line"),
+        "forgetting kept the threads on disk"
+    );
+}
+
+#[test]
+fn forgetting_own_before_another_erases_what_it_kept() {
+    let mut phone = Phone::start("forget-first", "session-own", &["env-c"]);
+    phone.listed_by_own();
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    assert!(!phone.shows("env-b"), "promoting kept the threads listed");
+    assert!(
+        !phone.keeps("Tax line"),
+        "promoting kept the threads on disk"
+    );
+}
+
+#[test]
+fn forgetting_own_drops_its_drafts() {
+    let mut phone = Phone::start("forget-drafts", "session-own", &[]);
+    drafts::start(&phone.engine, "env-b", "project").expect("a draft");
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    assert!(
+        drafts::all(&phone.engine).is_empty(),
+        "forgetting kept the draft"
+    );
+}
+
+#[test]
+fn forgetting_own_has_the_others_list_again() {
+    let mut phone = Phone::start("forget-others", "session-own", &["env-c", "env-d"]);
+    let link = |phone: &Phone| {
+        shell_controller::with::<controller::SavedEnvironments, _>(&phone.engine, |c, _| {
+            c.link("env-d")
+        })
+        .flatten()
+        .expect("env-d's link")
+    };
+    let before = link(&phone);
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+
+    // Emptied with env-b's, what env-d lists comes with a new snapshot.
+    assert!(
+        !Rc::ptr_eq(&before, &link(&phone)),
+        "env-d was not asked again"
+    );
+}
+
+#[test]
+fn forgetting_says_so_when_what_was_kept_cannot_be_deleted() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut phone = Phone::start("forget-stuck", "session-own", &[]);
+    phone.listed_by_own();
+    let dir = phone._home.path().join("cache");
+    let files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("the cache")
+        .map(|file| file.expect("a file").path())
+        .collect();
+    let allow = |dir_mode, file_mode| {
+        let set = |path, mode| {
+            // Its WAL may go with the connection.
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+        };
+        files.iter().for_each(|file| set(file, file_mode));
+        set(&dir, dir_mode);
+    };
+    allow(0o500, 0o400);
+
+    phone.dispatch("pairing.forget", "id", "env-b");
+    threads::drain(&phone.engine);
+    allow(0o700, 0o600);
+
+    assert!(!phone.shows("env-b"));
+    let said = Bridge::of(&phone.engine)
+        .published(&phone.engine, "pairing")
+        .map(|state| format!("{state:?}"))
+        .expect("the pairing's state");
+    assert!(said.contains("could not be deleted"), "{said}");
 }

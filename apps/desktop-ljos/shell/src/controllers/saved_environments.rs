@@ -19,8 +19,10 @@
 //! Actions: `savedEnvironments.pair {link}` pairs with the MC a pairing link
 //! names and saves it (nothing is listed when its credential cannot be kept);
 //! `savedEnvironments.remove {id}`, the way back out: its connection, record
-//! and credential go; `savedEnvironments.retry {id}` tries its connection
-//! again now, or reads its credential again (asking the keyring anew).
+//! and credential go, and what was kept of it unless the shell's own
+//! connection is open for it; `savedEnvironments.retry {id}` tries its
+//! connection again now, or reads its credential again (asking the keyring
+//! anew).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -437,10 +439,26 @@ impl SavedEnvironments {
         self.publish(engine);
     }
 
+    /// Connects each saved environment again, for a shell that emptied what
+    /// they listed (SavedEnvironmentsController::reconnect).
+    pub fn reconnect(&mut self, engine: &Engine) {
+        let ids: Vec<String> = self
+            .catalog
+            .iter()
+            .flat_map(|catalog| catalog.environments())
+            .map(|environment| environment.id.clone())
+            .collect();
+        for id in ids {
+            self.connect_to(engine, &id);
+        }
+        self.publish(engine);
+    }
+
     /// The way back out of one beside the shell's own, as
     /// `savedEnvironments.remove` does; the phone's Pairing calls it too.
     pub fn remove(&mut self, engine: &Engine, id: &str) {
-        self.disconnect(engine, id, true);
+        // A copy of the shell's own: what is kept of it is still shown.
+        self.disconnect(engine, id, id != self.mc.open_for());
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {
             catalog.forget(id);

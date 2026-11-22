@@ -21,6 +21,7 @@
 #include "PairingExchange.h"
 #include "SavedEnvironmentsController.h"
 #include "Phone.h"
+#include "ShellBridge.h"
 #include "ShellStore.h"
 #include "World.h"
 
@@ -372,6 +373,15 @@ const Steps steps([] {
     expect(saved != nullptr && saved->catalog() != nullptr, S("the phone has no catalog of saved environments"));
     const QString kept = saved->catalog()->connect(world.mc.environmentId).credential;
     expect(kept == S("session-newer"), S("the phone kept %1").arg(kept));
+  });
+
+  // A tablet's Settings > Connections; the phone's layout leaves that page out.
+  step(S("the user removes the saved copy of %1 in the connection settings").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.label == c[0], S("the environment is %1").arg(world.mc.label));
+    // Once the copy's own connection serves it, its threads are that one's to take along.
+    world.waitFor([&] { return world.native().store()->linkServing(world.mc.environmentId) != nullptr; },
+                  [&] { return S("the copy's connection to serve %1").arg(c[0]); });
+    world.bridge().dispatch(S("savedEnvironments.remove"), QVariantMap{{S("id"), world.mc.environmentId}});
   });
 
   step(S("the app is closed and opened again"), [](World& world, const Captures&, const Table&) {

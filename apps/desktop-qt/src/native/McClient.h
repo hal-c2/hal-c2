@@ -115,6 +115,12 @@ public:
   // The environment the MC itself serves, for calls about the MC (its
   // cluster); empty until the first hello.
   QString environment() const { return m_environment; }
+  // The environment it is open for, said hello or not: the one it was opened
+  // to serve, else the one its MC named. Empty while closed.
+  QString openFor() const {
+    if (m_closed) return {};
+    return m_expectedEnvironment.isEmpty() ? m_environment : m_expectedEnvironment;
+  }
   // Names an environment for the user, for a call to one the MC cannot reach.
   using Names = std::function<QString(const QString& environment)>;
   void setEnvironmentNames(Names names) { m_names = std::move(names); }

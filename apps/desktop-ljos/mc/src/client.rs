@@ -72,6 +72,9 @@ impl Drop for Inner {
 struct State {
     origin: Option<Url>,
     token: String,
+    /// What it was last opened to serve (empty: whichever it finds); None
+    /// while closed. The status follows only once it is delivered.
+    open_for: Option<String>,
     status: Status,
     /// The ready connection, as the last status said.
     connection: Option<u64>,
@@ -262,11 +265,13 @@ impl McClient {
             let mut state = self.state();
             state.origin = Some(origin.clone());
             state.token = token.clone();
+            state.open_for = Some(environment.to_owned());
         }
         self.inner.handle.open_expecting(origin, token, environment);
     }
 
     pub fn close(&self) {
+        self.state().open_for = None;
         self.inner.handle.close();
     }
 
@@ -314,6 +319,24 @@ impl McClient {
     /// The environment the MC itself serves; empty until the first hello.
     pub fn environment(&self) -> String {
         self.state().status.environment.clone()
+    }
+
+    /// The environment it is open for, said hello or not: the one it was
+    /// opened to serve, else the one its MC named. Empty from
+    /// [`Self::close`] on (desktop-qt's McClient::openFor).
+    pub fn open_for(&self) -> String {
+        let state = self.state();
+        match state.open_for.as_deref() {
+            None => String::new(),
+            Some("") => state
+                .status
+                .descriptor
+                .get("environmentId")
+                .and_then(Value::as_str)
+                .unwrap_or(&state.status.environment)
+                .to_owned(),
+            Some(expected) => expected.to_owned(),
+        }
     }
 
     /// The http(s) origin the MC was opened at.

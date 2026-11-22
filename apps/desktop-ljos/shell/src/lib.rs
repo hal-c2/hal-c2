@@ -307,6 +307,23 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     Ok(())
 }
 
+/// Leaves the MC, as NativeShell::close does: the connection closes, and
+/// what was held and kept of it goes, its threads and the drafts. `done`
+/// hears false when the cache could not be emptied (see [`store::clear`]).
+pub fn close(engine: &Engine, done: impl FnOnce(&Engine, bool) + 'static) {
+    if let Some(mc) = controller::mc(engine) {
+        mc.close();
+    }
+    // Every draft is one of its machines', listed or not. They go after its
+    // rows, so a window that showed either lands on neither.
+    let drafts = controllers::drafts::all(engine);
+    store::clear(engine, done);
+    for draft in drafts {
+        controllers::drafts::remove(engine, &draft.id);
+    }
+    bridge::Bridge::of(engine).set_mc_origin(engine, "");
+}
+
 /// NativeShell::setStoreDirs: the environments paired beside the shell's MC
 /// connect once the store is there, before that MC's first snapshot, so
 /// it lists what each link serves and that snapshot takes none of their

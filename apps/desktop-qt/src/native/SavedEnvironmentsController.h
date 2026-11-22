@@ -36,7 +36,8 @@ class ShellStore;
 // Actions: `savedEnvironments.pair {link}` pairs with the MC a pairing link
 // names and saves it (nothing is listed when its credential cannot be kept);
 // `savedEnvironments.remove {id}`, the way back out: its connection closes and
-// its record, credential and everything the client kept of it go;
+// its record, credential and everything the client kept of it go, but what
+// was kept stays for the one the client's own connection is open for;
 // `savedEnvironments.retry {id}` tries one again now.
 class SavedEnvironmentsController : public QObject, public NativeController {
   Q_OBJECT

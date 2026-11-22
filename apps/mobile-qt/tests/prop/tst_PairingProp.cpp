@@ -4,7 +4,8 @@
 // pairing started while one is in flight, adding and cancelling, another
 // environment paired beside the first and forgotten again, forgetting the
 // first while another is beside it, the first saved beside itself on its own
-// session or another, and the app started again over what the device kept.
+// session or another, a saved one removed in Settings > Connections, and the
+// app started again over what the device kept.
 
 #include "Prop.h"
 
@@ -106,8 +107,8 @@ struct Model {
   // The MCs paired beside it, and the sessions they sold.
   std::map<int, std::string> beside;
   // The paired MC is beside itself too (#1746): beside holds it as well,
-  // until a forget or a pairing again drops the copy, or a restart does
-  // when the copy has the pairing's own session.
+  // until a forget, a pairing again or Settings drops the copy, or a restart
+  // does when the copy has the pairing's own session.
   bool duplicated = false;
   bool pairing = false;
   bool adding = false;
@@ -689,6 +690,39 @@ struct Duplicate : Command {
   void show(std::ostream& os) const override { os << (otherSession ? "Duplicate(other session)" : "Duplicate(same session)"); }
 };
 
+// The user removes one in Settings > Connections, which a tablet shows. The
+// copy of the shell's own goes alone: the phone stays paired, and still holds
+// its threads (#1746).
+struct SettingsRemove : Command {
+  int mc = *rc::gen::inRange(0, kMcs);
+  explicit SettingsRemove(const Model&) {}
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.beside.contains(mc));
+    // As for Forget (#1096).
+    RC_PRE(m.writable);
+  }
+  void apply(Model& m) const override {
+    m.beside.erase(mc);
+    if (m.paired == mc) m.duplicated = false;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    const bool own = m.paired == mc;
+    const QString title = s.mcs[mc]->pairable.threadTitle();
+    const auto shown = [&] {
+      const auto threads = s.phone->shell->store()->threads();
+      return std::any_of(threads.begin(), threads.end(), [&](const sidebar::Thread& thread) { return thread.title == title; });
+    };
+    if (own) RC_ASSERT(halc2::prop::until(shown));
+    s.phone->bridge->dispatch(QStringLiteral("savedEnvironments.remove"),
+                              QVariantMap{{QStringLiteral("id"), QStringLiteral("env-") + QString::fromLatin1(kNames[mc])}});
+    if (own) RC_ASSERT(shown());
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "SettingsRemove(" << kNames[mc] << ")"; }
+};
+
 // The app is closed and started again over what the device kept. What the
 // MCs held for the phone that went is let go of. The start drops a saved
 // copy of the pairing only when it has the pairing's own session: another
@@ -742,7 +776,7 @@ private slots:
     QVERIFY(rc::check("the phone's pairing agrees with the model", [] {
       Model model;
       Sut sut;
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Forget, Duplicate, Duplicate, Disk, Restart, Restart>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Forget, Duplicate, Duplicate, SettingsRemove, SettingsRemove, Disk, Restart, Restart>());
     }));
   }
 };

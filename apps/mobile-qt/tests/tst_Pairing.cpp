@@ -457,6 +457,38 @@ private slots:
     QVERIFY(!phone.shell->shared<SavedEnvironmentsController>()->catalog()->find(QStringLiteral("env-a")));
   }
 
+  void removingItsSavedCopyInSettingsKeepsWhatItShowed_data() {
+    QTest::addColumn<bool>("refusedAtStart");
+    QTest::newRow("connected") << false;
+    // No hello says whose the connection is: only the pairing does.
+    QTest::newRow("refused at start") << true;
+  }
+
+  // Settings > Connections removing the copy of the phone's own leaves the
+  // phone paired, and showing its threads.
+  void removingItsSavedCopyInSettingsKeepsWhatItShowed() {
+    QFETCH(bool, refusedAtStart);
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    {
+      Phone paired(home.path());
+      QVERIFY(paired.pair(macbook.link()));
+      QVERIFY(paired.waitForThreads({macbook.threadTitle()}));
+    }
+    if (refusedAtStart) macbook.revoke(macbook.sessions.last());
+    Phone phone(home.path());
+    QVERIFY(phone.waitForConnection(refusedAtStart ? QStringLiteral("refused") : QStringLiteral("connected")));
+    phone.dispatch(QStringLiteral("savedEnvironments.pair"), {{QStringLiteral("link"), macbook.link()}});
+    QVERIFY(waitUntil(phone.shell->store(), &ShellStore::changed,
+                      [&] { return phone.shell->store()->linkServing(QStringLiteral("env-a")) != nullptr; }));
+    QVERIFY(phone.waitForThreads({macbook.threadTitle()}));
+
+    phone.dispatch(QStringLiteral("savedEnvironments.remove"), {{QStringLiteral("id"), QStringLiteral("env-a")}});
+    QVERIFY(!phone.shell->shared<SavedEnvironmentsController>()->catalog()->find(QStringLiteral("env-a")));
+    QCOMPARE(phone.kept().value(QLatin1String("environmentId")).toString(), QStringLiteral("env-a"));
+    QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
+  }
+
   // Pairing with another environment adds it beside the one the phone had,
   // on a connection of its own; forgetting it leaves the first, and
   // forgetting the first puts it in the first one's place.

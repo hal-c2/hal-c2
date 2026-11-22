@@ -170,7 +170,8 @@ void SavedEnvironmentsController::reconnect() {
 }
 
 void SavedEnvironmentsController::remove(const QString& id) {
-  disconnect(id, true);
+  // A copy of the client's own: what is kept of it is still shown.
+  disconnect(id, id != m_client->openFor());
   if (m_catalog) m_catalog->forget(id);
   publish();
 }
