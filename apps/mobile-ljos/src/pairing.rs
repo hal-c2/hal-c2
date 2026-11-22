@@ -509,11 +509,26 @@ impl Pairing {
     /// first one paired beside a forgotten one takes its place.
     pub fn start(&mut self, engine: &Engine) {
         let Some(environment) = self.core.paired.clone() else {
-            if !self.promote(engine) {
+            if !self.promote(engine, None) {
                 self.publish(engine);
             }
             return;
         };
+        // An interrupted promote or re-pair writes pairing.json first and
+        // removes the saved copy second, so a saved environment with the
+        // pairing's id is the older copy: it is dropped, credential and
+        // all. The pairing's own session is in pairing.json, not in the
+        // catalog's store, so dropping the copy cannot delete it.
+        if !environment.environment_id.is_empty() {
+            let id = environment.environment_id.clone();
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| {
+                if c.catalog()
+                    .is_some_and(|catalog| catalog.find(&id).is_some())
+                {
+                    c.drop_duplicate(engine, &id);
+                }
+            });
+        }
         self.open(engine, &environment);
     }
 
@@ -786,6 +801,12 @@ impl Pairing {
             return;
         }
         let had = self.core.paired.is_some();
+        let forgotten_id = self
+            .core
+            .paired
+            .as_ref()
+            .map(|own| own.environment_id.clone())
+            .filter(|own_id| !own_id.is_empty());
         self.core.forgotten();
         self.forgets.set(self.core.forgets);
         // A fresh link ConnectionHealth is spending for it opens nothing:
@@ -794,9 +815,24 @@ impl Pairing {
         if had && let Some(mc) = controller::mc(engine) {
             mc.close();
         }
+        // A saved copy of it (an interrupted promote or re-pair left one)
+        // is forgotten too, credential and all, before another takes its
+        // place: beside_label does not name the shell's own, so the
+        // catalog is asked directly.
+        if let Some(own_id) = &forgotten_id {
+            let own_id = own_id.clone();
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| {
+                if c.catalog()
+                    .is_some_and(|catalog| catalog.find(&own_id).is_some())
+                {
+                    c.remove(engine, &own_id);
+                }
+            });
+        }
         // One paired beside it takes its place, so the device stays
-        // paired while it has any.
-        if !self.promote(engine) {
+        // paired while it has any. Never the one just forgotten, even
+        // when removing its saved copy did not take.
+        if !self.promote(engine, forgotten_id.as_deref()) {
             self.publish(engine);
         }
     }
@@ -804,13 +840,16 @@ impl Pairing {
     /// With no environment of its own, the shell connects to the first
     /// one paired beside it that it can, which then is its own; false
     /// when none is.
-    fn promote(&mut self, engine: &Engine) -> bool {
+    fn promote(&mut self, engine: &Engine, except: Option<&str>) -> bool {
         if self.core.paired.is_some() {
             return false;
         }
         let candidate = controller::with::<SavedEnvironments, _>(engine, |saved, _| {
             let catalog = saved.catalog()?;
             catalog.environments().iter().find_map(|environment| {
+                if except == Some(environment.id.as_str()) {
+                    return None;
+                }
                 let connection = catalog.connect(&environment.id);
                 connection.blocked.is_empty().then(|| Environment {
                     origin: environment.origin.clone(),

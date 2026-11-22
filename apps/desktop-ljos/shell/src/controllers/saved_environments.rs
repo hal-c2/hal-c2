@@ -422,6 +422,21 @@ impl SavedEnvironments {
         self.publish(engine);
     }
 
+    /// Drops a saved copy of an environment kept as the shell's own (the
+    /// phone's pairing): its connection, record and credential go, but
+    /// what the shell kept of the environment stays, as the shell's own
+    /// connection serves it. The shell's own credential is not the
+    /// catalog's (the phone keeps it in pairing.json), so forgetting the
+    /// catalog's copy under the same id cannot delete it.
+    pub fn drop_duplicate(&mut self, engine: &Engine, id: &str) {
+        self.disconnect(engine, id, false);
+        self.blocked.remove(id);
+        if let Some(catalog) = &mut self.catalog {
+            catalog.forget(id);
+        }
+        self.publish(engine);
+    }
+
     /// The way back out of one beside the shell's own, as
     /// `savedEnvironments.remove` does; the phone's Pairing calls it too.
     pub fn remove(&mut self, engine: &Engine, id: &str) {
