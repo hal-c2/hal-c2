@@ -523,6 +523,19 @@ Item {
                 const end = findChild(button(), "buttonKeptEnd");
                 return end !== null && end.visible && end.text === row.end && !end.truncated && end.mapToItem(button(), end.width, 0).x <= button().width + 1;
             }, 3000, row.end + " shows whole");
+            verify(!Array.from(findChild(button(), "contents").children).some(kid => kid.objectName !== "buttonKeptEnd" && kid.visible && String(kid.text ?? "").includes(row.end)), row.end + " shows once");
+        }
+
+        // Where even the end has no room, it elides inside its button, off Open.
+        function test_aKeptEndStaysInsideANarrowButton() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: [{ id: "a", name: "a.png", kind: "image", status: "failed", preview: "", source: null }]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 280 });
+            const button = () => findChild(composer, "attachment:a.png");
+            const end = () => findChild(button(), "buttonKeptEnd");
+            tryVerify(() => button() !== null && button().width > 0 && button().width < button().implicitWidth && end().mapToItem(button(), 0, 0).x >= button().leftPadding + button().iconSize, 3000, "the narrow button is laid out");
+            tryVerify(() => end().mapToItem(button(), end().width, 0).x <= button().width + 1, 3000, "the end stays inside its button");
         }
 
         function test_fastModeSaysItIsOn() {

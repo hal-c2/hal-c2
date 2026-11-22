@@ -108,16 +108,23 @@ Button {
                 Layout.minimumWidth: 0
             }
 
-            Text {
-                objectName: "buttonKeptEnd"
+            // The slot keeps the end's whole width and only the painted text is cut:
+            // a maximum on the laid-out item would feed back into the row's implicit width.
+            Item {
+                id: keptEndSlot
                 visible: control.keptEnd.length > 0
-                text: control.keptEnd
-                font: control.font
-                color: control.tint
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-                Layout.minimumWidth: 0
-                Layout.maximumWidth: contents.parent.width
+                implicitWidth: keptEndText.implicitWidth
+                implicitHeight: keptEndText.implicitHeight
+
+                Text {
+                    id: keptEndText
+                    objectName: "buttonKeptEnd"
+                    text: control.keptEnd
+                    width: Math.min(Math.ceil(implicitWidth), Math.max(0, contents.width - keptEndSlot.x))
+                    font: control.font
+                    color: control.tint
+                    elide: Text.ElideRight
+                }
             }
 
             ShellChevron {
