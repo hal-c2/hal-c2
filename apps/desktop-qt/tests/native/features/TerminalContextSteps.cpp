@@ -207,6 +207,9 @@ const Steps steps([] {
   step(QStringLiteral("the draft holds nothing but a terminal excerpt whose text is gone"), [restoredDraft](World& world, const Captures&, const Table&) {
     restoredDraft(world, QString(), 1);
   });
+  step(QStringLiteral("the draft is otherwise empty and holds (one terminal excerpt|two terminal excerpts) whose text is gone"), [restoredDraft](World& world, const Captures& c, const Table&) {
+    restoredDraft(world, QString(), c[0].startsWith(QLatin1String("one")) ? 1 : 2);
+  });
   step(QStringLiteral("the message is sent without them"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return !lastMessage(world).isEmpty(); },
                   [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });

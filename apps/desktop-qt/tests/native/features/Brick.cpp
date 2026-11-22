@@ -132,6 +132,12 @@ bool Brick::press(const QString& key) {
       {QStringLiteral("left"), Qt::Key_Left},     {QStringLiteral("arrowleft"), Qt::Key_Left},
       {QStringLiteral("right"), Qt::Key_Right},   {QStringLiteral("arrowright"), Qt::Key_Right},
       {QStringLiteral("home"), Qt::Key_Home},     {QStringLiteral("end"), Qt::Key_End},
+      {QStringLiteral("f1"), Qt::Key_F1},         {QStringLiteral("f2"), Qt::Key_F2},
+      {QStringLiteral("f3"), Qt::Key_F3},         {QStringLiteral("f4"), Qt::Key_F4},
+      {QStringLiteral("f5"), Qt::Key_F5},         {QStringLiteral("f6"), Qt::Key_F6},
+      {QStringLiteral("f7"), Qt::Key_F7},         {QStringLiteral("f8"), Qt::Key_F8},
+      {QStringLiteral("f9"), Qt::Key_F9},         {QStringLiteral("f10"), Qt::Key_F10},
+      {QStringLiteral("f11"), Qt::Key_F11},       {QStringLiteral("f12"), Qt::Key_F12},
   };
   Qt::KeyboardModifiers modifiers;
   int code = 0;

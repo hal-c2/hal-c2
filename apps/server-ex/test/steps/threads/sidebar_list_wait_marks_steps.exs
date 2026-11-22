@@ -83,7 +83,9 @@ defmodule HalC2.Steps.Threads.SidebarListWaitMarks do
     context
   end
 
-  step "{string} holds {string}", %{args: [name, title]} = context do
+  # A thread title, never a file path: `"<project>" holds "<path/file>"` is the
+  # file steps' step of the same shape.
+  step ~r/^"(?<name>[^"]+)" holds "(?<title>[^"\/]+)"$/, %{args: [name, title]} = context do
     task = context.tasks[name]
 
     await_settled(

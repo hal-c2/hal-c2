@@ -312,7 +312,9 @@ const Steps steps([] {
   // The shell prints a line with `link` in it; where the link is drawn.
   const auto showLink = [pointOn](World& world, const QString& printed, const QString& link) {
     QQuickItem* terminal = drawnTerminal(world);
-    print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
+    // A line the Given step already printed holds the link; click it there
+    // rather than printing a second line of its own.
+    if (!call(terminal, "text").contains(link)) print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
     world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
     return pointOn(world, terminal, link);
   };
@@ -694,6 +696,14 @@ const Steps steps([] {
     world.waitFor([&] { return !editorCall(world).isEmpty(); }, QStringLiteral("the editor to be asked for the file"));
     const QJsonObject asked = editorCall(world);
     expect(asked.value(QLatin1String("editor")) == QLatin1String("zed") && asked.value(QLatin1String("cwd")).toString().endsWith(QLatin1String("/src/app.ts:12:4")),
+           QStringLiteral("the editor was asked for %1").arg(QString::fromUtf8(QJsonDocument(asked).toJson(QJsonDocument::Compact))));
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the browser was opened"));
+  });
+  step(QStringLiteral("%1 opens in the editor at line (\\d+)").arg(q), [editorCall](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !editorCall(world).isEmpty(); }, QStringLiteral("the editor to be asked for the file"));
+    const QJsonObject asked = editorCall(world);
+    const QString wanted = QStringLiteral("/") + c[0] + QLatin1Char(':') + c[1];
+    expect(asked.value(QLatin1String("cwd")).toString().endsWith(wanted),
            QStringLiteral("the editor was asked for %1").arg(QString::fromUtf8(QJsonDocument(asked).toJson(QJsonDocument::Compact))));
     expect(world.openedUrls.isEmpty(), QStringLiteral("the browser was opened"));
   });
