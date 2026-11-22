@@ -435,6 +435,28 @@ private slots:
     QVERIFY(macbook.connectedWithTicket());
   }
 
+  // A tablet whose session was refused saved a fresh one in Settings >
+  // Connections, whose link then lists the threads. Pairing again takes it
+  // off the saved ones and keeps what it showed.
+  void pairingAgainBesideItselfKeepsWhatItShowed() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForThreads({macbook.threadTitle()}));
+    macbook.revoke(macbook.sessions.last());
+    QVERIFY(phone.waitForConnection(QStringLiteral("refused")));
+    phone.dispatch(QStringLiteral("savedEnvironments.pair"), {{QStringLiteral("link"), macbook.link()}});
+    QVERIFY(waitUntil(phone.shell->store(), &ShellStore::changed,
+                      [&] { return phone.shell->store()->linkServing(QStringLiteral("env-a")) != nullptr; }));
+
+    QVERIFY(phone.pair(macbook.link()));
+    QCOMPARE(phone.error(), QString());
+    QCOMPARE(phone.threads(), QStringList{macbook.threadTitle()});
+    QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), macbook.sessions.last());
+    QVERIFY(!phone.shell->shared<SavedEnvironmentsController>()->catalog()->find(QStringLiteral("env-a")));
+  }
+
   // Pairing with another environment adds it beside the one the phone had,
   // on a connection of its own; forgetting it leaves the first, and
   // forgetting the first puts it in the first one's place.

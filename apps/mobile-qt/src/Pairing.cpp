@@ -68,14 +68,15 @@ void Pairing::start() {
     promote();
     return;
   }
-  // An interrupted promote or re-pair writes pairing.json first and removes
-  // the saved copy second, so a saved environment with the pairing's id is
-  // the older copy: it is dropped, credential and all. The pairing's own
-  // session is in pairing.json, not in the catalog's store, so dropping
-  // the copy cannot delete it.
+  // An interrupted promote leaves the pairing's own session in the saved
+  // environments too: that copy is dropped. One with another session stays,
+  // as it may be the newer (a tablet's Settings > Connections saves one
+  // there) and the only one that works.
   if (!m_paired->environmentId.isEmpty()) {
-    if (auto* saved = m_shell->shared<SavedEnvironmentsController>()) {
-      if (saved->catalog() && saved->catalog()->find(m_paired->environmentId)) saved->dropDuplicate(m_paired->environmentId);
+    auto* saved = m_shell->shared<SavedEnvironmentsController>();
+    if (saved && saved->catalog()) {
+      const EnvironmentCatalog::Connection copy = saved->catalog()->connect(m_paired->environmentId);
+      if (copy.blocked.isEmpty() && copy.credential == m_paired->token) saved->dropDuplicate(m_paired->environmentId);
     }
   }
   // The environment it paired with, not whichever answers at its address now.
@@ -242,10 +243,11 @@ void Pairing::paired(const pairing::Result& result) {
   if (m_paired) m_shell->client()->close();
   const bool moved = m_paired && m_paired->origin != next.origin;
   // Nor is it listed beside itself: beside() does not name the shell's
-  // own, so the catalog is asked directly.
+  // own, so the catalog is asked directly. Dropped, not removed: removing
+  // it erases the threads the shell shows of it.
   if (!environmentId.isEmpty()) {
     if (auto* saved = m_shell->shared<SavedEnvironmentsController>()) {
-      if (saved->catalog() && saved->catalog()->find(environmentId)) saved->remove(environmentId);
+      if (saved->catalog() && saved->catalog()->find(environmentId)) saved->dropDuplicate(environmentId);
     }
   }
   m_paired = next;

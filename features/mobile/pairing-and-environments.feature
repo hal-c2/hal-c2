@@ -421,9 +421,11 @@ Feature: Pairing a phone with environments
     Then "My MacBook" is no longer listed
     And "Office Mac" is still listed
 
-  # New behaviour, the next two (#1746): the phone can stop part-way through
-  # putting an environment first and keep it beside itself as well.
-  # Forgetting it signs the phone out anyway, and a start keeps it once.
+  # New behaviour, the next three (#1746): the phone can stop part-way through
+  # putting an environment first and keep it beside itself as well, on the
+  # same session, and a tablet's Settings can save a newer session beside it.
+  # Forgetting it signs the phone out anyway. A start keeps the same session
+  # once and never deletes another.
   @mobile
   Scenario: Removing an environment that is also kept beside itself signs the phone out
     Given the phone is paired with "My MacBook"
@@ -438,6 +440,13 @@ Feature: Pairing a phone with environments
     And the phone also keeps "My MacBook" beside itself
     When the app is closed and opened again
     Then "My MacBook" is kept once, as the phone's own environment
+
+  @mobile
+  Scenario: A newer session saved beside an environment is kept when the app starts
+    Given the phone is paired with "My MacBook"
+    And the phone also keeps a newer session for "My MacBook" beside itself
+    When the app is closed and opened again
+    Then the newer session for "My MacBook" is still on the phone
 
   @mobile
   Scenario: Cancelling removal keeps the environment

@@ -357,6 +357,23 @@ const Steps steps([] {
     expect(!besideEntry(world, c[0]).isEmpty(), S("the phone lists %1").arg(show(world.state(S("savedEnvironments")))));
   });
 
+  // What a tablet's Settings > Connections saves (#1746).
+  step(S("the phone also keeps a newer session for %1 beside itself").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.label == c[0], S("the environment is %1").arg(world.mc.label));
+    auto* saved = world.native().shared<SavedEnvironmentsController>();
+    expect(saved != nullptr && saved->catalog() != nullptr, S("the phone has no catalog of saved environments"));
+    const SavedEnvironment copy{world.mc.environmentId, world.mc.label, world.mc.origin(), {}};
+    expect(!saved->catalog()->save(copy, S("session-newer")).has_value(), S("the newer session could not be saved"));
+  });
+
+  step(S("the newer session for %1 is still on the phone").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.label == c[0], S("the environment is %1").arg(world.mc.label));
+    auto* saved = world.native().shared<SavedEnvironmentsController>();
+    expect(saved != nullptr && saved->catalog() != nullptr, S("the phone has no catalog of saved environments"));
+    const QString kept = saved->catalog()->connect(world.mc.environmentId).credential;
+    expect(kept == S("session-newer"), S("the phone kept %1").arg(kept));
+  });
+
   step(S("the app is closed and opened again"), [](World& world, const Captures&, const Table&) {
     world.close();
     world.open();

@@ -3,8 +3,8 @@
 // outside, token exchanges answered, refused, held and dropped, a second
 // pairing started while one is in flight, adding and cancelling, another
 // environment paired beside the first and forgotten again, forgetting the
-// first while another is beside it, an interrupted promote that left the
-// first beside itself, and the app started again over what the device kept.
+// first while another is beside it, the first saved beside itself on its own
+// session or another, and the app started again over what the device kept.
 
 #include "Prop.h"
 
@@ -105,8 +105,9 @@ struct Model {
   std::string session;
   // The MCs paired beside it, and the sessions they sold.
   std::map<int, std::string> beside;
-  // An interrupted promote left the paired MC beside itself too (#1746):
-  // beside holds it as well, until a restart or a forget drops the copy.
+  // The paired MC is beside itself too (#1746): beside holds it as well,
+  // until a forget or a pairing again drops the copy, or a restart does
+  // when the copy has the pairing's own session.
   bool duplicated = false;
   bool pairing = false;
   bool adding = false;
@@ -655,11 +656,12 @@ struct Disk : Command {
   void show(std::ostream& os) const override { os << (writable ? "Disk(writable)" : "Disk(read-only)"); }
 };
 
-// An interrupted promote or re-pair: pairing.json was written, the saved
-// copy never removed, so the shell's own environment is beside itself too
-// (#1746). Injected through the catalog of the running phone, as the
-// interruption leaves it on the device.
+// The shell's own environment is beside itself too (#1746): on its own
+// session, as an interrupted promote leaves it, or on another, as a tablet's
+// Settings > Connections saves it. Injected through the catalog of the
+// running phone.
 struct Duplicate : Command {
+  bool otherSession = *rc::gen::arbitrary<bool>();
   explicit Duplicate(const Model&) {}
   void checkPreconditions(const Model& m) const override {
     RC_PRE(m.paired.has_value());
@@ -669,7 +671,7 @@ struct Duplicate : Command {
   }
   void apply(Model& m) const override {
     m.duplicated = true;
-    m.beside[*m.paired] = m.session;
+    m.beside[*m.paired] = otherSession ? "session-beside-" + std::string(kNames[*m.paired]) : m.session;
   }
   void run(const Model& m, Sut& s) const override {
     Model next = m;
@@ -680,24 +682,33 @@ struct Duplicate : Command {
     RC_ASSERT(saved != nullptr);
     RC_ASSERT(saved->catalog() != nullptr);
     const SavedEnvironment copy{id, QString::fromLatin1(kLabels[mc]), QUrl(s.mcs[mc]->origin()), {}};
-    RC_ASSERT(!saved->catalog()->save(copy, QString::fromStdString(m.session)).has_value());
+    RC_ASSERT(!saved->catalog()->save(copy, QString::fromStdString(next.beside.at(mc))).has_value());
     saved->connectTo(id);
     s.check(next);
   }
-  void show(std::ostream& os) const override { os << "Duplicate"; }
+  void show(std::ostream& os) const override { os << (otherSession ? "Duplicate(other session)" : "Duplicate(same session)"); }
 };
 
 // The app is closed and started again over what the device kept. What the
-// MCs held for the phone that went is let go of. A saved copy of the
-// pairing is the older one (pairing.json is written first): the start
-// drops it, the pairing's own session untouched (#1746).
+// MCs held for the phone that went is let go of. The start drops a saved
+// copy of the pairing only when it has the pairing's own session: another
+// may be the newer (#1746).
 struct Restart : Command {
   explicit Restart(const Model&) {}
+  // A record the device cannot write outlives its credential, and the next
+  // start lists it blocked (#1096): such a start is left out until that is fixed.
+  // RC_PRE captures its expression, which evaluates every operand of `&&`.
+  void checkPreconditions(const Model& m) const override {
+    const bool unwritten = m.duplicated && m.paired && !m.writable && m.beside.at(*m.paired) == m.session;
+    RC_PRE(!unwritten);
+  }
   void apply(Model& m) const override {
     ++m.attempt;
     m.pairing = false;
-    if (m.duplicated && m.paired) m.beside.erase(*m.paired);
-    m.duplicated = false;
+    if (m.duplicated && m.paired && m.beside.at(*m.paired) == m.session) {
+      m.beside.erase(*m.paired);
+      m.duplicated = false;
+    }
     m.held.clear();
     m.adding = false;
     m.link.reset();

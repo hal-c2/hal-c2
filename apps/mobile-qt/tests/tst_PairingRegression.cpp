@@ -1,7 +1,8 @@
 // Forgetting the phone's own environment when an interrupted promote or
 // re-pair left it in the saved environments too (#1746): the saved copy
-// and its credential go with it, and at start the saved copy of the
-// pairing is dropped (pairing.json is written first, so it is newer).
+// and its credential go with it. At start the saved copy is dropped only
+// when it holds the pairing's own session: a tablet's Settings > Connections
+// saves a newer one there.
 
 #include <QDir>
 #include <QFile>
@@ -60,17 +61,18 @@ public:
   std::unique_ptr<Pairing> pairing;
 };
 
-// The state an interruption leaves: env-b in pairing.json and `beside` in
-// the catalog, each with its session under its id in the keyring.
+// env-b in pairing.json on `own`, and `beside` in the catalog, each with
+// its session under its id in the keyring. By default the state an
+// interrupted promote leaves: both on one session.
 struct Seeded {
   QTemporaryDir home;
   std::shared_ptr<MemorySecretStore::Keys> keys = std::make_shared<MemorySecretStore::Keys>();
 
-  explicit Seeded(const QStringList& beside) {
+  explicit Seeded(const QStringList& beside, const QString& own = QStringLiteral("session-env-b")) {
     const QDir data(QDir(home.path()).filePath(QStringLiteral("data")));
     writeJson(data.filePath(QStringLiteral("pairing.json")),
               {{QStringLiteral("origin"), kDead},
-               {QStringLiteral("token"), QStringLiteral("session-env-b")},
+               {QStringLiteral("token"), own},
                {QStringLiteral("label"), QStringLiteral("env-b")},
                {QStringLiteral("environmentId"), QStringLiteral("env-b")}});
     QJsonArray environments;
@@ -149,6 +151,15 @@ private slots:
     QCOMPARE(seeded.listed(), QStringList{QStringLiteral("env-c")});
     QCOMPARE(seeded.kept(), QStringList{QStringLiteral("session-env-c")});
     QCOMPARE(phone.bridge->state()->value(QStringLiteral("pairing")).toMap().value(QStringLiteral("phase")).toString(), QStringLiteral("paired"));
+  }
+
+  // The saved one may be the only session that works.
+  void startingKeepsASavedCopyWithAnotherSession() {
+    Seeded seeded({QStringLiteral("env-b")}, QStringLiteral("session-refused"));
+    Phone phone(seeded.home.path());
+    QCOMPARE(readJson(seeded.pairingFile()).value(QStringLiteral("token")).toString(), QStringLiteral("session-refused"));
+    QCOMPARE(seeded.listed(), QStringList{QStringLiteral("env-b")});
+    QCOMPARE(seeded.kept(), QStringList{QStringLiteral("session-env-b")});
   }
 };
 

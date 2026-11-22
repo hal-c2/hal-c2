@@ -514,17 +514,18 @@ impl Pairing {
             }
             return;
         };
-        // An interrupted promote or re-pair writes pairing.json first and
-        // removes the saved copy second, so a saved environment with the
-        // pairing's id is the older copy: it is dropped, credential and
-        // all. The pairing's own session is in pairing.json, not in the
-        // catalog's store, so dropping the copy cannot delete it.
+        // An interrupted promote leaves the pairing's own session in the
+        // saved environments too: that copy is dropped. One with another
+        // session stays, as it may be the newer (a tablet's Settings >
+        // Connections saves one there) and the only one that works.
         if !environment.environment_id.is_empty() {
             let id = environment.environment_id.clone();
+            let token = environment.token.clone();
             controller::with::<SavedEnvironments, _>(engine, |c, engine| {
-                if c.catalog()
-                    .is_some_and(|catalog| catalog.find(&id).is_some())
-                {
+                if c.catalog().is_some_and(|catalog| {
+                    let copy = catalog.connect(&id);
+                    copy.blocked.is_empty() && copy.credential == token
+                }) {
                     c.drop_duplicate(engine, &id);
                 }
             });
@@ -640,14 +641,15 @@ impl Pairing {
             self.publish(engine);
             return;
         }
-        // Nor is it listed beside itself.
+        // Nor is it listed beside itself. Dropped, not removed: removing
+        // it erases the threads the shell shows of it.
         if !next.environment_id.is_empty() {
             let id = next.environment_id.clone();
             controller::with::<SavedEnvironments, _>(engine, |c, engine| {
                 if c.catalog()
                     .is_some_and(|catalog| catalog.find(&id).is_some())
                 {
-                    c.remove(engine, &id);
+                    c.drop_duplicate(engine, &id);
                 }
             });
         }
