@@ -540,13 +540,7 @@ defmodule HalC2.ClusterTest do
     {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
     assert %{"t" => "plugin", "value" => "before"} = first
 
-    {:ok, [socket]} = ThousandIsland.connection_pids(web)
-
-    :sys.replace_state(socket, fn state ->
-      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
-      state
-    end)
-
+    deafen(web)
     part_let_go(peer, c, :from_topic, [id, "watched"])
     publish(peer, id, "while parted")
     true = Node.connect(c)
@@ -567,6 +561,39 @@ defmodule HalC2.ClusterTest do
     publish(peer, id, "after")
     {later, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
     assert later["value"] == "after"
+  end
+
+  # The code installed hears no nodeup until the install ends, and the MC may be back by then.
+  test "a terminal lost while its socket was deaf is attached again as the install ends",
+       %{tmp_dir: dir, port: port, web: web, peer: second} do
+    {_peer, c} = pair(second, dir)
+    true = Node.connect(c)
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    input = %{"threadId" => "deaf-th", "terminalId" => "term-1", "cwd" => dir}
+    shape = %{"type" => "terminal", "mc" => Atom.to_string(c), "input" => input}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "terminal", "event" => %{"type" => "snapshot"}} = first
+
+    deafen(web)
+    cookie = Node.get_cookie()
+    Node.set_cookie(c, :elsewhere)
+    on_exit(fn -> Node.set_cookie(c, cookie) end)
+    part(c)
+    {lost, _, client} = WsClient.recv_until(client, &(&1["event"]["type"] == "error"), 30_000)
+    assert lost["event"]["message"] =~ "reattaching when it is back"
+
+    Node.set_cookie(c, cookie)
+    true = Node.connect(c) or Node.connect(c)
+    assert {:ok, _changes} = HalC2.Upgrade.Tree.sync()
+
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {again, _, _client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "terminal", "event" => %{"type" => "snapshot"}} = again
   end
 
   test "a plugin topic asked for while its MC was away is asked again once it has started",
@@ -668,6 +695,16 @@ defmodule HalC2.ClusterTest do
     :ok = :gen_tcp.send(tcp, ["PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", empty_settings])
     assert {:ok, <<_::24, 4, _::binary>>} = :gen_tcp.recv(tcp, 0, 30_000)
     pid
+  end
+
+  # The test's one socket as older code leaves it: deaf to MCs, its state kept.
+  defp deafen(web) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
   end
 
   # The test's one socket as version 12 kept it: deaf to MCs coming back.

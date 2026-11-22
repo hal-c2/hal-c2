@@ -1019,6 +1019,34 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "it follows a terminal on the second member", context do
+    input = %{"threadId" => "far-th", "terminalId" => "term-1", "cwd" => context.second.home}
+    shape = %{"type" => "terminal", "mc" => Atom.to_string(context.second.mc), "input" => input}
+    client = Mc.sub(World.client(context), 5, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "terminal" and &1["id"] == 5), 30_000)
+    World.put_client(context, client)
+  end
+
+  step "the members lose each other, the terminal is lost and they meet again", context do
+    second = context.second.mc
+    cookie = Node.get_cookie()
+    # Neither dials the other back until the client has heard of the loss.
+    Node.set_cookie(second, :elsewhere)
+    ExUnit.Callbacks.on_exit(fn -> Node.set_cookie(second, cookie) end)
+    _ = Node.disconnect(second)
+    lost? = &(&1["id"] == 5 and &1["event"]["type"] == "error")
+    {_, client} = Mc.await(World.client(context), lost?, 30_000)
+    Node.set_cookie(second, cookie)
+    true = Node.connect(second) or Node.connect(second)
+    World.put_client(context, client)
+  end
+
+  step "the client is told to attach the second member's terminal again", context do
+    resync? = &(&1 == %{"t" => "resync", "id" => 5})
+    {_, client} = Mc.await(World.client(context), resync?, 30_000)
+    World.put_client(context, client)
+  end
+
   step "its socket is from before sockets heard members come back", context do
     {:ok, supervisor} = ExUnit.fetch_test_supervisor()
     [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
