@@ -134,8 +134,19 @@ Item {
             return page.world.pods.findIndex(pod => pod.review);
         }
 
+        // A Repeater's items by the key of what each shows.
+        function viewsIn(repeater) {
+            const byKey = {};
+            for (let i = 0; i < repeater.count; i++) {
+                const item = repeater.itemAt(i);
+                if (item)
+                    byKey[item.modelData.key] = item;
+            }
+            return byKey;
+        }
+
         function markOf(id) {
-            return page.markViews["mark:" + page.world.seatOf[id].index];
+            return viewsIn(page.markViews)["mark:" + page.world.seatOf[id].index];
         }
 
         function icons(map) {
@@ -1990,9 +2001,10 @@ Item {
             };
             for (let t = 0; t < 1500; t++) {
                 page.game.advance(1);
+                const screens = viewsIn(page.screenViews);
                 for (const p of people) {
                     const seat = page.world.seatOf[p.id];
-                    const view = seat && page.screenViews[seat.screen];
+                    const view = seat && screens[seat.screen];
                     if (!view || view.mode === "off") {
                         delete last[p.id];
                         continue;
@@ -2045,7 +2057,7 @@ Item {
             plugin.publish(many(16, "a", "asking"));
             for (let t = 0; t < 600; t++) {
                 page.game.advance(1);
-                for (const view of Object.values(page.screenViews))
+                for (const view of Object.values(viewsIn(page.screenViews)))
                     compare(view.slack, "");
             }
         }
@@ -2070,13 +2082,13 @@ Item {
             let slacking = 0;
             for (let t = 0; t < 300; t++) {
                 page.game.advance(1);
-                slacking += Object.values(page.screenViews).filter(view => view.slack).length;
+                slacking += Object.values(viewsIn(page.screenViews)).filter(view => view.slack).length;
             }
             verify(slacking > 0, "they slack off while waiting");
             plugin.publish(many(16, "a", data.state));
             page.game.advance(5);
             for (let t = 0; t < 600; t++) {
-                for (const view of Object.values(page.screenViews))
+                for (const view of Object.values(viewsIn(page.screenViews)))
                     compare(view.slack, "", data.tag + " people do not slack");
                 page.game.advance(1);
             }
@@ -2091,7 +2103,7 @@ Item {
             let changes = 0;
             for (let t = 0; t < 600; t++) {
                 page.game.tick(200);
-                for (const [key, view] of Object.entries(page.screenViews)) {
+                for (const [key, view] of Object.entries(viewsIn(page.screenViews))) {
                     const was = last[key];
                     if (was && view.slack && was.slack === view.slack && was.scene !== view.scene) {
                         if (was.changed)
@@ -3206,7 +3218,7 @@ Item {
         function test_a_whiteboard_fills_by_time_on_either_clock() {
             plugin.publish([person("lead", "Lead", "working", "planning")]);
             runUntil(() => arrived(actor("lead")));
-            const board = page.boardViews[actor("lead").goal.board];
+            const board = viewsIn(page.boardViews)[actor("lead").goal.board];
             runUntil(() => board.progress > 0.05, 2000, "the planner draws");
             // From just after the screens changed, so both runs count the
             // same 2.4 s.
@@ -3236,7 +3248,7 @@ Item {
             plugin.publish(many(16, "t", "idle"));
             runUntil(() => Object.values(page.game.actors).every(arrived), 6000, "everyone sits down");
             page.game.advance(10);
-            const views = Object.values(page.screenViews).filter(v => v.mode === "idle" && !v.slacking);
+            const views = Object.values(viewsIn(page.screenViews)).filter(v => v.mode === "idle" && !v.slacking);
             verify(views.length > 0, "some screens show the idle screen");
             const phases = views.map(v => v.phase);
             for (let i = 0; i < 10; i++)
@@ -3249,12 +3261,12 @@ Item {
             plugin.publish([person("lead", "Lead", "working", "planning")]);
             runUntil(() => arrived(actor("lead")));
             const key = actor("lead").goal.board;
-            const board = page.boardViews[key];
+            const board = viewsIn(page.boardViews)[key];
             const blank = board.progress;
             runUntil(() => board.progress > blank, 200, "the planner draws");
             plugin.environments = ["local", "lab"];
             page.environment = "lab";
-            verify(page.boardViews[key] === board, "the same whiteboard");
+            verify(viewsIn(page.boardViews)[key] === board, "the same whiteboard");
             compare(board.progress, blank, "wiped");
         }
 

@@ -90,9 +90,9 @@ Item {
 
     // The room as built: pods, seats and who has which.
     property var world: null
-    property var screenViews: ({})
-    property var markViews: ({})
-    property var boardViews: ({})
+    readonly property alias screenViews: screenViews
+    readonly property alias markViews: markViews
+    readonly property alias boardViews: boardViews
     property var jobs: []
     // People who came in while the doorway was busy wait outside, in order.
     // The doorway lets one person or mover through a step's time apart, from
@@ -212,7 +212,6 @@ Item {
 
     onEnvironmentChanged: reset()
     onOfficeChanged: if (!resetting) take(office)
-    onProjectIconsChanged: updateMarks()
     Component.onCompleted: follow()
 
     Connections {
@@ -1654,8 +1653,11 @@ Item {
                 setDesk(seat, false);
             }
         }
-        for (const board of Object.values(page.boardViews))
-            board.progress = board.blank;
+        for (let i = 0; i < boardViews.count; i++) {
+            const board = boardViews.itemAt(i);
+            if (board)
+                board.progress = board.blank;
+        }
         countMoves();
         page.seen = {};
         page.arrival = {};
@@ -1791,7 +1793,7 @@ Item {
                 arrive(actor);
             actor.decide(false);
         }
-        updateMarks();
+        page.deskTurns++;
     }
 
     // Builds the office with `count` pods, `across` to a row, taking over
@@ -1996,7 +1998,7 @@ Item {
             return;
         if (page.closeTo)
             take(page.office);
-        updateMarks();
+        page.deskTurns++;
         updateWalking();
     }
 
@@ -2077,7 +2079,6 @@ Item {
             page.deskCount += on ? 1 : -1;
             page.deskTurns++;
         }
-        showDesk(seat);
         if (!on)
             return;
         const owner = Object.keys(w.seatOf).find(id => w.seatOf[id] === seat);
@@ -2095,46 +2096,27 @@ Item {
         return !!seat && deskShown(seat);
     }
 
-    function showDesk(seat) {
-        const mark = page.world.marks[seat.index];
-        if (mark)
-            updateMark(mark);
-    }
-
     // ── The project on each desk ────────────────────────────────────────────
 
-    function updateMarks() {
-        const w = page.world;
-        if (!w)
-            return;
+    // Who has each seat, as of the desks' last turn.
+    readonly property var owners: {
+        const seatOf = page.deskTurns >= 0 ? page.world?.seatOf ?? {} : {};
         const owners = {};
-        for (const id of Object.keys(w.seatOf))
-            owners[w.seatOf[id].index] = id;
-        for (const mark of w.marks)
-            updateMark(mark, owners[mark.seat] ?? "");
+        for (const id of Object.keys(seatOf))
+            owners[seatOf[id].index] = id;
+        return owners;
     }
 
-    // Shows the project of whoever has the desk, while it is in the office.
-    // Reviewers hot-desk, so the corner's desks and any desk a reviewer has
-    // show none. A mark is painted again only when its project's look changes.
-    function updateMark(mark, owner) {
-        const view = page.markViews[mark.key];
-        if (!view)
-            return;
-        const w = page.world;
-        const seat = w.seats[mark.seat];
-        const id = owner ?? Object.keys(w.seatOf).find(each => w.seatOf[each] === seat) ?? "";
+    // What a desk shows: its owner's project. Reviewers hot-desk, so the
+    // corner's desks and any desk a reviewer has show none.
+    function signAt(index) {
+        const id = page.owners[index];
         const person = id ? game.actors[id]?.person : null;
-        const hot = person?.kind === "reviewer" || !!w.pods[seat.pod]?.review;
-        const sign = person && !hot ? signOf(person) : null;
-        view.visible = !!sign?.kind && deskShown(seat);
-        if (!sign)
-            return;
-        view.kind = sign.kind;
-        view.label = sign.label;
-        view.tint = sign.tint;
-        view.emoji = sign.emoji;
-        view.url = sign.url;
+        const w = page.world;
+        const seat = w?.seats[index];
+        if (!person || !seat || person.kind === "reviewer" || w.pods[seat.pod]?.review)
+            return null;
+        return signOf(person);
     }
 
     // A person's project as the sidebar draws it: its monogram in its colour,
@@ -2657,8 +2639,8 @@ Item {
     function updateScreens(elapsed) {
         if (!page.world)
             return;
-        for (const screen of page.screens) {
-            const view = page.screenViews[screen.key];
+        for (const [k, screen] of page.screens.entries()) {
+            const view = screenViews.itemAt(k);
             if (!view)
                 continue;
             const seat = page.world.seats[screen.seat];
@@ -2681,8 +2663,8 @@ Item {
             view.scene = scene;
             view.phase = phase;
         }
-        for (const board of page.boards) {
-            const view = page.boardViews[board.key];
+        for (const [k, board] of page.boards.entries()) {
+            const view = boardViews.itemAt(k);
             if (!view)
                 continue;
             const drawing = Object.values(game.actors).some(a => a.goal?.board === board.key && a.tx === a.goal.x && a.ty === a.goal.y);
@@ -3388,6 +3370,8 @@ Item {
 
             // The screens of the computers facing us.
             Repeater {
+                id: screenViews
+
                 model: page.screens
 
                 delegate: Rectangle {
@@ -3411,11 +3395,6 @@ Item {
                     height: 6
                     color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
                     visible: page.deskIn(modelData.seat)
-                    Component.onCompleted: page.screenViews[modelData.key] = screen
-                    Component.onDestruction: {
-                        if (page.screenViews[modelData.key] === screen)
-                            delete page.screenViews[modelData.key];
-                    }
 
                     Repeater {
                         model: 3
@@ -3474,17 +3453,22 @@ Item {
 
             // The project on each desk, for whoever has it.
             Repeater {
+                id: markViews
+
                 model: page.deskMarks
 
                 delegate: Item {
                     id: mark
 
                     required property var modelData
-                    property string kind: ""
-                    property string label: ""
-                    property string tint: ""
-                    property string emoji: ""
-                    property string url: ""
+                    readonly property var shows: page.signAt(modelData.seat)
+                    // The last it showed, so a desk that empties is not painted again.
+                    property var last: null
+                    readonly property string kind: last?.kind ?? ""
+                    readonly property string label: last?.label ?? ""
+                    readonly property string tint: last?.tint ?? ""
+                    readonly property string emoji: last?.emoji ?? ""
+                    readonly property string url: last?.url ?? ""
                     readonly property string sign: [kind, label, tint, emoji].join("\n")
 
                     objectName: "officeDeskMark"
@@ -3493,16 +3477,10 @@ Item {
                     z: modelData.z
                     width: modelData.w
                     height: modelData.h
-                    visible: false
+                    visible: !!shows?.kind && page.deskIn(modelData.seat)
+                    onShowsChanged: if (shows) last = shows
+                    Component.onCompleted: if (shows) last = shows
                     onSignChanged: tile.requestPaint()
-                    Component.onCompleted: {
-                        page.markViews[modelData.key] = mark;
-                        page.updateMark(modelData);
-                    }
-                    Component.onDestruction: {
-                        if (page.markViews[modelData.key] === mark)
-                            delete page.markViews[modelData.key];
-                    }
 
                     Canvas {
                         id: tile
@@ -3549,6 +3527,8 @@ Item {
 
             // What has been drawn on each whiteboard.
             Repeater {
+                id: boardViews
+
                 model: page.boards
 
                 delegate: Item {
@@ -3566,11 +3546,6 @@ Item {
                     z: modelData.z
                     width: 38
                     height: 18
-                    Component.onCompleted: page.boardViews[modelData.key] = board
-                    Component.onDestruction: {
-                        if (page.boardViews[modelData.key] === board)
-                            delete page.boardViews[modelData.key];
-                    }
 
                     Repeater {
                         model: board.marks
