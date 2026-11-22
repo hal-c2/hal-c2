@@ -198,7 +198,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     if File.regular?(Path.join(path, ".gitmodules")) do
       store = Path.join(clone, "hal-c2-submodules")
 
-      with {:ok, _} <- git(clone, ["init", "-q", "--bare", store]),
+      with {:ok, _} <- alone(clone, fn -> git(clone, ["init", "-q", "--bare", store]) end),
            {:ok, {credentials, env}} <- credentials(clone, remote, url),
            {:ok, checked} <- checked_config(path) do
         updated =
@@ -492,8 +492,10 @@ defmodule HalC2Plugins.CodeReview.Checkout do
          do: :ok
   end
 
-  # Reviews of one repository share its clone; one at a time makes it or changes its
-  # worktrees, or one's prune takes another's worktree while it is being added.
+  # Reviews of one repository share its clone and the store of submodules in it; one
+  # at a time makes either or changes the clone's worktrees, as two `git init` of one
+  # directory fail each other and one's prune takes another's worktree while it is
+  # being added.
   defp alone(repository, fun),
     do: :global.trans({{__MODULE__, repository}, self()}, fun, [node()])
 

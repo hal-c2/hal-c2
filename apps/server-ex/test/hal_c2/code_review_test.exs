@@ -672,6 +672,46 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  # From hal-c2/hal-c2#1713: two first reviews made the store at once and git failed one.
+  test "the store of submodules is made with the clone locked", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/locked")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    :ok = apply(checkout, :release, [])
+
+    # A git that says when it is making the store, and waits there until let go.
+    hold = Path.join(context.dir, "init.hold")
+    held = Path.join(context.dir, "init.held")
+    real = System.find_executable("git")
+    fake = Path.join(context.dir, "bin/git")
+
+    File.write!(fake, """
+    #!/bin/sh
+    case "$*" in
+      "init -q --bare "*/hal-c2-submodules)
+        touch '#{held}'
+        while [ -e '#{hold}' ]; do sleep 0.05; done ;;
+    esac
+    exec '#{real}' "$@"
+    """)
+
+    File.write!(hold, "")
+    File.chmod!(fake, 0o755)
+    on_exit(fn -> File.rm(hold) end)
+
+    making = Task.async(fn -> apply(checkout, :submodules, [clone, path, remote]) end)
+    await_file(held)
+    refute :global.set_lock({{checkout, clone}, self()}, [node()], 0)
+    File.rm!(hold)
+
+    assert :ok = Task.await(making, :infinity)
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
+  end
+
   test "submodules are fetched through the SSH program GIT_SSH names", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     inner = repo!(context.dir, "inner", "inner.txt")

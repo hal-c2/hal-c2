@@ -235,6 +235,19 @@ defmodule HalC2.CodeReviewPropTest do
     ])
   end
 
+  # From hal-c2/hal-c2#1713: two pull requests of one repository, let go of their
+  # fetches at once, make the clone's store of submodules and both check theirs out.
+  # Placing their worktrees spaces them out, so the race to make the store is
+  # `HalC2.CodeReviewTest`'s, which holds git midway.
+  test "two reviews of one repository let go at once both get its submodules" do
+    replay([
+      {:hold, [true]},
+      {:start, ["acme/api#1"]},
+      {:start, ["acme/api#2"]},
+      {:hold, [false]}
+    ])
+  end
+
   defp replay(steps) do
     Process.flag(:trap_exit, true)
 
@@ -2148,12 +2161,12 @@ defmodule HalC2.CodeReviewPropTest do
         do: admin
   end
 
-  # Saved checkouts of acme/web, made here rather than in a sandbox, without its
-  # submodule `lib` checked out.
+  # Saved checkouts made here rather than in a sandbox, without their submodule `lib`
+  # checked out.
   defp unchecked do
     case File.read(Path.join(data_dir(), "reviews.json")) do
       {:ok, text} ->
-        for {"acme/web" <> _, r} <- JSON.decode!(text)["reviews"],
+        for {_key, r} <- JSON.decode!(text)["reviews"],
             is_binary(r["checkout"]) and r["sandboxed"] != true,
             File.dir?(r["checkout"]),
             not File.regular?(Path.join(r["checkout"], "lib/README.md")),
@@ -2764,8 +2777,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # The fake remotes: `acme/api` and `acme/web`, each pull request with two head
-  # commits off `main` that change `src/limits.ts`. `acme/web` has `acme/lib` as its
-  # submodule `lib`. Returns `{key, i}` → sha.
+  # commits off `main` that change `src/limits.ts`. Both have `acme/lib` as their
+  # submodule `lib`, so the two of acme/api share a store of it. Returns `{key, i}` → sha.
   defp remotes(fx) do
     lib_bare = Path.join([fx, "remotes", "acme", "lib.git"])
     File.mkdir_p!(Path.dirname(lib_bare))
@@ -2788,15 +2801,13 @@ defmodule HalC2.CodeReviewPropTest do
         File.write!(Path.join(seed, "README.md"), "# #{repo}\n")
         git!(seed, ["add", "README.md"])
 
-        if repo == "web" do
-          File.write!(
-            Path.join(seed, ".gitmodules"),
-            "[submodule \"lib\"]\n\tpath = lib\n\turl = https://github.com/acme/lib.git\n"
-          )
+        File.write!(
+          Path.join(seed, ".gitmodules"),
+          "[submodule \"lib\"]\n\tpath = lib\n\turl = https://github.com/acme/lib.git\n"
+        )
 
-          git!(seed, ["add", ".gitmodules"])
-          git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{lib_sha},lib"])
-        end
+        git!(seed, ["add", ".gitmodules"])
+        git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{lib_sha},lib"])
 
         git!(seed, ["commit", "-q", "-m", "Start"])
         git!(seed, ["push", "-q", bare, "main:main"])
