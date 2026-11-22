@@ -39,11 +39,10 @@ import HalC2.Bricks
 // and then. A talk in the `office` topic walks the speaker up to the other person with a speech bubble.
 // Hover a person for who it is; click it to open its thread.
 //
-// Everything is drawn once into canvases (the floor, each piece of furniture,
-// and a sprite sheet per person) and animated by moving them on one timer that
-// runs only while the page is shown. The sprite sheets are painted a few a
-// frame; until the floor and everyone on it are drawn, the page says the office
-// is being set up.
+// The World is LjosPlay's (src/LjosPlay): it scales, paints each picture once
+// and moves it. What is written here is the office: its art, who sits where and
+// what each state looks like. Until the floor and everyone on it are drawn, the
+// page says the office is being set up.
 Item {
     id: page
 
@@ -53,6 +52,7 @@ Item {
     // environment → its watch.
     property var watches: ({})
     property string environment: ""
+    readonly property alias game: game
     readonly property var office: byEnvironment[environment] ?? null
     readonly property var people: office?.people ?? []
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -71,60 +71,10 @@ Item {
     property int moves: 0
     readonly property bool animating: visible && applicationActive && (actorCount > 0 || moves > 0)
     property bool walking: false
-    // The office fits the view at zoom 1, by its width or its height,
-    // whichever runs out first; each zoom button is a quarter more or less.
-    // It can shrink below one device pixel per art pixel only to fit, and
-    // grows no further than topScale, the most zoomed in scale.
-    property real zoom: 1
-    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
-    readonly property real fitScale: worldCols > 0 && worldRows > 0 ? Math.max(0.01, Math.min((scroller.width - 8) / (worldCols * 16), (scroller.height - 8) / (worldRows * 16))) : 1
-    readonly property real minScale: Math.min(1, fitScale)
-    readonly property real maxScale: 8
-    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
-    // Nearest-neighbour art at a fractional scale draws some art pixels a
-    // device pixel wider than others. So the art is drawn at the next whole
-    // number of device pixels per art pixel, drawScale, into a layer shrunk
-    // smoothly to pixelScale. From `crispFrom` device pixels per art pixel up
-    // a step of one device pixel is under a quarter, so a zoomed scale snaps
-    // to whole device pixels and is drawn directly; the layer is then at most
-    // `crispFrom` times the office's art size, or about the view's size at Fit.
-    readonly property int crispFrom: 4
-    readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
-    readonly property bool resampled: drawScale - pixelScale > 0.001
-
-    // The scale shown for a wanted zoomed scale: kept within bounds, and
-    // rounded to whole device pixels where that is fine enough, never past
-    // the largest whole number of device pixels within maxScale.
-    function snapScale(wanted) {
-        const ratio = devicePixelRatio;
-        const scale = Math.max(minScale, Math.min(maxScale, wanted));
-        const devicePixels = scale * ratio;
-        return devicePixels >= crispFrom ? Math.min(Math.round(devicePixels), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
-    }
-    // The most zoomed in scale shown.
-    readonly property real topScale: snapScale(maxScale)
-
-    // Zooms from the scale shown, so a step always moves it; where the scale
-    // snaps, by at least one device pixel, so in and out take the same path.
-    function zoomBy(factor) {
-        const ratio = devicePixelRatio;
-        let next = pixelScale * factor;
-        if (next * ratio >= crispFrom) {
-            // A scale between whole device pixels (Fit) moves to the next
-            // whole one, a whole one by at least one device pixel.
-            const now = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
-            const step = Math.round(next * ratio);
-            next = (factor > 1 ? Math.max(step, now + 1) : Math.min(step, now - 1)) / ratio;
-        }
-        zoom = Math.max(minScale, Math.min(maxScale, next)) / fitScale;
-    }
-
     // The office as drawn: its size in tiles, its furniture, each desk and
     // chair, the screens of its computers and its whiteboards. Built again
     // only when the office changes size; the movers bring desks in and take
     // them out.
-    property int worldCols: 0
-    property int worldRows: 0
     property var props: []
     property var units: []
     property var screens: []
@@ -177,10 +127,9 @@ Item {
     // When the screens last changed and next change (see updateScreens()).
     property real screensSeen: 0
     property real screensAt: 0
-    property var rng: random(0x0ff1ce)
     // What is on the screens draws from its own stream, so it never changes
     // where anyone goes.
-    property var screenRng: random(0x5c4ee7)
+    property var screenRng: game.random(0x5c4ee7)
 
     // What a waiting or idle person slacks off with on its screen: a
     // background and a few frames, each a list of [x, y, w, h, color] on the
@@ -212,14 +161,6 @@ Item {
             }
         })
 
-    // The people whose sprite sheets wait to be painted, in order. A full
-    // office's sheets painted at once block the page for a tenth of a second
-    // on Qt and for seconds on Ljós, so paintSheets() paints as many each
-    // frame as fit sheetBudget milliseconds, by what the last ones took.
-    property var sheetQueue: []
-    property int sheetsPending: 0
-    property real sheetCost: 0
-    readonly property real sheetBudget: 10
     // Whether this machine's office has been drawn once: its floor and the
     // sprite sheet of everyone in it. Until then the page says it is being set
     // up; newcomers after that just walk in. See settle().
@@ -300,35 +241,7 @@ Item {
         }
     }
 
-    // ── Randomness that is the same every time ──────────────────────────────
-
-    function hash(text) {
-        let h = 2166136261;
-        for (let i = 0; i < text.length; i++) {
-            h ^= text.charCodeAt(i);
-            h = Math.imul(h, 16777619);
-        }
-        return h >>> 0;
-    }
-
-    function random(seed) {
-        let s = seed >>> 0;
-        return () => {
-            s = (s + 0x6D2B79F5) >>> 0;
-            let t = s;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-        };
-    }
-
-    function pick(r, list) {
-        return list[Math.floor(r() * list.length)];
-    }
-
-    function between(r, low, high) {
-        return low + r() * (high - low);
-    }
+    // ── Colours ───────────────────────────────────────────────────────────────
 
     function shade(hex, k) {
         const n = parseInt(hex.slice(1), 16);
@@ -481,36 +394,36 @@ Item {
     // A person's look, from its thread id alone, so it is the same every time.
     // About a third of the workers are pets.
     function lookFor(person) {
-        const r = random(hash(person.id));
+        const r = game.random(game.hash(person.id));
         if (person.parentId && r() < 0.34) {
             const cat = r() < 0.5;
-            const breed = pick(r, cat ? page.cats : page.dogs);
+            const breed = game.pick(r, cat ? page.cats : page.dogs);
             return Object.assign({
                 pet: true,
                 species: cat ? "cat" : "dog",
                 gender: "",
-                collar: pick(r, ["#e04848", "#3b82f6", "#22a06b", "#e8b928", "#a855f7"]),
+                collar: game.pick(r, ["#e04848", "#3b82f6", "#22a06b", "#e8b928", "#a855f7"]),
                 eye: cat ? "#7bc043" : "#2a2226"
             }, breed);
         }
         const woman = r() < 0.5;
-        const style = woman ? pick(r, ["long", "long", "bob", "ponytail", "bun", "pigtails", "pixie", "bob", "curly", "long"]) : pick(r, ["short", "short", "sidepart", "spiky", "buzz", "bald", "curly", "mohawk", "long", "sidepart"]);
+        const style = woman ? game.pick(r, ["long", "long", "bob", "ponytail", "bun", "pigtails", "pixie", "bob", "curly", "long"]) : game.pick(r, ["short", "short", "sidepart", "spiky", "buzz", "bald", "curly", "mohawk", "long", "sidepart"]);
         const look = {
             pet: false,
             species: "human",
             gender: woman ? "woman" : "man",
-            skin: pick(r, page.skins),
-            hair: r() < 0.15 ? pick(r, page.funHairs) : pick(r, page.hairs),
+            skin: game.pick(r, page.skins),
+            hair: r() < 0.15 ? game.pick(r, page.funHairs) : game.pick(r, page.hairs),
             style: style,
-            top: woman && r() < 0.3 ? "dress" : pick(r, ["tee", "tee", "collared", "tie", "hoodie", "sweater", "blazer"]),
-            shirt: pick(r, page.cloth),
-            accent: pick(r, page.cloth),
-            pants: pick(r, page.pantsColors),
-            shoes: pick(r, page.shoeColors),
+            top: woman && r() < 0.3 ? "dress" : game.pick(r, ["tee", "tee", "collared", "tie", "hoodie", "sweater", "blazer"]),
+            shirt: game.pick(r, page.cloth),
+            accent: game.pick(r, page.cloth),
+            pants: game.pick(r, page.pantsColors),
+            shoes: game.pick(r, page.shoeColors),
             glasses: r() < 0.3,
             headphones: r() < 0.14,
-            hat: r() < 0.12 ? pick(r, ["beanie", "cap"]) : "",
-            beard: !woman && r() < 0.32 ? pick(r, ["beard", "moustache", "stubble"]) : "",
+            hat: r() < 0.12 ? game.pick(r, ["beanie", "cap"]) : "",
+            beard: !woman && r() < 0.32 ? game.pick(r, ["beard", "moustache", "stubble"]) : "",
             earrings: woman && r() < 0.4,
             lashes: woman && r() < 0.65,
             lipstick: woman && r() < 0.35,
@@ -1330,64 +1243,6 @@ Item {
 
     // Draws a whole sprite sheet into a canvas: 16×24 frames on an 18×26 grid,
     // so a scaled frame never samples the frame next to it.
-    // A person's sheet: facing us, facing left and facing away, one row each;
-    // facing right is the left row mirrored where it is shown.
-    function paintSheet(ctx, look) {
-        ctx.clearRect(0, 0, 270, 78);
-        for (const [row, d] of [[0, 0], [1, 1], [2, 3]]) {
-            for (let f = 0; f < 15; f++) {
-                const parts = look.pet ? petFrame(look, f, d) : humanFrame(look, f, d);
-                paintCell(ctx, parts, f * 18, row * 26, false);
-            }
-        }
-    }
-
-    // A person's sheet waits its turn to be painted.
-    function queueSheet(view) {
-        view.sheet = "queued";
-        page.sheetQueue.push(view);
-        page.sheetsPending++;
-    }
-
-    function dropSheet(view) {
-        const i = page.sheetQueue.indexOf(view);
-        if (i >= 0)
-            page.sheetQueue.splice(i, 1);
-        if (view.sheet === "queued" || view.sheet === "due")
-            page.sheetsPending--;
-        view.sheet = "";
-    }
-
-    // Asks the next sheets in the queue to be painted, one before it is known
-    // what a sheet takes, then as many as the budget allows; a sheet whose
-    // canvas cannot paint yet keeps its place.
-    function paintSheets() {
-        let n = page.sheetCost > 0 ? Math.max(1, Math.floor(page.sheetBudget / page.sheetCost)) : 1;
-        const waiting = [];
-        while (n > 0 && page.sheetQueue.length) {
-            const view = page.sheetQueue.shift();
-            if (!view.paintable) {
-                waiting.push(view);
-                continue;
-            }
-            view.sheet = "due";
-            view.requestSheet();
-            n--;
-        }
-        page.sheetQueue = waiting.concat(page.sheetQueue);
-    }
-
-    function sheetPainted(view, ms) {
-        if (view.sheet !== "due")
-            return;
-        view.sheet = "painted";
-        // Date.now() counts whole milliseconds; a sheet takes at least one.
-        const cost = Math.max(1, ms);
-        page.sheetCost = page.sheetCost > 0 ? 0.7 * page.sheetCost + 0.3 * cost : cost;
-        page.sheetsPending--;
-        settle(page.office);
-    }
-
     // A mover's sheet: standing and two walking frames, empty-handed and then
     // carrying, in the four directions.
     function paintMoverSheet(ctx, look) {
@@ -1425,6 +1280,12 @@ Item {
         R(O, 10, 1, 6, 6);
         R(chair, 11, 2, 4, 4);
         R(shade(chair, 0.18), 11, 2, 4, 1);
+    }
+
+    function personCell(look, frame, dir) {
+        if (!look)
+            return [];
+        return look.pet ? petFrame(look, frame, dir) : humanFrame(look, frame, dir);
     }
 
     function paintCell(ctx, parts, ox, oy, mirror) {
@@ -1688,7 +1549,7 @@ Item {
             w: w,
             h: h,
             z: z,
-            seed: hash(kind + x + "," + y)
+            seed: game.hash(kind + x + "," + y)
         }, extra ?? {}));
 
         // Pods: a row of chairs, two rows of desks, a row of chairs. Each seat
@@ -1702,7 +1563,7 @@ Item {
             const slot = index === corner ? across - 1 : index === across - 1 ? corner : index;
             const y0 = 6 + 6 * Math.floor(slot / across);
             const x = 3 + slot % across * (podCols + 2);
-            const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
+            const chair = game.pick(game.random(game.hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
             const podSeats = [];
             for (let i = 0; i < podCols; i++) {
                 for (const north of [true, false]) {
@@ -1731,7 +1592,7 @@ Item {
                         w: 16,
                         h: 16,
                         z: (y0 + 3) * 16,
-                        seed: hash("desk" + seat.index)
+                        seed: game.hash("desk" + seat.index)
                     });
                     units.push({
                         key: "chair:" + seat.index,
@@ -1743,7 +1604,7 @@ Item {
                         h: 16,
                         z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
                         color: chair,
-                        seed: hash("chair" + seat.index)
+                        seed: game.hash("chair" + seat.index)
                     });
                     if (!north)
                         screens.push({
@@ -2089,7 +1950,7 @@ Item {
     // drawn. Asked only where the people match `value`: after taking it and
     // after a paint, never from a binding, which sees the steps in between.
     function settle(value) {
-        if (!page.settled && page.world && value && page.floorPaints > 0 && page.sheetsPending === 0)
+        if (!page.settled && page.world && value && page.floorPaints > 0 && game.sheetsPending === 0)
             page.settled = true;
     }
 
@@ -2108,7 +1969,7 @@ Item {
     // narrow one, and has the fewest pods of those that show as big. Before
     // the view has a size, it is three across.
     function gridFor(pods) {
-        const vw = scroller.width - 8, vh = scroller.height - 8;
+        const vw = game.width - 8, vh = game.height - 8;
         let best = null;
         for (let across = 1; across <= Math.max(3, Math.ceil(pods / 2)); across++) {
             const down = Math.max(2, Math.ceil(pods / across));
@@ -2191,8 +2052,8 @@ Item {
         page.world = w;
         if (old)
             carry(old, w);
-        page.worldCols = w.cols;
-        page.worldRows = w.rows;
+        game.columns = w.cols;
+        game.rows = w.rows;
         page.props = w.props;
         page.units = w.units;
         page.screens = w.screens;
@@ -2374,7 +2235,7 @@ Item {
     // even when it keeps its own.
     function refit() {
         const w = page.world;
-        if (!w || scroller.width <= 8 || scroller.height <= 8)
+        if (!w || game.width <= 8 || game.height <= 8)
             return;
         const across = gridFor(w.pods.length).across;
         if (across !== w.across)
@@ -2730,7 +2591,7 @@ Item {
             plan: "",
             // The chance it gets up for a break each time it thinks of one,
             // its own (see restless()).
-            restless: between(page.rng, 0.15, 0.5),
+            restless: game.between(game.rng, 0.15, 0.5),
             claim: -1,
             hold: -1,
             until: 0,
@@ -2749,7 +2610,7 @@ Item {
             slack: "",
             slackFor: "",
             slackUntil: 0,
-            beat: hash(person.id) % 25,
+            beat: game.hash(person.id) % 25,
             faceUntil: 0
         };
     }
@@ -2979,7 +2840,7 @@ Item {
         if (!options.length)
             return null;
         const current = options.find(s => s.x === actor.goal?.x && s.y === actor.goal?.y);
-        const spot = current ?? pick(page.rng, options);
+        const spot = current ?? game.pick(game.rng, options);
         claim(actor, spot);
         return Object.assign({}, spot, {
             pose: pose ?? spot.pose
@@ -3013,11 +2874,11 @@ Item {
         };
         const options = page.world.spots.filter(s => s.area === "break" && weights[s.kind] && (!s.pets || pet) && free(s, actor));
         if (!options.length) {
-            const free = nearestFree(page.world.bx + 4 + Math.floor(page.rng() * 4), 11 + Math.floor(page.rng() * 3), actor.id);
+            const free = nearestFree(page.world.bx + 4 + Math.floor(game.rng() * 4), 11 + Math.floor(game.rng() * 3), actor.id);
             const goal = {
                 x: free[0],
                 y: free[1],
-                face: Math.floor(page.rng() * 4),
+                face: Math.floor(game.rng() * 4),
                 offY: 0,
                 pose: pet ? "sit" : "stand",
                 kind: "floor"
@@ -3028,7 +2889,7 @@ Item {
         let total = 0;
         for (const s of options)
             total += weights[s.kind];
-        let r = page.rng() * total;
+        let r = game.rng() * total;
         let spot = options[options.length - 1];
         for (const s of options) {
             r -= weights[s.kind];
@@ -3040,7 +2901,7 @@ Item {
         claim(actor, spot);
         let pose = spot.pose;
         if (spot.kind === "couch" || spot.kind === "armchair")
-            pose = pet ? (page.rng() < 0.7 ? "nap" : "sit") : idle && page.rng() < 0.35 ? "nap" : "sit";
+            pose = pet ? (game.rng() < 0.7 ? "nap" : "sit") : idle && game.rng() < 0.35 ? "nap" : "sit";
         return Object.assign({}, spot, {
             pose: pose
         });
@@ -3098,8 +2959,8 @@ Item {
     // finished by then.
     function restless(actor) {
         actor.cup = false;
-        actor.until = page.now + between(page.rng, 15000, 45000);
-        if (page.rng() >= actor.restless)
+        actor.until = page.now + game.between(game.rng, 15000, 45000);
+        if (game.rng() >= actor.restless)
             return;
         let away = 0;
         for (const id of Object.keys(page.actors)) {
@@ -3117,7 +2978,7 @@ Item {
     function takeBreak(actor) {
         const goal = breakGoal(actor, actor.person.state === "idle");
         const stage = goal.pose === "machine";
-        actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 8000, 15000) : between(page.rng, 10000, 25000);
+        actor.stay = stage ? game.between(game.rng, 3000, 5000) : goal.kind === "arcade" ? game.between(game.rng, 8000, 15000) : game.between(game.rng, 10000, 25000);
         actor.until = Infinity;
         if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
             actor.cup = false;
@@ -3510,7 +3371,7 @@ Item {
                 decide(actor, true);
             else if (actor.plan === "rest" && actor.goal?.seat && actor.tx === actor.goal.x && actor.ty === actor.goal.y && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity)
-                    actor.until = page.now + between(page.rng, 15000, 45000);
+                    actor.until = page.now + game.between(game.rng, 15000, 45000);
                 else if (page.now >= actor.until)
                     restless(actor);
             } else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
@@ -3522,7 +3383,7 @@ Item {
                     const cup = actor.goal?.pose === "machine" && actor.goal.cup;
                     if (cup)
                         actor.cup = true;
-                    if (cup && page.rng() < 0.5)
+                    if (cup && game.rng() < 0.5)
                         takeBreak(actor);
                     else
                         decide(actor, true);
@@ -3695,9 +3556,9 @@ Item {
         }
         if (page.now >= actor.slackUntil || actor.slackFor !== state) {
             const odds = state === "waiting" ? 0.75 : 0.35;
-            actor.slack = page.screenRng() < odds ? pick(page.screenRng, Object.keys(page.slackArt)) : "";
+            actor.slack = page.screenRng() < odds ? game.pick(page.screenRng, Object.keys(page.slackArt)) : "";
             actor.slackFor = state;
-            actor.slackUntil = page.now + between(page.screenRng, 8000, 20000);
+            actor.slackUntil = page.now + game.between(page.screenRng, 8000, 20000);
         }
         return actor.slack;
     }
@@ -4001,7 +3862,7 @@ Item {
 
     function paintProp(ctx, p) {
         ctx.clearRect(0, 0, p.w, p.h);
-        const r = random(p.seed);
+        const r = game.random(p.seed);
         const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
         const O = page.outline;
         switch (p.kind) {
@@ -4020,7 +3881,7 @@ Item {
             R("#4b5160", 3, 4, 9, 1);
             if (r() < 0.3) {
                 R(O, 13, 4, 3, 4);
-                R(pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
+                R(game.pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
             }
             break;
         case "deskS":
@@ -4041,7 +3902,7 @@ Item {
                 const thing = r();
                 if (thing < 0.25) {
                     R(O, 0, 3, 3, 5);
-                    R(pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), 1, 4, 1, 3);
+                    R(game.pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), 1, 4, 1, 3);
                 } else if (thing < 0.45) {
                     R("#3a9a68", 13, 2, 3, 2);
                     R("#4fbf85", 13, 3, 3, 3);
@@ -4092,7 +3953,7 @@ Item {
                         }
                         if (x + bw > 29)
                             break;
-                        const c = pick(r, books);
+                        const c = game.pick(r, books);
                         R(c, x, base - bh, bw, bh);
                         R(shade(c, 0.25), x, base - bh, 1, bh);
                         R(shade(c, -0.3), x, base - bh + 2, bw, 1);
@@ -4119,7 +3980,7 @@ Item {
             }
         case "plant":
             {
-                const leaf = pick(r, ["#3fa560", "#4fbf75", "#2f8f5a"]);
+                const leaf = game.pick(r, ["#3fa560", "#4fbf75", "#2f8f5a"]);
                 R("rgba(0,0,0,0.25)", 3, 28, 10, 2);
                 R(O, 3, 18, 10, 11);
                 R("#c4693b", 4, 19, 8, 9);
@@ -4210,7 +4071,7 @@ Item {
                 for (let row = 0; row < 4; row++) {
                     R("#3a3542", 3, 11 + row * 7, 18, 1);
                     for (let col = 0; col < 4; col++)
-                        R(pick(r, snacks), 4 + col * 4, 7 + row * 7, 3, 4);
+                        R(game.pick(r, snacks), 4 + col * 4, 7 + row * 7, 3, 4);
                 }
                 R("rgba(255,255,255,0.18)", 4, 6, 2, 28);
                 R("#2b2f39", 23, 6, 6, 10);
@@ -4356,14 +4217,6 @@ Item {
     }
 
     Timer {
-        objectName: "officeSheetPainter"
-        interval: 16
-        repeat: true
-        running: page.visible && page.sheetsPending > 0
-        onTriggered: page.paintSheets()
-    }
-
-    Timer {
         interval: page.walking ? 40 : 200
         repeat: true
         running: page.animating
@@ -4428,36 +4281,46 @@ Item {
             ShellButton {
                 text: "−"
                 toolTip: qsTr("Zoom out")
-                enabled: page.pixelScale > page.minScale + 0.001
-                onClicked: page.zoomBy(1 / 1.25)
+                enabled: game.pixelScale > game.minScale + 0.001
+                onClicked: game.zoomBy(1 / 1.25)
             }
 
             ShellButton {
                 text: qsTr("Fit")
                 toolTip: qsTr("Fit the office to the view")
-                enabled: page.zoom !== 1
-                onClicked: page.zoom = 1
+                enabled: game.zoom !== 1
+                onClicked: game.zoom = 1
             }
 
             ShellButton {
                 objectName: "officeZoomIn"
                 text: "+"
                 toolTip: qsTr("Zoom in")
-                enabled: page.pixelScale < page.topScale - 0.001
-                onClicked: page.zoomBy(1.25)
+                enabled: game.pixelScale < game.topScale - 0.001
+                onClicked: game.zoomBy(1.25)
             }
         }
 
-        Flickable {
-            id: scroller
+        World {
+            id: game
 
             objectName: "officeScroller"
+            name: qsTr("Office")
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            contentWidth: Math.max(width, stage.width)
-            contentHeight: Math.max(height, stage.height)
-            boundsBehavior: Flickable.StopAtBounds
+            seed: 0x0ff1ce
+            columns: 0
+            rows: 0
+            active: page.applicationActive
+            busy: false
+            // Hidden until set up; the people in it are out of reach until
+            // then too (see their Touchable).
+            ready: page.settled
+            fontScale: Theme.fontScale
+            stageName: "officeStage"
+            artName: "officeArt"
+            painterName: "officeSheetPainter"
+            onSheetPainted: page.settle(page.office)
             // Once for both sides of a resize, at its new size.
             onWidthChanged: refitLater.restart()
             onHeightChanged: refitLater.restart()
@@ -4465,718 +4328,623 @@ Item {
             ScrollBar.vertical: ScrollBar {}
             ScrollBar.horizontal: ScrollBar {}
 
-            Item {
-                id: stage
+            Canvas {
+                id: floor
 
-                objectName: "officeStage"
-                // Hidden until set up; the people in it are out of reach until
-                // then too (see their MouseArea).
-                opacity: page.settled ? 1 : 0
-                x: Math.max(0, (scroller.width - width) / 2)
-                y: Math.max(0, (scroller.height - height) / 2)
-                width: page.worldCols * 16 * page.pixelScale
-                height: page.worldRows * 16 * page.pixelScale
+                z: -1
+                width: Math.max(1, game.pixelWidth)
+                height: Math.max(1, game.pixelHeight)
+                smooth: false
+                antialiasing: false
+                onPaint: {
+                    page.floorPaints++;
+                    page.paintFloor(getContext("2d"));
+                    page.settle(page.office);
+                }
+            }
 
-                Item {
-                    objectName: "officeArt"
-                    width: page.worldCols * 16 * page.drawScale
-                    height: page.worldRows * 16 * page.drawScale
-                    scale: page.pixelScale / page.drawScale
-                    transformOrigin: Item.TopLeft
-                    layer.enabled: page.resampled
-                    layer.smooth: true
+            Repeater {
+                model: page.props
+
+                delegate: Canvas {
+                    required property var modelData
+
+                    x: modelData.x
+                    y: modelData.y
+                    z: modelData.z
+                    width: modelData.w
+                    height: modelData.h
+                    smooth: false
+                    antialiasing: false
+                    onPaint: page.paintProp(getContext("2d"), modelData)
+                }
+            }
+
+            // Each seat's desk and chair, shown while it is in the office.
+            Repeater {
+                model: page.units
+
+                delegate: Canvas {
+                    id: unit
+
+                    required property var modelData
+
+                    x: modelData.x
+                    y: modelData.y
+                    z: modelData.z
+                    width: modelData.w
+                    height: modelData.h
+                    smooth: false
+                    antialiasing: false
+                    Component.onCompleted: {
+                        page.unitViews[modelData.key] = unit;
+                        visible = page.deskShown(page.world.seats[modelData.seat]);
+                    }
+                    Component.onDestruction: {
+                        if (page.unitViews[modelData.key] === unit)
+                            delete page.unitViews[modelData.key];
+                    }
+                    onPaint: page.paintProp(getContext("2d"), modelData)
+                }
+            }
+
+            // The screens of the computers facing us.
+            Repeater {
+                model: page.screens
+
+                delegate: Rectangle {
+                    id: screen
+
+                    required property var modelData
+                    property string mode: "off"
+                    property int phase: 0
+                    // What its sitter slacks off with, and which frame of it.
+                    property string slack: ""
+                    property int scene: 0
+                    readonly property var art: slack ? page.slackArt[slack] : null
+                    readonly property bool slacking: slack !== ""
+                    readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
+                    readonly property bool terminal: mode === "running" || mode === "testing"
+
+                    x: modelData.x
+                    y: modelData.y
+                    z: modelData.z
+                    width: 8
+                    height: 6
+                    color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                    Component.onCompleted: {
+                        page.screenViews[modelData.key] = screen;
+                        visible = page.deskShown(page.world.seats[modelData.seat]);
+                    }
+                    Component.onDestruction: {
+                        if (page.screenViews[modelData.key] === screen)
+                            delete page.screenViews[modelData.key];
+                    }
+
+                    Repeater {
+                        model: 3
+
+                        delegate: Rectangle {
+                            required property int index
+
+                            visible: screen.mode !== "off" && !screen.art
+                            x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
+                            y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
+                            height: 1
+                            width: {
+                                if (screen.mode === "failed")
+                                    return index === 1 ? 6 : 0;
+                                if (screen.mode === "browsing")
+                                    return index === 0 ? 8 : 2 + ((screen.phase + index * 3) % 4);
+                                if (screen.mode === "idle")
+                                    return index === 1 ? 2 : 0;
+                                return 1 + ((screen.phase * (index + 2) + index * 5) % 6);
+                            }
+                            color: {
+                                if (screen.mode === "failed")
+                                    return "#ffb3b3";
+                                if (screen.mode === "browsing")
+                                    return index === 0 ? "#4a90d9" : "#9aa5b0";
+                                if (screen.mode === "testing")
+                                    return (screen.phase + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                if (screen.mode === "running")
+                                    return "#5fd38a";
+                                if (screen.mode === "idle")
+                                    return "#9cc8ff";
+                                return ["#c792ea", "#82aaff", "#f8c25c"][index];
+                            }
+                        }
+                    }
+
+                    // Its slacking frame: up to six blocks of pixels,
+                    // made while it slacks and only moved as frames change.
+                    Repeater {
+                        model: screen.slacking ? 6 : 0
+
+                        delegate: Rectangle {
+                            required property int index
+                            readonly property var block: screen.art ? screen.art.frames[screen.scene % screen.art.frames.length][index] : undefined
+
+                            visible: block !== undefined
+                            x: block?.[0] ?? 0
+                            y: block?.[1] ?? 0
+                            width: block?.[2] ?? 0
+                            height: block?.[3] ?? 0
+                            color: block?.[4] ?? "transparent"
+                        }
+                    }
+                }
+            }
+
+            // The project on each desk, for whoever has it.
+            Repeater {
+                model: page.deskMarks
+
+                delegate: Item {
+                    id: mark
+
+                    required property var modelData
+                    property string kind: ""
+                    property string label: ""
+                    property string tint: ""
+                    property string emoji: ""
+                    property string url: ""
+                    readonly property string sign: [kind, label, tint, emoji].join("\n")
+
+                    objectName: "officeDeskMark"
+                    x: modelData.x
+                    y: modelData.y
+                    z: modelData.z
+                    width: modelData.w
+                    height: modelData.h
+                    visible: false
+                    onSignChanged: tile.requestPaint()
+                    Component.onCompleted: {
+                        page.markViews[modelData.key] = mark;
+                        page.updateMark(modelData);
+                    }
+                    Component.onDestruction: {
+                        if (page.markViews[modelData.key] === mark)
+                            delete page.markViews[modelData.key];
+                    }
+
+                    Canvas {
+                        id: tile
+
+                        anchors.fill: parent
+                        smooth: false
+                        antialiasing: false
+                        onPaint: {
+                            page.markPaints++;
+                            page.paintMark(getContext("2d"), mark);
+                        }
+                    }
+                    // An emoji, drawn at the mark's own few pixels.
+                    Item {
+                        anchors.fill: parent
+                        visible: mark.kind === "emoji"
+                        layer.enabled: visible
+                        layer.smooth: false
+                        layer.textureSize: Qt.size(width, height)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: mark.emoji
+                            font.pixelSize: mark.height
+                            Accessible.ignored: true
+                        }
+                    }
+                    // A logo, drawn at the mark's own few pixels.
+                    Image {
+                        objectName: "officeDeskLogo"
+                        Accessible.ignored: true
+                        x: Math.floor((mark.width - mark.height) / 2)
+                        width: mark.height
+                        height: mark.height
+                        visible: mark.kind === "image" && status === Image.Ready
+                        source: mark.kind === "image" ? mark.url : ""
+                        sourceSize: Qt.size(mark.height, mark.height)
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        asynchronous: true
+                    }
+                }
+            }
+
+            // What has been drawn on each whiteboard.
+            Repeater {
+                model: page.boards
+
+                delegate: Item {
+                    id: board
+
+                    required property var modelData
+                    readonly property real blank: 0.15
+                    property real progress: blank
+                    // Doodles, or on the review corner's board a
+                    // checklist beside a diff.
+                    readonly property var marks: modelData.review ? [[1, 1, 3, 3, "#3d4451"], [2, 2, 1, 1, "#3fa560"], [6, 2, 12, 1, "#3d4451"], [1, 7, 3, 3, "#3d4451"], [2, 8, 1, 1, "#3fa560"], [6, 8, 9, 1, "#3d4451"], [1, 13, 3, 3, "#3d4451"], [6, 14, 11, 1, "#3d4451"], [22, 2, 12, 1, "#3fa560"], [22, 5, 9, 1, "#e05d5d"], [22, 8, 13, 1, "#3fa560"], [22, 11, 7, 1, "#3fa560"], [22, 14, 10, 1, "#e05d5d"]] : [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
+
+                    x: modelData.x
+                    y: modelData.y
+                    z: modelData.z
+                    width: 38
+                    height: 18
+                    Component.onCompleted: page.boardViews[modelData.key] = board
+                    Component.onDestruction: {
+                        if (page.boardViews[modelData.key] === board)
+                            delete page.boardViews[modelData.key];
+                    }
+
+                    Repeater {
+                        model: board.marks
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+                            readonly property int count: board.marks.length
+                            readonly property real start: index / count
+
+                            x: modelData[0]
+                            y: modelData[1]
+                            height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
+                            width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * count)))
+                            color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
+                            border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
+                            border.color: modelData[4]
+                            visible: width > 0
+                        }
+                    }
+                }
+            }
+
+            // The movers, and the desks they carry.
+            Repeater {
+                model: moverModel
+
+                delegate: Item {
+                    id: mover
+
+                    required property string moverId
+                    property int frame: 0
+                    property int dir: 0
+                    property bool carrying: false
+                    readonly property var who: page.movers[moverId] ?? null
+
+                    objectName: "officeMover:" + moverId
+                    width: 16
+                    height: 24
+                    Component.onCompleted: {
+                        page.moverViews[moverId] = mover;
+                        if (who)
+                            page.renderMover(who);
+                    }
+                    Component.onDestruction: {
+                        if (page.moverViews[moverId] === mover)
+                            delete page.moverViews[moverId];
+                    }
 
                     Item {
-                        id: world
-
-                        width: page.worldCols * 16
-                        height: page.worldRows * 16
-                        scale: page.drawScale
-                        transformOrigin: Item.TopLeft
+                        width: 16
+                        height: 24
+                        clip: true
 
                         Canvas {
-                            id: floor
-
-                            z: -1
-                            width: Math.max(1, page.worldCols * 16)
-                            height: Math.max(1, page.worldRows * 16)
+                            x: -(mover.frame + (mover.carrying ? 3 : 0)) * 18
+                            y: -mover.dir * 26
+                            width: 108
+                            height: 104
                             smooth: false
                             antialiasing: false
                             onPaint: {
-                                page.floorPaints++;
-                                page.paintFloor(getContext("2d"));
-                                page.settle(page.office);
+                                if (mover.who)
+                                    page.paintMoverSheet(getContext("2d"), mover.who.look);
                             }
                         }
+                    }
 
-                        Repeater {
-                            model: page.props
+                    Canvas {
+                        objectName: "officeLoad:" + mover.moverId
+                        visible: mover.carrying
+                        // Seen from behind, the mover's back hides it.
+                        z: mover.dir === 3 ? -1 : 0
+                        y: 8
+                        width: 16
+                        height: 14
+                        smooth: false
+                        antialiasing: false
+                        onPaint: page.paintLoad(getContext("2d"), mover.who?.chair ?? "#3d4a63")
+                    }
+                }
+            }
 
-                            delegate: Canvas {
-                                required property var modelData
+            // The people.
+            Repeater {
+                model: actorModel
 
-                                x: modelData.x
-                                y: modelData.y
-                                z: modelData.z
-                                width: modelData.w
-                                height: modelData.h
-                                smooth: false
-                                antialiasing: false
-                                onPaint: page.paintProp(getContext("2d"), modelData)
-                            }
+                delegate: Item {
+                    id: person
+
+                    required property string actorId
+                    property int frame: 0
+                    property int dir: 0
+                    readonly property var look: page.actors[actorId]?.look ?? null
+
+                    width: 16
+                    height: 24
+                    Component.onCompleted: {
+                        page.views[actorId] = person;
+                        const actor = page.actors[actorId];
+                        if (actor)
+                            page.render(actor);
+                    }
+                    Component.onDestruction: {
+                        if (page.views[actorId] === person)
+                            delete page.views[actorId];
+                    }
+
+                    Sheet {
+                        columns: 15
+                        rows: 3
+                        cellHeight: 24
+                        frame: person.frame
+                        facing: person.dir
+                        // A row each facing us, left and away.
+                        draw: (f, row) => page.personCell(person.look, f, [0, 1, 3][row])
+                    }
+
+                    // Tab walks the people; a focused one shows its card as a
+                    // hovered one does, and Return or Space opens its thread.
+                    // Nobody is reachable while the office is being set up.
+                    Touchable {
+                        objectName: "officePerson:" + person.actorId
+                        name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
+                        enabled: page.settled
+                        x: 2
+                        y: 2
+                        width: 12
+                        height: 21
+                        onActivated: page.openPerson(person.actorId)
+                        onEntered: page.hovered = person.actorId
+                        onExited: {
+                            if (page.hovered === person.actorId && !activeFocus)
+                                page.hovered = "";
+                        }
+                        onActiveFocusChanged: {
+                            if (activeFocus)
+                                page.hovered = person.actorId;
+                            else if (page.hovered === person.actorId && !containsMouse)
+                                page.hovered = "";
+                        }
+                    }
+                }
+            }
+
+            // Speech bubbles and icons, over everything and not pixelated.
+            overlay: Item {
+                anchors.fill: parent
+
+                Repeater {
+                    model: actorModel
+
+                    delegate: Item {
+                        id: over
+
+                        required property string actorId
+                        property real anchorX: 0
+                        property real anchorY: 0
+                        property string icon: ""
+                        property string bubble: ""
+                        property int bob: 0
+
+                        x: anchorX * game.pixelScale
+                        y: anchorY * game.pixelScale
+                        z: bubble ? 2 : 1
+                        Component.onCompleted: {
+                            page.overlays[actorId] = over;
+                            const actor = page.actors[actorId];
+                            if (actor)
+                                page.render(actor);
+                        }
+                        Component.onDestruction: {
+                            if (page.overlays[actorId] === over)
+                                delete page.overlays[actorId];
                         }
 
-                        // Each seat's desk and chair, shown while it is in the office.
-                        Repeater {
-                            model: page.units
+                        Item {
+                            objectName: "officeIcon:" + over.actorId
+                            visible: over.icon !== ""
+                            x: -5 * game.pixelScale
+                            y: (-11 - over.bob) * game.pixelScale
+                            width: 10 * game.drawScale
+                            height: 11 * game.drawScale
+                            scale: game.pixelScale / game.drawScale
+                            transformOrigin: Item.TopLeft
+                            layer.enabled: visible && game.resampled
+                            layer.smooth: true
 
-                            delegate: Canvas {
-                                id: unit
-
-                                required property var modelData
-
-                                x: modelData.x
-                                y: modelData.y
-                                z: modelData.z
-                                width: modelData.w
-                                height: modelData.h
-                                smooth: false
-                                antialiasing: false
-                                Component.onCompleted: {
-                                    page.unitViews[modelData.key] = unit;
-                                    visible = page.deskShown(page.world.seats[modelData.seat]);
-                                }
-                                Component.onDestruction: {
-                                    if (page.unitViews[modelData.key] === unit)
-                                        delete page.unitViews[modelData.key];
-                                }
-                                onPaint: page.paintProp(getContext("2d"), modelData)
-                            }
-                        }
-
-                        // The screens of the computers facing us.
-                        Repeater {
-                            model: page.screens
-
-                            delegate: Rectangle {
-                                id: screen
-
-                                required property var modelData
-                                property string mode: "off"
-                                property int phase: 0
-                                // What its sitter slacks off with, and which frame of it.
-                                property string slack: ""
-                                property int scene: 0
-                                readonly property var art: slack ? page.slackArt[slack] : null
-                                readonly property bool slacking: slack !== ""
-                                readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
-                                readonly property bool terminal: mode === "running" || mode === "testing"
-
-                                x: modelData.x
-                                y: modelData.y
-                                z: modelData.z
-                                width: 8
-                                height: 6
-                                color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                                Component.onCompleted: {
-                                    page.screenViews[modelData.key] = screen;
-                                    visible = page.deskShown(page.world.seats[modelData.seat]);
-                                }
-                                Component.onDestruction: {
-                                    if (page.screenViews[modelData.key] === screen)
-                                        delete page.screenViews[modelData.key];
-                                }
-
-                                Repeater {
-                                    model: 3
-
-                                    delegate: Rectangle {
-                                        required property int index
-
-                                        visible: screen.mode !== "off" && !screen.art
-                                        x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
-                                        y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
-                                        height: 1
-                                        width: {
-                                            if (screen.mode === "failed")
-                                                return index === 1 ? 6 : 0;
-                                            if (screen.mode === "browsing")
-                                                return index === 0 ? 8 : 2 + ((screen.phase + index * 3) % 4);
-                                            if (screen.mode === "idle")
-                                                return index === 1 ? 2 : 0;
-                                            return 1 + ((screen.phase * (index + 2) + index * 5) % 6);
-                                        }
-                                        color: {
-                                            if (screen.mode === "failed")
-                                                return "#ffb3b3";
-                                            if (screen.mode === "browsing")
-                                                return index === 0 ? "#4a90d9" : "#9aa5b0";
-                                            if (screen.mode === "testing")
-                                                return (screen.phase + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
-                                            if (screen.mode === "running")
-                                                return "#5fd38a";
-                                            if (screen.mode === "idle")
-                                                return "#9cc8ff";
-                                            return ["#c792ea", "#82aaff", "#f8c25c"][index];
-                                        }
-                                    }
-                                }
-
-                                // Its slacking frame: up to six blocks of pixels,
-                                // made while it slacks and only moved as frames change.
-                                Repeater {
-                                    model: screen.slacking ? 6 : 0
-
-                                    delegate: Rectangle {
-                                        required property int index
-                                        readonly property var block: screen.art ? screen.art.frames[screen.scene % screen.art.frames.length][index] : undefined
-
-                                        visible: block !== undefined
-                                        x: block?.[0] ?? 0
-                                        y: block?.[1] ?? 0
-                                        width: block?.[2] ?? 0
-                                        height: block?.[3] ?? 0
-                                        color: block?.[4] ?? "transparent"
-                                    }
-                                }
-                            }
-                        }
-
-                        // The project on each desk, for whoever has it.
-                        Repeater {
-                            model: page.deskMarks
-
-                            delegate: Item {
-                                id: mark
-
-                                required property var modelData
-                                property string kind: ""
-                                property string label: ""
-                                property string tint: ""
-                                property string emoji: ""
-                                property string url: ""
-                                readonly property string sign: [kind, label, tint, emoji].join("\n")
-
-                                objectName: "officeDeskMark"
-                                x: modelData.x
-                                y: modelData.y
-                                z: modelData.z
-                                width: modelData.w
-                                height: modelData.h
-                                visible: false
-                                onSignChanged: tile.requestPaint()
-                                Component.onCompleted: {
-                                    page.markViews[modelData.key] = mark;
-                                    page.updateMark(modelData);
-                                }
-                                Component.onDestruction: {
-                                    if (page.markViews[modelData.key] === mark)
-                                        delete page.markViews[modelData.key];
-                                }
-
-                                Canvas {
-                                    id: tile
-
-                                    anchors.fill: parent
-                                    smooth: false
-                                    antialiasing: false
-                                    onPaint: {
-                                        page.markPaints++;
-                                        page.paintMark(getContext("2d"), mark);
-                                    }
-                                }
-                                // An emoji, drawn at the mark's own few pixels.
-                                Item {
-                                    anchors.fill: parent
-                                    visible: mark.kind === "emoji"
-                                    layer.enabled: visible
-                                    layer.smooth: false
-                                    layer.textureSize: Qt.size(width, height)
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: mark.emoji
-                                        font.pixelSize: mark.height
-                                        Accessible.ignored: true
-                                    }
-                                }
-                                // A logo, drawn at the mark's own few pixels.
-                                Image {
-                                    objectName: "officeDeskLogo"
-                                    Accessible.ignored: true
-                                    x: Math.floor((mark.width - mark.height) / 2)
-                                    width: mark.height
-                                    height: mark.height
-                                    visible: mark.kind === "image" && status === Image.Ready
-                                    source: mark.kind === "image" ? mark.url : ""
-                                    sourceSize: Qt.size(mark.height, mark.height)
-                                    fillMode: Image.PreserveAspectFit
-                                    smooth: false
-                                    asynchronous: true
-                                }
-                            }
-                        }
-
-                        // What has been drawn on each whiteboard.
-                        Repeater {
-                            model: page.boards
-
-                            delegate: Item {
-                                id: board
-
-                                required property var modelData
-                                readonly property real blank: 0.15
-                                property real progress: blank
-                                // Doodles, or on the review corner's board a
-                                // checklist beside a diff.
-                                readonly property var marks: modelData.review ? [[1, 1, 3, 3, "#3d4451"], [2, 2, 1, 1, "#3fa560"], [6, 2, 12, 1, "#3d4451"], [1, 7, 3, 3, "#3d4451"], [2, 8, 1, 1, "#3fa560"], [6, 8, 9, 1, "#3d4451"], [1, 13, 3, 3, "#3d4451"], [6, 14, 11, 1, "#3d4451"], [22, 2, 12, 1, "#3fa560"], [22, 5, 9, 1, "#e05d5d"], [22, 8, 13, 1, "#3fa560"], [22, 11, 7, 1, "#3fa560"], [22, 14, 10, 1, "#e05d5d"]] : [[1, 1, 14, 1, "#3d4451"], [1, 4, 10, 1, "#4a90d9"], [1, 7, 12, 1, "#4a90d9"], [19, 1, 8, 7, "#e05d5d"], [30, 3, 6, 1, "#3d4451"], [1, 11, 6, 5, "#5fbf7a"], [9, 12, 18, 1, "#3d4451"], [9, 15, 12, 1, "#3d4451"], [29, 10, 7, 6, "#e8894a"]]
-
-                                x: modelData.x
-                                y: modelData.y
-                                z: modelData.z
-                                width: 38
-                                height: 18
-                                Component.onCompleted: page.boardViews[modelData.key] = board
-                                Component.onDestruction: {
-                                    if (page.boardViews[modelData.key] === board)
-                                        delete page.boardViews[modelData.key];
-                                }
-
-                                Repeater {
-                                    model: board.marks
-
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        required property int index
-                                        readonly property int count: board.marks.length
-                                        readonly property real start: index / count
-
-                                        x: modelData[0]
-                                        y: modelData[1]
-                                        height: modelData[3] > 1 && modelData[2] > 1 ? modelData[3] : 1
-                                        width: Math.round(modelData[2] * Math.max(0, Math.min(1, (board.progress - start) * count)))
-                                        color: modelData[3] > 1 && modelData[2] > 1 ? "transparent" : modelData[4]
-                                        border.width: modelData[3] > 1 && modelData[2] > 1 ? 1 : 0
-                                        border.color: modelData[4]
-                                        visible: width > 0
-                                    }
-                                }
-                            }
-                        }
-
-                        // The movers, and the desks they carry.
-                        Repeater {
-                            model: moverModel
-
-                            delegate: Item {
-                                id: mover
-
-                                required property string moverId
-                                property int frame: 0
-                                property int dir: 0
-                                property bool carrying: false
-                                readonly property var who: page.movers[moverId] ?? null
-
-                                objectName: "officeMover:" + moverId
-                                width: 16
-                                height: 24
-                                Component.onCompleted: {
-                                    page.moverViews[moverId] = mover;
-                                    if (who)
-                                        page.renderMover(who);
-                                }
-                                Component.onDestruction: {
-                                    if (page.moverViews[moverId] === mover)
-                                        delete page.moverViews[moverId];
-                                }
-
-                                Item {
-                                    width: 16
-                                    height: 24
-                                    clip: true
-
-                                    Canvas {
-                                        x: -(mover.frame + (mover.carrying ? 3 : 0)) * 18
-                                        y: -mover.dir * 26
-                                        width: 108
-                                        height: 104
-                                        smooth: false
-                                        antialiasing: false
-                                        onPaint: {
-                                            if (mover.who)
-                                                page.paintMoverSheet(getContext("2d"), mover.who.look);
-                                        }
-                                    }
-                                }
-
-                                Canvas {
-                                    objectName: "officeLoad:" + mover.moverId
-                                    visible: mover.carrying
-                                    // Seen from behind, the mover's back hides it.
-                                    z: mover.dir === 3 ? -1 : 0
-                                    y: 8
-                                    width: 16
-                                    height: 14
-                                    smooth: false
-                                    antialiasing: false
-                                    onPaint: page.paintLoad(getContext("2d"), mover.who?.chair ?? "#3d4a63")
-                                }
-                            }
-                        }
-
-                        // The people.
-                        Repeater {
-                            model: actorModel
-
-                            delegate: Item {
-                                id: person
-
-                                required property string actorId
-                                property int frame: 0
-                                property int dir: 0
-                                readonly property var look: page.actors[actorId]?.look ?? null
-                                // Its sprite sheet: "queued", "due" (asked to
-                                // paint) or "painted"; see paintSheets().
-                                property string sheet: ""
-                                readonly property bool paintable: sheetCanvas.available
-
-                                function requestSheet() {
-                                    sheetCanvas.requestPaint();
-                                }
-
-                                width: 16
-                                height: 24
+                            Item {
+                                width: 10
+                                height: 11
+                                scale: game.drawScale
+                                transformOrigin: Item.TopLeft
                                 clip: true
-                                Component.onCompleted: {
-                                    page.views[actorId] = person;
-                                    page.queueSheet(person);
-                                    const actor = page.actors[actorId];
-                                    if (actor)
-                                        page.render(actor);
-                                }
-                                Component.onDestruction: {
-                                    page.dropSheet(person);
-                                    if (page.views[actorId] === person)
-                                        delete page.views[actorId];
-                                }
 
                                 Canvas {
-                                    id: sheetCanvas
-
-                                    x: -person.frame * 18
-                                    y: -[0, 26, 26, 52][person.dir]
-                                    width: 270
-                                    height: 78
+                                    x: -({
+                                            ask: 0,
+                                            fail: 16,
+                                            think: 32,
+                                            nap: 48
+                                        }[over.icon] ?? 0)
+                                    width: 64
+                                    height: 11
                                     smooth: false
                                     antialiasing: false
-                                    transform: Scale {
-                                        origin.x: person.frame * 18 + 8
-                                        xScale: person.dir === 2 ? -1 : 1
-                                    }
-                                    onPaint: {
-                                        if (person.sheet === "queued")
-                                            return;
-                                        const start = Date.now();
-                                        if (person.look)
-                                            page.paintSheet(getContext("2d"), person.look);
-                                        page.sheetPainted(person, Date.now() - start);
-                                    }
+                                    onPaint: page.paintIcons(getContext("2d"))
                                 }
+                            }
+                        }
 
-                                // Tab walks the people; a focused one shows its card as a
-                                // hovered one does, and Return or Space opens its thread.
-                                // Nobody is reachable while the office is being set up.
-                                // (On this item, not the stage: under a stage whose
-                                // `enabled` changes, Ljós reports `visible` a change late,
-                                // hal-c2/ljos-ui#611.)
-                                MouseArea {
-                                    id: hit
+                        Rectangle {
+                            id: bubble
 
-                                    enabled: page.settled
+                            objectName: "officeBubble:" + over.actorId
+                            visible: over.bubble !== ""
+                            x: Math.max(-over.x, Math.min(game.overlayItem.width - over.x - width, -width / 2))
+                            y: -height - 3 * game.pixelScale
+                            width: Math.min(220, bubbleText.implicitWidth + 16)
+                            height: bubbleText.implicitHeight + 10
+                            color: "#fbf8f1"
+                            border.color: "#211d2a"
+                            border.width: 2
 
-                                    objectName: "officePerson:" + person.actorId
-                                    Accessible.role: Accessible.Button
-                                    Accessible.name: page.people.find(p => p.id === person.actorId)?.title ?? qsTr("Person")
-                                    Accessible.onPressAction: page.openPerson(person.actorId)
-                                    activeFocusOnTab: true
-                                    x: 2
-                                    y: 2
-                                    width: 12
-                                    height: 21
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onEntered: page.hovered = person.actorId
-                                    onExited: {
-                                        if (page.hovered === person.actorId && !activeFocus)
-                                            page.hovered = "";
-                                    }
-                                    onActiveFocusChanged: {
-                                        if (activeFocus) {
-                                            page.hovered = person.actorId;
-                                            page.reveal(hit);
-                                        } else if (page.hovered === person.actorId && !containsMouse)
-                                            page.hovered = "";
-                                    }
-                                    onClicked: page.openPerson(person.actorId)
-                                    Keys.onReturnPressed: page.openPerson(person.actorId)
-                                    Keys.onEnterPressed: page.openPerson(person.actorId)
-                                    Keys.onSpacePressed: page.openPerson(person.actorId)
-                                }
+                            Text {
+                                id: bubbleText
 
-                                // The focus ring of the person Tab is on.
-                                Rectangle {
-                                    visible: hit.activeFocus
-                                    anchors.fill: hit
-                                    color: "transparent"
-                                    border.width: 1
-                                    border.color: "#ffd84a"
-                                }
+                                anchors.centerIn: parent
+                                width: Math.min(204, implicitWidth)
+                                text: over.bubble
+                                textFormat: Text.PlainText
+                                color: "#211d2a"
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.weight: Font.Medium
+                            }
+
+                            Rectangle {
+                                x: -bubble.x - 4
+                                y: bubble.height - 2
+                                width: 8
+                                height: 4
+                                color: "#fbf8f1"
+                                border.color: "#211d2a"
+                                border.width: 2
+                            }
+
+                            Rectangle {
+                                x: -bubble.x - 2
+                                y: bubble.height - 2
+                                width: 4
+                                height: 3
+                                color: "#fbf8f1"
                             }
                         }
                     }
                 }
 
-                // Speech bubbles and icons, over everything and not pixelated.
-                Item {
-                    id: overlay
+                // Who the hovered person is.
+                Rectangle {
+                    id: card
 
-                    anchors.fill: parent
+                    readonly property var actor: page.hovered ? page.actors[page.hovered] ?? null : null
+                    readonly property var person: page.people.find(p => p.id === page.hovered) ?? null
+                    readonly property var over: page.hovered ? page.overlays[page.hovered] ?? null : null
 
-                    Repeater {
-                        model: actorModel
+                    objectName: "officeCard"
+                    visible: person !== null && over !== null
+                    z: 10
+                    x: over ? Math.max(0, Math.min(game.overlayItem.width - width, over.x + 10 * game.pixelScale)) : 0
+                    y: over ? Math.max(0, over.y - 4 * game.pixelScale) : 0
+                    width: Math.min(280, Math.max(160, cardColumn.implicitWidth + 20))
+                    height: cardColumn.implicitHeight + 16
+                    color: "#211d2a"
+                    border.color: "#fbf8f1"
+                    border.width: 2
 
-                        delegate: Item {
-                            id: over
+                    Column {
+                        id: cardColumn
 
-                            required property string actorId
-                            property real anchorX: 0
-                            property real anchorY: 0
-                            property string icon: ""
-                            property string bubble: ""
-                            property int bob: 0
+                        x: 10
+                        y: 8
+                        width: card.width - 20
+                        spacing: 2
 
-                            x: anchorX * page.pixelScale
-                            y: anchorY * page.pixelScale
-                            z: bubble ? 2 : 1
-                            Component.onCompleted: {
-                                page.overlays[actorId] = over;
-                                const actor = page.actors[actorId];
-                                if (actor)
-                                    page.render(actor);
-                            }
-                            Component.onDestruction: {
-                                if (page.overlays[actorId] === over)
-                                    delete page.overlays[actorId];
-                            }
-
-                            Item {
-                                objectName: "officeIcon:" + over.actorId
-                                visible: over.icon !== ""
-                                x: -5 * page.pixelScale
-                                y: (-11 - over.bob) * page.pixelScale
-                                width: 10 * page.drawScale
-                                height: 11 * page.drawScale
-                                scale: page.pixelScale / page.drawScale
-                                transformOrigin: Item.TopLeft
-                                layer.enabled: visible && page.resampled
-                                layer.smooth: true
-
-                                Item {
-                                    width: 10
-                                    height: 11
-                                    scale: page.drawScale
-                                    transformOrigin: Item.TopLeft
-                                    clip: true
-
-                                    Canvas {
-                                        x: -({
-                                                ask: 0,
-                                                fail: 16,
-                                                think: 32,
-                                                nap: 48
-                                            }[over.icon] ?? 0)
-                                        width: 64
-                                        height: 11
-                                        smooth: false
-                                        antialiasing: false
-                                        onPaint: page.paintIcons(getContext("2d"))
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                id: bubble
-
-                                objectName: "officeBubble:" + over.actorId
-                                visible: over.bubble !== ""
-                                x: Math.max(-over.x, Math.min(stage.width - over.x - width, -width / 2))
-                                y: -height - 3 * page.pixelScale
-                                width: Math.min(220, bubbleText.implicitWidth + 16)
-                                height: bubbleText.implicitHeight + 10
-                                color: "#fbf8f1"
-                                border.color: "#211d2a"
-                                border.width: 2
-
-                                Text {
-                                    id: bubbleText
-
-                                    anchors.centerIn: parent
-                                    width: Math.min(204, implicitWidth)
-                                    text: over.bubble
-                                    textFormat: Text.PlainText
-                                    color: "#211d2a"
-                                    wrapMode: Text.Wrap
-                                    maximumLineCount: 3
-                                    elide: Text.ElideRight
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    font.weight: Font.Medium
-                                }
-
-                                Rectangle {
-                                    x: -bubble.x - 4
-                                    y: bubble.height - 2
-                                    width: 8
-                                    height: 4
-                                    color: "#fbf8f1"
-                                    border.color: "#211d2a"
-                                    border.width: 2
-                                }
-
-                                Rectangle {
-                                    x: -bubble.x - 2
-                                    y: bubble.height - 2
-                                    width: 4
-                                    height: 3
-                                    color: "#fbf8f1"
-                                }
-                            }
+                        Text {
+                            objectName: "officeCardTitle"
+                            width: parent.width
+                            text: card.person?.title ?? ""
+                            textFormat: Text.PlainText
+                            color: "#fbf8f1"
+                            elide: Text.ElideRight
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.weight: Font.DemiBold
                         }
-                    }
 
-                    // Who the hovered person is.
-                    Rectangle {
-                        id: card
+                        Row {
+                            width: parent.width
+                            spacing: 5
+                            visible: projectText.text.length > 0
 
-                        readonly property var actor: page.hovered ? page.actors[page.hovered] ?? null : null
-                        readonly property var person: page.people.find(p => p.id === page.hovered) ?? null
-                        readonly property var over: page.hovered ? page.overlays[page.hovered] ?? null : null
-
-                        objectName: "officeCard"
-                        visible: person !== null && over !== null
-                        z: 10
-                        x: over ? Math.max(0, Math.min(stage.width - width, over.x + 10 * page.pixelScale)) : 0
-                        y: over ? Math.max(0, over.y - 4 * page.pixelScale) : 0
-                        width: Math.min(280, Math.max(160, cardColumn.implicitWidth + 20))
-                        height: cardColumn.implicitHeight + 16
-                        color: "#211d2a"
-                        border.color: "#fbf8f1"
-                        border.width: 2
-
-                        Column {
-                            id: cardColumn
-
-                            x: 10
-                            y: 8
-                            width: card.width - 20
-                            spacing: 2
-
-                            Text {
-                                objectName: "officeCardTitle"
-                                width: parent.width
-                                text: card.person?.title ?? ""
-                                textFormat: Text.PlainText
-                                color: "#fbf8f1"
-                                elide: Text.ElideRight
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
-                                font.weight: Font.DemiBold
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: 5
-                                visible: projectText.text.length > 0
-
-                                ProjectIcon {
-                                    objectName: "officeCardProjectIcon"
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    size: Math.round(12 * Theme.fontScale)
-                                    icon: card.person ? page.projectIcons?.[page.environment + ":" + card.person.projectId] ?? null : null
-                                    name: card.person?.project ?? ""
-                                }
-
-                                Text {
-                                    id: projectText
-
-                                    objectName: "officeCardProject"
-                                    width: parent.width - parent.spacing - Math.round(12 * Theme.fontScale)
-                                    text: [card.person?.project ?? "", card.person?.kind === "reviewer" ? qsTr("reviewing") : "", card.actor?.look.pet ? card.actor.look.breed : ""].filter(s => s).join(" · ")
-                                    textFormat: Text.PlainText
-                                    color: "#bdb6c9"
-                                    elide: Text.ElideRight
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
-                                }
+                            ProjectIcon {
+                                objectName: "officeCardProjectIcon"
+                                anchors.verticalCenter: parent.verticalCenter
+                                size: Math.round(12 * Theme.fontScale)
+                                icon: card.person ? page.projectIcons?.[page.environment + ":" + card.person.projectId] ?? null : null
+                                name: card.person?.project ?? ""
                             }
 
                             Text {
-                                objectName: "officeCardAgent"
-                                width: parent.width
-                                visible: text.length > 0
-                                text: [card.person?.provider ?? "", card.person?.model ?? ""].filter(s => s).join(" · ")
+                                id: projectText
+
+                                objectName: "officeCardProject"
+                                width: parent.width - parent.spacing - Math.round(12 * Theme.fontScale)
+                                text: [card.person?.project ?? "", card.person?.kind === "reviewer" ? qsTr("reviewing") : "", card.actor?.look.pet ? card.actor.look.breed : ""].filter(s => s).join(" · ")
                                 textFormat: Text.PlainText
                                 color: "#bdb6c9"
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
+                        }
 
-                            Text {
-                                objectName: "officeCardState"
-                                width: parent.width
-                                text: card.person ? page.personState(card.person) : ""
-                                textFormat: Text.PlainText
-                                color: card.person?.state === "asking" ? "#ffd84a" : card.person?.state === "failed" ? "#ff8a8a" : "#9fe0b0"
-                                elide: Text.ElideRight
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
-                            }
+                        Text {
+                            objectName: "officeCardAgent"
+                            width: parent.width
+                            visible: text.length > 0
+                            text: [card.person?.provider ?? "", card.person?.model ?? ""].filter(s => s).join(" · ")
+                            textFormat: Text.PlainText
+                            color: "#bdb6c9"
+                            elide: Text.ElideRight
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                        }
+
+                        Text {
+                            objectName: "officeCardState"
+                            width: parent.width
+                            text: card.person ? page.personState(card.person) : ""
+                            textFormat: Text.PlainText
+                            color: card.person?.state === "asking" ? "#ffd84a" : card.person?.state === "failed" ? "#ff8a8a" : "#9fe0b0"
+                            elide: Text.ElideRight
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
                     }
                 }
             }
-
-            Text {
-                objectName: "officeMessage"
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 32, 420)
-                visible: text.length > 0
-                text: {
-                    if (page.plugin.environments.length === 0)
-                        return qsTr("No machine runs the Office plugin yet.");
-                    if (page.office === null)
-                        return qsTr("Waiting for the office…");
-                    if (page.people.length === 0)
-                        return qsTr("Nobody is in the office. Threads show up here as they work.");
-                    return page.settled ? "" : qsTr("Setting up the office…");
-                }
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
-            }
         }
     }
 
-    // Scrolls the office just enough to show `item`.
-    function reveal(item) {
-        const r = item.mapToItem(scroller.contentItem, 0, 0, item.width, item.height);
-        const fit = (at, size, view, content, start) => {
-            let next = at;
-            if (start < next)
-                next = start;
-            else if (start + size > next + view)
-                next = start + size - view;
-            return Math.max(0, Math.min(Math.max(0, content - view), next));
-        };
-        scroller.contentX = fit(scroller.contentX, r.width, scroller.width, scroller.contentWidth, r.x);
-        scroller.contentY = fit(scroller.contentY, r.height, scroller.height, scroller.contentHeight, r.y);
+    // Over the stage, which is hidden until set up.
+    Text {
+        parent: game.contentItem
+        objectName: "officeMessage"
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 32, 420)
+        visible: text.length > 0
+        text: {
+            if (page.plugin.environments.length === 0)
+                return qsTr("No machine runs the Office plugin yet.");
+            if (page.office === null)
+                return qsTr("Waiting for the office…");
+            if (page.people.length === 0)
+                return qsTr("Nobody is in the office. Threads show up here as they work.");
+            return page.settled ? "" : qsTr("Setting up the office…");
+        }
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.Wrap
+        color: page.muted
+        font.pixelSize: Math.round(13 * Theme.fontScale)
     }
 
     function summary() {

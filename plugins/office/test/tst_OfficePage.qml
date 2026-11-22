@@ -288,7 +288,7 @@ Item {
                 plugin: plugin
             });
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => made.worldCols > 0);
+            tryVerify(() => made.game.columns > 0);
             wait(50);
             const summary = findChild(made, "officeSummary");
             const scroller = findChild(made, "officeScroller");
@@ -304,7 +304,7 @@ Item {
             }
             compare(buttons, 3);
             verify(row.width >= needed, "the summary and the zoom buttons fit side by side");
-            verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
+            verify(scroller.width >= made.game.columns * 16 && scroller.height > 0, "the office has room to show");
         }
 
         function test_some_workers_are_cats_and_dogs() {
@@ -900,7 +900,7 @@ Item {
             // Six pods hold 40 people; the review corner's 8 desks are for
             // reviewers only.
             plugin.publish(many(40, "t", "working", "typing"));
-            const cols = page.worldCols, rows = page.worldRows;
+            const cols = page.game.columns, rows = page.game.rows;
             compare(grid(), [3, 6]);
             compare(page.world.seats.length, 48);
             seated(40);
@@ -913,7 +913,7 @@ Item {
 
             plugin.publish(many(41, "t", "working", "typing"));
             compare(grid(), [4, 8], "a pod more to each row");
-            compare(page.worldRows, rows, "as deep as before");
+            compare(page.game.rows, rows, "as deep as before");
             compare(page.world.seats.length, 64);
             seated(41);
             for (const id of Object.keys(seats))
@@ -926,7 +926,7 @@ Item {
             compare(grid(), [4, 8], "56 people fit");
             plugin.publish(many(70, "t", "working", "typing"));
             compare(grid(), [4, 12], "a row of pods more");
-            compare(page.worldRows, rows + 6);
+            compare(page.game.rows, rows + 6);
             compare(page.world.entrance, [2, rows + 4], "the entrance moves down with the wall");
             seated(70);
             walk(300);
@@ -953,7 +953,7 @@ Item {
             plugin.publish(many(32, "t", "working", "typing"));
             compare(page.closeTo, 6, "32 people leave a pod free in six");
             runUntil(() => page.world.pods.length === 6, 6000, "the office shrinks back to its first size");
-            compare([page.worldCols, page.worldRows], [cols, rows]);
+            compare([page.game.columns, page.game.rows], [cols, rows]);
             seated(32);
             walk(400);
             // Past 40 people again, it grows at once.
@@ -987,7 +987,7 @@ Item {
             plugin.publish(many(70, "t", "working", "typing"));
             const wide = page.world.across;
             // Rows of three pods: four rows for 70 people.
-            verify(page.fitScale > fitOf(33, 31), "it shows bigger than in rows of three: " + page.fitScale + " against " + fitOf(33, 31));
+            verify(page.game.fitScale > fitOf(33, 31), "it shows bigger than in rows of three: " + page.game.fitScale + " against " + fitOf(33, 31));
             const seats = {}, at = {};
             for (const id of Object.keys(page.actors)) {
                 seats[id] = page.world.seatOf[id].index;
@@ -1020,7 +1020,7 @@ Item {
                 resize(size[0], size[1]);
                 open();
                 plugin.publish(many(12, "t", "working", "typing"));
-                compare([page.world.across, page.world.pods.length, page.worldCols, page.worldRows], [3, 6, 33, 19], size.join("×"));
+                compare([page.world.across, page.world.pods.length, page.game.columns, page.game.rows], [3, 6, 33, 19], size.join("×"));
             }
         }
 
@@ -1030,7 +1030,7 @@ Item {
             resize(300, 1000);
             plugin.publish(many(12, "t", "working", "typing").concat([reviewer("r0", "Review 0")]));
             compare([page.world.across, page.world.pods.length], [1, 6]);
-            verify(page.fitScale > fitOf(27, 25), "it shows bigger than two across: " + page.fitScale + " against " + fitOf(27, 25));
+            verify(page.game.fitScale > fitOf(27, 25), "it shows bigger than two across: " + page.game.fitScale + " against " + fitOf(27, 25));
             const corner = page.world.pods.find(pod => pod.review);
             compare(corner.y, Math.min(...page.world.pods.map(pod => pod.y)), "the review corner is the top pod");
             compare(page.world.seatOf["r0"].pod, page.world.pods.indexOf(corner), "the reviewer sits there");
@@ -1644,7 +1644,7 @@ Item {
             plugin.publish(many(30, "t", "working", "typing"));
             compare(page.closeTo, 6);
             walk(4000);
-            compare([page.world.pods.length, page.worldRows], [6, 19]);
+            compare([page.world.pods.length, page.game.rows], [6, 19]);
             compare(page.closeTo, 0);
             runUntil(() => Object.keys(page.movers).length === 0 && page.jobs.length === 0, 4000, "the movers are done");
             for (const id of Object.keys(page.actors))
@@ -1660,7 +1660,7 @@ Item {
             verify(page.world.pods.length > 6, "75 people need more pods");
             plugin.publish([]);
             compare(page.closeTo, 0, "no closure is left pending");
-            compare([page.world.pods.length, page.worldRows], [6, 19], "the office is back to six pods");
+            compare([page.world.pods.length, page.game.rows], [6, 19], "the office is back to six pods");
         }
 
         function test_a_break_lasts_from_when_the_person_gets_there() {
@@ -2711,16 +2711,16 @@ Item {
         // out first, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {
             plugin.publish(many(9, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const scroller = find("officeScroller");
             const stage = find("officeStage");
             verify(stage.width <= scroller.width && stage.height <= scroller.height, "the whole office shows");
             verify(scroller.width - stage.width <= 8 || scroller.height - stage.height <= 8, "it fills one side of the view");
-            const fitted = page.pixelScale;
-            page.zoomBy(1.25);
-            verify(page.pixelScale > fitted && page.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
-            page.zoom = 1;
-            compare(page.pixelScale, fitted);
+            const fitted = page.game.pixelScale;
+            page.game.zoomBy(1.25);
+            verify(page.game.pixelScale > fitted && page.game.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
+            page.game.zoom = 1;
+            compare(page.game.pixelScale, fitted);
         }
 
         // A view wide enough to fit the office past the most zoomed in scale
@@ -2730,8 +2730,8 @@ Item {
             loader.width = 16000;
             loader.height = 10000;
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0 && page.fitScale > page.maxScale, 1000, "the view fits the office past the most zoomed in scale");
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            tryVerify(() => page.game.columns > 0 && page.game.fitScale > page.game.maxScale, 1000, "the view fits the office past the most zoomed in scale");
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!find("officeArt").layer.enabled, "the art is drawn directly");
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
@@ -2743,7 +2743,7 @@ Item {
             loader.width = 2600;
             loader.height = 1600;
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0 && page.fitScale * page.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
+            tryVerify(() => page.game.columns > 0 && page.game.fitScale * page.game.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
             const scroller = find("officeScroller");
             const stage = find("officeStage");
             verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows");
@@ -2754,19 +2754,19 @@ Item {
         // returns to the same scale.
         function test_zooming_in_and_out_returns_to_the_same_scale() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            page.zoom = 4 / page.devicePixelRatio / page.fitScale;
-            for (let i = 0; i < 12 && page.pixelScale < page.topScale - 0.001; i++) {
-                const before = page.pixelScale;
-                page.zoomBy(1.25);
+            tryVerify(() => page.game.columns > 0);
+            page.game.zoom = 4 / page.game.devicePixelRatio / page.game.fitScale;
+            for (let i = 0; i < 12 && page.game.pixelScale < page.game.topScale - 0.001; i++) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1.25);
                 // A step held back by the most zoomed in scale is not undone.
-                if (page.pixelScale >= page.topScale - 0.001)
+                if (page.game.pixelScale >= page.game.topScale - 0.001)
                     break;
-                const after = page.pixelScale;
-                page.zoomBy(1 / 1.25);
-                fuzzyCompare(page.pixelScale, before, 1e-9, "out undoes in");
-                page.zoomBy(1.25);
-                fuzzyCompare(page.pixelScale, after, 1e-9, "in again goes as far");
+                const after = page.game.pixelScale;
+                page.game.zoomBy(1 / 1.25);
+                fuzzyCompare(page.game.pixelScale, before, 1e-9, "out undoes in");
+                page.game.zoomBy(1.25);
+                fuzzyCompare(page.game.pixelScale, after, 1e-9, "in again goes as far");
             }
         }
 
@@ -2774,12 +2774,12 @@ Item {
         // the most zoom allows, and the zoom-in button stops there.
         function test_the_most_zoomed_in_scale_is_whole_device_pixels() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            const ratio = page.devicePixelRatio;
-            fuzzyCompare(page.topScale * ratio, Math.round(page.topScale * ratio), 1e-9);
-            verify(page.topScale <= page.maxScale + 1e-9 && page.topScale > page.maxScale - 1 / ratio, "as far in as whole device pixels go");
-            page.zoom = page.maxScale / page.fitScale;
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            tryVerify(() => page.game.columns > 0);
+            const ratio = page.game.devicePixelRatio;
+            fuzzyCompare(page.game.topScale * ratio, Math.round(page.game.topScale * ratio), 1e-9);
+            verify(page.game.topScale <= page.game.maxScale + 1e-9 && page.game.topScale > page.game.maxScale - 1 / ratio, "as far in as whole device pixels go");
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
 
@@ -2787,11 +2787,11 @@ Item {
         // the next whole one, not one past it.
         function test_a_step_from_between_whole_pixels_goes_to_the_next() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            const ratio = page.devicePixelRatio;
-            page.zoom = 3.55 / ratio / page.fitScale;
-            page.zoomBy(1.25);
-            fuzzyCompare(page.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
+            tryVerify(() => page.game.columns > 0);
+            const ratio = page.game.devicePixelRatio;
+            page.game.zoom = 3.55 / ratio / page.game.fitScale;
+            page.game.zoomBy(1.25);
+            fuzzyCompare(page.game.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
         }
 
         // At a zoom between whole pixels the art is drawn at a whole number of
@@ -2799,17 +2799,17 @@ Item {
         // drawn wider than another; at a whole zoom it is drawn as it is.
         function test_art_at_a_fractional_zoom_keeps_its_pixels_even() {
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const art = find("officeArt");
             const stage = find("officeStage");
-            const ratio = page.devicePixelRatio;
-            page.zoom = 3.5 / ratio / page.fitScale;
-            const devicePixels = page.drawScale * ratio;
+            const ratio = page.game.devicePixelRatio;
+            page.game.zoom = 3.5 / ratio / page.game.fitScale;
+            const devicePixels = page.game.drawScale * ratio;
             fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
-            verify(page.drawScale >= page.pixelScale);
+            verify(page.game.drawScale >= page.game.pixelScale);
             verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
             fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
-            page.zoom = 3 / ratio / page.fitScale;
+            page.game.zoom = 3 / ratio / page.game.fitScale;
             verify(!art.layer.enabled, "a whole zoom draws the art directly");
             compare(art.scale, 1);
         }
@@ -2819,23 +2819,23 @@ Item {
         // whole zoomed office is drawn.
         function test_zoomed_in_far_the_art_is_drawn_directly() {
             plugin.publish(many(20, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const art = find("officeArt");
             let steps = 0;
-            while (page.pixelScale < page.topScale - 0.001 && steps < 40) {
-                const before = page.pixelScale;
-                page.zoomBy(1.25);
-                verify(page.pixelScale > before, "each step zooms in");
+            while (page.game.pixelScale < page.game.topScale - 0.001 && steps < 40) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1.25);
+                verify(page.game.pixelScale > before, "each step zooms in");
                 if (art.layer.enabled)
-                    verify(page.drawScale * page.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
+                    verify(page.game.drawScale * page.game.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
                 steps++;
             }
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!art.layer.enabled, "the most zoomed in office is drawn directly");
-            while (page.pixelScale > 1.001 && steps < 80) {
-                const before = page.pixelScale;
-                page.zoomBy(1 / 1.25);
-                verify(page.pixelScale < before, "each step zooms out");
+            while (page.game.pixelScale > 1.001 && steps < 80) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1 / 1.25);
+                verify(page.game.pixelScale < before, "each step zooms out");
                 steps++;
             }
         }
@@ -2844,25 +2844,25 @@ Item {
         // after the view changes moves the scale from what is shown.
         function test_a_small_view_fits_the_office_and_zoom_steps_from_what_shows() {
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const scroller = find("officeScroller");
             const stage = find("officeStage");
-            while (page.pixelScale > page.minScale + 0.001)
-                page.zoomBy(1 / 1.25);
+            while (page.game.pixelScale > page.game.minScale + 0.001)
+                page.game.zoomBy(1 / 1.25);
             loader.height = 200;
-            tryVerify(() => page.fitScale < 1, 1000, "the office is taller than the view");
+            tryVerify(() => page.game.fitScale < 1, 1000, "the office is taller than the view");
             verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows when zoomed out");
-            const shown = page.pixelScale;
-            page.zoomBy(1.25);
-            verify(page.pixelScale > shown, "the first step after the view shrank zooms in");
-            page.zoom = 1;
+            const shown = page.game.pixelScale;
+            page.game.zoomBy(1.25);
+            verify(page.game.pixelScale > shown, "the first step after the view shrank zooms in");
+            page.game.zoom = 1;
             verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows at Fit");
         }
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
             tryVerify(() => page.settled);
-            page.zoom = page.maxScale / page.fitScale;
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
             const scroller = find("officeScroller");
             const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
             const hit = find("officePerson:" + far.id);
@@ -3305,19 +3305,19 @@ Item {
             compare(message(), "Setting up the office…");
             compare(find("officeStage").opacity, 0, "nothing half drawn shows");
             verify(!find("officePerson:t0").enabled, "nobody can be hovered, reached with Tab or clicked yet");
-            compare(page.sheetsPending, 40);
+            compare(page.game.sheetsPending, 40);
             // The sheets are painted a few a frame, not all at once.
-            tryVerify(() => page.sheetsPending < 40);
-            verify(page.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
+            tryVerify(() => page.game.sheetsPending < 40);
+            verify(page.game.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
             waitForRendering(page);
             const summary = find("officeSummary");
             verify(find("officeZoomIn").x >= summary.x + summary.width, "the zoom buttons sit beside the summary");
             tryVerify(() => page.settled, 5000);
-            compare(page.sheetsPending, 0);
+            compare(page.game.sheetsPending, 0);
             compare(message(), "");
             compare(find("officeStage").opacity, 1);
             verify(find("officePerson:t0").enabled);
-            verify(page.sheetCost > 0, "what a sheet takes is known");
+            verify(page.game.sheetCost > 0, "what a sheet takes is known");
             // The first people are already where they belong.
             for (const id of Object.keys(page.actors))
                 verify(!page.outside.includes(id), id + " is not waiting outside");
@@ -3333,7 +3333,7 @@ Item {
             tryVerify(() => page.settled);
             plugin.publish(many(3, "t", "working", "typing"));
             compare(message(), "", "newcomers to a settled office just walk in");
-            tryVerify(() => page.sheetsPending === 0);
+            tryVerify(() => page.game.sheetsPending === 0);
             compare(message(), "");
         }
 
@@ -3367,14 +3367,14 @@ Item {
             plugin.publish(many(8, "t", "idle"));
             page.visible = false;
             verify(!find("officeSheetPainter").running, "no sheet is asked for while hidden");
-            compare(page.sheetsPending, 8);
+            compare(page.game.sheetsPending, 8);
             page.visible = true;
             tryVerify(() => page.settled);
             page.visible = false;
             page.visible = true;
             find("officeZoomIn").clicked();
-            page.zoom = 1;
-            compare(page.sheetsPending, 0);
+            page.game.zoom = 1;
+            compare(page.game.sheetsPending, 0);
             compare(message(), "");
             verify(page.settled);
         }
