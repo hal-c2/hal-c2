@@ -1156,7 +1156,8 @@ Rectangle {
                                 implicitHeight: Theme.control.sm
                                 width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "terminal"
-                                text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
+                                text: modelData.label + " " + keptEnd
+                                keptEnd: modelData.lineStart === modelData.lineEnd ? qsTr("line %1").arg(modelData.lineStart) : qsTr("lines %1-%2").arg(modelData.lineStart).arg(modelData.lineEnd)
                                 font.pixelSize: Theme.type.meta.size
                                 Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                                 onClicked: Shell.dispatch("composer.terminalContext.remove", {

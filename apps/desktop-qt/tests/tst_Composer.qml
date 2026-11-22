@@ -503,6 +503,28 @@ Item {
             tryVerify(() => shown().length === 3 && inside(), 3000, "the context chips end inside the strip");
         }
 
+        // Only the name elides: how the upload stands, and a selection's lines, stay whole.
+        function test_aLongNameKeepsItsStatus_data() {
+            return [
+                { tag: "failed", file: { status: "failed" }, end: "(upload failed)" },
+                { tag: "uploading", file: { status: "uploading", progress: 0.4 }, end: "(uploading 40%)" },
+                { tag: "lines", file: null, end: "lines 12-40" }
+            ];
+        }
+
+        function test_aLongNameKeepsItsStatus(row) {
+            const long = "Screenshot from 2026-11-22 14-03-22 of a window with a long title.png";
+            const draft = row.file ? { attachments: [Object.assign({ id: "a", name: long, kind: "image", preview: "", source: null }, row.file)] } : { terminalContexts: [{ id: "a", label: long, lineStart: 12, lineEnd: 40 }] };
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), draft), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 360 });
+            const button = () => findChild(composer, row.file ? "attachment:" + long : "terminalContext-a");
+            tryVerify(() => button() !== null && button().width > 0 && button().width < button().implicitWidth, 3000, "the name is too long for the strip");
+            tryVerify(() => {
+                const end = findChild(button(), "buttonKeptEnd");
+                return end !== null && end.visible && end.text === row.end && !end.truncated && end.mapToItem(button(), end.width, 0).x <= button().width + 1;
+            }, 3000, row.end + " shows whole");
+        }
+
         function test_fastModeSaysItIsOn() {
             const state = fast => ({ composer: Object.assign({}, Shell.defaultComposer(), {
                 options: [{ id: "fastMode", label: "Fast Mode", type: "boolean", value: fast, choices: [] }]
