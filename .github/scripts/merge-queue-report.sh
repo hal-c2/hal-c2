@@ -48,10 +48,8 @@ fi
 listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
 
 # A run whose own CI result passed has nothing to report: a parked run, or one cancelled
-# after its entry left the queue (ci-result.sh). A parked run can list two: the answer a
-# later entry stamped on it, and its own.
-if jq -e '[.jobs[] | select(.name == "CI result") | .conclusion] | length > 0 and all(. == "success")' \
-  <<<"$listing" >/dev/null; then
+# after its entry left the queue (ci-result.sh).
+if [ "$(jq -r '.jobs[] | select(.name == "CI result") | .conclusion' <<<"$listing")" = success ]; then
   echo "run $run's CI result passed"
   exit 0
 fi
