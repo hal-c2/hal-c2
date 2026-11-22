@@ -172,6 +172,20 @@ defmodule HalC2.ProviderHandoffProofTest do
     refute_deadlock(proof, init, "settled", besides: @faults ++ ~w(background settle))
   end
 
+  test "a turn's room is what it reported, or what it sent and any answer still to come",
+       %{proof: proof} do
+    for {turns, next, held} <- [
+          {"pturn(1, a, 1) never(1)", 2, 1},
+          {"pturn(1, a, 1)", 2, 2},
+          {"pturn(1, a, 1) report(1, 5)", 2, 5},
+          {"pturn(1, a, 1) never(1) pturn(2, a, 1)", 3, 3}
+        ] do
+      red = "red in PROVIDER-HANDOFF : occ(a, 1, #{next}, #{turns}) ."
+      assert {:ok, out} = ExMaude.execute(red, pool: proof.pool)
+      assert out =~ ~r/\b#{held}\s*$/, "#{turns}: #{out}"
+    end
+  end
+
   test "every run ends when nothing is lost", %{proof: proof} do
     assert_ltl(proof, "start(#{@design}, 8, 0, 0, #{@script})", "<> finished", [])
   end
