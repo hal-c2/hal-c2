@@ -36,8 +36,8 @@ permissions: {}
 jobs:
   watch:
     name: Drop wedged queue entries
-    # A queue run, or a parked entry's run the watchdog started on its queue branch.
-    if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/')
+    # A merge group's run. By event: a fork can give its PR's branch any name.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group'
     # Job-level, so a pending watch replacing another never drops a report.
     concurrency:
       group: merge-queue-watchdog
@@ -61,7 +61,7 @@ jobs:
     name: Report a failed queue run on its PR
     if: >-
       (github.event_name == 'workflow_run'
-      && startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/')
+      && github.event.workflow_run.event == 'merge_group'
       && github.event.workflow_run.conclusion != 'success')
       || (github.event_name == 'workflow_dispatch' && inputs.run != '')
     runs-on: ubuntu-24.04

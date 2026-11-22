@@ -8,10 +8,11 @@
 # started is in that run's own suite, while a check run made here lands in the merge
 # group's, the commit's first.
 #
-# ci.yml's `CI result` calls this, and the watchdog when that was missed.
+# ci.yml's `CI result` calls this, and the watchdog when that was missed. It believes the
+# caller: the conclusion and GITHUB_EVENT_NAME must be those of the entry's own queue run.
 #
 # Usage: merge-queue-stamp.sh <the entry's commit> <its run's URL> <success|failure>
-#   (GH_TOKEN with checks: write, GITHUB_REPOSITORY, GITHUB_EVENT_NAME in a run)
+#   (GH_TOKEN with checks: write, GITHUB_REPOSITORY, GITHUB_EVENT_NAME of that run)
 set -euo pipefail
 
 repo=${GITHUB_REPOSITORY:?} sha=${1:?commit} url=${2:?run url} conclusion=${3:?conclusion}
