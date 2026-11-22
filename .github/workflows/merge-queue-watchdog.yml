@@ -7,8 +7,10 @@ name: Merge queue watchdog
 # ahead of the last one park (ci.yml's `park`): when the last one fails and leaves, this
 # starts the new last one's tests, and it cancels runs no entry reads any more.
 #
-# A queue run that ends is when a wedge or a departure shows; the schedule catches a run
-# that never starts, and whatever a missed event left.
+# A queue run that ends is when a wedge or a departure shows. GitHub sends no workflow_run
+# for a run GITHUB_TOKEN started, so a promoted one dispatches this itself as it ends
+# (ci.yml's `follow`). The schedule catches a run that never starts, and whatever a missed
+# event left, but GitHub may go hours without running it.
 #
 # A queue run that fails also gets the PR a comment naming the jobs that failed or timed
 # out and their failed tests (.github/scripts/merge-queue-report.sh): the queue itself
@@ -21,6 +23,13 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      run:
+        description: A failed promoted run to report on its PR (ci.yml's `follow` sets these)
+      attempt:
+        description: That run's attempt
+      branch:
+        description: That run's queue branch
 
 permissions: {}
 
@@ -51,9 +60,10 @@ jobs:
   report:
     name: Report a failed queue run on its PR
     if: >-
-      github.event_name == 'workflow_run'
+      (github.event_name == 'workflow_run'
       && startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/')
-      && github.event.workflow_run.conclusion != 'success'
+      && github.event.workflow_run.conclusion != 'success')
+      || (github.event_name == 'workflow_dispatch' && inputs.run != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -69,6 +79,6 @@ jobs:
       - run: .github/scripts/merge-queue-report.sh "$RUN_ID" "$RUN_ATTEMPT" "$QUEUE_BRANCH"
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          QUEUE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.attempt }}
+          QUEUE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.branch }}

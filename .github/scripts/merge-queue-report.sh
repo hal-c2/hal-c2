@@ -86,7 +86,7 @@ excerpt() {
   ' | head -80
 }
 
-body="The merge queue run for this PR failed, so it left the queue: [run $run]"
+body="The merge queue run for this PR failed, so the queue will not merge it: [run $run]"
 body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt). A queue run"
 body+=" also tests the PRs queued ahead, so if there were any, the cause may be one of theirs."$'\n'
 while IFS=$'\t' read -r id name url timed_out; do

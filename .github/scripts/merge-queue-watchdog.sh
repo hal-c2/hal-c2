@@ -7,8 +7,8 @@
 #     job for STUCK_MINUTES. It gets a comment saying why; its owner re-queues it.
 #   - Starts the tests of the last entry being built when its run is parked: the entry it
 #     waited on left the queue. Entries whose `CI result` failed are on their way out.
-#   - Answers for the entries ahead of a last entry whose run passed, when its `CI result`
-#     could not (merge-queue-stamp.sh).
+#   - Answers for a last entry whose run passed and the entries ahead of it, or for one
+#     whose promoted run failed, when `CI result` could not (merge-queue-stamp.sh).
 #   - Cancels queue runs whose commit is no longer in the queue: no one reads them.
 #
 # Usage: merge-queue-watchdog.sh   (GH_TOKEN, GITHUB_REPOSITORY; DRY_RUN=1 only reports)
@@ -99,16 +99,22 @@ while IFS=$'\t' read -r _ _ sha number pr; do
 done <<<"$awaiting"
 
 # The last entry being built, past those on their way out: it tests, or has passed.
-while IFS=$'\t' read -r _ _ sha number _; do
+while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
   result=$(ci_result "$sha")
-  [ "$result" != failure ] && [ "$result" != cancelled ] || continue
   run=$(latest_run "$sha")
   [ -n "$run" ] || break # GitHub has not started it yet
   IFS=$'\t' read -r id status _ event branch url _ <<<"$run"
+  if [ "$result" = failure ] || [ "$result" = cancelled ]; then
+    if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ]; then
+      echo "#$number's promoted run ended $result; failing the entry"
+      act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
+    fi
+    continue
+  fi
   if [ "$result" = success ]; then
-    echo "#$number passed; answering for the entries ahead"
-    act "$here/merge-queue-stamp.sh" "$sha" "$url"
+    echo "#$number passed; answering for it and the entries ahead"
+    act "$here/merge-queue-stamp.sh" "$sha" "$url" success
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
     echo "#$number is the last entry but its run $id parked: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
