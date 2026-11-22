@@ -150,7 +150,16 @@ impl McClient {
     pub fn deliver(&self, event: McEvent) {
         match event {
             McEvent::Status(status) => self.take_status(status),
-            McEvent::Frame { id, frame } => self.on_frame(id, frame),
+            McEvent::Frame {
+                id,
+                frame,
+                switched,
+            } => {
+                // One queued before the last open or close is for what that left.
+                if switched == self.inner.handle.switches() {
+                    self.on_frame(id, frame);
+                }
+            }
             McEvent::Reply { id, result } => {
                 let pending = self.state().replies.remove(&id);
                 if let Some(Pending::Value(reply)) = pending {

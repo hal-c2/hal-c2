@@ -209,33 +209,57 @@ impl Phone {
 }
 
 /// The phone restarted as an interrupted promote leaves it, env-b's two on
-/// one session; `forget` says whether it then forgets env-b.
-fn restarted(
-    name: &str,
-    beside: &[&str],
-    forget: bool,
-) -> (Option<String>, Vec<String>, Vec<String>) {
-    let mut phone = Phone::start(name, "session-env-b", beside);
-    if forget {
-        phone.dispatch("pairing.forget", "id", "env-b");
-    }
+/// one session.
+fn restarted(name: &str, beside: &[&str]) -> (Option<String>, Vec<String>, Vec<String>) {
+    Phone::start(name, "session-env-b", beside).left()
+}
+
+/// The phone with `beside` saved, env-b's copy on another session than its
+/// own, as only that outlives a start, after it forgets env-b.
+fn forgotten(name: &str, beside: &[&str]) -> (Option<String>, Vec<String>, Vec<String>) {
+    let mut phone = Phone::start(name, "session-own", beside);
+    let mut saved: Vec<String> = beside.iter().map(|id| (*id).to_owned()).collect();
+    saved.sort();
+    assert_eq!(phone.left().1, saved, "the start left forget nothing to do");
+    phone.dispatch("pairing.forget", "id", "env-b");
     phone.left()
+}
+
+/// env-b's saved copy with an open thread held on its link, which `act`
+/// takes away: whether the thread is still held there.
+fn holds_after_removal(name: &str, act: impl FnOnce(&mut Phone)) -> bool {
+    let mut phone = Phone::start(name, "session-own", &[]);
+    phone.listed_beside("env-b");
+    let mc = shell_controller::mc(&phone.engine).expect("the MC");
+    mc.subscribe(
+        serde_json::json!({"type": "thread", "environmentId": "env-b", "threadId": "t-env-b"}),
+        Box::new(|_, _| {}),
+        None,
+    );
+    let link = shell_controller::with::<controller::SavedEnvironments, _>(&phone.engine, |c, _| {
+        c.link("env-b").map(|link| Rc::downgrade(&link))
+    })
+    .flatten()
+    .expect("the copy's link");
+    act(&mut phone);
+    // Nothing but a subscription held on it keeps a closed link.
+    link.upgrade().is_some()
 }
 
 #[test]
 fn forgetting_own_not_duplicated() {
-    assert_eq!(restarted("control", &[], true), (None, vec![], vec![]));
+    assert_eq!(forgotten("control", &[]), (None, vec![], vec![]));
 }
 
 #[test]
 fn forgetting_own_also_saved_forgets_it() {
-    assert_eq!(restarted("alone", &["env-b"], true), (None, vec![], vec![]));
+    assert_eq!(forgotten("alone", &["env-b"]), (None, vec![], vec![]));
 }
 
 #[test]
 fn forgetting_own_also_saved_behind_another_promotes_the_other() {
     assert_eq!(
-        restarted("behind", &["env-c", "env-b"], true),
+        forgotten("behind", &["env-c", "env-b"]),
         (Some("env-c session-env-c".into()), vec![], vec![])
     );
 }
@@ -245,7 +269,7 @@ fn starting_with_own_also_saved_drops_the_saved_copy() {
     // The live pairing stays, token and all: its credential is in
     // pairing.json, not under its id in the keyring.
     assert_eq!(
-        restarted("start", &["env-b", "env-c"], false),
+        restarted("start", &["env-b", "env-c"]),
         (
             Some("env-b session-env-b".into()),
             vec!["env-c".to_string()],
@@ -301,6 +325,24 @@ fn removing_own_saved_copy_in_settings_keeps_what_it_showed() {
 }
 
 #[test]
+fn removing_own_saved_copy_takes_the_open_thread_off_its_link() {
+    let held = holds_after_removal("remove-held", |phone| {
+        phone.dispatch("savedEnvironments.remove", "id", "env-b");
+    });
+    assert!(!held, "the open thread stayed on the closed link");
+}
+
+#[test]
+fn pairing_again_takes_the_open_thread_off_the_copys_link() {
+    let held = holds_after_removal("again-held", |phone| {
+        phone.dispatch("pairing.pair", "link", "http://127.0.0.1:9/?token=again");
+        Platform::of(&phone.engine).finish(&phone.engine);
+        phone.streams.pump(&phone.engine);
+    });
+    assert!(!held, "the open thread stayed on the closed link");
+}
+
+#[test]
 fn removing_another_in_settings_erases_what_it_showed() {
     let mut phone = Phone::start("remove-other", "session-own", &[]);
     phone.listed_beside("env-c");
@@ -319,6 +361,11 @@ fn forgetting_own_also_saved_erases_what_it_showed() {
     phone.dispatch("pairing.forget", "id", "env-b");
 
     assert!(!phone.shows("env-b"), "forgetting kept the threads");
+    assert_eq!(
+        phone.left(),
+        (None, vec![], vec![]),
+        "forgetting kept the saved copy"
+    );
 }
 
 #[test]

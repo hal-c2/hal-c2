@@ -171,13 +171,18 @@ void SavedEnvironmentsController::reconnect() {
 
 void SavedEnvironmentsController::remove(const QString& id) {
   // A copy of the client's own: what is kept of it is still shown.
-  disconnect(id, id != m_client->openFor());
+  if (id == m_client->openFor()) return dropDuplicate(id);
+  disconnect(id, true);
   if (m_catalog) m_catalog->forget(id);
   publish();
 }
 
 void SavedEnvironmentsController::dropDuplicate(const QString& id) {
+  McClient* link = client(id);
   disconnect(id, false);
+  // What was held on its link is the client's own to hold now; the link is
+  // deleted later.
+  m_client->reroute(link);
   if (m_catalog) m_catalog->forget(id);
   publish();
 }

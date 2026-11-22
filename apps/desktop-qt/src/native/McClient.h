@@ -131,6 +131,10 @@ public:
   // environment they talk to. Asked once per call and per subscription.
   using Route = std::function<McClient*(const QString& environment, const QString& mc)>;
   void setRoute(Route route) { m_route = std::move(route); }
+  // What `from` carries of this client's subscriptions is subscribed again
+  // by the route as it is now, each under the id it was given. For when
+  // `from` is taken out of the route with what it served still shown.
+  void reroute(McClient* from);
 
   // When the credential runs out; invalid when it does not, or is not known
   // (the desktop's own MC). An HTTP request made within renewWithin() of then
@@ -234,6 +238,7 @@ private:
   struct Subscription {
     QJsonObject shape;
     FrameHandler onFrame;
+    QObject* context;  // outlives it: its going ends the subscription
     // Ends the subscription when its context goes.
     QMetaObject::Connection contextGone;
     Resume resume;
@@ -244,6 +249,7 @@ private:
     QString environment;
   };
   void endSubscription(int id);
+  void subscribeAs(int id, QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume);
 
   QUrl m_origin;
   QUrl m_url;

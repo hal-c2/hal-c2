@@ -213,20 +213,40 @@ McClient* McClient::routed(const QString& environment, const QString& mc) const 
 }
 
 int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume) {
+  const int id = m_nextId++;
+  subscribeAs(id, context, shape, std::move(onFrame), std::move(resume));
+  return id;
+}
+
+void McClient::reroute(McClient* from) {
+  if (!from) return;
+  QList<std::pair<int, int>> held;
+  for (auto it = m_forwarded.cbegin(); it != m_forwarded.cend(); ++it) {
+    if (it->first == from) held.append({it.key(), it->second});
+  }
+  for (const auto& [id, theirs] : held) {
+    m_forwarded.remove(id);
+    const auto subscription = from->m_subscriptions.constFind(theirs);
+    // Its MC ended it.
+    if (subscription == from->m_subscriptions.constEnd()) continue;
+    const Subscription moved = *subscription;
+    from->unsubscribe(theirs);
+    subscribeAs(id, moved.context, moved.shape, moved.onFrame, moved.resume);
+  }
+}
+
+void McClient::subscribeAs(int id, QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume) {
   const QString environment = shape.contains(QLatin1String("environment")) ? shape.value(QLatin1String("environment")).toString()
                                                                          : shape.value(QLatin1String("environmentId")).toString();
   if (McClient* other = routed(environment, shape.value(QLatin1String("mc")).toString())) {
-    const int id = m_nextId++;
     m_forwarded.insert(id, {other, other->subscribe(context, shape, std::move(onFrame), std::move(resume))});
     // Its id here goes once that subscription goes with its context.
     connect(context, &QObject::destroyed, this, [this, id] { m_forwarded.remove(id); });
-    return id;
+    return;
   }
-  const int id = m_nextId++;
   const auto gone = connect(context, &QObject::destroyed, this, [this, id] { unsubscribe(id); });
-  m_subscriptions.insert(id, {shape, std::move(onFrame), gone, std::move(resume)});
+  m_subscriptions.insert(id, {shape, std::move(onFrame), context, gone, std::move(resume)});
   sendSub(id);
-  return id;
 }
 
 void McClient::more(int id, int items) {

@@ -3,7 +3,8 @@
 //! threads, pumped in any order against an MC played by the test. It checks
 //! what reaches the MC (no subscription twice on one socket, nothing before
 //! hello, each `sub` resumed from where its owner is) and what the owner hears
-//! (frames only for live subscriptions, every call answered once and rightly).
+//! (frames only for live subscriptions and from the connection as it last
+//! opened or closed it, every call answered once and rightly).
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -121,6 +122,8 @@ struct Heard {
     replies: HashMap<usize, Vec<Result<Value, CallError>>>,
     /// The offset each resuming subscription last said it continues from.
     resumed: HashMap<u64, u64>,
+    /// The opens and closes the owner asked for.
+    switches: u64,
 }
 
 /// One socket on the MC's side.
@@ -155,6 +158,8 @@ struct World {
     ticket: Option<u64>,
     opening: Option<u64>,
     socket: Option<Served>,
+    /// The opens and closes that reached the core.
+    switched: u64,
 }
 
 impl World {
@@ -178,10 +183,14 @@ impl World {
             ticket: None,
             opening: None,
             socket: None,
+            switched: 0,
         }
     }
 
     fn input(&mut self, input: Input) {
+        if matches!(input, Input::Command(Command::Open { .. } | Command::Close)) {
+            self.switched += 1;
+        }
         let effects = self.core.handle(input, self.now);
         for effect in effects {
             self.effect(effect);
@@ -278,7 +287,8 @@ impl World {
         }
     }
 
-    fn server_frame(&mut self, frame: Value) {
+    fn server_frame(&mut self, mut frame: Value) {
+        frame["switched"] = json!(self.switched);
         let attempt = self.socket.as_ref().unwrap().attempt;
         self.input(Input::SocketText {
             attempt,
@@ -297,10 +307,15 @@ impl World {
 
     fn step(&mut self, action: Action) {
         match action {
-            Action::Open => self
-                .client
-                .open(Url::parse("https://mc.example").unwrap(), "token"),
-            Action::Close => self.client.close(),
+            Action::Open => {
+                self.heard.borrow_mut().switches += 1;
+                self.client
+                    .open(Url::parse("https://mc.example").unwrap(), "token");
+            }
+            Action::Close => {
+                self.heard.borrow_mut().switches += 1;
+                self.client.close();
+            }
             Action::Reconnect => self.client.reconnect(),
             Action::Subscribe { resume } => {
                 let id = self.subscribe(resume);
@@ -523,6 +538,11 @@ impl World {
                 let mut heard = heard.borrow_mut();
                 assert!(!heard.gone.contains(&id), "frame for ended sub {id}");
                 assert_eq!(frame["id"], json!(id));
+                assert_eq!(
+                    frame["switched"],
+                    json!(heard.switches),
+                    "sub {id} heard what an open or close left"
+                );
                 if frame["t"] == "end" {
                     heard.gone.insert(id);
                 }

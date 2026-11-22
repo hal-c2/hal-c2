@@ -168,8 +168,13 @@ impl std::error::Error for CallError {}
 pub enum McEvent {
     /// The connection's status changed.
     Status(Status),
-    /// A frame for subscription `id`.
-    Frame { id: u64, frame: Frame },
+    /// A frame for subscription `id`, from the connection as `switched` of
+    /// its handle's opens and closes left it.
+    Frame {
+        id: u64,
+        frame: Frame,
+        switched: u64,
+    },
     /// The answer to call, post or upload `id`.
     Reply {
         id: u64,

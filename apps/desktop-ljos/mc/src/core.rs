@@ -255,6 +255,8 @@ pub(crate) struct Core {
     last_status: Status,
     effects: Vec<Effect>,
     now: Instant,
+    /// The owner's opens and closes taken so far.
+    switched: u64,
 }
 
 impl Core {
@@ -263,6 +265,7 @@ impl Core {
             origin: None,
             ws_url: None,
             token: String::new(),
+            switched: 0,
             closed: true,
             online: true,
             phase: Phase::Closed,
@@ -383,8 +386,14 @@ impl Core {
                 origin,
                 token,
                 environment,
-            } => self.open(origin, token, environment),
-            Command::Close => self.close(),
+            } => {
+                self.switched += 1;
+                self.open(origin, token, environment);
+            }
+            Command::Close => {
+                self.switched += 1;
+                self.close();
+            }
             Command::Reconnect => {
                 if let Some(origin) = self.origin.clone() {
                     let token = self.token.clone();
@@ -888,7 +897,11 @@ impl Core {
                 };
                 self.emit(McEvent::Reply { id, result });
             }
-            _ => self.emit(McEvent::Frame { id, frame }),
+            _ => self.emit(McEvent::Frame {
+                id,
+                frame,
+                switched: self.switched,
+            }),
         }
     }
 

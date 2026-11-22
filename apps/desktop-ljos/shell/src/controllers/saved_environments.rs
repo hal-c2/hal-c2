@@ -432,6 +432,8 @@ impl SavedEnvironments {
     /// catalog's copy under the same id cannot delete it.
     pub fn drop_duplicate(&mut self, engine: &Engine, id: &str) {
         self.disconnect(engine, id, false);
+        // What was held on its link is the shell's own to hold now.
+        self.mc.reroute();
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {
             catalog.forget(id);
@@ -458,7 +460,10 @@ impl SavedEnvironments {
     /// `savedEnvironments.remove` does; the phone's Pairing calls it too.
     pub fn remove(&mut self, engine: &Engine, id: &str) {
         // A copy of the shell's own: what is kept of it is still shown.
-        self.disconnect(engine, id, id != self.mc.open_for());
+        if id == self.mc.open_for() {
+            return self.drop_duplicate(engine, id);
+        }
+        self.disconnect(engine, id, true);
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {
             catalog.forget(id);

@@ -484,6 +484,10 @@ const Steps steps([] {
     world.awaitPopup(S("confirmDialog"), false);
     expect(!world.shows(c[0], false) && world.find(S("homeScreen")) == nullptr, S("%1 is still on screen, which says: %2").arg(c[0], screenTexts(world)));
     expect(!QFile::exists(pairingFile(world)), S("the phone still keeps the pairing"));
+    // Nothing on the screen would show a copy left beside it (#1746).
+    auto* saved = world.native().shared<SavedEnvironmentsController>();
+    expect(saved != nullptr && saved->catalog() != nullptr, S("the phone has no catalog of saved environments"));
+    expect(!saved->catalog()->find(world.mc.environmentId), S("the phone still keeps %1 in its saved environments").arg(c[0]));
   });
 
   step(S("its cached threads are removed from the phone"), [](World& world, const Captures&, const Table&) {

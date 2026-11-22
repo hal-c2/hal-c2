@@ -15,13 +15,17 @@
 
 #include <memory>
 
+#include "FakeMc.h"
+#include "McClient.h"
 #include "NativeShell.h"
+#include "PairableMc.h"
 #include "Pairing.h"
 #include "PluginController.h"
 #include "SavedEnvironmentsController.h"
 #include "SecretStore.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "ShellStore.h"
 
 namespace {
 
@@ -68,10 +72,10 @@ struct Seeded {
   QTemporaryDir home;
   std::shared_ptr<MemorySecretStore::Keys> keys = std::make_shared<MemorySecretStore::Keys>();
 
-  explicit Seeded(const QStringList& beside, const QString& own = QStringLiteral("session-env-b")) {
+  explicit Seeded(const QStringList& beside, const QString& own = QStringLiteral("session-env-b"), const QString& origin = kDead) {
     const QDir data(QDir(home.path()).filePath(QStringLiteral("data")));
     writeJson(data.filePath(QStringLiteral("pairing.json")),
-              {{QStringLiteral("origin"), kDead},
+              {{QStringLiteral("origin"), origin},
                {QStringLiteral("token"), own},
                {QStringLiteral("label"), QStringLiteral("env-b")},
                {QStringLiteral("environmentId"), QStringLiteral("env-b")}});
@@ -121,8 +125,10 @@ private slots:
   }
 
   void forgettingOwnAlsoSavedForgetsIt() {
-    Seeded seeded({QStringLiteral("env-b")});
+    Seeded seeded({QStringLiteral("env-b")}, QStringLiteral("session-own"));
     Phone phone(seeded.home.path());
+    // The start leaves forget the copy to forget.
+    QCOMPARE(seeded.listed(), QStringList{QStringLiteral("env-b")});
     phone.bridge->dispatch(QStringLiteral("pairing.forget"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-b")}});
     QVERIFY(!QFile::exists(seeded.pairingFile()));
     QCOMPARE(seeded.listed(), QStringList{});
@@ -130,14 +136,57 @@ private slots:
   }
 
   void forgettingOwnAlsoSavedBehindAnotherPromotesTheOther() {
-    Seeded seeded({QStringLiteral("env-c"), QStringLiteral("env-b")});
+    Seeded seeded({QStringLiteral("env-c"), QStringLiteral("env-b")}, QStringLiteral("session-own"));
     Phone phone(seeded.home.path());
+    QCOMPARE(seeded.listed(), QStringList({QStringLiteral("env-c"), QStringLiteral("env-b")}));
     phone.bridge->dispatch(QStringLiteral("pairing.forget"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-b")}});
     const QJsonObject own = readJson(seeded.pairingFile());
     QCOMPARE(own.value(QStringLiteral("environmentId")).toString(), QStringLiteral("env-c"));
     QCOMPARE(own.value(QStringLiteral("token")).toString(), QStringLiteral("session-env-c"));
     QCOMPARE(seeded.listed(), QStringList{});
     QCOMPARE(seeded.kept(), QStringList{});
+  }
+
+  void takingAwayOwnCopyMovesWhatItsLinkHeld_data() {
+    QTest::addColumn<bool>("pairsAgain");
+    QTest::newRow("removed in Settings") << false;
+    QTest::newRow("paired again") << true;
+  }
+
+  // What is open over the copy's link is asked for again on the phone's
+  // own connection, under the id it was given. The copy is of the same
+  // environment at another address, so each connection's MC hears its own.
+  void takingAwayOwnCopyMovesWhatItsLinkHeld() {
+    QFETCH(bool, pairsAgain);
+    PairableMc mc(QStringLiteral("b"), QStringLiteral("env-b"));
+    PairableMc elsewhere(QStringLiteral("b"), QStringLiteral("env-b"));
+    mc.sessions.append(QStringLiteral("session-own"));
+    int asked = 0;
+    int askedElsewhere = 0;
+    mc.mc.onShape(QStringLiteral("probe"), [&](int, const QJsonObject&) { ++asked; });
+    elsewhere.mc.onShape(QStringLiteral("probe"), [&](int, const QJsonObject&) { ++askedElsewhere; });
+    Seeded seeded({}, QStringLiteral("session-own"), mc.mc.origin().toString());
+    Phone phone(seeded.home.path());
+    McClient* own = phone.shell->client();
+    QTRY_VERIFY(own->phase() == McClient::Phase::Ready);
+    phone.bridge->dispatch(QStringLiteral("savedEnvironments.pair"), QVariantMap{{QStringLiteral("link"), elsewhere.link()}});
+    QTRY_VERIFY(phone.shell->store()->linkServing(QStringLiteral("env-b")) != nullptr);
+    QObject context;
+    const int id = own->subscribe(&context, {{QStringLiteral("type"), QStringLiteral("probe")}, {QStringLiteral("environmentId"), QStringLiteral("env-b")}},
+                                  [](const QJsonObject&) {});
+    QTRY_COMPARE(askedElsewhere, 1);
+    QCOMPARE(asked, 0);
+
+    if (pairsAgain) {
+      phone.bridge->dispatch(QStringLiteral("pairing.pair"), QVariantMap{{QStringLiteral("link"), mc.link()}});
+    } else {
+      phone.bridge->dispatch(QStringLiteral("savedEnvironments.remove"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-b")}});
+    }
+    QTRY_COMPARE(asked, 1);
+    QCOMPARE(mc.mc.subscribers(QStringLiteral("probe")), QList<int>{id});
+    QCOMPARE(askedElsewhere, 1);
+    own->unsubscribe(id);
+    QTRY_VERIFY(mc.mc.subscribers(QStringLiteral("probe")).isEmpty());
   }
 
   // The live pairing stays, token and all: its credential is in

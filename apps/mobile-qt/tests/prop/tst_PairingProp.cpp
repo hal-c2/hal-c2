@@ -4,8 +4,9 @@
 // pairing started while one is in flight, adding and cancelling, another
 // environment paired beside the first and forgotten again, forgetting the
 // first while another is beside it, the first saved beside itself on its own
-// session or another, a saved one removed in Settings > Connections, and the
-// app started again over what the device kept.
+// session or another, a saved one removed in Settings > Connections (what
+// was open over a copy's link moving to the phone's own), and the app
+// started again over what the device kept.
 
 #include "Prop.h"
 
@@ -194,8 +195,16 @@ public:
       QObject::connect(socket, &QTcpSocket::readyRead, socket, take);
       take();
     });
+    pairable.mc.onShape(QStringLiteral("probe"), [this](int, const QJsonObject&) { ++probed; });
+    // The copy's link and the phone's own are two sockets on one MC, either the newer.
+    pairable.mc.overheard = [this](const QJsonObject& frame) {
+      if (frame.value(QLatin1String("t")).toString() != QLatin1String("sub")) return;
+      if (frame.value(QLatin1String("shape")).toObject().value(QLatin1String("type")).toString() == QLatin1String("probe")) ++probed;
+    };
   }
 
+  // How often a `probe` subscription was asked of it.
+  int probed = 0;
   QString origin() const { return pairable.mc.origin().toString(); }
   void answer(QTcpSocket* socket, const QString& token) {
     if (!socket) return;
@@ -715,8 +724,21 @@ struct SettingsRemove : Command {
       return std::any_of(threads.begin(), threads.end(), [&](const sidebar::Thread& thread) { return thread.title == title; });
     };
     if (own) RC_ASSERT(halc2::prop::until(shown));
+    // Something open over the copy's link moves to the phone's own, when
+    // both answer.
+    const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
+    McClient* client = s.phone->shell->client();
+    QObject opened;
+    const int probed = s.mcs[mc]->probed;
+    const McClient* link = s.phone->shell->store()->linkServing(id);
+    const bool held = own && client->phase() == McClient::Phase::Ready && link && link->phase() == McClient::Phase::Ready;
+    if (held) {
+      client->subscribe(&opened, {{QStringLiteral("type"), QStringLiteral("probe")}, {QStringLiteral("environmentId"), id}}, [](const QJsonObject&) {});
+      RC_ASSERT(halc2::prop::until([&] { return s.mcs[mc]->probed == probed + 1; }));
+    }
     s.phone->bridge->dispatch(QStringLiteral("savedEnvironments.remove"),
-                              QVariantMap{{QStringLiteral("id"), QStringLiteral("env-") + QString::fromLatin1(kNames[mc])}});
+                              QVariantMap{{QStringLiteral("id"), id}});
+    if (held) RC_ASSERT(halc2::prop::until([&] { return s.mcs[mc]->probed == probed + 2; }));
     if (own) RC_ASSERT(shown());
     s.check(next);
   }
