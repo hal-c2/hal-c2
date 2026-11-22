@@ -607,6 +607,28 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_unsubscribed_at_its_snapshot_gets_no_live() {
+        let engine = ljos::engine();
+        let mc = loaded();
+        let own = Rc::new(Cell::new(None::<SubId>));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (weak, cell, record) = (Rc::downgrade(&mc), own.clone(), seen.clone());
+        let id = mc.subscribe(
+            json!({"type": "stream", "environment": ENVIRONMENT, "stream": "t7"}),
+            Box::new(move |_, frame| {
+                record.borrow_mut().push(frame["t"].clone());
+                if let (Some(mc), Some(id)) = (weak.upgrade(), cell.get()) {
+                    mc.unsubscribe(id);
+                }
+            }),
+            None,
+        );
+        own.set(Some(id));
+        mc.deliver(&engine);
+        assert_eq!(*seen.borrow(), ["snapshot"]);
+    }
+
+    #[test]
     fn a_fresh_subscription_gets_its_first_frame_before_the_news() {
         let engine = ljos::engine();
         let mut window = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
