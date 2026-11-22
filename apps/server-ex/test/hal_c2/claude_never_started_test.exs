@@ -107,6 +107,18 @@ defmodule HalC2.ClaudeNeverStartedTest do
     refute failed_never_started?(context)
   end
 
+  test "a started prompt Claude reports completed before its result keeps its turn", context do
+    started(context)
+
+    claude(context, %{
+      "type" => "command_lifecycle",
+      "command_uuid" => context.uuid,
+      "state" => "completed"
+    })
+
+    assert %{turn: %{prompt: %{started: true}}} = :sys.get_state(context.pid)
+  end
+
   # Claude takes the prompt; the runtime has read that when this returns.
   defp started(%{pid: pid, uuid: uuid} = context) do
     claude(context, %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => "started"})
