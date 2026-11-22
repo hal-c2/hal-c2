@@ -375,7 +375,7 @@ Feature: Codex
   # and later requests waited forever and the session was never retired.
   # Only an app-server the MC owns directly is fixed. A durable one (the default off Windows) still
   # waits: a write to its input FIFO never fails (hal-c2#1379).
-  @priority-high
+  @backlog @priority-high
   Scenario: Codex requests fail at once when the app-server stops taking input
     Given a Codex turn is running
     When the Codex app-server stops accepting input but keeps its output open

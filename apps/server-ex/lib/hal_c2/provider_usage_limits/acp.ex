@@ -83,7 +83,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
              token when is_binary(token) <- grok_token(credential) do
           case http(:get, grok_url(), token) do
             {:ok, %{"config" => %{"creditUsagePercent" => used} = config}} when is_number(used) ->
-              limits(checked_at, [grok_window(used, config["currentPeriod"] || %{})])
+              limits(checked_at, [grok_window(used, config["currentPeriod"])])
 
             # xAI omits the percentage until an account has metered use: a complete
             # period then reads as unused, and the account stays listed either way.
@@ -140,13 +140,18 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
   defp grok_period(_period), do: :incomplete
 
-  defp grok_kind(period) do
-    case String.replace_prefix(to_string(period["type"]), "USAGE_PERIOD_TYPE_", "") do
+  defp grok_kind(%{"type" => type}) when is_binary(type) do
+    case String.replace_prefix(type, "USAGE_PERIOD_TYPE_", "") do
       "WEEKLY" -> "weekly"
       "MONTHLY" -> "monthly"
       _ -> "other"
     end
   end
+
+  defp grok_kind(_period), do: "other"
+
+  # A period that is not an object leaves the percentage without a kind or a reset.
+  defp grok_window(used, period) when not is_map(period), do: grok_window(used, %{})
 
   defp grok_window(used, period) do
     kind = grok_kind(period)

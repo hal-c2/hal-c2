@@ -320,12 +320,20 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
+  @backlog @desktop @mobile @priority-high
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings
     Then the providers are shown but every change is unavailable
     And the user is told this session can only view them
+
+  # The MC's part of the scenario above; what a client draws from it is still backlog.
+  @priority-high
+  Scenario: The MC refuses provider changes from a client with view-only access
+    Given the client has view-only access to the environment
+    When the client reads the provider settings
+    Then it receives the providers and every change it sends is refused
+    And each refusal names the access a change needs
 
   @desktop @backlog-mc
   Scenario: Provider settings follow the chosen device

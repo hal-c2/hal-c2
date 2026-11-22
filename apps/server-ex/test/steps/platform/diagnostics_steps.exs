@@ -570,6 +570,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
   step ~r/^"(?<name>server\.trace\.ndjson\..+)" is kept$/, %{args: [name]} = context do
     # The next record is what finds the file full and rolls it over.
     HalC2.Traces.finished("trace.rolled", %{}, System.system_time(:millisecond))
+    assert File.stat!("#{HalC2.Traces.path()}.1").size == 10 * @mib
     kept = Path.join(Path.dirname(HalC2.Traces.path()), name)
     assert File.read!(kept) == "not a backup\n"
     context

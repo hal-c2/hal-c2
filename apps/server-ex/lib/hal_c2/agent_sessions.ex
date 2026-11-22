@@ -35,11 +35,13 @@ defmodule HalC2.AgentSessions do
   def scan(_input \\ %{}) do
     {transcripts, truncated} = transcripts()
     projects = projects_by_root()
+    never = never_projects()
 
     candidates =
       transcripts
       |> with_cwds()
       |> Enum.group_by(&real_path(&1.cwd))
+      |> Enum.reject(fn {real, _group} -> excluded?(real, never) end)
       |> Enum.flat_map(fn {real, group} -> candidate(real, group, projects) end)
       |> Enum.sort_by(&{&1["lastActiveAt"], &1["path"]}, fn {a, pa}, {b, pb} ->
         if a == b, do: pa <= pb, else: a >= b
@@ -53,8 +55,7 @@ defmodule HalC2.AgentSessions do
   # `real` is the folder with its links followed, only the key to compare by; the
   # candidate shows the project's own root, else where the newest transcript ran.
   defp candidate(real, group, projects) do
-    with false <- excluded?(real),
-         true <- File.dir?(real),
+    with true <- File.dir?(real),
          {:ok, git} <- git_identity(real) do
       {project_id, project_root} = projects[real] || {nil, nil}
       newest = Enum.max_by(group, & &1.mtime)
@@ -170,29 +171,37 @@ defmodule HalC2.AgentSessions do
   defp session_id(%{"sessionId" => id}), do: trimmed(id)
   defp session_id(_), do: nil
 
-  defp cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "", do: cwd
-  defp cwd(%{"payload" => %{"cwd" => cwd}}) when is_binary(cwd) and cwd != "", do: cwd
+  defp cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "", do: absolute(cwd)
+  defp cwd(%{"payload" => %{"cwd" => cwd}}) when is_binary(cwd) and cwd != "", do: absolute(cwd)
   defp cwd(_), do: nil
+
+  # A relative folder says nothing here: it would be read against the MC's own.
+  defp absolute(path), do: if(Path.type(path) == :absolute, do: path)
 
   # The user's home, temp folders, downloads, Codex scratch folders, and HAL-C2's own
   # data and scratch (its worktrees among it, under `.hal-c2` or `.t3` before XDG) are
-  # never projects.
-  defp excluded?(path) do
+  # never projects: `{folders, trees}`, the latter with all they hold. Each has
+  # its links followed, like the paths they are compared with.
+  defp never_projects do
     home = user_home()
-    hal_c2_home = Path.expand(HalC2.Paths.data_dir())
+    folders = [home, System.tmp_dir!(), "/tmp", "/private/tmp"]
 
-    path in [home, Path.expand(System.tmp_dir!()), "/tmp", "/private/tmp"] or
-      Enum.any?(
-        [
-          Path.join(home, "Downloads"),
-          Path.join([home, "Documents", "Codex"]),
-          Path.join(home, ".hal-c2"),
-          Path.join(home, ".t3"),
-          hal_c2_home
-          | HalC2.Scratch.roots()
-        ],
-        &(path == &1 or String.starts_with?(path, &1 <> "/"))
-      ) or String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
+    trees = [
+      Path.join(home, "Downloads"),
+      Path.join([home, "Documents", "Codex"]),
+      Path.join(home, ".hal-c2"),
+      Path.join(home, ".t3"),
+      HalC2.Paths.data_dir()
+      | HalC2.Scratch.roots()
+    ]
+
+    {Enum.map(folders, &real_path/1), Enum.map(trees, &real_path/1)}
+  end
+
+  defp excluded?(path, {folders, trees}) do
+    path in folders or
+      Enum.any?(trees, &(path == &1 or String.starts_with?(path, &1 <> "/"))) or
+      String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
   end
 
   # `{:ok, git}` with the origin's normalized key, or `{:ok, nil}` outside a

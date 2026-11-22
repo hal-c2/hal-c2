@@ -80,7 +80,8 @@ defmodule HalC2.Steps.Orchestration.Threads do
   defp regenerate(context, thread),
     do: thread_command(context, "thread.metadata.update", thread, %{"regenerateTitle" => true})
 
-  defp today(time), do: "#{Date.utc_today()}T#{time}:00.000Z"
+  # A scenario keeps the day its setup saw, so one that runs across midnight compares alike.
+  defp on_day(context, time), do: "#{context.utc_day}T#{time}:00.000Z"
 
   # --- creating -------------------------------------------------------------------
 
@@ -481,9 +482,11 @@ defmodule HalC2.Steps.Orchestration.Threads do
 
   step ~r/^thread "(?<thread>[^"]+)" was deleted at (?<time>\d\d:\d\d)$/,
        %{args: [thread, time]} = context do
+    context = Map.put(context, :utc_day, Date.utc_today())
+
     context
     |> World.named_thread(thread)
-    |> World.patch_thread(thread, %{"deletedAt" => today(time)})
+    |> World.patch_thread(thread, %{"deletedAt" => on_day(context, time)})
   end
 
   step ~r/^a client deletes "(?<thread>[^"]+)" again at (?<time>\d\d:\d\d)$/,
@@ -494,7 +497,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
   step ~r/^thread "(?<thread>[^"]+)" still records (?<time>\d\d:\d\d) as the time it was deleted$/,
        %{args: [thread, time]} = context do
     assert {:ok, _} = context.reply
-    assert World.thread(context, thread)["deletedAt"] == today(time)
+    assert World.thread(context, thread)["deletedAt"] == on_day(context, time)
     context
   end
 
@@ -602,16 +605,18 @@ defmodule HalC2.Steps.Orchestration.Threads do
 
   step ~r/^thread "(?<thread>[^"]+)" was visited at (?<time>\d\d:\d\d)$/,
        %{args: [thread, time]} = context do
+    context = Map.put(context, :utc_day, Date.utc_today())
+
     context
     |> World.named_thread(thread)
-    |> thread_command("thread.visit", thread, %{"visitedAt" => today(time)})
+    |> thread_command("thread.visit", thread, %{"visitedAt" => on_day(context, time)})
     |> ok!()
   end
 
   step ~r/^thread "(?<thread>[^"]+)" is still read as of (?<time>\d\d:\d\d)$/,
        %{args: [thread, time]} = context do
     assert {:ok, _} = context.reply
-    assert World.thread(context, thread)["lastVisitedAt"] == today(time)
+    assert World.thread(context, thread)["lastVisitedAt"] == on_day(context, time)
     context
   end
 
@@ -635,15 +640,15 @@ defmodule HalC2.Steps.Orchestration.Threads do
 
   step ~r/^thread "(?<thread>[^"]+)" was last updated at (?<time>\d\d:\d\d)$/,
        %{args: [thread, time]} = context do
-    context = World.named_thread(context, thread)
-    World.patch_thread(context, thread, %{"updatedAt" => today(time)})
+    context = context |> World.named_thread(thread) |> Map.put(:utc_day, Date.utc_today())
+    World.patch_thread(context, thread, %{"updatedAt" => on_day(context, time)})
     Map.put(context, :updated_at, World.row(context, thread)["updatedAt"])
   end
 
   step ~r/^the last activity of thread "(?<thread>[^"]+)" is still (?<time>\d\d:\d\d)$/,
        %{args: [thread, time]} = context do
     assert {:ok, _} = context.reply
-    assert World.thread(context, thread)["updatedAt"] == today(time)
+    assert World.thread(context, thread)["updatedAt"] == on_day(context, time)
     visited = World.thread(context, thread)["lastVisitedAt"]
     row = World.await_row(World.thread_id(context, thread), &(&1["lastVisitedAt"] == visited))
     assert row["updatedAt"] == context.updated_at

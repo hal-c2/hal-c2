@@ -175,6 +175,38 @@ defmodule HalC2.AgentSessionsTest do
              AgentSessions.import_project(%{"projectId" => "p9"})
   end
 
+  test "a home and Downloads behind links are still left out of a scan", %{tmp_dir: dir, app: app} do
+    me = Path.join([dir, "disk", "me"])
+    downloads = Path.join([dir, "disk", "downloads"])
+    home = Path.join(dir, "home")
+    for path <- [me, downloads], do: File.mkdir_p!(path)
+    File.ln_s!(me, home)
+    File.ln_s!(downloads, Path.join(home, "Downloads"))
+    Application.put_env(:hal_c2, :agent_sessions_home, home)
+    on_exit(fn -> Application.delete_env(:hal_c2, :agent_sessions_home) end)
+
+    for folder <- ["", "Downloads/unpacked", "Documents/Codex/one", ".hal-c2/old", ".t3/old"] do
+      cwd = if folder == "", do: home, else: Path.join(home, folder)
+      File.mkdir_p!(cwd)
+      codex_session(dir, cwd)
+    end
+
+    assert {:ok, %{"candidates" => [%{"path" => ^app}]}} = AgentSessions.scan()
+  end
+
+  test "a relative folder in a transcript is not read against the MC's own", %{
+    tmp_dir: dir,
+    app: app
+  } do
+    target = Path.join([dir, "work", "relative"])
+    File.mkdir_p!(target)
+    cwd = Path.relative_to(target, File.cwd!(), force: true)
+    assert Path.type(cwd) == :relative and File.dir?(cwd)
+    codex_session(dir, cwd)
+
+    assert {:ok, %{"candidates" => [%{"path" => ^app}]}} = AgentSessions.scan()
+  end
+
   test "git config remotes in their quoted, dotted, and fallback forms" do
     assert AgentSessions.origin_url(~s([remote "upstream"]\n url = https://a/b.git\n)) ==
              "https://a/b.git"
@@ -194,6 +226,14 @@ defmodule HalC2.AgentSessionsTest do
 
   defp texts(state),
     do: for(m <- StreamState.list(state, "message"), do: {m["role"], m["text"]})
+
+  defp codex_session(dir, cwd) do
+    n = System.unique_integer([:positive])
+
+    jsonl(Path.join([dir, "codex", "sessions", "2026", "09", "21", "rollout-#{n}.jsonl"]), [
+      %{"type" => "session_meta", "payload" => %{"id" => "codex-#{n}", "cwd" => cwd}}
+    ])
+  end
 
   defp jsonl(path, lines) do
     File.mkdir_p!(Path.dirname(path))

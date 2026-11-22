@@ -4,8 +4,9 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
 
   Transcripts are written under a scratch folder that stands in for the user's
   home: `~/code/app` is `<scratch>/code/app`, and `CLAUDE_CONFIG_DIR` and
-  `CODEX_HOME` point at `<scratch>/.claude` and `<scratch>/.codex`. The real home
-  and temporary folders are only named, never written to.
+  `CODEX_HOME` point at `<scratch>/.claude` and `<scratch>/.codex`. The MC's
+  `agent_sessions_home` is the scratch folder too, so the folders a scan leaves
+  out exist there and the real home is neither named nor written to.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -22,6 +23,7 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     previous = for name <- ~w(CLAUDE_CONFIG_DIR CODEX_HOME), do: {name, System.get_env(name)}
     System.put_env("CLAUDE_CONFIG_DIR", Path.join(root, ".claude"))
     System.put_env("CODEX_HOME", Path.join(root, ".codex"))
+    World.put_app_env(:agent_sessions_home, root)
 
     ExUnit.Callbacks.on_exit(fn ->
       for {name, value} <- previous,
@@ -79,19 +81,20 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     path =
       case folder do
         "the home folder itself" ->
-          System.user_home!()
+          context.agent_home
 
         "the temporary folder" ->
           System.tmp_dir!()
 
         "a folder under Downloads" ->
-          Path.join([System.user_home!(), "Downloads", "unpacked"])
+          mkdir(Path.join(context.agent_home, "Downloads/unpacked"))
 
         "the HAL-C2 home" ->
           context.mc.home
 
         "a HAL-C2 worktree" ->
-          mkdir(Path.join(context.agent_home, ".hal-c2/worktrees/app/hal-c2-1a2b"))
+          # Outside the home's `.hal-c2`, which is left out whole.
+          mkdir(Path.join(context.agent_home, "disk/.hal-c2/worktrees/app/hal-c2-1a2b"))
 
         "a linked git worktree" ->
           main = mkdir(dir(context, "~/code/main"))
@@ -104,23 +107,27 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
           Path.join(context.agent_home, "code/gone")
 
         "a scratch folder Codex made under \"~/Documents/Codex\"" ->
-          Path.join([System.user_home!(), "Documents", "Codex", "scratch-1"])
+          mkdir(Path.join(context.agent_home, "Documents/Codex/scratch-1"))
 
         "a folder under the old HAL-C2 home \"~/.hal-c2\"" ->
-          Path.join([System.user_home!(), ".hal-c2", "leftover"])
+          mkdir(Path.join(context.agent_home, ".hal-c2/leftover"))
 
         "a folder under the old T3 Code home \"~/.t3\"" ->
-          Path.join([System.user_home!(), ".t3", "leftover"])
+          mkdir(Path.join(context.agent_home, ".t3/leftover"))
 
         "a link that leads into a HAL-C2 worktree folder" ->
-          target = mkdir(Path.join(context.agent_home, ".hal-c2/worktrees/app/hal-c2-9z8y"))
+          target = mkdir(Path.join(context.agent_home, "disk/.hal-c2/worktrees/app/hal-c2-9z8y"))
           link = dir(context, "~/code/linked-worktree")
           File.mkdir_p!(Path.dirname(link))
           File.ln_s!(target, link)
           link
 
         "a folder a transcript names with a relative path" ->
-          "code/relative-app"
+          # It leads from the MC's own folder to one that would be offered.
+          target = mkdir(dir(context, "~/code/relative-app"))
+          relative = Path.relative_to(target, File.cwd!(), force: true)
+          assert Path.type(relative) == :relative
+          relative
 
         "\"~/code/app/vendor/lib\", which is a submodule checkout" ->
           app = mkdir(dir(context, "~/code/app"))
@@ -135,6 +142,10 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
           File.write!(Path.join(lib, ".git"), "gitdir: ../../.git/modules/vendor/lib\n")
           lib
       end
+
+    # Only the folder that is gone may be left out for not being there.
+    assert File.dir?(path) or folder == "a folder that no longer exists",
+           "the scenario's folder #{path} must exist"
 
     session(context, path, source: "codex")
     session(context, mkdir(dir(context, "~/code/app")), source: "codex")
