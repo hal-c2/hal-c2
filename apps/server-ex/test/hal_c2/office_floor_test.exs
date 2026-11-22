@@ -4,7 +4,8 @@ defmodule HalC2.OfficeFloorTest do
   @moduledoc """
   How long the office keeps an idle thread (`HalC2Plugins.Office.Floor`, in
   `plugins/office/mc`): `idleHours` from when the thread became idle, however often its
-  row changes after. And the talks of calls too long for a plugin to hear whole.
+  row changes after. And its talks: only current ones, and those of calls too long for a
+  plugin to hear whole.
   The plugin process is covered by `features/plugins/office.feature`,
   the rest of the floor by `prop/hal_c2/office_prop_test.exs`.
   """
@@ -29,6 +30,14 @@ defmodule HalC2.OfficeFloorTest do
       "pendingBackgroundTasks" =>
         if(state == "waiting", do: [%{"taskId" => "w", "taskType" => "subagent"}], else: [])
     }
+  end
+
+  defp worker(created) do
+    Map.merge(row("working", nil, created), %{
+      "id" => "worker",
+      "createdAt" => Floor.iso(created),
+      "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "lead"}
+    })
   end
 
   defp in_office?(floor, now), do: Floor.view(floor, now)["people"] != []
@@ -79,6 +88,36 @@ defmodule HalC2.OfficeFloorTest do
     floor = Floor.observe(floor(), heard("delegate_task", %{"task" => long()}, result), @start)
 
     assert [%{"text" => "…"}] = Floor.view(floor, @start)["talks"]
+  end
+
+  test "a talk is in the office only while it is current, thirty seconds" do
+    result = %{"childThreadId" => "worker"}
+    floor = Floor.observe(floor(), heard("delegate_task", %{"task" => "Fix it"}, result), @start)
+
+    assert [_] = Floor.view(floor, @start + 29_999)["talks"]
+    assert Floor.next_change(floor, @start) == @start + 30_000
+    assert Floor.view(floor, @start + 30_000)["talks"] == []
+  end
+
+  # A call that waits for its worker completes when the worker is done.
+  test "a hand-off heard long after its worker was made is no talk" do
+    floor = Floor.rows(floor(), [worker(@start)], @start)
+    assert [%{"kind" => "delegate"}] = Floor.view(floor, @start)["talks"]
+
+    later = @start + 5 * 60_000
+    result = %{"childThreadId" => "worker"}
+    floor = Floor.observe(floor, heard("delegate_task", %{"task" => "Fix it"}, result), later)
+
+    assert Floor.view(floor, later)["talks"] == []
+  end
+
+  test "a worker's row that comes after its hand-off left the office is no second talk" do
+    result = %{"childThreadId" => "worker"}
+    floor = Floor.observe(floor(), heard("delegate_task", %{"task" => "Fix it"}, result), @start)
+    later = @start + 60_000
+    floor = Floor.rows(floor, [worker(@start)], later)
+
+    assert Floor.view(floor, later)["talks"] == []
   end
 
   test "a thread read idle leaves idleHours after its run ended, its row touched since" do

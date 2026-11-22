@@ -27,7 +27,8 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
   person to open the thread and answer. A red mark means its last turn failed.
 - When one agent hands work to another or sends it a message, the two walk up
   to each other and the message shows in a speech bubble. A very long message
-  shows as "…".
+  shows as "…". The office shows talks as they happen: what was said before you
+  opened it, or more than thirty seconds ago, is not played.
 - New threads walk in through the door, and movers carry their desks in. Desks
   nobody uses are carried back out. The office starts with 48 desks, 8 of them
   in the review corner, and grows by groups of desks when more threads come, so
@@ -52,4 +53,6 @@ it is doing; click it or press Return to open the thread.
   leave with the thread that delegated to them, unless they are still working
   or waiting on work of their own.
 
-The page stands still while it is hidden or the app is in the background.
+The page stands still while it is hidden or the app is in the background. When
+you come back after more than a few seconds it shows the office as it is now,
+without playing what happened meanwhile.

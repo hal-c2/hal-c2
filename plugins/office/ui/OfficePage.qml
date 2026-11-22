@@ -145,6 +145,8 @@ Item {
     property int arrivals: 0
     property bool primed: false
     property real now: 0
+    // The wall clock at the page's last tick (see catchUp()).
+    property real tickedAt: Date.now()
     property int ticks: 0
     // When the screens last changed and next change (see updateScreens()).
     property real screensSeen: 0
@@ -2002,6 +2004,9 @@ Item {
     }
 
     function take(value) {
+        // An empty office has no clock running, and nothing to catch up on.
+        if (page.visible && page.applicationActive && !page.animating)
+            page.tickedAt = Date.now();
         const people = value?.people ?? [];
         sync(people);
         // A closure with nothing left to carry out closes now: the clock may
@@ -2012,6 +2017,35 @@ Item {
         page.primed = value !== null && value !== undefined;
         updateWalking();
         settle(value);
+    }
+
+    // The clock stood still, the page out of sight or the machine asleep: what
+    // happened meanwhile is over, and the office is drawn as it is now, with
+    // everyone and every desk where they belong and nothing from then said.
+    function catchUp() {
+        if (!page.primed)
+            return;
+        for (const actor of Object.values(page.actors)) {
+            if (actor.talk)
+                endTalk(actor);
+            actor.queue = [];
+            actor.bubble = "";
+        }
+        for (const id of Object.keys(page.movers))
+            removeMover(id);
+        page.jobs = [];
+        page.outside = [];
+        page.doorOpensAt = 0;
+        page.primed = false;
+        take(page.office);
+        for (const actor of Object.values(page.actors)) {
+            if (actor.goal) {
+                place(actor, actor.goal.x, actor.goal.y, false);
+                actor.path = [];
+            }
+            render(actor);
+        }
+        updateWalking();
     }
 
     // The office is settled once `value`, this machine's office, has been
@@ -3150,16 +3184,23 @@ Item {
 
     // ── Talks ───────────────────────────────────────────────────────────────
 
-    // New talks walk their speaker over. The first time the page sees an office,
-    // only the talks of the last minute and a half are new. A talk can come
+    // Only what is being said walks a speaker over: not the talks an office
+    // already has when it is first seen or caught up with (see catchUp()), nor
+    // one still waiting its turn when the topic drops it. A talk can come
     // before one of its two, as a hand-off mostly does before its worker's row:
     // it is heard once both are here, for as long as the topic keeps it.
     function hear(talks) {
-        const fresh = Date.now() - 90000;
+        const current = {};
+        for (const talk of talks) {
+            if (talk)
+                current[talk.id] = true;
+        }
+        for (const actor of Object.values(page.actors))
+            actor.queue = actor.queue.filter(t => current[t.id]);
         for (const talk of talks) {
             if (!talk || page.seen[talk.id])
                 continue;
-            if ((!page.primed && Date.parse(talk.at) < fresh) || talk.from === talk.to) {
+            if (!page.primed || talk.from === talk.to) {
                 page.seen[talk.id] = true;
                 continue;
             }
@@ -4274,7 +4315,13 @@ Item {
         interval: page.walking ? 40 : 200
         repeat: true
         running: page.animating
-        onTriggered: page.tick(interval)
+        onTriggered: {
+            const now = Date.now();
+            if (now - page.tickedAt > 5000)
+                page.catchUp();
+            page.tickedAt = now;
+            page.tick(interval);
+        }
     }
 
     // Refits after a resize. A timer rather than Qt.callLater, so that a

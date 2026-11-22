@@ -24,9 +24,11 @@ defmodule HalC2.OfficePropTest do
   - the next change it names is the first of those: an idle thread in it going long
     idle, or a talk growing too old;
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
-    keeps its place, time, who said it to whom and its kind), those under ten minutes
-    old, each from, to and of the kind it was said; once the timer fires, the office
-    keeps no talk older, text and all;
+    keeps its place, time, who said it to whom and its kind), those under thirty
+    seconds old, each from, to and of the kind it was said; once the timer fires, the
+    office keeps no talk older, text and all;
+  - a hand-off is a talk only while its worker, where the office has its row, was made
+    under thirty seconds before;
   - a call too long to hear whole is a talk all the same: a hand-off says the title
     its result names, and a talk whose text was not heard keeps what it said before,
     or shows as `…`, never as nothing.
@@ -46,8 +48,7 @@ defmodule HalC2.OfficePropTest do
 
   @ids ~w(t1 t2 t3 t4 t5)
   @start 1_800_000_000_000
-  @talk_ms 600_000
-  @born_ms 120_000
+  @talk_ms 30_000
   # How long before its row last changed a row's run ended, for the states that ran.
   @ran_ms 600_000
   @put_away [:archived, :settled]
@@ -135,7 +136,7 @@ defmodule HalC2.OfficePropTest do
       {:call, __MODULE__, :send_messages, [elements(@ids), integer(0, 60)]},
       {:call, __MODULE__, :finish, [elements(@ids), integer(0, 2)]},
       {:call, __MODULE__, :settings, [integer(1, 4), elements([1, 3])]},
-      {:call, __MODULE__, :tick, [elements([1_000, 90_000, 5 * 60_000, 3_600_000])]}
+      {:call, __MODULE__, :tick, [elements([1_000, 20_000, 90_000, 5 * 60_000, 3_600_000])]}
     ])
   end
 
@@ -147,7 +148,7 @@ defmodule HalC2.OfficePropTest do
          state,
          elements([:none, :archived, :moved, :settled, :unsettled]),
          elements([nil, "t1", "t2"]),
-         elements([0, 60_000, 30 * 60_000, 2 * 3_600_000]),
+         elements([0, 20_000, 30_000, 30 * 60_000, 2 * 3_600_000]),
          mark
        ]}
 
@@ -380,10 +381,18 @@ defmodule HalC2.OfficePropTest do
           s.now
       end
 
-    entry = %{state: state, flag: flag, parent: parent, at: at, since: since, mark: mark}
+    entry = %{
+      state: state,
+      flag: flag,
+      parent: parent,
+      at: at,
+      made: at,
+      since: since,
+      mark: mark
+    }
 
     s =
-      if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms and
+      if not Map.has_key?(s.rows, id) and parent != nil and age < @talk_ms and
            not Enum.any?(s.talks, &(&1.id == "delegate:" <> id)),
          do: add_talk(s, "delegate:" <> id, {parent, id, "delegate"}, "Thread #{id}"),
          else: s
@@ -443,8 +452,12 @@ defmodule HalC2.OfficePropTest do
   def next_state(s, _result, {:call, _, :hand_off, [from, child, size]}) do
     text = if size != :untitled, do: "Task #{child}"
 
-    %{s | activity: Map.put(s.activity, from, "delegating")}
-    |> add_talk("delegate:" <> child, {from, child, "delegate"}, text)
+    s = %{s | activity: Map.put(s.activity, from, "delegating")}
+
+    case s.rows[child] do
+      %{made: made} when s.now - made >= @talk_ms -> s
+      _ -> add_talk(s, "delegate:" <> child, {from, child, "delegate"}, text)
+    end
   end
 
   def next_state(s, _result, {:call, _, :finish, [id, run]}) do

@@ -226,11 +226,11 @@ Feature: Office
       Then the office has the newest 40 talks
 
     @mc
-    Scenario: A talk leaves the office ten minutes after it was said
+    Scenario: A talk leaves the office thirty seconds after it was said
       Given threads "Lead" and "Reviewer" in the project "api"
       When the agent of "Lead" sends "Reviewer" the message "Please look at the diff"
       Then the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
-      When ten minutes pass with nothing else said or done
+      When thirty seconds pass with nothing else said or done
       Then the office has no talks
 
   Rule: The office page draws it
@@ -671,10 +671,39 @@ Feature: Office
       Then "Lead" walks up to the worker and says it, once
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The talks from before the office page opened are not played
+      Given the office has a "message" talk from "Lead" to "Reviewer"
+      When the office page opens
+      Then "Lead" does not walk over to say it
+      When the office has another "message" talk from "Lead" to "Reviewer"
+      Then "Lead" walks up to "Reviewer" and says that one
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk that waited until it was no longer current is not played
+      Given "Lead" is talking to "Reviewer" and has a talk for "Coder" waiting
+      When the waiting talk leaves the office
+      Then "Lead" never walks over to "Coder" to say it
+      And the talk under way goes on to its end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office back in sight shows what is happening now
+      Given the office page was out of sight, or the machine asleep, for over 5 seconds
+      And meanwhile threads joined and left the office and talked
+      When the page is in sight again
+      Then everyone in the office now is where they belong, at desks that are already there
+      And nobody walks in, carries a desk or says what was said meanwhile
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A glance away leaves the office as it was
+      Given "Lead" is talking and a mover carries a desk in
+      When the page is out of sight for a second
+      Then the talk and the move go on from where they were
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in
       Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
       When the office has a "message" talk from "Lead" to "Newcomer"
-      Then "Lead" waits until "Newcomer" has come in, however long that takes
+      Then "Lead" waits for "Newcomer" to come in, for as long as the office still has the talk
       And then walks up to "Newcomer" and says it
 
     @desktop @mobile @backlog-desktop @backlog-mobile

@@ -86,6 +86,9 @@ Add `OfficePage::test_<name>` after `-input <file>` to run single tests with Qt.
 `state` is `working`, `asking`, `waiting`, `idle` or `failed`; `activity` is
 `typing`, `running`, `testing`, `reading`, `browsing`, `planning`, `delegating`,
 `thinking` or null. `talks` are the newest 40, oldest first, and each leaves
-ten minutes after it was said, even with fewer than 40; `kind` is `delegate`,
-`message` or `result`. A talk can come before either of its two is in `people`,
-a hand-off before its worker's row for one, and waits on the page for both.
+thirty seconds after it was said, even with fewer than 40: the topic holds what
+is being said now, not a history. `kind` is `delegate`, `message` or `result`; a
+hand-off is only a talk while its worker is that new. A talk can come before
+either of its two is in `people`, a hand-off before its worker's row for one,
+and waits on the page for both while it is in the topic. The page plays none
+that were there when it first saw the office or came back in sight.
