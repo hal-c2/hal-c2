@@ -433,7 +433,7 @@ Feature: Subscription limits
   Scenario: A Grok usage percentage that is not a number is not read as unused
     Given Grok is signed in with a subscription and has not used any metered credit yet
     And xAI reports a complete monthly billing period with a usage percentage that is not a number
-    When the user opens Limits
+    When the MC checks limits
     Then Grok's limits are reported as not supported for this account
 
   @mc @backlog @priority-low
