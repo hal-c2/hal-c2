@@ -117,8 +117,10 @@ mise run release:install
 ```
 
 builds a release and installs it for your user: the MC as a background service (systemd on
-Linux, launchd on macOS) and the desktop as `hal-c2` with a launcher entry on x86_64 Linux, or as
-`~/Applications/HAL-C2.app` on macOS. The installed MC keeps its files in the XDG `hal-c2`
+Linux, launchd on macOS), the Qt desktop as `hal-c2` with a launcher entry on x86_64 Linux, or as
+`~/Applications/HAL-C2.app` on macOS, and the Ljós desktop beside it as `hal-c2-ljos`, or
+`~/Applications/HAL-C2 Ljós.app`. `release:install:mc`, `release:install:desktop-qt` and
+`release:install:desktop-ljos` install one of them. The installed MC keeps its files in the XDG `hal-c2`
 directories and listens on port 3790, so it runs beside a checkout's MC.
 `mise run mc:reload --release` moves it to a newer build in place, and `mise run mc:pair --release`
 and `mise run plugins:install --release` act on it instead of the dev MC.
