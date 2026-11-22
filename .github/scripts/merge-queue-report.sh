@@ -41,8 +41,10 @@ fi
 listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
 
 # A run whose CI result never finished is a wedge, which the watchdog drops and explains.
-# This run's own: a promoted run's commit may hold the parked run's too.
-result=$(jq -r '[.jobs[] | select(.name == "CI result") | .status][0] // "missing"' <<<"$listing")
+# This run's own: a promoted run's commit may hold the parked run's too. The listing shows
+# a stamp in the run's suite (merge-queue-stamp.sh) as a job of that name too: the latest.
+own=$(jq -c '[.jobs[] | select(.name == "CI result")] | max_by(.id) // {}' <<<"$listing")
+result=$(jq -r '.status // "missing"' <<<"$own")
 if [ "$result" != completed ]; then
   echo "run $run's CI result is $result: a wedge, which the watchdog reports"
   exit 0
@@ -50,7 +52,7 @@ fi
 
 # A run whose own CI result passed has nothing to report: a parked run, or one cancelled
 # after its entry left the queue (ci-result.sh).
-if [ "$(jq -r '.jobs[] | select(.name == "CI result") | .conclusion' <<<"$listing")" = success ]; then
+if [ "$(jq -r .conclusion <<<"$own")" = success ]; then
   echo "run $run's CI result passed"
   exit 0
 fi
@@ -61,9 +63,8 @@ jobs=$(jq -r "$(cat "$(dirname "$0")/failed-jobs.jq") | .[]
 # With no job to blame, `CI result` is what failed the entry: its own error, or a cancel
 # while the PR was queued. A run cancelled after the PR left passed it, so exited above.
 if [ -z "$jobs" ]; then
-  jobs=$(jq -r '.jobs[] | select(.name == "CI result")
-                | [.id, .name, .html_url, if .conclusion == "cancelled" then "was cancelled" else "failed" end]
-                | @tsv' <<<"$listing")
+  jobs=$(jq -r '[.id, .name, .html_url, if .conclusion == "cancelled" then "was cancelled" else "failed" end]
+                | @tsv' <<<"$own")
 fi
 
 # A job's log, without timestamps or colour.

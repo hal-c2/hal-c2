@@ -51,7 +51,7 @@ run_result() { # id event suite attempt
       --jq '.check_runs | max_by(.id) // {} | .conclusion // .status // "missing"'
   else
     gh api "repos/$repo/actions/runs/$1/attempts/$4/jobs?per_page=100" \
-      --jq '[.jobs[] | select(.name == "CI result")][0] // {} | .conclusion // .status // "missing"'
+      --jq '[.jobs[] | select(.name == "CI result")] | max_by(.id) // {} | .conclusion // .status // "missing"'
   fi
 }
 
