@@ -1790,6 +1790,23 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  step "the tool fails with code {string} ending in {string}",
+       %{args: [code, ending]} = context do
+    assert {:error, ^code, message} = context.mcp_result
+    assert String.ends_with?(message, ending)
+    context
+  end
+
+  step "the tool fails with code {string} with its usual message", %{args: [code]} = context do
+    assert {:error, ^code, "The thread was not found."} = context.mcp_result
+    context
+  end
+
+  step "no thread {string} exists", %{args: [thread]} = context do
+    refute Map.has_key?(context[:threads] || %{}, thread)
+    context
+  end
+
   step "{string} has no turn running", %{args: [thread]} = context do
     refute Enum.any?(World.runs(context, thread), &(&1["status"] in @active))
     context
