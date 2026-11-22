@@ -473,16 +473,34 @@ Item {
             verify(!!strip && !!flow, "the strip exists");
             tryVerify(() => flow.implicitHeight > strip.rowLimit, 3000, "the draft overflows the strip: " + flow.implicitHeight);
             tryVerify(() => strip.height > 0 && strip.height <= strip.rowLimit, 3000, "the strip is capped: " + strip.height);
-            const shown = Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
-            const straddles = shown.some(image => image.y + image.height > strip.rowLimit && shown.some(chip => chip !== image && chip.y === image.y && chip.y + chip.height <= strip.rowLimit));
-            verify(straddles, "a chip and an image share the row that crosses the limit: " + JSON.stringify(shown.map(kid => [kid.x, kid.y, kid.width, kid.height])));
-            const cut = [];
-            for (let i = 0; i < flow.children.length; ++i) {
-                const kid = flow.children[i];
-                if (kid.visible && kid.height > 0 && kid.y < strip.height && kid.y + kid.height > strip.height)
-                    cut.push(kid.y + "+" + kid.height);
-            }
-            compare(cut.length, 0, "no row is cut at " + strip.height + ": " + cut.join(", "));
+            // The Flow lays out after the first frame, so both wait for it.
+            const shown = () => Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
+            tryVerify(() => shown().some(image => image.y + image.height > strip.rowLimit && shown().some(chip => chip !== image && chip.y === image.y && chip.y + chip.height <= strip.rowLimit)), 3000, "a chip and an image share the row that crosses the limit");
+            tryVerify(() => shown().every(kid => kid.y >= strip.height || kid.y + kid.height <= strip.height), 3000, "no row is cut");
+        }
+
+        // A name longer than the strip is wide still has its row, and elides:
+        // the buttons after it stay inside the strip.
+        function test_aLongNameKeepsItsRowAndItsButtons() {
+            const long = "Screenshot from 2026-11-22 14-03-22 of a window with a long title.png";
+            const image = (i, status) => ({ id: "att-" + i, name: long, kind: "image", status: status, preview: "", source: null });
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: [{ id: "att-0", name: "a.txt", kind: "file", status: "ready", source: null }, image(1, "ready"), image(2, "failed")]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 360 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            const shown = () => Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
+            const inside = () => shown().every(kid => kid.x + kid.width <= flow.width + 1);
+            tryCompare(strip, "height", Theme.control.sm + Theme.space.sm + Theme.control.lg * 2, 3000, "the chip and the first image show whole");
+            tryVerify(inside, 3000, "the images end inside the strip");
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                reviewComments: [{ id: "r", label: long, text: long }],
+                terminalContexts: [{ id: "t", label: long, lineStart: 1, lineEnd: 2 }],
+                threadContexts: [{ id: "c", label: long }]
+            }), workspace: null };
+            tryVerify(() => shown().length === 3 && inside(), 3000, "the context chips end inside the strip");
         }
 
         function test_fastModeSaysItIsOn() {

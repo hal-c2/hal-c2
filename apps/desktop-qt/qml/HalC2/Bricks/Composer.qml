@@ -1051,20 +1051,18 @@ Rectangle {
                         // bottom of the lowest row that fits the limit. A
                         // row is as tall as its tallest child (children in
                         // a row share a y), so a chip beside an image ends
-                        // where the image does. Reading the Flow's width,
+                        // where the image does. Reading the Flow's
                         // implicitHeight and its children's geometry re-runs
-                        // this as attachments come and go and as the
-                        // composer changes width.
+                        // this as attachments come and go and as they rewrap.
                         readonly property real cappedHeight: {
                             const total = attachmentsFlow.implicitHeight;
-                            const flowWidth = attachmentsFlow.width;
                             if (total <= rowLimit)
                                 return total;
                             const rows = {};
                             const kids = attachmentsFlow.children;
                             for (let i = 0; i < kids.length; ++i) {
                                 const kid = kids[i];
-                                if (!kid.visible || kid.height <= 0 || kid.width <= 0 || kid.width > flowWidth + 1)
+                                if (!kid.visible || kid.height <= 0 || kid.width <= 0)
                                     continue;
                                 rows[kid.y] = Math.max(rows[kid.y] ?? 0, kid.y + kid.height);
                             }
@@ -1098,6 +1096,8 @@ Rectangle {
 
                             width: attachmentsScroll.availableWidth
                             spacing: Theme.space.sm
+                            // The room one chip has, unbounded until the strip is laid out.
+                            readonly property real room: width > 0 ? width : Infinity
 
                         Repeater {
                             model: composer.attachments
@@ -1106,6 +1106,7 @@ Rectangle {
                                 required property var modelData
 
                                 attachment: modelData
+                                maximumWidth: attachmentsFlow.room
                                 onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
                                     id: modelData.id
                                 })
@@ -1132,6 +1133,7 @@ Rectangle {
 
                                 objectName: "reviewComment-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "message-square"
                                 text: modelData.label
                                 font.pixelSize: Theme.type.meta.size
@@ -1152,6 +1154,7 @@ Rectangle {
 
                                 objectName: "terminalContext-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "terminal"
                                 text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
                                 font.pixelSize: Theme.type.meta.size
@@ -1171,6 +1174,7 @@ Rectangle {
 
                                 objectName: "threadContext-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "message-square"
                                 text: modelData.label
                                 font.pixelSize: Theme.type.meta.size
@@ -1208,6 +1212,7 @@ Rectangle {
 
                                 objectName: "citation-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: modelData.comment === null ? "quote" : "pencil"
                                 text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
                                 font.pixelSize: Theme.type.meta.size
