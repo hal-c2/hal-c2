@@ -256,11 +256,20 @@ Item {
                 decide(false);
             else if (!goal && world.ticks % 8 === 0)
                 decide(true);
-            else if (doing && goal && stay !== null && !goal.noStay && (doing.mustArrive ? tx === goal.x && ty === goal.y && next < 0 && path.length === 0 : next < 0 && path.length === 0))
+            else if (staying())
                 linger();
         }
         if (bubble && world.now >= bubbleUntil && !(talk && talk.phase === "say"))
             bubble = "";
+    }
+
+    // Whether the stay of what it is doing counts now.
+    function staying() {
+        if (!doing || !goal || stay === null || next >= 0 || path.length)
+            return false;
+        if (doing.mustSit && !goal.seat)
+            return false;
+        return !doing.mustArrive || (tx === goal.x && ty === goal.y);
     }
 
     function linger() {

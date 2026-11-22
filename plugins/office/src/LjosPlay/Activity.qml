@@ -20,6 +20,8 @@ QtObject {
     property var stay: null
     // Whether the stay waits for the goal, or starts wherever the actor stops.
     property bool mustArrive: true
+    // Whether the stay counts only at a seat: resting is sitting, not waiting.
+    property bool mustSit: false
     // Plans this one leaves running.
     property var keep: []
 
