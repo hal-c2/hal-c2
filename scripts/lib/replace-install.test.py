@@ -68,14 +68,16 @@ def default_signals():
 
 
 class ReplaceInstall(unittest.TestCase):
-    def install(self, fresh=False, **faults):
+    def install(self, fresh=False, link=None, **faults):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             place, shim, state = base / "apps with space", base / "shim", base / "state"
             for directory in (place, shim, state):
                 directory.mkdir()
             installed = place / "HAL-C2.app"
-            if not fresh:
+            if link:
+                installed.symlink_to(link)
+            elif not fresh:
                 installed.mkdir()
                 (installed / "mark").write_text("old\n")
             for name, text in (("mv", MV), ("rm", RM)):
@@ -115,9 +117,11 @@ class ReplaceInstall(unittest.TestCase):
                 for fifo in fifos:
                     os.close(fifo)
             files = {
-                str(path.relative_to(place)): path.read_text().strip()
+                str(path.relative_to(place)): f"-> {os.readlink(path)}"
+                if path.is_symlink()
+                else path.read_text().strip()
                 for path in place.rglob("*")
-                if path.is_file()
+                if path.is_symlink() or path.is_file()
             }
             left = sorted(path.name for path in place.iterdir() if path.name != installed.name)
             return run, files, left
@@ -131,6 +135,15 @@ class ReplaceInstall(unittest.TestCase):
     def test_installs(self):
         self.assert_intact(self.install(), "new", failed=False)
         self.assert_intact(self.install(fresh=True), "new", failed=False)
+
+    def test_installs_over_a_dangling_link(self):
+        self.assert_intact(self.install(link="gone"), "new", failed=False)
+
+    def test_failed_move_puts_a_dangling_link_back(self):
+        run, files, left = self.install(link="gone", new="fail")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(files, {"HAL-C2.app": "-> gone"}, run.stderr)
+        self.assertEqual(left, [])
 
     def test_failed_move(self):
         self.assert_intact(self.install(old="fail"), "old")
