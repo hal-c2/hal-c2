@@ -181,7 +181,8 @@ defmodule HalC2.AgentSessions do
   # The user's home, temp folders, downloads, Codex scratch folders, and HAL-C2's own
   # data and scratch (its worktrees among it, under `.hal-c2` or `.t3` before XDG) are
   # never projects: `{folders, trees}`, the latter with all they hold. Each has
-  # its links followed, like the paths they are compared with.
+  # its links followed, like the paths they are compared with. A tree whose links
+  # lead to home or above it is dropped, as it would hold every project.
   defp never_projects do
     home = user_home()
     folders = [home, System.tmp_dir!(), "/tmp", "/private/tmp"]
@@ -195,14 +196,18 @@ defmodule HalC2.AgentSessions do
       | HalC2.Scratch.roots()
     ]
 
-    {Enum.map(folders, &real_path/1), Enum.map(trees, &real_path/1)}
+    real_home = real_path(home)
+    trees = trees |> Enum.map(&real_path/1) |> Enum.reject(&within?(real_home, &1))
+    {Enum.map(folders, &real_path/1), trees}
   end
 
   defp excluded?(path, {folders, trees}) do
     path in folders or
-      Enum.any?(trees, &(path == &1 or String.starts_with?(path, &1 <> "/"))) or
+      Enum.any?(trees, &within?(path, &1)) or
       String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
   end
+
+  defp within?(path, tree), do: path == tree or String.starts_with?(path, tree <> "/")
 
   # `{:ok, git}` with the origin's normalized key, or `{:ok, nil}` outside a
   # repository. A linked worktree is skipped: its history belongs to the main one.

@@ -152,9 +152,20 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     Map.put(context, :folder, path)
   end
 
+  step ~r/^"~\/(?<link>[^"]+)" links to (?<target>the home folder|a folder above the home)$/,
+       %{args: [name, target]} = context do
+    home = context.agent_home
+    to = if target == "the home folder", do: home, else: Path.dirname(home)
+    File.ln_s!(to, Path.join(home, name))
+    context
+  end
+
   step "{string} is a candidate", %{args: [title]} = context do
-    assert Enum.any?(context.scan["candidates"], &(&1["title"] == title)),
-           "no candidate titled #{title}: #{inspect(context.scan["candidates"])}"
+    assert Enum.any?(
+             context.scan["candidates"],
+             &(&1["title"] == title and &1["path"] == context.folder)
+           ),
+           "no candidate titled #{title} at #{context.folder}: #{inspect(context.scan["candidates"])}"
 
     context
   end

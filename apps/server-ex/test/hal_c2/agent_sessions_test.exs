@@ -194,6 +194,28 @@ defmodule HalC2.AgentSessionsTest do
     assert {:ok, %{"candidates" => [%{"path" => ^app}]}} = AgentSessions.scan()
   end
 
+  test "a left-out folder that links to home or above it leaves out no project", %{
+    tmp_dir: dir,
+    app: app
+  } do
+    home = Path.join([dir, "disk", "me"])
+    project = Path.join([home, "work", "app"])
+    File.mkdir_p!(project)
+    for cwd <- [home, project], do: codex_session(dir, cwd)
+    Application.put_env(:hal_c2, :agent_sessions_home, home)
+    on_exit(fn -> Application.delete_env(:hal_c2, :agent_sessions_home) end)
+
+    for {folder, target} <- [{"Downloads", home}, {".t3", Path.dirname(home)}] do
+      link = Path.join(home, folder)
+      File.ln_s!(target, link)
+
+      assert {:ok, %{"candidates" => candidates}} = AgentSessions.scan()
+      assert Enum.sort(Enum.map(candidates, & &1["path"])) == Enum.sort([app, project])
+
+      File.rm!(link)
+    end
+  end
+
   test "a relative folder in a transcript is not read against the MC's own", %{
     tmp_dir: dir,
     app: app
