@@ -2157,6 +2157,30 @@ Item {
             ];
         }
 
+        // A hand-off heard before its worker is named is "…" until the office knows.
+        function test_a_talk_takes_the_text_the_office_has_for_it_now() {
+            const people = many(4, "t", "working", "typing");
+            const said = (first, second) => [
+                Object.assign(message_to("first", "t0", "t1"), { text: first }),
+                Object.assign(message_to("second", "t0", "t2"), { text: second })
+            ];
+            plugin.publish(people);
+            plugin.publish(people, said("…", "…"));
+            page.advance(1);
+            const a = actor("t0");
+            compare(a.talk?.text, "…", "the first is on its way over");
+            compare(a.queue.length, 1, "the second waits");
+            plugin.publish(people, said("Fix the\nparser", "Write the tests"));
+            compare(a.talk.text, "Fix the parser", "the one walking over takes it");
+            compare(a.queue[0].text, "Write the tests", "so does the one waiting");
+            runUntil(() => a.talk?.phase === "say", 2000, "the first is said");
+            page.advance(1);
+            compare(page.overlays["t0"].bubble, "Fix the parser");
+            plugin.publish(people, said("Fix the lexer", "Write the tests"));
+            page.advance(1);
+            compare(page.overlays["t0"].bubble, "Fix the lexer", "so does the one being said");
+        }
+
         // A hand-off's call often ends before its worker's row reaches the office.
         function test_a_talk_heard_before_both_are_in_the_office_waits_for_them(data) {
             const both = [person("lead", "Lead", "working", "typing"), person("worker", "Worker", "working", "typing")];

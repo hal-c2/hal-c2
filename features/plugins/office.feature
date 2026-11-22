@@ -361,6 +361,12 @@ Feature: Office
       And afterwards "Lead" goes back to what it was doing
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk shows the words the office has for it now
+      Given the office has a "delegate" talk from "Lead" to "Worker" saying "…"
+      When the office's talk comes to say "Fix the parser" before it is over
+      Then "Fix the parser" shows in the speech bubble of "Lead"
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person spoken to on its way stops only on a spot nobody else has
       Given "Lead" talks to "Reviewer" just as "Reviewer" walks over another person's spot
       Then "Reviewer" walks on past that spot before it stops to listen
