@@ -250,7 +250,7 @@ defmodule HalC2.Steps.Providers.ProviderInstancesCustom do
     context |> World.put_client("viewer", viewer) |> Map.put(:viewer_scopes, scopes)
   end
 
-  step "the user opens provider settings", context do
+  step "the client reads the provider settings", context do
     id = System.unique_integer([:positive])
 
     client =
@@ -271,7 +271,7 @@ defmodule HalC2.Steps.Providers.ProviderInstancesCustom do
     })
   end
 
-  step "the providers are shown but every change is unavailable", context do
+  step "it receives the providers and every change it sends is refused", context do
     assert [_ | _] = context.providers
     assert Enum.any?(context.providers, &(&1["instanceId"] == "codex"))
     {settings, version} = context.viewed
@@ -301,9 +301,9 @@ defmodule HalC2.Steps.Providers.ProviderInstancesCustom do
     Map.put(context, :refusals, refusals)
   end
 
-  # The client words it; the MC gives it the two facts: what this session holds, and
-  # what a change needs.
-  step "the user is told this session can only view them", context do
+  # What a client words as "this session can only view them": what the session
+  # holds, and what a change needs.
+  step "each refusal names the access a change needs", context do
     assert context.viewer_scopes == ["orchestration:read"]
 
     for {:error, message, detail} <- context.refusals do

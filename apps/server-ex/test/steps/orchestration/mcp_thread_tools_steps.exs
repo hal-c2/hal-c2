@@ -1764,6 +1764,11 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "thread {string} was deleted", %{args: [thread]} = context do
+    context =
+      if Map.has_key?(context[:threads] || %{}, thread),
+        do: context,
+        else: World.named_thread(context, thread, "demo")
+
     id = World.thread_id(context, thread)
 
     {:ok, _} =

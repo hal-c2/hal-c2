@@ -327,6 +327,14 @@ Feature: Provider instances
     Then the providers are shown but every change is unavailable
     And the user is told this session can only view them
 
+  # The MC's part of the scenario above; what a client draws from it is still backlog.
+  @priority-high
+  Scenario: The MC refuses provider changes from a client with view-only access
+    Given the client has view-only access to the environment
+    When the client reads the provider settings
+    Then it receives the providers and every change it sends is refused
+    And each refusal names the access a change needs
+
   @desktop @backlog-mc
   Scenario: Provider settings follow the chosen device
     Given the user is connected to the environments "workstation" and "laptop"

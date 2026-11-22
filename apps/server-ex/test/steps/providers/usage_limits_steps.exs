@@ -157,17 +157,42 @@ end
 defmodule HalC2.Steps.Providers.UsageLimits.Vendor do
   @moduledoc false
   # The usage endpoints of Grok, Cursor and OpenCode Go, answering the sign-in each
-  # scenario stores ("vendor-token").
+  # scenario stores ("vendor-token"). It tells the scenario (`test`) which paths were read.
   @behaviour Plug
 
   import Plug.Conn
 
   def init(opts), do: opts
 
-  def call(conn, _opts) do
+  def call(conn, test) do
+    send(test, {:vendor, conn.request_path})
+
     if get_req_header(conn, "authorization") != ["Bearer vendor-token"],
       do: send_resp(conn, 401, ""),
       else: route(conn, conn.method, conn.request_path)
+  end
+
+  defp route(conn, "GET", "/grok/billing-" <> unused) do
+    period =
+      case unused do
+        "weekly-unused" ->
+          %{"type" => "USAGE_PERIOD_TYPE_WEEKLY", "end" => "2026-10-05T00:00:00Z"}
+
+        "monthly-" <> _ ->
+          %{"type" => "USAGE_PERIOD_TYPE_MONTHLY", "end" => "2026-10-01T00:00:00Z"}
+
+        _incomplete ->
+          %{"type" => "USAGE_PERIOD_TYPE_MONTHLY"}
+      end
+
+    config = %{"currentPeriod" => period}
+
+    config =
+      if unused == "monthly-malformed",
+        do: Map.put(config, "creditUsagePercent", "12.5"),
+        else: config
+
+    json(conn, %{"config" => config})
   end
 
   defp route(conn, "GET", "/grok/billing") do
@@ -1403,9 +1428,81 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  step "Grok is signed in with a subscription and has not used any metered credit yet",
+       context do
+    dir = Path.join(context.mc.home, "vendor-auth")
+
+    write_json(Path.join(dir, ".grok/auth.json"), %{
+      "https://accounts.x.ai/sign-in" => %{"key" => "vendor-token"}
+    })
+
+    context = vendor_instance(context, "grok", %{"GROK_HOME" => Path.join(dir, ".grok")})
+    World.put_app_env(:grok_billing_url, context.vendor <> "/grok/billing-incomplete")
+    context
+  end
+
+  step ~r/^xAI reports (?<period>a complete weekly billing period|a complete monthly billing period|an incomplete billing period) without a usage percentage$/,
+       %{args: [period]} = context do
+    path =
+      case period do
+        "a complete weekly billing period" -> "/grok/billing-weekly-unused"
+        "a complete monthly billing period" -> "/grok/billing-monthly-unused"
+        "an incomplete billing period" -> "/grok/billing-incomplete"
+      end
+
+    World.put_app_env(:grok_billing_url, context.vendor <> path)
+    context
+  end
+
+  step "xAI reports a complete monthly billing period with a usage percentage that is not a number",
+       context do
+    path = "/grok/billing-monthly-malformed"
+    World.put_app_env(:grok_billing_url, context.vendor <> path)
+    Map.put(context, :vendor_reply, path)
+  end
+
+  step "the user opens Limits", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+
+    payload =
+      if context[:vendor_instance],
+        do: %{"instanceId" => context.vendor_instance},
+        else: %{}
+
+    {_, context} = World.call!(context, "server.refreshProviders", payload)
+    context
+  end
+
+  # Clients word limits with no windows and no refusal as this notice.
+  step "Grok's account is listed with the notice {string}", %{args: [_notice]} = context do
+    {limits, context} = usage_limits(context, "grok")
+    assert %{"windows" => []} = limits
+    refute Map.has_key?(limits, "unavailable")
+    Map.put(context, :grok_limits, limits)
+  end
+
+  step "it is not reported as not supported", context do
+    refute match?(%{"unavailable" => %{"reason" => "unsupported"}}, context.grok_limits)
+    context
+  end
+
+  step ~r/^Grok's (?<kind>weekly|monthly) window reads 0% used with its reset time$/,
+       %{args: [kind]} = context do
+    {limits, context} = usage_limits(context, "grok")
+    refute Map.has_key?(limits, "unavailable")
+    assert [%{"kind" => ^kind, "usedPercent" => 0, "resetsAt" => resets}] = limits["windows"]
+    ends = %{"weekly" => "2026-10-05", "monthly" => "2026-10-01"}
+    assert resets == ends[kind] <> "T00:00:00.000Z"
+    context
+  end
+
   step "Grok's limits are reported as not supported for this account", context do
     {limits, context} = usage_limits(context, "grok")
     assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported"}} = limits
+
+    # A key or custom config is refused the same way before any request, so a scenario
+    # about what xAI replied also needs that reply to have been read.
+    if path = context[:vendor_reply], do: assert_received({:vendor, ^path})
     context
   end
 
@@ -1415,9 +1512,24 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  @vendor_variables %{
+    "grok" => ~w(GROK_ XAI_),
+    "cursor" => ~w(CURSOR_ AGENT_CLI_ HAL_C2_CURSOR_),
+    "opencode" => ~w(OPENCODE_)
+  }
+
   # An enabled `providerInstances` entry for a built-in ACP agent, run by the fake
   # agent, with `env` on the instance and the vendor endpoints pointed at the fake.
+  # The MC lays an instance's environment over the host's, so each of the vendor's
+  # variables the host has is emptied there, leaving only the sign-in the scenario gives.
   defp vendor_instance(context, id, env) do
+    emptied =
+      for {name, _} <- System.get_env(),
+          String.starts_with?(name, @vendor_variables[id]),
+          into: %{},
+          do: {name, ""}
+
+    env = Map.merge(emptied, env)
     context = context |> World.fake_providers() |> serve_vendor()
     commands = Application.get_env(:hal_c2, :acp_commands, %{})
     World.put_app_env(:acp_commands, Map.put(commands, id, [context.fakes.acp]))
@@ -1446,7 +1558,9 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   defp serve_vendor(context) do
     server =
       ExUnit.Callbacks.start_supervised!(
-        Supervisor.child_spec({Bandit, plug: Vendor, port: 0, ip: :loopback}, id: :fake_vendor)
+        Supervisor.child_spec({Bandit, plug: {Vendor, self()}, port: 0, ip: :loopback},
+          id: :fake_vendor
+        )
       )
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
