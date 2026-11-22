@@ -195,7 +195,7 @@ Item {
                 }
                 for (const t of tiles) {
                     const x = t % w.cols, y = (t - x) / w.cols;
-                    const cell = w.grid[t];
+                    const cell = page.game.plan().grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
                     const stayed = (this.stood[id] ?? []).map(moved).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
@@ -205,7 +205,7 @@ Item {
                     stopped[here] = id;
                 }
                 if (page.actors[id] && a.goal)
-                    compare(page.claims[a.goal.y * w.cols + a.goal.x], id, id + " claims the tile it stops at, " + a.goal.x + "," + a.goal.y);
+                    compare(page.game.claims[a.goal.y * w.cols + a.goal.x], id, id + " claims the tile it stops at, " + a.goal.x + "," + a.goal.y);
                 stood[id] = tiles;
             }
             this.stood = stood;
@@ -1070,8 +1070,8 @@ Item {
             runUntil(() => {
                 if (!a.talk)
                     return true;
-                compare(page.claims[side], "lead", "the lead keeps the side it talks from");
-                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare(page.game.claims[side], "lead", "the lead keeps the side it talks from");
+                compare(page.game.claims[here], "c", "C keeps the tile it listens on");
                 checkFloor();
                 return false;
             }, 400, "the talk ends");
@@ -1095,12 +1095,12 @@ Item {
             ]);
             runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
             const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
-            delete page.claims[side];
-            delete page.claims[here];
+            delete page.game.claims[side];
+            delete page.game.claims[here];
             a.claim = -1;
             c.hold = -1;
             page.advance(1);
-            compare([page.claims[side], page.claims[here]], ["lead", "c"], "both are claimed again");
+            compare([page.game.claims[side], page.game.claims[here]], ["lead", "c"], "both are claimed again");
             compare([a.claim, c.hold], [side, here]);
         }
 
@@ -1113,10 +1113,10 @@ Item {
             const a = actor("lead"), c = actor("c");
             runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
             const W = page.world.cols;
-            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.walkable(x, y) && page.claims[y * W + x] === undefined);
+            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.game.walkable(x, y) && page.game.claims[y * W + x] === undefined);
             verify(beside.length > 0, "a side beside C is free");
             let below = 0;
-            while (below < 3 && page.walkable(c.tx, c.ty + below + 1))
+            while (below < 3 && page.game.walkable(c.tx, c.ty + below + 1))
                 below++;
             verify(below >= 2, "the floor below C is open");
             standAt(a, c.tx, c.ty + below);
@@ -1162,7 +1162,7 @@ Item {
             runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
             checkFloor();
             const W = page.world.cols, side = a.ty * W + a.tx;
-            delete page.claims[side];
+            delete page.game.claims[side];
             a.claim = -1;
             x.goal = {
                 x: a.tx,
@@ -1180,13 +1180,13 @@ Item {
             // The nearest free side is one of the two beside its old one, two
             // steps away; the one across the listener is a walk of four
             // around it.
-            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.walkable(sx, sy) && [undefined, "lead"].includes(page.claims[sy * W + sx]));
+            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.game.walkable(sx, sy) && [undefined, "lead"].includes(page.game.claims[sy * W + sx]));
             const across = [2 * c.tx - ox, 2 * c.ty - oy];
             verify(free.some(([sx, sy]) => sx === across[0] && sy === across[1]), "the side across the listener is free");
             verify(free.some(([sx, sy]) => sx !== across[0] || sy !== across[1]), "and so is one beside the old one");
             verify(a.goal.x !== across[0] || a.goal.y !== across[1], "it takes a side beside its old one, not the one across the listener");
             compare(Math.abs(a.goal.x - ox) + Math.abs(a.goal.y - oy), 2, "two steps away");
-            compare(page.claims[a.claim], "lead", "and claims it");
+            compare(page.game.claims[a.claim], "lead", "and claims it");
             compare(a.talk.phase, "go");
             runUntil(() => {
                 checkFloor();
@@ -1218,7 +1218,7 @@ Item {
             const W = page.world.cols;
             a.claim = -1;
             for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
-                page.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
+                page.game.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
             page.advance(1);
             verify(!a.talk, "the talk ends");
             compare(c.heldBy, "", "the listener is let go");
@@ -1287,7 +1287,7 @@ Item {
             // The south wall of an office of three rows of pods.
             const y = 6 * 3 + 7 - 1, W = page.world.cols;
             let x = 1;
-            while (x < page.world.xd && !(page.walkable(x, y) && page.walkable(x, y - 1)))
+            while (x < page.world.xd && !(page.game.walkable(x, y) && page.game.walkable(x, y - 1)))
                 x++;
             verify(x < page.world.xd, "the floor is open where the wall will be");
             const a = actor("t0");
@@ -1298,9 +1298,9 @@ Item {
             resize(1200, 760);
             compare([page.world.across, page.world.rows], [4, y + 1], "the south wall is where t0 steps from");
             const w = page.world;
-            verify(w.grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
+            verify(page.game.plan().grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
             if (a.next >= 0)
-                verify(w.grid[a.next] !== 1, "nor steps into one");
+                verify(page.game.plan().grid[a.next] !== 1, "nor steps into one");
             else
                 compare([a.px, a.py], [a.tx * 16, a.ty * 16], "t0 stands on its tile");
             const seat = w.seatOf["t0"];
@@ -1321,7 +1321,7 @@ Item {
             // One of them is mid-step where the wall will be.
             const a = actor("t0"), W = page.world.cols, wall = 3 + 4 + 2;
             let y = 3;
-            while (y < page.world.rows && !(page.walkable(wall, y) && page.walkable(wall + 1, y)))
+            while (y < page.world.rows && !(page.game.walkable(wall, y) && page.game.walkable(wall + 1, y)))
                 y++;
             standAt(a, wall + 1, y);
             send(a, wall, y);
@@ -1470,7 +1470,7 @@ Item {
             runUntil(() => {
                 checkFloor();
                 if (s.talk)
-                    compare(page.claims[held], listener.id, "the listener keeps its tile while it listens");
+                    compare(page.game.claims[held], listener.id, "the listener keeps its tile while it listens");
                 else
                     ended = true;
                 return ended && !page.closeTo;
@@ -1479,9 +1479,9 @@ Item {
             compare([l.hold, l.heldBy], [-1, ""], "nothing is held for the talk");
             const tiles = page.world.cols * page.world.rows;
             const mine = Object.values(page.actors).map(p => p.claim);
-            for (const tile of Object.keys(page.claims)) {
+            for (const tile of Object.keys(page.game.claims)) {
                 verify(Number(tile) < tiles, "tile " + tile + " is past the office's end");
-                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.game.claims[tile] + ", who stops elsewhere");
             }
             const seat = page.world.seatOf[listener.id];
             runUntil(() => {
@@ -1525,7 +1525,7 @@ Item {
             runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
             page.advance(50);
             compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
-            compare([s.talk?.phase, l.hold, page.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
+            compare([s.talk?.phase, l.hold, page.game.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
             s.talk.until = page.now;
             runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
             compare(page.world.pods.length, 9);
@@ -1550,7 +1550,7 @@ Item {
             // The listener stands on the floor past where the shorter office ends.
             const l = actor(listener.id), s = actor(speaker.id);
             let x = 1, y = end + 1;
-            while (!(page.walkable(x, y) && page.world.grid[y * page.world.cols + x] === 0 && page.claims[y * page.world.cols + x] === undefined)) {
+            while (!(page.game.walkable(x, y) && page.game.plan().grid[y * page.world.cols + x] === 0 && page.game.claims[y * page.world.cols + x] === undefined)) {
                 if (++x >= page.world.xd) {
                     x = 1;
                     y++;
@@ -1580,7 +1580,7 @@ Item {
             runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
             page.advance(50);
             compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
-            compare([s.talk?.phase, l.tx, l.ty, l.hold, page.claims[held]], ["say", x, y, held, listener.id], "the listener listens on where it was");
+            compare([s.talk?.phase, l.tx, l.ty, l.hold, page.game.claims[held]], ["say", x, y, held, listener.id], "the listener listens on where it was");
             s.talk.until = page.now;
             runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
             compare(page.world.pods.length, 9);
@@ -1712,7 +1712,7 @@ Item {
                     let open = true;
                     for (let dx = 0; dx < length && open; dx++) {
                         for (let dy = -1; dy <= 1; dy++)
-                            open = open && page.walkable(x + dx, y + dy) && !taken[(y + dy) * w.cols + x + dx] && !page.claims[(y + dy) * w.cols + x + dx];
+                            open = open && page.game.walkable(x + dx, y + dy) && !taken[(y + dy) * w.cols + x + dx] && !page.game.claims[(y + dy) * w.cols + x + dx];
                     }
                     if (open)
                         return [x, y];
@@ -2367,17 +2367,17 @@ Item {
             verify(c.path.length > 0 || c.next >= 0, "C is on its way");
             // Someone else has the tile C would stop at.
             const taken = c.next >= 0 ? c.next : c.ty * W + c.tx;
-            page.claims[taken] = "b";
+            page.game.claims[taken] = "b";
             runUntil(() => a.talk?.phase === "say", 4000, "the talk starts");
             verify(c.ty * W + c.tx !== taken, "C walks on past the spot that is someone else's");
-            compare(page.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
+            compare(page.game.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
             while (a.talk) {
                 const here = c.ty * W + c.tx;
                 if (c.next < 0)
-                    verify(!page.claims[here] || page.claims[here] === "c", "C stands on a tile nobody else has");
+                    verify(!page.game.claims[here] || page.game.claims[here] === "c", "C stands on a tile nobody else has");
                 page.advance(1);
             }
-            delete page.claims[taken];
+            delete page.game.claims[taken];
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
@@ -2416,11 +2416,11 @@ Item {
                 }, spot));
             }
             runUntil(() => a.talk?.phase === "reply", 400, "C replies");
-            compare(page.claims[here], "c", "C holds the tile it listens on");
+            compare(page.game.claims[here], "c", "C holds the tile it listens on");
             verify(b.goal?.kind !== "spot", "B is not sent to C's tile");
             compare([c.tx, c.ty], [spot.x, spot.y], "C listens where it stopped");
             runUntil(() => !a.talk, 200, "the talk ends");
-            verify(page.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
+            verify(page.game.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
@@ -2459,9 +2459,9 @@ Item {
             verify(ahead >= 0 && ahead !== here, "and the one it was headed for");
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing")]);
             verify(!actor("c"), "C has left");
-            compare(page.claims[here], undefined, "C's tile is free");
-            compare(page.claims[ahead], undefined, "the tile C was headed for is free");
-            compare(Object.values(page.claims).indexOf("c"), -1, "C holds no tile at all");
+            compare(page.game.claims[here], undefined, "C's tile is free");
+            compare(page.game.claims[ahead], undefined, "the tile C was headed for is free");
+            compare(Object.values(page.game.claims).indexOf("c"), -1, "C holds no tile at all");
             runUntil(() => !a.talk, 200, "the talk ends");
         }
 
@@ -2491,11 +2491,11 @@ Item {
             page.decide(c, true);
             verify(c.claim !== here, "C is headed for its desk");
             while (a.talk) {
-                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare(page.game.claims[here], "c", "C keeps the tile it listens on");
                 compare([c.tx, c.ty], [here % page.world.cols, Math.floor(here / page.world.cols)], "C stays put");
                 page.advance(1);
             }
-            compare(page.claims[here], undefined, "C lets go of it after the talk");
+            compare(page.game.claims[here], undefined, "C lets go of it after the talk");
             runUntil(() => arrived(c) && c.goal.kind === "desk", 2000, "C goes back to its desk");
         }
 
@@ -2527,7 +2527,7 @@ Item {
                         turns++;
                         here = c.ty * page.world.cols + c.tx;
                     }
-                    compare(page.claims[here], "c", "C keeps its tile while " + now.id + " talks");
+                    compare(page.game.claims[here], "c", "C keeps its tile while " + now.id + " talks");
                 }
             }
             compare(turns, 2, "both get their say");
@@ -2563,8 +2563,8 @@ Item {
             }, 3000, "both talks run to their end");
             compare([a.hold, b.hold, a.heldBy, b.heldBy], [-1, -1, "", ""], "nobody holds a tile for a talk");
             const mine = Object.values(page.actors).map(p => p.claim);
-            for (const tile of Object.keys(page.claims))
-                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+            for (const tile of Object.keys(page.game.claims))
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.game.claims[tile] + ", who stops elsewhere");
         }
 
         // A reviewer listening at a floor desk when a thread comes in to a full
@@ -2654,7 +2654,7 @@ Item {
             verify(t1.goal.x < pod.x || t1.goal.x >= pod.x + pod.cols, "beside the pod");
             runUntil(() => {
                 if (t0.talk) {
-                    compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
+                    compare(page.game.claims[tile], "r8", "r8 keeps the tile while it listens");
                     compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
                     compare(t1.goal.kind, "wait", "while t1 waits");
                 }
@@ -2679,8 +2679,8 @@ Item {
             const blocked = [];
             for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
                 const i = (far.ty + dy) * W + far.tx + dx;
-                if (page.walkable(far.tx + dx, far.ty + dy) && page.claims[i] === undefined) {
-                    page.claims[i] = "someone";
+                if (page.game.walkable(far.tx + dx, far.ty + dy) && page.game.claims[i] === undefined) {
+                    page.game.claims[i] = "someone";
                     blocked.push(i);
                 }
             }
@@ -2698,13 +2698,13 @@ Item {
             for (let i = 0; i < 200; i++) {
                 page.advance(1);
                 if (lead.next < 0 && lead.path.length === 0)
-                    compare(page.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
+                    compare(page.game.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
             }
             compare(lead.talk.phase, "go", "the lead waits for a side to come free");
             for (const i of blocked)
-                delete page.claims[i];
+                delete page.game.claims[i];
             runUntil(() => lead.talk?.phase === "say", 2000, "the talk starts once a side is free");
-            compare(page.claims[lead.ty * W + lead.tx], "t0");
+            compare(page.game.claims[lead.ty * W + lead.tx], "t0");
         }
 
         // The office fills the view by its width or its height, whichever runs
@@ -3097,7 +3097,7 @@ Item {
                     const key = goal.x + "," + goal.y;
                     verify(at[key] === undefined, id + " and " + at[key] + " both wait at " + key);
                     at[key] = id;
-                    compare(page.claims[goal.y * page.world.cols + goal.x], id, id + " holds its claim");
+                    compare(page.game.claims[goal.y * page.world.cols + goal.x], id, id + " holds its claim");
                 }
             };
             check();
@@ -3283,14 +3283,14 @@ Item {
             plugin.publish(many(4, "t", "working", "typing"));
             tryVerify(() => page.floorPaints > 0);
             const paints = page.floorPaints;
-            const props = page.props, units = page.units;
+            const world = page.world, seats = world.seats;
             plugin.publish(many(12, "t", "working", "typing"));
             page.advance(200);
             plugin.publish(many(2, "t", "working", "typing"));
             page.advance(200);
             wait(50);
             compare(page.floorPaints, paints);
-            verify(page.props === props && page.units === units, "the furniture is the same");
+            verify(page.world === world && page.world.seats === seats, "the furniture is the same");
         }
 
         function message() {

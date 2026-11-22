@@ -50,12 +50,12 @@ Item {
     // chair, the screens of its computers and its whiteboards. Built again
     // only when the office changes size; the movers bring desks in and take
     // them out.
-    property var props: []
-    property var units: []
     property var screens: []
     property var boards: []
     property var deskMarks: []
     property int deskCount: 0
+    // Counts the desks set down and carried away: a seat's state doesn't notify.
+    property int deskTurns: 0
     // How many times the floor, and the desks' project marks, have been
     // painted.
     property int floorPaints: 0
@@ -70,14 +70,12 @@ Item {
     property var views: ({})
     property var overlays: ({})
     property var screenViews: ({})
-    property var unitViews: ({})
     property var markViews: ({})
     property var moverViews: ({})
     property var boardViews: ({})
     // tile → the person who stops there: where it sits, stands or waits, or
     // the side of whoever it walks up to talk to. Nobody stops on a tile
     // another has claimed; on the way, people walk through each other.
-    property var claims: ({})
     property var movers: ({})
     property var jobs: []
     // People who came in while the doorway was busy wait outside, in order.
@@ -214,15 +212,6 @@ Item {
         function onEnvironmentsChanged() {
             page.follow();
         }
-    }
-
-    // ── Colours ───────────────────────────────────────────────────────────────
-
-    function shade(hex, k) {
-        const n = parseInt(hex.slice(1), 16);
-        let c = [n >> 16, (n >> 8) & 255, n & 255];
-        c = c.map(v => k < 0 ? v * (1 + k) : v + (255 - v) * k);
-        return "#" + c.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
     }
 
     // ── Looks ───────────────────────────────────────────────────────────────
@@ -434,14 +423,14 @@ Item {
         const dy = S ? 2 : 0;
         const hy = 2 + dy + (f === 14 ? 1 : 0);
         const side = d === 1, back = d === 3;
-        const skin = L.skin, skinDark = shade(L.skin, -0.2);
+        const skin = L.skin, skinDark = game.shade(L.skin, -0.2);
         const top = L.top;
         const white = "#f2efe8";
         const body = top === "tie" ? white : L.shirt;
         const sleeve = top === "tie" ? white : L.shirt;
-        const sleeveShade = shade(sleeve, -0.14);
+        const sleeveShade = game.shade(sleeve, -0.14);
         const short = top === "tee" || top === "dress";
-        const hair = L.hair, hairDark = shade(L.hair, -0.25);
+        const hair = L.hair, hairDark = game.shade(L.hair, -0.25);
         const legColor = top === "dress" ? skin : L.pants;
         const m = (x, y, w, h, c) => M.push([x, y, w, h, c]);
         const o = (x, y, w, h, c) => O.push([x, y, w, h, c]);
@@ -471,25 +460,25 @@ Item {
             if (!side) {
                 const l1 = f === 1 ? 2 : 3, l2 = f === 2 ? 2 : 3;
                 m(5, 17, 3, l1, legColor);
-                m(8, 17, 3, l2, shade(legColor, -0.08));
+                m(8, 17, 3, l2, game.shade(legColor, -0.08));
                 m(5, 17 + l1, 3, 1, L.shoes);
                 m(8, 17 + l2, 3, 1, L.shoes);
             } else if (f === 1) {
-                m(8, 17, 3, 3, shade(legColor, -0.15));
+                m(8, 17, 3, 3, game.shade(legColor, -0.15));
                 m(4, 17, 3, 3, legColor);
                 m(3, 20, 4, 1, L.shoes);
-                m(8, 20, 4, 1, shade(L.shoes, -0.1));
+                m(8, 20, 4, 1, game.shade(L.shoes, -0.1));
             } else if (f === 2) {
-                m(7, 17, 3, 3, shade(legColor, -0.15));
+                m(7, 17, 3, 3, game.shade(legColor, -0.15));
                 m(5, 17, 3, 3, legColor);
                 m(4, 20, 4, 1, L.shoes);
-                m(7, 20, 3, 1, shade(L.shoes, -0.1));
+                m(7, 20, 3, 1, game.shade(L.shoes, -0.1));
             } else {
                 m(6, 17, 4, 3, legColor);
                 m(5, 20, 5, 1, L.shoes);
             }
         } else if (side) {
-            m(3, 17, 7, 2, L.pants === legColor ? legColor : shade(L.shirt, -0.1));
+            m(3, 17, 7, 2, L.pants === legColor ? legColor : game.shade(L.shirt, -0.1));
             m(3, 19, 2, 1, legColor);
             m(2, 20, 3, 1, L.shoes);
         } else if (back) {
@@ -624,21 +613,21 @@ Item {
             if (top === "collared") {
                 o(6, 11 + dy, 1, 1, "#ffffff");
                 o(9, 11 + dy, 1, 1, "#ffffff");
-                o(8, 13 + dy, 1, 1, shade(body, -0.25));
-                o(8, 15 + dy, 1, 1, shade(body, -0.25));
+                o(8, 13 + dy, 1, 1, game.shade(body, -0.25));
+                o(8, 15 + dy, 1, 1, game.shade(body, -0.25));
             } else if (top === "tie") {
-                o(7, 11 + dy, 2, 1, shade(L.accent, -0.2));
+                o(7, 11 + dy, 2, 1, game.shade(L.accent, -0.2));
                 o(7, 12 + dy, 2, 4, L.accent);
             } else if (top === "hoodie") {
                 o(6, 12 + dy, 1, 2, "#f4f4f4");
                 o(9, 12 + dy, 1, 2, "#f4f4f4");
-                o(6, 15 + dy, 4, 1, shade(body, -0.18));
+                o(6, 15 + dy, 4, 1, game.shade(body, -0.18));
             } else if (top === "sweater") {
                 o(5, 13 + dy, 6, 1, L.accent);
             } else if (top === "blazer") {
                 o(7, 11 + dy, 2, 6, L.accent);
-                o(6, 11 + dy, 1, 2, shade(body, -0.25));
-                o(9, 11 + dy, 1, 2, shade(body, -0.25));
+                o(6, 11 + dy, 1, 2, game.shade(body, -0.25));
+                o(9, 11 + dy, 1, 2, game.shade(body, -0.25));
             } else if (top === "dress") {
                 o(5, 15 + dy, 6, 1, L.accent);
             } else if (f !== 12 && f !== 6 && f !== 8) {
@@ -651,7 +640,7 @@ Item {
             }
         } else if (back) {
             if (top === "hoodie")
-                o(4, 11 + dy, 8, 2, shade(body, -0.2));
+                o(4, 11 + dy, 8, 2, game.shade(body, -0.2));
             else if (top === "collared" || top === "tie")
                 o(5, 11 + dy, 6, 1, "#ffffff");
         } else if (top === "blazer" || top === "tie" || top === "collared") {
@@ -687,7 +676,7 @@ Item {
                 } else if (L.beard === "stubble") {
                     o(4, hy + 7, 8, 2, "rgba(40,30,30,0.18)");
                 }
-                const mouth = f === 13 ? "#5a2230" : L.lipstick ? "#c8324a" : shade(skin, -0.35);
+                const mouth = f === 13 ? "#5a2230" : L.lipstick ? "#c8324a" : game.shade(skin, -0.35);
                 if (f !== 7 && f !== 9)
                     o(7, hy + 7, 2, f === 13 ? 2 : 1, mouth);
                 if (L.glasses) {
@@ -726,7 +715,7 @@ Item {
                     o(4, hy + 7, 5, 2, "rgba(40,30,30,0.18)");
                 }
                 if (f !== 7 && f !== 9)
-                    o(4, hy + 7, f === 13 ? 2 : 1, 1, f === 13 ? "#5a2230" : L.lipstick ? "#c8324a" : shade(skin, -0.35));
+                    o(4, hy + 7, f === 13 ? 2 : 1, 1, f === 13 ? "#5a2230" : L.lipstick ? "#c8324a" : game.shade(skin, -0.35));
                 if (L.glasses) {
                     o(4, hy + 3, 3, 1, "#2b2233");
                     o(4, hy + 6, 3, 1, "#2b2233");
@@ -777,7 +766,7 @@ Item {
                     o(12, hy + 1, 1, 2, hairDark);
                     break;
                 case "bald":
-                    o(5, hy + 1, 2, 1, shade(skin, 0.3));
+                    o(5, hy + 1, 2, 1, game.shade(skin, 0.3));
                     o(3, hy + 4, 1, 2, hairDark);
                     o(12, hy + 4, 1, 2, hairDark);
                     break;
@@ -931,14 +920,14 @@ Item {
         // Hats, headphones, bows.
         if (L.hat === "beanie") {
             m(3, hy - 1, 10, 4, L.accent);
-            o(3, hy + 2, 10, 1, shade(L.accent, -0.2));
-            o(5, hy, 1, 2, shade(L.accent, 0.2));
+            o(3, hy + 2, 10, 1, game.shade(L.accent, -0.2));
+            o(5, hy, 1, 2, game.shade(L.accent, 0.2));
         } else if (L.hat === "cap") {
             m(3, hy - 1, 10, 3, L.accent);
             if (side)
-                m(1, hy + 1, 4, 1, shade(L.accent, -0.2));
+                m(1, hy + 1, 4, 1, game.shade(L.accent, -0.2));
             else if (!back)
-                m(3, hy + 2, 10, 1, shade(L.accent, -0.2));
+                m(3, hy + 2, 10, 1, game.shade(L.accent, -0.2));
         }
         if (L.headphones) {
             m(3, hy - 1, 10, 1, "#2c2f38");
@@ -990,7 +979,7 @@ Item {
                 mask: [3, 15, 5, 3]
             });
             o(4, 16, 2, 1, "#2a2226");
-            o(9, 20, 4, 1, shade(tailColor, -0.15));
+            o(9, 20, 4, 1, game.shade(tailColor, -0.15));
             return [U, M, O];
         }
         U.push([3, 20, 10, 2, "rgba(0,0,0,0.25)"]);
@@ -1005,8 +994,8 @@ Item {
             }
             const front = f === 1 ? 3 : f === 2 ? 5 : 4;
             const hind = f === 1 ? 11 : f === 2 ? 9 : 10;
-            m(front + 2, by + 5, 2, legs - 1, shade(base, -0.15));
-            m(hind - 2, by + 5, 2, legs - 1, shade(base, -0.15));
+            m(front + 2, by + 5, 2, legs - 1, game.shade(base, -0.15));
+            m(hind - 2, by + 5, 2, legs - 1, game.shade(base, -0.15));
             m(4, by, 9, 5, base);
             m(front, by + 5, 2, legs, base);
             m(hind, by + 5, 2, legs, base);
@@ -1107,7 +1096,7 @@ Item {
                 }
             }
             if (!cat && !backView)
-                m(6, 10, 4, 3, L.muzzle ? light : (L.face ?? shade(base, 0.12)));
+                m(6, 10, 4, 3, L.muzzle ? light : (L.face ?? game.shade(base, 0.12)));
             face = backView ? "back" : "front";
             marks(L, o, {
                 head: head,
@@ -1148,7 +1137,7 @@ Item {
                 o(5, 9, 1, 1, eye === "#2a2226" ? eye : eye);
                 o(10, 9, 1, 1, eye);
                 o(7, 10, 2, 1, "#2a2226");
-                o(7, 12, 2, 1, shade(L.muzzle ? light : base, -0.4));
+                o(7, 12, 2, 1, game.shade(L.muzzle ? light : base, -0.4));
                 if (f === 13)
                     m(7, 12, 2, 2, "#ef7d95");
             }
@@ -1176,7 +1165,7 @@ Item {
             o(a.head[0] + a.head[2] - 3, a.head[1], 1, 2, dark);
             if (a.body) {
                 for (let y = a.body[1] + 1; y < a.body[1] + a.body[3] - 1; y += 2)
-                    o(a.body[0] + 1, y, a.body[2] - 2, 1, shade(L.base, -0.18));
+                    o(a.body[0] + 1, y, a.body[2] - 2, 1, game.shade(L.base, -0.18));
             }
         }
         if (L.patches && a.head) {
@@ -1210,7 +1199,7 @@ Item {
             o(a.mask[0] + 1, a.mask[1] + 1, a.mask[2] - 2, a.mask[3], L.face);
         if (L.points) {
             if (a.mask)
-                o(a.mask[0] + 1, a.mask[1] + 1, a.mask[2] - 2, a.mask[3], shade(L.points, 0.15));
+                o(a.mask[0] + 1, a.mask[1] + 1, a.mask[2] - 2, a.mask[3], game.shade(L.points, 0.15));
             for (const p of a.paws ?? [])
                 o(p[0], p[1], p[2], p[3], L.points);
         }
@@ -1254,7 +1243,7 @@ Item {
         R("#141a24", 3, 2, 5, 3);
         R(O, 10, 1, 6, 6);
         R(chair, 11, 2, 4, 4);
-        R(shade(chair, 0.18), 11, 2, 4, 1);
+        R(game.shade(chair, 0.18), 11, 2, 4, 1);
     }
 
     function personCell(look, frame, dir) {
@@ -1499,33 +1488,8 @@ Item {
         const bx = xd + 1;
         const cols = officeCols(across);
         const rows = officeRows(down);
-        const grid = new Array(cols * rows).fill(0);
-        const at = (x, y) => y * cols + x;
-        const block = (x, y, w, h) => {
-            for (let j = y; j < y + h; j++)
-                for (let i = x; i < x + w; i++)
-                    grid[at(i, j)] = 1;
-        };
-        block(0, 0, cols, 3);
-        block(0, 0, 1, rows);
-        block(cols - 1, 0, 1, rows);
-        block(0, rows - 1, cols, 1);
-        block(xd, 0, 1, rows);
-        grid[at(xd, 5)] = 0;
-        grid[at(xd, 6)] = 0;
-
-        const props = [], units = [], screens = [], boards = [], seats = [], spots = [], marks = [];
+        const screens = [], boards = [], wall = [], seats = [], marks = [];
         const corner = 2;
-        const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
-            key: kind + ":" + x + ":" + y,
-            kind: kind,
-            x: x,
-            y: y,
-            w: w,
-            h: h,
-            z: z,
-            seed: game.hash(kind + x + "," + y)
-        }, extra ?? {}));
 
         // Pods: a row of chairs, two rows of desks, a row of chairs. Each seat
         // has its own desk and chair, which come and go together. A desk's
@@ -1556,31 +1520,6 @@ Item {
                         mover: ""
                     };
                     podSeats.push(seat);
-                    grid[at(seat.x, seat.deskY)] = 1;
-                    grid[at(seat.x, seat.y)] = 2;
-                    units.push({
-                        key: "desk:" + seat.index,
-                        kind: north ? "deskN" : "deskS",
-                        seat: seat.index,
-                        x: seat.x * 16,
-                        y: seat.deskY * 16,
-                        w: 16,
-                        h: 16,
-                        z: (y0 + 3) * 16,
-                        seed: game.hash("desk" + seat.index)
-                    });
-                    units.push({
-                        key: "chair:" + seat.index,
-                        kind: north ? "chairsN" : "chairsS",
-                        seat: seat.index,
-                        x: seat.x * 16,
-                        y: seat.y * 16,
-                        w: 16,
-                        h: 16,
-                        z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
-                        color: chair,
-                        seed: game.hash("chair" + seat.index)
-                    });
                     if (!north)
                         screens.push({
                             key: seat.screen,
@@ -1630,170 +1569,27 @@ Item {
             }
             if (wx + w > xd - 1)
                 break;
-            block(wx, 3, w, 1);
-            if (kind === "plant") {
-                prop("plant", wx * 16, 64 - 30, 16, 30, 64);
-            } else if (kind === "shelf") {
-                prop("shelf", wx * 16, 64 - 44, 32, 44, 64);
-                for (let j = 0; j < 2; j++)
-                    spots.push({
-                        x: wx + j,
-                        y: 4,
-                        face: 0,
-                        offY: 0,
-                        kind: "shelf",
-                        pose: "book"
-                    });
-            } else {
-                const key = "board:" + boards.length;
-                const review = !hung && wx >= reviewX;
-                hung = hung || review;
+            const piece = {
+                kind: kind,
+                tx: wx,
+                columns: w,
+                board: "",
+                review: false
+            };
+            if (kind === "board") {
+                piece.board = "board:" + boards.length;
+                piece.review = !hung && wx >= reviewX;
+                hung = hung || piece.review;
                 boards.push({
-                    key: key,
+                    key: piece.board,
                     x: wx * 16 + 5,
                     y: 64 - 40 + 5,
                     z: 64.5,
-                    review: review
+                    review: piece.review
                 });
-                prop("board", wx * 16, 64 - 40, 48, 40, 64);
-                for (let j = 0; j < 3; j++)
-                    spots.push({
-                        x: wx + j,
-                        y: 4,
-                        face: 3,
-                        offY: 0,
-                        kind: "board",
-                        pose: "board",
-                        board: key,
-                        review: review
-                    });
             }
+            wall.push(piece);
             wx += w + 1;
-        }
-
-        // The far corner of the work area; the doorway and the floor around it
-        // stay clear so people and movers meeting there can step aside.
-        block(xd - 1, rows - 2, 1, 1);
-        prop("plant", (xd - 1) * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
-
-        // The break room.
-        block(bx, 3, 10, 1);
-        grid[at(bx + 4, 3)] = 0;
-        prop("fridge", bx * 16, 64 - 42, 16, 42, 64);
-        prop("counter", (bx + 1) * 16, 64 - 40, 48, 40, 64);
-        prop("cooler", (bx + 5) * 16, 64 - 34, 16, 34, 64);
-        prop("vending", (bx + 6) * 16, 64 - 44, 32, 44, 64);
-        prop("arcade", (bx + 8) * 16, 64 - 42, 16, 42, 64);
-        prop("plant", (bx + 9) * 16, 64 - 30, 16, 30, 64);
-        const machine = (x, kind, cup) => spots.push({
-                x: x,
-                y: 4,
-                face: 3,
-                offY: 0,
-                kind: kind,
-                pose: kind === "arcade" ? "arcade" : "machine",
-                cup: cup,
-                area: "break"
-            });
-        machine(bx, "fridge", false);
-        machine(bx + 1, "coffee", true);
-        machine(bx + 5, "cooler", true);
-        machine(bx + 6, "vending", false);
-        machine(bx + 8, "arcade", false);
-
-        // The round table and its chairs.
-        block(bx + 2, 8, 2, 2);
-        prop("table", (bx + 2) * 16, 8 * 16, 32, 32, 10 * 16);
-        const tableSeat = (x, y, face, offY, z) => {
-            grid[at(x, y)] = 2;
-            prop("stool", x * 16, y * 16, 16, 16, z, {
-                face: face
-            });
-            spots.push({
-                x: x,
-                y: y,
-                face: face,
-                offY: offY,
-                kind: "table",
-                pose: "sit",
-                area: "break",
-                seat: true
-            });
-        };
-        tableSeat(bx + 2, 7, 0, 3, 8 * 16 - 2);
-        tableSeat(bx + 3, 10, 3, -3, 11 * 16 + 1);
-        tableSeat(bx + 1, 9, 2, 0, 10 * 16 - 2);
-        tableSeat(bx + 4, 8, 1, 0, 9 * 16 - 2);
-
-        // The couch, its coffee table and an armchair, on a rug.
-        prop("couch", (bx + 6) * 16, 8 * 16 - 26, 48, 26, 8 * 16 - 1);
-        for (let i = 0; i < 3; i++) {
-            grid[at(bx + 6 + i, 7)] = 2;
-            spots.push({
-                x: bx + 6 + i,
-                y: 7,
-                face: 0,
-                offY: -1,
-                kind: "couch",
-                pose: "sit",
-                area: "break",
-                seat: true
-            });
-        }
-        block(bx + 6, 9, 2, 1);
-        prop("coffeeTable", (bx + 6) * 16, 9 * 16, 32, 16, 10 * 16);
-        grid[at(bx + 9, 9)] = 2;
-        prop("armchair", (bx + 9) * 16, 9 * 16 - 6, 16, 22, 10 * 16 - 1);
-        spots.push({
-            x: bx + 9,
-            y: 9,
-            face: 1,
-            offY: -1,
-            kind: "armchair",
-            pose: "sit",
-            area: "break",
-            seat: true
-        });
-
-        // A bed for the pets, places to stand and chat, plants.
-        grid[at(bx + 8, 12)] = 2;
-        prop("petBed", (bx + 8) * 16, 12 * 16, 16, 16, 13 * 16 - 2);
-        spots.push({
-            x: bx + 8,
-            y: 12,
-            face: 0,
-            offY: 1,
-            kind: "petBed",
-            pose: "nap",
-            area: "break",
-            seat: true,
-            pets: true
-        });
-        for (const pair of [[bx + 5, 12], [bx + 2, 13]]) {
-            spots.push({
-                x: pair[0],
-                y: pair[1],
-                face: 2,
-                offY: 0,
-                kind: "chat",
-                pose: "chat",
-                area: "break",
-                partner: at(pair[0] + 1, pair[1])
-            });
-            spots.push({
-                x: pair[0] + 1,
-                y: pair[1],
-                face: 1,
-                offY: 0,
-                kind: "chat",
-                pose: "chat",
-                area: "break",
-                partner: at(pair[0], pair[1])
-            });
-        }
-        for (const x of [bx, bx + 9]) {
-            block(x, rows - 2, 1, 1);
-            prop("plant", x * 16, (rows - 1) * 16 - 30, 16, 30, (rows - 1) * 16);
         }
 
         const review = placed[corner];
@@ -1802,7 +1598,6 @@ Item {
             rows: rows,
             down: down,
             across: across,
-            grid: grid,
             xd: xd,
             bx: bx,
             pods: placed,
@@ -1817,21 +1612,12 @@ Item {
             marks: marks,
             seats: seats,
             seatOf: {},
-            spots: spots,
-            props: props,
-            units: units,
+            wall: wall,
             screens: screens,
             boards: boards,
             door: [xd, 5],
             entrance: [2, rows - 2]
         };
-    }
-
-    function walkable(x, y) {
-        const w = page.world;
-        if (!w || x < 0 || y < 0 || x >= w.cols || y >= w.rows)
-            return false;
-        return w.grid[y * w.cols + x] === 0;
     }
 
     // ── Who is in the office ────────────────────────────────────────────────
@@ -1860,7 +1646,7 @@ Item {
         countMoves();
         page.seen = {};
         page.arrival = {};
-        page.claims = {};
+        game.claims = {};
         page.primed = false;
         page.settled = false;
         // `office` still holds the last machine's value while its change is
@@ -2024,18 +1810,19 @@ Item {
     function build(across, count) {
         const old = page.world;
         const w = buildWorld(across, count);
-        page.world = w;
-        if (old)
-            carry(old, w);
         game.columns = w.cols;
         game.rows = w.rows;
-        page.props = w.props;
-        page.units = w.units;
+        // The furniture follows at once, and says which tiles it takes.
+        page.world = w;
+        game.changed();
+        if (old)
+            carry(old, w);
         page.screens = w.screens;
         if (!old || old.across !== across)
             page.boards = w.boards;
         page.deskMarks = w.marks;
         page.deskCount = w.seats.filter(deskShown).length;
+        page.deskTurns++;
         floor.requestPaint();
     }
 
@@ -2065,7 +1852,7 @@ Item {
             return;
         }
         const n = w.cols * w.rows;
-        const lost = i => i >= n || w.grid[i] === 1;
+        const lost = i => i >= n || game.plan().grid[i] === 1;
         for (const a of everyone()) {
             if (a.tx < 0)
                 continue;
@@ -2097,7 +1884,7 @@ Item {
     // office's edge, steps to the nearest floor first. Before the office is
     // first shown, people are simply there.
     function rearrange(old, w) {
-        page.claims = {};
+        game.claims = {};
         const dx = w.xd - old.xd;
         const across = x => x >= old.xd ? x + dx : x;
         for (const a of everyone()) {
@@ -2123,7 +1910,7 @@ Item {
             // steps back to the office's floor by its wall: it goes into the
             // break room only when let in (see restless()).
             if (!room && (a.tx >= w.xd || a.next >= 0 && a.next % w.cols >= w.xd)) {
-                const free = nearestFree(w.xd - 1, a.ty, a.id, false, w.xd);
+                const free = game.nearestFree(w.xd - 1, a.ty, a.id, w.xd) ?? w.entrance.slice();
                 place(a, free[0], free[1], false);
             }
             const goal = a.goal;
@@ -2170,7 +1957,7 @@ Item {
             // from no wall or furniture, a seat it is leaving aside.
             const on = a.next >= 0 ? a.next : a.ty * w.cols + a.tx;
             const mine = a.goal && on === a.goal.y * w.cols + a.goal.x;
-            if (w.grid[on] !== 0 && !mine || a.next >= 0 && w.grid[a.ty * w.cols + a.tx] === 1)
+            if (game.plan().grid[on] !== 0 && !mine || a.next >= 0 && game.plan().grid[a.ty * w.cols + a.tx] === 1)
                 place(a, a.tx, a.ty, true);
             route(a);
         }
@@ -2296,8 +2083,10 @@ Item {
         const w = page.world;
         const was = deskShown(seat);
         seat.state = on ? "in" : "out";
-        if (on !== was)
+        if (on !== was) {
             page.deskCount += on ? 1 : -1;
+            page.deskTurns++;
+        }
         showDesk(seat);
         if (!on)
             return;
@@ -2311,16 +2100,12 @@ Item {
         return seat.state === "in" || seat.state === "leaving";
     }
 
+    function deskIn(index) {
+        const seat = page.deskTurns >= 0 ? page.world?.seats[index] : null;
+        return !!seat && deskShown(seat);
+    }
+
     function showDesk(seat) {
-        const shown = deskShown(seat);
-        for (const key of ["desk:" + seat.index, "chair:" + seat.index]) {
-            const view = page.unitViews[key];
-            if (view)
-                view.visible = shown;
-        }
-        const screen = seat.screen ? page.screenViews[seat.screen] : null;
-        if (screen)
-            screen.visible = shown;
         const mark = page.world.marks[seat.index];
         if (mark)
             updateMark(mark);
@@ -2635,8 +2420,8 @@ Item {
         const w = page.world;
         const inside = x >= 0 && y >= 0 && x < w.cols && y < w.rows;
         const i = y * w.cols + x;
-        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y))) {
-            const free = nearestFree(x, y, actor.id);
+        if (!inside || snap && !(game.plan().grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y))) {
+            const free = game.nearestFree(x, y, actor.id) ?? w.entrance.slice();
             x = free[0];
             y = free[1];
         }
@@ -2645,29 +2430,6 @@ Item {
         actor.px = x * 16;
         actor.py = y * 16;
         actor.next = -1;
-    }
-
-    // The nearest floor tile nobody else has claimed, west of `before` when
-    // given; with none, null, or the entrance unless `unclaimed`.
-    function nearestFree(x, y, self, unclaimed, before) {
-        const w = page.world;
-        const seen = new Uint8Array(w.cols * w.rows);
-        const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
-        seen[queue[0][1] * w.cols + queue[0][0]] = 1;
-        while (queue.length) {
-            const [cx, cy] = queue.shift();
-            const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && !(cx >= before) && (!page.claims[i] || page.claims[i] === self))
-                return [cx, cy];
-            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                const nx = cx + dx, ny = cy + dy;
-                if (nx >= 0 && ny >= 0 && nx < w.cols && ny < w.rows && !seen[ny * w.cols + nx]) {
-                    seen[ny * w.cols + nx] = 1;
-                    queue.push([nx, ny]);
-                }
-            }
-        }
-        return unclaimed ? null : [w.entrance[0], w.entrance[1]];
     }
 
     function removeActor(id) {
@@ -2700,14 +2462,14 @@ Item {
 
     // Lets go of the tile a person stops at, unless it also listens there.
     function release(actor) {
-        if (actor.claim >= 0 && actor.claim !== actor.hold && page.claims[actor.claim] === actor.id)
-            delete page.claims[actor.claim];
+        if (actor.claim >= 0 && actor.claim !== actor.hold && game.claims[actor.claim] === actor.id)
+            delete game.claims[actor.claim];
         actor.claim = -1;
     }
 
     // Whether a person may stop at a spot: nobody else has claimed it.
     function free(spot, actor) {
-        const claim = page.claims[spot.y * page.world.cols + spot.x];
+        const claim = game.claims[spot.y * page.world.cols + spot.x];
         return !claim || claim === actor.id;
     }
 
@@ -2715,7 +2477,7 @@ Item {
     function claim(actor, spot) {
         release(actor);
         const i = spot.y * page.world.cols + spot.x;
-        page.claims[i] = actor.id;
+        game.claims[i] = actor.id;
         actor.claim = i;
     }
 
@@ -2724,8 +2486,8 @@ Item {
     // it even when it is headed there, should it be sent somewhere else.
     function holdHere(actor) {
         const i = actor.ty * page.world.cols + actor.tx;
-        if (page.claims[i] === undefined || page.claims[i] === actor.id) {
-            page.claims[i] = actor.id;
+        if (game.claims[i] === undefined || game.claims[i] === actor.id) {
+            game.claims[i] = actor.id;
             actor.hold = i;
         }
     }
@@ -2733,9 +2495,9 @@ Item {
     function letGo(actor) {
         const i = actor.hold;
         actor.hold = -1;
-        if (i < 0 || i === actor.claim || page.claims[i] !== actor.id)
+        if (i < 0 || i === actor.claim || game.claims[i] !== actor.id)
             return;
-        delete page.claims[i];
+        delete game.claims[i];
         // Whoever was given the desk there meanwhile waits for it (see
         // seatGoal()), and goes to it now.
         const w = page.world;
@@ -2754,7 +2516,7 @@ Item {
         }
         // A desk someone still listens at is theirs until the talk ends (see
         // letGo()).
-        const holder = page.actors[page.claims[seat.y * page.world.cols + seat.x]];
+        const holder = page.actors[game.claims[seat.y * page.world.cols + seat.x]];
         if (seat.state !== "in" || holder && holder !== actor && holder.hold === seat.y * page.world.cols + seat.x)
             return waitGoal(actor, seat);
         claim(actor, seat);
@@ -2777,7 +2539,7 @@ Item {
         const options = [];
         for (const y of [pod.y + 1, pod.y + 2]) {
             for (const x of [pod.x - 1, pod.x + pod.cols, pod.x - 2, pod.x + pod.cols + 1]) {
-                if (walkable(x, y) && free({
+                if (game.walkable(x, y) && free({
                     x: x,
                     y: y
                 }, actor))
@@ -2786,7 +2548,7 @@ Item {
         }
         const far = ([x, y]) => Math.abs(x - seat.x) + Math.abs(y - seat.y);
         options.sort((a, b) => far(a) - far(b));
-        const spot = options[0] ?? nearestFree(pod.x - 1, pod.y + 1, actor.id, true);
+        const spot = options[0] ?? game.nearestFree(pod.x - 1, pod.y + 1, actor.id);
         // With nowhere to wait, it plans again in a moment (see tick()).
         if (!spot) {
             release(actor);
@@ -2806,7 +2568,7 @@ Item {
     }
 
     function spotGoal(actor, kind, pose) {
-        let options = page.world.spots.filter(s => s.kind === kind && free(s, actor));
+        let options = game.plan().spots.filter(s => s.kind === kind && free(s, actor));
         // Reviewers plan at the review corner's whiteboard and everyone else
         // at the others, each at the other's when its own is taken.
         const own = options.filter(s => !!s.review === (actor.person?.kind === "reviewer"));
@@ -2847,9 +2609,9 @@ Item {
             armchair: 1,
             chat: 2
         };
-        const options = page.world.spots.filter(s => s.area === "break" && weights[s.kind] && (!s.pets || pet) && free(s, actor));
+        const options = game.plan().spots.filter(s => s.area === "break" && weights[s.kind] && (!s.pets || pet) && free(s, actor));
         if (!options.length) {
-            const free = nearestFree(page.world.bx + 4 + Math.floor(game.rng() * 4), 11 + Math.floor(game.rng() * 3), actor.id);
+            const free = game.nearestFree(page.world.bx + 4 + Math.floor(game.rng() * 4), 11 + Math.floor(game.rng() * 3), actor.id) ?? page.world.entrance.slice();
             const goal = {
                 x: free[0],
                 y: free[1],
@@ -2979,80 +2741,7 @@ Item {
         const W = page.world.cols;
         const sx = actor.next >= 0 ? actor.next % W : actor.tx;
         const sy = actor.next >= 0 ? (actor.next - sx) / W : actor.ty;
-        actor.path = findPath(sx, sy, goal.x, goal.y) ?? [];
-    }
-
-    // A* over the tiles, four ways, around the furniture and through people.
-    // Seats are entered only as the goal.
-    function findPath(sx, sy, gx, gy) {
-        const w = page.world;
-        const W = w.cols, H = w.rows;
-        const start = sy * W + sx, goal = gy * W + gx;
-        if (start === goal)
-            return [];
-        const g = new Int32Array(W * H).fill(-1);
-        const from = new Int32Array(W * H).fill(-1);
-        const heap = [];
-        const push = (f, i) => {
-            heap.push([f, i]);
-            let k = heap.length - 1;
-            while (k > 0) {
-                const parent = (k - 1) >> 1;
-                if (heap[parent][0] <= heap[k][0])
-                    break;
-                [heap[parent], heap[k]] = [heap[k], heap[parent]];
-                k = parent;
-            }
-        };
-        const pop = () => {
-            const top = heap[0];
-            const last = heap.pop();
-            if (heap.length) {
-                heap[0] = last;
-                let k = 0;
-                for (;;) {
-                    const l = 2 * k + 1, r = l + 1;
-                    let m = k;
-                    if (l < heap.length && heap[l][0] < heap[m][0])
-                        m = l;
-                    if (r < heap.length && heap[r][0] < heap[m][0])
-                        m = r;
-                    if (m === k)
-                        break;
-                    [heap[m], heap[k]] = [heap[k], heap[m]];
-                    k = m;
-                }
-            }
-            return top;
-        };
-        g[start] = 0;
-        push(Math.abs(gx - sx) + Math.abs(gy - sy), start);
-        while (heap.length) {
-            const [, i] = pop();
-            if (i === goal)
-                break;
-            const x = i % W, y = (i - x) / W;
-            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                const nx = x + dx, ny = y + dy;
-                if (nx < 0 || ny < 0 || nx >= W || ny >= H)
-                    continue;
-                const j = ny * W + nx;
-                if (j !== goal && w.grid[j] !== 0)
-                    continue;
-                const cost = g[i] + 1;
-                if (g[j] < 0 || cost < g[j]) {
-                    g[j] = cost;
-                    from[j] = i;
-                    push(cost + Math.abs(gx - nx) + Math.abs(gy - ny), j);
-                }
-            }
-        }
-        if (g[goal] < 0)
-            return null;
-        const path = [];
-        for (let i = goal; i !== start; i = from[i])
-            path.push(i);
-        return path.reverse();
+        actor.path = game.path(sx, sy, goal.x, goal.y) ?? [];
     }
 
     // ── Talks ───────────────────────────────────────────────────────────────
@@ -3229,7 +2918,7 @@ Item {
         const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
                     x: other.tx + dx,
                     y: other.ty + dy
-                })).filter(s => walkable(s.x, s.y) && free(s, actor));
+                })).filter(s => game.walkable(s.x, s.y) && free(s, actor));
         if (!sides.length)
             return false;
         const inside = (a, m, b) => Math.min(a, b) < m && m < Math.max(a, b);
@@ -3474,7 +3163,7 @@ Item {
             break;
         case "chat":
             {
-                const there = page.actors[page.claims[goal.partner]];
+                const there = page.actors[game.claims[goal.partner]];
                 const talking = there && there.goal?.kind === "chat" && there.tx === there.goal.x && there.ty === there.goal.y;
                 actor.frame = actor.cup ? (t % 4000 < 700 ? F.sip : F.cup) : talking && Math.floor((t + (goal.face === 1 ? 900 : 0)) / 1800) % 2 ? F.talk : F.stand;
                 break;
@@ -3551,20 +3240,18 @@ Item {
             const seat = page.world.seats[screen.seat];
             // On for whoever sits there, from the step onto the seat.
             const i = seat.y * page.world.cols + seat.x;
-            const actor = page.actors[page.claims[i]];
+            const actor = page.actors[game.claims[i]];
             let mode = "off", slack = "";
             if (actor && actor.goal?.kind === "desk" && (actor.ty * page.world.cols + actor.tx === i || actor.next === i)) {
                 const p = actor.person;
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
                 slack = slackOf(actor);
             }
-            const shown = deskShown(seat);
             const scene = slack ? Math.floor((page.now + actor.beat * 40) / 1000) % page.slackArt[slack].frames.length : view.scene;
             // Only working screens move with the clock.
             const phase = slack || mode === "off" || mode === "idle" || mode === "failed" ? view.phase : Math.floor(page.now / 240);
-            if (view.visible === shown && view.mode === mode && view.slack === slack && view.scene === scene && view.phase === phase)
+            if (view.mode === mode && view.slack === slack && view.scene === scene && view.phase === phase)
                 continue;
-            view.visible = shown;
             view.mode = mode;
             view.slack = slack;
             view.scene = scene;
@@ -3835,352 +3522,6 @@ Item {
         rect(ctx, "#4f8070", e[0] * 16 - 4, e[1] * 16 + 6, 24, 6);
     }
 
-    function paintProp(ctx, p) {
-        ctx.clearRect(0, 0, p.w, p.h);
-        const r = game.random(p.seed);
-        const R = (c, x, y, w, h) => rect(ctx, c, x, y, w, h);
-        const O = page.outline;
-        switch (p.kind) {
-        case "deskN":
-            // A north seat's desk: its keyboard by the chair, the back of its
-            // monitor and the low divider to the desk across.
-            R(O, 0, 0, 16, 16);
-            R("#c99a64", 1, 1, 14, 11);
-            R("#ddb27c", 1, 1, 14, 1);
-            R("#6f8584", 1, 12, 14, 3);
-            R("#8aa09f", 1, 12, 14, 1);
-            R("#d7dbe2", 4, 1, 8, 2);
-            R("#b9bec8", 4, 2, 8, 1);
-            R(O, 2, 3, 11, 9);
-            R("#3b404d", 3, 4, 9, 7);
-            R("#4b5160", 3, 4, 9, 1);
-            if (r() < 0.3) {
-                R(O, 13, 4, 3, 4);
-                R(game.pick(r, ["#e8894a", "#5a6fd6", "#f2efe8"]), 13, 5, 2, 2);
-            }
-            break;
-        case "deskS":
-            {
-                // A south seat's desk: the front of its monitor (its screen
-                // is drawn over it), a keyboard and a mouse.
-                R("rgba(0,0,0,0.25)", 1, 14, 14, 2);
-                R(O, 0, 0, 16, 14);
-                R("#c99a64", 1, 1, 14, 10);
-                R("#8f6538", 1, 11, 14, 2);
-                R("#7a5530", 1, 12, 14, 1);
-                R(O, 2, 0, 12, 9);
-                R("#2b2f39", 3, 0, 10, 8);
-                R("#141a24", 4, 1, 8, 6);
-                R("#5d6372", 6, 9, 4, 1);
-                R("#e3e6ec", 3, 10, 8, 1);
-                R("#e3e6ec", 12, 10, 2, 1);
-                const thing = r();
-                if (thing < 0.25) {
-                    R(O, 0, 3, 3, 5);
-                    R(game.pick(r, ["#e05d5d", "#4a90d9", "#e8c14a", "#f2efe8"]), 1, 4, 1, 3);
-                } else if (thing < 0.45) {
-                    R("#3a9a68", 13, 2, 3, 2);
-                    R("#4fbf85", 13, 3, 3, 3);
-                    R("#7a4a2a", 14, 6, 2, 2);
-                }
-                break;
-            }
-        case "chairsN":
-        case "chairsS":
-            {
-                const north = p.kind === "chairsN";
-                for (let i = 0; i < p.w / 16; i++) {
-                    const x = i * 16;
-                    if (north) {
-                        R(O, x + 3, 0, 10, 13);
-                        R(p.color, x + 4, 1, 8, 6);
-                        R(shade(p.color, 0.18), x + 4, 1, 8, 1);
-                        R(shade(p.color, 0.1), x + 4, 8, 8, 4);
-                        R("#2b2f39", x + 7, 13, 2, 2);
-                    } else {
-                        R("#2b2f39", x + 4, 14, 8, 1);
-                        R("#2b2f39", x + 7, 12, 2, 2);
-                        R(O, x + 2, 4, 11, 9);
-                        R(p.color, x + 3, 5, 9, 7);
-                        R(shade(p.color, 0.18), x + 3, 5, 9, 1);
-                    }
-                }
-                break;
-            }
-        case "shelf":
-            {
-                R("rgba(0,0,0,0.25)", 1, 42, 30, 2);
-                R(O, 0, 0, 32, 43);
-                R("#7a5232", 1, 1, 30, 41);
-                R("#4a3220", 3, 4, 26, 36);
-                R("#8f6440", 1, 1, 30, 2);
-                const books = ["#c0392b", "#2f6f9f", "#e8c14a", "#3fa58f", "#8e62c9", "#e8894a", "#f2efe8", "#3d4451", "#d36ba6"];
-                for (let s = 0; s < 3; s++) {
-                    const base = 4 + s * 12 + 11;
-                    R("#8f6440", 3, base, 26, 2);
-                    let x = 3;
-                    while (x < 28) {
-                        const bw = r() < 0.3 ? 3 : 2;
-                        const bh = 7 + Math.floor(r() * 3);
-                        if (r() < 0.12) {
-                            x += 2;
-                            continue;
-                        }
-                        if (x + bw > 29)
-                            break;
-                        const c = game.pick(r, books);
-                        R(c, x, base - bh, bw, bh);
-                        R(shade(c, 0.25), x, base - bh, 1, bh);
-                        R(shade(c, -0.3), x, base - bh + 2, bw, 1);
-                        x += bw;
-                    }
-                }
-                break;
-            }
-        case "board":
-            {
-                R("#7c858f", 6, 26, 2, 14);
-                R("#7c858f", 40, 26, 2, 14);
-                R("#5f6770", 3, 38, 7, 2);
-                R("#5f6770", 38, 38, 7, 2);
-                R(O, 0, 0, 48, 28);
-                R("#aab3bd", 1, 1, 46, 26);
-                R("#f6f8fa", 3, 3, 42, 22);
-                R("#e3e8ee", 3, 23, 42, 2);
-                R("#7c858f", 4, 26, 40, 2);
-                R("#e05d5d", 8, 26, 4, 1);
-                R("#4a90d9", 14, 26, 4, 1);
-                R("#3d4451", 20, 26, 4, 1);
-                break;
-            }
-        case "plant":
-            {
-                const leaf = game.pick(r, ["#3fa560", "#4fbf75", "#2f8f5a"]);
-                R("rgba(0,0,0,0.25)", 3, 28, 10, 2);
-                R(O, 3, 18, 10, 11);
-                R("#c4693b", 4, 19, 8, 9);
-                R("#d98250", 4, 19, 8, 2);
-                R("#a8552e", 5, 26, 6, 2);
-                const big = r() < 0.5;
-                const leaves = big ? [[2, 4, 4, 8], [10, 3, 4, 9], [6, 0, 4, 12], [4, 8, 8, 10], [1, 10, 3, 5], [12, 9, 3, 5]] : [[4, 6, 8, 12], [2, 9, 4, 6], [10, 8, 4, 7], [6, 3, 4, 6]];
-                for (const l of leaves)
-                    R(O, l[0] - 1, l[1] - 1, l[2] + 2, l[3] + 2);
-                for (const l of leaves)
-                    R(leaf, l[0], l[1], l[2], l[3]);
-                for (const l of leaves)
-                    R(shade(leaf, 0.25), l[0], l[1], 1, l[3] - 2);
-                R(shade(leaf, -0.25), 7, 8, 1, 10);
-                break;
-            }
-        case "fridge":
-            {
-                R("rgba(0,0,0,0.25)", 1, 40, 14, 2);
-                R(O, 0, 0, 16, 41);
-                R("#e6ebf0", 1, 1, 14, 39);
-                R("#f7f9fb", 1, 1, 14, 2);
-                R("#bfc8d1", 1, 14, 14, 1);
-                R("#9aa5b0", 12, 5, 1, 6);
-                R("#9aa5b0", 12, 18, 1, 10);
-                R("#e05d5d", 3, 20, 2, 2);
-                R("#4a90d9", 6, 24, 2, 2);
-                R("#f2efe8", 3, 26, 4, 3);
-                R("#cdd5dd", 1, 38, 14, 2);
-                break;
-            }
-        case "counter":
-            {
-                R("rgba(0,0,0,0.25)", 1, 38, 46, 2);
-                R(O, 0, 14, 48, 25);
-                R("#dfe4ea", 1, 15, 46, 4);
-                R("#ffffff", 1, 15, 46, 1);
-                R("#7a5a3c", 1, 19, 46, 19);
-                R("#6a4c32", 16, 19, 1, 19);
-                R("#6a4c32", 32, 19, 1, 19);
-                R("#c9a37a", 12, 25, 2, 4);
-                R("#c9a37a", 18, 25, 2, 4);
-                R("#c9a37a", 44, 25, 2, 4);
-                // The coffee machine, a mug and a kettle, the sink.
-                R(O, 2, 1, 12, 15);
-                R("#2f2b31", 3, 2, 10, 13);
-                R("#47414a", 3, 2, 10, 2);
-                R("#141216", 5, 7, 6, 5);
-                R("#e04848", 11, 4, 1, 1);
-                R("#5fd38a", 9, 4, 1, 1);
-                R("#f4f4f4", 6, 10, 4, 3);
-                R("#6b4226", 6, 10, 4, 1);
-                R(O, 18, 9, 5, 6);
-                R("#e8894a", 19, 10, 3, 4);
-                R(O, 24, 6, 7, 9);
-                R("#d0d6dd", 25, 7, 5, 7);
-                R("#2f2b31", 26, 6, 3, 1);
-                R("#9aa5b0", 34, 16, 12, 2);
-                R("#7c8794", 35, 16, 10, 1);
-                R(O, 39, 8, 3, 8);
-                R("#c8d0d8", 40, 9, 1, 7);
-                R("#c8d0d8", 38, 9, 3, 1);
-                break;
-            }
-        case "cooler":
-            {
-                R("rgba(0,0,0,0.25)", 2, 32, 12, 2);
-                R(O, 3, 0, 10, 12);
-                R("#8ec5ff", 4, 1, 8, 10);
-                R("#c4e1ff", 5, 2, 2, 7);
-                R("#4a90d9", 6, 0, 4, 1);
-                R(O, 2, 11, 12, 22);
-                R("#eef1f4", 3, 12, 10, 20);
-                R("#d5dbe1", 3, 28, 10, 4);
-                R("#4a90d9", 5, 16, 2, 2);
-                R("#e05d5d", 9, 16, 2, 2);
-                R("#bfc8d1", 4, 21, 8, 1);
-                break;
-            }
-        case "vending":
-            {
-                R("rgba(0,0,0,0.25)", 1, 42, 30, 2);
-                R(O, 0, 0, 32, 43);
-                R("#c8374a", 1, 1, 30, 41);
-                R("#e05d6d", 1, 1, 30, 2);
-                R("#1e1a24", 3, 5, 18, 30);
-                const snacks = ["#e8c14a", "#4a90d9", "#7cc06a", "#e8894a", "#f2efe8", "#d36ba6"];
-                for (let row = 0; row < 4; row++) {
-                    R("#3a3542", 3, 11 + row * 7, 18, 1);
-                    for (let col = 0; col < 4; col++)
-                        R(game.pick(r, snacks), 4 + col * 4, 7 + row * 7, 3, 4);
-                }
-                R("rgba(255,255,255,0.18)", 4, 6, 2, 28);
-                R("#2b2f39", 23, 6, 6, 10);
-                R("#5fd38a", 24, 7, 4, 2);
-                for (let i = 0; i < 3; i++)
-                    R("#d7dbe2", 24, 11 + i * 2, 4, 1);
-                R("#1e1a24", 4, 37, 16, 3);
-                break;
-            }
-        case "arcade":
-            {
-                R("rgba(0,0,0,0.25)", 1, 40, 14, 2);
-                R(O, 0, 0, 16, 41);
-                R("#5b3c8f", 1, 1, 14, 39);
-                R("#f8c25c", 2, 2, 12, 5);
-                R("#e05d5d", 4, 3, 8, 3);
-                R("#1e1a24", 2, 9, 12, 11);
-                R("#2fd1c4", 3, 10, 10, 9);
-                R("#f8c25c", 5, 12, 2, 2);
-                R("#e05d5d", 9, 15, 2, 2);
-                R("#ffffff", 7, 17, 1, 1);
-                R("#3d2a63", 1, 21, 14, 5);
-                R("#e04848", 4, 21, 2, 2);
-                R("#2b2f39", 4, 23, 2, 2);
-                R("#5fd38a", 9, 22, 2, 2);
-                R("#f8c25c", 12, 22, 2, 2);
-                R("#4a3275", 1, 26, 14, 14);
-                R("#2fd1c4", 6, 30, 4, 1);
-                break;
-            }
-        case "table":
-            {
-                R("rgba(0,0,0,0.25)", 4, 27, 24, 4);
-                const rows = [[10, 22], [6, 26], [4, 28], [3, 29], [2, 30], [2, 30], [2, 30], [2, 30], [2, 30], [3, 29], [4, 28], [6, 26], [10, 22]];
-                rows.forEach((row, i) => R(O, row[0] - 1, 4 + i, row[1] - row[0] + 2, 1));
-                R(O, 9, 3, 14, 1);
-                R(O, 9, 17, 14, 1);
-                rows.forEach((row, i) => R(i < 2 ? "#d9a46c" : "#c48d55", row[0], 4 + i, row[1] - row[0], 1));
-                R("#9c6b3c", 3, 14, 26, 2);
-                R(O, 14, 18, 4, 9);
-                R("#7a5530", 15, 18, 2, 9);
-                R("#7a5530", 10, 26, 12, 2);
-                R(O, 12, 6, 4, 4);
-                R("#f4f4f4", 13, 7, 2, 2);
-                R("#3fa560", 19, 6, 3, 2);
-                R("#e05d5d", 20, 5, 1, 1);
-                break;
-            }
-        case "stool":
-            {
-                const wood = "#a87444", seat = "#c48d55";
-                if (p.face === 0) {
-                    R(O, 3, 0, 10, 14);
-                    R(wood, 4, 1, 8, 5);
-                    R(seat, 4, 7, 8, 5);
-                    R(wood, 4, 12, 1, 2);
-                    R(wood, 11, 12, 1, 2);
-                } else if (p.face === 3) {
-                    R(wood, 4, 13, 1, 2);
-                    R(wood, 11, 13, 1, 2);
-                    R(O, 3, 8, 10, 6);
-                    R(wood, 4, 9, 8, 4);
-                } else {
-                    const left = p.face === 1;
-                    R(O, 3, 5, 10, 10);
-                    R(seat, 4, 6, 8, 6);
-                    R(wood, 4, 12, 8, 2);
-                    R(O, left ? 11 : 2, 0, 3, 13);
-                    R(wood, left ? 12 : 3, 1, 1, 11);
-                }
-                break;
-            }
-        case "couch":
-            {
-                const c = "#3f8a8a", light = "#5aa8a8", deep = "#2c6868";
-                R("rgba(0,0,0,0.25)", 2, 24, 44, 2);
-                R(O, 1, 0, 46, 25);
-                R(c, 2, 1, 44, 10);
-                R(light, 2, 1, 44, 2);
-                R(deep, 2, 10, 44, 1);
-                for (let i = 0; i < 3; i++) {
-                    R(light, 5 + i * 13, 11, 12, 7);
-                    R(shade(light, 0.15), 5 + i * 13, 11, 12, 1);
-                }
-                R(deep, 2, 18, 44, 5);
-                R(c, 1, 5, 5, 18);
-                R(c, 42, 5, 5, 18);
-                R(light, 1, 5, 5, 2);
-                R(light, 42, 5, 5, 2);
-                R("#e8c14a", 8, 5, 6, 5);
-                R("#f2efe8", 34, 5, 5, 5);
-                R("#5a4033", 3, 23, 2, 2);
-                R("#5a4033", 43, 23, 2, 2);
-                break;
-            }
-        case "coffeeTable":
-            {
-                R("rgba(0,0,0,0.25)", 2, 14, 28, 2);
-                R(O, 1, 3, 30, 11);
-                R("#8f6538", 2, 4, 28, 6);
-                R("#a87444", 2, 4, 28, 1);
-                R("#6a4c32", 2, 10, 28, 3);
-                R("#4a90d9", 5, 5, 7, 4);
-                R("#f2efe8", 6, 6, 5, 1);
-                R("#f4f4f4", 21, 5, 3, 3);
-                R("#6b4226", 21, 5, 3, 1);
-                break;
-            }
-        case "armchair":
-            {
-                const c = "#b5654a", light = "#cf8064";
-                R("rgba(0,0,0,0.25)", 2, 20, 13, 2);
-                R(O, 1, 4, 15, 17);
-                R(c, 10, 5, 5, 15);
-                R(light, 10, 5, 5, 1);
-                R(light, 2, 10, 9, 6);
-                R(c, 2, 5, 9, 4);
-                R(shade(c, -0.2), 2, 16, 13, 4);
-                R(light, 2, 5, 9, 1);
-                break;
-            }
-        case "petBed":
-            {
-                R("rgba(0,0,0,0.2)", 1, 11, 14, 2);
-                R(O, 1, 4, 14, 9);
-                R("#c0392b", 2, 5, 12, 7);
-                R("#e05d5d", 2, 5, 12, 1);
-                R("#f2d6c4", 4, 7, 8, 4);
-                R("#e8c4ae", 4, 10, 8, 1);
-                break;
-            }
-        }
-    }
-
     // ── The page ────────────────────────────────────────────────────────────
 
     ListModel {
@@ -4318,48 +3659,310 @@ Item {
                 }
             }
 
-            Repeater {
-                model: page.props
+            // Where the break room and the wall before it begin.
+            readonly property int breakX: page.world?.bx ?? 0
+            readonly property int wallX: breakX - 1
 
-                delegate: Canvas {
+            // The walls, with a doorway to the break room.
+            Thing {
+                columns: game.columns
+                rows: 3
+                solid: true
+            }
+            Thing {
+                rows: game.rows
+                solid: true
+            }
+            Thing {
+                tx: game.columns - 1
+                rows: game.rows
+                solid: true
+            }
+            Thing {
+                ty: game.rows - 1
+                columns: game.columns
+                solid: true
+            }
+            Thing {
+                tx: game.wallX
+                rows: 5
+                solid: true
+            }
+            Thing {
+                tx: game.wallX
+                ty: 7
+                rows: game.rows - 7
+                solid: true
+            }
+
+            // Along the top wall: what stands there, and where to stand at it.
+            Repeater {
+                model: page.world?.wall ?? []
+
+                delegate: Furniture {
+                    id: piece
+
                     required property var modelData
 
-                    x: modelData.x
-                    y: modelData.y
-                    z: modelData.z
-                    width: modelData.w
-                    height: modelData.h
-                    smooth: false
-                    antialiasing: false
-                    onPaint: page.paintProp(getContext("2d"), modelData)
+                    kind: modelData.kind
+                    tx: modelData.tx
+                    ty: 3
+                    columns: modelData.columns
+                    height: kind === "shelf" ? 44 : kind === "board" ? 40 : 30
+                    solid: true
+
+                    Repeater {
+                        model: piece.kind === "plant" ? 0 : piece.columns
+
+                        delegate: Spot {
+                            required property int index
+
+                            kind: piece.kind
+                            tx: index
+                            ty: 1
+                            face: kind === "board" ? "up" : "down"
+                            pose: kind === "board" ? "board" : "book"
+                            extra: kind === "board" ? ({ board: piece.modelData.board, review: piece.modelData.review }) : ({})
+                        }
+                    }
                 }
             }
 
-            // Each seat's desk and chair, shown while it is in the office.
+            // The far corner of the work area; the doorway and the floor around
+            // it stay clear so people and movers meeting there can step aside.
+            Furniture {
+                kind: "plant"
+                tx: game.wallX - 1
+                ty: game.rows - 2
+                height: 30
+                solid: true
+            }
+
+            // The break room, along its wall.
+            Furniture {
+                kind: "fridge"
+                tx: game.breakX
+                ty: 3
+                height: 42
+                solid: true
+
+                Spot { kind: "fridge"; ty: 1; face: "up"; pose: "machine"; area: "break"; extra: ({ cup: false }) }
+            }
+            Furniture {
+                kind: "counter"
+                tx: game.breakX + 1
+                ty: 3
+                columns: 3
+                height: 40
+                solid: true
+
+                Spot { kind: "coffee"; ty: 1; face: "up"; pose: "machine"; area: "break"; extra: ({ cup: true }) }
+            }
+            Furniture {
+                kind: "cooler"
+                tx: game.breakX + 5
+                ty: 3
+                height: 34
+                solid: true
+
+                Spot { kind: "cooler"; ty: 1; face: "up"; pose: "machine"; area: "break"; extra: ({ cup: true }) }
+            }
+            Furniture {
+                kind: "vending"
+                tx: game.breakX + 6
+                ty: 3
+                columns: 2
+                height: 44
+                solid: true
+
+                Spot { kind: "vending"; ty: 1; face: "up"; pose: "machine"; area: "break"; extra: ({ cup: false }) }
+            }
+            Furniture {
+                kind: "arcade"
+                tx: game.breakX + 8
+                ty: 3
+                height: 42
+                solid: true
+
+                Spot { kind: "arcade"; ty: 1; face: "up"; pose: "arcade"; area: "break"; extra: ({ cup: false }) }
+            }
+            Furniture {
+                kind: "plant"
+                tx: game.breakX + 9
+                ty: 3
+                height: 30
+                solid: true
+            }
+
+            // The round table and its stools.
+            Furniture {
+                kind: "table"
+                tx: game.breakX + 2
+                ty: 8
+                columns: 2
+                rows: 2
+                solid: true
+            }
+            Furniture {
+                kind: "stool"
+                tx: game.breakX + 2
+                ty: 7
+                z: 126
+
+                Spot { kind: "table"; offY: 3; pose: "sit"; area: "break"; seat: true }
+            }
+            Furniture {
+                kind: "stool"
+                tx: game.breakX + 3
+                ty: 10
+                z: 177
+                facing: 3
+
+                Spot { kind: "table"; face: "up"; offY: -3; pose: "sit"; area: "break"; seat: true }
+            }
+            Furniture {
+                kind: "stool"
+                tx: game.breakX + 1
+                ty: 9
+                z: 158
+                facing: 2
+
+                Spot { kind: "table"; face: "right"; pose: "sit"; area: "break"; seat: true }
+            }
+            Furniture {
+                kind: "stool"
+                tx: game.breakX + 4
+                ty: 8
+                z: 142
+                facing: 1
+
+                Spot { kind: "table"; face: "left"; pose: "sit"; area: "break"; seat: true }
+            }
+
+            // The couch, its coffee table and an armchair, on a rug.
+            Furniture {
+                kind: "couch"
+                tx: game.breakX + 6
+                ty: 7
+                columns: 3
+                height: 26
+                z: 127
+
+                Spot { kind: "couch"; offY: -1; pose: "sit"; area: "break"; seat: true }
+                Spot { kind: "couch"; tx: 1; offY: -1; pose: "sit"; area: "break"; seat: true }
+                Spot { kind: "couch"; tx: 2; offY: -1; pose: "sit"; area: "break"; seat: true }
+            }
+            Furniture {
+                kind: "coffeeTable"
+                tx: game.breakX + 6
+                ty: 9
+                columns: 2
+                solid: true
+            }
+            Furniture {
+                kind: "armchair"
+                tx: game.breakX + 9
+                ty: 9
+                height: 22
+                z: 159
+
+                Spot { kind: "armchair"; face: "left"; offY: -1; pose: "sit"; area: "break"; seat: true }
+            }
+
+            // A bed for the pets, places to stand and chat, plants.
+            Furniture {
+                kind: "petBed"
+                tx: game.breakX + 8
+                ty: 12
+                z: 206
+
+                Spot { kind: "petBed"; offY: 1; pose: "nap"; area: "break"; seat: true; extra: ({ pets: true }) }
+            }
+            Spot {
+                kind: "chat"
+                tx: game.breakX + 5
+                ty: 12
+                face: "right"
+                pose: "chat"
+                area: "break"
+                extra: ({ partner: ty * game.columns + tx + 1 })
+            }
+            Spot {
+                kind: "chat"
+                tx: game.breakX + 6
+                ty: 12
+                face: "left"
+                pose: "chat"
+                area: "break"
+                extra: ({ partner: ty * game.columns + tx - 1 })
+            }
+            Spot {
+                kind: "chat"
+                tx: game.breakX + 2
+                ty: 13
+                face: "right"
+                pose: "chat"
+                area: "break"
+                extra: ({ partner: ty * game.columns + tx + 1 })
+            }
+            Spot {
+                kind: "chat"
+                tx: game.breakX + 3
+                ty: 13
+                face: "left"
+                pose: "chat"
+                area: "break"
+                extra: ({ partner: ty * game.columns + tx - 1 })
+            }
+            Furniture {
+                kind: "plant"
+                tx: game.breakX
+                ty: game.rows - 2
+                height: 30
+                solid: true
+            }
+            Furniture {
+                kind: "plant"
+                tx: game.breakX + 9
+                ty: game.rows - 2
+                height: 30
+                solid: true
+            }
+
+            // Each seat's desk and chair, shown while it is in the office. A
+            // desk's place is kept while it is out.
             Repeater {
-                model: page.units
+                model: page.world?.seats ?? []
 
-                delegate: Canvas {
-                    id: unit
-
+                delegate: Furniture {
                     required property var modelData
+                    readonly property bool north: modelData.face === 0
 
-                    x: modelData.x
-                    y: modelData.y
-                    z: modelData.z
-                    width: modelData.w
-                    height: modelData.h
-                    smooth: false
-                    antialiasing: false
-                    Component.onCompleted: {
-                        page.unitViews[modelData.key] = unit;
-                        visible = page.deskShown(page.world.seats[modelData.seat]);
-                    }
-                    Component.onDestruction: {
-                        if (page.unitViews[modelData.key] === unit)
-                            delete page.unitViews[modelData.key];
-                    }
-                    onPaint: page.paintProp(getContext("2d"), modelData)
+                    kind: north ? "deskN" : "deskS"
+                    seed: game.hash("desk" + modelData.index)
+                    tx: modelData.x
+                    ty: modelData.deskY
+                    z: (ty + (north ? 2 : 1)) * 16
+                    solid: true
+                    visible: page.deskIn(modelData.index)
+                }
+            }
+            Repeater {
+                model: page.world?.seats ?? []
+
+                delegate: Furniture {
+                    required property var modelData
+                    readonly property bool north: modelData.face === 0
+
+                    kind: north ? "chairsN" : "chairsS"
+                    seed: game.hash("chair" + modelData.index)
+                    tint: modelData.chair
+                    tx: modelData.x
+                    ty: modelData.y
+                    z: (ty + 1) * 16 + (north ? -2 : 1)
+                    visible: page.deskIn(modelData.index)
+
+                    Spot { kind: "desk"; seat: true }
                 }
             }
 
@@ -4387,10 +3990,8 @@ Item {
                     width: 8
                     height: 6
                     color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
-                    Component.onCompleted: {
-                        page.screenViews[modelData.key] = screen;
-                        visible = page.deskShown(page.world.seats[modelData.seat]);
-                    }
+                    visible: page.deskIn(modelData.seat)
+                    Component.onCompleted: page.screenViews[modelData.key] = screen
                     Component.onDestruction: {
                         if (page.screenViews[modelData.key] === screen)
                             delete page.screenViews[modelData.key];

@@ -160,6 +160,15 @@ Flickable {
         return low + draw() * (high - low);
     }
 
+    // ── Colours ──
+
+    // "#rrggbb" darker for `by` below 0, lighter above, as far as -1 and 1.
+    function shade(color, by) {
+        const n = parseInt(color.slice(1), 16);
+        const parts = [n >> 16, (n >> 8) & 255, n & 255].map(v => by < 0 ? v * (1 + by) : v + (255 - v) * by);
+        return "#" + parts.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+    }
+
     // ── Tiles ──
 
     onColumnsChanged: changed()
