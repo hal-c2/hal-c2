@@ -191,13 +191,16 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
 
   step "thread {string} gets a new snoozed-at time", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
-    assert World.thread(context, thread)["snoozedAt"] != context.stamp_before
+    stamped = World.thread(context, thread)["snoozedAt"]
+    assert is_binary(stamped), "snoozedAt not set"
+    assert stamped != context.stamp_before
     context
   end
 
   step "a retry of that same snooze command is applied once", context do
     thread = context.thread
     stamped = World.thread(context, thread)["snoozedAt"]
+    assert is_binary(stamped), "snoozedAt not set"
     old = World.iso_from_now(-7_200_000)
     context = World.patch_thread(context, thread, %{"snoozedAt" => old})
 
