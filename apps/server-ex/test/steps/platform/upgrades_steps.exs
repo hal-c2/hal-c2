@@ -570,6 +570,28 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  # Req runs a Finch pool, whose `init/1` makes a named ETS table, so it cannot run
+  # twice: another Erlang compiler, for one, compiles Finch's unchanged source anew.
+  step "MCs started from a checkout that compiled a library's supervisor anew", context do
+    System.delete_env("RELEASE_ROOT")
+    Code.ensure_loaded!(Finch)
+    build = checkout(context, "checkout", [])
+    # The reload finds the build's applications through the MC's: Slack's needs Req's.
+    library(build, :slack_elixir, [])
+    library(build, :req, [])
+    library(build, :finch, [Mc.variant(Finch)])
+    own_build(build)
+    Map.put(context, :pool, Process.whereis(Req.Finch))
+  end
+
+  step "the library's new code runs in the supervisor already running", context do
+    assert {:ok, %{changed: [Finch], needs_restart: []}} = context.report
+    assert function_exported?(Finch, :__hal_c2_variant__, 0)
+    assert Process.whereis(Req.Finch) == context.pool
+    refute_received {:hal_c2_restart, _}
+    context
+  end
+
   step "another checkout holds edited code the MC was not started from", context do
     System.delete_env("RELEASE_ROOT")
     Code.ensure_loaded!(HalC2.Patch)
@@ -1577,12 +1599,23 @@ defmodule HalC2.Steps.Platform.Upgrades do
     File.cp_r!(Path.join(source, "consolidated"), Path.join(app, "consolidated"))
     File.ln_s!(Path.join(source, "priv"), Path.join(app, "priv"))
 
+    put_modules(app, modules)
+    build
+  end
+
+  # `app` in `build`, the running one's code with `modules` over it.
+  defp library(build, app, modules) do
+    dir = Path.join([build, "lib", to_string(app)])
+    File.mkdir_p!(dir)
+    File.cp_r!(Application.app_dir(app, "ebin"), Path.join(dir, "ebin"))
+    put_modules(dir, modules)
+  end
+
+  defp put_modules(app, modules) do
     for {mod, beam} <- modules do
       Mc.remember_module(mod)
       File.write!(Path.join([app, "ebin", "#{mod}.beam"]), beam)
     end
-
-    build
   end
 
   # The build the MC started from (`Mix.Project.build_path/0`).

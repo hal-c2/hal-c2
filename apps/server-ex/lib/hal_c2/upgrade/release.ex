@@ -85,7 +85,12 @@ defmodule HalC2.Upgrade.Release do
           from: old_vsn,
           to: vsn,
           dir: dir,
-          instructions: HalC2.Upgrade.Appup.instructions(old, new),
+          # `HalC2.Upgrade.Tree` reads the MC's supervisors' specs again; another
+          # application's `init/1` may not run twice.
+          instructions:
+            HalC2.Upgrade.Appup.instructions(old, new,
+              supervisors: if(app == :hal_c2, do: :update, else: :load)
+            ),
           native: for(mod <- HalC2.Upgrade.Appup.changed(old, new), new[mod].nif?, do: mod),
           frozen: HalC2.Upgrade.Appup.frozen(old, new)
         }
