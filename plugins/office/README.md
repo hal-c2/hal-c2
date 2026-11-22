@@ -5,10 +5,10 @@ with the workers it delegated to in the same group of desks; about a third of th
 workers are cats and dogs. What a person does follows its agent: typing, running
 and testing at the computer, planning at a whiteboard, reading at a bookshelf,
 and drinking coffee, napping on the couch or chatting in the break room while it
-waits. They walk around the furniture and each other. When one agent hands work
-to another or messages it, the two walk up to each other and talk; one whose
-agent asks the user something raises a question mark. Hover a person for who it
-is; click it to open its thread. How to use it is in
+waits. They walk around the furniture and through each other. When one agent
+hands work to another or messages it, the two walk up to each other and talk;
+one whose agent asks the user something raises a question mark. Hover a person
+for who it is; click it to open its thread. How to use it is in
 [docs/user/office.md](../../docs/user/office.md); what it does, scenario by
 scenario, is in [features/plugins/office.feature](../../features/plugins/office.feature).
 
@@ -30,8 +30,26 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   shown. A sprite sheet is thousands of Canvas calls, so sheets are painted a few
   a frame, within a budget the page learns from how long one took; until the
   floor and everyone on it are drawn, the page says the office is being set up.
-- `test/tst_OfficePage.qml`: the page against a fake MC part; its header has the
-  command that runs it.
+- `test/tst_OfficePage.qml`: the page against a fake MC part.
+
+## Running the tests
+
+From the repository root, with both `-import` paths: `apps/desktop-qt/tests/imports`
+holds the fake `HalC2.Shell` and `apps/desktop-qt/qml` the bricks. Without them
+the run fails with "module HalC2.Shell is not installed".
+
+```bash
+# Ljós
+ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
+  plugins/office/test/tst_OfficePage.qml
+
+# Qt 6 (a bare qmltestrunner may be Qt 5's, which prints nothing and exits 1)
+QT_QPA_PLATFORM=offscreen "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" \
+  -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+  -input plugins/office/test/tst_OfficePage.qml
+```
+
+Add `OfficePage::test_<name>` after `-input <file>` to run single tests with Qt.
 
 ## The `office` topic
 

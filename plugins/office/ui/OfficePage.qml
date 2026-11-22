@@ -122,12 +122,17 @@ Item {
     property var markViews: ({})
     property var moverViews: ({})
     property var boardViews: ({})
-    property var occupied: []
+    // tile → the person who stops there: where it sits, stands or waits, or
+    // the side of whoever it walks up to talk to. Nobody stops on a tile
+    // another has claimed; on the way, people walk through each other.
     property var claims: ({})
     property var movers: ({})
     property var jobs: []
     // People who came in while the doorway was busy wait outside, in order.
+    // The doorway lets one person or mover through a step's time apart, from
+    // doorOpensAt on.
     property var outside: []
+    property real doorOpensAt: 0
     property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
@@ -1903,6 +1908,7 @@ Item {
             removeMover(id);
         page.jobs = [];
         page.outside = [];
+        page.doorOpensAt = 0;
         if (page.world) {
             page.world.seatOf = {};
             for (const seat of page.world.seats) {
@@ -1982,7 +1988,6 @@ Item {
     function build() {
         const w = buildWorld();
         page.world = w;
-        page.occupied = new Array(w.cols * w.rows).fill("");
         page.worldCols = w.cols;
         page.worldRows = w.rows;
         page.props = w.props;
@@ -2191,12 +2196,12 @@ Item {
         page.moves = page.jobs.length + Object.keys(page.movers).length;
     }
 
-    // Someone to carry a desk walks in when the doorway is clear; four work
+    // Someone to carry a desk walks in when the doorway is free; four work
     // at once.
     function hire() {
         const w = page.world;
         const e = w.entrance;
-        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !doorClear())
+        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !throughDoor())
             return;
         const seat = w.seats[page.jobs.shift()];
         const id = "mover:" + page.moversHired++;
@@ -2218,15 +2223,15 @@ Item {
             pose: "stand",
             kind: "move"
         };
-        route(mover, false);
+        route(mover);
         moverModel.append({
             moverId: id
         });
         countMoves();
     }
 
-    // A mover walks to the desk's seat, waits for the desk's place to be clear,
-    // sets the desk down or picks it up, and walks out again.
+    // A mover walks to the desk's seat, sets the desk down or picks it up,
+    // and walks out again.
     function stepMover(mover, dt) {
         const w = page.world;
         const seat = mover.job >= 0 ? w.seats[mover.job] : null;
@@ -2247,8 +2252,6 @@ Item {
                 mover.carrying = true;
                 finish(mover, seat);
             }
-        } else if (mover.next < 0 && mover.path.length === 0 && page.ticks % 8 === 0) {
-            route(mover, true);
         }
         const moving = step(mover, dt);
         mover.frame = mover.next >= 0 ? [1, 0, 2, 0][Math.floor(mover.dist / 5) % 4] : 0;
@@ -2272,7 +2275,7 @@ Item {
             pose: "stand",
             kind: "leave"
         };
-        route(mover, false);
+        route(mover);
     }
 
     function removeMover(id) {
@@ -2280,10 +2283,6 @@ Item {
         if (!mover)
             return;
         const w = page.world;
-        for (const i of [mover.ty * w.cols + mover.tx, mover.next]) {
-            if (i >= 0 && page.occupied[i] === id)
-                page.occupied[i] = "";
-        }
         if (mover.job >= 0 && w.seats[mover.job].mover === id)
             w.seats[mover.job].mover = "";
         delete page.movers[id];
@@ -2344,6 +2343,7 @@ Item {
             goal: null,
             plan: "",
             claim: -1,
+            hold: -1,
             until: 0,
             stay: 0,
             cup: false,
@@ -2352,22 +2352,20 @@ Item {
             bubbleUntil: 0,
             talk: null,
             queue: [],
-            blocked: 0,
-            waitingFor: "",
             heldBy: "",
             face: -1,
-            faceUntil: 0,
-            sideStep: false
+            faceUntil: 0
         };
     }
 
-    // A new person walks in through the door, waiting outside while someone is
-    // in the doorway; the first people on the page are already where they belong.
+    // A new person walks in through the door, waiting outside while someone
+    // else goes through; the first people on the page are already where they
+    // belong.
     function arrive(actor) {
         if (!page.primed) {
             decide(actor, true);
             const goal = actor.goal;
-            if (goal && !page.occupied[goal.y * page.world.cols + goal.x]) {
+            if (goal) {
                 place(actor, goal.x, goal.y, false);
                 actor.path = [];
                 return;
@@ -2377,19 +2375,20 @@ Item {
             page.outside.push(actor.id);
     }
 
-    // Whether nobody stands in the doorway or on the floor next to it, so
-    // whoever comes in can step off it.
-    function doorClear() {
-        const w = page.world;
-        const [x, y] = w.entrance;
-        return [[0, 0], [1, 0], [-1, 0], [0, -1]].every(([dx, dy]) => !walkable(x + dx, y + dy) || !page.occupied[(y + dy) * w.cols + x + dx]);
+    // Lets one through the doorway if the last went through a step ago, so
+    // people and movers come in one after another rather than in a heap.
+    function throughDoor() {
+        if (page.now < page.doorOpensAt)
+            return false;
+        page.doorOpensAt = page.now + 400;
+        return true;
     }
 
-    // The next person waiting outside walks in once the doorway is clear.
+    // The next person waiting outside walks in once the doorway is free.
     function letIn() {
         while (page.outside.length && !page.actors[page.outside[0]])
             page.outside.shift();
-        if (!page.outside.length || !doorClear())
+        if (!page.outside.length || !throughDoor())
             return;
         const actor = page.actors[page.outside.shift()];
         const e = page.world.entrance;
@@ -2398,11 +2397,13 @@ Item {
         page.walking = true;
     }
 
+    // Puts a person on a tile: off the floor, or with `snap` on furniture
+    // that is not where it is going, it goes to the nearest free floor.
     function place(actor, x, y, snap) {
         const w = page.world;
         const inside = x >= 0 && y >= 0 && x < w.cols && y < w.rows;
         const i = y * w.cols + x;
-        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y)) || page.occupied[i] && page.occupied[i] !== actor.id) {
+        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y))) {
             const free = nearestFree(x, y, actor.id);
             x = free[0];
             y = free[1];
@@ -2412,11 +2413,10 @@ Item {
         actor.px = x * 16;
         actor.py = y * 16;
         actor.next = -1;
-        page.occupied[y * w.cols + x] = actor.id;
     }
 
-    // The nearest floor tile nobody stands on, nor, when `unclaimed`, is headed
-    // for; with `unclaimed` and no such tile, null.
+    // The nearest floor tile nobody else has claimed; with none, null, or the
+    // entrance unless `unclaimed`.
     function nearestFree(x, y, self, unclaimed) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
@@ -2425,7 +2425,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self) && (!unclaimed || !page.claims[i] || page.claims[i] === self))
+            if (w.grid[i] === 0 && (!page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;
@@ -2442,14 +2442,8 @@ Item {
         const actor = page.actors[id];
         if (!actor)
             return;
+        letGo(actor);
         release(actor);
-        if (page.world && actor.tx >= 0) {
-            const i = actor.ty * page.world.cols + actor.tx;
-            if (page.occupied[i] === id)
-                page.occupied[i] = "";
-            if (actor.next >= 0 && page.occupied[actor.next] === id)
-                page.occupied[actor.next] = "";
-        }
         delete page.actors[id];
         for (let i = 0; i < actorModel.count; i++) {
             if (actorModel.get(i).actorId === id) {
@@ -2463,29 +2457,59 @@ Item {
         for (const other of Object.values(page.actors)) {
             if (other.talk && other.talk.to === id)
                 endTalk(other);
+            if (other.heldBy === id) {
+                other.heldBy = "";
+                letGo(other);
+            }
         }
     }
 
     // ── What each person does ───────────────────────────────────────────────
 
+    // Lets go of the tile a person stops at, unless it also listens there.
     function release(actor) {
-        if (actor.claim >= 0 && page.claims[actor.claim] === actor.id)
+        if (actor.claim >= 0 && actor.claim !== actor.hold && page.claims[actor.claim] === actor.id)
             delete page.claims[actor.claim];
         actor.claim = -1;
     }
 
+    // Whether a person may stop at a spot: nobody else has claimed it.
     function free(spot, actor) {
-        const i = spot.y * page.world.cols + spot.x;
-        const claim = page.claims[i];
-        const there = page.occupied[i];
-        return (!claim || claim === actor.id) && (!there || there === actor.id || !spot.seat && !page.actors[there]?.goal);
+        const claim = page.claims[spot.y * page.world.cols + spot.x];
+        return !claim || claim === actor.id;
     }
 
+    // Claims the tile a person stops at, letting go of the one it had.
     function claim(actor, spot) {
         release(actor);
         const i = spot.y * page.world.cols + spot.x;
         page.claims[i] = actor.id;
         actor.claim = i;
+    }
+
+    // Someone listening keeps the tile it stopped on for the talk, besides the
+    // one it is headed for, so nobody else is sent there meanwhile. It keeps
+    // it even when it is headed there, should it be sent somewhere else.
+    function holdHere(actor) {
+        const i = actor.ty * page.world.cols + actor.tx;
+        if (page.claims[i] === undefined || page.claims[i] === actor.id) {
+            page.claims[i] = actor.id;
+            actor.hold = i;
+        }
+    }
+
+    function letGo(actor) {
+        const i = actor.hold;
+        actor.hold = -1;
+        if (i < 0 || i === actor.claim || page.claims[i] !== actor.id)
+            return;
+        delete page.claims[i];
+        // Whoever was given the desk there meanwhile waits for it (see
+        // seatGoal()), and goes to it now.
+        const w = page.world;
+        const owner = page.actors[Object.keys(w.seatOf).find(id => w.seatOf[id].y * w.cols + w.seatOf[id].x === i)];
+        if (owner?.goal?.kind === "wait")
+            decide(owner, true);
     }
 
     function seatGoal(actor, pose) {
@@ -2496,9 +2520,12 @@ Item {
             goal.deskless = true;
             return goal;
         }
-        if (seat.state !== "in")
+        // A desk someone still listens at is theirs until the talk ends (see
+        // letGo()).
+        const holder = page.actors[page.claims[seat.y * page.world.cols + seat.x]];
+        if (seat.state !== "in" || holder && holder !== actor && holder.hold === seat.y * page.world.cols + seat.x)
             return waitGoal(actor, seat);
-        release(actor);
+        claim(actor, seat);
         return {
             x: seat.x,
             y: seat.y,
@@ -2590,9 +2617,8 @@ Item {
         };
         const options = page.world.spots.filter(s => s.area === "break" && weights[s.kind] && (!s.pets || pet) && free(s, actor));
         if (!options.length) {
-            release(actor);
             const free = nearestFree(page.world.bx + 4 + Math.floor(page.rng() * 4), 11 + Math.floor(page.rng() * 3), actor.id);
-            return {
+            const goal = {
                 x: free[0],
                 y: free[1],
                 face: Math.floor(page.rng() * 4),
@@ -2600,6 +2626,8 @@ Item {
                 pose: pet ? "sit" : "stand",
                 kind: "floor"
             };
+            claim(actor, goal);
+            return goal;
         }
         let total = 0;
         for (const s of options)
@@ -2677,24 +2705,24 @@ Item {
         if (!goal || actor.tx < 0)
             return;
         if (!same || (actor.path.length === 0 && actor.next < 0 && (actor.tx !== goal.x || actor.ty !== goal.y)))
-            route(actor, false);
+            route(actor);
         page.walking = true;
     }
 
     // Plans from the tile the person stands on, or the one it is stepping onto.
-    function route(actor, avoid) {
+    function route(actor) {
         const goal = actor.goal;
         if (!goal)
             return;
         const W = page.world.cols;
         const sx = actor.next >= 0 ? actor.next % W : actor.tx;
         const sy = actor.next >= 0 ? (actor.next - sx) / W : actor.ty;
-        actor.path = findPath(actor, sx, sy, goal.x, goal.y, avoid) ?? (avoid ? findPath(actor, sx, sy, goal.x, goal.y, false) ?? [] : []);
+        actor.path = findPath(sx, sy, goal.x, goal.y) ?? [];
     }
 
-    // A* over the tiles, four ways. Seats are entered only as the goal; with
-    // `avoid`, tiles other people stand on are walls too.
-    function findPath(actor, sx, sy, gx, gy, avoid) {
+    // A* over the tiles, four ways, around the furniture and through people.
+    // Seats are entered only as the goal.
+    function findPath(sx, sy, gx, gy) {
         const w = page.world;
         const W = w.cols, H = w.rows;
         const start = sy * W + sx, goal = gy * W + gx;
@@ -2747,12 +2775,8 @@ Item {
                 if (nx < 0 || ny < 0 || nx >= W || ny >= H)
                     continue;
                 const j = ny * W + nx;
-                if (j !== goal) {
-                    if (w.grid[j] !== 0)
-                        continue;
-                    if (avoid && page.occupied[j] && page.occupied[j] !== actor.id)
-                        continue;
-                }
+                if (j !== goal && w.grid[j] !== 0)
+                    continue;
                 const cost = g[i] + 1;
                 if (g[j] < 0 || cost < g[j]) {
                     g[j] = cost;
@@ -2797,13 +2821,24 @@ Item {
 
     // Starts the speaker's first talk whose listener is inside. One to someone
     // still outside the door waits its turn without holding up the rest.
+    // A talk waits while its listener is outside, or listens to someone else.
+    // A person takes part in one talk at a time: someone being talked to
+    // starts no talk of its own, and nobody talks to someone already talking
+    // or being talked to. Two who talk to each other take turns.
     function startTalk(actor) {
-        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0));
+        if (listening(actor))
+            return;
+        const next = actor.queue.findIndex(t => {
+            const other = page.actors[t.to];
+            return !(other?.tx < 0) && !other?.talk && !listening(other, actor);
+        });
         if (next < 0)
             return;
         const talk = actor.queue.splice(next, 1)[0];
-        if (!page.actors[talk.to])
+        const other = page.actors[talk.to];
+        if (!other)
             return;
+        other.heldBy = actor.id;
         actor.talk = {
             to: talk.to,
             text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
@@ -2814,15 +2849,17 @@ Item {
             until: 0,
             met: false
         };
-        release(actor);
-        actor.goal = null;
+        // It keeps the spot it had until it claims a side to talk from.
         page.walking = true;
     }
 
     function endTalk(actor) {
         const other = actor.talk ? page.actors[actor.talk.to] : null;
-        if (other)
+        if (other && other.heldBy === actor.id) {
             other.face = -1;
+            other.heldBy = "";
+            letGo(other);
+        }
         actor.talk = null;
         actor.bubble = "";
         actor.plan = "";
@@ -2845,13 +2882,18 @@ Item {
         const W = page.world.cols;
         const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            if (near && actor.next < 0) {
-                // The other person stops once it finishes its step (see held()),
-                // and the talk starts when both stand still side by side.
+            // The other person stops once it finishes its step on a tile it
+            // may stop at (see held()).
+            if (near)
                 t.met = true;
-                other.heldBy = actor.id;
-                if (other.next >= 0)
-                    return;
+            // The talk starts when both stand still side by side, each on a tile
+            // nobody else has: the speaker on the side it claimed.
+            const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
+            if (near && atSide && other.next < 0 && free({
+                x: other.tx,
+                y: other.ty
+            }, other)) {
+                holdHere(other);
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2859,10 +2901,15 @@ Item {
                 actor.bubbleUntil = t.until;
                 return;
             }
+            if (near && atSide)
+                return;
             const there = other.ty * W + other.tx;
             if (t.target !== there || actor.path.length === 0 && actor.next < 0) {
                 t.target = there;
-                const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [other.tx + dx, other.ty + dy]).filter(([x, y]) => walkable(x, y) && (!page.occupied[y * W + x] || page.occupied[y * W + x] === actor.id));
+                const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [other.tx + dx, other.ty + dy]).filter(([x, y]) => walkable(x, y) && free({
+                        x: x,
+                        y: y
+                    }, actor));
                 if (!sides.length)
                     return;
                 sides.sort((a, b) => Math.abs(a[0] - actor.tx) + Math.abs(a[1] - actor.ty) - (Math.abs(b[0] - actor.tx) + Math.abs(b[1] - actor.ty)));
@@ -2876,7 +2923,8 @@ Item {
                     pose: "talk",
                     kind: "talk"
                 };
-                route(actor, false);
+                claim(actor, actor.goal);
+                route(actor);
             }
             return;
         }
@@ -2899,10 +2947,22 @@ Item {
         }
     }
 
+    // Whether someone other than `speaker` (anyone, without one) is talking to
+    // this person.
+    function listening(actor, speaker) {
+        const other = actor?.heldBy ? page.actors[actor.heldBy] : null;
+        return !!other && other !== speaker && other.talk?.to === actor.id;
+    }
+
     // Whether someone who walked up to talk to this person keeps it where it is.
+    // It stops only on a tile nobody else claimed, and walks on past one that is
+    // someone's.
     function held(actor) {
         const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
-        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met;
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && free({
+            x: actor.tx,
+            y: actor.ty
+        }, actor);
     }
 
     function dirTowards(a, b) {
@@ -2965,54 +3025,18 @@ Item {
         page.walking = page.jobs.length > 0 || page.outside.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
-    // The walkable tiles beside a person that nobody holds.
-    function freeSides(actor) {
-        const W = page.world.cols;
-        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-    }
-
-    // Moves a person along its path, two pixels a tick, holding the tile it
-    // stands on and the one it steps to so nobody walks through anybody.
+    // Moves a person along its path, two pixels a tick. People walk through
+    // each other: only where they stop is anyone's own (see claims).
     function step(actor, dt) {
         const W = page.world.cols;
         if (actor.next < 0 && actor.path.length && held(actor))
             return false;
         if (actor.next < 0 && actor.path.length) {
-            const n = actor.path[0];
-            const there = page.occupied[n];
-            if (there && there !== actor.id) {
-                actor.blocked++;
-                actor.waitingFor = there;
-                // Two people walking into each other would both step around the
-                // same way and meet again, so only one gives way: the one with
-                // room to step aside, the first by id when both have it.
-                const other = page.actors[there] ?? page.movers[there];
-                const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
-                const sides = freeSides(actor);
-                const yields = !headOn || sides.length > 0 && (actor.id < other.id || freeSides(other).length === 0);
-                if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
-                    route(actor, true);
-                if (actor.blocked >= 30) {
-                    // Stepping aside makes room for someone waiting on this
-                    // person; anyone else in the way is waited for, not paced
-                    // in front of.
-                    if (headOn && yields) {
-                        const s = pick(page.rng, sides);
-                        actor.path = [s[1] * W + s[0]];
-                        actor.sideStep = true;
-                    }
-                    actor.blocked = 0;
-                }
-                return true;
-            }
-            page.occupied[n] = actor.id;
+            const n = actor.path.shift();
             actor.next = n;
-            actor.path.shift();
             const nx = n % W, ny = (n - nx) / W;
             actor.dir = nx < actor.tx ? 1 : nx > actor.tx ? 2 : ny < actor.ty ? 3 : 0;
             actor.offY = 0;
-            actor.blocked = 0;
-            actor.waitingFor = "";
         }
         if (actor.next < 0)
             return false;
@@ -3023,17 +3047,9 @@ Item {
         actor.py += Math.sign(ty - actor.py) * Math.min(speed, Math.abs(ty - actor.py));
         actor.dist += speed;
         if (actor.px === tx && actor.py === ty) {
-            const old = actor.ty * W + actor.tx;
-            if (page.occupied[old] === actor.id)
-                page.occupied[old] = "";
             actor.tx = nx;
             actor.ty = ny;
             actor.next = -1;
-            if (actor.sideStep && actor.path.length === 0) {
-                actor.sideStep = false;
-                if (actor.goal)
-                    route(actor, true);
-            }
         }
         return true;
     }
@@ -3091,8 +3107,7 @@ Item {
             break;
         case "chat":
             {
-                const partner = page.occupied[goal.partner];
-                const there = partner && page.actors[partner];
+                const there = page.actors[page.claims[goal.partner]];
                 const talking = there && there.goal?.kind === "chat" && there.tx === there.goal.x && there.ty === there.goal.y;
                 actor.frame = actor.cup ? (t % 4000 < 700 ? F.sip : F.cup) : talking && Math.floor((t + (goal.face === 1 ? 900 : 0)) / 1800) % 2 ? F.talk : F.stand;
                 break;
@@ -3144,10 +3159,11 @@ Item {
                 continue;
             const seat = page.world.seats[screen.seat];
             view.visible = deskShown(seat);
-            const owner = page.occupied[seat.y * page.world.cols + seat.x];
-            const actor = owner ? page.actors[owner] : null;
+            // On for whoever sits there, from the step onto the seat.
+            const i = seat.y * page.world.cols + seat.x;
+            const actor = page.actors[page.claims[i]];
             let mode = "off";
-            if (actor && actor.goal?.kind === "desk") {
+            if (actor && actor.goal?.kind === "desk" && (actor.ty * page.world.cols + actor.tx === i || actor.next === i)) {
                 const p = actor.person;
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
             }

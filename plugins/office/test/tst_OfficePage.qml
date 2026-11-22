@@ -162,15 +162,14 @@ Item {
         property var stood: ({})
 
         // Nobody, people or movers, stands on a wall or furniture or off the
-        // floor, a seat is only
-        // stepped onto as where a person is going (a step already begun ends
-        // there, and the person leaves again), a step goes
-        // to a tile next to the person, each person holds the tiles it stands
-        // on and steps to, and no two people hold the same tile. A carried desk
-        // is drawn within its mover's figure.
+        // floor, a seat is only stepped onto as where a person is going (a
+        // step already begun ends there, and the person leaves again), and a
+        // step goes to a tile next to the person. People walk through each
+        // other, but each claims the tile it stops at, and no two stop on one
+        // tile. A carried desk is drawn within its mover's figure.
         function checkFloor() {
             const w = page.world;
-            const held = {};
+            const stopped = {};
             const stood = {};
             const everyone = Object.assign({}, page.actors, page.movers);
             for (const id of Object.keys(everyone)) {
@@ -185,21 +184,21 @@ Item {
                     compare(Math.abs(nx - a.tx) + Math.abs(ny - a.ty), 1, id + " steps from " + a.tx + "," + a.ty + " to " + nx + "," + ny);
                     tiles.push(a.next);
                 }
-                for (const t of tiles)
-                    compare(page.occupied[t], id, id + " holds the tile at " + t % w.cols + "," + Math.floor(t / w.cols));
                 for (const t of tiles) {
                     const x = t % w.cols, y = (t - x) / w.cols;
                     const cell = w.grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
                     const stayed = (this.stood[id] ?? []).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
-                    verify(held[t] === undefined, id + " and " + held[t] + " overlap at " + x + "," + y);
-                    held[t] = id;
                 }
+                if (a.next < 0 && a.path.length === 0) {
+                    verify(stopped[here] === undefined, id + " and " + stopped[here] + " stop on one tile at " + a.tx + "," + a.ty);
+                    stopped[here] = id;
+                }
+                if (page.actors[id] && a.goal)
+                    compare(page.claims[a.goal.y * w.cols + a.goal.x], id, id + " claims the tile it stops at, " + a.goal.x + "," + a.goal.y);
                 stood[id] = tiles;
             }
-            const taken = page.occupied.filter(owner => owner).length;
-            compare(taken, Object.keys(held).length, "only people's tiles are held");
             this.stood = stood;
             for (const m of Object.values(page.movers)) {
                 if (!m.carrying)
@@ -207,6 +206,29 @@ Item {
                 const r = load(m);
                 verify(r[0] >= m.px && r[1] >= m.py - 8 && r[0] + r[2] <= m.px + 16 && r[1] + r[3] <= m.py + 16, m.id + "'s desk is drawn within its figure");
             }
+        }
+
+        // Sends a person to stand at a tile, claimed as any place it stops at.
+        function send(who, x, y) {
+            const goal = {
+                x: x,
+                y: y,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "floor"
+            };
+            page.claim(who, goal);
+            page.setGoal(who, goal);
+        }
+
+        // Takes a person off wherever it is and stands it at a tile.
+        function standAt(who, x, y) {
+            who.goal = null;
+            who.path = [];
+            page.release(who);
+            page.place(who, x, y, true);
+            send(who, x, y);
         }
 
         // Where a person is drawn, from the top of its head to its shoes (its
@@ -689,7 +711,7 @@ Item {
             compare(page.markPaints, paints + 1, "only the web desk repaints");
         }
 
-        function test_people_walk_around_furniture_and_never_through_each_other() {
+        function test_people_walk_around_furniture_and_never_stop_on_one_tile() {
             const activities = ["typing", "planning", "reading", "testing"];
             const people = [];
             for (let i = 0; i < 16; i++)
@@ -862,38 +884,19 @@ Item {
             compare([actor("lead").tx, actor("lead").ty], [desk.x, desk.y]);
         }
 
-        // A person standing still in the way is waited for: the person behind
-        // it once stepped aside and back every second, pacing on the spot.
-        function test_a_person_blocked_by_someone_standing_still_waits() {
-            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const a = actor("a"), b = actor("b");
-            // A heads for B's desk, which B never leaves.
-            page.setGoal(a, {
-                x: b.tx,
-                y: b.ty,
-                face: 0,
-                offY: 0,
-                pose: "type",
-                kind: "desk",
-                seat: true
-            });
-            runUntil(() => a.blocked > 0, 1500, "A walks up to B");
-            const spot = [a.tx, a.ty];
-            for (let i = 0; i < 200; i++) {
-                walk(1);
-                compare([a.tx, a.ty, a.next], spot.concat([-1]), "A waits where it is");
-            }
-        }
-
-        // Where a row of open floor with open rows above and below it starts.
+        // Where a row of open floor with open rows above and below it starts,
+        // with nobody standing on it.
         function openFloor(length) {
             const w = page.world;
+            const taken = {};
+            for (const a of Object.values(page.actors))
+                taken[a.ty * w.cols + a.tx] = true;
             for (let y = 1; y < w.rows - 1; y++) {
                 for (let x = 0; x + length <= w.cols; x++) {
                     let open = true;
                     for (let dx = 0; dx < length && open; dx++) {
                         for (let dy = -1; dy <= 1; dy++)
-                            open = open && page.walkable(x + dx, y + dy) && !page.occupied[(y + dy) * w.cols + x + dx];
+                            open = open && page.walkable(x + dx, y + dy) && !taken[(y + dy) * w.cols + x + dx] && !page.claims[(y + dy) * w.cols + x + dx];
                     }
                     if (open)
                         return [x, y];
@@ -902,98 +905,111 @@ Item {
             fail("the office has open floor");
         }
 
-        // Stands A and B side by side and sends each to its own tile of the row.
-        function meet(left, row, aTo, bTo) {
-            const w = page.world;
-            const a = actor("a"), b = actor("b");
-            for (const who of [a, b]) {
-                page.occupied[who.ty * w.cols + who.tx] = "";
-                who.goal = null;
-                who.path = [];
-            }
-            page.place(a, left, row, true);
-            page.place(b, left + 1, row, true);
-            const goal = x => ({
-                    x: x,
-                    y: row,
-                    face: 0,
-                    offY: 0,
-                    pose: "stand",
-                    kind: "floor"
-                });
-            page.setGoal(a, goal(aTo));
-            page.setGoal(b, goal(bTo));
-            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+        // Runs the office until `a` and `b` get where they are going, and
+        // returns the ticks that took; each walks a straight row, so it took
+        // no longer than walking it alone, stopping for nobody.
+        function walkBoth(a, b, tiles) {
+            let ticks = 0, crossed = false;
+            while (ticks < 600 && !(arrived(a) && arrived(b))) {
                 walk(1);
-            compare([a.tx, a.ty, b.tx, b.ty], [aTo, row, bTo, row], "both get where they are going");
+                ticks++;
+                crossed = crossed || Math.abs(a.px - b.px) < 16 && a.py === b.py;
+            }
+            verify(ticks <= tiles * 8 + 2, "both walk straight on, in " + ticks + " ticks");
+            return crossed;
         }
 
-        // Two people walking into each other once both stepped around the same
-        // way, met again, and stepped back, over and over.
-        function test_two_people_walking_into_each_other_get_past() {
+        // A person walks through someone standing in its way rather than
+        // waiting for it, or going around; it never stops there.
+        function test_a_person_walks_through_someone_standing_in_its_way() {
             plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const a = actor("a"), b = actor("b");
+            const [left, row] = openFloor(5);
+            standAt(b, left + 2, row);
+            standAt(a, left, row);
+            send(a, left + 4, row);
+            let through = false;
+            for (let i = 0; i < 4 * 8 + 2 && !arrived(a); i++) {
+                walk(1);
+                through = through || a.tx === b.tx && a.ty === b.ty;
+            }
+            verify(through, "A walks across B's tile");
+            compare([a.tx, a.ty], [left + 4, row], "A gets where it is going, as fast as on open floor");
+            compare([b.tx, b.ty, b.next], [left + 2, row, -1], "B never moves");
+        }
+
+        // Two people walking into each other, or swapping places, walk through
+        // each other: neither steps aside, waits or goes around.
+        function test_two_people_walking_into_each_other_walk_through() {
+            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
+            const a = actor("a"), b = actor("b");
             const [left, row] = openFloor(8);
-            meet(left + 3, row, left + 7, left);
-        }
-
-        // Two people headed for each other's tile cannot go around: one steps
-        // aside to let the other through.
-        function test_two_people_swapping_places_get_there() {
-            plugin.publish([person("a", "A", "working", "typing"), person("b", "B", "working", "typing")]);
-            const [left, row] = openFloor(4);
-            meet(left + 1, row, left + 2, left + 1);
-        }
-
-        // The first by id gives way in a head-on meeting, but one boxed in at a
-        // dead end cannot, so the other steps aside instead.
-        function test_a_person_boxed_in_is_given_way() {
-            const ids = ["a", "b", "c", "d", "e"];
-            plugin.publish(ids.map(id => person(id, id.toUpperCase(), "working", "typing")));
-            const w = page.world;
-            const [left, row] = openFloor(6);
-            for (const id of ids) {
-                const who = actor(id);
-                page.occupied[who.ty * w.cols + who.tx] = "";
-                who.goal = null;
-                who.path = [];
+            for (const [aFrom, aTo, bFrom, bTo] of [[left + 3, left + 7, left + 4, left], [left + 1, left + 2, left + 2, left + 1]]) {
+                standAt(a, aFrom, row);
+                standAt(b, bFrom, row);
+                send(a, aTo, row);
+                send(b, bTo, row);
+                verify(walkBoth(a, b, Math.max(Math.abs(aTo - aFrom), Math.abs(bTo - bFrom))), "they pass through each other");
+                compare([a.tx, a.ty, b.tx, b.ty], [aTo, row, bTo, row], "both get where they are going");
             }
-            const at = (who, x, y) => {
-                page.place(who, x, y, true);
-                page.setGoal(who, {
-                    x: x,
-                    y: y,
-                    face: 0,
-                    offY: 0,
-                    pose: "stand",
-                    kind: "floor"
-                });
+        }
+
+        // A person and a mover carrying a desk that meet head-on walk through
+        // each other, as two people do: neither steps aside, waits or goes
+        // around.
+        function test_a_person_and_a_mover_walk_through_each_other() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"));
+            runUntil(() => Object.keys(page.movers).length > 0, 400, "a mover comes in");
+            const m = Object.values(page.movers)[0];
+            verify(m.carrying, "it carries a desk");
+            // It carries the desk along open floor instead of to its seat.
+            page.world.seats[m.job].mover = "";
+            m.job = -1;
+            m.path = [];
+            const a = actor("t0");
+            const [left, row] = openFloor(6);
+            standAt(a, left + 5, row);
+            page.place(m, left, row, true);
+            m.goal = {
+                x: left + 5,
+                y: row,
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "leave"
             };
-            const a = actor("a"), b = actor("b");
-            // A stands with C, D and E on its other three sides, facing B.
-            at(a, left + 1, row);
-            at(actor("c"), left, row);
-            at(actor("d"), left + 1, row - 1);
-            at(actor("e"), left + 1, row + 1);
-            at(b, left + 2, row);
-            page.setGoal(a, {
-                x: left + 4,
-                y: row,
-                face: 0,
-                offY: 0,
-                pose: "stand",
-                kind: "floor"
-            });
-            page.setGoal(b, {
-                x: left + 1,
-                y: row,
-                face: 0,
-                offY: 0,
-                pose: "stand",
-                kind: "floor"
-            });
-            for (let i = 0; i < 600 && !(arrived(a) && arrived(b)); i++)
+            page.route(m);
+            send(a, left, row);
+            let ticks = 0, crossed = false, aside = false;
+            while (ticks < 600 && (page.movers[m.id] || !arrived(a))) {
                 walk(1);
-            compare([a.tx, a.ty, b.tx, b.ty], [left + 4, row, left + 1, row], "both get where they are going");
+                ticks++;
+                aside = aside || a.ty !== row || page.movers[m.id] && m.ty !== row;
+                crossed = crossed || page.movers[m.id] && Math.abs(a.px - m.px) < 16 && a.py === m.py;
+            }
+            verify(crossed, "they pass through each other");
+            verify(!aside, "neither steps off the row");
+            verify(ticks <= 5 * 8 + 2, "both walk straight on, in " + ticks + " ticks");
+            verify(!page.movers[m.id], "the mover gets where it is going");
+            compare([a.tx, a.ty], [left, row], "and so does the person");
+        }
+
+        // Where two people both want to stop, only one may: the tile is the
+        // first one's, and the other stops beside it.
+        function test_two_people_never_stop_on_one_tile() {
+            plugin.publish(many(16, "t", "working", "typing"));
+            checkFloor();
+            const people = many(16, "t", "waiting");
+            plugin.publish(people);
+            const stops = {};
+            for (const id of Object.keys(page.actors)) {
+                const g = actor(id).goal;
+                const key = g.x + "," + g.y;
+                verify(stops[key] === undefined, id + " and " + stops[key] + " both stop at " + key);
+                stops[key] = id;
+            }
+            walk(400);
         }
 
         function test_what_a_person_does_follows_its_agent() {
@@ -1084,6 +1100,307 @@ Item {
             }
             verify(c.path.length > 0 || c.next >= 0, "C still knows where it was going");
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
+        // Someone spoken to on its way stops only where nobody else may, and the
+        // speaker talks from the side it claimed, never where it happens to pass.
+        function test_a_talk_stops_people_only_where_nobody_else_has_claimed() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), c = actor("c");
+            const W = page.world.cols;
+            runUntil(() => a.talk?.met, 2000, "the lead catches C on its way");
+            verify(c.path.length > 0 || c.next >= 0, "C is on its way");
+            // Someone else has the tile C would stop at.
+            const taken = c.next >= 0 ? c.next : c.ty * W + c.tx;
+            page.claims[taken] = "b";
+            runUntil(() => a.talk?.phase === "say", 4000, "the talk starts");
+            verify(c.ty * W + c.tx !== taken, "C walks on past the spot that is someone else's");
+            compare(page.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
+            while (a.talk) {
+                const here = c.ty * W + c.tx;
+                if (c.next < 0)
+                    verify(!page.claims[here] || page.claims[here] === "c", "C stands on a tile nobody else has");
+                page.advance(1);
+            }
+            delete page.claims[taken];
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
+        // The one listening keeps the tile it stopped on for the whole talk:
+        // anyone else looking for a spot, as every goal does, finds it taken,
+        // so the listener stays put and the talk reaches its reply.
+        function test_a_listener_keeps_its_tile_until_the_talk_ends() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), b = actor("b"), c = actor("c");
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const spot = {
+                x: c.tx,
+                y: c.ty
+            };
+            const here = spot.y * page.world.cols + spot.x;
+            // B looks for somewhere to stand and wants C's tile.
+            if (page.free(spot, b)) {
+                page.claim(b, spot);
+                page.setGoal(b, Object.assign({
+                    face: 0,
+                    offY: 0,
+                    pose: "stand",
+                    kind: "spot"
+                }, spot));
+            }
+            runUntil(() => a.talk?.phase === "reply", 400, "C replies");
+            compare(page.claims[here], "c", "C holds the tile it listens on");
+            verify(b.goal?.kind !== "spot", "B is not sent to C's tile");
+            compare([c.tx, c.ty], [spot.x, spot.y], "C listens where it stopped");
+            runUntil(() => !a.talk, 200, "the talk ends");
+            verify(page.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
+        }
+
+        // A listener archived mid-talk leaves both tiles it held: the one it
+        // listens on and the one it was headed for.
+        function test_an_archived_listener_lets_go_of_its_tiles() {
+            // Lead and C get the desks side by side, and C sets off for the
+            // door just as the lead speaks to it.
+            const people = [person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")];
+            plugin.publish(people);
+            const door = {
+                x: page.world.entrance[0],
+                y: page.world.entrance[1]
+            };
+            page.claim(actor("c"), door);
+            page.setGoal(actor("c"), Object.assign({
+                face: 0,
+                offY: 0,
+                pose: "stand",
+                kind: "spot"
+            }, door));
+            plugin.publish(people, [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            const a = actor("lead"), c = actor("c");
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const here = c.ty * page.world.cols + c.tx, ahead = c.claim;
+            compare(c.hold, here, "C holds the tile it listens on");
+            verify(ahead >= 0 && ahead !== here, "and the one it was headed for");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing")]);
+            verify(!actor("c"), "C has left");
+            compare(page.claims[here], undefined, "C's tile is free");
+            compare(page.claims[ahead], undefined, "the tile C was headed for is free");
+            compare(Object.values(page.claims).indexOf("c"), -1, "C holds no tile at all");
+            runUntil(() => !a.talk, 200, "the talk ends");
+        }
+
+        // A listener spoken to where it was headed keeps that tile for the
+        // talk, even when it is sent elsewhere meanwhile.
+        function test_a_listener_sent_elsewhere_keeps_its_tile_for_the_talk() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "working", "typing")]);
+            const a = actor("lead"), c = actor("c");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")]);
+            runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C gets to the break room");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "waiting")], [
+                {
+                    id: "talk-1",
+                    from: "lead",
+                    to: "c",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => a.talk?.phase === "say", 2000, "the talk starts");
+            const here = c.ty * page.world.cols + c.tx;
+            compare(c.claim, here, "C listens where it was headed");
+            compare(c.hold, here, "and holds that tile for the talk");
+            // C's agent gets to work: it is sent back to its desk.
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "working", "typing")]);
+            page.decide(c, true);
+            verify(c.claim !== here, "C is headed for its desk");
+            while (a.talk) {
+                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare([c.tx, c.ty], [here % page.world.cols, Math.floor(here / page.world.cols)], "C stays put");
+                page.advance(1);
+            }
+            compare(page.claims[here], undefined, "C lets go of it after the talk");
+            runUntil(() => arrived(c) && c.goal.kind === "desk", 2000, "C goes back to its desk");
+        }
+
+        // Two people with something to say to the same one take turns: the
+        // second waits until the first is done.
+        function test_two_speakers_take_turns_with_one_listener() {
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "working", "typing")]);
+            const a = actor("lead"), d = actor("d"), c = actor("c");
+            const say = (from, id) => ({
+                        id: id,
+                        from: from,
+                        to: "c",
+                        kind: "message",
+                        text: "From " + from,
+                        at: new Date().toISOString()
+                    });
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "waiting")], [say("lead", "talk-1")]);
+            runUntil(() => a.talk?.phase === "say", 2000, "the lead starts");
+            plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "waiting")], [say("lead", "talk-1"), say("d", "talk-2")]);
+            let here = c.ty * page.world.cols + c.tx, turns = 0, last = "";
+            for (let t = 0; t < 3000 && turns < 2; t++) {
+                page.advance(1);
+                const talking = [a, d].filter(p => p.talk?.to === "c");
+                verify(talking.length <= 1, "one talks to C at a time");
+                const now = talking[0];
+                if (now && now.talk.phase !== "go") {
+                    if (now.id !== last) {
+                        last = now.id;
+                        turns++;
+                        here = c.ty * page.world.cols + c.tx;
+                    }
+                    compare(page.claims[here], "c", "C keeps its tile while " + now.id + " talks");
+                }
+            }
+            compare(turns, 2, "both get their say");
+            compare(last, "d", "D goes second");
+        }
+
+        // Two who talk to each other at once take turns: each is someone the
+        // other talks to only once the first talk is over.
+        function test_two_who_talk_to_each_other_take_turns() {
+            const people = [person("a", "A", "working", "typing"), person("b", "B", "working", "typing")].concat(many(4, "o", "working", "typing"));
+            plugin.publish(people);
+            const a = actor("a"), b = actor("b");
+            const say = (from, to, id) => ({
+                        id: id,
+                        from: from,
+                        to: to,
+                        kind: "message",
+                        text: "From " + from,
+                        at: new Date().toISOString()
+                    });
+            plugin.publish(people, [say("a", "b", "talk-1"), say("b", "a", "talk-2")]);
+            const talked = {};
+            runUntil(() => {
+                verify(!(a.talk && b.talk), "one of them talks at a time");
+                // Only a talk that gets to its line counts, not one that gives
+                // up on the way.
+                if (a.talk && a.talk.phase !== "go")
+                    talked.a = true;
+                if (b.talk && b.talk.phase !== "go")
+                    talked.b = true;
+                checkFloor();
+                return talked.a && talked.b && !a.talk && !b.talk;
+            }, 3000, "both talks run to their end");
+            compare([a.hold, b.hold, a.heldBy, b.heldBy], [-1, -1, "", ""], "nobody holds a tile for a talk");
+            const mine = Object.values(page.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.claims))
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+        }
+
+        // A reviewer listening at a floor desk that goes to someone else keeps
+        // the tile until the talk ends; the desk's new owner waits beside the
+        // pod meanwhile, and sits down once the reviewer has gone.
+        function test_a_listener_keeps_a_desk_given_away_until_the_talk_ends() {
+            const reviewers = [];
+            for (let i = 0; i < 9; i++)
+                reviewers.push(reviewer("r" + i, "Review #" + i));
+            const threads = many(40, "t", "working", "typing");
+            plugin.publish(reviewers.concat(threads.slice(0, 39)));
+            const r8 = actor("r8"), t0 = actor("t0");
+            verify(page.world.seatOf["r8"].pod !== corner(), "r8 sits on the floor");
+            runUntil(() => arrived(r8) && arrived(t0), 6000, "everyone sits down");
+            const seat = page.world.seatOf["r8"];
+            const tile = seat.y * page.world.cols + seat.x;
+            plugin.publish(reviewers.concat(threads.slice(0, 39)), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: "r8",
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => t0.talk?.phase === "say", 3000, "t0 talks to r8");
+            compare(r8.hold, tile, "r8 listens at its desk");
+            checkFloor();
+            plugin.publish(reviewers.concat(threads));
+            compare(page.world.seatOf["t39"], seat, "t39 is given r8's desk");
+            const t39 = actor("t39");
+            runUntil(() => {
+                if (t0.talk) {
+                    compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
+                    compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
+                }
+                checkFloor();
+                return !t0.talk;
+            }, 3000, "the talk runs to its end");
+            runUntil(() => {
+                checkFloor();
+                return arrived(t39) && t39.tx === seat.x && t39.ty === seat.y;
+            }, 6000, "t39 sits at its desk once r8 has gone");
+        }
+
+        // A speaker that finds every side of its listener taken keeps the spot
+        // it had, rather than stop somewhere nobody holds for it.
+        function test_a_speaker_with_no_side_free_keeps_its_spot() {
+            plugin.publish(many(6, "t", "working", "typing"));
+            const W = page.world.cols;
+            const lead = actor("t0");
+            const far = Object.values(page.actors).find(a => Math.abs(a.tx - lead.tx) + Math.abs(a.ty - lead.ty) > 2);
+            verify(far, "someone sits away from the lead");
+            const blocked = [];
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                const i = (far.ty + dy) * W + far.tx + dx;
+                if (page.walkable(far.tx + dx, far.ty + dy) && page.claims[i] === undefined) {
+                    page.claims[i] = "someone";
+                    blocked.push(i);
+                }
+            }
+            plugin.publish(many(6, "t", "working", "typing"), [
+                {
+                    id: "talk-1",
+                    from: "t0",
+                    to: far.id,
+                    kind: "message",
+                    text: "Got a minute?",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => !!lead.talk, 200, "the lead goes to talk");
+            for (let i = 0; i < 200; i++) {
+                page.advance(1);
+                if (lead.next < 0 && lead.path.length === 0)
+                    compare(page.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
+            }
+            compare(lead.talk.phase, "go", "the lead waits for a side to come free");
+            for (const i of blocked)
+                delete page.claims[i];
+            runUntil(() => lead.talk?.phase === "say", 2000, "the talk starts once a side is free");
+            compare(page.claims[lead.ty * W + lead.tx], "t0");
         }
 
         // The office fills the view by its width or its height, whichever runs
@@ -1365,8 +1682,9 @@ Item {
             runUntil(() => page.moves === 0, 1500, "the movers leave");
         }
 
-        // People walk around movers and the desks they carry, as around anyone.
-        function test_nobody_walks_through_a_carried_desk() {
+        // Several movers carry desks at once, and people walk past them, as
+        // past anyone, never stopping where another stops.
+        function test_movers_carry_desks_at_once_among_the_people() {
             plugin.publish(many(4, "t", "working", "typing"));
             checkFloor();
             const activities = ["typing", "planning", "reading", "testing"];
@@ -1398,24 +1716,10 @@ Item {
             // t0 standing just north of the way.
             w.seats[m.job].mover = "";
             m.job = -1;
-            for (const t of [m.ty * w.cols + m.tx, m.next]) {
-                if (t >= 0 && page.occupied[t] === m.id)
-                    page.occupied[t] = "";
-            }
             m.path = [];
             const t0 = actor("t0");
-            page.occupied[t0.ty * w.cols + t0.tx] = "";
-            t0.path = [];
             const [left, row] = openFloor(5);
-            page.place(t0, left + 2, row - 1, true);
-            page.setGoal(t0, {
-                x: left + 2,
-                y: row - 1,
-                face: 0,
-                offY: 0,
-                pose: "stand",
-                kind: "floor"
-            });
+            standAt(t0, left + 2, row - 1);
             page.place(m, left, row, true);
             m.goal = {
                 x: left + 4,
@@ -1425,7 +1729,7 @@ Item {
                 pose: "stand",
                 kind: "leave"
             };
-            page.route(m, false);
+            page.route(m);
             stood = {};
             let under = false;
             for (let i = 0; i < 600 && page.movers[m.id]; i++) {
@@ -1498,11 +1802,9 @@ Item {
         // the speaker's time to find its listener starts only then.
         function test_a_talk_waits_for_its_listener_to_come_in() {
             plugin.publish(many(4, "t", "working", "typing"));
-            const w = page.world;
-            const door = w.entrance[1] * w.cols + w.entrance[0];
-            // Someone stands in the doorway for longer than a speaker looks for
-            // its listener.
-            page.occupied[door] = "someone";
+            // The doorway lets nobody through for longer than a speaker looks
+            // for its listener.
+            page.doorOpensAt = 1e12;
             plugin.publish(many(5, "t", "working", "typing"), [
                 {
                     id: "talk-1",
@@ -1518,7 +1820,7 @@ Item {
                 compare(actor("t4").tx, -1, "t4 waits outside");
                 compare(actor("t0").talk, null, "t0 waits for t4 to come in");
             }
-            page.occupied[door] = "";
+            page.doorOpensAt = 0;
             runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t4 once it is in");
             compare(actor("t0").talk.to, "t4");
         }
@@ -1527,9 +1829,7 @@ Item {
         // speaker's talks to people already inside.
         function test_a_talk_to_someone_outside_lets_the_next_talk_go_first() {
             plugin.publish(many(4, "t", "working", "typing"));
-            const w = page.world;
-            const door = w.entrance[1] * w.cols + w.entrance[0];
-            page.occupied[door] = "someone";
+            page.doorOpensAt = 1e12;
             const at = new Date().toISOString();
             plugin.publish(many(5, "t", "working", "typing"), [
                 {
@@ -1553,16 +1853,14 @@ Item {
             compare(actor("t0").talk.to, "t1");
             compare(actor("t4").tx, -1, "t4 is still outside");
             compare(actor("t0").queue.map(t => t.to), ["t4"], "the talk to t4 waits its turn");
-            page.occupied[door] = "";
+            page.doorOpensAt = 0;
         }
 
         // Talks to people outside do not fill a speaker's queue so that a talk
         // to someone inside is lost.
         function test_talks_to_people_outside_never_crowd_out_one_inside() {
             plugin.publish(many(4, "t", "working", "typing"));
-            const w = page.world;
-            const door = w.entrance[1] * w.cols + w.entrance[0];
-            page.occupied[door] = "someone";
+            page.doorOpensAt = 1e12;
             const at = new Date().toISOString();
             const talk = (id, to) => ({
                     id: id,
@@ -1575,7 +1873,7 @@ Item {
             plugin.publish(many(8, "t", "working", "typing"), [talk("o1", "t4"), talk("o2", "t5"), talk("o3", "t6"), talk("in", "t1")]);
             runUntil(() => actor("t0").talk?.phase === "say", 2000, "t0 talks to t1 while the others wait outside");
             compare(actor("t0").talk.to, "t1");
-            page.occupied[door] = "";
+            page.doorOpensAt = 0;
         }
 
         // Another machine's office starts with clean whiteboards.
@@ -1611,7 +1909,7 @@ Item {
                 while ((page.moves || page.outside.length) && ticks < 2000) {
                     page.advance(1);
                     ticks++;
-                    const there = page.occupied[e[1] * w.cols + e[0]];
+                    const there = Object.values(page.actors).concat(Object.values(page.movers)).find(a => a.tx === e[0] && a.ty === e[1] && a.next < 0)?.id ?? "";
                     since = there && there === inDoor ? since + 1 : 0;
                     inDoor = there;
                     verify(since < 40, there + " stands in the doorway");
