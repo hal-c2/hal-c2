@@ -26,11 +26,11 @@ age_minutes() { echo $(((now - $(date -u -d "$1" +%s)) / 60)); }
 act() { if [ -n "${DRY_RUN:-}" ]; then echo "(dry run) $*"; else "$@"; fi; }
 
 # The latest ci.yml run for a commit, a queue run or a promoted one:
-#   id  status  created_at  event  head_branch  html_url  check_suite_id
+#   id  status  created_at  event  head_branch  html_url  check_suite_id  run_attempt
 latest_run() {
   gh api "repos/$repo/actions/runs?head_sha=$1&per_page=20" \
     --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | max_by(.created_at) // empty
-          | [.id, .status, .created_at, .event, .head_branch, .html_url, .check_suite_id] | @tsv'
+          | [.id, .status, .created_at, .event, .head_branch, .html_url, .check_suite_id, .run_attempt] | @tsv'
 }
 
 # The conclusion of a commit's latest `CI result`, or its status while it runs, or missing.
@@ -66,7 +66,7 @@ while IFS=$'\t' read -r _ _ sha number pr; do
   run=$(latest_run "$sha")
   why='' failed=''
   if [ -n "$run" ]; then
-    IFS=$'\t' read -r id status created _ _ _ suite <<<"$run"
+    IFS=$'\t' read -r id status created _ _ _ suite _ <<<"$run"
     if [ "$status" = completed ]; then
       # This run's own: the commit's may hold a parked run's too, which a promoted run ended.
       result=$(gh api "repos/$repo/check-suites/$suite/check-runs?check_name=CI%20result" \
@@ -104,10 +104,21 @@ while IFS=$'\t' read -r _ state sha number _; do
   result=$(ci_result "$sha")
   run=$(latest_run "$sha")
   [ -n "$run" ] || break # GitHub has not started it yet
-  IFS=$'\t' read -r id status _ event branch url _ <<<"$run"
+  IFS=$'\t' read -r id status _ event branch url _ attempt <<<"$run"
   if [ "$result" = failure ] || [ "$result" = cancelled ]; then
     if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ]; then
-      echo "#$number's promoted run ended $result; failing the entry"
+      # This attempt's own: `result` may be from the one a retry replaces. Not the run's
+      # status, as it is still in progress when its `follow` job starts this.
+      own=$(gh api "repos/$repo/actions/runs/$id/attempts/$attempt/jobs?per_page=100" \
+        --jq '.jobs[] | select(.name == "CI result") | .conclusion // empty')
+      case $own in
+        failure | cancelled) ;;
+        *)
+          echo "#$number's promoted run $id has not failed in attempt $attempt; leaving it to that"
+          break
+          ;;
+      esac
+      echo "#$number's promoted run ended $own; failing the entry"
       act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
     fi
     continue

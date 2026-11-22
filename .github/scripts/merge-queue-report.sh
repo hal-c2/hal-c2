@@ -37,15 +37,15 @@ if [ -n "$queued" ]; then
   exit 0
 fi
 
+listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
+
 # A run whose CI result never finished is a wedge, which the watchdog drops and explains.
-result=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=CI%20result" \
-  --jq '[.check_runs[].status] | if length == 0 then "missing" else (sort | last) end')
+# This run's own: a promoted run's commit may hold the parked run's too.
+result=$(jq -r '[.jobs[] | select(.name == "CI result") | .status][0] // "missing"' <<<"$listing")
 if [ "$result" != completed ]; then
   echo "run $run's CI result is $result: a wedge, which the watchdog reports"
   exit 0
 fi
-
-listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
 
 # A run whose own CI result passed has nothing to report: a parked run, or one cancelled
 # after its entry left the queue (ci-result.sh).
