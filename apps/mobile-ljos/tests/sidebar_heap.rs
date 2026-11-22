@@ -12,9 +12,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use hal_c2_mobile::pairing::{self, Environment};
-use hal_c2_shell::Launch;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Mc, OnFrame, OnReady, Reply, Resume, SubId};
+use hal_c2_shell::{Launch, store};
 use ljos::App;
 use ljos::prelude::{Engine, ObjectId};
 use ljos::testing::TestWindow;
@@ -220,6 +220,18 @@ fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
             json!({"t": "shell.rows", "mc": "mc-a", "epoch": "e1", "rev": tick + 1, "rows": rows}),
         );
         window.advance(250).expect("at rest");
+        // The news landed: otherwise the heap would have nothing to hold.
+        let moved = tick * 6 % THREADS;
+        let shown = store::get(&engine)
+            .expect("the phone keeps a store")
+            .borrow()
+            .thread(&format!("env-1:t{moved}"))
+            .map(|thread| thread.updated_at);
+        assert_eq!(
+            shown,
+            Some(at(moved + tick * 7)),
+            "rows frame {tick} didn't reach the phone's threads"
+        );
         assert_eq!(
             engine.faults_reported(),
             0,
