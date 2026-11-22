@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#MISE description="Open the phone shell on Ljós, paired with the running MC (mise run mc) the first time, as mise run mobile does; --url LINK pairs with another"
+#MISE dir="{{config_root}}/apps/mobile-ljos"
+set -euo pipefail
+root="$(cd ../.. && pwd)"
+args=("$@")
+# The phone's files in the checkout, never the installed desktop app's
+# home: the binary refuses a desktop host without --home-dir.
+home="$root/.hal-c2/mobile-ljos"
+if [[ " $* " == *" --home-dir"* ]]; then
+  home=""
+else
+  args=(--home-dir "$home" "${args[@]}")
+fi
+# Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780)
+# through a pairing link (mise run mc:pair), as a user entering it in the
+# app does — only while this home has paired with nothing, so a later
+# run opens the environment it remembers. --url names one itself, and a
+# hal-c2://pair link from outside the app is shown for the user to
+# accept, so neither is paired over.
+invitation=false
+for arg in "$@"; do
+  [[ $arg == hal-c2:* ]] && invitation=true
+done
+if [[ -n $home && $invitation == false && " $* " != *" --url"* && ! -f "$home/data/pairing.json" ]]; then
+  origin="http://127.0.0.1:${HAL_C2_MC_PORT:-3780}"
+  if ! curl -fsS -m 2 "$origin/.well-known/hal-c2/environment" >/dev/null; then
+    echo "no MC answers at $origin. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), or pass --url <pairing link>." >&2
+    exit 1
+  fi
+  link="$(cd ../server-ex && mise exec -- mix hal_c2.pair "$origin" | grep -Eo '^https?://[^ ]+[?#]token=[^ ]+' | head -n 1)"
+  if [[ -z $link ]]; then
+    echo "mix hal_c2.pair printed no pairing link." >&2
+    exit 1
+  fi
+  args=(--url "$link" "${args[@]}")
+fi
+exec mise exec -- cargo run --release -q -p hal_c2_mobile -- "${args[@]}"

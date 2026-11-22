@@ -250,6 +250,12 @@ impl SavedEnvironments {
         self.exchange = exchange;
     }
 
+    /// What an MC lists this client as when it pairs beside the shell's
+    /// own: the phone's device, not the desktop's (MobileApp).
+    pub fn set_device(&mut self, device: Client) {
+        self.device = device;
+    }
+
     /// Connects to `id` anew, or says why it cannot.
     fn connect_to(&mut self, engine: &Engine, id: &str) {
         let Some(catalog) = &self.catalog else {
@@ -416,7 +422,9 @@ impl SavedEnvironments {
         self.publish(engine);
     }
 
-    fn remove(&mut self, engine: &Engine, id: &str) {
+    /// The way back out of one beside the shell's own, as
+    /// `savedEnvironments.remove` does; the phone's Pairing calls it too.
+    pub fn remove(&mut self, engine: &Engine, id: &str) {
         self.disconnect(engine, id, true);
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {
