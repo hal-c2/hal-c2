@@ -705,7 +705,7 @@ defmodule HalC2.GitActions do
 
     cta =
       cond do
-        action == "commit" and commit["status"] == "created" ->
+        action == "commit" and commit["status"] == "created" and not behind_upstream?(cwd) ->
           %{"kind" => "run_action", "label" => "Push", "action" => %{"kind" => "push"}}
 
         pr["url"] ->
@@ -721,6 +721,9 @@ defmodule HalC2.GitActions do
     %{"title" => title, "cta" => cta}
     |> then(&if(description, do: Map.put(&1, "description", truncate(description)), else: &1))
   end
+
+  # A push from behind its upstream cannot fast-forward, so the commit's result offers none.
+  defp behind_upstream?(cwd), do: ((Vcs.remote_status(cwd) || %{})["behindCount"] || 0) > 0
 
   defp truncate(text) when byte_size(text) <= 72, do: text
   defp truncate(text), do: String.slice(text, 0, 69) |> String.trim_trailing() |> Kernel.<>("...")

@@ -441,6 +441,9 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
                 maximumLineCount: 1
+                // The whole title, which the row's width cuts short; the
+                // hover preview says it too, but only while built.
+                Accessible.description: truncated ? text : ""
             }
 
             // "project · branch": the project keeps at most half the line,

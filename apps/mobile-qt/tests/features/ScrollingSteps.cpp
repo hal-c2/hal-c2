@@ -593,8 +593,12 @@ const Steps steps([] {
     seedLong(world, id);
     // Its own last words, so another thread showing them would show.
     setEntity(world.mc, id, S("turn-item"), S("reply"), {{S("text"), S("Tax totals are done")}});
-    world.back();
-    world.item(S("homeScreen"));
+    // Back to the list first, in the phone layout; a wide window's list is
+    // already beside the thread, and its Back would leave for a draft.
+    if (world.find(S("phoneLayout")) != nullptr) {
+      world.back();
+      world.item(S("homeScreen"));
+    }
     world.thread = id;
     openThread(world, c[0]);
     waitLive(world);

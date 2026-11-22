@@ -40,7 +40,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     again at once; one it still has, or may have while its plugin restarts, shows
     where it is now;
   - paused at the usage limit, this machine shares no queued review, and the user's
-    ask that ends the pause still leaves a commit the laptop claimed to the laptop;
+    ask that ends the pause (a start or "Look now") still leaves a commit the laptop
+    claimed to the laptop;
   - a review the look found starts only while the repository's daily limit has room,
     counting the reviews this machine started and those the connected laptop tells it
     started in the last day (kept once heard, cut off or not); while the laptop cannot
@@ -74,7 +75,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   @settle_ms 15_000
   # The most reviews a day of the repository; no author limit.
   @per_repository 5
-  @paused "code-review reports: Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
+  @paused "code-review reports: Reviews are paused: the agent hit its usage limit. Queued reviews wait instead of failing one by one."
 
   setup_all do
     fx = Path.expand("../../tmp/prop/code-review-claims-fixtures-#{System.pid()}", __DIR__)
@@ -406,16 +407,26 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # `{model after call, the reply it expects}`; nil is a step with no reply to check.
-  defp step(m, {:call, _, :refresh, []}), do: {look(m), :ok}
+  # "Look now" is the user's ask too: it ends a pause before the look.
+  defp step(m, {:call, _, :refresh, []}), do: {look(%{m | paused: false}), :ok}
 
   # The user's ask ends a pause and runs whatever a look left to the laptop: only a
   # claim of the laptop's on the commit checked out keeps it from running.
   defp step(m, {:call, _, :start, [key]}) do
     m = %{m | paused: false}
 
+    # A queued review the user asks for is theirs from then on: the limits no longer
+    # hold it back.
     case m.reviews[key] do
-      %{status: s} when s in [:queued, :running] -> {pump(m), :ok}
-      _ -> {m |> queue(key, true) |> pump(), :ok}
+      %{status: :queued} = r ->
+        r = Map.put(%{r | asked: true}, :asked_at, m.seq)
+        {%{m | seq: m.seq + 1} |> put_review(key, r) |> pump(), :ok}
+
+      %{status: :running} ->
+        {pump(m), :ok}
+
+      _ ->
+        {m |> queue(key, true) |> pump(), :ok}
     end
   end
 
@@ -682,7 +693,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     queued =
       m.reviews
       |> Enum.filter(fn {_, r} -> r.status == :queued end)
-      |> Enum.sort_by(fn {_, r} -> r.seq end)
+      # One the user asked to start now goes first, the rest oldest first.
+      |> Enum.sort_by(fn {_, r} -> {r[:asked_at] == nil, r[:asked_at], r.seq} end)
 
     case {running, queued} do
       {false, [{key, r} | _]} ->
@@ -727,7 +739,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     runs = (m.runs[key] || []) ++ [false]
 
     m = %{
-      put_review(m, key, %{r | status: :running, run: length(runs)})
+      put_review(m, key, Map.delete(%{r | status: :running, run: length(runs)}, :asked_at))
       | runs: Map.put(m.runs, key, runs)
     }
 

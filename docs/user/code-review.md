@@ -92,7 +92,18 @@ stays in its thread only; the new review covers the whole change again.
 
 If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
-the queue instead of failing one by one, and the Reviews page says so.
+the queue instead of failing one by one, and the Reviews page says so and when
+they start again. If you know the limit no longer holds, say after signing in
+to another account, click **Resume now**. **Look now**, and picking another
+agent or model for the reviews, end the pause too; a limit that a review still
+running on the old agent hits after the switch only puts that review back in
+the queue. **Review now** on a queued review starts it next, ahead of the rest
+of the queue, and ends a pause as well. Other queued reviews start oldest first.
+
+In a repository that publishes automatically, a review the host would not post
+because of its own rate limit is posted again at the first look for pull
+requests that the limit lets through. A review you publish yourself is not
+retried: publish it again once the limit resets.
 
 ## Reviews in a sandbox
 
@@ -133,6 +144,12 @@ own copy of the repository and fetched over HTTPS with your `gh` or `fj` sign-in
 repository is not touched, but if it runs commands it runs the pull request's code. Choose its
 access with that in mind. Reviewing a pull request again removes the last
 review's checkout.
+
+The checkout carries the submodules the pull request's head pins, fetched over
+HTTP(S) or SSH, never over `git://` or from a path on your machine; the plugin's copy
+keeps their objects, so later reviews fetch only what is new. When a submodule cannot
+be fetched, the review still runs, and its agent reports the checks that needed it
+as blocked on the reviewing machine. A review in a sandbox gets no submodules.
 
 The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and the
 others listed under it are filled in for each pull request. How the agent
@@ -201,6 +218,11 @@ review it again, then publish.
 - **As threads** and **Both** list them, marked with the state of their review.
 
 Changing this moves the review threads there already are, not only new ones.
+
+The search field above the Reviews page's list finds a pull request by its
+title, repository, author or branch, or by its number: `#83` finds that pull
+request only, and `83` also finds a title or branch that names 83. Every word
+you type has to match.
 
 When a review is done — reported, published or failed — its thread is settled,
 so finished reviews leave your active list on their own. Unsettle one to bring

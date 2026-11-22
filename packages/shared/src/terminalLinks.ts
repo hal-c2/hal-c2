@@ -88,6 +88,17 @@ function collectMatches(
     const trimmed = trimClosingDelimiters(raw);
     if (trimmed.length === 0) continue;
     if (kind === "path" && isTerminalUrl(trimmed)) continue;
+    // A logged request route carries its query ("GET /api/users?page=2"), and
+    // an address with a scheme other than http ("redis://127.0.0.1:6379/0")
+    // leaves the scheme's tail looking like a drive or a rooted path.
+    if (
+      kind === "path" &&
+      (trimmed.includes("://") ||
+        trimmed.includes("?") ||
+        (trimmed.startsWith("//") && start > 0 && line[start - 1] === ":"))
+    ) {
+      continue;
+    }
 
     const candidate: TerminalLinkMatch = {
       kind,

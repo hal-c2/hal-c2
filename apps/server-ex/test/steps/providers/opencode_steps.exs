@@ -3669,8 +3669,13 @@ defmodule HalC2.Steps.Providers.Opencode do
         })
       end)
 
-    # The interrupt is on its way; only now may the session finish opening,
-    # so the runtime meets the stop before it could send the prompt.
+    # Only once the stop is recorded may the session finish opening.
+    World.await_stream(World.thread_id(context, @thread), fn state ->
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "run_interrupt_request"))
+    end)
+
     File.write!(Path.join(FakeAcp.fake(context).dir, "open-session"), "")
     Task.await(context.send_task, 10_000)
     Task.await(stop, 10_000)

@@ -1,0 +1,144 @@
+name: mobile-ljos
+
+# The phone shell on Ljós (apps/mobile-ljos): mobile-qt's QML over
+# desktop-ljos's shell, in a Cargo workspace of its own. One job, because
+# runners are scarce: it builds in desktop-ljos's target directory, restored
+# from desktop-ljos.yml's `test` cache (the two lockfiles pin the same
+# crates), so only the phone's own crate and what its features change build
+# cold. It never saves a cache of its own.
+
+on:
+  push:
+    branches:
+      - main
+    paths: &paths
+      - "apps/mobile-ljos/**"
+      # The shell, controllers and MC client the phone runs on, the bricks
+      # and the phone's QML it compiles, and the scenarios its RATCHET holds.
+      - "apps/desktop-ljos/**"
+      - "apps/desktop-qt/qml/**"
+      - "apps/mobile-qt/qml/**"
+      - "features/mobile/**"
+      # The default globs the features runner reads (kDefaultGlobs).
+      - "apps/mobile-qt/tests/tst_Features.cpp"
+      - ".github/workflows/mobile-ljos.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ljos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# As desktop-ljos.yml's: rust-cache keys on the CARGO_* variables, so these
+# must match for its `test` cache to restore here.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_TERM_COLOR: always
+  LJOS_QT_TYPES: none
+
+defaults:
+  run:
+    working-directory: apps/desktop-ljos
+
+jobs:
+  phone:
+    name: Unit tests, QML check and features
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # The same toolchain desktop-ljos pins (apps/mobile-ljos/mise.toml
+      # follows it), read where desktop-ljos.yml reads it.
+      - name: Setup Rust
+        run: |
+          version="$(sed -n 's/^rust = .*version = "\([0-9.]*\)".*/\1/p' mise.toml)"
+          rustup toolchain install "$version" --profile minimal --component rustfmt
+          rustup default "$version"
+
+      - name: Format
+        working-directory: apps/mobile-ljos
+        run: cargo fmt --check
+
+      - name: Setup Zig
+        id: zig
+        run: |
+          version="$(sed -n 's/^zig = "\([0-9.]*\)"/\1/p' mise.toml)"
+          mkdir -p "$RUNNER_TOOL_CACHE/zig"
+          curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
+            | tar -xJ -C "$RUNNER_TOOL_CACHE/zig"
+          echo "$RUNNER_TOOL_CACHE/zig/zig-x86_64-linux-$version" >> "$GITHUB_PATH"
+          echo "ghostty=$(grep -o 'libghostty-rs?rev=[0-9a-f]*' Cargo.lock | head -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      # desktop-ljos.yml's caches, restored only.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/zig/p
+          key: zig-packages-${{ steps.zig.outputs.ghostty }}
+
+      - name: CEF version
+        id: cef-version
+        run: |
+          echo "version=$(sed -n '/^name = "cef-dll-sys"$/{n;s/^version = "\(.*\)"$/\1/p}' Cargo.lock)" >> "$GITHUB_OUTPUT"
+          echo "CEF_PATH=$HOME/cef" >> "$GITHUB_ENV"
+
+      - name: Restore CEF
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/cef
+          key: cef-${{ steps.cef-version.outputs.version }}
+
+      # The build's (fontconfig, ALSA) and the tests' (a session bus, a
+      # software Vulkan, a font), as desktop-ljos.yml's `test` job.
+      - name: Install system packages
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh pkg-config libfontconfig1-dev libasound2-dev dbus mesa-vulkan-drivers fonts-dejavu-core'
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ljos
+          shared-key: test
+          save-if: false
+
+      # As desktop-ljos.yml's: a restored target leaves out the libcef.so
+      # the cef crate's build script copies beside the binaries.
+      - name: CEF beside the binaries
+        run: |
+          dist=$(dirname "$(ls "$CEF_PATH"/*/*/archive.json 2>/dev/null | head -1)")
+          dir=target/debug
+          if [[ -d $dir/deps && ! -f $dir/libcef.so ]]; then
+            if [[ -f $dist/libcef.so ]]; then
+              find "$dist" -maxdepth 1 -type f -exec cp -t "$dir" {} +
+              cp -r "$dist/locales" "$dir/"
+            else
+              cargo clean --profile dev -p cef-dll-sys
+            fi
+          fi
+
+      # Every step builds in the dev profile into desktop-ljos's target, so
+      # the three share one build (`mise run mobile-ljos:check` uses release
+      # locally; the compile check is the same).
+      - name: Unit and property tests
+        working-directory: apps/mobile-ljos
+        run: cargo test --target-dir ../desktop-ljos/target --no-fail-fast
+
+      - name: QML compile check
+        working-directory: apps/mobile-ljos
+        run: cargo run -q --target-dir ../desktop-ljos/target -p hal_c2_mobile -- --check
+
+      # The scenarios tests/features/RATCHET holds fail the run when one
+      # stops passing.
+      - name: Features
+        working-directory: apps/mobile-ljos
+        run: cargo test -q --target-dir ../desktop-ljos/target -p hal_c2_mobile --test features

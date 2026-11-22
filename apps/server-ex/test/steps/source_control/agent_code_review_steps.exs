@@ -864,6 +864,54 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the head of \#{int} pins the submodule {string} of {string} behind its newest commit",
+       %{args: [number, path, repository]} = context do
+    # The fake GitHub serves every repository from the directory acme/api's remote is in.
+    remotes =
+      context.source |> World.git!(~w(remote get-url origin)) |> Path.dirname() |> Path.dirname()
+
+    bare = Path.join(remotes, "#{repository}.git")
+    World.git!(remotes, ["init", "-q", "--bare", "-b", "main", bare])
+    seed = Path.join(Mc.tmp_dir(context.mc, "submodule-source"), "repo")
+    World.git!(Path.dirname(seed), ["init", "-q", "-b", "main", seed])
+    pinned = World.commit!(seed, %{"README.md" => "pinned\n"}, "Pinned")
+    World.commit!(seed, %{"README.md" => "newer\n"}, "Newer")
+    World.git!(seed, ["push", "-q", bare, "main:main"])
+
+    source = context.source
+    World.git!(source, ~w(fetch -q origin))
+    World.git!(source, ~w(checkout -q --detach origin/main))
+
+    File.write!(
+      Path.join(source, ".gitmodules"),
+      "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = https://github.com/#{repository}.git\n"
+    )
+
+    World.git!(source, ~w(add .gitmodules))
+    World.git!(source, ["update-index", "--add", "--cacheinfo", "160000,#{pinned},#{path}"])
+    World.git!(source, ["commit", "-q", "-m", "Pull request #{number}"])
+    head = World.git!(source, ~w(rev-parse HEAD))
+    World.git!(source, ["push", "-q", "--force", "origin", "HEAD:refs/pull/#{number}/head"])
+
+    context
+    |> put_in([:heads, number], head)
+    |> Map.put(:pinned, pinned)
+  end
+
+  step "the checkout of \#{int} has {string} at the commit its head pins",
+       %{args: [number, path]} = context do
+    {review, context} = await_review(context, number, & &1["checkout"])
+    submodule = Path.join(review["checkout"], path)
+    assert World.git!(submodule, ~w(rev-parse HEAD)) == context.pinned
+    assert File.read!(Path.join(submodule, "README.md")) == "pinned\n"
+
+    # Every review of the repository shares the plugin's clone: nothing of this one's
+    # submodules is registered in its config.
+    clone = World.git!(review["checkout"], ~w(rev-parse --path-format=absolute --git-common-dir))
+    refute File.read!(Path.join(clone, "config")) =~ "submodule"
+    context
+  end
+
   step "the user's own checkout of {string} is not touched", context do
     assert checkout_state(context.root) == context.untouched
     context
@@ -1435,8 +1483,55 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "{string} says reviews are paused until the limit resets", %{args: [@id]} = context do
     assert review(context.snapshot, 12)
     {reply, context} = plugin(context, "reviews", %{})
-    assert {:ok, %{"problem" => problem}} = reply
+    assert {:ok, %{"problem" => problem, "pausedUntil" => until}} = reply
     assert problem =~ "usage limit"
+    assert {:ok, until, _} = DateTime.from_iso8601(until)
+    assert DateTime.compare(until, DateTime.utc_now()) == :gt
+    context
+  end
+
+  step "reviews of \#{int} and \#{int} are running", %{args: numbers} = context do
+    Enum.reduce(numbers, context, &running(&2, &1))
+  end
+
+  step "the user resumes the reviews", context do
+    {reply, context} = plugin(context, "resume", %{})
+    assert {:ok, snapshot} = reply
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "the user picks another model for {string}", %{args: [@id]} = context do
+    save(context, %{"model" => "fake/two"})
+  end
+
+  step "{string} no longer says reviews are paused", %{args: [@id]} = context do
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, %{"problem" => nil, "pausedUntil" => nil}} = reply
+    context
+  end
+
+  step "the review of \#{int} is running again", %{args: [number]} = context do
+    old = context.thread
+    {review, context} = await_review(context, number, &(&1["threadId"] not in [nil, old]))
+    assert review["status"] == "running"
+    context
+  end
+
+  step "the user asked for reviews of \#{int} and \#{int}, which wait in the queue",
+       %{args: numbers} = context do
+    context =
+      Enum.reduce(numbers, context, fn number, context ->
+        context |> open(number) |> start(number)
+      end)
+
+    Enum.reduce(numbers, context, &await_review!(&2, &1, fn r -> r["status"] == "queued" end))
+  end
+
+  step "the review of \#{int} is running and \#{int} still waits in the queue",
+       %{args: [asked, other]} = context do
+    {_, context} = await_review(context, asked, &(&1["status"] == "running"))
+    # The frame that showed the asked review running, not an earlier snapshot.
+    assert %{"status" => "queued"} = review(context.reviews_last, other)
     context
   end
 
@@ -2058,6 +2153,32 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         "exit" => 1
       }
     ])
+  end
+
+  step "GitHub turns reviews away for its rate limit", context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method POST", "pulls/12/reviews"],
+        "stderr" => "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n",
+        "stdout" => ~s({"message":"API rate limit exceeded for user ID 1."}),
+        "exit" => 1
+      }
+    ])
+  end
+
+  step "the review of \#{int} waits, saying GitHub's rate limit turned it away",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["publishError"])
+    assert %{"status" => "waiting", "comments" => [_, _]} = review
+    assert review["publishError"] =~ "rate limit exceeded"
+    context
+  end
+
+  step "GitHub takes reviews again", context do
+    rules = context.cli.rules |> File.read!() |> JSON.decode!()
+    kept = Enum.reject(rules, &((&1["stderr"] || "") =~ "rate limit exceeded"))
+    File.write!(context.cli.rules, JSON.encode!(kept))
+    context
   end
 
   step "the user publishes the review of \#{int}", %{args: [number]} = context do

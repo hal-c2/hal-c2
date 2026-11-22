@@ -107,7 +107,7 @@ Feature: The MC working with its host machine
       | IntelliJ |
 
   # Upstream #22826: JetBrains IDEs count columns from zero, so the column moves back by one.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A JetBrains IDE opens a location at the column the user asked for
     When a client opens "src/app.ts" at line 12 column <asked> in IntelliJ
     Then IntelliJ is launched with line 12 and column <passed>

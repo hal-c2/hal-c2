@@ -35,4 +35,24 @@ defmodule HalC2.GitTest do
     assert byte_size(err) <= max
     assert String.ends_with?(err, "without `workflow` scope\n")
   end
+
+  test "a variable named in unset is not in git's environment", %{tmp_dir: dir} do
+    vars = ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+    previous = Map.new(vars, &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      for {var, value} <- previous,
+          do: if(value, do: System.put_env(var, value), else: System.delete_env(var))
+    end)
+
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "hal.probe",
+      "GIT_CONFIG_VALUE_0" => "seen"
+    })
+
+    args = ["config", "--get", "hal.probe"]
+    assert {:ok, %{status: 0, out: "seen\n"}} = HalC2.Git.run(dir, args)
+    assert {:ok, %{status: 1}} = HalC2.Git.run(dir, args, unset: ["GIT_CONFIG_COUNT"])
+  end
 end

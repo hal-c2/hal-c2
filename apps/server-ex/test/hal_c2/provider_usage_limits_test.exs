@@ -886,4 +886,80 @@ defmodule HalC2.ProviderUsageLimitsTest do
                        "Bearer token-1"}
     end
   end
+
+  describe "a Grok billing period xAI shapes otherwise" do
+    defmodule GrokPlug do
+      @behaviour Plug
+
+      def init(config), do: config
+
+      def call(conn, config),
+        do: Plug.Conn.send_resp(conn, 200, JSON.encode!(%{"config" => config}))
+    end
+
+    defp grok_usage(config) do
+      server =
+        start_supervised!(
+          Supervisor.child_spec({Bandit, plug: {GrokPlug, config}, port: 0, ip: :loopback},
+            id: make_ref()
+          )
+        )
+
+      {:ok, {_, port}} = ThousandIsland.listener_info(server)
+      Application.put_env(:hal_c2, :grok_billing_url, "http://127.0.0.1:#{port}/billing")
+      on_exit(fn -> Application.delete_env(:hal_c2, :grok_billing_url) end)
+
+      HalC2.ProviderUsageLimits.Acp.probe("grok", "2026-11-22T00:00:00Z")
+    end
+
+    setup %{dir: dir} do
+      auth = %{"https://accounts.x.ai/sign-in" => %{"key" => "token"}}
+      File.write!(Path.join(dir, "auth.json"), JSON.encode!(auth))
+      Application.put_env(:hal_c2, :acp_commands, %{"grok" => ["true"]})
+      on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
+
+      # Emptied, this machine's own Grok and xAI variables stay out of it.
+      environment =
+        for({name, _} <- System.get_env(), String.starts_with?(name, ~w(GROK_ XAI_)), do: name)
+        |> Map.new(&{&1, ""})
+        |> Map.put("GROK_HOME", dir)
+
+      {:ok, _} =
+        HalC2.Settings.put(
+          %{
+            "providerInstances" => %{
+              "grok" => %{
+                "driver" => "grok",
+                "enabled" => true,
+                "environment" =>
+                  for({name, value} <- environment, do: %{"name" => name, "value" => value})
+              }
+            }
+          },
+          0
+        )
+
+      :ok
+    end
+
+    test "a type that is not a string is no known kind" do
+      for type <- [%{"name" => "WEEKLY"}, [1000], 7] do
+        period = %{"type" => type, "end" => "2026-12-01T00:00:00Z"}
+
+        assert %{"windows" => []} = grok_usage(%{"currentPeriod" => period})
+
+        assert %{"windows" => [%{"kind" => "other", "usedPercent" => 12}]} =
+                 grok_usage(%{"currentPeriod" => period, "creditUsagePercent" => 12})
+      end
+    end
+
+    test "a period that is not an object still shows the percentage" do
+      for period <- ["weekly", ["weekly"], 7] do
+        assert %{"windows" => [%{"kind" => "other", "usedPercent" => 12} = window]} =
+                 grok_usage(%{"currentPeriod" => period, "creditUsagePercent" => 12})
+
+        refute Map.has_key?(window, "resetsAt")
+      end
+    end
+  end
 end

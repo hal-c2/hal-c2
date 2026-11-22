@@ -12,6 +12,7 @@
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
+#   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
 
 @plugin-code-review
 Feature: Agent code review
@@ -501,6 +502,13 @@ Feature: Agent code review
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
 
+    @mc
+    Scenario: A review checkout has the submodules the reviewed commit pins
+      Given the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its thread works in a checkout of the head of #12
+      And the checkout of #12 has "third_party/lib" at the commit its head pins
+
   Rule: An untrusted pull request is reviewed in a sandbox
 
     The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
@@ -750,6 +758,50 @@ Feature: Agent code review
       Then the review of #12 waits in the queue
       And "code-review" says reviews are paused until the limit resets
 
+    # The user may know the limit no longer holds, as after signing in to another account.
+    @mc
+    Scenario: The user ends a usage-limit pause before the limit resets
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the user resumes the reviews
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    @mc
+    Scenario: Reviewing with another model ends a usage-limit pause
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the user picks another model for "code-review"
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    # Asking to look is the user's say-so, as a start is.
+    @mc
+    Scenario: Looking at the pull requests now ends a usage-limit pause
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the plugin looks at the pull requests again
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    # The limit was the old model's: the new one has its own.
+    @mc
+    Scenario: A usage limit a run of the old model hits after a switch pauses nothing
+      Given reviews of #12 and #13 are running
+      When the user picks another model for "code-review"
+      And the agent's turn ends because its usage limit is reached
+      Then "code-review" no longer says reviews are paused
+      And the review of #13 is running again
+
+    @mc
+    Scenario: A queued review the user asks to start now starts next
+      Given "code-review" runs at most 1 reviews at once
+      And a review of #12 is running
+      And the user asked for reviews of #13 and #14, which wait in the queue
+      When the user retries the review of #14
+      And the agent's turn ends without a report
+      Then the review of #14 is running and #13 still waits in the queue
+
     @mc
     Scenario: A finding carries its severity and a suggested fix
       Given a review of #12 is running
@@ -961,6 +1013,16 @@ Feature: Agent code review
       And the review of #12 is still waiting with its comments
 
     @mc
+    Scenario: A post GitHub's rate limit turned away is posted again at the next look
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub turns reviews away for its rate limit
+      When the review of #12 finishes with two comments
+      Then the review of #12 waits, saying GitHub's rate limit turned it away
+      When GitHub takes reviews again
+      And the plugin looks at the pull requests again
+      Then the review of #12 is marked as published
+
+    @mc
     Scenario: A review being posted is not posted twice
       Given the publishing mode for "acme/api" is "automatic"
       And GitHub is slow to take reviews
@@ -1104,6 +1166,32 @@ Feature: Agent code review
       Given "code-review" watches "acme/api" selectively
       When the user starts a review of #12 from the "Reviews" tab
       Then the review of #12 is listed as running
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page says until when reviews are paused, and resumes them
+      Given reviews are paused until the usage limit resets at "2026-11-22T19:00:00Z", with #12 queued
+      When the user switches to the "Reviews" tab
+      Then the page says when reviews start again, in the user's own time
+      When the user resumes the reviews from the page
+      Then the MC is asked to resume them, and the page no longer says they are paused
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page starts a queued review now
+      Given the review of #13 is queued
+      When the user opens the review of #13 on the "Reviews" page
+      And the user asks to review it now
+      Then the MC is asked to review #13 now, and it is listed as running
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page finds a pull request by its number, title or branch
+      Given reviews of #12 running, #13 waiting to be published and #14 failed
+      When the user switches to the "Reviews" tab
+      And the user searches the reviews for "#14"
+      Then only #14 is listed
+      When the user searches the reviews for "cache session"
+      Then only #13 is listed
+      When the user searches the reviews for "feature/12"
+      Then only #12 is listed
 
   Rule: The host is the user's choice
 

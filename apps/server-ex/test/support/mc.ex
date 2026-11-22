@@ -679,8 +679,8 @@ defmodule HalC2.Test.Mc do
   `HalC2.Test.Release`), under the service wrapper (`HAL_C2_SERVICE=1`) unless
   `service: false`. A restart the MC asks for is sent to the test process as
   `{:hal_c2_restart, status}` instead of stopping the VM. Environment, code paths,
-  loaded versions, the MC's application specification and modules replaced by
-  `bundle/4` are put back when the scenario ends. Returns the release root.
+  loaded versions, the boot script, the MC's application specification and modules
+  replaced by `bundle/4` are put back when the scenario ends. Returns the release root.
   """
   def release(%{home: home}, opts \\ []) do
     root = Path.join(home, "release")
@@ -701,14 +701,16 @@ defmodule HalC2.Test.Mc do
 
   @doc """
   Puts back, when the scenario ends, what an upgrade in this VM changes: the
-  release environment, the code path, the MC's application specification and the
-  modules `remember_module/1` saw. `release/2` does this; a scenario that reloads
-  from a checkout without it calls it itself.
+  release environment, the code path, the boot script a restart uses (making a
+  release permanent points `init` at its own), the MC's application specification
+  and the modules `remember_module/1` saw. `release/2` does this; a scenario that
+  reloads from a checkout without it calls it itself.
   """
   def put_back_on_exit do
     unless :persistent_term.get({__MODULE__, :release}, false) do
       :persistent_term.put({__MODULE__, :release}, true)
       paths = :code.get_path()
+      boot = boot_script()
       {:ok, spec} = :application.get_all_key(:hal_c2)
 
       ExUnit.Callbacks.on_exit(fn ->
@@ -726,12 +728,20 @@ defmodule HalC2.Test.Mc do
         :persistent_term.erase({HalC2.Upgrade, :continue_threads})
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
+        :ok = :init.make_permanent(boot, false)
         restore_modules()
         restore_spec(:hal_c2, spec)
       end)
     end
 
     :ok
+  end
+
+  defp boot_script do
+    case :init.get_argument(:boot) do
+      {:ok, [[boot | _] | _]} -> boot
+      _ -> String.to_charlist(Path.join([to_string(:code.root_dir()), "bin", "start"]))
+    end
   end
 
   # An upgrade from a checkout gives the MC's application the new release's version
@@ -4817,6 +4827,21 @@ defmodule HalC2.Test.Mc.Host do
   agents and file browsing out of its own directories (`HalC2.Workspace`).
   """
   def root(%{mc: %{home: home}}), do: home <> "-fs"
+
+  @doc "`relative` under `root` with links in it followed, so a save through a link is checked at its target."
+  def resolved(root, relative) do
+    relative |> Path.split() |> Enum.reduce(root, &follow(Path.join(&2, &1), 40))
+  end
+
+  # A link to a link is followed to the end of the chain, for at most `hops` links.
+  defp follow(path, 0), do: path
+
+  defp follow(path, hops) do
+    case File.read_link(path) do
+      {:ok, target} -> follow(Path.expand(target, Path.dirname(path)), hops - 1)
+      _ -> path
+    end
+  end
 
   @doc "The scenario's `$HOME` (`/home/sam`), set for the MC on first call."
   def home(context) do

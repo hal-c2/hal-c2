@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Build the release and install it for this user: the MC as the background service (release:install:mc) and both desktops (release:install:desktop-qt, release:install:desktop-ljos) where they build"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+
+tasks=(release:install:mc)
+case "$(uname -s) $(uname -m)" in
+  "Linux x86_64" | Darwin*) tasks+=(::: release:install:desktop-qt ::: release:install:desktop-ljos) ;;
+  Linux*) tasks+=(::: release:install:desktop-ljos) ;;
+esac
+# One run, so the MC release they all carry is built once; one task at a time,
+# as each desktop build takes the machine.
+exec mise run --jobs 1 "${tasks[@]}"

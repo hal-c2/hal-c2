@@ -21,6 +21,17 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     Map.delete(context, :reply)
   end
 
+  # The stamp is the time of the snooze: between its sending and its reply.
+  defp assert_stamped_by_snooze(context, thread) do
+    stamped = World.thread(context, thread)["snoozedAt"]
+    assert is_binary(stamped), "snoozedAt not set"
+    {:ok, at, _} = DateTime.from_iso8601(stamped)
+    {sent, replied} = context.snooze_window
+
+    assert DateTime.compare(at, sent) != :lt and DateTime.compare(at, replied) != :gt,
+           "snoozedAt #{stamped} is not between #{sent} and #{replied}"
+  end
+
   defp at_nine(date), do: "#{date}T09:00:00.000Z"
 
   # "tomorrow 09:00", "next Monday 09:00" (UTC), or "a past time".
@@ -147,6 +158,73 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
       assert World.thread(context, thread)["snoozedUntil"] == wake_time(until)
       context
     end
+  end
+
+  # The stamps are backdated first, so a stamp set anew is told from one kept even
+  # when both commands fall in the same millisecond.
+  step "a client settles {string} again", %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"settledAt" => World.iso_from_now(-3_600_000)})
+
+    context
+    |> Map.put(:stamp_before, World.thread(context, thread)["settledAt"])
+    |> organize(thread, "thread.settle")
+  end
+
+  step "no error is reported", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "thread {string} keeps its original settled time", %{args: [thread]} = context do
+    assert World.thread(context, thread)["settledAt"] == context.stamp_before
+    context
+  end
+
+  step ~r/^a client snoozes "(?<thread>[^"]+)" until tomorrow 09:00 again$/,
+       %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"snoozedAt" => World.iso_from_now(-3_600_000)})
+
+    # The thread's own wake time, which is the same one even across midnight.
+    command = %{
+      "type" => "thread.snooze",
+      "commandId" => "cmd-snooze-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, thread),
+      "snoozedUntil" => World.thread(context, thread)["snoozedUntil"]
+    }
+
+    sent = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+    reply = HalC2.Orchestration.dispatch_once(command) |> World.normalize_reply()
+
+    Map.merge(context, %{
+      thread: thread,
+      snooze_command: command,
+      snooze_window: {sent, DateTime.utc_now()},
+      reply: reply
+    })
+  end
+
+  step "thread {string} gets a new snoozed-at time", %{args: [thread]} = context do
+    assert {:ok, _} = context.reply
+    assert_stamped_by_snooze(context, thread)
+    context
+  end
+
+  step "a retry of that same snooze command is applied once", context do
+    thread = context.thread
+    assert_stamped_by_snooze(context, thread)
+    old = World.iso_from_now(-7_200_000)
+    context = World.patch_thread(context, thread, %{"snoozedAt" => old})
+
+    assert {:ok, _} = HalC2.Orchestration.dispatch_once(context.snooze_command)
+    assert World.thread(context, thread)["snoozedAt"] == old
+
+    # Also when the MC stopped after committing the snooze and before saving its receipt.
+    :ok = HalC2.Store.delete_meta("command-receipt:" <> context.snooze_command["commandId"])
+    assert {:ok, _} = HalC2.Orchestration.dispatch_once(context.snooze_command)
+    assert World.thread(context, thread)["snoozedAt"] == old
+    context
   end
 
   step "thread {string} records when it was snoozed", %{args: [thread]} = context do

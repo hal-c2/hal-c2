@@ -6,8 +6,8 @@ defmodule HalC2Plugins.Office.Floor do
   for those that changed since) and the turn events the plugin hears (`observe/3`), and
   `view/2` is the `office` topic:
 
-      %{"people" => [%{"id", "title", "projectId", "project", "parentId", "provider",
-                       "model", "state", "activity", "question", "since"}],
+      %{"people" => [%{"id", "title", "projectId", "project", "parentId", "kind",
+                       "provider", "model", "state", "activity", "question", "since"}],
         "talks" => [%{"id", "from", "to", "kind", "text", "at"}]}
 
   A thread is in the office while it works, waits or asks, or was idle less than
@@ -15,7 +15,10 @@ defmodule HalC2Plugins.Office.Floor do
   machine. A worker is in it only while the thread it was delegated from is, unless it
   works or waits itself: a parent's row that changes changes its workers too.
   A person's `state` comes from its row alone (`state_of/1`); its `activity` from the
-  last tool call heard in the turn under way, shown only while it is working. Talks are
+  last tool call heard in the turn under way, shown only while it is working. Its `kind`
+  is `"reviewer"` for a thread the code-review plugin started to review a pull request,
+  and for the workers it delegated to however deep, so they sit together; nil for
+  everyone else. Talks are
   kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
   shows those, and `expire/2` and every talk added drop the rest.
   Times are milliseconds since the epoch; the topic carries them as ISO 8601.
@@ -32,6 +35,8 @@ defmodule HalC2Plugins.Office.Floor do
   # delegated to: it came back from another machine, say.
   @born_ms 120_000
   @ranks %{"asking" => 0, "working" => 1, "waiting" => 2, "idle" => 3, "failed" => 3}
+  # The plugin marks (`HalC2.Plugins.Host.launch_thread/4`) of review threads.
+  @reviews [{"code-review", "review"}]
 
   defstruct rows: %{},
             states: %{},
@@ -198,6 +203,21 @@ defmodule HalC2Plugins.Office.Floor do
        do: p
 
   defp parent_of(_row), do: nil
+
+  defp kind(floor, row), do: if(reviewer?(floor, row, []), do: "reviewer")
+
+  # A review thread, or a worker of one: its parents are walked through every row of
+  # this MC's, so a worker whose reviewer is not in the office still sits as one. A
+  # lineage that loops ends where it began.
+  defp reviewer?(floor, %{"id" => id} = row, seen) do
+    review?(row["plugin"]) or
+      (id not in seen and reviewer?(floor, floor.rows[parent_of(row)], [id | seen]))
+  end
+
+  defp reviewer?(_floor, _row, _seen), do: false
+
+  defp review?(%{"id" => plugin, "kind" => kind}), do: {plugin, kind} in @reviews
+  defp review?(_mark), do: false
 
   @doc "A turn event the plugin heard (`HalC2.Plugins.Extension`'s `observe/2`)."
   def observe(floor, %{"type" => "turn.started", "threadId" => id} = event, _now)
@@ -481,6 +501,7 @@ defmodule HalC2Plugins.Office.Floor do
       "projectId" => row["projectId"],
       "project" => row["projectTitle"],
       "parentId" => parent_of(row),
+      "kind" => kind(floor, row),
       "provider" => floor.drivers[id] || row["providerInstanceId"],
       "model" => get_in(row, ["modelSelection", "model"]),
       "state" => state,

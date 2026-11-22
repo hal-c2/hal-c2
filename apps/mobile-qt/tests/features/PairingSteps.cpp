@@ -40,14 +40,14 @@ void enterPairingLink(World& world, const QString& link) {
   world.waitFor([&] { return pairingPhase(world) != QLatin1String("pairing"); }, QStringLiteral("an answer to the pairing link"));
 }
 
-void pairWithEnvironment(World& world) {
+void pairWithEnvironment(World& world, bool toThreadList) {
   if (pairingPhase(world) == QLatin1String("paired")) return;
   enterPairingLink(world, world.environment.link());
   world.waitFor([&] { return pairingPhase(world) == QLatin1String("paired"); },
                 [&] { return QStringLiteral("the phone to pair; it says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
   world.waitFor([&] { return world.state(QStringLiteral("connection")).toMap().value(QStringLiteral("phase")) == QLatin1String("connected"); },
                 [&] { return QStringLiteral("the connection; it is %1").arg(show(world.state(QStringLiteral("connection")))); });
-  threadList(world);
+  if (toThreadList) threadList(world);
 }
 
 namespace {

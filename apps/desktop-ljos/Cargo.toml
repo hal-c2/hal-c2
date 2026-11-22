@@ -31,6 +31,9 @@ ljos_quick = { git = "https://github.com/hal-c2/ljos-ui", rev = "ed0048bfd1beb2c
 # The host of the shell's `Window` where no platform window shows it
 # (`--render`, the tests), and the windows there are.
 ljos_controls = { git = "https://github.com/hal-c2/ljos-ui", rev = "ed0048bfd1beb2c29d67140920a18c0be89f8516" }
+# Qt.labs.lottieqt (the dashboard example's cat), registered by
+# hal_c2_shell::register.
+ljos_lottie = { git = "https://github.com/hal-c2/ljos-ui", rev = "ed0048bfd1beb2c29d67140920a18c0be89f8516" }
 hal_c2_mc = { path = "mc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
