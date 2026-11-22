@@ -2414,6 +2414,13 @@ Feature: Claude
     When the user sends a message Claude never starts a turn for
     Then that message's run keeps room for what Claude said in it
 
+  # #1736: a turn already running when the MC learnt to record answers may have one.
+  @mc @plugin-claude
+  Scenario: A message running while the MC updates keeps room for an answer
+    Given Claude has a message from before the MC recorded answers, not started yet
+    When the MC updates and Claude then ends that message without starting it
+    Then that message's run keeps room for an answer
+
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high
   Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging

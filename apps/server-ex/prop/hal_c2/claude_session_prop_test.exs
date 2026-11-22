@@ -29,7 +29,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
   keeps no room in the conversation for an answer that is not coming (#1735), unless
-  Claude answered a turn of its own in that run, or began to.
+  Claude answered a turn of its own in that run, or began to, or an MC from before
+  answers were recorded (v12) left that turn running for this one to adopt.
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
@@ -166,6 +167,30 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
   end
 
+  # The upgrade found on #1736, checked by the model on every run: a prompt an older
+  # MC left unstarted may have been answered, however often it is adopted since.
+  test "a prompt an older MC left keeps room for an answer" do
+    start(false, true)
+
+    try do
+      calls = [
+        {:held_turn, [1, "claude-opus-4-6", false, :never_start]},
+        {:adopt, [:older]},
+        {:adopt, [:current]},
+        {:release, [1]}
+      ]
+
+      commands =
+        for {{name, args}, n} <- Enum.with_index(calls, 1),
+            do: {:set, {:var, n}, {:call, __MODULE__, name, args}}
+
+      {history, state, result} = run_commands(__MODULE__, commands)
+      assert result == :ok, HalC2.Prop.report(commands, history, state, result)
+    after
+      stop_case()
+    end
+  end
+
   # What a case leaves behind: its services and the fake's environment.
   defp stop_case do
     HalC2.Prop.stop_services()
@@ -290,7 +315,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   # Texts whose turn fails. None is refused: the next message would quote it to the fake.
   @failing [:start_failing | @unstarted]
   @full_access_modes %{allowed: "bypassPermissions", no_bypass: "auto", no_auto: "default"}
-  @held_texts [:hello, :which_tools, :halfway]
+  @held_texts [:hello, :which_tools, :halfway, :never_start]
 
   def command(%{held: nil, n: n}) do
     frequency([
@@ -312,14 +337,14 @@ defmodule HalC2.ClaudeSessionPropTest do
     do:
       frequency([
         {2, {:call, __MODULE__, :interrupt, []}},
-        {1, {:call, __MODULE__, :adopt, []}}
+        {1, {:call, __MODULE__, :adopt, [oneof([:current, :older])]}}
       ])
 
   def command(%{held: held}),
     do:
       frequency([
         {2, {:call, __MODULE__, :release, [held.n]}},
-        {1, {:call, __MODULE__, :adopt, []}}
+        {1, {:call, __MODULE__, :adopt, [oneof([:current, :older])]}}
       ])
 
   # A held turn starts a new process; one half-answered runs until it is stopped. The
@@ -408,7 +433,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         launch: {model, fast == true},
         session: true,
         tools: takes_tools?(state),
-        held: %{n: n, text: text, interrupted: false}
+        held: %{n: n, text: text, interrupted: false, older: false}
     }
 
   def next_state(state, _result, {:call, _, :release, [_n]}), do: %{state | held: nil}
@@ -416,7 +441,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   def next_state(state, _result, {:call, _, :interrupt, []}),
     do: put_in(state.held.interrupted, true)
 
-  def next_state(state, _result, {:call, _, :adopt, []}), do: state
+  # What an older MC did not record stays unknown through a later adoption.
+  def next_state(state, _result, {:call, _, :adopt, [from]}),
+    do: put_in(state.held.older, state.held.older or from == :older)
 
   def next_state(%{background: true} = state, _result, {:call, _, :stop, []}),
     do: %{state | session: false, background: false}
@@ -554,21 +581,27 @@ defmodule HalC2.ClaudeSessionPropTest do
     do: seen == %{status: "running", held: true}
 
   def postcondition(%{held: held} = state, {:call, _, :release, [_n]}, seen) do
-    if held.interrupted,
-      do: seen.status == "interrupted",
-      else:
+    cond do
+      held.interrupted ->
+        seen.status == "interrupted"
+
+      held.text == :never_start ->
+        seen.status == "failed" and seen.never_started == not held.older
+
+      true ->
         seen.status == "completed" and
           seen.reply ==
             if(held.text == :hello,
               do: "Hello from claude",
               else: if(state.tools, do: "tools: hal-c2", else: "tools: none")
             )
+    end
   end
 
   def postcondition(_state, {:call, _, :interrupt, []}, seen),
     do: seen == %{stopped: true, held: true}
 
-  def postcondition(_state, {:call, _, :adopt, []}, seen),
+  def postcondition(_state, {:call, _, :adopt, [_]}, seen),
     do: seen == %{adopted: :ok, held: true}
 
   # --- commands -------------------------------------------------------------------
@@ -682,8 +715,9 @@ defmodule HalC2.ClaudeSessionPropTest do
     System.put_env("FAKE_CLAUDE_MCP_HOLD", release_file(n))
     # The turn the user stops starts on a process with nothing of its own to report:
     # the fake would run that report to its result before it read the stop, where
-    # Claude stops the turn it is running.
-    if text == :halfway, do: System.put_env("FAKE_CLAUDE_ORPHANED", "")
+    # Claude stops the turn it is running. Nor does one Claude never starts, so that
+    # whether it was answered is down to who left it running.
+    if text in [:halfway, :never_start], do: System.put_env("FAKE_CLAUDE_ORPHANED", "")
     runs = ended_runs()
     dispatch(n, model, fast, text)
     held = await_held(System.monotonic_time(:millisecond) + @wait_ms)
@@ -698,11 +732,17 @@ defmodule HalC2.ClaudeSessionPropTest do
     runs = ended_runs()
     File.write!(release_file(n), "")
     run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
-    %{status: run["status"], reply: reply(current(@tid), run)}
+
+    %{
+      status: run["status"],
+      reply: reply(current(@tid), run),
+      never_started: run["turnNeverStarted"] == true
+    }
   end
 
-  # The MC goes down with the message held, and the next one adopts the process.
-  def adopt do
+  # The MC goes down with the message held, and the next one adopts the process: one
+  # `:older` saved the turn as v12 did, without whether it was answered.
+  def adopt(from) do
     [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
     session = Process.monitor(:sys.get_state(runtime).session)
     Recovery.leaving(true)
@@ -715,9 +755,17 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
 
     Recovery.leaving(false)
-    survivor = Map.fetch!(Durable.survivors_peek(), @tid)
+    survivor = saved_by(from, Map.fetch!(Durable.survivors_peek(), @tid))
     %{adopted: ThreadRuntime.adopt(@tid, survivor), held: held?()}
   end
+
+  defp saved_by(:current, survivor), do: survivor
+
+  defp saved_by(:older, survivor),
+    do:
+      update_in(survivor.snapshot.state, fn state ->
+        %{state | v: 12, turn: Map.delete(state.turn, :answered)}
+      end)
 
   # The user stops the turn whose message is held.
   def interrupt do

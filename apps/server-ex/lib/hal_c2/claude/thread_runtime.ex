@@ -38,7 +38,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 12
+  @state_version 13
 
   # Claude 5's task tools (`task_tools/2`).
   @task_tools ["TaskCreate", "TaskUpdate", "TaskList"]
@@ -1220,7 +1220,13 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:sandbox_spent, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
+       |> upgrade_turn(Map.get(state, :v, 0))
        |> Map.put(:v, @state_version)}
+
+  # A turn from before v13 did not record whether Claude answered in it, so it may
+  # have: its run keeps room for an answer (`answerless?/1`).
+  defp upgrade_turn(%{turn: %{}} = state, v) when v < 13, do: answered(state)
+  defp upgrade_turn(state, _v), do: state
 
   # A session started before launches recorded their MCP server has the thread's own.
   # One from before they recorded their instance cannot be told from the latest

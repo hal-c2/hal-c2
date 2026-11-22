@@ -88,6 +88,25 @@ defmodule HalC2.ClaudeNeverStartedTest do
     refute never_started?(context)
   end
 
+  # Before v13 a turn did not record whether Claude answered in it, so it may have.
+  test "a turn from before answers were recorded keeps its reserve", context do
+    :ok = :sys.suspend(context.pid)
+
+    :sys.replace_state(context.pid, fn state ->
+      %{state | v: 12, turn: Map.delete(state.turn, :answered)}
+    end)
+
+    upgrade(context)
+    refute never_started?(context)
+  end
+
+  # An MC that adopts the process, or updates, migrates a turn of its own version too.
+  test "a turn that records answers still drops its reserve after an upgrade", context do
+    :ok = :sys.suspend(context.pid)
+    upgrade(context)
+    assert never_started?(context)
+  end
+
   # A turn that did start fails with no usage reported, and may have answered.
   test "a started turn that failed with an error keeps its reserve", context do
     started(context)
@@ -117,6 +136,12 @@ defmodule HalC2.ClaudeNeverStartedTest do
     })
 
     assert %{turn: %{prompt: %{started: true}}} = :sys.get_state(context.pid)
+  end
+
+  # What a release upgrade, and adopting an earlier MC's process, run on the state.
+  defp upgrade(%{pid: pid}) do
+    :ok = :sys.change_code(pid, ThreadRuntime, nil, nil)
+    :ok = :sys.resume(pid)
   end
 
   # Claude takes the prompt; the runtime has read that when this returns.

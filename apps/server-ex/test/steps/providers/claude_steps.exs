@@ -4507,6 +4507,41 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude has a message from before the MC recorded answers, not started yet", context do
+    context =
+      context
+      |> World.fake_providers()
+      # The fake takes the prompt and neither starts nor ends it.
+      |> World.launch_on(@thread, "claudeAgent", "wait")
+
+    World.await_value(context, @thread, &(StreamState.list(&1, "provider-turn") != []))
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :ok = :sys.suspend(pid)
+
+    # As v12 kept the turn.
+    %{turn: %{prompt: prompt}} =
+      :sys.replace_state(pid, &%{&1 | v: 12, turn: Map.delete(&1.turn, :answered)})
+
+    Map.put(context, :older_turn, {pid, prompt.uuid})
+  end
+
+  step "the MC updates and Claude then ends that message without starting it", context do
+    {pid, uuid} = context.older_turn
+    :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 12, nil)
+    :ok = :sys.resume(pid)
+
+    ended = %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => "completed"}
+    send(pid, {:claude, :sys.get_state(pid).session, {:message, ended}})
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "that message's run keeps room for an answer", context do
+    assert [run] = World.runs(context, @thread)
+    refute run["turnNeverStarted"]
+    context
+  end
+
   step "the next message the user sends starts a turn as usual", context do
     context = World.post_message(context, "Work", "hello")
     World.await_runs(context, "Work", ["failed", "completed"])
