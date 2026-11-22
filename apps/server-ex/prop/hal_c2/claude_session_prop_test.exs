@@ -4,10 +4,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   on the fake CLI in `test/support/fake_claude.py`: turns on one model or another,
   with fast mode on, off or unset, that say hello, leave a subagent and a command
   running in the background, put Claude's own session in plan mode (EnterPlanMode), or
-  ask which mode the session runs in, compact the conversation (`/compact`), or that
-  Claude acknowledges without ever starting a turn for; and the user stopping the
-  thread between turns. Every resumed process first runs a turn of its own, reporting a
-  background task the previous one left behind. Each process is handed HAL-C2's MCP
+  ask which mode the session runs in, compact the conversation (`/compact`), fail once
+  Claude has started them, or that Claude acknowledges without ever starting a turn
+  for; and the user stopping the thread between turns. Every resumed process first runs
+  a turn of its own, reporting a background task the previous one left behind. Each process is handed HAL-C2's MCP
   server over stdin when the thread's project lets agents reach the browser (a choice
   made per run, opposite to the environment's, so a turn that read the environment's
   would launch differently from the next), which Claude takes or refuses
@@ -24,7 +24,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
   other turn runs, on the same process when the selection is the same, so the work
-  survives it. Stopping between turns ends the background work with its process. Plan
+  survives it, unless Claude started the turn and it failed: that ends the work and
+  keeps the process. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
   keeps no room in the conversation for an answer that is not coming (#1735), unless
@@ -134,6 +135,32 @@ defmodule HalC2.ClaudeSessionPropTest do
         |> Enum.count(&(&1["turnNeverStarted"] == true))
 
       assert never_started == 3
+    after
+      stop_case()
+    end
+  end
+
+  # The counterexample of #1736's review, checked by the model on every run: a turn
+  # Claude started that fails ends the background work, so the next turn can change
+  # the model.
+  test "a started turn that fails ends the background work" do
+    start(false, true)
+
+    try do
+      commands =
+        for {{model, text}, n} <-
+              Enum.with_index(
+                [
+                  {"claude-opus-4-6", :background},
+                  {"claude-opus-4-6", :start_failing},
+                  {"claude-opus-4-5", :hello}
+                ],
+                1
+              ),
+            do: {:set, {:var, n}, {:call, __MODULE__, :turn, [n, model, true, text]}}
+
+      {history, state, result} = run_commands(__MODULE__, commands)
+      assert result == :ok, HalC2.Prop.report(commands, history, state, result)
     after
       stop_case()
     end
@@ -347,8 +374,8 @@ defmodule HalC2.ClaudeSessionPropTest do
       | launch: {model, fast == true},
         session: true,
         # A refused turn's message reaches Claude as history, context and not a request,
-        # so only the turn's own text starts work.
-        background: state.background or text == :background,
+        # so only the turn's own text starts work. A started turn that fails ends it.
+        background: text != :start_failing and (state.background or text == :background),
         tools: if(reused?(state, model, fast), do: state.tools, else: takes_tools?(state)),
         missed: missed(state, text),
         lost: false,
@@ -438,11 +465,12 @@ defmodule HalC2.ClaudeSessionPropTest do
           seen.background == state.background and
           sent?(state, text, seen.sent)
 
-      # A turn Claude started is never recorded as one it did not, however it fails.
+      # A turn Claude started is never recorded as one it did not, however it fails,
+      # and one that fails ends the background work.
       text == :start_failing ->
         seen.status == "failed" and not seen.never_started and
           started?(state, model, fast, text, seen) and
-          seen.background == state.background and
+          not seen.background and
           sent?(state, text, seen.sent)
 
       # The fake answers what it finds first in a message, so one that carries refused
