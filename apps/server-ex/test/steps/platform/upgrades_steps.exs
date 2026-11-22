@@ -1242,7 +1242,9 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step ~r/^(?<versions>".+) (?:is|are) kept$/, %{args: [versions]} = context do
+  # Trace files kept beside their backups are diagnostics' step, not versions.
+  step ~r/^(?!"server\.trace\.ndjson)(?<versions>".+) (?:is|are) kept$/,
+       %{args: [versions]} = context do
     versions = Regex.scan(~r/"([^"]+)"/, versions, capture: :all_but_first) |> List.flatten()
 
     for version <- versions,

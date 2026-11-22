@@ -1568,7 +1568,8 @@ defmodule HalC2.Steps.Common do
     end
   end
 
-  step ~r/^a client snoozes "(?<thread>[^"]+)" until (?<until>.+)$/,
+  # "... again", to the wake time it already has, is thread_organization_steps.exs's.
+  step ~r/^a client snoozes "(?<thread>[^"]+)" until (?<until>.+)(?<! again)$/,
        %{args: [thread, until]} = context do
     until =
       if until == "a past time",

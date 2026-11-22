@@ -65,6 +65,31 @@ defmodule HalC2.OrchestrationSettleTest do
            } = thread(thread_id)
   end
 
+  # The stream commits before the receipt is saved, so an MC that stops in between
+  # decides a retried command again.
+  test "a snooze retried before its receipt was saved keeps when it was snoozed", %{
+    thread_id: thread_id
+  } do
+    command = %{
+      "type" => "thread.snooze",
+      "commandId" => "snooze-#{thread_id}",
+      "threadId" => thread_id,
+      "snoozedUntil" => thread(thread_id)["snoozedUntil"]
+    }
+
+    {:ok, _} = Orchestration.dispatch_once(command)
+    :ok = HalC2.Store.delete_meta("command-receipt:" <> command["commandId"])
+    old = "2020-01-01T00:00:00.000Z"
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"thread", thread_id, %{"s" => %{"snoozedAt" => old}}}
+      ])
+
+    {:ok, _} = Orchestration.dispatch_once(command)
+    assert thread(thread_id)["snoozedAt"] == old
+  end
+
   defp auto_settle(thread_id),
     do:
       Orchestration.dispatch(%{

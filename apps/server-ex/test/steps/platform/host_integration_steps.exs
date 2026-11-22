@@ -202,12 +202,23 @@ defmodule HalC2.Steps.Platform.HostIntegration do
         "VS Code" -> ["--goto", context.target]
         "Cursor" -> ["--classic", "--goto", context.target]
         "Zed" -> [context.target]
-        "IntelliJ" -> ["--line", "12", "--column", "4", path]
+        "IntelliJ" -> ["--line", "12", "--column", "3", path]
       end
 
     {conn, argv} = launched(context)
     assert argv == [command | expected]
     Map.put(context, :editor_conn, conn)
+  end
+
+  step "IntelliJ is launched with line {int} and column {int}",
+       %{args: [line, column]} = context do
+    {command, _id} = Map.fetch!(@editors, "IntelliJ")
+    [path, _line, _column] = String.split(context.target, ":")
+    {conn, argv} = launched(context)
+    assert argv == [command, "--line", "#{line}", "--column", "#{column}", path]
+    assert :ok = :gen_tcp.send(conn, "exit\n")
+    :gen_tcp.close(conn)
+    context
   end
 
   step "it does not wait for the editor to exit", context do

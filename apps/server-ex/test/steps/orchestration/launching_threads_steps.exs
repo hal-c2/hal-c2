@@ -49,6 +49,59 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     launch(context, nil, %{"commandId" => command, "initialMessage" => message(text)})
   end
 
+  step "a client launches a thread in {string} asking to reuse an existing thread without naming one",
+       %{args: [project]} = context do
+    input =
+      context |> input(project, %{"reuseExistingThread" => true}) |> Map.delete("threadId")
+
+    {reply, context} = World.call(context, "orchestration.launchThread", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "a client launches thread {string} in {string} asking to reuse it",
+       %{args: [thread, project]} = context do
+    input =
+      input(context, project, %{
+        "threadId" => World.thread_id(context, thread),
+        "reuseExistingThread" => true,
+        "initialMessage" => message("Look")
+      })
+
+    context = Map.put(context, :stream_before, committed(context, thread))
+    {reply, context} = World.call(context, "orchestration.launchThread", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "thread {string} is deleted", %{args: [thread]} = context do
+    context = ensure_thread(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{"type" => "thread.delete", "threadId" => thread})
+
+    context
+  end
+
+  # A sent turn leaves both a message and a run: each of these holds only what it names,
+  # so that it stands on that check of `reusable?/3` alone.
+  step "thread {string} already has a message", %{args: [thread]} = context do
+    context = ensure_thread(context, thread)
+    message = %{"id" => "m-only", "role" => "user", "text" => "Hi"}
+    World.put_entity(context, thread, "message", "m-only", %{"s" => message})
+    context
+  end
+
+  step "thread {string} already has a run", %{args: [thread]} = context do
+    context = ensure_thread(context, thread)
+    run = %{"id" => "r-only", "status" => "completed", "ordinal" => 1}
+    World.put_entity(context, thread, "run", "r-only", %{"s" => run})
+    context
+  end
+
+  step "the refused launch writes nothing to thread {string}", %{args: [thread]} = context do
+    assert committed(context, thread) == context.stream_before
+    context
+  end
+
   step "a new thread exists in {string}", %{args: [project]} = context do
     assert World.thread(context, "new")["projectId"] == World.project(context, project).id
     context
@@ -523,6 +576,15 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     if Map.values(context.threads) |> Enum.member?(id),
       do: context,
       else: context |> put_in([:threads, "new"], id) |> Map.put(:thread, "new")
+  end
+
+  # All a commit to the thread's stream would change.
+  defp committed(context, thread), do: Map.take(World.state(context, thread), [:seq, :entities])
+
+  defp ensure_thread(context, thread) do
+    if Map.has_key?(context[:threads] || %{}, thread),
+      do: context,
+      else: World.named_thread(context, thread, "demo")
   end
 
   defp launch_in_worktree(context, project, text) do

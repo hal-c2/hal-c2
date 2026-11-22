@@ -27,8 +27,11 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     |> complete_through(thread, last)
   end
 
+  # `mcp-thread-tools.feature` names a thread by its exact id ("mcp:4f1c").
   step "thread {string} exists", %{args: [thread]} = context do
-    World.create_thread(context, thread)
+    if String.ends_with?(context.feature_file, "/mcp-thread-tools.feature"),
+      do: World.named_thread(context, thread, "demo"),
+      else: World.create_thread(context, thread)
   end
 
   # Also threads/fork-and-lineage.feature, whose threads fork through `World.fork_thread/3`
