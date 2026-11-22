@@ -12,7 +12,8 @@ defmodule HalC2.OrchestrationPropTest do
   queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474), or as an agent does, which records
   the agent and its reason as who stopped the run; interrupt a run the thread does
-  not have, which is refused and changes nothing (#461);
+  not have, which is refused and changes nothing, also not the task of a child that
+  has not started (#461);
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
   for the next boot's recovery to settle; stop a run nothing drives any more, which
@@ -2436,7 +2437,44 @@ defmodule HalC2.OrchestrationPropTest do
     asked = stop_requests(tid)
     stop = %{"type" => "run.interrupt", "threadId" => tid, "runId" => "run:unknown"}
     result = Orchestration.dispatch(stop)
-    reply(if(stop_requests(tid) == asked, do: result, else: {:error, :stop_recorded}), [])
+
+    result =
+      cond do
+        stop_requests(tid) != asked -> {:error, :stop_recorded}
+        not unstarted_task_survives?(stop) -> {:error, :task_cancelled}
+        true -> result
+      end
+
+    reply(result, [])
+  end
+
+  # The same stop sent to the child of a task that has started no run, which any stop
+  # getting past the refusal cancels. Neither thread is the model's.
+  defp unstarted_task_survives?(stop) do
+    parent = "unknown-stop-#{System.unique_integer([:positive])}"
+    child = parent <> "-child"
+    lineage = %{"relationshipToParent" => "subagent", "parentThreadId" => parent}
+
+    task = %{
+      "id" => "task",
+      "origin" => "app_owned",
+      "childThreadId" => child,
+      "status" => "running"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"thread", child, %{"s" => %{"id" => child, "lineage" => lineage}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", "task", %{"s" => task}},
+        {"node", "task", %{"s" => %{"id" => "task", "status" => "running"}}}
+      ])
+
+    Orchestration.dispatch(%{stop | "threadId" => child})
+    StreamState.get(current(parent), "subagent")["task"]["status"] == "running"
   end
 
   defp stop_requests(tid) do

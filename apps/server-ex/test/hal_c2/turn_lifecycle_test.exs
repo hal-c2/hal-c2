@@ -151,6 +151,34 @@ defmodule HalC2.TurnLifecycleTest do
     assert ["running"] = statuses(thread_id)
   end
 
+  # The stop is refused at entry: past it, a child that had not started ended its task
+  # and the user's Stop ended the thread's tasks, before the caller heard the error (#461).
+  test "an interrupt naming an unknown run does not cancel an unstarted child's task",
+       %{thread_id: parent} do
+    child = delegate_unstarted(parent)
+
+    stop = %{"type" => "run.interrupt", "threadId" => child, "runId" => "run:unknown"}
+    assert {:error, "no running turn"} = Orchestration.dispatch(stop)
+
+    assert %{"status" => "running"} = StreamState.get(current(parent), "subagent")["task"]
+  end
+
+  test "a user's Stop naming an unknown run does not cancel the thread's delegated tasks",
+       %{thread_id: parent} do
+    delegate_unstarted(parent)
+
+    stop = %{
+      "type" => "run.interrupt",
+      "threadId" => parent,
+      "runId" => "run:unknown",
+      "stopDelegated" => true
+    }
+
+    assert {:error, "no running turn"} = dispatch_to_the_end(stop)
+
+    assert %{"status" => "running"} = StreamState.get(current(parent), "subagent")["task"]
+  end
+
   # A runtime stuck on its provider is killed at the MC's shutdown limit. Failing its run
   # then left a steer it held pending for good, since boot recovery skips an ended run.
   test "a runtime killed while the MC stops leaves its turn for boot recovery",
@@ -1048,6 +1076,61 @@ defmodule HalC2.TurnLifecycleTest do
 
     :erlang.trace(watch, false, [:receive])
     runtime
+  end
+
+  # A running task of `parent` whose child thread has started no run.
+  defp delegate_unstarted(parent) do
+    child = parent <> "-child"
+    lineage = %{"relationshipToParent" => "subagent", "parentThreadId" => parent}
+
+    task = %{
+      "id" => "task",
+      "origin" => "app_owned",
+      "childThreadId" => child,
+      "status" => "running"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"thread", child, %{"s" => %{"id" => child, "lineage" => lineage}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", "task", %{"s" => task}},
+        {"node", "task", %{"s" => %{"id" => "task", "status" => "running"}}}
+      ])
+
+    child
+  end
+
+  # Returns the reply once the processes the command spawned are gone too: a Stop
+  # cancels tasks in processes of its own.
+  defp dispatch_to_the_end(command) do
+    caller =
+      Task.async(fn ->
+        receive do: (:go -> Orchestration.dispatch(command))
+      end)
+
+    :erlang.trace(caller.pid, true, [:procs])
+    send(caller.pid, :go)
+    reply = Task.await(caller)
+
+    delivered = :erlang.trace_delivered(:all)
+    assert_receive {:trace_delivered, :all, ^delivered}, 5_000
+    await_spawned(caller.pid)
+    reply
+  end
+
+  defp await_spawned(caller) do
+    receive do
+      {:trace, ^caller, :spawn, pid, _} ->
+        gone = Process.monitor(pid)
+        assert_receive {:DOWN, ^gone, :process, _, _}, 5_000
+        await_spawned(caller)
+    after
+      0 -> :ok
+    end
   end
 
   defp send_message(thread_id, message_id, text \\ nil) do
