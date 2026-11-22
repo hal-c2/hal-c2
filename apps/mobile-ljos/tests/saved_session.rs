@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use hal_c2_mc::Phase;
+use hal_c2_mc::{PROTOCOL, Phase};
 use hal_c2_mobile::pairing::{self, Environment};
 use hal_c2_shell::Launch;
 use hal_c2_shell::mc::{Connection, Mc};
@@ -36,7 +36,8 @@ fn another_environment() -> (String, mpsc::Receiver<String>) {
                 }
             }
             let _ = asked.send(first.split(' ').nth(1).unwrap_or_default().to_owned());
-            let body = r#"{"environmentId":"env-2","orchestrationProtocolVersion":3}"#;
+            let body =
+                format!(r#"{{"environmentId":"env-2","orchestrationProtocolVersion":{PROTOCOL}}}"#);
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -92,6 +93,10 @@ fn a_saved_session_is_blocked_where_another_environment_answers() {
         streams.pump(&engine);
         let status = connection.status();
         if status.phase == Phase::Blocked {
+            assert_eq!(
+                status.failure, "mismatch",
+                "blocked, but not for the environment"
+            );
             break;
         }
         let left = deadline.saturating_duration_since(Instant::now());
