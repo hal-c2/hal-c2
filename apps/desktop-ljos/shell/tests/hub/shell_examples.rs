@@ -55,9 +55,6 @@ impl Example {
             .diagnostics
             .iter()
             .filter(|d| d.severity == Severity::Error)
-            // TODO(ljos-lottie): the cat compiles once Ljós has
-            // Qt.labs.lottieqt; until then the dashboard shows its fallback.
-            .filter(|d| !d.to_string().contains("CatPlaying"))
             .map(ToString::to_string)
             .collect();
         assert!(errors.is_empty(), "{name} compiles:\n{}", errors.join("\n"));
@@ -350,14 +347,28 @@ fn the_dashboard_drawer_opens_on_its_cards_and_clock() {
         example.advance(60_000);
         assert_ne!(time(&example.texts(clock)), before, "the clock moves on");
 
-        // TODO(ljos-lottie): with Qt.labs.lottieqt in Ljós the cat loads
-        // (`mascotCat`'s status Ready) and the initial hides. Until then
-        // the agent's initial stands in for it.
+        // The cat at play: Qt.labs.lottieqt loads CatPlaying.qml, its
+        // LottieAnimation is Ready, and the agent's initial hides.
         let cat = example.item("mascotCat");
-        assert_eq!(number(&engine, cat, "status"), 3.0, "the cat is an error");
+        assert_eq!(
+            number(&engine, cat, "status"),
+            1.0,
+            "the cat's loader is Ready"
+        );
+        let Value::Object(playing) = engine.read_by_name(cat, "item") else {
+            panic!("the cat's loader has an item");
+        };
+        assert_eq!(
+            number(&engine, playing, "status"),
+            2.0,
+            "the LottieAnimation is Ready"
+        );
+        assert!(example.shown(playing), "the cat shows at {width}");
         let initial = example.item("mascotInitial");
-        assert!(example.shown(initial));
-        assert_eq!(example.texts(initial), ["H"]);
+        assert!(
+            !example.visible(initial),
+            "the initial hides behind the cat"
+        );
     }
 }
 
@@ -399,4 +410,35 @@ fn the_macos_glass_example_falls_back_to_the_built_in_shell_elsewhere() {
     };
     assert_eq!(read("usingUserShell"), "false");
     assert_ne!(read("lastError"), "");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "needs a Ljós pin with QtQuick.Controls.macOS (hal-c2/ljos-ui#732)"]
+fn the_macos_glass_example_loads_on_macos() {
+    // Its toolbar is QtQuick.Controls.macOS's (hal-c2/ljos-ui#730): this
+    // passes once the Ljós pin brings that module in, and then holds the
+    // example to what it is for at every width: the glass sidebar beside
+    // an opaque centre, under one title band. Example::install asserts
+    // usingUserShell and an empty lastError.
+    for width in [1400.0, 1000.0, 640.0] {
+        let example = Example::install("glass-macos", width);
+        fits(&example, width);
+        let centre = example.centre();
+        assert!(example.shown(centre), "at {width} shows its centre");
+        let navigation = example.item("macNavigation");
+        let content = example.item("macContent");
+        assert!(example.shown(content), "at {width}");
+        if width >= 768.0 {
+            assert!(example.shown(navigation), "at {width}");
+            assert!(
+                example.at(centre).0 >= example.at(navigation).0 + example.width(navigation),
+                "the centre sits beside the sidebar at {width}"
+            );
+            assert!(
+                example.shown(example.item("macSidebarToggle")),
+                "the toolbar shows at {width}"
+            );
+        }
+    }
 }

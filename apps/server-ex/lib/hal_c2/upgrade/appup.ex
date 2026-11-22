@@ -5,9 +5,12 @@ defmodule HalC2.Upgrade.Appup do
   `systools:make_relup/4` turns them into the release's `relup`).
 
     * A module new in the version is added, and one it no longer has deleted.
-    * A changed supervisor is `{update, M, supervisor}`: it reads its child specs
-      again (`HalC2.Upgrade.Tree` then starts, stops and restarts the children that
-      changed).
+    * A changed supervisor of the MC is `{update, M, supervisor}`: it reads its child
+      specs again (`HalC2.Upgrade.Tree` then starts, stops and restarts the children
+      that changed). Another application's supervisor is only loaded
+      (`supervisors: :load`): re-reading its specs runs its `init/1` again, which may
+      run once only (Finch's makes a named ETS table), and its children change when
+      it next starts.
     * A changed module of a process behaviour (`GenServer`, `:gen_statem`, ...) is
       `{update, M, {advanced, []}}`: the processes running it are suspended, migrate
       their state through `code_change/3`, and resume on the new code.
@@ -105,26 +108,35 @@ defmodule HalC2.Upgrade.Appup do
 
   @doc """
   The upgrade instructions from `old` to `new` modules, in an order `systools`
-  accepts: additions, then updates and loads, then deletions.
+  accepts: additions, then updates and loads, then deletions. `supervisors: :load`
+  loads changed supervisors instead of having them re-read their specs (`:update`,
+  the default).
   """
-  @spec instructions(%{module() => beam()}, %{module() => beam()}) :: [tuple()]
-  def instructions(old, new) do
+  @spec instructions(%{module() => beam()}, %{module() => beam()}, keyword()) :: [tuple()]
+  def instructions(old, new, opts \\ []) do
+    supervisors = Keyword.get(opts, :supervisors, :update)
     added = for mod <- Map.keys(new), not Map.has_key?(old, mod), do: mod
     removed = for mod <- Map.keys(old), not Map.has_key?(new, mod), do: mod
     updated = for mod <- changed(old, new), Map.has_key?(old, mod), do: mod
     moving = MapSet.new(added ++ updated)
 
     Enum.map(Enum.sort(added), &{:add_module, &1}) ++
-      Enum.map(Enum.sort(updated), &update(&1, new[&1], moving)) ++
+      Enum.map(Enum.sort(updated), &update(&1, new[&1], moving, supervisors)) ++
       Enum.map(Enum.sort(removed), &{:delete_module, &1})
   end
 
-  defp update(mod, beam, moving) do
+  defp update(mod, beam, moving, supervisors) do
     deps = for dep <- beam.imports, dep != mod, MapSet.member?(moving, dep), do: dep
+    supervisor? = Enum.any?(beam.behaviours, &(&1 in @supervisor_behaviours))
 
     cond do
+      # A supervisor runs `:supervisor`'s code, not its callback module's, between
+      # calls to `init/1`, so loading the module is enough to move it.
+      supervisor? and supervisors == :load ->
+        {:load_module, mod, :soft_purge, :soft_purge, Enum.sort(deps)}
+
       # `{update, M, supervisor}` with soft purges: supervisors re-read their specs.
-      Enum.any?(beam.behaviours, &(&1 in @supervisor_behaviours)) ->
+      supervisor? ->
         {:update, mod, :static, :default, {:advanced, []}, :soft_purge, :soft_purge,
          Enum.sort(deps)}
 

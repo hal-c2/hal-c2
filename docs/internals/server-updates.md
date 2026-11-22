@@ -48,7 +48,10 @@ hand. What that asks of the MC's code:
   static supervisor of the MC was started from, and the relup's last step compares them with the
   new code's: new children start, removed ones stop, changed ones restart. The snapshot's
   `:persistent_term` key and shape pass from one version to the next, so they are a contract
-  between versions.
+  between versions. Another application's changed supervisor is only loaded: re-reading its
+  specs runs its `init/1` again, which need not survive a second run (Finch's makes a named ETS
+  table, and failing there is past the point of no return). A reload sees one whenever another
+  Erlang compiler built the checkout's dependencies, even from the same source.
 - **The configuration is the running one.** The release handler reads only `sys.config`, so for the
   install the new release's `sys.config` holds the running environment with the new configuration
   and its `runtime.exs` over it; what the MC set itself (its home) survives.
