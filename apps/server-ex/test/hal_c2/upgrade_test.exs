@@ -726,7 +726,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 12
+    assert state.v == 13
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -739,6 +739,7 @@ defmodule HalC2.UpgradeTest do
     assert state.terminals == %{}
     assert state.lost == %{}
     assert state.terminal_windows == %{}
+    assert state.unreached == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
 
@@ -774,12 +775,12 @@ defmodule HalC2.UpgradeTest do
     assert {:push, _, migrated} =
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
-    assert migrated.v == 12
+    assert migrated.v == 13
     assert_receive :recheck_session, 1_000
 
     refute_received :recheck_session
 
-    assert {:push, _, %{v: 12}} =
+    assert {:push, _, %{v: 13}} =
              HalC2.Web.Socket.handle_info(
                {:hal_c2_keybindings, node(), []},
                %{state | session: nil}
@@ -814,7 +815,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 12
+    assert migrated.v == 13
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
