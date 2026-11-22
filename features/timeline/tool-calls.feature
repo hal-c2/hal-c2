@@ -372,7 +372,7 @@ Feature: Tool calls and file changes
     Then the command is shown as succeeded
 
   # Upstream #23351: the failure text heuristic overrode a reported exit code of 0, so a grep for "ENOENT" showed as failed.
-  @backlog @mc @desktop @mobile @tui @priority-high
+  @mc @desktop @mobile @tui @priority-high @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A command that exited 0 is a success whatever its text says
     Given the provider reported a command as completed with exit code 0
     And the command's <part> says <text>

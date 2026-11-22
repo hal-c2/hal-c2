@@ -282,7 +282,7 @@ Feature: Device hub on an MC
       | setOrientation | Android  |
       | launchApp      | Android  |
   # Upstream #25205: adb shell joined the arguments, so a URL with "&", "'" or a space arrived cut short or split.
-  @mc @backlog
+  @mc
   Scenario Outline: A URL opened on an Android device arrives whole
     When a client opens "<url>" on a booted Android device, on this machine or over SSH
     Then the device is asked to open exactly "<url>"

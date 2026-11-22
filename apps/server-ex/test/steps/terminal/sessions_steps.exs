@@ -212,6 +212,20 @@ defmodule HalC2.Steps.Terminal.Sessions do
     Map.put(context, :snapshot, snapshot)
   end
 
+  step ~r/^the MC was started inside a terminal multiplexer that set (\w+)$/,
+       %{args: [variable]} = context do
+    Terminal.put_env(variable, "from-the-mc")
+    Map.put(context, :mc_variable, variable)
+  end
+
+  step ~r/^the shell sees (\w+)$/, %{args: [name]} = context do
+    {output, context} = Terminal.run(context, "default", "env | cut -d= -f1 | sort")
+    names = output |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1)
+    assert "HOME" in names
+    assert name in names
+    context
+  end
+
   step "the shell sees {string} as {string}", %{args: [key, value]} = context do
     {output, context} = Terminal.run(context, "default", ~s(echo "<$#{key}>"))
     assert output =~ "<#{value}>"

@@ -119,7 +119,7 @@ Feature: Thread titles
     Then the thread keeps its previous title
 
   # Upstream #27483: a generated title longer than 120 characters was cut through an emoji.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A long generated title is cut before an emoji, not through it
     Given the title generator answers a title longer than 120 characters with an emoji where it is cut
     When the user sends the first message of a new thread
