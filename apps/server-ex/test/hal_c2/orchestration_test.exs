@@ -2986,6 +2986,9 @@ defmodule HalC2.OrchestrationTest do
 
       File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(promote)
+      # The queue runs on once the steer is answered: left to, it starts "third" and
+      # "fourth" on the fake Codex the next test configures.
+      _ = await_statuses(thread_id, ["completed", "cancelled", "completed", "completed"])
     end
 
     # #105: Codex took the steer and ended its turn before it said so. The message is
