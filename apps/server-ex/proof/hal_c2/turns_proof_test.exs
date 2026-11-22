@@ -7,7 +7,8 @@ defmodule HalC2.TurnsProofTest do
   # pinned to a run that started before the latest turn's leaves. The interrupt is
   # pinned to r1, the first run to start, so "another run" is always a later one;
   # a pin to a later run reaches work only in another provider's runtime, which one
-  # runtime leaves out (`orchestration_test.exs` stops it).
+  # runtime leaves out (`orchestration_test.exs` stops it). Or it names a run the
+  # thread does not have, which is refused before any runtime hears of it (#461).
   # A run's "waiting" is "running" here, and Codex stands for every runtime.
   @items "writes a turn's items, streamed text and requests; no run's status changes"
   @changes "builds a transaction's changes; each transaction is one step"
@@ -35,11 +36,11 @@ defmodule HalC2.TurnsProofTest do
     covers: %{
       "HalC2.Orchestration.dispatch/1" =>
         ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
-           interrupt-undriven),
+           interrupt-unknown interrupt-undriven),
       # dispatch/1 behind a receipt: a repeated command id is answered from it, unchanged.
       "HalC2.Orchestration.dispatch_once/1" =>
         ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
-           interrupt-undriven),
+           interrupt-unknown interrupt-undriven),
       # dispatch/1's message path, split around a caller's own transaction (delegation).
       "HalC2.Orchestration.decide_dispatch/3" => "dispatch",
       "HalC2.Orchestration.dispatched/3" => ~w(begin-turn retry start-failed interrupt-any),
@@ -235,6 +236,7 @@ defmodule HalC2.TurnsProofTest do
         "The next queued message starts when a run ends",
         "Interrupting the running turn",
         "Interrupting when nothing is running is refused",
+        "Interrupting a run the thread does not have changes nothing",
         "Stopping the provider session of an idle thread",
         "Stopping the provider session while a turn runs is refused"
       ],
@@ -253,17 +255,21 @@ defmodule HalC2.TurnsProofTest do
   # Rules the environment may or may not take; the code's own may not stop.
   @faults ~w(crash raise time-out refused exit restart)
   @fair ~w(dispatch begin-turn start-failed start-next take started finish interrupted
-           stale-pin no-turn stop-work interrupt-any interrupt-undriven delete stop-runtimes abandon
+           stale-pin no-turn stop-work interrupt-any interrupt-unknown interrupt-undriven delete
+           stop-runtimes abandon
            end-abandoned release-session release-idle keep-turn retry)
 
   # turns(faults, interrupt, delete, idle timer): an interrupt pinned to r1, the run
-  # the client read as active, or one for whatever runs (`any`).
+  # the client read as active, one for whatever runs (`any`), or one for a run the
+  # thread does not have (`unknown`), at dispatch or come to interrupt_undriven/2.
   @inits [
     "turns(2, empty, false, ready)",
     "turns(2, intr(r1), false, ready)",
     "turns(2, intr(any), false, ready)",
     "turns(2, empty, true, ready)",
-    "turns(3, intr(r1), true, ready)"
+    "turns(3, intr(r1), true, ready)",
+    "turns(2, intr(unknown), false, ready)",
+    "turns(2, undriven(unknown), false, ready)"
   ]
 
   for init <- @inits do
@@ -284,6 +290,19 @@ defmodule HalC2.TurnsProofTest do
     end
   end
 
+  test "an interrupt for an unknown run reaches no runtime", %{proof: proof} do
+    refute_reachable(proof, "turns(2, intr(unknown), true, ready)", "reached", [])
+  end
+
+  # Each part of #461's fix, switched off, lets in the bad state it keeps out.
+  test "without the refusal, an unknown run's interrupt reaches the runtimes", %{proof: proof} do
+    assert_reachable(proof, "turns(2, intr(unknown) unrefused, false, ready)", "reached")
+  end
+
+  test "with the fallback, an unknown run's interrupt ends another", %{proof: proof} do
+    assert_reachable(proof, "turns(2, undriven(unknown) fallback, false, ready)", "stray")
+  end
+
   # IdleSessions releases a runtime between its check for an active run and a message
   # that starts one there: the runtime keeps a turn it took, and a start it stopped
   # under is tried again.
@@ -298,7 +317,8 @@ defmodule HalC2.TurnsProofTest do
         "turns(2, intr(r1), false, ready)",
         "turns(2, empty, true, ready)",
         "turns(1, intr(r1), true, ready)",
-        "turns(1, intr(any), false, ready)"
+        "turns(1, intr(any), false, ready)",
+        "turns(1, intr(unknown), false, ready)"
       ] do
     test "every run ends, and a queued message starts once none is active, from #{init}",
          %{proof: proof} do

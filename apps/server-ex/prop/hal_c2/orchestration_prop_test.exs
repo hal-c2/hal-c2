@@ -11,7 +11,8 @@ defmodule HalC2.OrchestrationPropTest do
   promoted one, also after the thread was archived while Codex was asked); send a
   queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474), or as an agent does, which records
-  the agent and its reason as who stopped the run;
+  the agent and its reason as who stopped the run; interrupt a run the thread does
+  not have, which is refused and changes nothing (#461);
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
   for the next boot's recovery to settle; stop a run nothing drives any more, which
@@ -247,6 +248,7 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
       {2, {:call, __MODULE__, :interrupt_by_agent, [tid]}},
+      {1, {:call, __MODULE__, :interrupt_unknown, [tid]}},
       {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task, :with_held_up_task])]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}},
@@ -411,6 +413,7 @@ defmodule HalC2.OrchestrationPropTest do
           {4, {:call, __MODULE__, :end_stream, [oneof(running)]}},
           {4, {:call, __MODULE__, :end_stream_leaving, [oneof(running)]}},
           {4, {:call, __MODULE__, :stop_undriven, [oneof(running)]}},
+          {4, {:call, __MODULE__, :interrupt_unknown, [oneof(running)]}},
           {2, {:call, __MODULE__, :restart, []}},
           {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}},
           {1, {:call, __MODULE__, :restart_capturing, [oneof(running)]}},
@@ -825,6 +828,8 @@ defmodule HalC2.OrchestrationPropTest do
         state
     end
   end
+
+  defp step(state, _result, {:call, _, :interrupt_unknown, _args}), do: state
 
   defp step(state, _result, {:call, _, :crash, [tid]}),
     do: update(state, tid, &(&1 |> end_running(:failed) |> start_next()))
@@ -1273,6 +1278,8 @@ defmodule HalC2.OrchestrationPropTest do
        do: :ok,
        else: {:error, "no running turn"}
   end
+
+  defp expected_reply(_state, :interrupt_unknown, _args), do: {:error, "no running turn"}
 
   defp expected_reply(state, :send_stopping, [tid, msg, how, instance]) do
     off = how != :promote && off_refusal(state.threads[tid], instance)
@@ -2421,6 +2428,22 @@ defmodule HalC2.OrchestrationPropTest do
       Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid, "runId" => run_id}),
       ending
     )
+  end
+
+  # The projection leaves out stop requests, so one the refused stop recorded is told
+  # by the reply: it would refuse every steer into the running turn.
+  def interrupt_unknown(tid) do
+    asked = stop_requests(tid)
+    stop = %{"type" => "run.interrupt", "threadId" => tid, "runId" => "run:unknown"}
+    result = Orchestration.dispatch(stop)
+    reply(if(stop_requests(tid) == asked, do: result, else: {:error, :stop_recorded}), [])
+  end
+
+  defp stop_requests(tid) do
+    for %{"type" => "run_interrupt_request", "id" => id} <-
+          StreamState.list(current(tid), "turn-item"),
+        into: MapSet.new(),
+        do: id
   end
 
   def start_queued(tid, msg),

@@ -620,6 +620,15 @@ Feature: Runs and turns
     And the running turn is still running
 
   @mc
+  Scenario: Interrupting a run the thread does not have changes nothing
+    Given "t1" has a running turn and a queued message "Next"
+    When the user interrupts a run the thread does not have
+    Then the command fails with "no running turn"
+    And the running turn is still running
+    And the running turn was not asked to stop
+    And no queued message is held
+
+  @mc
   Scenario: Interrupting when nothing is running is refused
     When the user interrupts the run of idle thread "t1"
     Then the command fails with "no running turn"

@@ -21,6 +21,9 @@ mod TURNS is
   op nil : -> Rids [ctor] .
   op _;_ : Rids Rids -> Rids [ctor assoc id: nil] .
 
+  --- An id no run of the thread has.
+  op unknown : -> Rid [ctor] .
+
   --- The run an interrupt is pinned to (its `runId`), or none: then whichever runs.
   op any : -> Tgt [ctor] .
 
@@ -88,6 +91,11 @@ mod TURNS is
   op undriven : Tgt -> Item [ctor] .
   op aimed : Tgt -> Item [ctor] .
   op del : -> Item [ctor] .
+
+  --- Parts of #461's fix switched off, one at a time, so a proof shows each is needed:
+  --- run.interrupt lets an unknown id through to the runtimes (`unrefused`), or
+  --- interrupt_undriven/2 takes it for the active run (`fallback`).
+  ops unrefused fallback : -> Item [ctor] .
 
   op faults : Nat -> Item [ctor] .
 
@@ -223,13 +231,17 @@ mod TURNS is
     if S == queued or on(S) .
   eq cancel(C) = C [owise] .
 
-  --- interrupt_undriven/2: the run it is pinned to, else the active one, ends as
-  --- interrupted if it is running and nothing drives it; a pinned run that ended
-  --- is refused, and no other run is touched.
+  --- interrupt_undriven/2: the run it is pinned to, or the active one for a stop that
+  --- is not pinned, ends as interrupted if it is running and nothing drives it; a
+  --- pinned run that ended, or that the thread does not have, is refused, and no
+  --- other run is touched.
   op stopRun : Tgt Conf -> Conf .
   ceq stopRun(Y, run(R, running, H, G) C) = abandon(R, interrupted, run(R, running, H, G) C)
-    if (Y == R or Y == any) /\ not claimed?(R, C) .
+    if targets?(Y, R, C) /\ not claimed?(R, C) .
   eq stopRun(Y, C) = C [owise] .
+  op targets? : Tgt Rid Conf -> Bool .
+  eq targets?(unknown, R, fallback C) = true .
+  eq targets?(Y, R, C) = Y == R or Y == any [owise] .
 
   --- An MC that stops loses its processes; Recovery.run/0 then settles the thread:
   --- queued runs are held, a run that never reached its provider goes back to the
@@ -328,9 +340,18 @@ mod TURNS is
 
   --- run.interrupt: interrupt_any/2 ----------------------------------------------------
 
+  --- interrupt_policy/2: an id the thread does not have is refused before anything
+  --- is recorded or asked.
+  crl [interrupt-unknown] : { intr(Y) C } => { C } if refused?(Y, C) .
+  op refused? : Tgt Conf -> Bool .
+  eq refused?(Y, unrefused C) = false .
+  eq refused?(Y, C) = Y == unknown [owise] .
+
   --- Each runtime's interrupt/2: the call, or no runtime to call.
-  rl [interrupt-any] : intr(Y) rt(none) => undriven(Y) rt(none) .
-  crl [interrupt-any] : intr(Y) rt(X) => icall(Y) rt(X) if X =/= none .
+  crl [interrupt-any] : { intr(Y) rt(none) C } => { undriven(Y) rt(none) C }
+    if not refused?(Y, C) .
+  crl [interrupt-any] : { intr(Y) rt(X) C } => { icall(Y) rt(X) C }
+    if X =/= none /\ not refused?(Y, C) .
 
   rl [interrupt-undriven] : { undriven(Y) C } => { stopRun(Y, C) } .
 
@@ -400,8 +421,9 @@ mod TURNS is
 
   --- r1 was just dispatched to start, with q queued behind it; a client sends r2, and
   --- perhaps deletes the thread or asks to interrupt: either r1, which it read as
-  --- active, or (`any`) whatever runs. By the time the interrupt arrives r1 may have
-  --- ended and r2 or q be running.
+  --- active, (`any`) whatever runs, or an `unknown` id. By the time the interrupt
+  --- arrives r1 may have ended and r2 or q be running. An `undriven` there is an
+  --- interrupt's effect that came to interrupt_undriven/2 without dispatch's check.
   op turns : Nat Conf Bool Tm -> Sys .
   var Q : Conf .
   eq turns(F, Q, B, T) =
@@ -409,14 +431,15 @@ mod TURNS is
       disp(r1, begin) client(r2) rt(none) mbox(nil) timer(T) faults(F)
       aim(Q) (if B then del else empty fi) } .
   op aim : Conf -> Conf .
-  eq aim(intr(Y)) = intr(Y) aimed(Y) .
+  eq aim(intr(Y) C) = intr(Y) aimed(Y) C .
+  eq aim(undriven(Y) C) = undriven(Y) aimed(Y) C .
   eq aim(Q) = Q [owise] .
 
   --- Two runs active at once; a run that ended changing status; a run that failed;
   --- an interrupt pinned to one run ending another as interrupted (a restart, which
   --- interrupts what runs, forgets the interrupt it cut off), or the work another
   --- left running; nothing left to do.
-  ops twice flipped failed? stray settled : Sys -> Bool .
+  ops twice flipped failed? stray reached settled : Sys -> Bool .
   ceq twice({ run(R, S, H, G) run(R', S', B, G') C }) = true if on(S) /\ on(S') .
   eq twice({ C }) = false [owise] .
   ceq flipped({ run(R, S, H, S') C }) = true if S =/= S' .
@@ -426,6 +449,10 @@ mod TURNS is
   ceq stray({ aimed(R) run(R', S, H, interrupted) C }) = true if R =/= R' .
   ceq stray({ aimed(R) halted(R') C }) = true if R =/= R' .
   eq stray({ C }) = false [owise] .
+  --- An id the thread does not have got as far as a runtime or interrupt_undriven/2.
+  eq reached({ icall(unknown) C }) = true .
+  eq reached({ undriven(unknown) C }) = true .
+  eq reached({ C }) = false [owise] .
   eq settled({ client(R) C }) = false .
   eq settled({ disp(R, P) C }) = false .
   eq settled({ mbox(R ; L) C }) = false .

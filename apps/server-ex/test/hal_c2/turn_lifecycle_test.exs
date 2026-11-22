@@ -112,6 +112,45 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["interrupted"])
   end
 
+  # A run id the thread does not have was taken for the active run: the stop was
+  # refused, after it had held the queue and marked that run as being stopped (#461).
+  test "an interrupt naming a run the thread does not have changes nothing",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2")
+    before = await_statuses(thread_id, ["running", "queued"])
+
+    stop = %{"type" => "run.interrupt", "threadId" => thread_id, "runId" => "run:unknown"}
+    assert {:error, "no running turn"} = Orchestration.dispatch(stop)
+
+    assert await_statuses(thread_id, ["running", "queued"]) == before
+
+    refute Enum.any?(
+             StreamState.list(current(thread_id), "turn-item"),
+             &(&1["type"] == "run_interrupt_request")
+           )
+  end
+
+  # The interrupt's effect reads the run again, and ended the active one when nothing
+  # drove it (#461).
+  test "an interrupt effect naming an unknown run leaves an undriven turn alone",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    TurnWatch.release(running["id"])
+    refute TurnWatch.driven?(running["id"])
+
+    effect = %{
+      "type" => "provider-turn.interrupt",
+      "threadId" => thread_id,
+      "args" => %{"runId" => "run:unknown"}
+    }
+
+    assert {:error, "no running turn"} = Orchestration.execute_effect(effect, nil, false)
+    assert ["running"] = statuses(thread_id)
+  end
+
   # A runtime stuck on its provider is killed at the MC's shutdown limit. Failing its run
   # then left a steer it held pending for good, since boot recovery skips an ended run.
   test "a runtime killed while the MC stops leaves its turn for boot recovery",
