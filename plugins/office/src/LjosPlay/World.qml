@@ -406,8 +406,10 @@ Flickable {
             actor.key = "actor-" + (++made);
         if (actor.manual || actors[actor.key] === actor)
             return;
+        const replaces = !!actors[actor.key];
         actors[actor.key] = actor;
-        actorCount++;
+        if (!replaces)
+            actorCount++;
         walking = true;
     }
 
@@ -511,6 +513,17 @@ Flickable {
         if (sheet.painting === "queued" || sheet.painting === "due")
             sheetsPending--;
         sheet.painting = "";
+    }
+
+    // Those in an item that is going: it is destroyed only later.
+    function dropSheets(item) {
+        for (let i = 0; i < item.children.length; i++) {
+            const child = item.children[i];
+            if (child.requestSheet)
+                dropSheet(child);
+            else
+                dropSheets(child);
+        }
     }
 
     // One until it is known what a sheet takes, then as many as the budget allows.

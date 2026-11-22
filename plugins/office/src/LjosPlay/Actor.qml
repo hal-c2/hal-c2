@@ -44,6 +44,8 @@ Item {
     property var reply: talk => "!"
     property real headX: width / 2
     property real headY: 0
+    // What is over its head among the others': a bubble above icons.
+    property real headZ: bubble ? 2 : 1
     property string bubbleName: ""
     // Art pixels a second.
     property real speed: 50
@@ -364,7 +366,7 @@ Item {
         visible: actor.visible
         x: (actor.x + actor.headX) * (world?.pixelScale ?? 1)
         y: (actor.y + actor.headY) * (world?.pixelScale ?? 1)
-        z: actor.bubble ? 2 : 1
+        z: actor.headZ
 
         Rectangle {
             id: speech

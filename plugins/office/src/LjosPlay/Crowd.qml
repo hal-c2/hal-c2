@@ -31,13 +31,20 @@ Item {
         const wanted = {};
         for (const entry of list(entries))
             wanted[keyOf(entry)] = true;
+        const left = [];
         for (const key of Object.keys(members)) {
             if (wanted[key])
                 continue;
-            const gone = members[key];
+            left.push(members[key]);
             delete members[key];
-            count--;
+        }
+        count -= left.length;
+        // Whoever hears of one leaving may sync again: all are out by then.
+        for (const gone of left) {
+            if (!gone)
+                continue;
             world?.leave(gone);
+            world?.dropSheets(gone);
             gone.visible = false;
             gone.parent = null;
             gone.destroy();
