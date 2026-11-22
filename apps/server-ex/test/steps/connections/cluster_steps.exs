@@ -1009,7 +1009,10 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "the members lose each other, the second's settings change and they meet again",
        context do
-    true = Node.disconnect(context.second.mc)
+    %{mc: second, peer: peer} = context.second
+    true = Node.monitor(second, true)
+    :ok = :peer.call(peer, HalC2.Test.Parting, :from_settings, [node()], 60_000)
+    assert_receive {:nodedown, ^second}, 30_000
     code = ~S|HalC2.Settings.update(&Map.put(&1, "addProjectBaseDirectory", "/garden"))|
     _ = :peer.call(context.second.peer, Code, :eval_string, [code], 15_000)
     true = Node.connect(context.second.mc)
@@ -1030,15 +1033,34 @@ defmodule HalC2.Steps.Connections.Cluster do
     Map.put(context, :older_socket, socket)
   end
 
+  step "older code stopped its socket hearing members come back", context do
+    {:ok, supervisor} = ExUnit.fetch_test_supervisor()
+    [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    Map.put(context, :older_socket, socket)
+  end
+
   step "the client's MC is upgraded in place", context do
-    # A socket's state moves to the code it runs with the first message it handles.
+    # The install's last instruction; a socket it can't tell moves with its next message.
+    {:ok, _changes} = HalC2.Upgrade.Tree.sync()
     send(context.older_socket, :after_upgrade)
     context
   end
 
   step "the client is told to resync what it watches of the second member", context do
-    {resync, client} = Mc.await(World.client(context), &(&1["t"] == "resync"), 30_000)
+    {resync, before, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "resync"), 30_000)
+
     assert resync == %{"t" => "resync", "id" => 4}
+    # Its watch was dead when they changed: only watching again tells it of the change.
+    changed? = &(get_in(&1, ["settings", "addProjectBaseDirectory"]) == "/garden")
+    refute Enum.any?(before, changed?)
     World.put_client(context, client)
   end
 

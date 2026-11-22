@@ -3225,15 +3225,25 @@ Item {
     // already has when it is first seen or caught up with (see catchUp()), nor
     // one still waiting its turn when the topic drops it. A talk can come
     // before one of its two, as a hand-off mostly does before its worker's row:
-    // it is heard once both are here, for as long as the topic keeps it.
+    // it is heard once both are here, for as long as the topic keeps it. The
+    // topic can give a talk its words late ("…" until then): one waiting,
+    // walking over or being said takes the ones it has now.
     function hear(talks) {
         const current = {};
         for (const talk of talks) {
             if (talk)
-                current[talk.id] = true;
+                current[talk.id] = talk;
         }
-        for (const actor of Object.values(page.actors))
-            actor.queue = actor.queue.filter(t => current[t.id]);
+        for (const actor of Object.values(page.actors)) {
+            actor.queue = actor.queue.filter(t => current[t.id]).map(t => current[t.id]);
+            const talk = actor.talk;
+            const now = talk ? current[talk.id] : undefined;
+            if (!now)
+                continue;
+            talk.text = spoken(now.text);
+            if (talk.phase === "say")
+                actor.bubble = talk.text;
+        }
         for (const talk of talks) {
             if (!talk || page.seen[talk.id])
                 continue;
@@ -3254,6 +3264,10 @@ Item {
             if (from.queue.length < 3)
                 from.queue.push(talk);
         }
+    }
+
+    function spoken(text) {
+        return (text ?? "").replace(/\s+/g, " ").slice(0, 120);
     }
 
     // Starts the speaker's first talk whose listener is inside. One to someone
@@ -3277,8 +3291,9 @@ Item {
             return;
         other.heldBy = actor.id;
         actor.talk = {
+            id: talk.id,
             to: talk.to,
-            text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
+            text: spoken(talk.text),
             kind: talk.kind,
             phase: "go",
             deadline: page.now + 25000,

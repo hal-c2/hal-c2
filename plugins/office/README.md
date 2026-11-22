@@ -90,5 +90,6 @@ thirty seconds after it was said, even with fewer than 40: the topic holds what
 is being said now, not a history. `kind` is `delegate`, `message` or `result`; a
 hand-off is only a talk while its worker is that new. A talk can come before
 either of its two is in `people`, a hand-off before its worker's row for one,
-and waits on the page for both while it is in the topic. The page plays none
+and waits on the page for both while it is in the topic. A talk keeps its id as
+its text arrives, and the page shows the text it has now. The page plays none
 that were there when it first saw the office or came back in sight.

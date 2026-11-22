@@ -282,7 +282,7 @@ defmodule HalC2.ClusterTest do
     true = :erlang.suspend_process(socket)
     :ok = :erpc.call(c, :sys, :resume, [stream])
     assert_receive {:trace, _follow, :send, {:hal_c2_followed, _, {:ok, _}}, ^socket}, 5_000
-    part(c)
+    part_let_go(peer, c, :from_stream, [stream])
     true = Node.connect(c)
     assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
     true = :erlang.resume_process(socket)
@@ -477,7 +477,7 @@ defmodule HalC2.ClusterTest do
     {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
     assert %{"t" => "plugin", "value" => "before"} = first
 
-    part_watched(peer, c, id)
+    part_let_go(peer, c, :from_topic, [id, "watched"])
     publish(peer, id, "while parted")
     true = Node.connect(c)
 
@@ -508,7 +508,7 @@ defmodule HalC2.ClusterTest do
     assert %{"t" => "plugin", "value" => "before"} = first
 
     socket = as_v12(web)
-    part_watched(peer, c, id)
+    part_let_go(peer, c, :from_topic, [id, "watched"])
     publish(peer, id, "while parted")
     true = Node.connect(c)
     # Any message after the upgrade is the first its new code handles.
@@ -516,6 +516,50 @@ defmodule HalC2.ClusterTest do
 
     {resync, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
     assert resync == %{"t" => "resync", "id" => 1}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {now, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "while parted"
+
+    publish(peer, id, "after")
+    {later, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert later["value"] == "after"
+  end
+
+  # Older code kept `unreached` and stopped node news as its last lost terminal came back.
+  test "a socket back from older code follows again what a parting ended as it is upgraded",
+       %{tmp_dir: dir, port: port, web: web, peer: second} do
+    {peer, c} = pair(second, dir)
+    true = Node.connect(c)
+    id = topic_plugin(peer)
+    publish(peer, id, "before")
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "plugin", "value" => "before"} = first
+
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    part_let_go(peer, c, :from_topic, [id, "watched"])
+    publish(peer, id, "while parted")
+    true = Node.connect(c)
+
+    # An HTTP/2 connection has no clause for a message it doesn't know.
+    http2 = http2_connection(port)
+    assert {:ok, _changes} = HalC2.Upgrade.Tree.sync()
+
+    {resync, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+    # It answers once it has handled whatever the install sent it.
+    assert {_socket, _state} = :sys.get_state(http2, 30_000)
+
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
     {now, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
     assert now["value"] == "while parted"
@@ -609,6 +653,21 @@ defmodule HalC2.ClusterTest do
     member(dir)
   end
 
+  # The process serving an HTTP/2 connection of the test's, once it has answered the preface.
+  defp http2_connection(port) do
+    test = self()
+    event = [:thousand_island, :connection, :start]
+    on_start = fn _, _, _, _ -> send(test, {:accepted, self()}) end
+    :ok = :telemetry.attach({__MODULE__, test}, event, on_start, nil)
+    {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+    assert_receive {:accepted, pid}, 30_000
+    :ok = :telemetry.detach({__MODULE__, test})
+    empty_settings = <<0::24, 4, 0, 0::32>>
+    :ok = :gen_tcp.send(tcp, ["PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", empty_settings])
+    assert {:ok, <<_::24, 4, _::binary>>} = :gen_tcp.recv(tcp, 0, 30_000)
+    pid
+  end
+
   # The test's one socket as version 12 kept it: deaf to MCs coming back.
   defp as_v12(web) do
     {:ok, [socket]} = ThousandIsland.connection_pids(web)
@@ -627,11 +686,10 @@ defmodule HalC2.ClusterTest do
     refute c in Node.list()
   end
 
-  # Parted from `c`'s side, and not back until `c`'s host watches nothing for this MC.
-  defp part_watched(peer, c, id) do
+  # Parted from `c`'s side, and not back until `c` has let go of what this MC watched.
+  defp part_let_go(peer, c, from, args) do
     true = Node.monitor(c, true)
-    args = [node(), id, "watched"]
-    :ok = :peer.call(peer, HalC2.Test.RunningPlugin, :part, args, 60_000)
+    :ok = :peer.call(peer, HalC2.Test.Parting, from, [node() | args], 60_000)
     assert_receive {:nodedown, ^c}, 30_000
   end
 

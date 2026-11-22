@@ -54,6 +54,9 @@ defmodule HalC2.Web.Socket do
             when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version or
                    not is_map_key(state, :unreached)
 
+  # In the dictionary of a socket that hears MCs come and go, where older code leaves it.
+  @hears {__MODULE__, :hears_mcs}
+
   defguardp newer(state)
             when is_map_key(state, :v) and :erlang.map_get(:v, state) > @state_version
 
@@ -104,6 +107,26 @@ defmodule HalC2.Web.Socket do
 
   def rpc_timeout(_method), do: rpc_timeout()
 
+  @doc """
+  Tells this MC's sockets that code was installed in place (`HalC2.Upgrade.Tree.sync/0`).
+  The code before may have stopped their node news and kept their state, so each hears
+  MCs again and follows again what it watches on those here now. Only sockets are told:
+  a connection that is none yet has no clause for a message it doesn't know.
+  """
+  def code_installed do
+    with listener when is_pid(listener) <- Process.whereis(HalC2.Web.Listener),
+         {:ok, connections} <- ThousandIsland.connection_pids(listener) do
+      for pid <- connections,
+          Process.info(pid, {:dictionary, @hears}) == {{:dictionary, @hears}, true},
+          do: send(pid, :hal_c2_code_installed)
+    end
+
+    :ok
+  catch
+    # The listener is going down, and its sockets with it.
+    :exit, _ -> :ok
+  end
+
   @impl true
   def init(opts) do
     # A socket opened with a ticket belongs to that client's session.
@@ -118,7 +141,7 @@ defmodule HalC2.Web.Socket do
     )
 
     # Other MCs coming back: what this socket watched there is gone (`mc_ready/2`).
-    :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+    hear_mcs()
 
     state = %{
       v: @state_version,
@@ -199,6 +222,8 @@ defmodule HalC2.Web.Socket do
 
   @impl true
   def handle_info(_message, state) when newer(state), do: from_newer(state)
+  # Migrating already follows again what a parting ended.
+  def handle_info(:hal_c2_code_installed, state) when outdated(state), do: {:ok, migrate(state)}
   def handle_info(message, state) when outdated(state), do: handle_info(message, migrate(state))
 
   # One for a subscription followed before this one, still on its way, is not this
@@ -407,6 +432,11 @@ defmodule HalC2.Web.Socket do
 
   def handle_info({:hal_c2_terminal_down, mc, key, reason}, state),
     do: terminal_down(state, mc, key, reason)
+
+  def handle_info(:hal_c2_code_installed, state) do
+    hear_mcs_again()
+    {:ok, state}
+  end
 
   # An MC is back: its terminals lost with it are attached again, and what is
   # watched on it is followed again once it can answer (`await_ready/1`).
@@ -986,6 +1016,21 @@ defmodule HalC2.Web.Socket do
     :ok
   end
 
+  defp hear_mcs do
+    :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+    Process.put(@hears, true)
+    :ok
+  end
+
+  # Whatever this socket heard before, it hears each MC once, and takes those here now
+  # as just back: one may have parted and returned unheard.
+  defp hear_mcs_again do
+    :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+    hear_mcs()
+    for mc <- Node.list(), do: await_ready(mc)
+    :ok
+  end
+
   defp watched_on(state, mc) do
     watched =
       for {id, shape} <- state.subs,
@@ -1398,9 +1443,7 @@ defmodule HalC2.Web.Socket do
   # ended what it watches on the MCs here now, so that is followed again as if they
   # had just come back.
   defp migrate(%{v: 12} = state) when not is_map_key(state, :unreached) do
-    :ok = :net_kernel.monitor_nodes(false, node_type: :all)
-    :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-    for mc <- Node.list(), do: await_ready(mc)
+    hear_mcs_again()
     Map.put(state, :unreached, %{})
   end
 

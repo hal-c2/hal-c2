@@ -49,6 +49,7 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_terminal_down, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:nodeup, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_mc_ready, _}" => @socket_traffic,
+      "HalC2.Web.Socket handle_info :hal_c2_code_installed" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:nodedown, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_followed, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_server_update, _, _}" => @socket_traffic,
