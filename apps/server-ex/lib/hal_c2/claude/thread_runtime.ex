@@ -2100,7 +2100,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     case state.turn do
       %{prompt: %{} = prompt} ->
-        if echoes_prompt?(result, prompt), do: message(result, state), else: state
+        if echoes_prompt?(result, prompt), do: message(result, state), else: answered(state)
 
       _ ->
         state
@@ -2115,7 +2115,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        when not state.interrupted do
     if other_turn?(result, prompt) do
       Logger.info("claude result for a turn of its own: #{inspect(result["origin"])}")
-      state
+      answered(state)
     else
       message(result, state)
     end
@@ -2282,10 +2282,11 @@ defmodule HalC2.Claude.ThreadRuntime do
           state,
           "failed",
           "Claude acknowledged the message but never started a turn for it.",
-          # The process and the work it runs in the background are untouched, and no
-          # answer is coming, which the run records (`Handoff.room/3`).
+          # The process and the work it runs in the background are untouched. With
+          # nothing else in the run answered, no answer is coming, which the run
+          # records (`Handoff.room/3`).
           keep_background: true,
-          never_started: true
+          never_started: answerless?(state)
         )
 
       _ ->
@@ -2419,6 +2420,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        ) do
     # The last assistant message is where a rollback to this turn resumes. Once Claude
     # writes, the turn no longer sits where it resumed the conversation (`kept_head/3`).
+    state = answered(state)
+
     state =
       if uuid = message["uuid"],
         do: update_in(state.turn, &(&1 |> Map.put(:head, uuid) |> Map.delete(:resumed_at))),
@@ -4184,6 +4187,17 @@ defmodule HalC2.Claude.ThreadRuntime do
       ]
     end)
   end
+
+  # Whether nothing in the turn could have been answered, its prompt unstarted: Claude
+  # wrote nothing and ended no turn of its own in it, runs no wake, and was sent no
+  # steer. Such an answer's size is never reported, as only the result that ends the
+  # user's turn reports one (`record_usage/2`).
+  defp answerless?(%{turn: turn, wake: wake}) do
+    not Map.get(turn, :answered, false) and not match?(%{open: true}, wake) and
+      Map.get(turn.prompt, :steers, []) == []
+  end
+
+  defp answered(state), do: put_in(state.turn[:answered], true)
 
   defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)

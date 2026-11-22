@@ -57,7 +57,7 @@ mod PROVIDER-HANDOFF is
   op mc : Prov Nat Nat Nat Nat Nat -> Item [ctor] .
   op pturn : Nat Prov Nat -> Item [ctor] .
   op report : Nat Nat -> Item [ctor] .
-  --- A run the provider said it never started a turn for: no answer follows it.
+  --- A run the provider said it never started a turn for, and answered nothing in.
   op never : Nat -> Item [ctor] .
   op bg : Prov Bool -> Item [ctor] .
   op poke : Nat Prov -> Item [ctor] .
@@ -157,9 +157,10 @@ mod PROVIDER-HANDOFF is
   eq reported(N, C) = false [owise] .
   ceq occ(P, Q, N, C) = 0 if N <= Q .
   ceq occ(P, Q, s N, pturn(N, P, Z) report(N, U) C) = U if Q <= N .
-  ceq occ(P, Q, s N, pturn(N, P, Z) never(N) C) = Z + occ(P, Q, N, pturn(N, P, Z) never(N) C)
-    if Q <= N /\ not reported(N, C) .
-  ceq occ(P, Q, s N, pturn(N, P, Z) C) = Z + reserve + occ(P, Q, N, pturn(N, P, Z) C)
+  op kept : Nat Conf -> Nat .
+  eq kept(N, never(N) C) = 0 .
+  eq kept(N, C) = reserve [owise] .
+  ceq occ(P, Q, s N, pturn(N, P, Z) C) = Z + kept(N, C) + occ(P, Q, N, pturn(N, P, Z) C)
     if Q <= N /\ not reported(N, C) .
   eq occ(P, Q, s N, C) = occ(P, Q, N, C) [owise] .
 

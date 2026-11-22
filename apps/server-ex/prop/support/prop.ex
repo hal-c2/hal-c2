@@ -207,7 +207,7 @@ defmodule HalC2.Prop do
     Commands:
     #{inspect(cmds, pretty: true, limit: :infinity)}
 
-    History (each command with the model state and result after it):
+    History (each command with the model state before it and its result):
     #{inspect(Enum.zip(runnable(cmds), history), pretty: true, limit: :infinity)}
 
     Final model state:

@@ -4500,6 +4500,13 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "that message's run keeps room for what Claude said in it", context do
+    assert [_, %{"status" => "failed"} = run] = World.runs(context, @thread)
+    assert "The survey stopped" in World.replies(context, @thread)
+    refute run["turnNeverStarted"]
+    context
+  end
+
   step "the next message the user sends starts a turn as usual", context do
     context = World.post_message(context, "Work", "hello")
     World.await_runs(context, "Work", ["failed", "completed"])

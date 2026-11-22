@@ -2407,6 +2407,13 @@ Feature: Claude
     Then Claude resumes the same session
     And it reads the messages it missed before the new one
 
+  # #1735: only an answer that is not coming gives up its room.
+  @mc @plugin-claude
+  Scenario: A message Claude never started keeps room for what Claude said meanwhile
+    Given a resumed Claude thread whose previous process left a background task
+    When the user sends a message Claude never starts a turn for
+    Then that message's run keeps room for what Claude said in it
+
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high
   Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging

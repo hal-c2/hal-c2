@@ -27,7 +27,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   survives it. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
-  keeps no room in the conversation for an answer that is not coming (#1735).
+  keeps no room in the conversation for an answer that is not coming (#1735), unless
+  Claude answered a turn of its own in that run.
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
@@ -428,6 +429,7 @@ defmodule HalC2.ClaudeSessionPropTest do
 
       text == :never_start ->
         seen.status == "failed" and started?(state, model, fast, text, seen) and
+          seen.never_started == (seen.reply == nil) and
           seen.background == state.background and
           sent?(state, text, seen.sent)
 
@@ -553,6 +555,7 @@ defmodule HalC2.ClaudeSessionPropTest do
       reused: session != nil and session() == session,
       background: background?(),
       reply: reply(state, run),
+      never_started: run["turnNeverStarted"] == true,
       compactions: Enum.count(items(state, run), &(&1["type"] == "compaction")),
       sent: sent,
       starts: for(%{"argv" => argv} <- new, do: argv),

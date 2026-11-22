@@ -262,7 +262,9 @@ defmodule HalC2.Orchestration.Handoff do
   turn's of the latest run that reported, and each later turn keeps a reserve. A run
   the provider is recorded never to have started a turn for (`turnNeverStarted`,
   which a runtime sets only on the provider's own word that the prompt ended
-  unstarted) has no answer coming, so it keeps no reserve; what it sent still counts,
+  unstarted, and only where nothing else in the run could have been answered: a
+  steer, or a turn of the provider's own) has no answer in it, so it keeps no
+  reserve; what it sent still counts,
   as the prompt reached the conversation. Any other unreported run may have started,
   and keeps its reserve. Text counts four characters to a token.
   """
