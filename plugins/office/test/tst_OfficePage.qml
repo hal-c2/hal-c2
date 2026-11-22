@@ -2183,6 +2183,25 @@ Item {
             compare(actor("lead").queue.length, 0, "a talk is heard once");
         }
 
+        // The MC ends a talk, by its own clock: the page never does by a talk's age.
+        function test_a_talk_waits_as_long_as_the_office_has_it_whatever_its_age() {
+            const lead = person("lead", "Lead", "working", "typing");
+            const talks = [
+                {
+                    id: "delegate:worker",
+                    from: "lead",
+                    to: "worker",
+                    kind: "delegate",
+                    text: "Fix the parser",
+                    at: new Date(Date.now() - 120000).toISOString()
+                }
+            ];
+            plugin.publish([lead]);
+            plugin.publish([lead], talks);
+            plugin.publish([lead, person("worker", "Worker", "working", "typing")], talks);
+            compare(actor("lead").queue.length, 1, "the talk waits as long as the topic keeps it");
+        }
+
         function message_to(id, from, to) {
             return {
                 id: id,

@@ -338,7 +338,7 @@ defmodule HalC2.Steps.Plugins.Office do
        %{args: [from, to]} = context do
     thread = World.thread_id(context, to)
 
-    # Plugins hear the input's last 4,000 characters, and the whole result.
+    # Plugins hear each one's last 4,000 characters, so all of a send's short result.
     heard =
       HalC2.Orchestration.TurnWriter.observed_item(%{
         "input" => %{"threadId" => thread, "message" => String.duplicate("x", 5_000)},

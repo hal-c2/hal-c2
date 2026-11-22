@@ -296,8 +296,10 @@ defmodule HalC2Plugins.Office.Floor do
 
   # A talk an item is: a task delegated with `delegate_task`, a message sent with
   # `hal_c2_thread_send`, once the call completed. Only the last 4,000 characters of an
-  # input are heard (`HalC2.Plugins.Extension`), so a longer one is no JSON: whom and
-  # what it was about are then read from the call's result.
+  # input and of a result are heard (`HalC2.Orchestration.TurnWriter.observed_item/1`),
+  # and a longer one is no JSON. Whom and what a long input was about are then read from
+  # the result, when that was short enough to be heard whole; a hand-off with both long
+  # relies on the talk of its worker's row.
   defp talk(%{"status" => "completed", "threadId" => from} = event, now) do
     input = decoded(event["input"])
     result = decoded(event["output"])
