@@ -66,9 +66,9 @@ defmodule HalC2.UpgradeAppupPropTest do
 
   # Some of the modules, each with one of three builds, a kind and what it calls.
   defp modules do
-    entry = {oneof(@mods), range(1, 3), oneof(Map.keys(@kinds)), list(oneof(@mods))}
+    entry = {oneof(@mods), range(1, 3), oneof(Map.keys(@kinds)), resize(4, list(oneof(@mods)))}
 
-    let entries <- list(entry) do
+    let entries <- resize(10, list(entry)) do
       Map.new(entries, fn {mod, md5, kind, imports} ->
         {mod,
          %{
