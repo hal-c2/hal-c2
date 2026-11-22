@@ -72,6 +72,13 @@ public:
   // For a client that spends the link itself (apps/mobile-qt's Pairing).
   std::optional<QString> add(const pairing::Result& result);
   void remove(const QString& id);
+  // Drops a saved copy of an environment kept as the shell's own (the
+  // phone's pairing): its connection, record and credential go, but what
+  // the shell kept of the environment stays, as the shell's own
+  // connection serves it. The shell's own credential is not the
+  // catalog's (the phone keeps it in pairing.json), so forgetting the
+  // catalog's copy under the same id cannot delete it.
+  void dropDuplicate(const QString& id);
   // Connects to every saved environment again, for a shell whose rows were
   // emptied under them (NativeShell::close) and that needs them sent afresh.
   void reconnect();

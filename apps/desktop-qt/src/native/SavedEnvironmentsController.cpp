@@ -175,6 +175,12 @@ void SavedEnvironmentsController::remove(const QString& id) {
   publish();
 }
 
+void SavedEnvironmentsController::dropDuplicate(const QString& id) {
+  disconnect(id, false);
+  if (m_catalog) m_catalog->forget(id);
+  publish();
+}
+
 bool SavedEnvironmentsController::handle(const QString& action, const QVariant& payload) {
   const QVariantMap input = payload.toMap();
   if (action == QLatin1String("savedEnvironments.pair")) {

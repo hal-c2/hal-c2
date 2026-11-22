@@ -3,8 +3,8 @@
 // outside, token exchanges answered, refused, held and dropped, a second
 // pairing started while one is in flight, adding and cancelling, another
 // environment paired beside the first and forgotten again, forgetting the
-// first while another is beside it, and the app started again over what the
-// device kept.
+// first while another is beside it, an interrupted promote that left the
+// first beside itself, and the app started again over what the device kept.
 
 #include "Prop.h"
 
@@ -105,6 +105,9 @@ struct Model {
   std::string session;
   // The MCs paired beside it, and the sessions they sold.
   std::map<int, std::string> beside;
+  // An interrupted promote left the paired MC beside itself too (#1746):
+  // beside holds it as well, until a restart or a forget drops the copy.
+  bool duplicated = false;
   bool pairing = false;
   bool adding = false;
   // Whether the device's storage takes writes.
@@ -156,6 +159,9 @@ void answered(Model& m, int mc, bool paired) {
   } else {
     m.paired = mc;
     m.session = sessionOf(mc, m.sold[mc]);
+    // Nor is it listed beside itself.
+    m.beside.erase(mc);
+    m.duplicated = false;
   }
   m.adding = false;
   m.link.reset();
@@ -334,7 +340,7 @@ struct Sut {
     const QVariantList listed = phone->bridge->state()->value(QStringLiteral("savedEnvironments")).toMap().value(QStringLiteral("environments")).toList();
     RC_ASSERT(listed.size() == qsizetype(m.beside.size()));
     for (const auto& [mc, session] : m.beside) {
-      RC_ASSERT(!m.paired || *m.paired != mc);
+      if (!m.duplicated) RC_ASSERT(!m.paired || *m.paired != mc);
       const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
       RC_ASSERT(std::any_of(listed.begin(), listed.end(), [&](const QVariant& entry) {
         return entry.toMap().value(QStringLiteral("id")) == id && entry.toMap().value(QStringLiteral("origin")) == mcs[mc]->origin();
@@ -589,7 +595,7 @@ struct Forget : Command {
     RC_PRE(!kept);
   }
   void apply(Model& m) const override {
-    if (mc && m.beside.contains(*mc)) {
+    if (mc && m.beside.contains(*mc) && m.paired != mc) {
       m.beside.erase(*mc);
       m.said = Said::Nothing;
       return;
@@ -604,6 +610,10 @@ struct Forget : Command {
     }
     ++m.attempt;
     m.pairing = false;
+    // A saved copy of the shell's own goes with it, before another
+    // takes its place (#1746).
+    if (m.duplicated && m.paired) m.beside.erase(*m.paired);
+    m.duplicated = false;
     m.paired.reset();
     m.session.clear();
     m.adding = false;
@@ -645,13 +655,49 @@ struct Disk : Command {
   void show(std::ostream& os) const override { os << (writable ? "Disk(writable)" : "Disk(read-only)"); }
 };
 
+// An interrupted promote or re-pair: pairing.json was written, the saved
+// copy never removed, so the shell's own environment is beside itself too
+// (#1746). Injected through the catalog of the running phone, as the
+// interruption leaves it on the device.
+struct Duplicate : Command {
+  explicit Duplicate(const Model&) {}
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.paired.has_value());
+    RC_PRE(!m.duplicated);
+    RC_PRE(!m.pairing);
+    RC_PRE(m.writable);
+  }
+  void apply(Model& m) const override {
+    m.duplicated = true;
+    m.beside[*m.paired] = m.session;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    const int mc = *m.paired;
+    const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
+    auto* saved = s.phone->shell->shared<SavedEnvironmentsController>();
+    RC_ASSERT(saved != nullptr);
+    RC_ASSERT(saved->catalog() != nullptr);
+    const SavedEnvironment copy{id, QString::fromLatin1(kLabels[mc]), QUrl(s.mcs[mc]->origin()), {}};
+    RC_ASSERT(!saved->catalog()->save(copy, QString::fromStdString(m.session)).has_value());
+    saved->connectTo(id);
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Duplicate"; }
+};
+
 // The app is closed and started again over what the device kept. What the
-// MCs held for the phone that went is let go of.
+// MCs held for the phone that went is let go of. A saved copy of the
+// pairing is the older one (pairing.json is written first): the start
+// drops it, the pairing's own session untouched (#1746).
 struct Restart : Command {
   explicit Restart(const Model&) {}
   void apply(Model& m) const override {
     ++m.attempt;
     m.pairing = false;
+    if (m.duplicated && m.paired) m.beside.erase(*m.paired);
+    m.duplicated = false;
     m.held.clear();
     m.adding = false;
     m.link.reset();
@@ -685,7 +731,7 @@ private slots:
     QVERIFY(rc::check("the phone's pairing agrees with the model", [] {
       Model model;
       Sut sut;
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Disk, Restart>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Forget, Duplicate, Duplicate, Disk, Restart, Restart>());
     }));
   }
 };
