@@ -320,6 +320,17 @@ Feature: Clustering one person's machines
     Then the client is told to resync what it watches of the second member
     And watching it again shows the settings as they are now
 
+  # An upgrade in place keeps the socket, and with it watches a parting ended under the older code.
+  @mc
+  Scenario: A client whose watches a parting ended watches again as its MC is upgraded in place
+    Given a client connected to the first of two members that can lose each other
+    And it watches the second member's settings
+    And its socket is from before sockets heard members come back
+    When the members lose each other, the second's settings change and they meet again
+    And the client's MC is upgraded in place
+    Then the client is told to resync what it watches of the second member
+    And watching it again shows the settings as they are now
+
   @mc
   Scenario: A client follows a thread on another member by its environment
     Given a client connected to the first member

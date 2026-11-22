@@ -1016,6 +1016,26 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "its socket is from before sockets heard members come back", context do
+    {:ok, supervisor} = ExUnit.fetch_test_supervisor()
+    [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn {io, %{connection: connection} = handler} ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      v12 = connection.websock_state |> Map.delete(:unreached) |> Map.put(:v, 12)
+      {io, %{handler | connection: %{connection | websock_state: v12}}}
+    end)
+
+    Map.put(context, :older_socket, socket)
+  end
+
+  step "the client's MC is upgraded in place", context do
+    # A socket's state moves to the code it runs with the first message it handles.
+    send(context.older_socket, :after_upgrade)
+    context
+  end
+
   step "the client is told to resync what it watches of the second member", context do
     {resync, client} = Mc.await(World.client(context), &(&1["t"] == "resync"), 30_000)
     assert resync == %{"t" => "resync", "id" => 4}

@@ -24,6 +24,10 @@ defmodule HalC2.WebSocketWatchPropTest do
   the old member once it can answer): every subscription watching it, and every one
   that failed there (`away`: its Slack, which it doesn't run), is told to resync and
   forgotten, and no other is told anything.
+
+  The socket is upgraded in place from before it heard MCs come back (`upgrade/1`): on
+  its first message it treats the old member as just back for what it watches there,
+  and no longer knows what had failed there, which that version didn't keep.
   """
 
   use ExUnit.Case, async: false
@@ -61,6 +65,7 @@ defmodule HalC2.WebSocketWatchPropTest do
     numtests: HalC2.Prop.numtests(60),
     max_size: 30 do
     {_peer, old} = OldMc.start(self())
+    answers_when_up(old)
     :persistent_term.put({__MODULE__, :old}, old)
 
     forall cmds <- commands(__MODULE__) do
@@ -139,6 +144,7 @@ defmodule HalC2.WebSocketWatchPropTest do
     frequency(
       [
         {1, {:call, __MODULE__, :ready, [state.subs.old != []]}},
+        {1, {:call, __MODULE__, :upgrade, [state.subs.old != []]}},
         {2, let(id <- oneof(@ids.away), do: {:call, __MODULE__, :sub_away, [id]})},
         {3,
          let(kind <- oneof(@kinds), do: {:call, __MODULE__, :change, [kind, state.values[kind]]})}
@@ -191,6 +197,7 @@ defmodule HalC2.WebSocketWatchPropTest do
 
   def precondition(state, {:call, _, :change, [kind, value]}), do: value == state.values[kind]
   def precondition(state, {:call, _, :ready, [held]}), do: held == (state.subs.old != [])
+  def precondition(state, {:call, _, :upgrade, [held]}), do: held == (state.subs.old != [])
   def precondition(state, {:call, _, :sub_away, [id]}), do: id not in state.unreached
   def precondition(state, {:call, _, :unsub_away, [id]}), do: id in state.unreached
 
@@ -206,6 +213,9 @@ defmodule HalC2.WebSocketWatchPropTest do
   def next_state(state, _result, {:call, _, :resub, _}), do: state
 
   def next_state(state, _result, {:call, _, :ready, [_held]}),
+    do: %{put_in(state.subs.old, []) | unreached: []}
+
+  def next_state(state, _result, {:call, _, :upgrade, [_held]}),
     do: %{put_in(state.subs.old, []) | unreached: []}
 
   def next_state(state, _result, {:call, _, :sub_away, [id]}),
@@ -251,6 +261,9 @@ defmodule HalC2.WebSocketWatchPropTest do
   def postcondition(state, {:call, _, :ready, [held]}, result),
     do:
       result == {Enum.sort(for id <- state.subs.old ++ state.unreached, do: {:resync, id}), held}
+
+  def postcondition(state, {:call, _, :upgrade, [held]}, result),
+    do: result == {Enum.sort(for id <- state.subs.old, do: {:resync, id}), held}
 
   def postcondition(_state, {:call, _, :sub_away, [id]}, frames), do: frames == [{:error, id}]
   def postcondition(_state, {:call, _, :unsub_away, _}, frames), do: frames == []
@@ -336,6 +349,30 @@ defmodule HalC2.WebSocketWatchPropTest do
     {frames, told}
   end
 
+  # The socket's state as version 12 kept it, then its first message on this code. The
+  # old member is asked first, so what it was told to let go of comes before the frames.
+  def upgrade(held) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(Process.get({__MODULE__, :web}))
+
+    :sys.replace_state(socket, fn {io, %{connection: connection} = handler} ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      v12 = connection.websock_state |> Map.delete(:unreached) |> Map.put(:v, 12)
+      {io, %{handler | connection: %{connection | websock_state: v12}}}
+    end)
+
+    send(socket, :after_upgrade)
+    wait = if held, do: 10_000, else: 0
+
+    told =
+      receive do
+        {:old_mc_unsubscribed, _socket} -> true
+      after
+        wait -> false
+      end
+
+    {frames(), told}
+  end
+
   def change(kind, value) do
     change!(kind, value)
     frames()
@@ -358,6 +395,17 @@ defmodule HalC2.WebSocketWatchPropTest do
   defp shape(:old), do: %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(old())}
 
   defp old, do: :persistent_term.get({__MODULE__, :old})
+
+  # A socket follows again only once the member's supervisor answers.
+  defp answers_when_up(member) do
+    code = ~S"""
+    {:ok, pid} = Supervisor.start_link([], strategy: :one_for_one, name: HalC2.Supervisor)
+    Process.unlink(pid)
+    :ok
+    """
+
+    {:ok, _bindings} = :erpc.call(member, Code, :eval_string, [code])
+  end
 
   defp gate(kind), do: Map.fetch!(Process.get({__MODULE__, :gates}), kind)
 

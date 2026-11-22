@@ -1386,11 +1386,15 @@ defmodule HalC2.Web.Socket do
       |> migrate()
 
   # Version 13: every socket hears MCs come back. One that awaited a lost terminal
-  # heard them already, and would hear each twice.
+  # heard them already, and would hear each twice. A parting before this may have
+  # ended what it watches on the MCs here now, so that is followed again as if they
+  # had just come back.
   defp migrate(%{v: 12} = state) do
     :ok = :net_kernel.monitor_nodes(false, node_type: :all)
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-    state |> Map.merge(%{unreached: %{}, v: 13}) |> migrate()
+    state = Map.merge(state, %{unreached: %{}, v: 13})
+    for mc <- Node.list(), do: await_ready(state, mc)
+    migrate(state)
   end
 
   # Version 12: a socket with a session rechecks it on a timer, started here for one

@@ -21,7 +21,8 @@ defmodule HalC2.ClusterTest do
     start_supervised!({HalC2.Store, path: Path.join([dir, "a", "hal-c2.sqlite"])})
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    web = start_supervised!(HalC2.Web)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
 
     {:ok, peer, b} =
       :peer.start_link(%{
@@ -36,7 +37,7 @@ defmodule HalC2.ClusterTest do
         do: :ok = :erpc.call(b, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(b, Application, :ensure_all_started, [:hal_c2])
-    %{port: port, peer: peer, b: b}
+    %{port: port, web: web, peer: peer, b: b}
   end
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
@@ -491,6 +492,39 @@ defmodule HalC2.ClusterTest do
     assert later["value"] == "after"
   end
 
+  # Reloading keeps sockets up, so one may hold watches a parting ended before it could hear of it.
+  test "a socket from before it heard MCs come back follows again what a parting ended as it is upgraded",
+       %{tmp_dir: dir, port: port, web: web, peer: second} do
+    {peer, c} = pair(second, dir)
+    true = Node.connect(c)
+    id = topic_plugin(peer)
+    publish(peer, id, "before")
+
+    {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    shape = %{"type" => "plugin", "mc" => Atom.to_string(c), "id" => id, "topic" => "watched"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert %{"t" => "plugin", "value" => "before"} = first
+
+    socket = as_v12(web)
+    part(c)
+    publish(peer, id, "while parted")
+    true = Node.connect(c)
+    # Any message after the upgrade is the first its new code handles.
+    send(socket, :after_upgrade)
+
+    {resync, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
+    assert resync == %{"t" => "resync", "id" => 1}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
+    {now, _, client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert now["value"] == "while parted"
+
+    publish(peer, id, "after")
+    {later, _, _client} = WsClient.recv_until(client, &(&1["t"] == "plugin"), 30_000)
+    assert later["value"] == "after"
+  end
+
   test "a plugin topic asked for while its MC was away is asked again once it has started",
        %{tmp_dir: dir, port: port, peer: second} do
     {peer, c} = pair(second, dir)
@@ -543,6 +577,19 @@ defmodule HalC2.ClusterTest do
   defp pair(second, dir) do
     :ok = :peer.stop(second)
     member(dir)
+  end
+
+  # The test's one socket as version 12 kept it: deaf to MCs coming back.
+  defp as_v12(web) do
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn {io, %{connection: connection} = handler} ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      old = connection.websock_state |> Map.delete(:unreached) |> Map.put(:v, 12)
+      {io, %{handler | connection: %{connection | websock_state: old}}}
+    end)
+
+    socket
   end
 
   defp part(c) do
