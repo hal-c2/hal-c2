@@ -316,6 +316,8 @@ struct Model {
   bool holding = false;
   // Rows a held settle or snooze is waiting on (SidebarController::parking).
   std::set<std::string> parking;
+  // Threads a held unarchive is waiting on (ArchivedThreadsController's busy rows).
+  std::set<std::string> unarchiving;
   std::optional<std::string> scope;  // a project id
   std::set<std::string> selected;
   std::string anchor;
@@ -471,6 +473,13 @@ void park(Model& model, const std::string& key, const Cmd& cmd) {
   if (!online(model, environment)) return;
   dispatch(model, key, cmd);
   if (model.holding) model.parking.insert(key);
+}
+
+// ArchivedThreadsController::act: once per thread at a time.
+void unarchive(Model& model, const std::string& key) {
+  if (model.unarchiving.count(key) || !online(model, split(key).first)) return;
+  dispatch(model, key, Cmd{"thread.unarchive", std::nullopt, std::nullopt});
+  if (model.holding) model.unarchiving.insert(key);
 }
 
 // SidebarController::arrange: the order keys that put `key` where `ordered`
@@ -1227,6 +1236,7 @@ struct Disconnect : Command {
   void apply(Model& model) const override {
     model.connected = false;
     model.parking.clear();
+    model.unarchiving.clear();
   }
   void run(const Model& model, Sut& sut) const override {
     Model next = model;
@@ -1292,7 +1302,7 @@ struct RowAction : Command {
     } else if (action == "unsnooze") {
       dispatch(model, key, Cmd{"thread.unsnooze", std::nullopt, std::nullopt});
     } else if (action == "unarchive") {
-      dispatch(model, key, Cmd{"thread.unarchive", std::nullopt, std::nullopt});
+      unarchive(model, key);
     } else {
       model.anchor = key;
       model.selected.clear();
@@ -1551,7 +1561,10 @@ struct Hold : Command {
 
   void checkPreconditions(const Model& model) const override { RC_PRE(model.connected); }
   void apply(Model& model) const override {
-    if (model.holding) model.parking.clear();
+    if (model.holding) {
+      model.parking.clear();
+      model.unarchiving.clear();
+    }
     model.holding = !model.holding;
   }
   void run(const Model& model, Sut& sut) const override {
