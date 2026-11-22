@@ -12,6 +12,7 @@
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
+#   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
 
 @plugin-code-review
 Feature: Agent code review
@@ -500,6 +501,13 @@ Feature: Agent code review
       When #12 is reviewed
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
+
+    @mc
+    Scenario: A review checkout has the submodules the reviewed commit pins
+      Given the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its thread works in a checkout of the head of #12
+      And the checkout of #12 has "third_party/lib" at the commit its head pins
 
   Rule: An untrusted pull request is reviewed in a sandbox
 
