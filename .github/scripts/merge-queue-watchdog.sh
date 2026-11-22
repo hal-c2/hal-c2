@@ -118,6 +118,11 @@ while IFS=$'\t' read -r _ state sha number _; do
           break
           ;;
       esac
+      # Read last, as a retry may have started since. One can still start as the stamp posts.
+      if [ "$(gh api "repos/$repo/actions/runs/$id" --jq .run_attempt)" != "$attempt" ]; then
+        echo "#$number's promoted run $id is no longer known to be at attempt $attempt; not failing it"
+        break
+      fi
       echo "#$number's promoted run ended $own; failing the entry"
       act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
     fi
