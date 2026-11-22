@@ -125,6 +125,9 @@ jobs:
       - name: Claimed desktop/mobile scenarios are selected by their runners
         run: python3 mise-tasks/features/check
 
+      # Here because this job runs on every change, with a checkout and nothing to install.
+      - name: An interrupted desktop install keeps an installed desktop
+        run: python3 scripts/lib/replace-install.test.py
 
   # The one job that saves the build every other MC job restores.
   mc_check:
@@ -214,7 +217,6 @@ jobs:
       - name: Sobelow against its baseline
         run: mix sobelow.check
 
-
   mc:
     name: MC tests
     needs: [changes, mc_check]
@@ -267,7 +269,6 @@ jobs:
         run: mix test
         env:
           HAL_C2_TEST_SLOWEST: 25
-
 
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
@@ -336,7 +337,6 @@ jobs:
           while read -r name; do echo "::warning title=Flaky property::$name"; done <<<"$failed"
         env:
           SHARD: ${{ matrix.shard }}
-
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
   # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
@@ -454,7 +454,6 @@ jobs:
           echo "$globs"
           HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
-
   tui:
     name: TUI
     needs: changes
@@ -507,7 +506,6 @@ jobs:
         env:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
-
 
   # In the queue the first failure decides the entry: these stop the rest of the run so the
   # queue drops it now, not when the slowest proof ends. A job that ran into its timeout
@@ -612,7 +610,20 @@ jobs:
   # write permission, and runs no project code either.
   result:
     name: CI result
-    needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui, park]
+    needs:
+      [
+        changes,
+        pr_assets,
+        ledger,
+        mc_check,
+        mc_audit,
+        mc,
+        mc_props,
+        mc_proofs,
+        mc_scenarios,
+        tui,
+        park,
+      ]
     # Also after a cancel in the queue, which the stop jobs cause: the queue needs an answer.
     if: ${{ always() && (github.event_name == 'merge_group' || inputs.queue || !cancelled()) }}
     permissions:
