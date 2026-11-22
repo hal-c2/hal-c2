@@ -305,7 +305,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
   defp fresh(_thread, _fun, _), do: []
 
-  def postcondition(state, {:call, _, fun, args} = call, {reply, before, now}) do
+  def postcondition(state, {:call, _, fun, args} = call, {reply, before, now, window}) do
     expected = expected_reply(state, call)
     next = next_state(state, nil, call)
     tid = List.first(args)
@@ -335,6 +335,13 @@ defmodule HalC2.ThreadOrganizationPropTest do
     checks =
       if fun in [:active_reorder, :auto_settle_set] and expected == :ok,
         do: [{tid, now[tid].updated_at == before[tid].updated_at} | checks],
+        else: checks
+
+    # A snooze is stamped when it is sent, replacing the stamp it finds even when it
+    # snoozes to the same wake time.
+    checks =
+      if fun == :snooze and expected == :ok,
+        do: [{tid, now[tid] != nil and within?(now[tid].fields["snoozedAt"], window)} | checks],
         else: checks
 
     reply_ok? = reply == expected
@@ -384,10 +391,6 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
           not stamps_set[stamp] ->
             real[stamp] == nil
-
-          # A snooze replaces the stamp it finds, even when it snoozes to the same wake time.
-          stamp == "snoozedAt" and fun == :snooze and stamp in fresh ->
-            is_binary(real[stamp]) and real[stamp] != before.fields[stamp]
 
           stamp in fresh or before == %{} ->
             is_binary(real[stamp])
@@ -502,6 +505,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
   # running on `ending`, the thread whose turn the command ends.
   defp observe(dispatch, ending \\ nil) do
     before = organizations(nil)
+    sent = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
     reply =
       case dispatch.() do
@@ -510,8 +514,18 @@ defmodule HalC2.ThreadOrganizationPropTest do
         other -> {:unexpected, other}
       end
 
-    {reply, before, organizations(ending)}
+    window = {sent, DateTime.utc_now()}
+    {reply, before, organizations(ending), window}
   end
+
+  defp within?(stamp, {sent, replied}) when is_binary(stamp) do
+    case DateTime.from_iso8601(stamp) do
+      {:ok, at, _} -> DateTime.compare(at, sent) != :lt and DateTime.compare(at, replied) != :gt
+      _ -> false
+    end
+  end
+
+  defp within?(_stamp, _window), do: false
 
   defp organizations(ending) do
     deadline = System.monotonic_time(:millisecond) + @wait_ms
