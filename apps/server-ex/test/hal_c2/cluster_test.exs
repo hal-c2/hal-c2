@@ -595,7 +595,9 @@ defmodule HalC2.ClusterTest do
     # Still starting: it is not asked until its services are up.
     :ok = :peer.call(peer, :sys, :suspend, [HalC2.Supervisor])
     Node.set_cookie(c, cookie)
-    true = Node.connect(c)
+    # The failed watch's let-go dialled too, maybe with the wrong cookie still: the
+    # first connect can only wait for that attempt to end.
+    true = Node.connect(c) or Node.connect(c)
     client = WsClient.send_json(client, %{"t" => "ping"})
     {_pong, before, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 30_000)
     refute Enum.any?(before, &(&1["t"] == "resync"))
