@@ -181,7 +181,7 @@ Feature: Launching a thread with its first message
     Given thread "t1" <state>
     When a client launches thread "t1" in "demo" asking to reuse it
     Then it fails with "Only an empty active thread in the target project can change workspace during launch."
-    And "t1" is unchanged
+    And the refused launch writes nothing to thread "t1"
 
     Examples:
       | state                        |
