@@ -751,13 +751,13 @@ defmodule HalC2.Test.Mc do
   end
 
   # An upgrade from a checkout gives the applications it changed the new release's
-  # version and modules; the VM's other tests see the ones they started with.
+  # version and modules; the VM's other tests see the ones they started with. The
+  # spec goes back whole (a key left out reverts to its default, such as Req's
+  # `optional_applications`), with the environment as it is now.
   defp restore_spec(app, spec) do
-    {:ok, now} = :application.get_all_key(app)
-
-    if now[:vsn] != spec[:vsn] do
-      keys = [:description, :vsn, :modules, :registered, :applications, :mod, :start_phases]
-      spec = Keyword.take(spec, keys) ++ [env: Application.get_all_env(app)]
+    with {:ok, now} <- :application.get_all_key(app),
+         true <- now[:vsn] != spec[:vsn] do
+      spec = Keyword.put(spec, :env, Application.get_all_env(app))
 
       :ok =
         :application_controller.change_application_data([{:application, app, spec}], [
