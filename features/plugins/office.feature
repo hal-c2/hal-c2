@@ -208,6 +208,12 @@ Feature: Office
       Then the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
 
     @mc
+    Scenario: A message too long for plugins to hear whole is still a talk
+      Given threads "Lead" and "Reviewer" in the project "api"
+      When the agent of "Lead" sends "Reviewer" a message of 5,000 characters
+      Then the office has a "message" talk from "Lead" to "Reviewer" saying "…"
+
+    @mc
     Scenario: A worker that ends its turn talks back to its parent with its last message
       Given a thread "Lead" with a worker "Write the tests"
       When the worker ends its turn saying "All 12 tests pass"

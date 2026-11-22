@@ -20,7 +20,8 @@ defmodule HalC2Plugins.Office.Floor do
   and for the workers it delegated to however deep, so they sit together; nil for
   everyone else. Talks are
   kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
-  shows those, and `expire/2` and every talk added drop the rest.
+  shows those, and `expire/2` and every talk added drop the rest. One whose text was
+  not heard shows as `…`.
   Times are milliseconds since the epoch; the topic carries them as ISO 8601.
   """
 
@@ -31,6 +32,8 @@ defmodule HalC2Plugins.Office.Floor do
   # `idleHours` above this is refused: a year, whose milliseconds stay a small integer.
   @max_idle_hours 8_760
   @text_chars 120
+  # What a talk says when its text was not heard: never an empty speech bubble.
+  @unheard "…"
   # A worker whose row first shows up this long after it was created was not just
   # delegated to: it came back from another machine, say.
   @born_ms 120_000
@@ -282,9 +285,12 @@ defmodule HalC2Plugins.Office.Floor do
   defp driver(floor, _id, _provider), do: floor
 
   # A talk an item is: a task delegated with `delegate_task`, a message sent with
-  # `hal_c2_thread_send`, once the call completed.
+  # `hal_c2_thread_send`, once the call completed. Only the last 4,000 characters of an
+  # input are heard (`HalC2.Plugins.Extension`), so a longer one is no JSON: whom and
+  # what it was about are then read from the call's result.
   defp talk(%{"status" => "completed", "threadId" => from} = event, now) do
     input = decoded(event["input"])
+    result = decoded(event["output"])
 
     case tool(event["tool"]) do
       "delegate_task" ->
@@ -294,13 +300,13 @@ defmodule HalC2Plugins.Office.Floor do
             "from" => from,
             "to" => child,
             "kind" => "delegate",
-            "text" => line(input["title"]) || line(input["task"]),
+            "text" => line(input["title"]) || line(result["title"]) || line(input["task"]),
             "at" => iso(now)
           }
         end
 
       "hal_c2_thread_send" ->
-        with to when is_binary(to) and to != "" <- input["threadId"] do
+        with to when is_binary(to) and to != "" <- input["threadId"] || result["threadId"] do
           %{
             "id" => "message:#{from}:#{event["itemId"] || event["ordinal"]}",
             "from" => from,
@@ -445,7 +451,10 @@ defmodule HalC2Plugins.Office.Floor do
       |> Enum.take(floor.max_people)
       |> Enum.map(fn {row, state} -> person(floor, row, state) end)
 
-    talks = Enum.filter(floor.talks, &recent?(&1, now))
+    talks =
+      for talk <- floor.talks,
+          recent?(talk, now),
+          do: %{talk | "text" => talk["text"] || @unheard}
 
     %{"people" => people, "talks" => talks}
   end

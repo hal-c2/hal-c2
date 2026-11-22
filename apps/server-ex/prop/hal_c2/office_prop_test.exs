@@ -4,7 +4,8 @@ defmodule HalC2.OfficePropTest do
   @moduledoc """
   The office plugin's state (`HalC2Plugins.Office.Floor`, in `plugins/office/mc`) as a
   state machine: rows put and deleted in every state and with every flag, turns that
-  start, call tools, send messages and finish, settings changed and time passing. After
+  start, call tools, hand work off, send messages (some too long to
+  hear whole) and finish, settings changed and time passing. After
   every step the office is the model's:
 
   - its people are the rows still in it (not archived, moved or deleted; a settled or
@@ -25,7 +26,10 @@ defmodule HalC2.OfficePropTest do
   - its talks are the newest 40 kept, in the order first heard (a talk heard again
     keeps its place, time, who said it to whom and its kind), those under ten minutes
     old, each from, to and of the kind it was said; once the timer fires, the office
-    keeps no talk older, text and all.
+    keeps no talk older, text and all;
+  - a call too long to hear whole is a talk all the same: a hand-off says the title
+    its result names, and a talk whose text was not heard keeps what it said before,
+    or shows as `…`, never as nothing.
 
   A second property holds the deadline `next_change/2` names to `view/2`: an idle thread
   is in the office the millisecond before it and gone at it, whatever its idle hours.
@@ -37,6 +41,7 @@ defmodule HalC2.OfficePropTest do
   use PropCheck
   use PropCheck.StateM
 
+  alias HalC2.Orchestration.TurnWriter
   alias HalC2Plugins.Office.Floor
 
   @ids ~w(t1 t2 t3 t4 t5)
@@ -124,6 +129,9 @@ defmodule HalC2.OfficePropTest do
       {:call, __MODULE__, :call_tool, [elements(@ids), elements(Map.keys(@tools))]},
       {:call, __MODULE__, :say, [elements(@ids), elements(["Done.\nAll green.", "  ", "Fixed"])]},
       {:call, __MODULE__, :send_message, [elements(@ids), elements(@ids), integer(0, 60)]},
+      {:call, __MODULE__, :send_long, [elements(@ids), elements(@ids), integer(0, 60)]},
+      {:call, __MODULE__, :hand_off,
+       [elements(@ids), elements(@ids), elements([:whole, :long, :untitled])]},
       {:call, __MODULE__, :send_messages, [elements(@ids), integer(0, 60)]},
       {:call, __MODULE__, :finish, [elements(@ids), integer(0, 2)]},
       {:call, __MODULE__, :settings, [integer(1, 4), elements([1, 3])]},
@@ -219,6 +227,35 @@ defmodule HalC2.OfficePropTest do
       "status" => "completed",
       "input" => JSON.encode!(%{"threadId" => to, "message" => "m#{k}"})
     })
+  end
+
+  # A message plugins hear only the end of, so not who it is to.
+  def send_long(from, to, k) do
+    input = %{"threadId" => to, "message" => long("m#{k}")}
+    event(heard(from, "i#{k}", "hal_c2_thread_send", input, %{"threadId" => to}))
+  end
+
+  # Work handed off: heard whole, too long to, or too long to with no title anywhere.
+  def hand_off(from, child, size) do
+    title = if size != :untitled, do: "Task #{child}"
+    task = if size == :whole, do: "Do it", else: long("Do it")
+    result = JSON.encode!(%{"childThreadId" => child, "title" => title})
+    event(heard(from, "d", "delegate_task", %{"title" => title, "task" => task}, result))
+  end
+
+  defp long(first), do: first <> "\n" <> String.duplicate("more ", 1_000)
+
+  defp heard(from, id, tool, input, output) do
+    %{
+      "id" => id,
+      "type" => "dynamic_tool",
+      "providerToolName" => "mcp__hal-c2__" <> tool,
+      "status" => "completed",
+      "input" => input,
+      "output" => output
+    }
+    |> TurnWriter.observed_item()
+    |> Map.merge(%{"type" => "turn.item", "threadId" => from})
   end
 
   def finish(id, run),
@@ -346,9 +383,10 @@ defmodule HalC2.OfficePropTest do
     entry = %{state: state, flag: flag, parent: parent, at: at, since: since, mark: mark}
 
     s =
-      if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms,
-        do: add_talk(s, "delegate:" <> id, {parent, id, "delegate"}, "Thread #{id}"),
-        else: s
+      if not Map.has_key?(s.rows, id) and parent != nil and age <= @born_ms and
+           not Enum.any?(s.talks, &(&1.id == "delegate:" <> id)),
+         do: add_talk(s, "delegate:" <> id, {parent, id, "delegate"}, "Thread #{id}"),
+         else: s
 
     put_in(s, [:rows, id], entry)
   end
@@ -397,6 +435,18 @@ defmodule HalC2.OfficePropTest do
     |> add_talk("message:#{from}:i#{k}", {from, to, "message"}, "m#{k}")
   end
 
+  def next_state(s, _result, {:call, _, :send_long, [from, to, k]}) do
+    %{s | activity: Map.put(s.activity, from, "delegating")}
+    |> add_talk("message:#{from}:i#{k}", {from, to, "message"}, nil)
+  end
+
+  def next_state(s, _result, {:call, _, :hand_off, [from, child, size]}) do
+    text = if size != :untitled, do: "Task #{child}"
+
+    %{s | activity: Map.put(s.activity, from, "delegating")}
+    |> add_talk("delegate:" <> child, {from, child, "delegate"}, text)
+  end
+
   def next_state(s, _result, {:call, _, :finish, [id, run]}) do
     said = s.said[id]
     parent = get_in(s.rows, [id, :parent])
@@ -412,14 +462,14 @@ defmodule HalC2.OfficePropTest do
 
   def next_state(s, _result, {:call, _, :tick, [ms]}), do: expire(%{s | now: s.now + ms})
 
-  # A talk heard again keeps its place, time, ends and kind, and takes the new text; one
-  # too old is gone first, so a talk heard again after that is new.
+  # A talk heard again keeps its place, time, ends and kind, and takes the new text if it
+  # has one; one too old is gone first, so a talk heard again after that is new.
   defp add_talk(s, id, {from, to, kind}, text) do
     s = expire(s)
 
     talks =
       if Enum.any?(s.talks, &(&1.id == id)),
-        do: Enum.map(s.talks, &if(&1.id == id, do: %{&1 | text: text}, else: &1)),
+        do: Enum.map(s.talks, &if(&1.id == id, do: %{&1 | text: text || &1.text}, else: &1)),
         else:
           Enum.take(
             s.talks ++ [%{id: id, from: from, to: to, kind: kind, text: text, at: s.now}],
@@ -439,7 +489,7 @@ defmodule HalC2.OfficePropTest do
     Enum.map(view["people"], & &1["id"]) == Enum.map(expected, &elem(&1, 0)) and
       Enum.all?(Enum.zip(view["people"], expected), &person?(s, &1)) and
       Enum.map(view["talks"], &talk/1) ==
-        Enum.map(talks, &{&1.id, &1.from, &1.to, &1.kind, &1.text, &1.at}) and
+        Enum.map(talks, &{&1.id, &1.from, &1.to, &1.kind, &1.text || "…", &1.at}) and
       view["next"] == next_change(s, talks) and kept?(call, view, talks)
   end
 

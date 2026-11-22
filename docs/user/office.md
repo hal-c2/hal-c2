@@ -26,7 +26,8 @@ the machine at the top. **+** and **−** zoom, and **Fit** shows the whole offi
 - A question mark means the thread's agent is asking you something. Click the
   person to open the thread and answer. A red mark means its last turn failed.
 - When one agent hands work to another or sends it a message, the two walk up
-  to each other and the message shows in a speech bubble.
+  to each other and the message shows in a speech bubble. A very long message
+  shows as "…".
 - New threads walk in through the door, and movers carry their desks in. Desks
   nobody uses are carried back out. The office starts with 48 desks, 8 of them
   in the review corner, and grows by groups of desks when more threads come, so

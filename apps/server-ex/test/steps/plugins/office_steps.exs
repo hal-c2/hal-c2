@@ -334,6 +334,25 @@ defmodule HalC2.Steps.Plugins.Office do
     |> send_message(from, to, text)
   end
 
+  step ~r/^the agent of "([^"]+)" sends "([^"]+)" a message of 5,000 characters$/,
+       %{args: [from, to]} = context do
+    thread = World.thread_id(context, to)
+
+    # Plugins hear the input's last 4,000 characters, and the whole result.
+    heard =
+      HalC2.Orchestration.TurnWriter.observed_item(%{
+        "input" => %{"threadId" => thread, "message" => String.duplicate("x", 5_000)},
+        "output" => %{"threadId" => thread, "status" => "sent"}
+      })
+
+    fields =
+      "mcp__hal-c2__hal_c2_thread_send"
+      |> call(%{})
+      |> Map.merge(Map.take(heard, ["input", "output"]))
+
+    context |> start_turn(from) |> item(from, fields)
+  end
+
   step "its agent sends the worker {int} messages", %{args: [n]} = context do
     context = start_turn(context, context.lead)
 

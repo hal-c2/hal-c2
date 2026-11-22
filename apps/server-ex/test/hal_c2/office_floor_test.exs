@@ -4,11 +4,13 @@ defmodule HalC2.OfficeFloorTest do
   @moduledoc """
   How long the office keeps an idle thread (`HalC2Plugins.Office.Floor`, in
   `plugins/office/mc`): `idleHours` from when the thread became idle, however often its
-  row changes after. The plugin process is covered by `features/plugins/office.feature`,
+  row changes after. And the talks of calls too long for a plugin to hear whole.
+  The plugin process is covered by `features/plugins/office.feature`,
   the rest of the floor by `prop/hal_c2/office_prop_test.exs`.
   """
   use ExUnit.Case, async: true
 
+  alias HalC2.Orchestration.TurnWriter
   alias HalC2Plugins.Office.Floor
 
   @hour 3_600_000
@@ -30,6 +32,54 @@ defmodule HalC2.OfficeFloorTest do
   end
 
   defp in_office?(floor, now), do: Floor.view(floor, now)["people"] != []
+
+  # A completed MCP call as plugins hear it.
+  defp heard(tool, input, output) do
+    %{
+      "id" => "call-1",
+      "type" => "dynamic_tool",
+      "providerToolName" => "mcp__hal-c2__" <> tool,
+      "status" => "completed",
+      "input" => input,
+      "output" => output
+    }
+    |> TurnWriter.observed_item()
+    |> Map.merge(%{"type" => "turn.item", "threadId" => "lead"})
+  end
+
+  defp long, do: "First line\n" <> String.duplicate("more ", 1_000)
+
+  # Claude gives a tool's result as text, Codex as a map.
+  for {form, output} <- [text: quote(do: &JSON.encode!/1), map: quote(do: &Function.identity/1)] do
+    test "a hand-off too long to hear whole says its worker's title (a #{form} result)" do
+      title = ~s(Fix the "quoted" parser)
+      input = %{"task" => long(), "title" => title}
+      result = unquote(output).(%{"childThreadId" => "worker", "title" => title})
+
+      # The call can be heard before the worker's row.
+      floor = Floor.observe(floor(), heard("delegate_task", input, result), @start)
+
+      assert [%{"kind" => "delegate", "to" => "worker", "text" => ^title}] =
+               Floor.view(floor, @start)["talks"]
+    end
+
+    test "a message too long to hear whole is still a talk (a #{form} result)" do
+      input = %{"threadId" => "reviewer", "message" => long()}
+      result = unquote(output).(%{"threadId" => "reviewer", "status" => "sent"})
+
+      floor = Floor.observe(floor(), heard("hal_c2_thread_send", input, result), @start)
+
+      assert [%{"kind" => "message", "to" => "reviewer", "text" => "…"}] =
+               Floor.view(floor, @start)["talks"]
+    end
+  end
+
+  test "a hand-off nothing names shows as … and never an empty bubble" do
+    result = %{"childThreadId" => "worker"}
+    floor = Floor.observe(floor(), heard("delegate_task", %{"task" => long()}, result), @start)
+
+    assert [%{"text" => "…"}] = Floor.view(floor, @start)["talks"]
+  end
 
   test "a thread read idle leaves idleHours after its run ended, its row touched since" do
     # Its run ended 50 minutes ago; its provider session was stopped 20 minutes later.
