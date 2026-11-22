@@ -918,8 +918,11 @@ defmodule HalC2.ProviderUsageLimitsTest do
       Application.put_env(:hal_c2, :acp_commands, %{"grok" => ["true"]})
       on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
 
-      # An empty XAI_API_KEY keeps this machine's own key out of it.
-      environment = [{"GROK_HOME", dir}, {"GROK_AUTH", ""}, {"XAI_API_KEY", ""}]
+      # Emptied, this machine's own Grok and xAI variables stay out of it.
+      environment =
+        for({name, _} <- System.get_env(), String.starts_with?(name, ~w(GROK_ XAI_)), do: name)
+        |> Map.new(&{&1, ""})
+        |> Map.put("GROK_HOME", dir)
 
       {:ok, _} =
         HalC2.Settings.put(
