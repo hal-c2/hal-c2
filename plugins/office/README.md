@@ -23,14 +23,34 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   turns and publishes the `office` topic; `floor.ex` is who is in the office,
   what each does and who talks to whom, as plain functions. Nothing is kept on
   disk: after a restart the office is rebuilt from the threads.
-- `ui/OfficePage.qml`: the **Office** page. Every look is drawn from a seed (the
+- `ui/OfficePage.qml`: the **Office** page, generated from `src/`. Don't edit it.
+  Clients fetch only the files `plugin.json` names, so the page and the engine
+  it uses have to be this one file. Every look is drawn from a seed (the
   thread's id), so a person looks the same each time and on every client. The
   floor, each piece of furniture and one sprite sheet per person are painted
   once; the page then only moves them, on one timer that runs while the page is
   shown. A sprite sheet is thousands of Canvas calls, so sheets are painted a few
   a frame, within a budget the page learns from how long one took; until the
   floor and everyone on it are drawn, the page says the office is being set up.
-- `test/tst_OfficePage.qml`: the page against a fake MC part.
+- `src/`: the page as it is written. `OfficePage.qml` says who is in the room
+  and what they do, `OfficeArt.qml` and `Furniture.qml` draw it, and
+  `src/LjosPlay/` is a pinned copy of the declarative engine that runs it, at
+  the commit in `COMMIT`. Change the engine in its own repository and copy it
+  here, rather than editing the copy.
+- `bundle.mjs`: writes `ui/OfficePage.qml` from `src/`.
+- `test/tst_OfficePage.qml`: the generated page against a fake MC part.
+
+## Changing the page
+
+Edit `src/`, then write the shipped file and check that it is current:
+
+```bash
+node plugins/office/bundle.mjs
+node plugins/office/bundle.mjs --check
+```
+
+The bundler makes each file in `src/` an inline component, so a file has one
+root object, its opening line and closing brace in the first column.
 
 ## Running the tests
 
