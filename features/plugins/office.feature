@@ -264,6 +264,11 @@ Feature: Office
       And no two people stop on the same spot
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The wall between the office and the break room has no hole
+      Given the office has grown its break room
+      Then the wall between the rooms is painted from the top wall down to the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person walks through someone standing in its way
       Given a person's way is crossed by someone standing still
       Then it walks straight through them without stopping
@@ -362,6 +367,11 @@ Feature: Office
       Then the person of "Lead" walks up next to the person of "Reviewer", beside it rather than above or below it
       And they face each other and "Please look at the diff" shows in a speech bubble
       And afterwards "Lead" goes back to what it was doing
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speech bubble is over a neighbour's icon
+      Given "Lead" talks beside someone whose agent asks the user something
+      Then the speech bubble of "Lead" is drawn over the question mark
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk shows the words the office has for it now

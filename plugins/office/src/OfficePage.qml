@@ -1719,6 +1719,7 @@ Item {
             Canvas {
                 id: floor
 
+                objectName: "officeFloor"
                 z: -1
                 width: Math.max(1, game.pixelWidth)
                 height: Math.max(1, game.pixelHeight)
@@ -2326,8 +2327,6 @@ Item {
                     // Over the furniture and movers on its row.
                     z: py + 16.001
                     headY: artist.seated(frame) ? 2 : 0
-                    // Bubbles and icons all alike, the later arrival's on top.
-                    headZ: 2
                     bubbleName: "officeBubble:" + key
                     walkFrames: [page.frame.walk1, page.frame.stand, page.frame.walk2, page.frame.stand]
                     standFrame: page.frame.stand

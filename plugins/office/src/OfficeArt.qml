@@ -1306,7 +1306,7 @@ QtObject {
         rect(ctx, "#4a4038", 0, H - 16, W, 16);
         rect(ctx, "#5d544b", 0, H - 14, W, 12);
         rect(ctx, "#6c6258", 0, H - 14, W, 1);
-        wall(xd * 16, 40, 16, 5 * 16 - 40);
+        wall(xd * 16, 6, 16, 5 * 16 - 6);
         wall(xd * 16, 7 * 16, 16, H - 7 * 16);
         // The door to the break room, and a mat at the way in.
         rect(ctx, "#8a6a48", xd * 16, 5 * 16, 2, 32);

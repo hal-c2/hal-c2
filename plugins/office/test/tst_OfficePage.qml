@@ -2128,6 +2128,39 @@ Item {
             verify(changes > 50, "frames change: " + changes);
         }
 
+        function test_a_bubble_is_over_anothers_icon() {
+            const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing"), person("ask", "Fix the parser", "asking")];
+            plugin.publish(people);
+            runUntil(() => people.every(each => arrived(actor(each.id))));
+            plugin.publish(people, [
+                {
+                    id: "talk-over",
+                    from: "lead",
+                    to: "rev",
+                    kind: "message",
+                    text: "Please look at the diff",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the speaker walks up");
+            page.game.advance(1);
+            const speaker = find("officeBubble:lead").parent;
+            let other = find("officeIcon:ask");
+            while (other && other.parent !== speaker.parent)
+                other = other.parent;
+            verify(other, "both are over the room");
+            verify(speaker.z > other.z, "a bubble's " + speaker.z + " is over an icon's " + other.z);
+        }
+
+        function test_the_wall_between_the_rooms_has_no_hole() {
+            plugin.publish([person("one", "One", "working", "typing")]);
+            tryVerify(() => page.settled);
+            waitForRendering(loader.item);
+            const x = page.world.xd * 16 + 8, ctx = find("officeFloor").getContext("2d");
+            for (let y = 0; y < 5 * 16; y++)
+                compare(ctx.getImageData(x, y, 1, 1).data[3], 255, "painted at y " + y);
+        }
+
         function test_two_agents_that_talk_walk_up_to_each_other() {
             const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing")].concat(many(6, "o", "working", "typing"));
             plugin.publish(people);
