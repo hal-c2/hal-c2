@@ -539,6 +539,13 @@ for line in sys.stdin:
         if "start and wait" in text and msg.get("uuid"):
             send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": "started"})
         continue
+    # "start a turn, then fail": Claude starts the prompt, and its result is an error that
+    # reports the turn's usage. Read at the message's end, as history may come before it.
+    if text.endswith("start a turn, then fail"):
+        lifecycle("started")
+        send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session,
+              "usage": {"input_tokens": 1000, "output_tokens": 50}})
+        continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
     # ends it in another lifecycle state (discarded, refused); "never start a turn, mid-answer"

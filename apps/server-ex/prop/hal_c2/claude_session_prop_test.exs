@@ -70,6 +70,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     compact: "/compact",
     never_start: "never start a turn",
     never_start_streaming: "never start a turn, mid-answer",
+    start_failing: "start a turn, then fail",
     which_tools: "which tools",
     halfway: "answer halfway"
   }
@@ -259,6 +260,8 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   @turn_texts Map.keys(@texts) -- [:halfway]
   @unstarted [:never_start, :never_start_streaming]
+  # Texts whose turn fails. None is refused: the next message would quote it to the fake.
+  @failing [:start_failing | @unstarted]
   @full_access_modes %{allowed: "bypassPermissions", no_bypass: "auto", no_auto: "default"}
   @held_texts [:hello, :which_tools, :halfway]
 
@@ -305,7 +308,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   # How `/compact` meets a session that has to start over is not modelled.
   def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
     do:
-      not (refused?(state, model, fast) and text in @unstarted) and
+      not (refused?(state, model, fast) and text in @failing) and
         not (text == :compact and (state.marked or state.lost))
 
   # The MC lets go of an idle runtime only; a transcript is lost with no process up.
@@ -432,6 +435,13 @@ defmodule HalC2.ClaudeSessionPropTest do
       text in @unstarted ->
         seen.status == "failed" and started?(state, model, fast, text, seen) and
           seen.never_started == (text == :never_start and seen.reply == nil) and
+          seen.background == state.background and
+          sent?(state, text, seen.sent)
+
+      # A turn Claude started is never recorded as one it did not, however it fails.
+      text == :start_failing ->
+        seen.status == "failed" and not seen.never_started and
+          started?(state, model, fast, text, seen) and
           seen.background == state.background and
           sent?(state, text, seen.sent)
 
