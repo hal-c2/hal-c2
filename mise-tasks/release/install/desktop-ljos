@@ -3,6 +3,8 @@
 #MISE dir="{{config_root}}"
 #MISE depends=["release:desktop-ljos"]
 set -euo pipefail
+# shellcheck source=scripts/lib/replace-install.sh
+source scripts/lib/replace-install.sh
 
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
 # release:desktop-ljos's output, named for this platform as it names it.
@@ -19,11 +21,9 @@ if [[ $os == Darwin ]]; then
   app="$HOME/Applications/HAL-C2 Ljós.app"
   mkdir -p "$HOME/Applications"
   # Copied beside its place and moved in, so the app is never half there.
-  tmp="$(mktemp -d "$HOME/Applications/.hal-c2-ljos.XXXXXX")"
-  ditto "$out/HAL-C2 Ljós.app" "$tmp/HAL-C2 Ljós.app"
-  rm -rf "$app"
-  mv "$tmp/HAL-C2 Ljós.app" "$app"
-  rmdir "$tmp"
+  staged_install "$app"
+  ditto "$out/HAL-C2 Ljós.app" "$staging/HAL-C2 Ljós.app"
+  swap_install "$staging/HAL-C2 Ljós.app"
   echo "$app"
   exit 0
 fi
@@ -35,11 +35,11 @@ bin="$HOME/.local/bin/hal-c2-ljos"
 icons="$data/icons/hicolor/1024x1024/apps"
 mkdir -p "$HOME/.local/lib" "$HOME/.local/bin" "$data/applications" "$icons"
 # Copied beside its place and moved in. A running window keeps the files it opened.
-tmp="$(mktemp -d "$HOME/.local/lib/.hal-c2-ljos.XXXXXX")"
-cp -R "$out/." "$tmp/"
-chmod 755 "$tmp"
-rm -rf "$lib"
-mv "$tmp" "$lib"
+staged_install "$lib"
+mkdir "$staging/new"
+cp -R "$out/." "$staging/new/"
+chmod 755 "$staging/new"
+swap_install "$staging/new"
 # A link, which the binary resolves to find what lies beside it.
 ln -sfn "$lib/bin/hal-c2-ljos" "$bin"
 cp assets/prod/black-universal-1024.png "$icons/hal-c2-ljos.png"
