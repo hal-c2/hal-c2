@@ -191,10 +191,25 @@ Item {
         return true;
     }
 
-    // Walks up to another actor to say something.
+    // Walks up to another actor to say something. The line's id, for reword().
     function tell(other, text, kind) {
-        queue.push({ to: typeof other === "string" ? other : other.key, text: text, kind: kind });
+        const id = ++world.made;
+        queue.push({ id: id, to: typeof other === "string" ? other : other.key, text: text, kind: kind });
         world.walking = true;
+        return id;
+    }
+
+    // New words for a line it waits to say, walks over to say, or is saying.
+    function reword(id, text) {
+        for (const line of queue) {
+            if (line.id === id)
+                line.text = text;
+        }
+        if (!talk || talk.id !== id)
+            return;
+        talk.text = world.talks.spoken(text);
+        if (talk.phase === "say")
+            bubble = talk.text;
     }
 
     function say(text, ms) {

@@ -45,8 +45,9 @@ QtObject {
             return;
         other.heldBy = actor.key;
         actor.talk = {
+            id: talk.id,
             to: talk.to,
-            text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
+            text: spoken(talk.text),
             kind: talk.kind,
             phase: "go",
             deadline: world.now + giveUpAfter,
@@ -55,6 +56,10 @@ QtObject {
             met: false
         };
         world.walking = true;
+    }
+
+    function spoken(text) {
+        return (text ?? "").replace(/\s+/g, " ").slice(0, 120);
     }
 
     function end(actor) {

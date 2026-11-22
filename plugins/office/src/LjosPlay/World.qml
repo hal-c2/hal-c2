@@ -222,6 +222,16 @@ Flickable {
         return tiles;
     }
 
+    function sameFloor(one, other) {
+        if (one.cols !== other.cols || one.rows !== other.rows)
+            return false;
+        for (let i = 0; i < one.grid.length; i++) {
+            if (one.grid[i] !== other.grid[i])
+                return false;
+        }
+        return true;
+    }
+
     function plan() {
         return stale || !tiles ? compile() : tiles;
     }
@@ -438,7 +448,8 @@ Flickable {
         if (stale || !tiles) {
             const before = tiles;
             compile();
-            if (before) {
+            // Only walls and seats change a walk, so only they plan it again.
+            if (before && !sameFloor(before, tiles)) {
                 for (const actor of Object.values(actors))
                     actor.route();
             }
