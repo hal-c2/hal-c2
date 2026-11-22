@@ -28,7 +28,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
   keeps no room in the conversation for an answer that is not coming (#1735), unless
-  Claude answered a turn of its own in that run.
+  Claude answered a turn of its own in that run, or began to.
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
@@ -69,6 +69,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     which_mode: "which mode",
     compact: "/compact",
     never_start: "never start a turn",
+    never_start_streaming: "never start a turn, mid-answer",
     which_tools: "which tools",
     halfway: "answer halfway"
   }
@@ -257,6 +258,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     }
 
   @turn_texts Map.keys(@texts) -- [:halfway]
+  @unstarted [:never_start, :never_start_streaming]
   @full_access_modes %{allowed: "bypassPermissions", no_bypass: "auto", no_auto: "default"}
   @held_texts [:hello, :which_tools, :halfway]
 
@@ -303,7 +305,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   # How `/compact` meets a session that has to start over is not modelled.
   def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
     do:
-      not (refused?(state, model, fast) and text == :never_start) and
+      not (refused?(state, model, fast) and text in @unstarted) and
         not (text == :compact and (state.marked or state.lost))
 
   # The MC lets go of an idle runtime only; a transcript is lost with no process up.
@@ -352,7 +354,7 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   # A turn handed history that Claude never started leaves the handoff unconfirmed: the
   # next turn is handed it again, its own message too.
-  defp marks?(state, text), do: history?(state, text) and text == :never_start
+  defp marks?(state, text), do: history?(state, text) and text in @unstarted
 
   defp missed(state, text) do
     cond do
@@ -427,9 +429,9 @@ defmodule HalC2.ClaudeSessionPropTest do
       empty_compact?(state, text) ->
         seen.status == "failed" and not seen.background and seen.compactions == 0
 
-      text == :never_start ->
+      text in @unstarted ->
         seen.status == "failed" and started?(state, model, fast, text, seen) and
-          seen.never_started == (seen.reply == nil) and
+          seen.never_started == (text == :never_start and seen.reply == nil) and
           seen.background == state.background and
           sent?(state, text, seen.sent)
 

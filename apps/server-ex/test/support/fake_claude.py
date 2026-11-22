@@ -541,8 +541,11 @@ for line in sys.stdin:
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
-    # ends it in another lifecycle state (discarded, refused).
+    # ends it in another lifecycle state (discarded, refused); "never start a turn, mid-answer"
+    # has begun an answer of its own (message_start, with no block yet) when it ends it.
     if "never start a turn" in text:
+        if "never start a turn, mid-answer" in text.split("</conversation_history>")[-1]:
+            send({"type": "stream_event", "session_id": session, "event": {"type": "message_start", "message": {"id": f"m{turn}s"}}})
         ended = re.search(r"never start a turn \((\w+)\)", text)
         send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg.get("uuid"), "state": ended.group(1) if ended else "completed"})
         continue

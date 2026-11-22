@@ -44,6 +44,23 @@ defmodule HalC2.ClaudeNeverStartedTest do
     refute never_started?(context)
   end
 
+  test "an answer Claude began streaming keeps its reserve", context do
+    stream(context, %{"type" => "message_start", "message" => %{"id" => "partial"}})
+
+    stream(context, %{
+      "type" => "content_block_start",
+      "index" => 0,
+      "content_block" => %{"type" => "text", "text" => ""}
+    })
+
+    refute never_started?(context)
+  end
+
+  test "an answer begun with no text yet keeps its reserve", context do
+    stream(context, %{"type" => "message_start", "message" => %{"id" => "partial"}})
+    refute never_started?(context)
+  end
+
   test "a result of a turn Claude ran on its own keeps its reserve", context do
     claude(context, %{
       "type" => "result",
@@ -83,6 +100,9 @@ defmodule HalC2.ClaudeNeverStartedTest do
     [run] = World.runs(world, @thread)
     run["turnNeverStarted"] == true
   end
+
+  defp stream(context, event),
+    do: claude(context, %{"type" => "stream_event", "event" => event})
 
   defp claude(%{pid: pid}, message),
     do: send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})

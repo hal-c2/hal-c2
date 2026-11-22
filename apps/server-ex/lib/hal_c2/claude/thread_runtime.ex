@@ -2411,8 +2411,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     %{state | session_id: session_id}
   end
 
+  # An answer is under way from its first partial message: should the prompt end
+  # unstarted first, its size is still never reported (`answerless?/1`).
   defp claude_message(%{"type" => "stream_event", "event" => event}, state),
-    do: stream_event(event, state)
+    do: stream_event(event, answered(state))
 
   defp claude_message(
          %{"type" => "assistant", "message" => %{"id" => id, "content" => content}} = message,
@@ -4189,9 +4191,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # Whether nothing in the turn could have been answered, its prompt unstarted: Claude
-  # wrote nothing and ended no turn of its own in it, runs no wake, and was sent no
-  # steer. Such an answer's size is never reported, as only the result that ends the
-  # user's turn reports one (`record_usage/2`).
+  # neither wrote nor began a message in it, ended no turn of its own, runs no wake,
+  # and was sent no steer. An answer's size is otherwise never reported, as only the
+  # result that ends the user's turn reports one (`record_usage/2`).
   defp answerless?(%{turn: turn, wake: wake}) do
     not Map.get(turn, :answered, false) and not match?(%{open: true}, wake) and
       Map.get(turn.prompt, :steers, []) == []
