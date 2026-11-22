@@ -34,10 +34,17 @@ Rectangle {
             strip.window.startSystemMove()
     }
 
-    TapHandler {
-        enabled: strip.framelessChrome
-        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
-        onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
+    // The pointer's double click on the title bar. To assistive technology
+    // this is the window controls' Maximize button, which the keyboard reaches.
+    Item {
+        anchors.fill: parent
+        Accessible.ignored: true
+
+        TapHandler {
+            enabled: strip.framelessChrome
+            // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
+            onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
+        }
     }
 
     RowLayout {
@@ -68,6 +75,10 @@ Rectangle {
                 background: Rectangle {
                     color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
                     radius: Theme.radiusSm
+                    // Keyboard focus draws a ring: the fill alone does not
+                    // change on the active tab, whose fill already shows.
+                    border.width: tab.visualFocus ? 1 : 0
+                    border.color: Theme.palette.color("focus", "#3b82f6")
                 }
 
                 Row {

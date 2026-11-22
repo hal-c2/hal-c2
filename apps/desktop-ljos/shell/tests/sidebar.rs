@@ -737,6 +737,29 @@ fn migrated_threads_are_announced_once() {
     assert_eq!(count(&engine, "Setting not saved"), 1);
     assert_eq!(count(&engine, "Your threads were brought over"), 0);
 
+    // The same with a settings folder that cannot be written: it sits under a
+    // regular file.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("blocker"), "").unwrap();
+    let source = common::compile(&[("Main", "import QtQuick\nItem {}\n")], &[]);
+    let engine = App::new("test")
+        .register(hal_c2_shell::register)
+        .source(source)
+        .build_engine();
+    let mc = Rc::new(StreamingMc::default());
+    let launch = Launch {
+        mc_origin: Some(ORIGIN.into()),
+        cache_dir: Some(dir.path().join("cache")),
+        config_dir: Some(dir.path().join("blocker").join("config")),
+        ..Launch::default()
+    };
+    hal_c2_shell::start(&engine, &launch, mc.clone());
+    for title in ["One", "Two", "Three"] {
+        mc.send(&engine, migrated(title));
+    }
+    assert_eq!(count(&engine, "Setting not saved"), 1);
+    assert_eq!(count(&engine, "Your threads were brought over"), 0);
+
     // Kept, the threads are announced once.
     let dir = tempfile::tempdir().unwrap();
     let source = common::compile(&[("Main", "import QtQuick\nItem {}\n")], &[]);

@@ -1246,6 +1246,23 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  step "the user interrupts a run the thread does not have", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => "run:unknown"
+    })
+  end
+
+  step "the running turn was not asked to stop", context do
+    refute Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["type"] == "run_interrupt_request")
+           )
+
+    context
+  end
+
   step "the running turn is still running", context do
     run =
       World.entities(context, context.thread, "run") |> Enum.find(&(&1["id"] == context.running))

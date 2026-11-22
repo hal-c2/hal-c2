@@ -110,9 +110,11 @@ as it was.
 
 None of the clients has a download yet. To use one, run it from source: the
 [README](../../README.md#running-from-source) lists what to install, and
-`mise run release:install` builds the MC, and on x86_64 Linux and macOS the
-desktop app, and installs them for your user. The desktop app uses the MC already
-running on the same files, and starts the MC it carries when there is none. Link a
+`mise run release:install` builds the MC and the desktop apps this machine
+can build (HAL-C2, and HAL-C2 Ljós beside it) and installs them for your user; `release:install:mc`,
+`release:install:desktop-qt` and `release:install:desktop-ljos` install one
+of them. A desktop app uses the MC already running on the same files, and
+starts the MC it carries when there is none. Link a
 phone or another computer to an MC with [remote access](./remote-access.md).
 
 ## Providers

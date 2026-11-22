@@ -337,8 +337,22 @@ defmodule HalC2.Pair do
   defp base(true, port, serve_port, _rest, running, dirs),
     do: HalC2.TailscaleServe.publish(port, serve_port, located_id(dirs, running), command_name())
 
-  defp base(_, _port, _serve_port, rest, running, _dirs),
-    do: {:ok, List.first(rest) || (running && running["origin"]) || HalC2.Web.base_url()}
+  defp base(_, port, _serve_port, rest, running, _dirs),
+    do: {:ok, List.first(rest) || reachable_origin(port, running)}
+
+  # The address a device reaches the paired MC at when none was named. An MC
+  # listening on every interface records a loopback origin no other device can
+  # use, so the machine's network address serves instead.
+  defp reachable_origin(port, running) do
+    # A running MC's record names its bind only when one was set (the default is
+    # loopback); this tool's own setting describes no other MC.
+    bind = if running, do: running["host"], else: Application.get_env(:hal_c2, :host)
+    ip = bind in ["0.0.0.0", "::"] && HalC2.Web.network_ip(:inet.getifaddrs())
+
+    if ip,
+      do: "http://#{ip}:#{port}",
+      else: (running && running["origin"]) || HalC2.Web.base_url()
+  end
 
   # The located MC's environment id, for the Tailscale Serve check: read from its
   # home, or asked of the MC itself at its recorded origin. Never

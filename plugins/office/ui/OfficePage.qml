@@ -9,8 +9,8 @@ import HalC2.Bricks
 // thread sits at a desk with the workers it delegated to in the same group of
 // desks; some workers are cats and dogs. What a person does follows its agent:
 // typing, running and testing at the computer, planning at a whiteboard, reading
-// at a bookshelf, and waiting or idling in the break room. A talk in the
-// `office` topic walks the speaker up to the other person with a speech bubble.
+// at a bookshelf, and waiting or idling at the desk, with a short break now
+// and then. A talk in the `office` topic walks the speaker up to the other person with a speech bubble.
 // Hover a person for who it is; click it to open its thread.
 //
 // Everything is drawn once into canvases (the floor, each piece of furniture,
@@ -94,8 +94,9 @@ Item {
     }
 
     // The office as drawn: its size in tiles, its furniture, each desk and
-    // chair, the screens of its computers and its whiteboards. Built once; the
-    // movers bring desks in and take them out.
+    // chair, the screens of its computers and its whiteboards. Built again
+    // only when the office changes size; the movers bring desks in and take
+    // them out.
     property int worldCols: 0
     property int worldRows: 0
     property var props: []
@@ -122,12 +123,22 @@ Item {
     property var markViews: ({})
     property var moverViews: ({})
     property var boardViews: ({})
-    property var occupied: []
+    // tile → the person who stops there: where it sits, stands or waits, or
+    // the side of whoever it walks up to talk to. Nobody stops on a tile
+    // another has claimed; on the way, people walk through each other.
     property var claims: ({})
     property var movers: ({})
     property var jobs: []
     // People who came in while the doorway was busy wait outside, in order.
+    // The doorway lets one person or mover through a step's time apart, from
+    // doorOpensAt on.
     property var outside: []
+    property real doorOpensAt: 0
+    // The number of pods the office is closing down to, while the desks are
+    // carried out of the rest; 0 when it is not (see closeRows()).
+    property int closeTo: 0
+    // The most people on a break at once.
+    readonly property int breakRoomCap: 8
     property int moversHired: 0
     property var seen: ({})
     property var arrival: ({})
@@ -135,7 +146,43 @@ Item {
     property bool primed: false
     property real now: 0
     property int ticks: 0
+    // When the screens last changed and next change (see updateScreens()).
+    property real screensSeen: 0
+    property real screensAt: 0
     property var rng: random(0x0ff1ce)
+    // What is on the screens draws from its own stream, so it never changes
+    // where anyone goes.
+    property var screenRng: random(0x5c4ee7)
+
+    // What a waiting or idle person slacks off with on its screen: a
+    // background and a few frames, each a list of [x, y, w, h, color] on the
+    // 8×6 screen. A frame lasts a second (see updateScreens()).
+    readonly property var slackArt: ({
+            solitaire: {
+                color: "#1f7a3a",
+                frames: [[[0, 1, 2, 2, "#ffffff"], [3, 1, 2, 3, "#ffffff"], [6, 1, 2, 4, "#ffffff"], [0, 1, 1, 1, "#e53935"], [3, 1, 1, 1, "#212121"], [6, 1, 1, 1, "#e53935"]], [[0, 1, 2, 3, "#ffffff"], [3, 1, 2, 2, "#ffffff"], [6, 1, 2, 4, "#ffffff"], [0, 3, 1, 1, "#212121"], [3, 1, 1, 1, "#e53935"], [6, 1, 1, 1, "#e53935"]], [[1, 0, 2, 2, "#ffffff"], [4, 2, 2, 2, "#ffffff"], [6, 4, 2, 2, "#ffffff"], [1, 0, 1, 1, "#e53935"], [4, 2, 1, 1, "#212121"], [6, 4, 1, 1, "#e53935"]]]
+            },
+            snake: {
+                color: "#0d1210",
+                frames: [[[1, 4, 3, 1, "#5fd38a"], [3, 2, 1, 2, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[2, 4, 2, 1, "#5fd38a"], [3, 1, 1, 3, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[3, 2, 1, 3, "#5fd38a"], [3, 1, 3, 1, "#5fd38a"], [6, 1, 1, 1, "#ff5252"]], [[3, 2, 1, 2, "#5fd38a"], [3, 1, 4, 1, "#5fd38a"], [1, 4, 1, 1, "#ff5252"]]]
+            },
+            blocks: {
+                color: "#151a33",
+                frames: [[[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 0, 1, 2, "#ffd54f"]], [[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 2, 1, 2, "#ffd54f"]], [[0, 5, 3, 1, "#ffb74d"], [4, 5, 4, 1, "#4dd0e1"], [0, 4, 2, 1, "#ba68c8"], [6, 4, 2, 1, "#81c784"], [3, 3, 1, 3, "#ffd54f"]], [[0, 5, 2, 1, "#ba68c8"], [6, 5, 2, 1, "#81c784"], [3, 0, 3, 1, "#e57373"], [4, 1, 1, 1, "#e57373"]]]
+            },
+            cat: {
+                color: "#202020",
+                frames: [[[2, 2, 4, 2, "#f4a24c"], [2, 1, 1, 1, "#f4a24c"], [5, 1, 1, 1, "#f4a24c"], [6, 3, 1, 1, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 2, 1, "#ff3b3b"]], [[2, 2, 4, 2, "#f4a24c"], [2, 1, 1, 1, "#f4a24c"], [5, 1, 1, 1, "#f4a24c"], [6, 1, 1, 2, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 4, 1, "#ff3b3b"]], [[2, 1, 4, 2, "#f4a24c"], [2, 0, 1, 1, "#f4a24c"], [5, 0, 1, 1, "#f4a24c"], [6, 2, 1, 1, "#f4a24c"], [0, 5, 8, 1, "#555555"], [0, 5, 6, 1, "#ff3b3b"]]]
+            },
+            meme: {
+                color: "#3a3a3a",
+                frames: [[[1, 0, 6, 1, "#ffffff"], [3, 2, 2, 2, "#ffd54f"], [3, 3, 2, 1, "#5d4037"], [1, 5, 6, 1, "#ffffff"]], [[2, 0, 4, 1, "#ffffff"], [2, 2, 4, 2, "#7cb342"], [2, 1, 1, 1, "#7cb342"], [5, 1, 1, 1, "#7cb342"], [0, 5, 8, 1, "#ffffff"]]]
+            },
+            shopping: {
+                color: "#f2f4f8",
+                frames: [[[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#4a90d9"], [5, 2, 2, 2, "#e57373"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#9aa5b0"]], [[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#4a90d9"], [5, 2, 2, 2, "#e57373"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#ff9900"], [7, 0, 1, 1, "#e53935"]], [[0, 0, 8, 1, "#ff9900"], [1, 2, 2, 2, "#81c784"], [5, 2, 2, 2, "#ba68c8"], [1, 4, 2, 1, "#9aa5b0"], [5, 4, 2, 1, "#9aa5b0"], [7, 0, 1, 1, "#e53935"]]]
+            }
+        })
 
     // The people whose sprite sheets wait to be painted, in order. A full
     // office's sheets painted at once block the page for a tenth of a second
@@ -1397,10 +1444,20 @@ Item {
     // Rows 0–2 are the wall, row 3 the furniture along it, then groups of desks
     // ("pods") from row 6: a pod is chairs, two rows of desks, chairs. Teams (a
     // thread and the workers under it) share pods of 4×2 desks; a bigger team
-    // takes several. The office keeps one size, so adding a person never
-    // repaints it: movers carry desks in through the entrance at the bottom
+    // takes several. Movers carry desks in through the entrance at the bottom
     // left and back out again. The break room is behind a wall with a door on
     // the right.
+    //
+    // The office is at least six pods in two rows, 48 desks of which the
+    // review corner's 8 are for reviewers only, and grows by pods, so
+    // everyone has a desk. It grows as soon as people outnumber the desks
+    // they may take, to the grid of pods that shows biggest in the view (see
+    // gridFor()), and shrinks once a pod's worth of desks would still be free
+    // in a smaller one, after the desks in the pods it loses are carried out
+    // (see closeRows()). It is painted again only when it changes size. Pods
+    // are added at the bottom of a grid of the same width, so every tile keeps
+    // its place; in one of another width people walk to where their desks now
+    // stand (see rearrange()).
 
     function teamsOf(ids, byId) {
         const rootOf = id => {
@@ -1430,20 +1487,28 @@ Item {
     // when someone else comes or goes. A newcomer takes a free
     // seat in its team's pod, or the nearest pod with room when that is full;
     // a new team takes a pod with room for all of it, and small teams share.
-    // A team bigger than a pod takes as many as it needs. Whoever is left over
-    // when every desk is taken has none, and spends the time in the break room.
+    // A team bigger than a pod takes as many as it needs; the office has a desk
+    // for everyone (see buildWorld()). While the office is closing pods, they
+    // take nobody, and whoever sat there moves to a desk in the rest.
     // Reviewers (`kind` "reviewer" in `byId`, their workers too, each by its
     // own kind) sit in the review corner, and once it is full at the desks
-    // nearest it that nobody else needs, giving one up when someone else
-    // needs it after all. The corner is theirs alone: nobody else ever takes
-    // a desk there, and whoever sits there and is no reviewer leaves it.
+    // nearest it that nobody else needs. The corner is theirs alone: nobody
+    // else ever needs a desk there, since the office grows first (see
+    // sync()), and whoever sits there and is no reviewer leaves it. Should
+    // someone else still find no free desk, a reviewer on a floor desk gives
+    // it up.
     function seatTeams(teams, byId) {
         const w = page.world;
         const size = w.pods[0].seats.length;
-        const before = w.seatOf ?? {};
+        const open = pod => !page.closeTo || pod < page.closeTo;
+        const before = {};
+        for (const id of Object.keys(w.seatOf ?? {})) {
+            if (open(w.seatOf[id].pod))
+                before[id] = w.seatOf[id];
+        }
         const seatOf = {};
         const taken = {};
-        const room = pod => w.pods[pod].seats.filter(seat => !taken[seat.index]).length;
+        const room = pod => open(pod) ? w.pods[pod].seats.filter(seat => !taken[seat.index]).length : 0;
         const sit = (id, pod) => {
             const seat = w.pods[pod].seats.find(seat => !taken[seat.index]);
             taken[seat.index] = id;
@@ -1554,18 +1619,19 @@ Item {
         return seatOf;
     }
 
-    // The office: six pods of 4×2 desks, three across and two down, the walls,
-    // the furniture along them and the break room. The top pod by the break
-    // room is the review corner, on a carpet of its own under a review sign
-    // and the whiteboard where reviews are worked through. Every desk starts
-    // out carried away (see furnish()).
-    function buildWorld() {
-        const podCols = 4, across = 3, down = 2;
+    // The office: `count` pods of 4×2 desks, `across` of them to a row, the
+    // walls, the furniture along them and the break room. The top pod by the
+    // break room is the review corner, on a carpet of its own under a review
+    // sign and the whiteboard where reviews are worked through. Every desk
+    // starts out carried away (see furnish()).
+    function buildWorld(across, count) {
+        const podCols = 4;
+        const down = Math.max(2, Math.ceil(count / across));
         const workW = across * podCols + 2 * (across - 1);
         const xd = 3 + workW + 2;
         const bx = xd + 1;
-        const cols = bx + 11;
-        const rows = 6 + 6 * down + 1;
+        const cols = officeCols(across);
+        const rows = officeRows(down);
         const grid = new Array(cols * rows).fill(0);
         const at = (x, y) => y * cols + x;
         const block = (x, y, w, h) => {
@@ -1582,7 +1648,7 @@ Item {
         grid[at(xd, 6)] = 0;
 
         const props = [], units = [], screens = [], boards = [], seats = [], spots = [], marks = [];
-        const corner = across - 1;
+        const corner = 2;
         const prop = (kind, x, y, w, h, z, extra) => props.push(Object.assign({
             key: kind + ":" + x + ":" + y,
             kind: kind,
@@ -1598,95 +1664,103 @@ Item {
         // has its own desk and chair, which come and go together. A desk's
         // place is kept for it while it is out, so the way around the pods
         // never changes; a seat is stepped onto only by whoever is going there.
+        // A pod keeps its number, and so its desks, in every grid: pod 2, the
+        // review corner, is always the top one by the break room.
         const placed = [];
-        for (let k = 0; k < down; k++) {
-            const y0 = 6 + 6 * k;
-            for (let c = 0; c < across; c++) {
-                const x = 3 + c * (podCols + 2);
-                const index = placed.length;
-                const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
-                const podSeats = [];
-                for (let i = 0; i < podCols; i++) {
-                    for (const north of [true, false]) {
-                        const seat = {
-                            index: seats.length + podSeats.length,
-                            x: x + i,
-                            y: north ? y0 : y0 + 3,
-                            deskY: north ? y0 + 1 : y0 + 2,
-                            face: north ? 0 : 3,
-                            offY: north ? 5 : -3,
-                            pod: index,
-                            chair: chair,
-                            screen: north ? "" : index + ":" + i,
-                            state: "out",
-                            mover: ""
-                        };
-                        podSeats.push(seat);
-                        grid[at(seat.x, seat.deskY)] = 1;
-                        grid[at(seat.x, seat.y)] = 2;
-                        units.push({
-                            key: "desk:" + seat.index,
-                            kind: north ? "deskN" : "deskS",
+        for (let index = 0; index < count; index++) {
+            const slot = index === corner ? across - 1 : index === across - 1 ? corner : index;
+            const y0 = 6 + 6 * Math.floor(slot / across);
+            const x = 3 + slot % across * (podCols + 2);
+            const chair = pick(random(hash("chair" + index)), ["#3d4a63", "#4a3d63", "#2f5b52", "#63413d", "#3d5563"]);
+            const podSeats = [];
+            for (let i = 0; i < podCols; i++) {
+                for (const north of [true, false]) {
+                    const seat = {
+                        index: seats.length + podSeats.length,
+                        x: x + i,
+                        y: north ? y0 : y0 + 3,
+                        deskY: north ? y0 + 1 : y0 + 2,
+                        face: north ? 0 : 3,
+                        offY: north ? 5 : -3,
+                        pod: index,
+                        chair: chair,
+                        screen: north ? "" : index + ":" + i,
+                        state: "out",
+                        mover: ""
+                    };
+                    podSeats.push(seat);
+                    grid[at(seat.x, seat.deskY)] = 1;
+                    grid[at(seat.x, seat.y)] = 2;
+                    units.push({
+                        key: "desk:" + seat.index,
+                        kind: north ? "deskN" : "deskS",
+                        seat: seat.index,
+                        x: seat.x * 16,
+                        y: seat.deskY * 16,
+                        w: 16,
+                        h: 16,
+                        z: (y0 + 3) * 16,
+                        seed: hash("desk" + seat.index)
+                    });
+                    units.push({
+                        key: "chair:" + seat.index,
+                        kind: north ? "chairsN" : "chairsS",
+                        seat: seat.index,
+                        x: seat.x * 16,
+                        y: seat.y * 16,
+                        w: 16,
+                        h: 16,
+                        z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
+                        color: chair,
+                        seed: hash("chair" + seat.index)
+                    });
+                    if (!north)
+                        screens.push({
+                            key: seat.screen,
                             seat: seat.index,
-                            x: seat.x * 16,
-                            y: seat.deskY * 16,
-                            w: 16,
-                            h: 16,
-                            z: (y0 + 3) * 16,
-                            seed: hash("desk" + seat.index)
+                            x: seat.x * 16 + 4,
+                            y: seat.deskY * 16 + 1,
+                            z: (y0 + 3) * 16 + 1
                         });
-                        units.push({
-                            key: "chair:" + seat.index,
-                            kind: north ? "chairsN" : "chairsS",
-                            seat: seat.index,
-                            x: seat.x * 16,
-                            y: seat.y * 16,
-                            w: 16,
-                            h: 16,
-                            z: north ? (y0 + 1) * 16 - 2 : (y0 + 4) * 16 + 1,
-                            color: chair,
-                            seed: hash("chair" + seat.index)
-                        });
-                        if (!north)
-                            screens.push({
-                                key: seat.screen,
-                                seat: seat.index,
-                                x: seat.x * 16 + 4,
-                                y: seat.deskY * 16 + 1,
-                                z: (y0 + 3) * 16 + 1
-                            });
-                        // Its sitter's project: on the back of the monitor
-                        // facing us, or on the back of the chair facing away.
-                        marks.push({
-                            key: "mark:" + seat.index,
-                            seat: seat.index,
-                            x: seat.x * 16 + 3,
-                            y: north ? seat.deskY * 16 + 4 : seat.y * 16 + 5,
-                            w: 9,
-                            h: 7,
-                            z: north ? (y0 + 3) * 16 + 1 : (y0 + 4) * 16 + 2
-                        });
-                    }
+                    // Its sitter's project: on the back of the monitor
+                    // facing us, or on the back of the chair facing away.
+                    marks.push({
+                        key: "mark:" + seat.index,
+                        seat: seat.index,
+                        x: seat.x * 16 + 3,
+                        y: north ? seat.deskY * 16 + 4 : seat.y * 16 + 5,
+                        w: 9,
+                        h: 7,
+                        z: north ? (y0 + 3) * 16 + 1 : (y0 + 4) * 16 + 2
+                    });
                 }
-                placed.push({
-                    x: x,
-                    y: y0,
-                    cols: podCols,
-                    members: [],
-                    seats: podSeats,
-                    review: index === corner
-                });
-                for (const seat of podSeats)
-                    seats.push(seat);
             }
+            placed.push({
+                x: x,
+                y: y0,
+                cols: podCols,
+                members: [],
+                seats: podSeats,
+                review: index === corner
+            });
+            for (const seat of podSeats)
+                seats.push(seat);
         }
 
-        // Along the top wall: bookshelves, whiteboards and plants.
+        // Along the top wall: bookshelves, whiteboards and plants, and the
+        // review corner's whiteboard over it, whatever would hang there.
         const sequence = ["plant", "shelf", "board", "shelf", "board", "plant", "shelf", "board"];
+        const reviewX = placed[corner].x - 1;
+        let hung = false;
         let wx = 2;
         for (let i = 0; ; i++) {
-            const kind = sequence[i % sequence.length];
-            const w = kind === "shelf" ? 2 : kind === "board" ? 3 : 1;
+            let kind = sequence[i % sequence.length];
+            let w = kind === "shelf" ? 2 : kind === "board" ? 3 : 1;
+            if (!hung && wx + w > reviewX) {
+                kind = "board";
+                w = 3;
+                wx = Math.max(wx, reviewX);
+            }
             if (wx + w > xd - 1)
                 break;
             block(wx, 3, w, 1);
@@ -1705,8 +1779,8 @@ Item {
                     });
             } else {
                 const key = "board:" + boards.length;
-                const reviewPod = placed[corner];
-                const review = wx + w > reviewPod.x && wx < reviewPod.x + reviewPod.cols;
+                const review = !hung && wx >= reviewX;
+                hung = hung || review;
                 boards.push({
                     key: key,
                     x: wx * 16 + 5,
@@ -1859,6 +1933,8 @@ Item {
         return {
             cols: cols,
             rows: rows,
+            down: down,
+            across: across,
             grid: grid,
             xd: xd,
             bx: bx,
@@ -1903,6 +1979,8 @@ Item {
             removeMover(id);
         page.jobs = [];
         page.outside = [];
+        page.doorOpensAt = 0;
+        page.closeTo = 0;
         if (page.world) {
             page.world.seatOf = {};
             for (const seat of page.world.seats) {
@@ -1926,6 +2004,10 @@ Item {
     function take(value) {
         const people = value?.people ?? [];
         sync(people);
+        // A closure with nothing left to carry out closes now: the clock may
+        // not run again for an office nobody is in.
+        if (page.closeTo)
+            closeRows();
         hear(value?.talks ?? []);
         page.primed = value !== null && value !== undefined;
         updateWalking();
@@ -1940,9 +2022,59 @@ Item {
             page.settled = true;
     }
 
+    // The size in tiles of an office `across` pods wide and `down` deep.
+    function officeCols(across) {
+        return 6 * across + 15;
+    }
+
+    function officeRows(down) {
+        return 6 * down + 7;
+    }
+
+    // The grid for at least `pods` pods, at least two rows of them, that
+    // shows biggest when fitted to the view (see fitScale): it grows sideways
+    // in a wide view and down in a tall one, down to a single column in a
+    // narrow one, and has the fewest pods of those that show as big. Before
+    // the view has a size, it is three across.
+    function gridFor(pods) {
+        const vw = scroller.width - 8, vh = scroller.height - 8;
+        let best = null;
+        for (let across = 1; across <= Math.max(3, Math.ceil(pods / 2)); across++) {
+            const down = Math.max(2, Math.ceil(pods / across));
+            const fit = vw > 0 && vh > 0 ? Math.min(vw / (officeCols(across) * 16), vh / (officeRows(down) * 16)) : across === 3 ? 1 : 0;
+            if (!best || fit > best.fit || fit === best.fit && across * down < best.pods)
+                best = {
+                    across: across,
+                    pods: across * down,
+                    fit: fit
+                };
+        }
+        return best;
+    }
+
     function sync(people) {
-        if (!page.world)
-            build();
+        // The review corner's eight desks are only for reviewers, and the
+        // reviewers it has no room for take ordinary desks. The office grows
+        // to a full grid when it runs out of desks, and closes pods once a
+        // smaller grid would leave a pod's worth free. A reviewer who already
+        // sits at an ordinary desk keeps it (see seatTeams()), so it needs one
+        // of those rather than one in the corner.
+        const w = page.world;
+        const floor = p => {
+            const seat = w?.seatOf?.[p.id];
+            return !!seat && !w.pods[seat.pod]?.review;
+        };
+        const reviewers = people.filter(p => p.kind === "reviewer" && !floor(p)).length;
+        const desks = people.length - reviewers + Math.max(8, reviewers);
+        const need = Math.max(6, Math.ceil(desks / 8));
+        const grid = gridFor(need);
+        if (!w || need > w.pods.length || !page.primed && (grid.across !== w.across || grid.pods !== w.pods.length)) {
+            page.closeTo = 0;
+            build(grid.across, grid.pods);
+        } else {
+            const keep = gridFor(Math.max(6, Math.ceil((desks + 8) / 8))).pods;
+            page.closeTo = keep < w.pods.length ? keep : 0;
+        }
         const byId = {};
         for (const person of people)
             byId[person.id] = person;
@@ -1979,19 +2111,209 @@ Item {
         updateMarks();
     }
 
-    function build() {
-        const w = buildWorld();
+    // Builds the office with `count` pods, `across` to a row, taking over
+    // what goes on in the one before, if any. The whiteboards stay, with what
+    // is drawn on them, while the office keeps its width.
+    function build(across, count) {
+        const old = page.world;
+        const w = buildWorld(across, count);
         page.world = w;
-        page.occupied = new Array(w.cols * w.rows).fill("");
+        if (old)
+            carry(old, w);
         page.worldCols = w.cols;
         page.worldRows = w.rows;
         page.props = w.props;
         page.units = w.units;
         page.screens = w.screens;
-        page.boards = w.boards;
+        if (!old || old.across !== across)
+            page.boards = w.boards;
         page.deskMarks = w.marks;
-        page.deskCount = 0;
+        page.deskCount = w.seats.filter(deskShown).length;
         floor.requestPaint();
+    }
+
+    // Moves the desks, who has them and everyone in the office over from
+    // `old` to the bigger or smaller `w`. A desk keeps its number and its
+    // owner. While the office keeps its width tiles keep their places, and
+    // whoever stands, steps or is headed where the smaller office ends goes on
+    // from the nearest floor; movers on their way out head for the new
+    // entrance.
+    function carry(old, w) {
+        for (const seat of w.seats) {
+            const was = old.seats[seat.index];
+            if (was) {
+                seat.state = was.state;
+                seat.mover = was.mover;
+            }
+        }
+        for (const id of Object.keys(old.seatOf)) {
+            const seat = w.seats[old.seatOf[id].index];
+            if (seat)
+                w.seatOf[id] = seat;
+        }
+        w.pods.forEach((pod, i) => pod.members = old.pods[i]?.members ?? []);
+        page.jobs = page.jobs.filter(i => i < w.seats.length);
+        if (old.across !== w.across) {
+            rearrange(old, w);
+            return;
+        }
+        const n = w.cols * w.rows;
+        const lost = i => i >= n || w.grid[i] === 1;
+        for (const a of everyone()) {
+            if (a.tx < 0)
+                continue;
+            const leaving = a.goal?.kind === "leave";
+            if (a.goal && !leaving && lost(a.goal.y * w.cols + a.goal.x)) {
+                release(a);
+                a.goal = null;
+                a.path = [];
+            }
+            const moved = lost(a.ty * w.cols + a.tx) || a.next >= 0 && lost(a.next);
+            // A mover on its way out where the office ends has left.
+            if (moved && leaving) {
+                removeMover(a.id);
+                continue;
+            }
+            if (moved)
+                place(a, a.tx, a.ty, true);
+            if (leaving)
+                leave(a);
+            else if (a.goal && (moved || a.path.some(lost)))
+                route(a);
+        }
+    }
+
+    // In an office of another width the desks stand elsewhere, and the break
+    // room moves along with whoever is in it. Everyone else walks on from
+    // where it is to where it was going: people to their own desk, movers to
+    // the desk they carry. Whoever is left on furniture, or past the smaller
+    // office's edge, steps to the nearest floor first. Before the office is
+    // first shown, people are simply there.
+    function rearrange(old, w) {
+        page.claims = {};
+        const dx = w.xd - old.xd;
+        const across = x => x >= old.xd ? x + dx : x;
+        for (const a of everyone()) {
+            a.claim = -1;
+            a.hold = -1;
+            if (a.tx < 0)
+                continue;
+            // Whoever is in the break room, on its door or stepping onto the
+            // door moves with it, the step it takes and all.
+            const room = a.tx >= old.xd || a.next >= 0 && a.next % old.cols >= old.xd;
+            const shift = room ? dx : 0;
+            const nx = a.next >= 0 ? a.next % old.cols + shift : -1;
+            const ny = a.next >= 0 ? Math.floor(a.next / old.cols) : -1;
+            a.px += shift * 16;
+            a.tx += shift;
+            a.next = nx >= 0 && nx < w.cols && ny < w.rows ? ny * w.cols + nx : -1;
+            a.path = [];
+            // A step through the break room's door that the door moved away
+            // from is not finished: it goes on from the tile it set out from.
+            if (a.tx >= w.cols || a.ty >= w.rows || a.next >= 0 && Math.abs(nx - a.tx) + Math.abs(ny - a.ty) !== 1)
+                place(a, a.tx, a.ty, true);
+            // Whoever was out in the office where the break room now is
+            // steps back to the office's floor by its wall: it goes into the
+            // break room only when let in (see restless()).
+            if (!room && (a.tx >= w.xd || a.next >= 0 && a.next % w.cols >= w.xd)) {
+                const free = nearestFree(w.xd - 1, a.ty, a.id, false, w.xd);
+                place(a, free[0], free[1], false);
+            }
+            const goal = a.goal;
+            if (page.movers[a.id]) {
+                if (a.job >= 0) {
+                    const seat = w.seats[a.job];
+                    a.goal = Object.assign({}, goal, {
+                        x: seat.x,
+                        y: seat.y,
+                        face: seat.face
+                    });
+                } else {
+                    leave(a);
+                }
+            } else if (a.talk) {
+                // Its speaker finds a side of it again (see stepTalk()), or,
+                // talking already, keeps the one it talks from (below).
+                a.goal = null;
+                a.talk.target = -1;
+            } else if (a.plan === "break" && goal && goal.x >= old.xd) {
+                a.goal = Object.assign({}, goal, {
+                    x: across(goal.x)
+                });
+                if (goal.partner !== undefined)
+                    a.goal.partner = Math.floor(goal.partner / old.cols) * w.cols + across(goal.partner % old.cols);
+                claim(a, a.goal);
+            } else {
+                // Someone resting who still sits at its desk rests on to the
+                // same moment; one that has to move starts again once there.
+                const until = a.plan === "rest" ? a.until : Infinity;
+                a.goal = null;
+                a.plan = "";
+                decide(a, true);
+                if (a.plan === "rest" && a.goal?.seat && a.tx === a.goal.x && a.ty === a.goal.y && a.next < 0)
+                    a.until = until;
+            }
+            if (!page.primed && a.goal && !page.movers[a.id]) {
+                place(a, a.goal.x, a.goal.y, false);
+                a.path = [];
+                continue;
+            }
+            // A step goes on only between tiles still open to it: the one it
+            // steps onto is floor or where it is going, and the one it steps
+            // from no wall or furniture, a seat it is leaving aside.
+            const on = a.next >= 0 ? a.next : a.ty * w.cols + a.tx;
+            const mine = a.goal && on === a.goal.y * w.cols + a.goal.x;
+            if (w.grid[on] !== 0 && !mine || a.next >= 0 && w.grid[a.ty * w.cols + a.tx] === 1)
+                place(a, a.tx, a.ty, true);
+            route(a);
+        }
+        // Two still side by side and talking claim their tiles again, or the
+        // speaker moves on (see keepTalk()).
+        for (const a of everyone()) {
+            const other = a.talk && a.talk.phase !== "go" ? page.actors[a.talk.to] : null;
+            if (other && a.next < 0 && Math.abs(a.tx - other.tx) + Math.abs(a.ty - other.ty) === 1)
+                keepTalk(a, other);
+        }
+    }
+
+    // Once the desks in the pods the office is closing are all carried out,
+    // and nobody listens at one of their seats or in the rows a shorter
+    // office loses, the office shrinks to the rest.
+    function closeRows() {
+        const w = page.world;
+        const first = page.closeTo * w.pods[0].seats.length;
+        const seats = {};
+        for (let i = first; i < w.seats.length; i++) {
+            if (w.seats[i].state !== "out" || w.seats[i].mover)
+                return;
+            seats[w.seats[i].y * w.cols + w.seats[i].x] = true;
+        }
+        const count = page.closeTo;
+        const gone = (officeRows(Math.max(2, Math.ceil(count / gridFor(count).across))) - 1) * w.cols;
+        if (Object.values(page.actors).some(a => seats[a.hold] || a.hold >= gone))
+            return;
+        page.closeTo = 0;
+        build(gridFor(count).across, count);
+    }
+
+    // A view of another size may show the office bigger in another grid: it
+    // is built again only when the best number of pods to a row changes. A
+    // view with no size keeps the office as it is. An office closing pods
+    // works out again how many to close down to, in a grid for the new view,
+    // even when it keeps its own.
+    function refit() {
+        const w = page.world;
+        if (!w || scroller.width <= 8 || scroller.height <= 8)
+            return;
+        const across = gridFor(w.pods.length).across;
+        if (across !== w.across)
+            build(across, w.pods.length);
+        else if (!page.closeTo)
+            return;
+        if (page.closeTo)
+            take(page.office);
+        updateMarks();
+        updateWalking();
     }
 
     function layout(teams, byId) {
@@ -2005,17 +2327,10 @@ Item {
         w.seatOf = seatOf;
         furnish();
         // Seats move between people as people come and go; whoever was headed
-        // for a desk, or waiting for one, that is no longer theirs plans again,
-        // and so does whoever waited in the break room for want of a desk and
-        // now has one, or left its desk for a whiteboard or a shelf and has
-        // none now.
+        // for a desk, or waiting for one, that is no longer theirs plans again.
         for (const id of Object.keys(page.actors)) {
             const actor = page.actors[id];
             const goal = actor.goal;
-            if (goal?.deskless && seatOf[id] || (goal?.kind === "board" || goal?.kind === "shelf") && !seatOf[id]) {
-                actor.goal = null;
-                continue;
-            }
             if (goal?.kind !== "desk" && goal?.kind !== "wait")
                 continue;
             const seat = seatOf[id];
@@ -2191,12 +2506,12 @@ Item {
         page.moves = page.jobs.length + Object.keys(page.movers).length;
     }
 
-    // Someone to carry a desk walks in when the doorway is clear; four work
+    // Someone to carry a desk walks in when the doorway is free; four work
     // at once.
     function hire() {
         const w = page.world;
         const e = w.entrance;
-        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !doorClear())
+        if (!page.jobs.length || Object.keys(page.movers).length >= 4 || !throughDoor())
             return;
         const seat = w.seats[page.jobs.shift()];
         const id = "mover:" + page.moversHired++;
@@ -2218,15 +2533,15 @@ Item {
             pose: "stand",
             kind: "move"
         };
-        route(mover, false);
+        route(mover);
         moverModel.append({
             moverId: id
         });
         countMoves();
     }
 
-    // A mover walks to the desk's seat, waits for the desk's place to be clear,
-    // sets the desk down or picks it up, and walks out again.
+    // A mover walks to the desk's seat, sets the desk down or picks it up,
+    // and walks out again.
     function stepMover(mover, dt) {
         const w = page.world;
         const seat = mover.job >= 0 ? w.seats[mover.job] : null;
@@ -2247,10 +2562,13 @@ Item {
                 mover.carrying = true;
                 finish(mover, seat);
             }
-        } else if (mover.next < 0 && mover.path.length === 0 && page.ticks % 8 === 0) {
-            route(mover, true);
         }
         const moving = step(mover, dt);
+        // Out through the entrance, it is gone at once.
+        if (!seat && mover.goal && mover.tx === mover.goal.x && mover.ty === mover.goal.y && mover.next < 0) {
+            removeMover(mover.id);
+            return false;
+        }
         mover.frame = mover.next >= 0 ? [1, 0, 2, 0][Math.floor(mover.dist / 5) % 4] : 0;
         renderMover(mover);
         return moving || mover.path.length > 0;
@@ -2272,7 +2590,7 @@ Item {
             pose: "stand",
             kind: "leave"
         };
-        route(mover, false);
+        route(mover);
     }
 
     function removeMover(id) {
@@ -2280,10 +2598,6 @@ Item {
         if (!mover)
             return;
         const w = page.world;
-        for (const i of [mover.ty * w.cols + mover.tx, mover.next]) {
-            if (i >= 0 && page.occupied[i] === id)
-                page.occupied[i] = "";
-        }
         if (mover.job >= 0 && w.seats[mover.job].mover === id)
             w.seats[mover.job].mover = "";
         delete page.movers[id];
@@ -2343,7 +2657,11 @@ Item {
             dist: 0,
             goal: null,
             plan: "",
+            // The chance it gets up for a break each time it thinks of one,
+            // its own (see restless()).
+            restless: between(page.rng, 0.15, 0.5),
             claim: -1,
+            hold: -1,
             until: 0,
             stay: 0,
             cup: false,
@@ -2352,22 +2670,27 @@ Item {
             bubbleUntil: 0,
             talk: null,
             queue: [],
-            blocked: 0,
-            waitingFor: "",
             heldBy: "",
             face: -1,
-            faceUntil: 0,
-            sideStep: false
+            // What it slacks off with on its screen, the state it picked it
+            // in, and until when (see slackOf()); `beat` keeps its frames out
+            // of step with others'.
+            slack: "",
+            slackFor: "",
+            slackUntil: 0,
+            beat: hash(person.id) % 25,
+            faceUntil: 0
         };
     }
 
-    // A new person walks in through the door, waiting outside while someone is
-    // in the doorway; the first people on the page are already where they belong.
+    // A new person walks in through the door, waiting outside while someone
+    // else goes through; the first people on the page are already where they
+    // belong.
     function arrive(actor) {
         if (!page.primed) {
             decide(actor, true);
             const goal = actor.goal;
-            if (goal && !page.occupied[goal.y * page.world.cols + goal.x]) {
+            if (goal) {
                 place(actor, goal.x, goal.y, false);
                 actor.path = [];
                 return;
@@ -2377,19 +2700,20 @@ Item {
             page.outside.push(actor.id);
     }
 
-    // Whether nobody stands in the doorway or on the floor next to it, so
-    // whoever comes in can step off it.
-    function doorClear() {
-        const w = page.world;
-        const [x, y] = w.entrance;
-        return [[0, 0], [1, 0], [-1, 0], [0, -1]].every(([dx, dy]) => !walkable(x + dx, y + dy) || !page.occupied[(y + dy) * w.cols + x + dx]);
+    // Lets one through the doorway if the last went through a step ago, so
+    // people and movers come in one after another rather than in a heap.
+    function throughDoor() {
+        if (page.now < page.doorOpensAt)
+            return false;
+        page.doorOpensAt = page.now + 400;
+        return true;
     }
 
-    // The next person waiting outside walks in once the doorway is clear.
+    // The next person waiting outside walks in once the doorway is free.
     function letIn() {
         while (page.outside.length && !page.actors[page.outside[0]])
             page.outside.shift();
-        if (!page.outside.length || !doorClear())
+        if (!page.outside.length || !throughDoor())
             return;
         const actor = page.actors[page.outside.shift()];
         const e = page.world.entrance;
@@ -2398,11 +2722,13 @@ Item {
         page.walking = true;
     }
 
+    // Puts a person on a tile: off the floor, or with `snap` on furniture
+    // that is not where it is going, it goes to the nearest free floor.
     function place(actor, x, y, snap) {
         const w = page.world;
         const inside = x >= 0 && y >= 0 && x < w.cols && y < w.rows;
         const i = y * w.cols + x;
-        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y)) || page.occupied[i] && page.occupied[i] !== actor.id) {
+        if (!inside || snap && !(w.grid[i] === 0 || (actor.goal && actor.goal.x === x && actor.goal.y === y))) {
             const free = nearestFree(x, y, actor.id);
             x = free[0];
             y = free[1];
@@ -2412,12 +2738,11 @@ Item {
         actor.px = x * 16;
         actor.py = y * 16;
         actor.next = -1;
-        page.occupied[y * w.cols + x] = actor.id;
     }
 
-    // The nearest floor tile nobody stands on, nor, when `unclaimed`, is headed
-    // for; with `unclaimed` and no such tile, null.
-    function nearestFree(x, y, self, unclaimed) {
+    // The nearest floor tile nobody else has claimed, west of `before` when
+    // given; with none, null, or the entrance unless `unclaimed`.
+    function nearestFree(x, y, self, unclaimed, before) {
         const w = page.world;
         const seen = new Uint8Array(w.cols * w.rows);
         const queue = [[Math.max(0, Math.min(w.cols - 1, x)), Math.max(0, Math.min(w.rows - 1, y))]];
@@ -2425,7 +2750,7 @@ Item {
         while (queue.length) {
             const [cx, cy] = queue.shift();
             const i = cy * w.cols + cx;
-            if (w.grid[i] === 0 && (!page.occupied[i] || page.occupied[i] === self) && (!unclaimed || !page.claims[i] || page.claims[i] === self))
+            if (w.grid[i] === 0 && !(cx >= before) && (!page.claims[i] || page.claims[i] === self))
                 return [cx, cy];
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = cx + dx, ny = cy + dy;
@@ -2442,14 +2767,8 @@ Item {
         const actor = page.actors[id];
         if (!actor)
             return;
+        letGo(actor);
         release(actor);
-        if (page.world && actor.tx >= 0) {
-            const i = actor.ty * page.world.cols + actor.tx;
-            if (page.occupied[i] === id)
-                page.occupied[i] = "";
-            if (actor.next >= 0 && page.occupied[actor.next] === id)
-                page.occupied[actor.next] = "";
-        }
         delete page.actors[id];
         for (let i = 0; i < actorModel.count; i++) {
             if (actorModel.get(i).actorId === id) {
@@ -2463,24 +2782,29 @@ Item {
         for (const other of Object.values(page.actors)) {
             if (other.talk && other.talk.to === id)
                 endTalk(other);
+            if (other.heldBy === id) {
+                other.heldBy = "";
+                letGo(other);
+            }
         }
     }
 
     // ── What each person does ───────────────────────────────────────────────
 
+    // Lets go of the tile a person stops at, unless it also listens there.
     function release(actor) {
-        if (actor.claim >= 0 && page.claims[actor.claim] === actor.id)
+        if (actor.claim >= 0 && actor.claim !== actor.hold && page.claims[actor.claim] === actor.id)
             delete page.claims[actor.claim];
         actor.claim = -1;
     }
 
+    // Whether a person may stop at a spot: nobody else has claimed it.
     function free(spot, actor) {
-        const i = spot.y * page.world.cols + spot.x;
-        const claim = page.claims[i];
-        const there = page.occupied[i];
-        return (!claim || claim === actor.id) && (!there || there === actor.id || !spot.seat && !page.actors[there]?.goal);
+        const claim = page.claims[spot.y * page.world.cols + spot.x];
+        return !claim || claim === actor.id;
     }
 
+    // Claims the tile a person stops at, letting go of the one it had.
     function claim(actor, spot) {
         release(actor);
         const i = spot.y * page.world.cols + spot.x;
@@ -2488,17 +2812,45 @@ Item {
         actor.claim = i;
     }
 
+    // Someone listening keeps the tile it stopped on for the talk, besides the
+    // one it is headed for, so nobody else is sent there meanwhile. It keeps
+    // it even when it is headed there, should it be sent somewhere else.
+    function holdHere(actor) {
+        const i = actor.ty * page.world.cols + actor.tx;
+        if (page.claims[i] === undefined || page.claims[i] === actor.id) {
+            page.claims[i] = actor.id;
+            actor.hold = i;
+        }
+    }
+
+    function letGo(actor) {
+        const i = actor.hold;
+        actor.hold = -1;
+        if (i < 0 || i === actor.claim || page.claims[i] !== actor.id)
+            return;
+        delete page.claims[i];
+        // Whoever was given the desk there meanwhile waits for it (see
+        // seatGoal()), and goes to it now.
+        const w = page.world;
+        const owner = page.actors[Object.keys(w.seatOf).find(id => w.seatOf[id].y * w.cols + w.seatOf[id].x === i)];
+        if (owner?.goal?.kind === "wait")
+            decide(owner, true);
+    }
+
     function seatGoal(actor, pose) {
         const seat = page.world.seatOf[actor.id];
+        // Everyone has a desk (see buildWorld()); one not yet seated plans
+        // again in a moment (see tick()).
         if (!seat) {
-            // No desk yet: it waits in the break room, until it gets one.
-            const goal = breakGoal(actor, true);
-            goal.deskless = true;
-            return goal;
+            release(actor);
+            return null;
         }
-        if (seat.state !== "in")
+        // A desk someone still listens at is theirs until the talk ends (see
+        // letGo()).
+        const holder = page.actors[page.claims[seat.y * page.world.cols + seat.x]];
+        if (seat.state !== "in" || holder && holder !== actor && holder.hold === seat.y * page.world.cols + seat.x)
             return waitGoal(actor, seat);
-        release(actor);
+        claim(actor, seat);
         return {
             x: seat.x,
             y: seat.y,
@@ -2590,9 +2942,8 @@ Item {
         };
         const options = page.world.spots.filter(s => s.area === "break" && weights[s.kind] && (!s.pets || pet) && free(s, actor));
         if (!options.length) {
-            release(actor);
             const free = nearestFree(page.world.bx + 4 + Math.floor(page.rng() * 4), 11 + Math.floor(page.rng() * 3), actor.id);
-            return {
+            const goal = {
                 x: free[0],
                 y: free[1],
                 face: Math.floor(page.rng() * 4),
@@ -2600,6 +2951,8 @@ Item {
                 pose: pet ? "sit" : "stand",
                 kind: "floor"
             };
+            claim(actor, goal);
+            return goal;
         }
         let total = 0;
         for (const s of options)
@@ -2647,27 +3000,57 @@ Item {
             actor.cup = false;
             if (!force && actor.plan === plan && actor.goal)
                 return;
-            // Without a desk it waits in the break room whatever it does.
-            const seated = !!page.world.seatOf[actor.id];
-            if (seated && activity === "planning")
+            if (activity === "planning")
                 goal = spotGoal(actor, "board");
-            else if (seated && activity === "reading")
+            else if (activity === "reading")
                 goal = spotGoal(actor, "shelf");
             if (!goal)
                 goal = seatGoal(actor, activity === "typing" || activity === "running" || activity === "testing" || activity === "browsing" ? "type" : "sit");
         } else {
-            plan = "break";
-            if (!force && actor.plan === plan && actor.goal && page.now < actor.until)
+            // Waiting and idle people sit at their desks, and now and then get
+            // up for a short break (see restless()), counting from when they
+            // sit down (see tick()).
+            if (!force && (actor.plan === "rest" || actor.plan === "break") && actor.goal)
                 return;
-            goal = breakGoal(actor, state === "idle");
-            const stage = goal.pose === "machine";
-            // The stay starts once the person gets there (see tick()).
-            actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 10000, 20000) : between(page.rng, 15000, 40000);
+            plan = "rest";
+            goal = seatGoal(actor, "sit");
             actor.until = Infinity;
-            if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
-                actor.cup = false;
         }
         actor.plan = plan;
+        setGoal(actor, goal);
+    }
+
+    // A person sitting at its desk with nothing to do decides, every so often,
+    // whether to take a break: each by its own restlessness, and only while
+    // the break room has room. Someone whose break is over keeps its place
+    // until it is out of the room. A cup brought back from the break room is
+    // finished by then.
+    function restless(actor) {
+        actor.cup = false;
+        actor.until = page.now + between(page.rng, 15000, 45000);
+        if (page.rng() >= actor.restless)
+            return;
+        let away = 0;
+        for (const id of Object.keys(page.actors)) {
+            const other = page.actors[id];
+            if (other.plan === "break" || other.tx > page.world.xd)
+                away++;
+        }
+        if (away < page.breakRoomCap)
+            takeBreak(actor);
+    }
+
+    // Sends a person to the break room for a while: a few seconds at a
+    // machine, longer at the arcade or sitting down. The stay starts once it
+    // gets there (see tick()).
+    function takeBreak(actor) {
+        const goal = breakGoal(actor, actor.person.state === "idle");
+        const stage = goal.pose === "machine";
+        actor.stay = stage ? between(page.rng, 3000, 5000) : goal.kind === "arcade" ? between(page.rng, 8000, 15000) : between(page.rng, 10000, 25000);
+        actor.until = Infinity;
+        if (!stage && goal.kind !== "table" && goal.kind !== "couch" && goal.kind !== "armchair" && goal.kind !== "chat")
+            actor.cup = false;
+        actor.plan = "break";
         setGoal(actor, goal);
     }
 
@@ -2677,24 +3060,24 @@ Item {
         if (!goal || actor.tx < 0)
             return;
         if (!same || (actor.path.length === 0 && actor.next < 0 && (actor.tx !== goal.x || actor.ty !== goal.y)))
-            route(actor, false);
+            route(actor);
         page.walking = true;
     }
 
     // Plans from the tile the person stands on, or the one it is stepping onto.
-    function route(actor, avoid) {
+    function route(actor) {
         const goal = actor.goal;
         if (!goal)
             return;
         const W = page.world.cols;
         const sx = actor.next >= 0 ? actor.next % W : actor.tx;
         const sy = actor.next >= 0 ? (actor.next - sx) / W : actor.ty;
-        actor.path = findPath(actor, sx, sy, goal.x, goal.y, avoid) ?? (avoid ? findPath(actor, sx, sy, goal.x, goal.y, false) ?? [] : []);
+        actor.path = findPath(sx, sy, goal.x, goal.y) ?? [];
     }
 
-    // A* over the tiles, four ways. Seats are entered only as the goal; with
-    // `avoid`, tiles other people stand on are walls too.
-    function findPath(actor, sx, sy, gx, gy, avoid) {
+    // A* over the tiles, four ways, around the furniture and through people.
+    // Seats are entered only as the goal.
+    function findPath(sx, sy, gx, gy) {
         const w = page.world;
         const W = w.cols, H = w.rows;
         const start = sy * W + sx, goal = gy * W + gx;
@@ -2747,12 +3130,8 @@ Item {
                 if (nx < 0 || ny < 0 || nx >= W || ny >= H)
                     continue;
                 const j = ny * W + nx;
-                if (j !== goal) {
-                    if (w.grid[j] !== 0)
-                        continue;
-                    if (avoid && page.occupied[j] && page.occupied[j] !== actor.id)
-                        continue;
-                }
+                if (j !== goal && w.grid[j] !== 0)
+                    continue;
                 const cost = g[i] + 1;
                 if (g[j] < 0 || cost < g[j]) {
                     g[j] = cost;
@@ -2797,13 +3176,24 @@ Item {
 
     // Starts the speaker's first talk whose listener is inside. One to someone
     // still outside the door waits its turn without holding up the rest.
+    // A talk waits while its listener is outside, or listens to someone else.
+    // A person takes part in one talk at a time: someone being talked to
+    // starts no talk of its own, and nobody talks to someone already talking
+    // or being talked to. Two who talk to each other take turns.
     function startTalk(actor) {
-        const next = actor.queue.findIndex(t => !(page.actors[t.to]?.tx < 0));
+        if (listening(actor))
+            return;
+        const next = actor.queue.findIndex(t => {
+            const other = page.actors[t.to];
+            return !(other?.tx < 0) && !other?.talk && !listening(other, actor);
+        });
         if (next < 0)
             return;
         const talk = actor.queue.splice(next, 1)[0];
-        if (!page.actors[talk.to])
+        const other = page.actors[talk.to];
+        if (!other)
             return;
+        other.heldBy = actor.id;
         actor.talk = {
             to: talk.to,
             text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
@@ -2814,15 +3204,17 @@ Item {
             until: 0,
             met: false
         };
-        release(actor);
-        actor.goal = null;
+        // It keeps the spot it had until it claims a side to talk from.
         page.walking = true;
     }
 
     function endTalk(actor) {
         const other = actor.talk ? page.actors[actor.talk.to] : null;
-        if (other)
+        if (other && other.heldBy === actor.id) {
             other.face = -1;
+            other.heldBy = "";
+            letGo(other);
+        }
         actor.talk = null;
         actor.bubble = "";
         actor.plan = "";
@@ -2845,13 +3237,18 @@ Item {
         const W = page.world.cols;
         const near = Math.abs(actor.tx - other.tx) + Math.abs(actor.ty - other.ty) === 1;
         if (t.phase === "go") {
-            if (near && actor.next < 0) {
-                // The other person stops once it finishes its step (see held()),
-                // and the talk starts when both stand still side by side.
+            // The other person stops once it finishes its step on a tile it
+            // may stop at (see held()).
+            if (near)
                 t.met = true;
-                other.heldBy = actor.id;
-                if (other.next >= 0)
-                    return;
+            // The talk starts when both stand still side by side, each on a tile
+            // nobody else has: the speaker on the side it claimed.
+            const atSide = actor.next < 0 && actor.goal?.kind === "talk" && actor.tx === actor.goal.x && actor.ty === actor.goal.y;
+            if (near && atSide && other.next < 0 && free({
+                x: other.tx,
+                y: other.ty
+            }, other)) {
+                holdHere(other);
                 t.phase = "say";
                 t.until = page.now + 5000;
                 actor.path = [];
@@ -2859,24 +3256,12 @@ Item {
                 actor.bubbleUntil = t.until;
                 return;
             }
+            if (near && atSide)
+                return;
             const there = other.ty * W + other.tx;
             if (t.target !== there || actor.path.length === 0 && actor.next < 0) {
                 t.target = there;
-                const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [other.tx + dx, other.ty + dy]).filter(([x, y]) => walkable(x, y) && (!page.occupied[y * W + x] || page.occupied[y * W + x] === actor.id));
-                if (!sides.length)
-                    return;
-                sides.sort((a, b) => Math.abs(a[0] - actor.tx) + Math.abs(a[1] - actor.ty) - (Math.abs(b[0] - actor.tx) + Math.abs(b[1] - actor.ty)));
-                const sidewaysFirst = sides.filter(s => s[1] === other.ty).concat(sides.filter(s => s[1] !== other.ty));
-                const best = sidewaysFirst[0];
-                actor.goal = {
-                    x: best[0],
-                    y: best[1],
-                    face: 0,
-                    offY: 0,
-                    pose: "talk",
-                    kind: "talk"
-                };
-                route(actor, false);
+                toSide(actor, other);
             }
             return;
         }
@@ -2884,6 +3269,8 @@ Item {
             endTalk(actor);
             return;
         }
+        if (!keepTalk(actor, other))
+            return;
         // Facing each other.
         actor.dir = dirTowards(actor, other);
         other.face = dirTowards(other, actor);
@@ -2899,10 +3286,100 @@ Item {
         }
     }
 
+    // Sends a speaker to a free side of `other`: one beside it first, so
+    // neither's speech bubble covers the other, and the nearest of those,
+    // counting the walk around `other` when it stands in the way. A speaker
+    // already in a talk that lost its side (`nearest`) takes the nearest free
+    // side instead, beside only when two are as near, rather than walk round
+    // the listener. False when no side is free.
+    function toSide(actor, other, nearest) {
+        const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
+                    x: other.tx + dx,
+                    y: other.ty + dy
+                })).filter(s => walkable(s.x, s.y) && free(s, actor));
+        if (!sides.length)
+            return false;
+        const inside = (a, m, b) => Math.min(a, b) < m && m < Math.max(a, b);
+        const walk = s => {
+            const around = s.y === actor.ty && other.ty === actor.ty && inside(actor.tx, other.tx, s.x) || s.x === actor.tx && other.tx === actor.tx && inside(actor.ty, other.ty, s.y);
+            return Math.abs(s.x - actor.tx) + Math.abs(s.y - actor.ty) + (around ? 2 : 0);
+        };
+        const beside = (a, b) => (b.y === other.ty) - (a.y === other.ty);
+        sides.sort((a, b) => nearest ? walk(a) - walk(b) || beside(a, b) : beside(a, b) || walk(a) - walk(b));
+        actor.goal = Object.assign({
+            face: 0,
+            offY: 0,
+            pose: "talk",
+            kind: "talk"
+        }, sides[0]);
+        claim(actor, actor.goal);
+        route(actor);
+        return true;
+    }
+
+    // Once a talk has begun, the speaker holds the side it talks from and the
+    // listener the tile it listens on, until it ends. Each is claimed again
+    // here, on every step of the talk, when it is missing: rearrange() builds
+    // the floor again and clears every claim, and routes others meanwhile.
+    // A speaker whose side someone else took walks to another free side of
+    // the listener and starts its line again; with none, or when someone
+    // took the listener's tile, the talk ends. Returns whether the two still
+    // talk where they stand.
+    function keepTalk(actor, other) {
+        const W = page.world.cols;
+        const t = actor.talk;
+        const side = {
+            x: actor.tx,
+            y: actor.ty
+        };
+        if (other.hold !== other.ty * W + other.tx) {
+            letGo(other);
+            holdHere(other);
+            if (other.hold < 0) {
+                endTalk(actor);
+                return false;
+            }
+        }
+        if (actor.claim === side.y * W + side.x)
+            return true;
+        if (free(side, actor)) {
+            actor.goal = Object.assign({
+                face: 0,
+                offY: 0,
+                pose: "talk",
+                kind: "talk"
+            }, side);
+            claim(actor, actor.goal);
+            return true;
+        }
+        if (!toSide(actor, other, true)) {
+            endTalk(actor);
+            return false;
+        }
+        actor.bubble = "";
+        other.bubble = "";
+        t.phase = "go";
+        t.target = other.ty * W + other.tx;
+        t.deadline = page.now + 25000;
+        return false;
+    }
+
+    // Whether someone other than `speaker` (anyone, without one) is talking to
+    // this person.
+    function listening(actor, speaker) {
+        const other = actor?.heldBy ? page.actors[actor.heldBy] : null;
+        return !!other && other !== speaker && other.talk?.to === actor.id;
+    }
+
     // Whether someone who walked up to talk to this person keeps it where it is.
+    // It stops only on a tile nobody else claimed, and walks on past one that is
+    // someone's.
     function held(actor) {
         const speaker = actor.heldBy ? page.actors[actor.heldBy] : null;
-        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met;
+        return !!speaker && !!speaker.talk && speaker.talk.to === actor.id && speaker.talk.met && free({
+            x: actor.tx,
+            y: actor.ty
+        }, actor);
     }
 
     function dirTowards(a, b) {
@@ -2934,13 +3411,24 @@ Item {
                 stepTalk(actor);
             else if (!actor.goal && actor.tx >= 0 && page.ticks % 8 === 0)
                 decide(actor, true);
-            else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
+            else if (actor.plan === "rest" && actor.goal?.seat && actor.tx === actor.goal.x && actor.ty === actor.goal.y && actor.next < 0 && actor.path.length === 0) {
+                if (actor.until === Infinity)
+                    actor.until = page.now + between(page.rng, 15000, 45000);
+                else if (page.now >= actor.until)
+                    restless(actor);
+            } else if (actor.plan === "break" && actor.next < 0 && actor.path.length === 0) {
                 if (actor.until === Infinity) {
                     actor.until = page.now + actor.stay;
                 } else if (page.now >= actor.until) {
-                    if (actor.goal?.pose === "machine" && actor.goal.cup)
+                    // With a cup from the machine it sits down with it in
+                    // the break room, or takes it back to its desk.
+                    const cup = actor.goal?.pose === "machine" && actor.goal.cup;
+                    if (cup)
                         actor.cup = true;
-                    decide(actor, true);
+                    if (cup && page.rng() < 0.5)
+                        takeBreak(actor);
+                    else
+                        decide(actor, true);
                 }
             }
             if (actor.bubble && page.now >= actor.bubbleUntil && !(actor.talk && actor.talk.phase === "say"))
@@ -2956,8 +3444,14 @@ Item {
             if (stepMover(page.movers[id], dt))
                 moving = true;
         }
-        if (page.ticks % 6 === 0)
-            updateScreens();
+        // By the clock, not by ticks, as a tick is longer while nobody walks.
+        if (page.now >= page.screensAt) {
+            page.screensAt = page.now + 200;
+            updateScreens(page.now - page.screensSeen);
+            page.screensSeen = page.now;
+        }
+        if (page.closeTo && page.ticks % 25 === 0)
+            closeRows();
         page.walking = moving || page.jobs.length > 0 || page.outside.length > 0;
     }
 
@@ -2965,54 +3459,18 @@ Item {
         page.walking = page.jobs.length > 0 || page.outside.length > 0 || everyone().some(a => a.next >= 0 || a.path.length > 0 || a.talk || a.queue.length);
     }
 
-    // The walkable tiles beside a person that nobody holds.
-    function freeSides(actor) {
-        const W = page.world.cols;
-        return [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [actor.tx + dx, actor.ty + dy]).filter(([x, y]) => walkable(x, y) && !page.occupied[y * W + x]);
-    }
-
-    // Moves a person along its path, two pixels a tick, holding the tile it
-    // stands on and the one it steps to so nobody walks through anybody.
+    // Moves a person along its path, two pixels a tick. People walk through
+    // each other: only where they stop is anyone's own (see claims).
     function step(actor, dt) {
         const W = page.world.cols;
         if (actor.next < 0 && actor.path.length && held(actor))
             return false;
         if (actor.next < 0 && actor.path.length) {
-            const n = actor.path[0];
-            const there = page.occupied[n];
-            if (there && there !== actor.id) {
-                actor.blocked++;
-                actor.waitingFor = there;
-                // Two people walking into each other would both step around the
-                // same way and meet again, so only one gives way: the one with
-                // room to step aside, the first by id when both have it.
-                const other = page.actors[there] ?? page.movers[there];
-                const headOn = !!other && other.next < 0 && other.path.length > 0 && other.waitingFor === actor.id;
-                const sides = freeSides(actor);
-                const yields = !headOn || sides.length > 0 && (actor.id < other.id || freeSides(other).length === 0);
-                if (yields && actor.blocked % 8 === 0 && actor.blocked < 30)
-                    route(actor, true);
-                if (actor.blocked >= 30) {
-                    // Stepping aside makes room for someone waiting on this
-                    // person; anyone else in the way is waited for, not paced
-                    // in front of.
-                    if (headOn && yields) {
-                        const s = pick(page.rng, sides);
-                        actor.path = [s[1] * W + s[0]];
-                        actor.sideStep = true;
-                    }
-                    actor.blocked = 0;
-                }
-                return true;
-            }
-            page.occupied[n] = actor.id;
+            const n = actor.path.shift();
             actor.next = n;
-            actor.path.shift();
             const nx = n % W, ny = (n - nx) / W;
             actor.dir = nx < actor.tx ? 1 : nx > actor.tx ? 2 : ny < actor.ty ? 3 : 0;
             actor.offY = 0;
-            actor.blocked = 0;
-            actor.waitingFor = "";
         }
         if (actor.next < 0)
             return false;
@@ -3023,17 +3481,9 @@ Item {
         actor.py += Math.sign(ty - actor.py) * Math.min(speed, Math.abs(ty - actor.py));
         actor.dist += speed;
         if (actor.px === tx && actor.py === ty) {
-            const old = actor.ty * W + actor.tx;
-            if (page.occupied[old] === actor.id)
-                page.occupied[old] = "";
             actor.tx = nx;
             actor.ty = ny;
             actor.next = -1;
-            if (actor.sideStep && actor.path.length === 0) {
-                actor.sideStep = false;
-                if (actor.goal)
-                    route(actor, true);
-            }
         }
         return true;
     }
@@ -3091,8 +3541,7 @@ Item {
             break;
         case "chat":
             {
-                const partner = page.occupied[goal.partner];
-                const there = partner && page.actors[partner];
+                const there = page.actors[page.claims[goal.partner]];
                 const talking = there && there.goal?.kind === "chat" && there.tx === there.goal.x && there.ty === there.goal.y;
                 actor.frame = actor.cup ? (t % 4000 < 700 ? F.sip : F.cup) : talking && Math.floor((t + (goal.face === 1 ? 900 : 0)) / 1800) % 2 ? F.talk : F.stand;
                 break;
@@ -3135,7 +3584,31 @@ Item {
         }
     }
 
-    function updateScreens() {
+    // What a waiting or idle person has on its screen, picked at random
+    // every 8 to 20 seconds: a game, a cat video, a meme or some shopping
+    // most of the time while waiting, now and then while idle, and otherwise
+    // nothing much. Someone asking the user something keeps to the question.
+    // A pick holds only for the state it was made in, so a change of state
+    // picks again at once.
+    function slackOf(actor) {
+        const state = actor.person.state;
+        if (state !== "waiting" && state !== "idle") {
+            actor.slackFor = "";
+            return "";
+        }
+        if (page.now >= actor.slackUntil || actor.slackFor !== state) {
+            const odds = state === "waiting" ? 0.75 : 0.35;
+            actor.slack = page.screenRng() < odds ? pick(page.screenRng, Object.keys(page.slackArt)) : "";
+            actor.slackFor = state;
+            actor.slackUntil = page.now + between(page.screenRng, 8000, 20000);
+        }
+        return actor.slack;
+    }
+
+    // Brings the screens up to date, touching only those whose picture
+    // changes, and fills the whiteboards being drawn on by `elapsed` ms: a
+    // board takes 12 s to fill whichever clock the page runs on.
+    function updateScreens(elapsed) {
         if (!page.world)
             return;
         for (const screen of page.screens) {
@@ -3143,16 +3616,26 @@ Item {
             if (!view)
                 continue;
             const seat = page.world.seats[screen.seat];
-            view.visible = deskShown(seat);
-            const owner = page.occupied[seat.y * page.world.cols + seat.x];
-            const actor = owner ? page.actors[owner] : null;
-            let mode = "off";
-            if (actor && actor.goal?.kind === "desk") {
+            // On for whoever sits there, from the step onto the seat.
+            const i = seat.y * page.world.cols + seat.x;
+            const actor = page.actors[page.claims[i]];
+            let mode = "off", slack = "";
+            if (actor && actor.goal?.kind === "desk" && (actor.ty * page.world.cols + actor.tx === i || actor.next === i)) {
                 const p = actor.person;
                 mode = p.state === "failed" ? "failed" : p.state === "working" ? (p.activity ?? "idle") : "idle";
+                slack = slackOf(actor);
             }
+            const shown = deskShown(seat);
+            const scene = slack ? Math.floor((page.now + actor.beat * 40) / 1000) % page.slackArt[slack].frames.length : view.scene;
+            // Only working screens move with the clock.
+            const phase = slack || mode === "off" || mode === "idle" || mode === "failed" ? view.phase : Math.floor(page.now / 240);
+            if (view.visible === shown && view.mode === mode && view.slack === slack && view.scene === scene && view.phase === phase)
+                continue;
+            view.visible = shown;
             view.mode = mode;
-            view.phase = page.ticks / 6;
+            view.slack = slack;
+            view.scene = scene;
+            view.phase = phase;
         }
         for (const board of page.boards) {
             const view = page.boardViews[board.key];
@@ -3160,7 +3643,7 @@ Item {
                 continue;
             const drawing = Object.values(page.actors).some(a => a.goal?.board === board.key && a.tx === a.goal.x && a.ty === a.goal.y);
             if (drawing)
-                view.progress = Math.min(1, view.progress + 0.02);
+                view.progress = Math.min(1, view.progress + Math.max(0, elapsed) / 12000);
         }
     }
 
@@ -3790,6 +4273,14 @@ Item {
         onTriggered: page.tick(interval)
     }
 
+    // Refits after a resize. A timer rather than Qt.callLater, so that a
+    // refit still pending when the page goes away goes with it.
+    Timer {
+        id: refitLater
+        interval: 0
+        onTriggered: page.refit()
+    }
+
     // The sky in the windows and the clock follow the time of day.
     Timer {
         property int hour: new Date().getHours()
@@ -3867,6 +4358,9 @@ Item {
             contentWidth: Math.max(width, stage.width)
             contentHeight: Math.max(height, stage.height)
             boundsBehavior: Flickable.StopAtBounds
+            // Once for both sides of a resize, at its new size.
+            onWidthChanged: refitLater.restart()
+            onHeightChanged: refitLater.restart()
 
             ScrollBar.vertical: ScrollBar {}
             ScrollBar.horizontal: ScrollBar {}
@@ -3969,7 +4463,12 @@ Item {
 
                                 required property var modelData
                                 property string mode: "off"
-                                property real phase: 0
+                                property int phase: 0
+                                // What its sitter slacks off with, and which frame of it.
+                                property string slack: ""
+                                property int scene: 0
+                                readonly property var art: slack ? page.slackArt[slack] : null
+                                readonly property bool slacking: slack !== ""
                                 readonly property bool code: mode === "typing" || mode === "thinking" || mode === "delegating" || mode === "planning" || mode === "reading"
                                 readonly property bool terminal: mode === "running" || mode === "testing"
 
@@ -3978,7 +4477,7 @@ Item {
                                 z: modelData.z
                                 width: 8
                                 height: 6
-                                color: mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
+                                color: art ? art.color : mode === "off" ? "#141a24" : mode === "failed" ? "#7a1f2b" : mode === "browsing" ? "#f2f4f8" : terminal ? "#0d1210" : mode === "idle" ? "#24406a" : "#1d2a44"
                                 Component.onCompleted: {
                                     page.screenViews[modelData.key] = screen;
                                     visible = page.deskShown(page.world.seats[modelData.seat]);
@@ -3994,7 +4493,7 @@ Item {
                                     delegate: Rectangle {
                                         required property int index
 
-                                        visible: screen.mode !== "off"
+                                        visible: screen.mode !== "off" && !screen.art
                                         x: screen.mode === "browsing" ? 1 : 1 + (index === 1 ? 1 : 0)
                                         y: 1 + index * 2 - (screen.mode === "browsing" && index === 0 ? 1 : 0)
                                         height: 1
@@ -4002,10 +4501,10 @@ Item {
                                             if (screen.mode === "failed")
                                                 return index === 1 ? 6 : 0;
                                             if (screen.mode === "browsing")
-                                                return index === 0 ? 8 : 2 + ((Math.floor(screen.phase) + index * 3) % 4);
+                                                return index === 0 ? 8 : 2 + ((screen.phase + index * 3) % 4);
                                             if (screen.mode === "idle")
                                                 return index === 1 ? 2 : 0;
-                                            return 1 + ((Math.floor(screen.phase) * (index + 2) + index * 5) % 6);
+                                            return 1 + ((screen.phase * (index + 2) + index * 5) % 6);
                                         }
                                         color: {
                                             if (screen.mode === "failed")
@@ -4013,13 +4512,31 @@ Item {
                                             if (screen.mode === "browsing")
                                                 return index === 0 ? "#4a90d9" : "#9aa5b0";
                                             if (screen.mode === "testing")
-                                                return (Math.floor(screen.phase) + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
+                                                return (screen.phase + index) % 5 === 0 ? "#ff6b6b" : "#5fd38a";
                                             if (screen.mode === "running")
                                                 return "#5fd38a";
                                             if (screen.mode === "idle")
                                                 return "#9cc8ff";
                                             return ["#c792ea", "#82aaff", "#f8c25c"][index];
                                         }
+                                    }
+                                }
+
+                                // Its slacking frame: up to six blocks of pixels,
+                                // made while it slacks and only moved as frames change.
+                                Repeater {
+                                    model: screen.slacking ? 6 : 0
+
+                                    delegate: Rectangle {
+                                        required property int index
+                                        readonly property var block: screen.art ? screen.art.frames[screen.scene % screen.art.frames.length][index] : undefined
+
+                                        visible: block !== undefined
+                                        x: block?.[0] ?? 0
+                                        y: block?.[1] ?? 0
+                                        width: block?.[2] ?? 0
+                                        height: block?.[3] ?? 0
+                                        color: block?.[4] ?? "transparent"
                                     }
                                 }
                             }

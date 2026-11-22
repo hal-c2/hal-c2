@@ -494,11 +494,16 @@ const Steps steps([] {
     projectThreadCommands(world);
     updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [&](QJsonObject& row) {
       row.insert(QStringLiteral("snoozedAt"), iso(world.now().addSecs(-3 * 3600)));
-      row.insert(QStringLiteral("snoozedUntil"), iso(world.now().addSecs(-3600)));
+      // After the row's updatedAt: an open thread is visited at its updatedAt, which must not
+      // cover the wake time.
+      row.insert(QStringLiteral("snoozedUntil"), iso(world.now().addSecs(-1800)));
       row.insert(QStringLiteral("lastVisitedAt"), iso(world.now().addSecs(-4 * 3600)));
     });
-    const auto row = rowOf(world, threadKeyOf(world, c[0]));
-    expect(row && wordOf(*row) == QLatin1String("Woke"), QStringLiteral("the row is %1").arg(show(row.value_or(QVariantMap()))));
+    const QString key = threadKeyOf(world, c[0]);
+    world.waitFor([&] {
+      const auto row = rowOf(world, key);
+      return row && wordOf(*row) == QLatin1String("Woke");
+    }, [&] { return QStringLiteral("the row to wake; it is %1").arg(show(rowOf(world, key).value_or(QVariantMap()))); });
   });
   step(QStringLiteral("the user dismisses its woke marker"), [](World& world, const Captures&, const Table&) {
     for (const QVariant& row : sidebar(world).value(QStringLiteral("active")).toList()) {

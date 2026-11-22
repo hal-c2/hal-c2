@@ -710,7 +710,7 @@ Feature: Agents working with threads through MCP tools
     Then the tool fails with code "thread_not_found" saying "Thread t2 is no longer available."
 
   # Upstream #22452: an agent naming a thread by its bare id gets pointed at the right one.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: Reading a thread by a bare id suggests the full id only when that thread exists
     Given <thread>
     When the agent of "caller" reads "4f1c"

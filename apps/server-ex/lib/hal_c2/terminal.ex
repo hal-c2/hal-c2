@@ -42,7 +42,8 @@ defmodule HalC2.Terminal do
   @call_timeout 15_000
   @default_terminal_id "term-1"
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
-  @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
+  @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME
+                   TMUX TMUX_PANE STY WINDOW ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
   @appimage_env ~w(APPIMAGE APPDIR ARGV0 OWD)
   @appimage_search_paths ~w(PATH LD_LIBRARY_PATH XDG_DATA_DIRS GSETTINGS_SCHEMA_DIR)

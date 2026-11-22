@@ -15,6 +15,7 @@
 #include "CommandPaletteController.h"
 #include "DevicePanelSteps.h"
 #include "PlanCard.h"
+#include "QtScenarios.h"
 #include "PullRequestSteps.h"
 #include "ThreadSettle.h"
 #include "FilesIdentity.h"
@@ -377,6 +378,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
     if (modelPickerChooses(world, c[0])) return;
+    // A notification card's action.
+    if (notificationChooses(world, c[0])) return;
     // The welcome wizard's Select all / Select none.
     if (onboardingChooses(world, c[0])) return;
     // The Device tab's Refresh devices.

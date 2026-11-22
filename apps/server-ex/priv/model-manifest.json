@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-07T12:00:00Z",
+  "updatedAt": "2026-11-22T10:00:00Z",
   "compatibility": [
     {
       "driver": "opencode",
@@ -618,7 +618,8 @@
               {
                 "id": "thinking",
                 "label": "Thinking",
-                "type": "boolean"
+                "type": "boolean",
+                "currentValue": true
               }
             ]
           },

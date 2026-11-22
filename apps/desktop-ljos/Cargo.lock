@@ -2474,6 +2474,7 @@ dependencies = [
  "ljos_audit",
  "ljos_controls",
  "ljos_dev",
+ "ljos_lottie",
  "ljos_quick",
  "ljos_quick3d",
  "ljos_runtime",
@@ -3922,6 +3923,16 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ljos_lottie"
+version = "0.0.0"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=203dcb240ffd70a22d681213576f7ab7d989948a#203dcb240ffd70a22d681213576f7ab7d989948a"
+dependencies = [
+ "ljos",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

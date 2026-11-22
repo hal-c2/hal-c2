@@ -301,7 +301,7 @@ Feature: MC diagnostics
 
   # Upstream #27503: rotation read any number-like suffix as a backup, so files such as
   # "debug.log.04" or "debug.log.4.0" beside the log were deleted.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: Rolling the trace file over keeps files that are not its backups
     Given tracing is enabled on the MC
     And the trace file's folder holds the file "<name>" beside the trace file's backups

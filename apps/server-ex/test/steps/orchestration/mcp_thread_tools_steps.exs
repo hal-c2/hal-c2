@@ -1764,6 +1764,11 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "thread {string} was deleted", %{args: [thread]} = context do
+    context =
+      if Map.has_key?(context[:threads] || %{}, thread),
+        do: context,
+        else: World.named_thread(context, thread, "demo")
+
     id = World.thread_id(context, thread)
 
     {:ok, _} =
@@ -1782,6 +1787,23 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     [_, name] = Regex.run(~r/^Thread (\S+) is no longer available\.$/, saying)
     expected = "Thread #{World.thread_id(context, name)} is no longer available."
     assert {:error, ^code, ^expected} = context.mcp_result
+    context
+  end
+
+  step "the tool fails with code {string} ending in {string}",
+       %{args: [code, ending]} = context do
+    assert {:error, ^code, message} = context.mcp_result
+    assert String.ends_with?(message, ending)
+    context
+  end
+
+  step "the tool fails with code {string} with its usual message", %{args: [code]} = context do
+    assert {:error, ^code, "The thread was not found."} = context.mcp_result
+    context
+  end
+
+  step "no thread {string} exists", %{args: [thread]} = context do
+    refute Map.has_key?(context[:threads] || %{}, thread)
     context
   end
 

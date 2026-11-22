@@ -111,6 +111,8 @@ pub struct FakeMc {
     pub mores: RefCell<Vec<(SubId, u32)>>,
     /// Every origin and token it was opened at, as a pairing does.
     pub opened: RefCell<Vec<(String, String)>>,
+    /// The environment each opening that named one expected, in order.
+    pub expected: RefCell<Vec<String>>,
 }
 
 impl FakeMc {
@@ -329,6 +331,11 @@ impl Mc for FakeMc {
     fn open(&self, origin: &str, token: &str) -> Result<(), String> {
         self.opened.borrow_mut().push((origin.into(), token.into()));
         Ok(())
+    }
+
+    fn open_expecting(&self, origin: &str, token: &str, environment: &str) -> Result<(), String> {
+        self.expected.borrow_mut().push(environment.into());
+        self.open(origin, token)
     }
 }
 

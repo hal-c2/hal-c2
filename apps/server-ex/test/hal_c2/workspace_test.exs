@@ -192,6 +192,14 @@ defmodule HalC2.WorkspaceTest do
         assert message =~ "Regex search needs ripgrep"
       end
     end
+
+    # One file with many matching lines keeps at most 100 of them.
+    File.write!(Path.join(root, "trace.txt"), String.duplicate("needle\n", 150))
+    File.write!(Path.join(root, "one.txt"), "needle\n")
+
+    assert {:ok, %{"matches" => matches}} = search.("needle", %{"limit" => 200})
+    assert Enum.count(matches, &(&1["path"] == "trace.txt")) == 100
+    assert Enum.any?(matches, &(&1["path"] == "one.txt"))
   end
 
   test "git grep computes literal ranges, applies the limit, and refuses regex without PCRE",
