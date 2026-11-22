@@ -2395,6 +2395,18 @@ Feature: Claude
     When the user sends another message
     Then it reads all three messages it missed, in order, before the new one
 
+  # #1735: a prompt Claude never starts a turn for has no answer, so it keeps no room
+  # in the conversation for one; three of them must not refuse the next handoff.
+  @mc @plugin-claude
+  Scenario: Messages Claude never started leave room for the next handoff
+    Given a Claude thread whose background subagent is still working
+    And Claude never starts a turn for the next two messages
+    And Claude refuses the message after those because of that work
+    And Claude never starts a turn for the message after that either
+    When the user sends another message
+    Then Claude resumes the same session
+    And it reads the messages it missed before the new one
+
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high
   Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging

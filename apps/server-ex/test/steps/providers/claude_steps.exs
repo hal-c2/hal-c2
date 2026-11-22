@@ -4353,9 +4353,16 @@ defmodule HalC2.Steps.Providers.Claude do
     context = World.post_message(context, @thread, "what next?", %{"modelSelection" => selection})
 
     statuses =
-      if context[:refused_twice],
-        do: ["completed", "failed", "failed", "failed", "completed"],
-        else: ["completed", "failed", "completed"]
+      cond do
+        context[:never_started] ->
+          ["completed", "failed", "failed", "failed", "failed", "completed"]
+
+        context[:refused_twice] ->
+          ["completed", "failed", "failed", "failed", "completed"]
+
+        true ->
+          ["completed", "failed", "completed"]
+      end
 
     World.await_runs(context, @thread, statuses)
     context
@@ -4390,6 +4397,47 @@ defmodule HalC2.Steps.Providers.Claude do
       World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
 
     World.await_runs(context, @thread, ["completed", "failed", "failed"])
+    context
+  end
+
+  # The runs of #1735 before the one that was refused for no room: two prompts
+  # Claude never starts, one it refuses for the background work, and a third it
+  # never starts, handing the refused one over unconfirmed.
+  step "Claude never starts a turn for the next two messages", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed"])
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed", "failed"])
+    context
+  end
+
+  step "Claude refuses the message after those because of that work", context do
+    context =
+      send_on(context, [%{"id" => "fastMode", "value" => true}], [
+        "completed",
+        "failed",
+        "failed",
+        "failed"
+      ])
+
+    assert refused?(context)
+    Map.put(context, :never_started, true)
+  end
+
+  step "Claude never starts a turn for the message after that either", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed", "failed", "failed", "failed"])
     context
   end
 

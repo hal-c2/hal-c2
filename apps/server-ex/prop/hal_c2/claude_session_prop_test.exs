@@ -26,7 +26,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   other turn runs, on the same process when the selection is the same, so the work
   survives it. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
-  prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
+  prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
+  keeps no room in the conversation for an answer that is not coming (#1735).
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
@@ -81,16 +82,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         trap_exit do
           start(relative?, access)
           {history, state, result} = run_commands(__MODULE__, cmds)
-          HalC2.Prop.stop_services()
-          Application.delete_env(:hal_c2, :claude_command)
-          System.delete_env("FAKE_CLAUDE_ORPHANED")
-          System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
-          System.delete_env("FAKE_CLAUDE_MCP_HOLD")
-          System.delete_env("CLAUDE_CONFIG_DIR")
-          System.delete_env("FAKE_CLAUDE_INPUT_LOG")
-          Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
-          Application.put_env(:hal_c2, :durable_programs, false)
-          Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
+          stop_case()
 
           (result == :ok)
           |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -98,6 +90,64 @@ defmodule HalC2.ClaudeSessionPropTest do
         end
       end
     end
+  end
+
+  # The counterexample of #1735, run whole every time rather than when PropEr draws
+  # it: with background work running, three prompts Claude never starts a turn for
+  # (the last handing over a refused turn, unconfirmed) must not use up the
+  # conversation's room, so the next turn runs with the history sent again. The
+  # commands are the issue's turns 2 to 8, renumbered from 1 (its 7 sent nothing).
+  test "prompts Claude never starts leave room for the history to go again" do
+    start(false, true)
+
+    try do
+      assert %{status: "completed", background: true} =
+               turn(1, "claude-opus-4-6", :unset, :background)
+
+      assert %{status: "failed", background: true} =
+               turn(2, "claude-opus-4-6", false, :never_start)
+
+      assert %{status: "failed", background: true} =
+               turn(3, "claude-opus-4-6", :unset, :never_start)
+
+      assert %{status: "failed", background: true, sent: []} =
+               turn(4, "claude-opus-4-5", true, :which_tools)
+
+      assert %{status: "failed", background: true, handed: true} =
+               turn(5, "claude-opus-4-6", false, :never_start)
+
+      seen = turn(6, "claude-opus-4-6", false, :which_mode)
+      assert seen.status == "completed"
+      assert seen.reply == "mode bypassPermissions"
+      assert seen.background
+      assert [sent] = seen.sent
+      assert sent =~ "which tools"
+      assert String.ends_with?(sent, "\n\n" <> @texts[:which_mode])
+
+      never_started =
+        @tid
+        |> current()
+        |> StreamState.list("run")
+        |> Enum.count(&(&1["turnNeverStarted"] == true))
+
+      assert never_started == 3
+    after
+      stop_case()
+    end
+  end
+
+  # What a case leaves behind: its services and the fake's environment.
+  defp stop_case do
+    HalC2.Prop.stop_services()
+    Application.delete_env(:hal_c2, :claude_command)
+    System.delete_env("FAKE_CLAUDE_ORPHANED")
+    System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
+    System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+    System.delete_env("CLAUDE_CONFIG_DIR")
+    System.delete_env("FAKE_CLAUDE_INPUT_LOG")
+    Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
+    Application.put_env(:hal_c2, :durable_programs, false)
+    Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
   end
 
   # Claude's config dir is given absolute, or relative, as Claude takes it: from the

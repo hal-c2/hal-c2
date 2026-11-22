@@ -2282,8 +2282,10 @@ defmodule HalC2.Claude.ThreadRuntime do
           state,
           "failed",
           "Claude acknowledged the message but never started a turn for it.",
-          # The process and the work it runs in the background are untouched.
-          keep_background: true
+          # The process and the work it runs in the background are untouched, and no
+          # answer is coming, which the run records (`Handoff.room/3`).
+          keep_background: true,
+          never_started: true
         )
 
       _ ->
@@ -4208,6 +4210,22 @@ defmodule HalC2.Claude.ThreadRuntime do
             &Map.put(&1, "nativeTurnRef", Entities.provider_ref(head, "claudeAgent"))
           ),
           kept_head(state.turn, status, stream)
+        ]
+      end)
+    end
+
+    # Claude's own word that it never started a turn for the prompt, recorded on the
+    # run before it ends: no answer or usage report follows, so the handoff's room
+    # keeps no reserve for one (`HalC2.Orchestration.Handoff.room/3`).
+    if opts[:never_started] do
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "run",
+            state.turn.ids.run,
+            &Map.put(&1, "turnNeverStarted", true)
+          )
         ]
       end)
     end
