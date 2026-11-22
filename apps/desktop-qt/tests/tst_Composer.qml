@@ -431,6 +431,7 @@ Item {
             tryVerify(() => flow.implicitHeight === twoRows, 3000, "two images take two rows: " + flow.implicitHeight);
             tryCompare(strip, "height", twoRows, 3000, "two image rows show whole");
             compare(strip.overflowing, false, "two rows do not overflow");
+            const roomWhole = strip.availableWidth;
             Shell.state = withImages(3);
             tryVerify(() => flow.implicitHeight === row * 3 + Theme.space.sm * 2, 3000, "three images take three rows: " + flow.implicitHeight);
             tryCompare(strip, "height", twoRows, 3000, "the strip still ends on the second whole row, not mid-row");
@@ -453,6 +454,7 @@ Item {
             verify(bar.visible, "the vertical scroll bar shows while the strip overflows");
             compare(bar.policy, ScrollBar.AlwaysOn, "the bar stays on, not only while scrolling");
             verify(strip.availableWidth <= strip.width - bar.width, "the bar sits beside the chips, not over them");
+            compare(strip.availableWidth, roomWhole, "whether the rows overflow does not change the width they wrap in");
         }
 
         // A row is as tall as its tallest child: a file chip sharing a row

@@ -1086,10 +1086,11 @@ Rectangle {
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         // Overflow says so: the bar stays while more is below,
                         // beside the chips rather than over a row's last button.
-                        // Narrower only makes the rows taller, so an overflowing
-                        // strip stays overflowing once the bar takes its room.
+                        // Its room is kept without overflow too: room that came
+                        // with overflow would rewrap the rows that decide it,
+                        // which can end the overflow, or keep it going.
                         ScrollBar.vertical.policy: overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
-                        rightPadding: overflowing ? ScrollBar.vertical.width : 0
+                        rightPadding: ScrollBar.vertical.width
 
                         Flow {
                             id: attachmentsFlow
