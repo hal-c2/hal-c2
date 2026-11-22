@@ -2144,6 +2144,62 @@ Item {
             runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the speaker goes back to work");
         }
 
+        function test_a_talk_heard_before_both_are_in_the_office_waits_for_them_data() {
+            return [
+                {
+                    tag: "the listener comes after",
+                    late: "worker"
+                },
+                {
+                    tag: "the speaker comes after",
+                    late: "lead"
+                }
+            ];
+        }
+
+        // A hand-off's call often ends before its worker's row reaches the office.
+        function test_a_talk_heard_before_both_are_in_the_office_waits_for_them(data) {
+            const both = [person("lead", "Lead", "working", "typing"), person("worker", "Worker", "working", "typing")];
+            const early = both.filter(p => p.id !== data.late);
+            const talks = [
+                {
+                    id: "delegate:worker",
+                    from: "lead",
+                    to: "worker",
+                    kind: "delegate",
+                    text: "Fix the parser",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(early);
+            page.advance(25);
+            plugin.publish(early, talks);
+            page.advance(25);
+            plugin.publish(both, talks);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the talk waits for both");
+            page.advance(1);
+            compare(page.overlays["lead"].bubble, "Fix the parser");
+            plugin.publish(both, talks);
+            compare(actor("lead").queue.length, 0, "a talk is heard once");
+        }
+
+        function test_an_old_talk_is_not_played_when_its_listener_comes_after_opening() {
+            const lead = person("lead", "Lead", "working", "typing");
+            const talks = [
+                {
+                    id: "delegate:worker",
+                    from: "lead",
+                    to: "worker",
+                    kind: "delegate",
+                    text: "Fix the parser",
+                    at: new Date(Date.now() - 120000).toISOString()
+                }
+            ];
+            plugin.publish([lead], talks);
+            plugin.publish([lead, person("worker", "Worker", "working", "typing")], talks);
+            compare(actor("lead").queue.length, 0, "a talk older than the opening's 90 seconds stays quiet");
+        }
+
         function test_a_person_spoken_to_stops_to_listen_and_then_goes_on() {
             // Lead and C get the desks side by side.
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);

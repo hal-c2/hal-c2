@@ -3151,18 +3151,22 @@ Item {
     // ── Talks ───────────────────────────────────────────────────────────────
 
     // New talks walk their speaker over. The first time the page sees an office,
-    // only the talks of the last minute and a half are new.
+    // only the talks of the last minute and a half are new. A talk can come
+    // before one of its two, as a hand-off mostly does before its worker's row:
+    // it is heard once both are here, for as long as the topic keeps it.
     function hear(talks) {
         const fresh = Date.now() - 90000;
         for (const talk of talks) {
             if (!talk || page.seen[talk.id])
                 continue;
-            page.seen[talk.id] = true;
-            if (!page.primed && Date.parse(talk.at) < fresh)
+            if ((!page.primed && Date.parse(talk.at) < fresh) || talk.from === talk.to) {
+                page.seen[talk.id] = true;
                 continue;
+            }
             const from = page.actors[talk.from];
-            if (!from || !page.actors[talk.to] || talk.from === talk.to)
+            if (!from || !page.actors[talk.to])
                 continue;
+            page.seen[talk.id] = true;
             // A speaker keeps at most three talks waiting. When they are full, a
             // talk to someone inside takes the place of the oldest one to
             // someone still outside the door.

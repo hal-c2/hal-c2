@@ -664,6 +664,13 @@ Feature: Office
       And neither steps aside, waits or goes around
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk heard before both are in the office waits for them
+      Given the office has "Lead" and not yet its new worker
+      When the office has a "delegate" talk from "Lead" to that worker
+      And the worker joins the office while the office still has the talk
+      Then "Lead" walks up to the worker and says it, once
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in
       Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
       When the office has a "message" talk from "Lead" to "Newcomer"
