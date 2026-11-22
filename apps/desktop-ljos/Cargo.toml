@@ -13,8 +13,12 @@ publish = false
 # Pinned to a commit of hal-c2/ljos-ui. To build against a local checkout,
 # add a `[patch."https://github.com/hal-c2/ljos-ui"]` to a gitignored
 # .cargo/config.toml rather than editing this line.
-# 203dcb24 is 43c5ce23 plus hal-c2/ljos-ui#734 (the Records sweep bound;
-# #1703); move every rev to that change's merge commit once it lands.
+# 203dcb24 is 43c5ce23 plus a copy of hal-c2/ljos-ui#734's Records sweep bound
+# (#1703). #734 merging doesn't make it reachable: only the ljos-ui branch
+# fix/records-sweep-dead-bound-pin holds it, so keep that branch while this
+# is pinned. #734's merge commit also brings everything ljos-ui main gained
+# since 43c5ce23 (over 200 commits), and a rev without the fix, ed0048bf
+# (#1728) among them, needs the fix carried onto it.
 ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "203dcb240ffd70a22d681213576f7ab7d989948a", default-features = false }
 ljos_quick3d = { git = "https://github.com/hal-c2/ljos-ui", rev = "203dcb240ffd70a22d681213576f7ab7d989948a" }
 ljos_webengine = { git = "https://github.com/hal-c2/ljos-ui", rev = "203dcb240ffd70a22d681213576f7ab7d989948a" }

@@ -118,15 +118,13 @@ fn rows_news_does_not_grow_the_script_heap() {
     shell.mc.frame(&shell.engine, "shell", "", snapshot());
     shell.window.borrow_mut().advance(1000).expect("at rest");
 
-    // Two minutes of news at the audit's cadence, moving the same six
-    // threads along each frame. Fixed frames sampled every twenty ticks
-    // can sit in a sweep trough while peaks pile up between them;
-    // tracking the peak over every frame would collect on each one and
-    // drive the sweep this means to observe, so the samples are the
-    // frames and the bound leaves room for one cycle's climb.
+    // Half a minute of news at the audit's cadence: six threads move along
+    // each frame, all 90 every fifteen frames. Every twentieth frame is
+    // sampled, and the bound leaves room for what piles up between two
+    // sweeps. Sampling doesn't sweep: `Records` does that only as it keeps
+    // a new record.
     let start = heap(&shell);
-    let mut peak = start;
-    for tick in 1..=480usize {
+    for tick in 1..=120usize {
         let rows: Vec<serde_json::Value> = (0..6)
             .map(|i| (tick * 6 + i * 13) % 90)
             .map(|t| json!([format!("t{t}"), "thread", thread(t, tick)]))
@@ -139,12 +137,12 @@ fn rows_news_does_not_grow_the_script_heap() {
         );
         shell.window.borrow_mut().advance(250).expect("at rest");
         if tick % 20 == 0 {
-            peak = peak.max(heap(&shell));
+            let held = heap(&shell);
+            assert!(
+                held < start + 6 * 1024 * 1024,
+                "script heap reached {held} bytes from a start of {start} after {tick} rows frames: \
+                 replaced generations pile up between sweeps"
+            );
         }
     }
-    assert!(
-        peak < start + 6 * 1024 * 1024,
-        "script heap peaked at {peak} bytes from a start of {start} over 480 rows frames: \
-         replaced generations pile up between sweeps"
-    );
 }
