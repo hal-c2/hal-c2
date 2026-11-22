@@ -88,14 +88,45 @@ defmodule HalC2.ClaudeNeverStartedTest do
     refute never_started?(context)
   end
 
+  # A turn that did start fails with no usage reported, and may have answered.
+  test "a started turn that failed with an error keeps its reserve", context do
+    started(context)
+
+    claude(context, %{
+      "type" => "result",
+      "subtype" => "error_during_execution",
+      "is_error" => true
+    })
+
+    refute failed_never_started?(context)
+  end
+
+  test "a started turn whose process exited keeps its reserve", context do
+    started(context)
+    Process.exit(:sys.get_state(context.pid).session, :kill)
+    refute failed_never_started?(context)
+  end
+
+  # Claude takes the prompt; the runtime has read that when this returns.
+  defp started(%{pid: pid, uuid: uuid} = context) do
+    claude(context, %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => "started"})
+
+    assert :sys.get_state(pid).turn.prompt.started
+  end
+
   # Claude ends the prompt unstarted; whether the run records that no answer follows.
-  defp never_started?(%{context: world, uuid: uuid} = context) do
+  defp never_started?(%{uuid: uuid} = context) do
     claude(context, %{
       "type" => "command_lifecycle",
       "command_uuid" => uuid,
       "state" => "completed"
     })
 
+    failed_never_started?(context)
+  end
+
+  # Whether the run, once it failed, records that no answer follows.
+  defp failed_never_started?(%{context: world}) do
     World.await_runs(world, @thread, ["failed"])
     [run] = World.runs(world, @thread)
     run["turnNeverStarted"] == true
