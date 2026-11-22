@@ -2852,24 +2852,29 @@ defmodule HalC2.Orchestration do
   # runtime is asked and each stops the work of its own that the pin covers (#474). A
   # started turn nothing drives any more (its runtime stopped without ending it) ends
   # here, and a provider plugin that cannot stop a turn says so.
-  # A provider that cannot be interrupted refuses the stop in its name, before
-  # anything is recorded. Between turns there is no provider to ask, and
+  # A stop naming a run the thread does not have is refused, and so is one for a
+  # provider that cannot be interrupted, in its name, before anything is recorded or
+  # any runtime is asked (#461). Between turns there is no provider to ask, and
   # `interrupt_undriven/2` decides.
   defp interrupt_policy(thread_id, run_id) do
-    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
-
-    run =
-      Enum.find(runs, &(&1["id"] == run_id)) ||
-        Enum.find(runs, &(&1["status"] in @active_statuses))
+    run = stop_target(HalC2.Streams.state(thread_id), run_id)
 
     instance =
       run && run["status"] in @active_statuses &&
         (run["providerInstanceId"] || get_in(run, ["modelSelection", "instanceId"]))
 
-    if instance,
-      do: HalC2.Orchestration.CommandPolicy.ensure(instance, :interrupt),
-      else: :ok
+    cond do
+      run_id != nil and run == nil -> {:error, "no running turn"}
+      instance -> HalC2.Orchestration.CommandPolicy.ensure(instance, :interrupt)
+      true -> :ok
+    end
   end
+
+  # The run a stop is for: the one it names, or the active one when it names none.
+  defp stop_target(state, nil),
+    do: Enum.find(StreamState.list(state, "run"), &(&1["status"] in @active_statuses))
+
+  defp stop_target(state, run_id), do: StreamState.get(state, "run")[run_id]
 
   # Asking a provider to stop is its own recorded effect. Work for the run
   # that has not reached the provider yet is cancelled with it.
@@ -2958,13 +2963,7 @@ defmodule HalC2.Orchestration do
   # The runtime of the pinned run if it is active, or of the active run for a stop
   # with no pin; nil between turns.
   defp active_runtime(thread_id, run_id) do
-    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
-
-    run =
-      if run_id,
-        do: Enum.find(runs, &(&1["id"] == run_id)),
-        else: Enum.find(runs, &(&1["status"] in @active_statuses))
-
+    run = stop_target(HalC2.Streams.state(thread_id), run_id)
     instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
     if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
   end
@@ -3051,11 +3050,7 @@ defmodule HalC2.Orchestration do
   defp interrupt_undriven(thread_id, run_id) do
     state = HalC2.Streams.state(thread_id)
     runs = StreamState.list(state, "run")
-
-    run =
-      Enum.find(runs, &(&1["id"] == run_id)) ||
-        Enum.find(runs, &(&1["status"] in @active_statuses))
-
+    run = stop_target(state, run_id)
     latest = Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
     thread = StreamState.get(state, "thread")[thread_id]
     deleted? = thread != nil and thread["deletedAt"] != nil
@@ -3447,10 +3442,7 @@ defmodule HalC2.Orchestration do
   # A stop for a run that already ended (a client still showing it) holds nothing.
   defp stop_request(state, command) do
     requested = interrupt_request(state, command)
-    runs = StreamState.get(state, "run")
-
-    stopped =
-      runs[command["runId"]] || Enum.find(Map.values(runs), &(&1["status"] in @active_statuses))
+    stopped = stop_target(state, command["runId"])
 
     held =
       if command["holdQueue"] != false and requested != [] and
@@ -3513,12 +3505,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp interrupt_request(state, command) do
-    runs = StreamState.get(state, "run")
-
-    run =
-      runs[command["runId"]] ||
-        runs |> Map.values() |> Enum.find(&(&1["status"] in @active_statuses))
-
+    run = stop_target(state, command["runId"])
     item_id = run && "turn-item:run:#{run["id"]}:signal:interrupt-request"
 
     # A run still queued has no turn to stop: a request left on it would read as a
