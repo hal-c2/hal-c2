@@ -282,7 +282,7 @@ defmodule HalC2.ClusterTest do
     true = :erlang.suspend_process(socket)
     :ok = :erpc.call(c, :sys, :resume, [stream])
     assert_receive {:trace, _follow, :send, {:hal_c2_followed, _, {:ok, _}}, ^socket}, 5_000
-    part(c)
+    part_let_go(peer, c, :from_stream, [stream])
     true = Node.connect(c)
     assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
     true = :erlang.resume_process(socket)
@@ -477,7 +477,7 @@ defmodule HalC2.ClusterTest do
     {first, _, client} = WsClient.recv_until(client, &(&1["id"] == 1), 30_000)
     assert %{"t" => "plugin", "value" => "before"} = first
 
-    part_watched(peer, c, id)
+    part_let_go(peer, c, :from_topic, [id, "watched"])
     publish(peer, id, "while parted")
     true = Node.connect(c)
 
@@ -508,7 +508,7 @@ defmodule HalC2.ClusterTest do
     assert %{"t" => "plugin", "value" => "before"} = first
 
     socket = as_v12(web)
-    part_watched(peer, c, id)
+    part_let_go(peer, c, :from_topic, [id, "watched"])
     publish(peer, id, "while parted")
     true = Node.connect(c)
     # Any message after the upgrade is the first its new code handles.
@@ -627,11 +627,10 @@ defmodule HalC2.ClusterTest do
     refute c in Node.list()
   end
 
-  # Parted from `c`'s side, and not back until `c`'s host watches nothing for this MC.
-  defp part_watched(peer, c, id) do
+  # Parted from `c`'s side, and not back until `c` has let go of what this MC watched.
+  defp part_let_go(peer, c, from, args) do
     true = Node.monitor(c, true)
-    args = [node(), id, "watched"]
-    :ok = :peer.call(peer, HalC2.Test.RunningPlugin, :part, args, 60_000)
+    :ok = :peer.call(peer, HalC2.Test.Parting, from, [node() | args], 60_000)
     assert_receive {:nodedown, ^c}, 30_000
   end
 
