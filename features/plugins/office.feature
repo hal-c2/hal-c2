@@ -5,7 +5,7 @@
 #   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
 #   plugins/office/src/OfficePage.qml (the pixel-art office: who sits where, movers, talking, the review corner, project marks)
 #   plugins/office/src/OfficeArt.qml, plugins/office/src/Furniture.qml (people, pets, furniture and the room as drawn)
-#   plugins/office/src/LjosPlay/World.qml, plugins/office/src/LjosPlay/Actor.qml (the clock, camera, tiles and walking)
+#   plugins/office/ljos-play/qml/LjosPlay/World.qml, plugins/office/ljos-play/qml/LjosPlay/Actor.qml (the clock, camera, tiles and walking)
 #   plugins/office/bundle.mjs (writes plugins/office/ui/OfficePage.qml, the file clients fetch, from src/)
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
 #   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)

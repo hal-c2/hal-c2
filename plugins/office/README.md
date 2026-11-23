@@ -33,12 +33,12 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   a frame, within a budget the page learns from how long one took; until the
   floor and everyone on it are drawn, the page says the office is being set up.
 - `src/`: the page as it is written. `OfficePage.qml` says who is in the room
-  and what they do, `OfficeArt.qml` and `Furniture.qml` draw it, and
-  `src/LjosPlay/` is a pinned copy of the declarative engine that runs it,
-  [Ljós Play](https://github.com/hal-c2/ljos-play), at the commit in `COMMIT`.
-  Change the engine in its own repository and pin it here, rather than editing
-  the copy.
-- `bundle.mjs`: writes `ui/OfficePage.qml` from `src/`.
+  and what they do, and `OfficeArt.qml` and `Furniture.qml` draw it.
+- `ljos-play/`: a submodule pinning the declarative engine that runs it,
+  [Ljós Play](https://github.com/hal-c2/ljos-play). Change the engine in its
+  own repository and move the submodule here. Only the bundler reads it, so
+  clients and tests work without it checked out.
+- `bundle.mjs`: writes `ui/OfficePage.qml` from `src/` and the engine.
 - `test/tst_OfficePage.qml`: the generated page against a fake MC part.
 
 ## Changing the page
@@ -50,11 +50,14 @@ node plugins/office/bundle.mjs
 node plugins/office/bundle.mjs --check
 ```
 
-To move the engine to what a ljos-play checkout has committed, with that
-checkout's `LICENSE` and commit:
+The bundler checks the submodule out if it is not yet. To move the engine,
+check out another ljos-play commit in it, bundle, and commit both:
 
 ```bash
-node plugins/office/bundle.mjs --engine ../ljos-play
+git -C plugins/office/ljos-play fetch origin
+git -C plugins/office/ljos-play checkout <commit>
+node plugins/office/bundle.mjs
+git add plugins/office/ljos-play plugins/office/ui/OfficePage.qml
 ```
 
 The bundler makes each file in `src/` an inline component, so a file has one
