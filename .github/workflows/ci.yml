@@ -18,7 +18,8 @@ name: CI
 # (`park`), holding no runner, and when the last passes it marks them passed too
 # (merge-queue-stamp.sh), so the queue merges them together. When the last entry fails and
 # leaves, the watchdog starts the new last one's tests (merge-queue-watchdog.sh), as a
-# workflow_dispatch run with `queue` set, which then counts as a queue run.
+# workflow_dispatch run with `queue` set, which then counts as a queue run. The queue can't
+# see that run's checks, so it copies its answer to where the queue looks (ci-result.sh).
 
 on:
   pull_request:
@@ -44,8 +45,9 @@ permissions:
 concurrency:
   # A promoted entry shares its commit with the parked run, which never ends by itself. Never
   # cancel a queue run: its `CI result` still runs, and lands on the commit red or green
-  # while another run tests it.
-  group: ci-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
+  # while another run tests it. The event is in the group because main's push run has the
+  # commit of the entry that merged, whose parked run may still wait.
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -608,8 +610,8 @@ jobs:
   # The check main's ruleset requires, since the jobs above vary with the change and matrix
   # entries change their names. A skipped job passes; a failed or cancelled one does not,
   # except in a queue run whose entry has left the queue (ci-result.sh). In the queue it
-  # also answers for the entries ahead, which its commit holds. It holds the run's other
-  # write permission, and runs no project code either.
+  # also answers for the entries ahead, which its commit holds, and in a promoted run for
+  # its own entry. It can write checks, so it runs no project code either.
   result:
     name: CI result
     needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui, park]
@@ -617,7 +619,7 @@ jobs:
     if: ${{ always() && (github.event_name == 'merge_group' || inputs.queue || !cancelled()) }}
     permissions:
       contents: read
-      checks: write # answering for the entries ahead
+      checks: write # answering for queue entries
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -631,3 +633,26 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           QUEUE: ${{ (github.event_name == 'merge_group' || inputs.queue) && 'true' || '' }}
           GH_TOKEN: ${{ github.token }}
+
+  # GitHub sends no workflow_run when a run GITHUB_TOKEN started ends, so a promoted run
+  # starts the watchdog itself, after `CI result`, and has a failure reported.
+  follow:
+    name: Wake the merge queue watchdog
+    needs: result
+    if: ${{ always() && inputs.queue }}
+    permissions:
+      actions: write # starting the watchdog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: |
+          args=()
+          if [ "$RESULT" != success ]; then
+            args=(-f run="$GITHUB_RUN_ID" -f attempt="$GITHUB_RUN_ATTEMPT" -f branch="$GITHUB_REF_NAME")
+          fi
+          gh workflow run merge-queue-watchdog.yml "${args[@]}" ||
+            echo "::warning::Could not start the merge queue watchdog; its schedule will"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.result.result }}

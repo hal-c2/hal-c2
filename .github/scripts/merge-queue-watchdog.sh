@@ -7,9 +7,12 @@
 #     job for STUCK_MINUTES. It gets a comment saying why; its owner re-queues it.
 #   - Starts the tests of the last entry being built when its run is parked: the entry it
 #     waited on left the queue. Entries whose `CI result` failed are on their way out.
-#   - Answers for the entries ahead of a last entry whose run passed, when its `CI result`
-#     could not (merge-queue-stamp.sh).
+#   - Answers for a last entry whose run passed and the entries ahead of it, or for one
+#     whose promoted run failed, when `CI result` could not (merge-queue-stamp.sh).
 #   - Cancels queue runs whose commit is no longer in the queue: no one reads them.
+#
+# A queue commit is public and can be anyone's PR head, so neither a run nor a `CI result`
+# counts for being on it: only queue runs, and the checks in their own suites.
 #
 # Usage: merge-queue-watchdog.sh   (GH_TOKEN, GITHUB_REPOSITORY; DRY_RUN=1 only reports)
 set -euo pipefail
@@ -25,18 +28,31 @@ failed_jobs="$(cat "$here/failed-jobs.jq") | map(.name) | join(\", \")"
 age_minutes() { echo $(((now - $(date -u -d "$1" +%s)) / 60)); }
 act() { if [ -n "${DRY_RUN:-}" ]; then echo "(dry run) $*"; else "$@"; fi; }
 
-# The latest ci.yml run for a commit, a queue run or a promoted one:
-#   id  status  created_at  event  head_branch  html_url  check_suite_id
+# The latest queue run of ci.yml for a commit, the merge group's or a promoted one:
+#   id  status  created_at  event  head_branch  html_url  check_suite_id  run_attempt
+# Asked by event, which a pull request can neither fake nor crowd out of the page.
 latest_run() {
-  gh api "repos/$repo/actions/runs?head_sha=$1&per_page=20" \
-    --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | max_by(.created_at) // empty
-          | [.id, .status, .created_at, .event, .head_branch, .html_url, .check_suite_id] | @tsv'
+  local event
+  for event in merge_group workflow_dispatch; do
+    gh api "repos/$repo/actions/runs?head_sha=$1&event=$event&per_page=20" \
+      --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml"
+                                      and (.head_branch | startswith("gh-readonly-queue/")))
+            | [.id, .status, .created_at, .event, .head_branch, .html_url, .check_suite_id, .run_attempt] | @tsv' ||
+      return
+  done | sort -t $'\t' -k 3,3 | tail -n 1
 }
 
-# The conclusion of a commit's latest `CI result`, or its status while it runs, or missing.
-ci_result() {
-  gh api "repos/$repo/commits/$1/check-runs?check_name=CI%20result" \
-    --jq '.check_runs | max_by(.id) // {} | .conclusion // .status // "missing"'
+# The conclusion of a queue run's `CI result`, or its status while it runs, or missing. A
+# merge group's is the latest in its suite, where the queue reads and a later entry's stamp
+# lands. A promoted run's is its job in that attempt: a retry's predecessor doesn't count.
+run_result() { # id event suite attempt
+  if [ "$2" = merge_group ]; then
+    gh api "repos/$repo/check-suites/$3/check-runs?check_name=CI%20result" \
+      --jq '.check_runs | max_by(.id) // {} | .conclusion // .status // "missing"'
+  else
+    gh api "repos/$repo/actions/runs/$1/attempts/$4/jobs?per_page=100" \
+      --jq '[.jobs[] | select(.name == "CI result")] | max_by(.id) // {} | .conclusion // .status // "missing"'
+  fi
 }
 
 # Waits up to two minutes for a commit's promoted run to be listed. Watchdog runs are serial,
@@ -66,7 +82,7 @@ while IFS=$'\t' read -r _ _ sha number pr; do
   run=$(latest_run "$sha")
   why='' failed=''
   if [ -n "$run" ]; then
-    IFS=$'\t' read -r id status created _ _ _ suite <<<"$run"
+    IFS=$'\t' read -r id status created _ _ _ suite _ <<<"$run"
     if [ "$status" = completed ]; then
       # This run's own: the commit's may hold a parked run's too, which a promoted run ended.
       result=$(gh api "repos/$repo/check-suites/$suite/check-runs?check_name=CI%20result" \
@@ -99,16 +115,27 @@ while IFS=$'\t' read -r _ _ sha number pr; do
 done <<<"$awaiting"
 
 # The last entry being built, past those on their way out: it tests, or has passed.
-while IFS=$'\t' read -r _ _ sha number _; do
+while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
-  result=$(ci_result "$sha")
-  [ "$result" != failure ] && [ "$result" != cancelled ] || continue
   run=$(latest_run "$sha")
   [ -n "$run" ] || break # GitHub has not started it yet
-  IFS=$'\t' read -r id status _ event branch url _ <<<"$run"
+  IFS=$'\t' read -r id status _ event branch url suite attempt <<<"$run"
+  result=$(run_result "$id" "$event" "$suite" "$attempt")
+  if [ "$result" = failure ] || [ "$result" = cancelled ]; then
+    if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ]; then
+      # Read last, as a retry may have started since. One can still start as the stamp posts.
+      if [ "$(gh api "repos/$repo/actions/runs/$id" --jq .run_attempt)" != "$attempt" ]; then
+        echo "#$number's promoted run $id is no longer known to be at attempt $attempt; not failing it"
+        break
+      fi
+      echo "#$number's promoted run ended $result; failing the entry"
+      act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
+    fi
+    continue
+  fi
   if [ "$result" = success ]; then
-    echo "#$number passed; answering for the entries ahead"
-    act "$here/merge-queue-stamp.sh" "$sha" "$url"
+    echo "#$number passed; answering for it and the entries ahead"
+    GITHUB_EVENT_NAME=$event act "$here/merge-queue-stamp.sh" "$sha" "$url" success
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
     echo "#$number is the last entry but its run $id parked: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
