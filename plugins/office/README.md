@@ -34,9 +34,10 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   floor and everyone on it are drawn, the page says the office is being set up.
 - `src/`: the page as it is written. `OfficePage.qml` says who is in the room
   and what they do, `OfficeArt.qml` and `Furniture.qml` draw it, and
-  `src/LjosPlay/` is a pinned copy of the declarative engine that runs it, at
-  the commit in `COMMIT`. Change the engine in its own repository and copy it
-  here, rather than editing the copy.
+  `src/LjosPlay/` is a pinned copy of the declarative engine that runs it,
+  [Ljós Play](https://github.com/hal-c2/ljos-play), at the commit in `COMMIT`.
+  Change the engine in its own repository and pin it here, rather than editing
+  the copy.
 - `bundle.mjs`: writes `ui/OfficePage.qml` from `src/`.
 - `test/tst_OfficePage.qml`: the generated page against a fake MC part.
 
@@ -47,6 +48,13 @@ Edit `src/`, then write the shipped file and check that it is current:
 ```bash
 node plugins/office/bundle.mjs
 node plugins/office/bundle.mjs --check
+```
+
+To move the engine to what a ljos-play checkout has committed, with that
+checkout's `LICENSE` and commit:
+
+```bash
+node plugins/office/bundle.mjs --engine ../ljos-play
 ```
 
 The bundler makes each file in `src/` an inline component, so a file has one
