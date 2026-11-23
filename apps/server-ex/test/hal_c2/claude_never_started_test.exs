@@ -1,0 +1,177 @@
+defmodule HalC2.ClaudeNeverStartedTest do
+  # Claude reports usage only with the result that ends the user's turn, so a prompt it
+  # ends unstarted drops the handoff's reserve (#1735) only where nothing else in the
+  # run could have been answered: an answer the MC was never told the size of still
+  # fills the conversation.
+  use ExUnit.Case, async: false
+
+  alias HalC2.Claude.ThreadRuntime
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
+
+  @moduletag :tmp_dir
+  @thread "Build"
+
+  setup %{tmp_dir: dir} do
+    context =
+      %{mc: Mc.start(dir), clients: %{}, projects: %{}, threads: %{}}
+      |> World.create_project("shop")
+      |> then(&World.put_client(&1, World.client(&1)))
+      |> World.fake_providers()
+      # The fake takes the prompt and neither starts nor ends it.
+      |> World.launch_on(@thread, "claudeAgent", "wait")
+
+    World.await_value(context, @thread, fn state ->
+      HalC2.StreamState.list(state, "provider-turn") != []
+    end)
+
+    id = World.thread_id(context, @thread)
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    %{turn: %{ids: ids, prompt: prompt}} = :sys.get_state(pid)
+    {:ok, context: context, id: id, pid: pid, run: ids.run, uuid: prompt.uuid}
+  end
+
+  test "a prompt that ended unstarted, with no answer, keeps no reserve", context do
+    assert never_started?(context)
+  end
+
+  test "an answer in the run keeps its reserve", context do
+    claude(context, %{
+      "type" => "assistant",
+      "message" => %{"id" => "own", "content" => [%{"type" => "text", "text" => "Done"}]}
+    })
+
+    refute never_started?(context)
+  end
+
+  test "an answer Claude began streaming keeps its reserve", context do
+    stream(context, %{"type" => "message_start", "message" => %{"id" => "partial"}})
+
+    stream(context, %{
+      "type" => "content_block_start",
+      "index" => 0,
+      "content_block" => %{"type" => "text", "text" => ""}
+    })
+
+    refute never_started?(context)
+  end
+
+  test "an answer begun with no text yet keeps its reserve", context do
+    stream(context, %{"type" => "message_start", "message" => %{"id" => "partial"}})
+    refute never_started?(context)
+  end
+
+  test "a result of a turn Claude ran on its own keeps its reserve", context do
+    claude(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "user_message_uuids" => ["another-prompt"]
+    })
+
+    refute never_started?(context)
+  end
+
+  test "a steer sent into the run keeps its reserve", context do
+    message = %{text: "wait for the tests", attachments: [], priority: :next}
+    assert :ok = ThreadRuntime.steer(context.id, context.run, message)
+    refute never_started?(context)
+  end
+
+  test "a wake the run took over and Claude still runs keeps its reserve", context do
+    :sys.replace_state(context.pid, &%{&1 | wake: %{open: true, buffer: []}})
+    refute never_started?(context)
+  end
+
+  test "a wake that ended in the run keeps its reserve", context do
+    :sys.replace_state(context.pid, &%{&1 | wake: %{open: true, buffer: []}})
+    claude(context, %{"type" => "result", "subtype" => "success"})
+    refute never_started?(context)
+  end
+
+  # Before v13 a turn did not record whether Claude answered in it, so it may have.
+  test "a turn from before answers were recorded keeps its reserve", context do
+    :ok = :sys.suspend(context.pid)
+
+    :sys.replace_state(context.pid, fn state ->
+      %{state | v: 12, turn: Map.delete(state.turn, :answered)}
+    end)
+
+    upgrade(context)
+    refute never_started?(context)
+  end
+
+  # An MC that adopts the process, or updates, migrates a turn of its own version too.
+  test "a turn that records answers still drops its reserve after an upgrade", context do
+    :ok = :sys.suspend(context.pid)
+    upgrade(context)
+    assert never_started?(context)
+  end
+
+  # A turn that did start fails with no usage reported, and may have answered.
+  test "a started turn that failed with an error keeps its reserve", context do
+    started(context)
+
+    claude(context, %{
+      "type" => "result",
+      "subtype" => "error_during_execution",
+      "is_error" => true
+    })
+
+    refute failed_never_started?(context)
+  end
+
+  test "a started turn whose process exited keeps its reserve", context do
+    started(context)
+    Process.exit(:sys.get_state(context.pid).session, :kill)
+    refute failed_never_started?(context)
+  end
+
+  test "a started prompt Claude reports completed before its result keeps its turn", context do
+    started(context)
+
+    claude(context, %{
+      "type" => "command_lifecycle",
+      "command_uuid" => context.uuid,
+      "state" => "completed"
+    })
+
+    assert %{turn: %{prompt: %{started: true}}} = :sys.get_state(context.pid)
+  end
+
+  # What a release upgrade, and adopting an earlier MC's process, run on the state.
+  defp upgrade(%{pid: pid}) do
+    :ok = :sys.change_code(pid, ThreadRuntime, nil, nil)
+    :ok = :sys.resume(pid)
+  end
+
+  # Claude takes the prompt; the runtime has read that when this returns.
+  defp started(%{pid: pid, uuid: uuid} = context) do
+    claude(context, %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => "started"})
+
+    assert :sys.get_state(pid).turn.prompt.started
+  end
+
+  # Claude ends the prompt unstarted; whether the run records that no answer follows.
+  defp never_started?(%{uuid: uuid} = context) do
+    claude(context, %{
+      "type" => "command_lifecycle",
+      "command_uuid" => uuid,
+      "state" => "completed"
+    })
+
+    failed_never_started?(context)
+  end
+
+  # Whether the run, once it failed, records that no answer follows.
+  defp failed_never_started?(%{context: world}) do
+    World.await_runs(world, @thread, ["failed"])
+    [run] = World.runs(world, @thread)
+    run["turnNeverStarted"] == true
+  end
+
+  defp stream(context, event),
+    do: claude(context, %{"type" => "stream_event", "event" => event})
+
+  defp claude(%{pid: pid}, message),
+    do: send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
+end

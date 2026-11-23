@@ -33,6 +33,10 @@ defmodule HalC2.ProviderHandoffProofTest do
   #     with the provider's place, and what it would have sent takes no room: the next
   #     run goes on in the same conversation. Dropping the mark without moving the place
   #     back would lose what the run was to carry.
+  #   - A prompt the provider took into its conversation and ended without starting a
+  #     turn for holds it only by what was sent: counting a reserve for an answer that
+  #     never comes would refuse handoffs a nearly empty conversation has room for,
+  #     and counting less than what was sent would overfill it (#1735).
   @provider "the provider's side; the MC sees it only through prompts, confirmations and reports"
   @handoff "what a prompt carries; the model counts it by size, not by text"
   @history "what of the thread fits a size; pure, its laws in handoff_history.maude and prop/hal_c2/handoff_history_prop_test.exs"
@@ -51,7 +55,7 @@ defmodule HalC2.ProviderHandoffProofTest do
     covers: %{
       "HalC2.Orchestration.Handoff.plan/6" =>
         ~w(resume restart resend busy refuse fresh? mark overfull unsent),
-      "HalC2.Orchestration.Handoff.room/3" => ~w(occ reserve unsent),
+      "HalC2.Orchestration.Handoff.room/3" => ~w(occ reserve unsent never-start),
       "HalC2.Orchestration.Handoff.transcript/5" => ~w(fit done),
       "HalC2.Orchestration.Handoff.fresh_start/2" => "restart",
       "HalC2.Orchestration.TurnWriter.ensure_item/5" => ~w(confirm late-ack clear background),
@@ -129,7 +133,7 @@ defmodule HalC2.ProviderHandoffProofTest do
       ]
     }
 
-  @faults ~w(drop lose-ack crash unsent)
+  @faults ~w(drop lose-ack crash unsent never-start)
   @script "todo(1, 1) todo(2, 2) todo(3, 1) todo(4, 2)"
   # Mark, Room, Fresh, Keyed, Quiet, Busy, Since.
   @design "true, true, true, true, true, true, true"
@@ -166,6 +170,20 @@ defmodule HalC2.ProviderHandoffProofTest do
       "start(#{@design}, 8, 1, 1, todo(1, 1) on(1, a) todo(2, 2) on(2, b) poke(3, a) todo(4, 1))"
 
     refute_deadlock(proof, init, "settled", besides: @faults ++ ~w(background settle))
+  end
+
+  test "a turn's room is what it reported, or what it sent and any answer still to come",
+       %{proof: proof} do
+    for {turns, next, held} <- [
+          {"pturn(1, a, 1) never(1)", 2, 1},
+          {"pturn(1, a, 1)", 2, 2},
+          {"pturn(1, a, 1) report(1, 5)", 2, 5},
+          {"pturn(1, a, 1) never(1) pturn(2, a, 1)", 3, 3}
+        ] do
+      red = "red in PROVIDER-HANDOFF : occ(a, 1, #{next}, #{turns}) ."
+      assert {:ok, out} = ExMaude.execute(red, pool: proof.pool)
+      assert out =~ ~r/\b#{held}\s*$/, "#{turns}: #{out}"
+    end
   end
 
   test "every run ends when nothing is lost", %{proof: proof} do

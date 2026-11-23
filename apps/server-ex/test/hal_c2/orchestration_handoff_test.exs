@@ -758,6 +758,85 @@ defmodule HalC2.Orchestration.HandoffTest do
       assert Handoff.room(state, pt, %{text: "", attachments: []}).held == 1_000 + 2 * 32_000
     end
 
+    # The sequence of #1735, with its numbers: run 2 reported 1,050 of a 1,000,000
+    # window and left background work running; runs 3 and 4 reached the provider,
+    # which never started a turn for either; run 5 was refused for the background
+    # work, so run 6 handed it over and was itself never started, unconfirmed.
+    # `extra` is merged into runs 3, 4 and 6.
+    defp unstarted(extra) do
+      at = fn ordinal -> "2026-10-01T10:0#{ordinal}:00Z" end
+
+      sent = fn ordinal, tokens ->
+        Map.merge(%{"sentTokens" => tokens, "startedAt" => at.(ordinal)}, extra)
+      end
+
+      report =
+        {"provider-turn",
+         %{
+           "id" => "pturn-2",
+           "ordinal" => 2,
+           "providerThreadId" => "pt",
+           "startedAt" => at.(2),
+           "tokenUsage" => %{"usedTokens" => 1_050, "maxTokens" => 1_000_000}
+         }}
+
+      unreported =
+        for ordinal <- [3, 4, 6] do
+          {"provider-turn",
+           %{
+             "id" => "pturn-#{ordinal}",
+             "ordinal" => ordinal,
+             "providerThreadId" => "pt",
+             "startedAt" => at.(ordinal)
+           }}
+        end
+
+      state(
+        runs([
+          {2, "pt", "completed", "two", %{}},
+          {3, "pt", "failed", "three", sent.(3, 5)},
+          {4, "pt", "failed", "four", sent.(4, 5)},
+          {5, "pt", "failed", "five", %{}},
+          {6, "pt", "failed", "six", sent.(6, 94)}
+        ]) ++
+          [report] ++
+          unreported ++
+          [
+            provider_thread(%{
+              "lastRunOrdinal" => 6,
+              "unconfirmedRunId" => "run-6",
+              "unconfirmedSince" => 4,
+              "pendingBackgroundTasks" => [%{"taskId" => "task-1", "taskType" => "local_bash"}]
+            })
+          ]
+      )
+    end
+
+    test "runs the provider never started keep no reserve, so the next handoff still fits" do
+      state = unstarted(%{"turnNeverStarted" => true})
+      pt = HalC2.StreamState.get(state, "provider-thread")["pt"]
+
+      # What they sent counts; no answer is kept room for.
+      assert Handoff.room(state, pt, %{text: "", attachments: []}).held == 1_050 + 5 + 5 + 94
+
+      plan = plan_run(state, 7)
+      assert plan.refusal == nil
+      refute plan.new_conversation
+      # The history run 6 handed over unconfirmed goes into the conversation again.
+      assert plan.context =~ "User: five"
+      assert plan.context =~ "User: six"
+    end
+
+    test "runs that may have started and never reported keep the reserve for their answers" do
+      state = unstarted(%{})
+      pt = HalC2.StreamState.get(state, "provider-thread")["pt"]
+
+      assert Handoff.room(state, pt, %{text: "", attachments: []}).held ==
+               1_050 + 3 * 250_000 + 5 + 5 + 94
+
+      assert %{"code" => "conversation_busy"} = plan_run(state, 7).refusal
+    end
+
     test "an unconfirmed handoff with no background work starts a new conversation" do
       state =
         unconfirmed([])

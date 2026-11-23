@@ -57,6 +57,8 @@ mod PROVIDER-HANDOFF is
   op mc : Prov Nat Nat Nat Nat Nat -> Item [ctor] .
   op pturn : Nat Prov Nat -> Item [ctor] .
   op report : Nat Nat -> Item [ctor] .
+  --- A run the provider said it never started a turn for, and answered nothing in.
+  op never : Nat -> Item [ctor] .
   op bg : Prov Bool -> Item [ctor] .
   op poke : Nat Prov -> Item [ctor] .
   --- A run whose message was sent to one provider; without it either may take the run.
@@ -147,14 +149,18 @@ mod PROVIDER-HANDOFF is
 
   --- The occupancy the MC assumes for a provider's conversation that started at run Q,
   --- from the turns before run N: the newest report, and what each later turn sent with
-  --- the reserve for its answer.
+  --- the reserve for its answer. A turn the provider never started has no answer, so
+  --- it holds the conversation only by what it sent.
   op occ : Prov Nat Nat Conf -> Nat .
   op reported : Nat Conf -> Bool .
   eq reported(N, report(N, U) C) = true .
   eq reported(N, C) = false [owise] .
   ceq occ(P, Q, N, C) = 0 if N <= Q .
   ceq occ(P, Q, s N, pturn(N, P, Z) report(N, U) C) = U if Q <= N .
-  ceq occ(P, Q, s N, pturn(N, P, Z) C) = Z + reserve + occ(P, Q, N, pturn(N, P, Z) C)
+  op kept : Nat Conf -> Nat .
+  eq kept(N, never(N) C) = 0 .
+  eq kept(N, C) = reserve [owise] .
+  ceq occ(P, Q, s N, pturn(N, P, Z) C) = Z + kept(N, C) + occ(P, Q, N, pturn(N, P, Z) C)
     if Q <= N /\ not reported(N, C) .
   eq occ(P, Q, s N, C) = occ(P, Q, N, C) [owise] .
 
@@ -279,6 +285,22 @@ mod PROVIDER-HANDOFF is
   crl [open] : { prompt(N, P, 0, true, CV, Z) live(P, L) ids(I) cfg(MK, RM, FR, KY, QU, BS, SI)
                 win(W) C }
     => { conv(P, s I, CV ; N, Z) live(P, s I) ids(s I) working(N, P, s I) ack(N, P, s I)
+         seen(N, within(before(N, C), CV)) over(N, CV =/= noRuns and Z > W)
+         cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C }
+    if (FR or L == 0) and not busy(P, C) .
+
+  --- The provider takes the prompt into its conversation and ends it without
+  --- starting a turn for it, and says so: what was sent is in the conversation, no
+  --- confirmation or answer follows, and the MC records the run as never started.
+  --- The run then fails, its mark standing. Bounded like the other faults.
+  crl [never-start] : { prompt(N, P, K, false, CV, Z) conv(P, K, KN, U) live(P, L)
+                       win(W) faults(s F) C }
+    => { conv(P, K, KN ; CV ; N, U + Z) live(P, K) never(N) faults(F)
+         seen(N, within(before(N, C), KN ; CV)) over(N, CV =/= noRuns and U + Z > W) win(W) C }
+    if not busy(P, C) .
+  crl [never-start] : { prompt(N, P, 0, true, CV, Z) live(P, L) ids(I)
+                       cfg(MK, RM, FR, KY, QU, BS, SI) win(W) faults(s F) C }
+    => { conv(P, s I, CV ; N, Z) live(P, s I) ids(s I) never(N) faults(F)
          seen(N, within(before(N, C), CV)) over(N, CV =/= noRuns and Z > W)
          cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C }
     if (FR or L == 0) and not busy(P, C) .

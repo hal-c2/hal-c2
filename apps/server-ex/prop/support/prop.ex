@@ -207,8 +207,8 @@ defmodule HalC2.Prop do
     Commands:
     #{inspect(cmds, pretty: true, limit: :infinity)}
 
-    History (model state and result after each step):
-    #{inspect(Enum.zip(cmds, history), pretty: true, limit: :infinity)}
+    History (each command with the model state before it and its result):
+    #{inspect(Enum.zip(runnable(cmds), history), pretty: true, limit: :infinity)}
 
     Final model state:
     #{inspect(state, pretty: true, limit: :infinity)}
@@ -216,4 +216,10 @@ defmodule HalC2.Prop do
     Result: #{inspect(result, pretty: true)}
     """
   end
+
+  # The commands a history entry each stands for: `commands/2` puts an
+  # `{:init, state}` first, which `run_commands/2` consumes to seed the model
+  # rather than runs, so it has no entry; `commands/1` has none to drop.
+  defp runnable([{:init, _state} | cmds]), do: cmds
+  defp runnable(cmds), do: cmds
 end

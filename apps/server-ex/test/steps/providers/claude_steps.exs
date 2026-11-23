@@ -4353,9 +4353,16 @@ defmodule HalC2.Steps.Providers.Claude do
     context = World.post_message(context, @thread, "what next?", %{"modelSelection" => selection})
 
     statuses =
-      if context[:refused_twice],
-        do: ["completed", "failed", "failed", "failed", "completed"],
-        else: ["completed", "failed", "completed"]
+      cond do
+        context[:never_started] ->
+          ["completed", "failed", "failed", "failed", "failed", "completed"]
+
+        context[:refused_twice] ->
+          ["completed", "failed", "failed", "failed", "completed"]
+
+        true ->
+          ["completed", "failed", "completed"]
+      end
 
     World.await_runs(context, @thread, statuses)
     context
@@ -4390,6 +4397,47 @@ defmodule HalC2.Steps.Providers.Claude do
       World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
 
     World.await_runs(context, @thread, ["completed", "failed", "failed"])
+    context
+  end
+
+  # The runs of #1735 before the one that was refused for no room: two prompts
+  # Claude never starts, one it refuses for the background work, and a third it
+  # never starts, handing the refused one over unconfirmed.
+  step "Claude never starts a turn for the next two messages", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed"])
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed", "failed"])
+    context
+  end
+
+  step "Claude refuses the message after those because of that work", context do
+    context =
+      send_on(context, [%{"id" => "fastMode", "value" => true}], [
+        "completed",
+        "failed",
+        "failed",
+        "failed"
+      ])
+
+    assert refused?(context)
+    Map.put(context, :never_started, true)
+  end
+
+  step "Claude never starts a turn for the message after that either", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed", "failed", "failed", "failed"])
     context
   end
 
@@ -4449,6 +4497,48 @@ defmodule HalC2.Steps.Providers.Claude do
     [session] = StreamState.list(World.stream(context, @thread), "provider-session")
     assert session["lastError"] =~ "never started a turn"
     assert untouched?(context)
+    context
+  end
+
+  step "that message's run keeps room for what Claude said in it", context do
+    assert [_, %{"status" => "failed"} = run] = World.runs(context, @thread)
+    assert "The survey stopped" in World.replies(context, @thread)
+    refute run["turnNeverStarted"]
+    context
+  end
+
+  step "Claude has a message from before the MC recorded answers, not started yet", context do
+    context =
+      context
+      |> World.fake_providers()
+      # The fake takes the prompt and neither starts nor ends it.
+      |> World.launch_on(@thread, "claudeAgent", "wait")
+
+    World.await_value(context, @thread, &(StreamState.list(&1, "provider-turn") != []))
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :ok = :sys.suspend(pid)
+
+    # As v12 kept the turn.
+    %{turn: %{prompt: prompt}} =
+      :sys.replace_state(pid, &%{&1 | v: 12, turn: Map.delete(&1.turn, :answered)})
+
+    Map.put(context, :older_turn, {pid, prompt.uuid})
+  end
+
+  step "the MC updates and Claude then ends that message without starting it", context do
+    {pid, uuid} = context.older_turn
+    :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 12, nil)
+    :ok = :sys.resume(pid)
+
+    ended = %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => "completed"}
+    send(pid, {:claude, :sys.get_state(pid).session, {:message, ended}})
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "that message's run keeps room for an answer", context do
+    assert [run] = World.runs(context, @thread)
+    refute run["turnNeverStarted"]
     context
   end
 
