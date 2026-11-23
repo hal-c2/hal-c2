@@ -224,10 +224,11 @@ jobs:
     needs: [changes, mc_check]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-24.04
-    # About twice the slowest recent run (892 s): at 15 a passing suite was cancelled
-    # as it finished (#1494). The time is the sync suite; the Test step ends by listing
+    # The slowest recent run (892 s) plus both install steps' own 10-minute limits,
+    # so a stalled download can't cancel a passing suite: at 15 one was cancelled as
+    # it finished (#1494). The time is the sync suite; the Test step ends by listing
     # the slowest tests and modules.
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       MIX_ENV: test
     defaults:
