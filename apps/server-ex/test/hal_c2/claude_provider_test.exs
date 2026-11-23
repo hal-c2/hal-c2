@@ -85,6 +85,9 @@ defmodule HalC2.ClaudeProviderTest do
   defp reset do
     :persistent_term.erase({Provider, :models})
     :persistent_term.erase({Provider, :version})
+    # Forgetting the sign-in reads revokes any an earlier test left in flight,
+    # whose landing would otherwise tell this test's watchers the list changed.
+    :ets.delete_all_objects(Provider.auth_table())
   end
 
   defp reports(models), do: System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(models))
