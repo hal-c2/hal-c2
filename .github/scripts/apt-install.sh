@@ -56,12 +56,14 @@ fi
 sources=$({
   sed 's/#.*//' /etc/apt/sources.list /etc/apt/sources.list.d/*.list | grep -E '^[[:space:]]*deb[[:space:]]'
   awk 'BEGIN { RS = "" } {
-         n = split($0, line, "\n"); kept = ""; off = 0; deb = 0
+         n = split($0, line, "\n"); kept = ""; off = 0; deb = 0; types = 0
          for (i = 1; i <= n; i++) {
            if (line[i] ~ /^[[:space:]]*#/) continue
            field = tolower(line[i])
            if (field ~ /^enabled:[[:space:]]*(no|false|off|without|disable|0)[[:space:]]*$/) off = 1
-           if (field ~ /^types:/ && (" " substr(field, 7) " ") ~ /[[:space:]]deb[[:space:]]/) deb = 1
+           # Types may fold onto indented lines; any of them can hold deb.
+           if (field ~ /^[^[:space:]]+:/) types = field ~ /^types:/
+           if (types && (" " (field ~ /^types:/ ? substr(field, 7) : field) " ") ~ /[[:space:]]deb[[:space:]]/) deb = 1
            kept = kept line[i] "\n"
          }
          if (deb && !off) printf "%s", kept }' /etc/apt/sources.list.d/*.sources
