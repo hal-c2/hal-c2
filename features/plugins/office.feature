@@ -3,7 +3,10 @@
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
 #   plugins/office/mc/floor.ex (the office topic's people, reviewers among them, and talks)
 #   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking, the review corner, project marks)
+#   plugins/office/src/OfficePage.qml (the pixel-art office: who sits where, movers, talking, the review corner, project marks)
+#   plugins/office/src/OfficeArt.qml, plugins/office/src/Furniture.qml (people, pets, furniture and the room as drawn)
+#   plugins/office/ljos-play/qml/LjosPlay/World.qml, plugins/office/ljos-play/qml/LjosPlay/Actor.qml (the clock, camera, tiles and walking)
+#   plugins/office/bundle.mjs (writes plugins/office/ui/OfficePage.qml, the file clients fetch, from src/)
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
 #   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
@@ -261,6 +264,11 @@ Feature: Office
       And no two people stop on the same spot
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The wall between the office and the break room has no hole
+      Given the office has grown its break room
+      Then the wall between the rooms is painted from the top wall down to the floor
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person walks through someone standing in its way
       Given a person's way is crossed by someone standing still
       Then it walks straight through them without stopping
@@ -359,6 +367,11 @@ Feature: Office
       Then the person of "Lead" walks up next to the person of "Reviewer", beside it rather than above or below it
       And they face each other and "Please look at the diff" shows in a speech bubble
       And afterwards "Lead" goes back to what it was doing
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speech bubble is over a neighbour's icon
+      Given "Lead" talks beside someone whose agent asks the user something
+      Then the speech bubble of "Lead" is drawn over the question mark
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk shows the words the office has for it now
@@ -739,18 +752,31 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view
-      Given the office page is open
-      Then the whole office shows and fills the view's width or its height, unless the largest zoom comes first
+      Given the office page is open at one screen pixel per art pixel or more
+      Then the whole office shows, as large as it can be with every art pixel a whole number of screen pixels, unless the largest zoom comes first
       When the user zooms in and then picks Fit
       Then the whole office shows again
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office too big for its view is shrunk to fit
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      Then the whole office shows, shrunk smoothly
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Zooming goes in small steps up to a largest size
-      Given the office page is open
+      Given the office page is open at one screen pixel per art pixel or more
       When the user zooms in
-      Then the office grows by about a quarter, with every art pixel the same size
+      Then the office grows by about a quarter, or by one screen pixel per art pixel where that is more, with every art pixel a sharp square of the same size
       When the user zooms in until it can grow no more
       Then zooming in is off
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Zooming in from smaller than one screen pixel per art pixel
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      When the user zooms in
+      Then the office grows by about a quarter, still shrunk smoothly, or to one screen pixel per art pixel where that comes first
+      When the user zooms out again
+      Then the office shows as it did before
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown

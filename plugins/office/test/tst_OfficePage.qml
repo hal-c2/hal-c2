@@ -127,15 +127,26 @@ Item {
         }
 
         function actor(id) {
-            return page.actors[id];
+            return page.game.actors[id];
         }
 
         function corner() {
             return page.world.pods.findIndex(pod => pod.review);
         }
 
+        // A Repeater's items by the key of what each shows.
+        function viewsIn(repeater) {
+            const byKey = {};
+            for (let i = 0; i < repeater.count; i++) {
+                const item = repeater.itemAt(i);
+                if (item)
+                    byKey[item.modelData.key] = item;
+            }
+            return byKey;
+        }
+
         function markOf(id) {
-            return page.markViews["mark:" + page.world.seatOf[id].index];
+            return viewsIn(page.markViews)["mark:" + page.world.seatOf[id].index];
         }
 
         function icons(map) {
@@ -149,7 +160,7 @@ Item {
             for (let i = 0; i < (limit ?? 1500); i++) {
                 if (done())
                     return;
-                page.advance(1);
+                page.game.advance(1);
             }
             verify(done(), message ?? "the office never got there");
         }
@@ -180,7 +191,7 @@ Item {
             };
             const stopped = {};
             const stood = {};
-            const everyone = Object.assign({}, page.actors, page.movers);
+            const everyone = Object.assign({}, page.game.actors, page.crew.members);
             for (const id of Object.keys(everyone)) {
                 const a = everyone[id];
                 if (page.outside.includes(id))
@@ -195,7 +206,7 @@ Item {
                 }
                 for (const t of tiles) {
                     const x = t % w.cols, y = (t - x) / w.cols;
-                    const cell = w.grid[t];
+                    const cell = page.game.plan().grid[t];
                     const goal = a.goal && a.goal.x === x && a.goal.y === y;
                     const stayed = (this.stood[id] ?? []).map(moved).includes(t);
                     verify(cell === 0 || cell === 2 && (goal || stayed), id + " stands on furniture at " + x + "," + y);
@@ -204,17 +215,17 @@ Item {
                     verify(stopped[here] === undefined, id + " and " + stopped[here] + " stop on one tile at " + a.tx + "," + a.ty);
                     stopped[here] = id;
                 }
-                if (page.actors[id] && a.goal)
-                    compare(page.claims[a.goal.y * w.cols + a.goal.x], id, id + " claims the tile it stops at, " + a.goal.x + "," + a.goal.y);
+                if (page.game.actors[id] && a.goal)
+                    compare(page.game.claims[a.goal.y * w.cols + a.goal.x], id, id + " claims the tile it stops at, " + a.goal.x + "," + a.goal.y);
                 stood[id] = tiles;
             }
             this.stood = stood;
             this.stoodOn = [w.cols, w.xd];
-            for (const m of Object.values(page.movers)) {
+            for (const m of Object.values(page.crew.members)) {
                 if (!m.carrying)
                     continue;
                 const r = load(m);
-                verify(r[0] >= m.px && r[1] >= m.py - 8 && r[0] + r[2] <= m.px + 16 && r[1] + r[3] <= m.py + 16, m.id + "'s desk is drawn within its figure");
+                verify(r[0] >= m.px && r[1] >= m.py - 8 && r[0] + r[2] <= m.px + 16 && r[1] + r[3] <= m.py + 16, m.key + "'s desk is drawn within its figure");
             }
         }
 
@@ -228,16 +239,16 @@ Item {
                 pose: "stand",
                 kind: "floor"
             };
-            page.claim(who, goal);
-            page.setGoal(who, goal);
+            page.game.claim(who, goal);
+            who.setGoal(goal);
         }
 
         // Takes a person off wherever it is and stands it at a tile.
         function standAt(who, x, y) {
             who.goal = null;
             who.path = [];
-            page.release(who);
-            page.place(who, x, y, true);
+            page.game.release(who);
+            who.place(x, y, true);
             send(who, x, y);
         }
 
@@ -248,8 +259,8 @@ Item {
         }
 
         function load(m) {
-            const v = find("officeLoad:" + m.id);
-            verify(v, m.id + "'s desk is drawn");
+            const v = find("officeLoad:" + m.key);
+            verify(v, m.key + "'s desk is drawn");
             return [m.px + v.x, m.py - 8 + v.y, v.width, v.height];
         }
 
@@ -260,7 +271,7 @@ Item {
         // Runs the office n ticks, checking the floor after each.
         function walk(n) {
             for (let i = 0; i < n; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 checkFloor();
             }
         }
@@ -288,7 +299,7 @@ Item {
                 plugin: plugin
             });
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => made.worldCols > 0);
+            tryVerify(() => made.game.columns > 0);
             wait(50);
             const summary = findChild(made, "officeSummary");
             const scroller = findChild(made, "officeScroller");
@@ -304,7 +315,7 @@ Item {
             }
             compare(buttons, 3);
             verify(row.width >= needed, "the summary and the zoom buttons fit side by side");
-            verify(scroller.width >= made.worldCols * 16 && scroller.height > 0, "the office has room to show");
+            verify(scroller.width >= made.game.columns * 16 && scroller.height > 0, "the office has room to show");
         }
 
         function test_some_workers_are_cats_and_dogs() {
@@ -644,7 +655,7 @@ Item {
                         verify(w.seatOf[r.id], r.id + " has a desk");
                         verify(!markOf(r.id).visible, r.id + "'s desk shows no project");
                     }
-                    page.advance(1);
+                    page.game.advance(1);
                 }
             };
             const first = many(36, "t", "working", "typing").concat(reviewers);
@@ -768,9 +779,9 @@ Item {
             tryVerify(() => page.markPaints >= 7);
             wait(50);
             const paints = page.markPaints;
-            page.advance(200);
+            page.game.advance(200);
             plugin.publish(many(6, "t", "working", "typing").concat([web]));
-            page.advance(200);
+            page.game.advance(200);
             wait(50);
             compare(page.markPaints, paints, "nothing repaints while nothing changes");
             icons({
@@ -900,7 +911,7 @@ Item {
             // Six pods hold 40 people; the review corner's 8 desks are for
             // reviewers only.
             plugin.publish(many(40, "t", "working", "typing"));
-            const cols = page.worldCols, rows = page.worldRows;
+            const cols = page.game.columns, rows = page.game.rows;
             compare(grid(), [3, 6]);
             compare(page.world.seats.length, 48);
             seated(40);
@@ -913,7 +924,7 @@ Item {
 
             plugin.publish(many(41, "t", "working", "typing"));
             compare(grid(), [4, 8], "a pod more to each row");
-            compare(page.worldRows, rows, "as deep as before");
+            compare(page.game.rows, rows, "as deep as before");
             compare(page.world.seats.length, 64);
             seated(41);
             for (const id of Object.keys(seats))
@@ -926,7 +937,7 @@ Item {
             compare(grid(), [4, 8], "56 people fit");
             plugin.publish(many(70, "t", "working", "typing"));
             compare(grid(), [4, 12], "a row of pods more");
-            compare(page.worldRows, rows + 6);
+            compare(page.game.rows, rows + 6);
             compare(page.world.entrance, [2, rows + 4], "the entrance moves down with the wall");
             seated(70);
             walk(300);
@@ -953,7 +964,7 @@ Item {
             plugin.publish(many(32, "t", "working", "typing"));
             compare(page.closeTo, 6, "32 people leave a pod free in six");
             runUntil(() => page.world.pods.length === 6, 6000, "the office shrinks back to its first size");
-            compare([page.worldCols, page.worldRows], [cols, rows]);
+            compare([page.game.columns, page.game.rows], [cols, rows]);
             seated(32);
             walk(400);
             // Past 40 people again, it grows at once.
@@ -987,9 +998,9 @@ Item {
             plugin.publish(many(70, "t", "working", "typing"));
             const wide = page.world.across;
             // Rows of three pods: four rows for 70 people.
-            verify(page.fitScale > fitOf(33, 31), "it shows bigger than in rows of three: " + page.fitScale + " against " + fitOf(33, 31));
+            verify(page.game.fitScale > fitOf(33, 31), "it shows bigger than in rows of three: " + page.game.fitScale + " against " + fitOf(33, 31));
             const seats = {}, at = {};
-            for (const id of Object.keys(page.actors)) {
+            for (const id of Object.keys(page.game.actors)) {
                 seats[id] = page.world.seatOf[id].index;
                 at[id] = [actor(id).tx, actor(id).ty];
             }
@@ -1020,7 +1031,7 @@ Item {
                 resize(size[0], size[1]);
                 open();
                 plugin.publish(many(12, "t", "working", "typing"));
-                compare([page.world.across, page.world.pods.length, page.worldCols, page.worldRows], [3, 6, 33, 19], size.join("×"));
+                compare([page.world.across, page.world.pods.length, page.game.columns, page.game.rows], [3, 6, 33, 19], size.join("×"));
             }
         }
 
@@ -1030,12 +1041,12 @@ Item {
             resize(300, 1000);
             plugin.publish(many(12, "t", "working", "typing").concat([reviewer("r0", "Review 0")]));
             compare([page.world.across, page.world.pods.length], [1, 6]);
-            verify(page.fitScale > fitOf(27, 25), "it shows bigger than two across: " + page.fitScale + " against " + fitOf(27, 25));
+            verify(page.game.fitScale > fitOf(27, 25), "it shows bigger than two across: " + page.game.fitScale + " against " + fitOf(27, 25));
             const corner = page.world.pods.find(pod => pod.review);
             compare(corner.y, Math.min(...page.world.pods.map(pod => pod.y)), "the review corner is the top pod");
             compare(page.world.seatOf["r0"].pod, page.world.pods.indexOf(corner), "the reviewer sits there");
             verify(page.boards.some(board => board.review), "under its whiteboard");
-            for (const id of Object.keys(page.actors)) {
+            for (const id of Object.keys(page.game.actors)) {
                 const seat = page.world.seatOf[id];
                 runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 3000, id + " gets to its desk");
             }
@@ -1070,8 +1081,8 @@ Item {
             runUntil(() => {
                 if (!a.talk)
                     return true;
-                compare(page.claims[side], "lead", "the lead keeps the side it talks from");
-                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare(page.game.claims[side], "lead", "the lead keeps the side it talks from");
+                compare(page.game.claims[here], "c", "C keeps the tile it listens on");
                 checkFloor();
                 return false;
             }, 400, "the talk ends");
@@ -1095,12 +1106,12 @@ Item {
             ]);
             runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
             const W = page.world.cols, side = a.ty * W + a.tx, here = c.ty * W + c.tx;
-            delete page.claims[side];
-            delete page.claims[here];
+            delete page.game.claims[side];
+            delete page.game.claims[here];
             a.claim = -1;
             c.hold = -1;
-            page.advance(1);
-            compare([page.claims[side], page.claims[here]], ["lead", "c"], "both are claimed again");
+            page.game.advance(1);
+            compare([page.game.claims[side], page.game.claims[here]], ["lead", "c"], "both are claimed again");
             compare([a.claim, c.hold], [side, here]);
         }
 
@@ -1113,10 +1124,10 @@ Item {
             const a = actor("lead"), c = actor("c");
             runUntil(() => arrived(c), 3000, "C stands at the whiteboard");
             const W = page.world.cols;
-            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.walkable(x, y) && page.claims[y * W + x] === undefined);
+            const beside = [[c.tx - 1, c.ty], [c.tx + 1, c.ty]].filter(([x, y]) => page.game.walkable(x, y) && page.game.claims[y * W + x] === undefined);
             verify(beside.length > 0, "a side beside C is free");
             let below = 0;
-            while (below < 3 && page.walkable(c.tx, c.ty + below + 1))
+            while (below < 3 && page.game.walkable(c.tx, c.ty + below + 1))
                 below++;
             verify(below >= 2, "the floor below C is open");
             standAt(a, c.tx, c.ty + below);
@@ -1162,7 +1173,7 @@ Item {
             runUntil(() => a.talk?.phase === "say", 3000, "the talk starts");
             checkFloor();
             const W = page.world.cols, side = a.ty * W + a.tx;
-            delete page.claims[side];
+            delete page.game.claims[side];
             a.claim = -1;
             x.goal = {
                 x: a.tx,
@@ -1172,21 +1183,21 @@ Item {
                 pose: "stand",
                 kind: "stand"
             };
-            page.claim(x, x.goal);
+            page.game.claim(x, x.goal);
             const [ox, oy] = [a.tx, a.ty];
-            page.advance(1);
+            page.game.advance(1);
             verify(a.claim !== side, "the speaker gives the taken side up");
             compare(Math.abs(a.goal.x - c.tx) + Math.abs(a.goal.y - c.ty), 1, "it heads for another side of the listener");
             // The nearest free side is one of the two beside its old one, two
             // steps away; the one across the listener is a walk of four
             // around it.
-            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.walkable(sx, sy) && [undefined, "lead"].includes(page.claims[sy * W + sx]));
+            const free = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).filter(([sx, sy]) => page.game.walkable(sx, sy) && [undefined, "lead"].includes(page.game.claims[sy * W + sx]));
             const across = [2 * c.tx - ox, 2 * c.ty - oy];
             verify(free.some(([sx, sy]) => sx === across[0] && sy === across[1]), "the side across the listener is free");
             verify(free.some(([sx, sy]) => sx !== across[0] || sy !== across[1]), "and so is one beside the old one");
             verify(a.goal.x !== across[0] || a.goal.y !== across[1], "it takes a side beside its old one, not the one across the listener");
             compare(Math.abs(a.goal.x - ox) + Math.abs(a.goal.y - oy), 2, "two steps away");
-            compare(page.claims[a.claim], "lead", "and claims it");
+            compare(page.game.claims[a.claim], "lead", "and claims it");
             compare(a.talk.phase, "go");
             runUntil(() => {
                 checkFloor();
@@ -1218,8 +1229,8 @@ Item {
             const W = page.world.cols;
             a.claim = -1;
             for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
-                page.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
-            page.advance(1);
+                page.game.claims[(c.ty + dy) * W + c.tx + dx] = "someone";
+            page.game.advance(1);
             verify(!a.talk, "the talk ends");
             compare(c.heldBy, "", "the listener is let go");
             compare(c.hold, -1, "and holds no tile");
@@ -1235,7 +1246,7 @@ Item {
             page.takeBreak(c);
             const xd = page.world.xd, W = page.world.cols;
             runUntil(() => c.next >= 0 && c.tx === xd - 1 && c.next % W === xd, 3000, "C steps through the door");
-            page.advance(2);
+            page.game.advance(2);
             const y = c.ty, offset = c.px - c.tx * 16;
             resize(300, 1000);
             const w = page.world;
@@ -1258,10 +1269,10 @@ Item {
             plugin.publish([person("c", "C", "waiting")]);
             page.takeBreak(c);
             runUntil(() => arrived(c) && c.tx > page.world.xd && c.until !== Infinity, 3000, "C gets to the break room");
-            c.until = page.now;
+            c.until = page.game.now;
             const xd = page.world.xd, W = page.world.cols;
             runUntil(() => c.next >= 0 && c.tx === xd && c.next % W === xd - 1, 3000, "C steps out through the door");
-            page.advance(2);
+            page.game.advance(2);
             const y = c.ty, offset = c.px - c.tx * 16;
             resize(300, 1000);
             const w = page.world;
@@ -1287,20 +1298,20 @@ Item {
             // The south wall of an office of three rows of pods.
             const y = 6 * 3 + 7 - 1, W = page.world.cols;
             let x = 1;
-            while (x < page.world.xd && !(page.walkable(x, y) && page.walkable(x, y - 1)))
+            while (x < page.world.xd && !(page.game.walkable(x, y) && page.game.walkable(x, y - 1)))
                 x++;
             verify(x < page.world.xd, "the floor is open where the wall will be");
             const a = actor("t0");
             standAt(a, x, y);
             send(a, x, y - 1);
-            page.advance(2);
+            page.game.advance(2);
             compare([a.tx, a.ty, a.next], [x, y, (y - 1) * W + x], "t0 steps north from where the wall will be");
             resize(1200, 760);
             compare([page.world.across, page.world.rows], [4, y + 1], "the south wall is where t0 steps from");
             const w = page.world;
-            verify(w.grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
+            verify(page.game.plan().grid[a.ty * w.cols + a.tx] !== 1, "t0 is not left in the wall");
             if (a.next >= 0)
-                verify(w.grid[a.next] !== 1, "nor steps into one");
+                verify(page.game.plan().grid[a.next] !== 1, "nor steps into one");
             else
                 compare([a.px, a.py], [a.tx * 16, a.ty * 16], "t0 stands on its tile");
             const seat = w.seatOf["t0"];
@@ -1316,16 +1327,16 @@ Item {
             runUntil(() => page.moves === 0, 6000, "every desk is in");
             compare(page.world.across, 4);
             const xd = page.world.xd;
-            const office = Object.keys(page.actors).filter(id => actor(id).tx < xd);
+            const office = Object.keys(page.game.actors).filter(id => actor(id).tx < xd);
             compare(office.length, 70, "everyone is in the office");
             // One of them is mid-step where the wall will be.
             const a = actor("t0"), W = page.world.cols, wall = 3 + 4 + 2;
             let y = 3;
-            while (y < page.world.rows && !(page.walkable(wall, y) && page.walkable(wall + 1, y)))
+            while (y < page.world.rows && !(page.game.walkable(wall, y) && page.game.walkable(wall + 1, y)))
                 y++;
             standAt(a, wall + 1, y);
             send(a, wall, y);
-            page.advance(2);
+            page.game.advance(2);
             compare(a.next, y * W + wall, "t0 steps onto where the wall will be");
             checkFloor();
             resize(300, 1000);
@@ -1358,7 +1369,7 @@ Item {
             for (let i = 0; i < 40; i++)
                 verify(page.world.seatOf["t" + i] !== undefined && page.world.seatOf["t" + i].pod < pods, "t" + i + " has a desk");
             checkFloor();
-            for (const id of Object.keys(page.actors)) {
+            for (const id of Object.keys(page.game.actors)) {
                 const seat = page.world.seatOf[id];
                 runUntil(() => arrived(actor(id)) && actor(id).tx === seat.x && actor(id).ty === seat.y, 3000, id + " gets to its desk");
             }
@@ -1405,7 +1416,7 @@ Item {
                     if (sat[p.id] || a.until === Infinity)
                         continue;
                     verify(arrived(a) && a.tx === page.world.seatOf[p.id].x && a.ty === page.world.seatOf[p.id].y, p.id + " rests only at its new desk");
-                    verify(a.until - page.now >= 15000 && a.until - page.now <= 45000, p.id + " rests 15 to 45 seconds, not " + (a.until - page.now));
+                    verify(a.until - page.game.now >= 15000 && a.until - page.game.now <= 45000, p.id + " rests 15 to 45 seconds, not " + (a.until - page.game.now));
                     sat[p.id] = true;
                 }
                 for (const p of stay)
@@ -1470,7 +1481,7 @@ Item {
             runUntil(() => {
                 checkFloor();
                 if (s.talk)
-                    compare(page.claims[held], listener.id, "the listener keeps its tile while it listens");
+                    compare(page.game.claims[held], listener.id, "the listener keeps its tile while it listens");
                 else
                     ended = true;
                 return ended && !page.closeTo;
@@ -1478,10 +1489,10 @@ Item {
             compare(page.world.pods.length, 9);
             compare([l.hold, l.heldBy], [-1, ""], "nothing is held for the talk");
             const tiles = page.world.cols * page.world.rows;
-            const mine = Object.values(page.actors).map(p => p.claim);
-            for (const tile of Object.keys(page.claims)) {
+            const mine = Object.values(page.game.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.game.claims)) {
                 verify(Number(tile) < tiles, "tile " + tile + " is past the office's end");
-                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.game.claims[tile] + ", who stops elsewhere");
             }
             const seat = page.world.seatOf[listener.id];
             runUntil(() => {
@@ -1523,10 +1534,10 @@ Item {
             const first = 9 * page.world.pods[0].seats.length;
             const closing = page.world.seats.slice(first);
             runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
-            page.advance(50);
+            page.game.advance(50);
             compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
-            compare([s.talk?.phase, l.hold, page.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
-            s.talk.until = page.now;
+            compare([s.talk?.phase, l.hold, page.game.claims[held]], ["say", held, listener.id], "the listener listens on where it was");
+            s.talk.until = page.game.now;
             runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
             compare(page.world.pods.length, 9);
             const seat = page.world.seatOf[listener.id];
@@ -1550,7 +1561,7 @@ Item {
             // The listener stands on the floor past where the shorter office ends.
             const l = actor(listener.id), s = actor(speaker.id);
             let x = 1, y = end + 1;
-            while (!(page.walkable(x, y) && page.world.grid[y * page.world.cols + x] === 0 && page.claims[y * page.world.cols + x] === undefined)) {
+            while (!(page.game.walkable(x, y) && page.game.plan().grid[y * page.world.cols + x] === 0 && page.game.claims[y * page.world.cols + x] === undefined)) {
                 if (++x >= page.world.xd) {
                     x = 1;
                     y++;
@@ -1578,10 +1589,10 @@ Item {
             compare(page.closeTo, 9);
             const closing = page.world.seats.slice(9 * page.world.pods[0].seats.length);
             runUntil(() => closing.every(seat => seat.state === "out" && !seat.mover), 6000, "the movers carry out every desk in the closing pods");
-            page.advance(50);
+            page.game.advance(50);
             compare([page.world.pods.length, page.closeTo], [12, 9], "the office waits for the talk");
-            compare([s.talk?.phase, l.tx, l.ty, l.hold, page.claims[held]], ["say", x, y, held, listener.id], "the listener listens on where it was");
-            s.talk.until = page.now;
+            compare([s.talk?.phase, l.tx, l.ty, l.hold, page.game.claims[held]], ["say", x, y, held, listener.id], "the listener listens on where it was");
+            s.talk.until = page.game.now;
             runUntil(() => !s.talk && !page.closeTo, 1500, "the talk ends and the office shrinks");
             compare(page.world.pods.length, 9);
             const seat = page.world.seatOf[listener.id];
@@ -1595,13 +1606,13 @@ Item {
             walk(20);
             wait(50);
             const world = page.world, paints = page.floorPaints;
-            const at = Object.keys(page.actors).map(id => [actor(id).px, actor(id).py]);
+            const at = Object.keys(page.game.actors).map(id => [actor(id).px, actor(id).py]);
             resize(1700, 950);
             resize(1550, 880);
             verify(page.world === world, "the office is not built again");
             wait(50);
             compare(page.floorPaints, paints, "nor painted again");
-            compare(Object.keys(page.actors).map(id => [actor(id).px, actor(id).py]), at, "nobody moves");
+            compare(Object.keys(page.game.actors).map(id => [actor(id).px, actor(id).py]), at, "nobody moves");
         }
 
         // Reviewers fill the review corner without the office growing; those
@@ -1630,7 +1641,7 @@ Item {
             plugin.publish(others.concat([reviewer("lead", "Lead"), reviewer("w", "W", "lead")]));
             compare(page.world.seatOf["w"], floor, "W keeps its desk");
             plugin.publish(others.concat([reviewer("lead", "Lead"), reviewer("w", "W", "lead"), person("t39", "t 39", "working", "typing")]));
-            for (const id of Object.keys(page.actors))
+            for (const id of Object.keys(page.game.actors))
                 verify(page.world.seatOf[id] !== undefined, id + " has a desk");
             walk(200);
         }
@@ -1644,10 +1655,10 @@ Item {
             plugin.publish(many(30, "t", "working", "typing"));
             compare(page.closeTo, 6);
             walk(4000);
-            compare([page.world.pods.length, page.worldRows], [6, 19]);
+            compare([page.world.pods.length, page.game.rows], [6, 19]);
             compare(page.closeTo, 0);
-            runUntil(() => Object.keys(page.movers).length === 0 && page.jobs.length === 0, 4000, "the movers are done");
-            for (const id of Object.keys(page.actors))
+            runUntil(() => Object.keys(page.crew.members).length === 0 && page.jobs.length === 0, 4000, "the movers are done");
+            for (const id of Object.keys(page.game.actors))
                 runUntil(() => arrived(actor(id)), 1500, id + " gets where it is going");
         }
 
@@ -1660,7 +1671,7 @@ Item {
             verify(page.world.pods.length > 6, "75 people need more pods");
             plugin.publish([]);
             compare(page.closeTo, 0, "no closure is left pending");
-            compare([page.world.pods.length, page.worldRows], [6, 19], "the office is back to six pods");
+            compare([page.world.pods.length, page.game.rows], [6, 19], "the office is back to six pods");
         }
 
         function test_a_break_lasts_from_when_the_person_gets_there() {
@@ -1678,11 +1689,11 @@ Item {
                     first[p.id] = first[p.id] ?? a.goal;
                     if (since[p.id] === undefined) {
                         if (arrived(a))
-                            since[p.id] = page.now;
-                    } else if (page.now - since[p.id] >= 3000) {
+                            since[p.id] = page.game.now;
+                    } else if (page.game.now - since[p.id] >= 3000) {
                         done++;
                     } else {
-                        verify(a.goal === first[p.id], p.id + " left its break spot " + (page.now - since[p.id]) + " ms after getting there");
+                        verify(a.goal === first[p.id], p.id + " left its break spot " + (page.game.now - since[p.id]) + " ms after getting there");
                     }
                 }
                 return done === resting.length;
@@ -1705,14 +1716,14 @@ Item {
         function openFloor(length) {
             const w = page.world;
             const taken = {};
-            for (const a of Object.values(page.actors))
+            for (const a of Object.values(page.game.actors))
                 taken[a.ty * w.cols + a.tx] = true;
             for (let y = 1; y < w.rows - 1; y++) {
                 for (let x = 0; x + length <= w.cols; x++) {
                     let open = true;
                     for (let dx = 0; dx < length && open; dx++) {
                         for (let dy = -1; dy <= 1; dy++)
-                            open = open && page.walkable(x + dx, y + dy) && !taken[(y + dy) * w.cols + x + dx] && !page.claims[(y + dy) * w.cols + x + dx];
+                            open = open && page.game.walkable(x + dx, y + dy) && !taken[(y + dy) * w.cols + x + dx] && !page.game.claims[(y + dy) * w.cols + x + dx];
                     }
                     if (open)
                         return [x, y];
@@ -1776,8 +1787,9 @@ Item {
         function test_a_person_and_a_mover_walk_through_each_other() {
             plugin.publish(many(4, "t", "working", "typing"));
             plugin.publish(many(5, "t", "working", "typing"));
-            runUntil(() => Object.keys(page.movers).length > 0, 400, "a mover comes in");
-            const m = Object.values(page.movers)[0];
+            runUntil(() => Object.keys(page.crew.members).length > 0, 400, "a mover comes in");
+            const m = Object.values(page.crew.members)[0];
+            const key = m.key;
             verify(m.carrying, "it carries a desk");
             // It carries the desk along open floor instead of to its seat.
             page.world.seats[m.job].mover = "";
@@ -1786,7 +1798,7 @@ Item {
             const a = actor("t0");
             const [left, row] = openFloor(6);
             standAt(a, left + 5, row);
-            page.place(m, left, row, true);
+            m.place(left, row, true);
             m.goal = {
                 x: left + 5,
                 y: row,
@@ -1795,19 +1807,19 @@ Item {
                 pose: "stand",
                 kind: "leave"
             };
-            page.route(m);
+            m.route();
             send(a, left, row);
             let ticks = 0, crossed = false, aside = false;
-            while (ticks < 600 && (page.movers[m.id] || !arrived(a))) {
+            while (ticks < 600 && (page.crew.members[key] || !arrived(a))) {
                 walk(1);
                 ticks++;
-                aside = aside || a.ty !== row || page.movers[m.id] && m.ty !== row;
-                crossed = crossed || page.movers[m.id] && Math.abs(a.px - m.px) < 16 && a.py === m.py;
+                aside = aside || a.ty !== row || page.crew.members[key] && m.ty !== row;
+                crossed = crossed || page.crew.members[key] && Math.abs(a.px - m.px) < 16 && a.py === m.py;
             }
             verify(crossed, "they pass through each other");
             verify(!aside, "neither steps off the row");
             verify(ticks <= 5 * 8 + 2, "both walk straight on, in " + ticks + " ticks");
-            verify(!page.movers[m.id], "the mover gets where it is going");
+            verify(!page.crew.members[key], "the mover gets where it is going");
             compare([a.tx, a.ty], [left, row], "and so does the person");
         }
 
@@ -1819,10 +1831,10 @@ Item {
             const people = many(16, "t", "waiting");
             plugin.publish(people);
             // More than the break room has places for go at once.
-            for (const id of Object.keys(page.actors))
+            for (const id of Object.keys(page.game.actors))
                 page.takeBreak(actor(id));
             const stops = {};
-            for (const id of Object.keys(page.actors)) {
+            for (const id of Object.keys(page.game.actors)) {
                 const g = actor(id).goal;
                 const key = g.x + "," + g.y;
                 verify(stops[key] === undefined, id + " and " + stops[key] + " both stop at " + key);
@@ -1836,7 +1848,7 @@ Item {
             plugin.publish([lead]);
             runUntil(() => arrived(actor("lead")));
             compare(actor("lead").goal.kind, "desk");
-            page.advance(7);
+            page.game.advance(7);
             verify([page.frame.type1, page.frame.type2].includes(actor("lead").frame), "typing at the computer");
 
             plugin.publish([person("lead", "Lead", "working", "planning")]);
@@ -1862,7 +1874,7 @@ Item {
                 compare(actor(id).goal.kind, "desk", id + " stays at its desk");
                 compare(actor(id).plan, "rest");
             }
-            page.advance(1);
+            page.game.advance(1);
             compare(actor("lead").frame, page.frame.sit, "the lead sits back");
             actor("lead").restless = 1;
             actor("calm").restless = 0;
@@ -1883,13 +1895,13 @@ Item {
         function test_the_break_room_never_holds_more_than_its_cap() {
             const people = many(70, "t", "waiting");
             plugin.publish(people);
-            for (const id of Object.keys(page.actors))
+            for (const id of Object.keys(page.game.actors))
                 actor(id).restless = 1;
             let most = 0;
             for (let i = 0; i < 3000; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 let away = 0, inside = 0;
-                for (const id of Object.keys(page.actors)) {
+                for (const id of Object.keys(page.game.actors)) {
                     if (actor(id).plan === "break")
                         away++;
                     if (actor(id).tx > page.world.xd)
@@ -1919,7 +1931,7 @@ Item {
             const first = away[0];
             runUntil(() => {
                 if (first.plan === "break" && first.until !== Infinity)
-                    first.until = page.now;
+                    first.until = page.game.now;
                 return first.plan === "rest";
             }, 200, "a break ends");
             verify(first.tx > page.world.xd, "it is still in the break room");
@@ -1940,8 +1952,8 @@ Item {
             plugin.publish(many(40, "t", "idle"));
             const breaks = {}, plans = {}, goals = {}, kinds = {};
             for (let i = 0; i < 6000; i++) {
-                page.advance(1);
-                for (const id of Object.keys(page.actors)) {
+                page.game.advance(1);
+                for (const id of Object.keys(page.game.actors)) {
                     const a = actor(id);
                     if (a.plan === "break" && plans[id] !== "break")
                         breaks[id] = (breaks[id] ?? 0) + 1;
@@ -1951,7 +1963,7 @@ Item {
                     goals[id] = a.goal;
                 }
             }
-            const counts = Object.keys(page.actors).map(id => breaks[id] ?? 0);
+            const counts = Object.keys(page.game.actors).map(id => breaks[id] ?? 0);
             verify(counts.some(n => n === 0), "someone stayed at its desk");
             verify(counts.some(n => n >= 2), "someone took more than one break");
             verify(new Set(counts).size >= 3, "how often differs");
@@ -1988,10 +2000,11 @@ Item {
                 i: 0
             };
             for (let t = 0; t < 1500; t++) {
-                page.advance(1);
+                page.game.advance(1);
+                const screens = viewsIn(page.screenViews);
                 for (const p of people) {
                     const seat = page.world.seatOf[p.id];
-                    const view = seat && page.screenViews[seat.screen];
+                    const view = seat && screens[seat.screen];
                     if (!view || view.mode === "off") {
                         delete last[p.id];
                         continue;
@@ -2007,18 +2020,18 @@ Item {
                     if (was && (was.slack !== view.slack || was.scene !== view.scene)) {
                         const next = was.slack === view.slack;
                         if (next && was.frame)
-                            verify(page.ticks - was.since >= 24, p.id + "'s screen changes at most once a second");
+                            verify(page.game.ticks - was.since >= 24, p.id + "'s screen changes at most once a second");
                         last[p.id] = {
                             slack: view.slack,
                             scene: view.scene,
-                            since: page.ticks,
+                            since: page.game.ticks,
                             frame: next
                         };
                     } else if (!was) {
                         last[p.id] = {
                             slack: view.slack,
                             scene: view.scene,
-                            since: page.ticks,
+                            since: page.game.ticks,
                             frame: false
                         };
                     }
@@ -2043,8 +2056,8 @@ Item {
         function test_a_person_asking_does_not_slack_off() {
             plugin.publish(many(16, "a", "asking"));
             for (let t = 0; t < 600; t++) {
-                page.advance(1);
-                for (const view of Object.values(page.screenViews))
+                page.game.advance(1);
+                for (const view of Object.values(viewsIn(page.screenViews)))
                     compare(view.slack, "");
             }
         }
@@ -2068,16 +2081,16 @@ Item {
             plugin.publish(many(16, "a", "waiting"));
             let slacking = 0;
             for (let t = 0; t < 300; t++) {
-                page.advance(1);
-                slacking += Object.values(page.screenViews).filter(view => view.slack).length;
+                page.game.advance(1);
+                slacking += Object.values(viewsIn(page.screenViews)).filter(view => view.slack).length;
             }
             verify(slacking > 0, "they slack off while waiting");
             plugin.publish(many(16, "a", data.state));
-            page.advance(5);
+            page.game.advance(5);
             for (let t = 0; t < 600; t++) {
-                for (const view of Object.values(page.screenViews))
+                for (const view of Object.values(viewsIn(page.screenViews)))
                     compare(view.slack, "", data.tag + " people do not slack");
-                page.advance(1);
+                page.game.advance(1);
             }
         }
 
@@ -2085,34 +2098,67 @@ Item {
         // lasts a second.
         function test_a_slacking_frame_lasts_a_second_on_the_slow_clock() {
             plugin.publish(many(24, "w", "waiting"));
-            runUntil(() => !page.walking, 4000, "everyone sits down");
+            runUntil(() => !page.game.walking, 4000, "everyone sits down");
             const last = {};
             let changes = 0;
             for (let t = 0; t < 600; t++) {
-                page.tick(200);
-                for (const [key, view] of Object.entries(page.screenViews)) {
+                page.game.tick(200);
+                for (const [key, view] of Object.entries(viewsIn(page.screenViews))) {
                     const was = last[key];
                     if (was && view.slack && was.slack === view.slack && was.scene !== view.scene) {
                         if (was.changed)
-                            compare(page.now - was.at, 1000, "a frame is up for a second");
+                            compare(page.game.now - was.at, 1000, "a frame is up for a second");
                         changes++;
                         last[key] = {
                             slack: view.slack,
                             scene: view.scene,
-                            at: page.now,
+                            at: page.game.now,
                             changed: true
                         };
                     } else if (!was || was.slack !== view.slack) {
                         last[key] = {
                             slack: view.slack,
                             scene: view.scene,
-                            at: page.now,
+                            at: page.game.now,
                             changed: false
                         };
                     }
                 }
             }
             verify(changes > 50, "frames change: " + changes);
+        }
+
+        function test_a_bubble_is_over_anothers_icon() {
+            const people = [person("lead", "Lead", "working", "typing"), person("rev", "Reviewer", "working", "typing"), person("ask", "Fix the parser", "asking")];
+            plugin.publish(people);
+            runUntil(() => people.every(each => arrived(actor(each.id))));
+            plugin.publish(people, [
+                {
+                    id: "talk-over",
+                    from: "lead",
+                    to: "rev",
+                    kind: "message",
+                    text: "Please look at the diff",
+                    at: new Date().toISOString()
+                }
+            ]);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the speaker walks up");
+            page.game.advance(1);
+            const speaker = find("officeBubble:lead").parent;
+            let other = find("officeIcon:ask");
+            while (other && other.parent !== speaker.parent)
+                other = other.parent;
+            verify(other, "both are over the room");
+            verify(speaker.z > other.z, "a bubble's " + speaker.z + " is over an icon's " + other.z);
+        }
+
+        function test_the_wall_between_the_rooms_has_no_hole() {
+            plugin.publish([person("one", "One", "working", "typing")]);
+            tryVerify(() => page.settled);
+            waitForRendering(loader.item);
+            const x = page.world.xd * 16 + 8, ctx = find("officeFloor").getContext("2d");
+            for (let y = 0; y < 5 * 16; y++)
+                compare(ctx.getImageData(x, y, 1, 1).data[3], 255, "painted at y " + y);
         }
 
         function test_two_agents_that_talk_walk_up_to_each_other() {
@@ -2130,14 +2176,14 @@ Item {
                 }
             ]);
             runUntil(() => actor("lead").talk?.phase === "say", 2000, "the speaker walks up");
-            page.advance(1);
+            page.game.advance(1);
             const a = actor("lead"), b = actor("rev");
             compare(Math.abs(a.tx - b.tx) + Math.abs(a.ty - b.ty), 1);
-            compare(a.dir, page.dirTowards(a, b));
-            compare(b.face, page.dirTowards(b, a));
+            compare(a.dir, page.game.talks.towards(a, b));
+            compare(b.face, page.game.talks.towards(b, a));
             const bubble = find("officeBubble:lead");
             verify(bubble.visible);
-            compare(page.overlays["lead"].bubble, "Please look at the diff");
+            compare(actor("lead").bubble, "Please look at the diff");
 
             runUntil(() => actor("lead").talk === null, 400, "the talk ends");
             verify(!bubble.visible);
@@ -2166,7 +2212,7 @@ Item {
             ];
             plugin.publish(people);
             plugin.publish(people, said("…", "…"));
-            page.advance(1);
+            page.game.advance(1);
             const a = actor("t0");
             compare(a.talk?.text, "…", "the first is on its way over");
             compare(a.queue.length, 1, "the second waits");
@@ -2174,11 +2220,11 @@ Item {
             compare(a.talk.text, "Fix the parser", "the one walking over takes it");
             compare(a.queue[0].text, "Write the tests", "so does the one waiting");
             runUntil(() => a.talk?.phase === "say", 2000, "the first is said");
-            page.advance(1);
-            compare(page.overlays["t0"].bubble, "Fix the parser");
+            page.game.advance(1);
+            compare(actor("t0").bubble, "Fix the parser");
             plugin.publish(people, said("Fix the lexer", "Write the tests"));
-            page.advance(1);
-            compare(page.overlays["t0"].bubble, "Fix the lexer", "so does the one being said");
+            page.game.advance(1);
+            compare(actor("t0").bubble, "Fix the lexer", "so does the one being said");
         }
 
         // A hand-off's call often ends before its worker's row reaches the office.
@@ -2196,13 +2242,13 @@ Item {
                 }
             ];
             plugin.publish(early);
-            page.advance(25);
+            page.game.advance(25);
             plugin.publish(early, talks);
-            page.advance(25);
+            page.game.advance(25);
             plugin.publish(both, talks);
             runUntil(() => actor("lead").talk?.phase === "say", 2000, "the talk waits for both");
-            page.advance(1);
-            compare(page.overlays["lead"].bubble, "Fix the parser");
+            page.game.advance(1);
+            compare(actor("lead").bubble, "Fix the parser");
             plugin.publish(both, talks);
             compare(actor("lead").queue.length, 0, "a talk is heard once");
         }
@@ -2253,7 +2299,7 @@ Item {
             const people = many(4, "t", "working", "typing");
             plugin.publish(people);
             plugin.publish(people, [message_to("first", "t0", "t1")]);
-            page.advance(1);
+            page.game.advance(1);
             compare(actor("t0").talk?.text, "first");
             plugin.publish(people, [message_to("first", "t0", "t1"), message_to("second", "t0", "t2")]);
             compare(actor("t0").queue.length, 1, "the second waits for the first");
@@ -2265,15 +2311,15 @@ Item {
         function test_an_office_shown_again_shows_what_is_happening_now() {
             plugin.publish(many(4, "t", "working", "typing"));
             plugin.publish(many(4, "t", "working", "typing"), [message_to("under way", "t0", "t1")]);
-            page.advance(1);
+            page.game.advance(1);
             verify(actor("t0").talk, "a talk is under way as the page goes out of sight");
             // Ten minutes out of sight: most of a new team came, t3 left, and they talked.
-            page.tickedAt = Date.now() - 600000;
+            page.game.tickedAt = Date.now() - 600000;
             const people = many(3, "t", "working", "typing").concat(many(8, "n", "working", "typing"));
             plugin.publish(people, [message_to("meanwhile", "t2", "t1"), message_to("to new", "t1", "n0")]);
             verify(page.outside.length > 0 && page.moves > 0, "their coming in has piled up");
             page.applicationActive = true;
-            tryVerify(() => Date.now() - page.tickedAt < 5000, 5000, "the clock runs again");
+            tryVerify(() => Date.now() - page.game.tickedAt < 5000, 5000, "the clock runs again");
             page.applicationActive = false;
             compare(page.outside.length, 0, "nobody waits to walk in");
             compare(page.moves, 0, "nobody carries a desk");
@@ -2291,7 +2337,7 @@ Item {
         function test_a_talk_said_just_as_the_office_is_shown_again_is_played() {
             const people = many(3, "t", "working", "typing");
             plugin.publish(people);
-            page.tickedAt = Date.now() - 600000;
+            page.game.tickedAt = Date.now() - 600000;
             page.applicationActive = true;
             // Said before the clock's first tick.
             plugin.publish(people, [message_to("now", "t0", "t1")]);
@@ -2306,10 +2352,10 @@ Item {
         function test_a_glance_away_leaves_the_walks_and_talks_under_way() {
             plugin.publish(many(4, "t", "working", "typing"));
             plugin.publish(many(5, "t", "working", "typing"), [message_to("now", "t0", "t1")]);
-            page.advance(1);
-            page.tickedAt = Date.now() - 1000;
+            page.game.advance(1);
+            page.game.tickedAt = Date.now() - 1000;
             page.applicationActive = true;
-            tryVerify(() => Date.now() - page.tickedAt < 500, 5000, "the clock runs again");
+            tryVerify(() => Date.now() - page.game.tickedAt < 500, 5000, "the clock runs again");
             page.applicationActive = false;
             compare(actor("t0").talk?.text, "now");
             verify(page.moves > 0, "the new desk is still carried in");
@@ -2339,7 +2385,7 @@ Item {
                 compare(c.next, -1, "C stands still while spoken to");
                 compare([c.tx, c.ty], spot);
                 compare(Math.abs(a.tx - c.tx) + Math.abs(a.ty - c.ty), 1, "the two stay together");
-                page.advance(1);
+                page.game.advance(1);
             }
             verify(c.path.length > 0 || c.next >= 0, "C still knows where it was going");
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
@@ -2367,17 +2413,17 @@ Item {
             verify(c.path.length > 0 || c.next >= 0, "C is on its way");
             // Someone else has the tile C would stop at.
             const taken = c.next >= 0 ? c.next : c.ty * W + c.tx;
-            page.claims[taken] = "b";
+            page.game.claims[taken] = "b";
             runUntil(() => a.talk?.phase === "say", 4000, "the talk starts");
             verify(c.ty * W + c.tx !== taken, "C walks on past the spot that is someone else's");
-            compare(page.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
+            compare(page.game.claims[a.ty * W + a.tx], "lead", "the lead talks from the side it claimed");
             while (a.talk) {
                 const here = c.ty * W + c.tx;
                 if (c.next < 0)
-                    verify(!page.claims[here] || page.claims[here] === "c", "C stands on a tile nobody else has");
-                page.advance(1);
+                    verify(!page.game.claims[here] || page.game.claims[here] === "c", "C stands on a tile nobody else has");
+                page.game.advance(1);
             }
-            delete page.claims[taken];
+            delete page.game.claims[taken];
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
@@ -2406,9 +2452,9 @@ Item {
             };
             const here = spot.y * page.world.cols + spot.x;
             // B looks for somewhere to stand and wants C's tile.
-            if (page.free(spot, b)) {
-                page.claim(b, spot);
-                page.setGoal(b, Object.assign({
+            if (page.game.free(spot, b)) {
+                page.game.claim(b, spot);
+                b.setGoal(Object.assign({
                     face: 0,
                     offY: 0,
                     pose: "stand",
@@ -2416,11 +2462,11 @@ Item {
                 }, spot));
             }
             runUntil(() => a.talk?.phase === "reply", 400, "C replies");
-            compare(page.claims[here], "c", "C holds the tile it listens on");
+            compare(page.game.claims[here], "c", "C holds the tile it listens on");
             verify(b.goal?.kind !== "spot", "B is not sent to C's tile");
             compare([c.tx, c.ty], [spot.x, spot.y], "C listens where it stopped");
             runUntil(() => !a.talk, 200, "the talk ends");
-            verify(page.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
+            verify(page.game.claims[here] === undefined || c.claim === here, "C lets go of the tile after the talk");
             runUntil(() => arrived(c) && c.tx > page.world.xd, 2000, "C goes on to the break room");
         }
 
@@ -2435,8 +2481,8 @@ Item {
                 x: page.world.entrance[0],
                 y: page.world.entrance[1]
             };
-            page.claim(actor("c"), door);
-            page.setGoal(actor("c"), Object.assign({
+            page.game.claim(actor("c"), door);
+            actor("c").setGoal(Object.assign({
                 face: 0,
                 offY: 0,
                 pose: "stand",
@@ -2459,9 +2505,9 @@ Item {
             verify(ahead >= 0 && ahead !== here, "and the one it was headed for");
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing")]);
             verify(!actor("c"), "C has left");
-            compare(page.claims[here], undefined, "C's tile is free");
-            compare(page.claims[ahead], undefined, "the tile C was headed for is free");
-            compare(Object.values(page.claims).indexOf("c"), -1, "C holds no tile at all");
+            compare(page.game.claims[here], undefined, "C's tile is free");
+            compare(page.game.claims[ahead], undefined, "the tile C was headed for is free");
+            compare(Object.values(page.game.claims).indexOf("c"), -1, "C holds no tile at all");
             runUntil(() => !a.talk, 200, "the talk ends");
         }
 
@@ -2488,14 +2534,14 @@ Item {
             compare(c.hold, here, "and holds that tile for the talk");
             // C's agent gets to work: it is sent back to its desk.
             plugin.publish([person("lead", "Lead", "working", "typing"), person("c", "C", "working", "typing")]);
-            page.decide(c, true);
+            c.decide(true);
             verify(c.claim !== here, "C is headed for its desk");
             while (a.talk) {
-                compare(page.claims[here], "c", "C keeps the tile it listens on");
+                compare(page.game.claims[here], "c", "C keeps the tile it listens on");
                 compare([c.tx, c.ty], [here % page.world.cols, Math.floor(here / page.world.cols)], "C stays put");
-                page.advance(1);
+                page.game.advance(1);
             }
-            compare(page.claims[here], undefined, "C lets go of it after the talk");
+            compare(page.game.claims[here], undefined, "C lets go of it after the talk");
             runUntil(() => arrived(c) && c.goal.kind === "desk", 2000, "C goes back to its desk");
         }
 
@@ -2517,17 +2563,17 @@ Item {
             plugin.publish([person("lead", "Lead", "working", "typing"), person("d", "D", "working", "typing"), person("c", "C", "waiting")], [say("lead", "talk-1"), say("d", "talk-2")]);
             let here = c.ty * page.world.cols + c.tx, turns = 0, last = "";
             for (let t = 0; t < 3000 && turns < 2; t++) {
-                page.advance(1);
+                page.game.advance(1);
                 const talking = [a, d].filter(p => p.talk?.to === "c");
                 verify(talking.length <= 1, "one talks to C at a time");
                 const now = talking[0];
                 if (now && now.talk.phase !== "go") {
-                    if (now.id !== last) {
-                        last = now.id;
+                    if (now.key !== last) {
+                        last = now.key;
                         turns++;
                         here = c.ty * page.world.cols + c.tx;
                     }
-                    compare(page.claims[here], "c", "C keeps its tile while " + now.id + " talks");
+                    compare(page.game.claims[here], "c", "C keeps its tile while " + now.key + " talks");
                 }
             }
             compare(turns, 2, "both get their say");
@@ -2562,9 +2608,9 @@ Item {
                 return talked.a && talked.b && !a.talk && !b.talk;
             }, 3000, "both talks run to their end");
             compare([a.hold, b.hold, a.heldBy, b.heldBy], [-1, -1, "", ""], "nobody holds a tile for a talk");
-            const mine = Object.values(page.actors).map(p => p.claim);
-            for (const tile of Object.keys(page.claims))
-                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.claims[tile] + ", who stops elsewhere");
+            const mine = Object.values(page.game.actors).map(p => p.claim);
+            for (const tile of Object.keys(page.game.claims))
+                verify(mine.includes(Number(tile)), "tile " + tile + " is claimed by " + page.game.claims[tile] + ", who stops elsewhere");
         }
 
         // A reviewer listening at a floor desk when a thread comes in to a full
@@ -2647,14 +2693,14 @@ Item {
             w.seatOf["r8"] = other;
             for (const a of [t1, r8]) {
                 a.goal = null;
-                page.decide(a, false);
+                a.decide(false);
             }
             compare(t1.goal.kind, "wait", "t1 waits for the desk r8 listens at");
             const pod = w.pods[seat.pod];
             verify(t1.goal.x < pod.x || t1.goal.x >= pod.x + pod.cols, "beside the pod");
             runUntil(() => {
                 if (t0.talk) {
-                    compare(page.claims[tile], "r8", "r8 keeps the tile while it listens");
+                    compare(page.game.claims[tile], "r8", "r8 keeps the tile while it listens");
                     compare([r8.tx, r8.ty], [seat.x, seat.y], "and stays on it");
                     compare(t1.goal.kind, "wait", "while t1 waits");
                 }
@@ -2674,13 +2720,13 @@ Item {
             plugin.publish(many(6, "t", "working", "typing"));
             const W = page.world.cols;
             const lead = actor("t0");
-            const far = Object.values(page.actors).find(a => Math.abs(a.tx - lead.tx) + Math.abs(a.ty - lead.ty) > 2);
+            const far = Object.values(page.game.actors).find(a => Math.abs(a.tx - lead.tx) + Math.abs(a.ty - lead.ty) > 2);
             verify(far, "someone sits away from the lead");
             const blocked = [];
             for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
                 const i = (far.ty + dy) * W + far.tx + dx;
-                if (page.walkable(far.tx + dx, far.ty + dy) && page.claims[i] === undefined) {
-                    page.claims[i] = "someone";
+                if (page.game.walkable(far.tx + dx, far.ty + dy) && page.game.claims[i] === undefined) {
+                    page.game.claims[i] = "someone";
                     blocked.push(i);
                 }
             }
@@ -2688,7 +2734,7 @@ Item {
                 {
                     id: "talk-1",
                     from: "t0",
-                    to: far.id,
+                    to: far.key,
                     kind: "message",
                     text: "Got a minute?",
                     at: new Date().toISOString()
@@ -2696,31 +2742,29 @@ Item {
             ]);
             runUntil(() => !!lead.talk, 200, "the lead goes to talk");
             for (let i = 0; i < 200; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 if (lead.next < 0 && lead.path.length === 0)
-                    compare(page.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
+                    compare(page.game.claims[lead.ty * W + lead.tx], "t0", "the lead stands on a spot of its own");
             }
             compare(lead.talk.phase, "go", "the lead waits for a side to come free");
             for (const i of blocked)
-                delete page.claims[i];
+                delete page.game.claims[i];
             runUntil(() => lead.talk?.phase === "say", 2000, "the talk starts once a side is free");
-            compare(page.claims[lead.ty * W + lead.tx], "t0");
+            compare(page.game.claims[lead.ty * W + lead.tx], "t0");
         }
 
-        // The office fills the view by its width or its height, whichever runs
-        // out first, and the zoom buttons step it a little at a time.
+        // The office fits the view as large as whole device pixels per art
+        // pixel allow, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {
             plugin.publish(many(9, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            const scroller = find("officeScroller");
-            const stage = find("officeStage");
-            verify(stage.width <= scroller.width && stage.height <= scroller.height, "the whole office shows");
-            verify(scroller.width - stage.width <= 8 || scroller.height - stage.height <= 8, "it fills one side of the view");
-            const fitted = page.pixelScale;
-            page.zoomBy(1.25);
-            verify(page.pixelScale > fitted && page.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
-            page.zoom = 1;
-            compare(page.pixelScale, fitted);
+            tryVerify(() => page.game.columns > 0);
+            verifyFitsWhole("the fit");
+            const ratio = page.game.devicePixelRatio;
+            const fitted = page.game.pixelScale;
+            page.game.zoomBy(1.25);
+            verify(page.game.pixelScale > fitted && page.game.pixelScale <= Math.max(fitted * 1.25 + 0.5 / ratio, fitted + 1 / ratio) + 1e-9, "one step zooms in by about a quarter, or one device pixel");
+            page.game.zoom = 1;
+            compare(page.game.pixelScale, fitted);
         }
 
         // A view wide enough to fit the office past the most zoomed in scale
@@ -2730,43 +2774,56 @@ Item {
             loader.width = 16000;
             loader.height = 10000;
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0 && page.fitScale > page.maxScale, 1000, "the view fits the office past the most zoomed in scale");
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            tryVerify(() => page.game.columns > 0 && page.game.fitScale > page.game.maxScale, 1000, "the view fits the office past the most zoomed in scale");
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!find("officeArt").layer.enabled, "the art is drawn directly");
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
 
-        // A large view fits the office at a scale where zoomed steps snap to
-        // whole device pixels; the fit itself does not snap, so the office
-        // still fills one side of the view.
-        function test_a_large_fit_fills_the_view() {
+        // The whole office shows, each art pixel a whole number of device
+        // pixels, and one more device pixel each would not fit.
+        function verifyFitsWhole(what) {
+            const game = page.game;
+            const ratio = game.devicePixelRatio;
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            const device = game.pixelScale * ratio;
+            fuzzyCompare(device, Math.round(device), 1e-9, what + ": each art pixel is whole device pixels");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, what + ": the whole office shows");
+            const bigger = (device + 1) / ratio;
+            verify(game.pixelWidth * bigger > scroller.width - game.margin || game.pixelHeight * bigger > scroller.height - game.margin || bigger > game.topScale + 1e-9, what + ": as large as fits");
+            verify(!find("officeArt").layer.enabled, what + ": the art is drawn directly");
+        }
+
+        // A large view fits the office as large as whole device pixels allow.
+        function test_a_large_fit_is_as_large_as_whole_pixels_allow() {
             loader.width = 2600;
             loader.height = 1600;
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0 && page.fitScale * page.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
-            const scroller = find("officeScroller");
-            const stage = find("officeStage");
-            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows");
-            verify(scroller.width - stage.width <= 8.5 || scroller.height - stage.height <= 8.5, "it fills one side of the view");
+            tryVerify(() => page.game.columns > 0 && page.game.fitScale * page.game.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
+            verifyFitsWhole("a large fit");
+            loader.width = 2611;
+            loader.height = 1633;
+            verifyFitsWhole("a view a little larger");
         }
 
         // Where zoom snaps to whole device pixels, zooming in and back out
         // returns to the same scale.
         function test_zooming_in_and_out_returns_to_the_same_scale() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            page.zoom = 4 / page.devicePixelRatio / page.fitScale;
-            for (let i = 0; i < 12 && page.pixelScale < page.topScale - 0.001; i++) {
-                const before = page.pixelScale;
-                page.zoomBy(1.25);
+            tryVerify(() => page.game.columns > 0);
+            page.game.zoom = 4 / page.game.devicePixelRatio / page.game.fitScale;
+            for (let i = 0; i < 12 && page.game.pixelScale < page.game.topScale - 0.001; i++) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1.25);
                 // A step held back by the most zoomed in scale is not undone.
-                if (page.pixelScale >= page.topScale - 0.001)
+                if (page.game.pixelScale >= page.game.topScale - 0.001)
                     break;
-                const after = page.pixelScale;
-                page.zoomBy(1 / 1.25);
-                fuzzyCompare(page.pixelScale, before, 1e-9, "out undoes in");
-                page.zoomBy(1.25);
-                fuzzyCompare(page.pixelScale, after, 1e-9, "in again goes as far");
+                const after = page.game.pixelScale;
+                page.game.zoomBy(1 / 1.25);
+                fuzzyCompare(page.game.pixelScale, before, 1e-9, "out undoes in");
+                page.game.zoomBy(1.25);
+                fuzzyCompare(page.game.pixelScale, after, 1e-9, "in again goes as far");
             }
         }
 
@@ -2774,44 +2831,45 @@ Item {
         // the most zoom allows, and the zoom-in button stops there.
         function test_the_most_zoomed_in_scale_is_whole_device_pixels() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            const ratio = page.devicePixelRatio;
-            fuzzyCompare(page.topScale * ratio, Math.round(page.topScale * ratio), 1e-9);
-            verify(page.topScale <= page.maxScale + 1e-9 && page.topScale > page.maxScale - 1 / ratio, "as far in as whole device pixels go");
-            page.zoom = page.maxScale / page.fitScale;
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            tryVerify(() => page.game.columns > 0);
+            const ratio = page.game.devicePixelRatio;
+            fuzzyCompare(page.game.topScale * ratio, Math.round(page.game.topScale * ratio), 1e-9);
+            verify(page.game.topScale <= page.game.maxScale + 1e-9 && page.game.topScale > page.game.maxScale - 1 / ratio, "as far in as whole device pixels go");
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
 
-        // Fit can sit between whole device pixels; the step from there goes to
-        // the next whole one, not one past it.
+        // A zoom set between whole device pixels shows the whole one below it;
+        // the step from there goes to the next whole one, not one past it.
         function test_a_step_from_between_whole_pixels_goes_to_the_next() {
             plugin.publish(many(1, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
-            const ratio = page.devicePixelRatio;
-            page.zoom = 3.55 / ratio / page.fitScale;
-            page.zoomBy(1.25);
-            fuzzyCompare(page.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
+            tryVerify(() => page.game.columns > 0);
+            const ratio = page.game.devicePixelRatio;
+            page.game.zoom = 3.55 / ratio / page.game.fitScale;
+            page.game.zoomBy(1.25);
+            fuzzyCompare(page.game.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
         }
 
-        // At a zoom between whole pixels the art is drawn at a whole number of
-        // device pixels per art pixel and shrunk smoothly, so no art pixel is
-        // drawn wider than another; at a whole zoom it is drawn as it is.
-        function test_art_at_a_fractional_zoom_keeps_its_pixels_even() {
+        // A zoom between whole device pixels shows the whole one below it, so
+        // each art pixel stays a hard block; only an office shown smaller than
+        // one device pixel per art pixel is drawn at one and shrunk smoothly.
+        function test_art_pixels_are_hard_blocks_at_any_zoom() {
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const art = find("officeArt");
             const stage = find("officeStage");
-            const ratio = page.devicePixelRatio;
-            page.zoom = 3.5 / ratio / page.fitScale;
-            const devicePixels = page.drawScale * ratio;
-            fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
-            verify(page.drawScale >= page.pixelScale);
+            const ratio = page.game.devicePixelRatio;
+            page.game.zoom = 3.5 / ratio / page.game.fitScale;
+            fuzzyCompare(page.game.pixelScale * ratio, 3, 1e-9, "3.5 device pixels shows 3");
+            verify(!art.layer.enabled, "the art is drawn directly");
+            compare(art.scale, 1);
+            loader.width = 120;
+            loader.height = 90;
+            page.game.zoom = 1;
+            tryVerify(() => page.game.pixelScale * ratio < 1, 1000, "the office is shown under a device pixel per art pixel");
             verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
             fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
-            page.zoom = 3 / ratio / page.fitScale;
-            verify(!art.layer.enabled, "a whole zoom draws the art directly");
-            compare(art.scale, 1);
         }
 
         // Zoomed far in, a step of one device pixel is fine enough, so the
@@ -2819,23 +2877,23 @@ Item {
         // whole zoomed office is drawn.
         function test_zoomed_in_far_the_art_is_drawn_directly() {
             plugin.publish(many(20, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const art = find("officeArt");
             let steps = 0;
-            while (page.pixelScale < page.topScale - 0.001 && steps < 40) {
-                const before = page.pixelScale;
-                page.zoomBy(1.25);
-                verify(page.pixelScale > before, "each step zooms in");
+            while (page.game.pixelScale < page.game.topScale - 0.001 && steps < 40) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1.25);
+                verify(page.game.pixelScale > before, "each step zooms in");
                 if (art.layer.enabled)
-                    verify(page.drawScale * page.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
+                    verify(page.game.drawScale * page.game.devicePixelRatio <= 4, "a layer is drawn only at a small scale");
                 steps++;
             }
-            fuzzyCompare(page.pixelScale, page.topScale, 1e-9);
+            fuzzyCompare(page.game.pixelScale, page.game.topScale, 1e-9);
             verify(!art.layer.enabled, "the most zoomed in office is drawn directly");
-            while (page.pixelScale > 1.001 && steps < 80) {
-                const before = page.pixelScale;
-                page.zoomBy(1 / 1.25);
-                verify(page.pixelScale < before, "each step zooms out");
+            while (page.game.pixelScale > 1.001 && steps < 80) {
+                const before = page.game.pixelScale;
+                page.game.zoomBy(1 / 1.25);
+                verify(page.game.pixelScale < before, "each step zooms out");
                 steps++;
             }
         }
@@ -2844,28 +2902,28 @@ Item {
         // after the view changes moves the scale from what is shown.
         function test_a_small_view_fits_the_office_and_zoom_steps_from_what_shows() {
             plugin.publish(many(3, "t", "working", "typing"));
-            tryVerify(() => page.worldCols > 0);
+            tryVerify(() => page.game.columns > 0);
             const scroller = find("officeScroller");
             const stage = find("officeStage");
-            while (page.pixelScale > page.minScale + 0.001)
-                page.zoomBy(1 / 1.25);
+            while (page.game.pixelScale > page.game.minScale + 0.001)
+                page.game.zoomBy(1 / 1.25);
             loader.height = 200;
-            tryVerify(() => page.fitScale < 1, 1000, "the office is taller than the view");
+            tryVerify(() => page.game.fitScale < 1, 1000, "the office is taller than the view");
             verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows when zoomed out");
-            const shown = page.pixelScale;
-            page.zoomBy(1.25);
-            verify(page.pixelScale > shown, "the first step after the view shrank zooms in");
-            page.zoom = 1;
+            const shown = page.game.pixelScale;
+            page.game.zoomBy(1.25);
+            verify(page.game.pixelScale > shown, "the first step after the view shrank zooms in");
+            page.game.zoom = 1;
             verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows at Fit");
         }
 
         function test_a_person_tabbed_to_is_scrolled_into_view() {
             plugin.publish(many(20, "t", "working", "typing"));
             tryVerify(() => page.settled);
-            page.zoom = page.maxScale / page.fitScale;
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
             const scroller = find("officeScroller");
-            const far = Object.values(page.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
-            const hit = find("officePerson:" + far.id);
+            const far = Object.values(page.game.actors).reduce((m, a) => a.tx + a.ty > m.tx + m.ty ? a : m);
+            const hit = find("officePerson:" + far.key);
             const inView = () => {
                 const r = hit.mapToItem(scroller, 0, 0, hit.width, hit.height);
                 // Half a pixel either way is rounding, not out of view.
@@ -2874,7 +2932,28 @@ Item {
             verify(!inView(), "the person starts out of view");
             hit.forceActiveFocus();
             verify(inView(), "the person is scrolled into view");
-            compare(page.hovered, far.id);
+            compare(page.hovered, far.key);
+            // Its card is beside it, in view too, though the stage goes on.
+            const card = find("officeCard");
+            tryVerify(() => card.visible);
+            const c = card.mapToItem(scroller, 0, 0, card.width, card.height);
+            verify(c.x >= -0.5 && c.y >= -0.5 && c.x + c.width <= scroller.width + 0.5 && c.y + c.height <= scroller.height + 0.5, JSON.stringify(c));
+        }
+
+        // Zoomed in, the page's message is in the middle of the view, not of
+        // the office it is over.
+        function test_the_message_is_in_the_middle_of_the_view_at_any_zoom() {
+            plugin.environments = ["local", "lab"];
+            plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.settled);
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
+            page.environment = "lab";
+            compare(message(), "Waiting for the office…");
+            const scroller = find("officeScroller");
+            const text = find("officeMessage");
+            const r = text.mapToItem(scroller, 0, 0, text.width, text.height);
+            fuzzyCompare(r.x + r.width / 2, scroller.width / 2, 1);
+            fuzzyCompare(r.y + r.height / 2, scroller.height / 2, 1);
         }
 
         function test_markup_in_a_title_shows_as_typed() {
@@ -2898,10 +2977,22 @@ Item {
             compare(page.office, null, "nothing stale shows before the new watch delivers");
         }
 
+        function test_another_machine_chosen_while_people_are_still_painted_settles() {
+            plugin.environments = ["local", "lab"];
+            plugin.publish(many(40, "t", "working", "typing"));
+            page.environment = "lab";
+            plugin.watchers["lab/office"]({
+                people: [],
+                talks: []
+            });
+            tryVerify(() => page.settled, 10000, "the other machine's empty office shows");
+            compare(Object.keys(page.game.actors).length, 0, "with nobody from the first");
+        }
+
         function test_an_asking_person_shows_a_question_and_opens_its_thread() {
             plugin.publish([person("ask", "Fix the parser", "asking"), person("busy", "Busy", "working", "typing")]);
             runUntil(() => arrived(actor("ask")));
-            compare(page.iconOf(actor("ask")), "ask");
+            compare(actor("ask").headIcon, "ask");
             verify(find("officeIcon:ask").visible);
             verify(!find("officeIcon:busy").visible);
             tryVerify(() => page.settled);
@@ -2951,12 +3042,12 @@ Item {
             plugin.publish(many(5, "t", "working", "typing"));
             const seat = page.world.seatOf["t4"];
             compare(seat.state, "coming");
-            page.advance(1);
+            page.game.advance(1);
             compare([actor("t4").tx, actor("t4").ty], page.world.entrance, "t4 walks in through the door");
             compare(page.deskCount, 4);
             let carried = false;
             runUntil(() => {
-                carried = carried || Object.values(page.movers).some(m => m.carrying);
+                carried = carried || Object.values(page.crew.members).some(m => m.carrying);
                 if (seat.state !== "in")
                     verify(actor("t4").tx !== seat.x || actor("t4").ty !== seat.y, "t4 does not sit before its desk is there");
                 return seat.state === "in";
@@ -2966,7 +3057,7 @@ Item {
             runUntil(() => arrived(actor("t4")), 1500, "t4 reaches its desk");
             compare([actor("t4").tx, actor("t4").ty], [seat.x, seat.y]);
             runUntil(() => page.moves === 0, 1500, "the mover leaves");
-            compare(Object.keys(page.movers).length, 0);
+            compare(Object.keys(page.crew.members).length, 0);
         }
 
         // A waiting person whose desk is still being carried in waits for it,
@@ -2985,7 +3076,7 @@ Item {
                 for (const p of people) {
                     const a = actor(p.id), seat = page.world.seatOf[p.id];
                     if (a.tx === seat.x && a.ty === seat.y) {
-                        sat[p.id] = sat[p.id] ?? page.now;
+                        sat[p.id] = sat[p.id] ?? page.game.now;
                         // The first rest after it sits, before a break
                         // replaces it, is 15 to 45 seconds from then; the
                         // tick after it sits sets it.
@@ -2995,7 +3086,7 @@ Item {
                         }
                     } else if (sat[p.id] === undefined) {
                         verify(a.plan !== "break", p.id + " goes on a break before it ever sat down");
-                        if (seat.state !== "in" && page.now > 15000)
+                        if (seat.state !== "in" && page.game.now > 15000)
                             late++;
                     }
                 }
@@ -3033,9 +3124,9 @@ Item {
             plugin.publish(people);
             let carrying = 0;
             for (let i = 0; i < 3000 && page.moves > 0; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 checkFloor();
-                carrying = Math.max(carrying, Object.values(page.movers).filter(m => m.carrying).length);
+                carrying = Math.max(carrying, Object.values(page.crew.members).filter(m => m.carrying).length);
             }
             compare(page.moves, 0, "the desks are all in");
             verify(carrying > 1, "movers carried desks at once");
@@ -3047,9 +3138,10 @@ Item {
         function test_a_carried_desk_never_covers_the_person_north_of_it() {
             plugin.publish(many(4, "t", "working", "typing"));
             plugin.publish(many(5, "t", "working", "typing"));
-            runUntil(() => Object.keys(page.movers).length > 0, 400, "a mover comes in");
+            runUntil(() => Object.keys(page.crew.members).length > 0, 400, "a mover comes in");
             const w = page.world;
-            const m = Object.values(page.movers)[0];
+            const m = Object.values(page.crew.members)[0];
+            const key = m.key;
             verify(m.carrying, "it carries a desk");
             // It carries the desk along open floor instead of to its seat, past
             // t0 standing just north of the way.
@@ -3059,7 +3151,7 @@ Item {
             const t0 = actor("t0");
             const [left, row] = openFloor(5);
             standAt(t0, left + 2, row - 1);
-            page.place(m, left, row, true);
+            m.place(left, row, true);
             m.goal = {
                 x: left + 4,
                 y: row,
@@ -3068,18 +3160,18 @@ Item {
                 pose: "stand",
                 kind: "leave"
             };
-            page.route(m);
+            m.route();
             stood = {};
             let under = false;
-            for (let i = 0; i < 600 && page.movers[m.id]; i++) {
+            for (let i = 0; i < 600 && page.crew.members[key]; i++) {
                 walk(1);
-                if (!page.movers[m.id])
+                if (!page.crew.members[key])
                     break;
                 under = under || m.tx === left + 2 && m.ty === row;
                 verify(!crosses(load(m), body(t0)), "the desk covers t0");
             }
             verify(under, "the mover passes just south of t0");
-            verify(!page.movers[m.id], "the mover gets where it is going");
+            verify(!page.crew.members[key], "the mover gets where it is going");
             compare([t0.tx, t0.ty], [left + 2, row - 1], "t0 stays where it stands");
         }
 
@@ -3090,19 +3182,19 @@ Item {
             plugin.publish(many(16, "t", "working", "typing"));
             const check = () => {
                 const at = {};
-                for (const id of Object.keys(page.actors)) {
+                for (const id of Object.keys(page.game.actors)) {
                     const goal = actor(id).goal;
                     if (goal?.kind !== "wait")
                         continue;
                     const key = goal.x + "," + goal.y;
                     verify(at[key] === undefined, id + " and " + at[key] + " both wait at " + key);
                     at[key] = id;
-                    compare(page.claims[goal.y * page.world.cols + goal.x], id, id + " holds its claim");
+                    compare(page.game.claims[goal.y * page.world.cols + goal.x], id, id + " holds its claim");
                 }
             };
             check();
             for (let i = 0; i < 400; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 check();
             }
         }
@@ -3126,7 +3218,7 @@ Item {
                 }
             ]);
             for (let i = 0; i < 800; i++) {
-                page.advance(1);
+                page.game.advance(1);
                 compare(actor("t4").tx, -1, "t4 waits outside");
                 compare(actor("t0").talk, null, "t0 waits for t4 to come in");
             }
@@ -3192,24 +3284,24 @@ Item {
         function test_a_whiteboard_fills_by_time_on_either_clock() {
             plugin.publish([person("lead", "Lead", "working", "planning")]);
             runUntil(() => arrived(actor("lead")));
-            const board = page.boardViews[actor("lead").goal.board];
+            const board = viewsIn(page.boardViews)[actor("lead").goal.board];
             runUntil(() => board.progress > 0.05, 2000, "the planner draws");
             // From just after the screens changed, so both runs count the
             // same 2.4 s.
             const settle = () => {
-                for (let i = 0; i < 10 && page.screensAt !== page.now + 200; i++)
-                    page.tick(40);
-                compare(page.screensAt, page.now + 200, "the screens just changed");
+                for (let i = 0; i < 10 && page.screensAt !== page.game.now + 200; i++)
+                    page.game.tick(40);
+                compare(page.screensAt, page.game.now + 200, "the screens just changed");
             };
             settle();
             const start = board.progress;
             for (let i = 0; i < 60; i++)
-                page.tick(40);
+                page.game.tick(40);
             const walking = board.progress - start;
             settle();
             board.progress = start;
             for (let i = 0; i < 12; i++)
-                page.tick(200);
+                page.game.tick(200);
             const quiet = board.progress - start;
             verify(arrived(actor("lead")), "the planner stays at the board");
             fuzzyCompare(walking, 0.2, 0.02, "2.4 s on the walking clock fills a fifth");
@@ -3220,13 +3312,13 @@ Item {
         // change when their picture does, never just because time passes.
         function test_quiet_screens_do_not_change_with_the_clock() {
             plugin.publish(many(16, "t", "idle"));
-            runUntil(() => Object.values(page.actors).every(arrived), 6000, "everyone sits down");
-            page.advance(10);
-            const views = Object.values(page.screenViews).filter(v => v.mode === "idle" && !v.slacking);
+            runUntil(() => Object.values(page.game.actors).every(arrived), 6000, "everyone sits down");
+            page.game.advance(10);
+            const views = Object.values(viewsIn(page.screenViews)).filter(v => v.mode === "idle" && !v.slacking);
             verify(views.length > 0, "some screens show the idle screen");
             const phases = views.map(v => v.phase);
             for (let i = 0; i < 10; i++)
-                page.tick(200);
+                page.game.tick(200);
             compare(views.map(v => v.phase), phases, "their phase stays put");
         }
 
@@ -3235,12 +3327,12 @@ Item {
             plugin.publish([person("lead", "Lead", "working", "planning")]);
             runUntil(() => arrived(actor("lead")));
             const key = actor("lead").goal.board;
-            const board = page.boardViews[key];
+            const board = viewsIn(page.boardViews)[key];
             const blank = board.progress;
             runUntil(() => board.progress > blank, 200, "the planner draws");
             plugin.environments = ["local", "lab"];
             page.environment = "lab";
-            verify(page.boardViews[key] === board, "the same whiteboard");
+            verify(viewsIn(page.boardViews)[key] === board, "the same whiteboard");
             compare(board.progress, blank, "wiped");
         }
 
@@ -3257,22 +3349,22 @@ Item {
                 const w = page.world;
                 const e = w.entrance;
                 plugin.publish(office(before));
-                page.advance(40);
+                page.game.advance(40);
                 plugin.publish(office(after));
                 let inDoor = "", since = 0, ticks = 0;
                 while ((page.moves || page.outside.length) && ticks < 2000) {
-                    page.advance(1);
+                    page.game.advance(1);
                     ticks++;
-                    const there = Object.values(page.actors).concat(Object.values(page.movers)).find(a => a.tx === e[0] && a.ty === e[1] && a.next < 0)?.id ?? "";
+                    const there = Object.values(page.game.actors).concat(Object.values(page.crew.members)).find(a => a.tx === e[0] && a.ty === e[1] && a.next < 0)?.key ?? "";
                     since = there && there === inDoor ? since + 1 : 0;
                     inDoor = there;
                     verify(since < 40, there + " stands in the doorway");
                     checkFloor();
                 }
                 verify(ticks < 2000, before + " to " + after + ": everyone gets through, " + page.moves + " moves are left");
-                page.advance(300);
-                for (const id of Object.keys(page.actors)) {
-                    const a = page.actors[id];
+                page.game.advance(300);
+                for (const id of Object.keys(page.game.actors)) {
+                    const a = page.game.actors[id];
                     verify(a.tx >= 0 && a.goal && a.tx === a.goal.x && a.ty === a.goal.y, id + " gets where it is going");
                 }
             }
@@ -3283,14 +3375,14 @@ Item {
             plugin.publish(many(4, "t", "working", "typing"));
             tryVerify(() => page.floorPaints > 0);
             const paints = page.floorPaints;
-            const props = page.props, units = page.units;
+            const world = page.world, seats = world.seats;
             plugin.publish(many(12, "t", "working", "typing"));
-            page.advance(200);
+            page.game.advance(200);
             plugin.publish(many(2, "t", "working", "typing"));
-            page.advance(200);
+            page.game.advance(200);
             wait(50);
             compare(page.floorPaints, paints);
-            verify(page.props === props && page.units === units, "the furniture is the same");
+            verify(page.world === world && page.world.seats === seats, "the furniture is the same");
         }
 
         function message() {
@@ -3304,22 +3396,26 @@ Item {
             plugin.publish(many(40, "t", "idle"));
             compare(message(), "Setting up the office…");
             compare(find("officeStage").opacity, 0, "nothing half drawn shows");
-            verify(!find("officePerson:t0").enabled, "nobody can be hovered, reached with Tab or clicked yet");
-            compare(page.sheetsPending, 40);
+            verify(!find("officePerson:t0").visible, "nobody can be hovered or clicked yet");
+            page.game.forceActiveFocus();
+            for (let i = 0; i < 3; i++)
+                keyClick(Qt.Key_Tab);
+            verify(!String(page.Window.activeFocusItem?.objectName ?? "").startsWith("officePerson"), "nor reached with Tab");
+            compare(page.game.sheetsPending, 40);
             // The sheets are painted a few a frame, not all at once.
-            tryVerify(() => page.sheetsPending < 40);
-            verify(page.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
+            tryVerify(() => page.game.sheetsPending < 40);
+            verify(page.game.sheetsPending > 0, "all sheets were painted in one batch, not a few a frame");
             waitForRendering(page);
             const summary = find("officeSummary");
             verify(find("officeZoomIn").x >= summary.x + summary.width, "the zoom buttons sit beside the summary");
             tryVerify(() => page.settled, 5000);
-            compare(page.sheetsPending, 0);
+            compare(page.game.sheetsPending, 0);
             compare(message(), "");
             compare(find("officeStage").opacity, 1);
-            verify(find("officePerson:t0").enabled);
-            verify(page.sheetCost > 0, "what a sheet takes is known");
+            verify(find("officePerson:t0").visible);
+            verify(page.game.sheetCost > 0, "what a sheet takes is known");
             // The first people are already where they belong.
-            for (const id of Object.keys(page.actors))
+            for (const id of Object.keys(page.game.actors))
                 verify(!page.outside.includes(id), id + " is not waiting outside");
         }
 
@@ -3333,7 +3429,7 @@ Item {
             tryVerify(() => page.settled);
             plugin.publish(many(3, "t", "working", "typing"));
             compare(message(), "", "newcomers to a settled office just walk in");
-            tryVerify(() => page.sheetsPending === 0);
+            tryVerify(() => page.game.sheetsPending === 0);
             compare(message(), "");
         }
 
@@ -3355,9 +3451,9 @@ Item {
             page.environment = "local";
             compare(message(), "Setting up the office…");
             // Its people are where they belong, not walking in from the door.
-            compare(Object.keys(page.actors).sort(), ["t0", "t1", "t2", "t3"]);
-            for (const id of Object.keys(page.actors))
-                verify(page.actors[id].tx >= 0 && !page.outside.includes(id), id + " is already in");
+            compare(Object.keys(page.game.actors).sort(), ["t0", "t1", "t2", "t3"]);
+            for (const id of Object.keys(page.game.actors))
+                verify(page.game.actors[id].tx >= 0 && !page.outside.includes(id), id + " is already in");
             tryVerify(() => page.settled);
         }
 
@@ -3367,14 +3463,14 @@ Item {
             plugin.publish(many(8, "t", "idle"));
             page.visible = false;
             verify(!find("officeSheetPainter").running, "no sheet is asked for while hidden");
-            compare(page.sheetsPending, 8);
+            compare(page.game.sheetsPending, 8);
             page.visible = true;
             tryVerify(() => page.settled);
             page.visible = false;
             page.visible = true;
             find("officeZoomIn").clicked();
-            page.zoom = 1;
-            compare(page.sheetsPending, 0);
+            page.game.zoom = 1;
+            compare(page.game.sheetsPending, 0);
             compare(message(), "");
             verify(page.settled);
         }
@@ -3382,13 +3478,13 @@ Item {
         function test_the_office_holds_still_while_it_is_not_shown() {
             plugin.publish(many(2, "t", "working", "typing"));
             page.applicationActive = true;
-            verify(page.animating);
+            verify(page.game.running);
             page.visible = false;
-            verify(!page.animating);
+            verify(!page.game.running);
             page.visible = true;
-            verify(page.animating);
+            verify(page.game.running);
             page.applicationActive = false;
-            verify(!page.animating);
+            verify(!page.game.running);
         }
     }
 }
