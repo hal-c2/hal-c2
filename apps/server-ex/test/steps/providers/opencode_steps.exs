@@ -1499,7 +1499,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   # A shell line that makes the fake report the latest version from now on.
   defp upgrades(dir),
     do:
-      ~s|python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; json.dump(c,open(p,"w"))' '#{Path.join(dir, "config.json")}'|
+      ~s|python3 -c 'import json,os,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; f=open(p+".new","w"); json.dump(c,f); f.close(); os.replace(p+".new",p)' '#{Path.join(dir, "config.json")}'|
 
   # OpenCode's own installer keeps it in `~/.opencode/bin`, and `opencode upgrade`
   # updates it in place.
