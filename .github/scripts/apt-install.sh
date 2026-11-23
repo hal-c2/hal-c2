@@ -51,8 +51,19 @@ fi
 # Some runners come up with no Ubuntu source at all, only Microsoft's, so nothing above
 # has an entry to fix and every package is "Unable to locate". Give such a runner the
 # archive's own (ports for arm64), and list what it had so the log shows why.
-# Only what apt reads: its .list and .sources files, without their comments.
-sources=$(cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | grep -v '^[[:space:]]*#' || true)
+# Only what apt reads: its .list and .sources files, without their comments, and no
+# .sources stanza that says `Enabled: no`.
+sources=$({
+  cat /etc/apt/sources.list /etc/apt/sources.list.d/*.list
+  awk 'BEGIN { RS = "" } {
+         n = split($0, line, "\n"); kept = ""; off = 0
+         for (i = 1; i <= n; i++) {
+           if (line[i] ~ /^[[:space:]]*#/) continue
+           if (tolower(line[i]) ~ /^enabled:[[:space:]]*(no|false|off|0)[[:space:]]*$/) off = 1
+           kept = kept line[i] "\n"
+         }
+         if (!off) printf "%s", kept }' /etc/apt/sources.list.d/*.sources
+} 2>/dev/null | grep -v '^[[:space:]]*#' || true)
 if ! grep -qiE 'ubuntu\.com|apt-mirrors' <<<"$sources"; then
   echo "::warning::No Ubuntu apt source on this runner; adding the archive's. It had: $(find /etc/apt/sources.list.d -mindepth 1 -printf '%f ' 2>&1)"
   codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
