@@ -18,6 +18,8 @@ Button {
     property bool chevron: false
     property string iconName: ""
     property string toolTip: ""
+    // The end of `text` that stays whole where the rest elides: a status, line numbers.
+    property string keptEnd: ""
     property real iconSize: Theme.icon.md
     // Fills the icon's outline too, for the filled variants (the fast-mode bolt).
     property bool iconFilled: false
@@ -97,13 +99,32 @@ Button {
 
             Text {
                 visible: control.text.length > 0
-                text: control.text
+                text: control.keptEnd.length > 0 ? control.text.slice(0, -control.keptEnd.length).trim() : control.text
                 font: control.font
                 color: control.tint
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
+            }
+
+            // The slot keeps the end's whole width and only the painted text is cut:
+            // a maximum on the laid-out item would feed back into the row's implicit width.
+            Item {
+                id: keptEndSlot
+                visible: control.keptEnd.length > 0
+                implicitWidth: keptEndText.implicitWidth
+                implicitHeight: keptEndText.implicitHeight
+
+                Text {
+                    id: keptEndText
+                    objectName: "buttonKeptEnd"
+                    text: control.keptEnd
+                    width: Math.min(Math.ceil(implicitWidth), Math.max(0, contents.width - keptEndSlot.x))
+                    font: control.font
+                    color: control.tint
+                    elide: Text.ElideRight
+                }
             }
 
             ShellChevron {

@@ -1045,18 +1045,61 @@ Rectangle {
                     ScrollView {
                         id: attachmentsScroll
 
+                        // Two image rows at most (a thumbnail tile is
+                        // Theme.control.lg * 2 tall, plus the Flow's spacing
+                        // between the rows).
+                        readonly property real rowLimit: Theme.control.lg * 4 + Theme.space.sm
+                        // The strip ends on a whole row, never mid-row: the
+                        // bottom of the lowest row that fits the limit. A
+                        // row is as tall as its tallest child (children in
+                        // a row share a y), so a chip beside an image ends
+                        // where the image does. Reading the Flow's
+                        // implicitHeight and its children's geometry re-runs
+                        // this as attachments come and go and as they rewrap.
+                        readonly property real cappedHeight: {
+                            const total = attachmentsFlow.implicitHeight;
+                            if (total <= rowLimit)
+                                return total;
+                            const rows = {};
+                            const kids = attachmentsFlow.children;
+                            for (let i = 0; i < kids.length; ++i) {
+                                const kid = kids[i];
+                                if (!kid.visible || kid.height <= 0 || kid.width <= 0)
+                                    continue;
+                                rows[kid.y] = Math.max(rows[kid.y] ?? 0, kid.y + kid.height);
+                            }
+                            let best = 0;
+                            for (const y in rows) {
+                                if (rows[y] <= rowLimit && rows[y] > best)
+                                    best = rows[y];
+                            }
+                            return best > 0 ? best : rowLimit;
+                        }
+                        readonly property bool overflowing: attachmentsFlow.implicitHeight > height
+
+                        objectName: "attachmentsScroll"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(attachmentsFlow.implicitHeight, Theme.control.md * 3)
+                        Layout.preferredHeight: cappedHeight
                         visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || (composer.model.threadContexts ?? []).length > 0 || composer.citations.length > 0)
                         clip: true
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        // Overflow says so: the bar stays while more is below,
+                        // beside the chips rather than over a row's last button.
+                        // Its room is kept without overflow too: room that came
+                        // with overflow would rewrap the rows that decide it,
+                        // which can end the overflow, or keep it going.
+                        ScrollBar.vertical.policy: overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                        rightPadding: ScrollBar.vertical.width
 
                         Flow {
                             id: attachmentsFlow
+                            objectName: "attachmentsFlow"
 
                             width: attachmentsScroll.availableWidth
                             spacing: Theme.space.sm
+                            // The room one chip has, unbounded until the strip is laid out.
+                            readonly property real room: width > 0 ? width : Infinity
 
                         Repeater {
                             model: composer.attachments
@@ -1065,6 +1108,7 @@ Rectangle {
                                 required property var modelData
 
                                 attachment: modelData
+                                maximumWidth: attachmentsFlow.room
                                 onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
                                     id: modelData.id
                                 })
@@ -1091,6 +1135,7 @@ Rectangle {
 
                                 objectName: "reviewComment-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "message-square"
                                 text: modelData.label
                                 font.pixelSize: Theme.type.meta.size
@@ -1111,8 +1156,10 @@ Rectangle {
 
                                 objectName: "terminalContext-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "terminal"
-                                text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
+                                text: modelData.label + " " + keptEnd
+                                keptEnd: modelData.lineStart === modelData.lineEnd ? qsTr("line %1").arg(modelData.lineStart) : qsTr("lines %1-%2").arg(modelData.lineStart).arg(modelData.lineEnd)
                                 font.pixelSize: Theme.type.meta.size
                                 Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                                 onClicked: Shell.dispatch("composer.terminalContext.remove", {
@@ -1130,6 +1177,7 @@ Rectangle {
 
                                 objectName: "threadContext-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: "message-square"
                                 text: modelData.label
                                 font.pixelSize: Theme.type.meta.size
@@ -1167,6 +1215,7 @@ Rectangle {
 
                                 objectName: "citation-" + modelData.id
                                 implicitHeight: Theme.control.sm
+                                width: Math.min(implicitWidth, attachmentsFlow.room)
                                 iconName: modelData.comment === null ? "quote" : "pencil"
                                 text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
                                 font.pixelSize: Theme.type.meta.size
