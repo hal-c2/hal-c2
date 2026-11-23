@@ -3,7 +3,8 @@
 //! threads, pumped in any order against an MC played by the test. It checks
 //! what reaches the MC (no subscription twice on one socket, nothing before
 //! hello, each `sub` resumed from where its owner is) and what the owner hears
-//! (frames only for live subscriptions, every call answered once and rightly).
+//! (frames only for live subscriptions and from the connection as it last
+//! opened or closed it, every call answered once and rightly).
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -21,7 +22,8 @@ use crate::{CallError, McClient, McEvent, McHandle, Phase};
 #[derive(Debug, Clone)]
 enum Action {
     // The owner, on its thread.
-    Open,
+    /// Opens the MC, or another one.
+    Open(bool),
     Close,
     Reconnect,
     Subscribe {
@@ -73,7 +75,7 @@ enum Ticketed {
 
 fn action() -> impl Strategy<Value = Action> {
     prop_oneof![
-        1 => Just(Action::Open),
+        1 => any::<bool>().prop_map(Action::Open),
         1 => Just(Action::Close),
         1 => Just(Action::Reconnect),
         4 => any::<bool>().prop_map(|resume| Action::Subscribe { resume }),
@@ -121,6 +123,8 @@ struct Heard {
     replies: HashMap<usize, Vec<Result<Value, CallError>>>,
     /// The offset each resuming subscription last said it continues from.
     resumed: HashMap<u64, u64>,
+    /// The opens and closes the owner asked for.
+    switches: u64,
 }
 
 /// One socket on the MC's side.
@@ -155,6 +159,11 @@ struct World {
     ticket: Option<u64>,
     opening: Option<u64>,
     socket: Option<Served>,
+    /// The opens and closes that reached the core.
+    switched: u64,
+    /// The MC the core was last opened at, and the one each attempt went to.
+    at: String,
+    hosts: HashMap<u64, String>,
 }
 
 impl World {
@@ -178,11 +187,34 @@ impl World {
             ticket: None,
             opening: None,
             socket: None,
+            switched: 0,
+            at: String::new(),
+            hosts: HashMap::new(),
         }
     }
 
     fn input(&mut self, input: Input) {
+        if matches!(input, Input::Command(Command::Open { .. } | Command::Close)) {
+            self.switched += 1;
+        }
+        if let Input::Command(Command::Open { origin, .. }) = &input {
+            self.at = origin.host_str().unwrap().to_owned();
+        }
         let effects = self.core.handle(input, self.now);
+        // Who the core says it is connected to is the MC it was opened at,
+        // or nobody yet (#1762).
+        let status = self.core.status();
+        let named = status
+            .descriptor
+            .get("environmentId")
+            .and_then(Value::as_str);
+        for said in [named.unwrap_or_default(), status.environment.as_str()] {
+            assert!(
+                said.is_empty() || said == environment_of(&self.at),
+                "open at {} but says it is {said}",
+                self.at
+            );
+        }
         for effect in effects {
             self.effect(effect);
         }
@@ -193,6 +225,8 @@ impl World {
             Effect::Emit(event) => self.events.push_back(event),
             Effect::GetDescriptor { attempt, url, .. } => {
                 assert_eq!(url.path(), "/.well-known/hal-c2/environment");
+                self.hosts
+                    .insert(attempt, url.host_str().unwrap().to_owned());
                 self.descriptor = Some(attempt);
             }
             Effect::PostTicket { attempt, url, .. } => {
@@ -206,6 +240,8 @@ impl World {
                     query == ["token", "protocol"] || query == ["wsTicket", "protocol"],
                     "socket query {query:?}"
                 );
+                self.hosts
+                    .insert(attempt, url.host_str().unwrap().to_owned());
                 self.opening = Some(attempt);
             }
             Effect::Send { attempt, text } => self.received(attempt, &text),
@@ -278,7 +314,8 @@ impl World {
         }
     }
 
-    fn server_frame(&mut self, frame: Value) {
+    fn server_frame(&mut self, mut frame: Value) {
+        frame["switched"] = json!(self.switched);
         let attempt = self.socket.as_ref().unwrap().attempt;
         self.input(Input::SocketText {
             attempt,
@@ -297,10 +334,19 @@ impl World {
 
     fn step(&mut self, action: Action) {
         match action {
-            Action::Open => self
-                .client
-                .open(Url::parse("https://mc.example").unwrap(), "token"),
-            Action::Close => self.client.close(),
+            Action::Open(other) => {
+                self.heard.borrow_mut().switches += 1;
+                let origin = if other {
+                    "https://other.example"
+                } else {
+                    "https://mc.example"
+                };
+                self.client.open(Url::parse(origin).unwrap(), "token");
+            }
+            Action::Close => {
+                self.heard.borrow_mut().switches += 1;
+                self.client.close();
+            }
             Action::Reconnect => self.client.reconnect(),
             Action::Subscribe { resume } => {
                 let id = self.subscribe(resume);
@@ -360,8 +406,12 @@ impl World {
             }
             Action::Descriptor(described) => {
                 if let Some(attempt) = self.descriptor.take() {
+                    let environment = environment_of(&self.hosts[&attempt]);
                     let answer = match described {
-                        Described::Ours => body(200, json!({"orchestrationProtocolVersion": 3})),
+                        Described::Ours => body(
+                            200,
+                            json!({"orchestrationProtocolVersion": 3, "environmentId": environment}),
+                        ),
                         Described::OtherProtocol => {
                             body(200, json!({"orchestrationProtocolVersion": 4}))
                         }
@@ -412,9 +462,9 @@ impl World {
                         pinged: false,
                         seq: 0,
                     });
-                    self.server_frame(
-                        json!({"t": "hello", "protocol": 3, "mc": "mc@host", "environment": "env"}),
-                    );
+                    let host = &self.hosts[&attempt];
+                    let hello = json!({"t": "hello", "protocol": 3, "mc": format!("mc@{host}"), "environment": environment_of(host)});
+                    self.server_frame(hello);
                     assert_eq!(self.core.status().phase, Phase::Ready);
                 }
             }
@@ -523,6 +573,11 @@ impl World {
                 let mut heard = heard.borrow_mut();
                 assert!(!heard.gone.contains(&id), "frame for ended sub {id}");
                 assert_eq!(frame["id"], json!(id));
+                assert_eq!(
+                    frame["switched"],
+                    json!(heard.switches),
+                    "sub {id} heard what an open or close left"
+                );
                 if frame["t"] == "end" {
                     heard.gone.insert(id);
                 }
@@ -622,6 +677,11 @@ impl World {
     }
 }
 
+/// The environment the MC at `host` serves.
+fn environment_of(host: &str) -> String {
+    format!("env-{host}")
+}
+
 fn shape() -> Value {
     json!({"type": "shell"})
 }
@@ -641,7 +701,7 @@ proptest! {
     fn connection_keeps_owner_and_mc_in_step(actions in proptest::collection::vec(action(), 1..120)) {
         let mut world = World::new();
         world.client.set_retry_delays(vec![Duration::from_millis(5), Duration::from_millis(10)]);
-        world.step(Action::Open);
+        world.step(Action::Open(false));
         world.drain();
         for action in actions {
             world.step(action);

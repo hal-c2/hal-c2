@@ -676,7 +676,7 @@ fn tear_down(engine: &Engine, window: &Rc<Window>) {
         let controllers = std::mem::take(&mut *window.controllers.borrow_mut());
         drop(controllers);
     });
-    window.mc.close();
+    window.mc.close_window();
     if let Some(owner) = window.owner {
         engine.destroy(owner);
     }

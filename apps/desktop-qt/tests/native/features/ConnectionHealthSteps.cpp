@@ -518,8 +518,15 @@ const Steps steps([] {
     world.mc.answerPings = false;
     world.mc.stopAccepting();
     client(world).wake();
-    world.waitFor([&] { return client(world).phase() == McClient::Phase::Retrying; },
-                  [&] { return QStringLiteral("the unanswered connection to be dropped; it is %1").arg(show(connection(world))); });
+    // A frame already on its way answers the check, so it is made again
+    // until it goes unanswered.
+    world.waitFor(
+        [&] {
+          if (client(world).phase() == McClient::Phase::Retrying) return true;
+          client(world).wake();
+          return false;
+        },
+        [&] { return QStringLiteral("the unanswered connection to be dropped; it is %1").arg(show(connection(world))); });
   });
   step(QStringLiteral("the environment reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Once the reconnect is past its grace: until then it reads as connected.

@@ -3,8 +3,10 @@
 // outside, token exchanges answered, refused, held and dropped, a second
 // pairing started while one is in flight, adding and cancelling, another
 // environment paired beside the first and forgotten again, forgetting the
-// first while another is beside it, and the app started again over what the
-// device kept.
+// first while another is beside it, the first saved beside itself on its own
+// session or another, a saved one removed in Settings > Connections (what
+// was open over a copy's link moving to the phone's own), and the app
+// started again over what the device kept.
 
 #include "Prop.h"
 
@@ -105,6 +107,10 @@ struct Model {
   std::string session;
   // The MCs paired beside it, and the sessions they sold.
   std::map<int, std::string> beside;
+  // The paired MC is beside itself too (#1746): beside holds it as well,
+  // until a forget, a pairing again or Settings drops the copy, or a restart
+  // does when the copy has the pairing's own session.
+  bool duplicated = false;
   bool pairing = false;
   bool adding = false;
   // Whether the device's storage takes writes.
@@ -156,6 +162,9 @@ void answered(Model& m, int mc, bool paired) {
   } else {
     m.paired = mc;
     m.session = sessionOf(mc, m.sold[mc]);
+    // Nor is it listed beside itself.
+    m.beside.erase(mc);
+    m.duplicated = false;
   }
   m.adding = false;
   m.link.reset();
@@ -186,8 +195,16 @@ public:
       QObject::connect(socket, &QTcpSocket::readyRead, socket, take);
       take();
     });
+    pairable.mc.onShape(QStringLiteral("probe"), [this](int, const QJsonObject&) { ++probed; });
+    // The copy's link and the phone's own are two sockets on one MC, either the newer.
+    pairable.mc.overheard = [this](const QJsonObject& frame) {
+      if (frame.value(QLatin1String("t")).toString() != QLatin1String("sub")) return;
+      if (frame.value(QLatin1String("shape")).toObject().value(QLatin1String("type")).toString() == QLatin1String("probe")) ++probed;
+    };
   }
 
+  // How often a `probe` subscription was asked of it.
+  int probed = 0;
   QString origin() const { return pairable.mc.origin().toString(); }
   void answer(QTcpSocket* socket, const QString& token) {
     if (!socket) return;
@@ -334,7 +351,7 @@ struct Sut {
     const QVariantList listed = phone->bridge->state()->value(QStringLiteral("savedEnvironments")).toMap().value(QStringLiteral("environments")).toList();
     RC_ASSERT(listed.size() == qsizetype(m.beside.size()));
     for (const auto& [mc, session] : m.beside) {
-      RC_ASSERT(!m.paired || *m.paired != mc);
+      if (!m.duplicated) RC_ASSERT(!m.paired || *m.paired != mc);
       const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
       RC_ASSERT(std::any_of(listed.begin(), listed.end(), [&](const QVariant& entry) {
         return entry.toMap().value(QStringLiteral("id")) == id && entry.toMap().value(QStringLiteral("origin")) == mcs[mc]->origin();
@@ -589,7 +606,7 @@ struct Forget : Command {
     RC_PRE(!kept);
   }
   void apply(Model& m) const override {
-    if (mc && m.beside.contains(*mc)) {
+    if (mc && m.beside.contains(*mc) && m.paired != mc) {
       m.beside.erase(*mc);
       m.said = Said::Nothing;
       return;
@@ -604,6 +621,10 @@ struct Forget : Command {
     }
     ++m.attempt;
     m.pairing = false;
+    // A saved copy of the shell's own goes with it, before another
+    // takes its place (#1746).
+    if (m.duplicated && m.paired) m.beside.erase(*m.paired);
+    m.duplicated = false;
     m.paired.reset();
     m.session.clear();
     m.adding = false;
@@ -645,13 +666,105 @@ struct Disk : Command {
   void show(std::ostream& os) const override { os << (writable ? "Disk(writable)" : "Disk(read-only)"); }
 };
 
+// The shell's own environment is beside itself too (#1746): on its own
+// session, as an interrupted promote leaves it, or on another, as a tablet's
+// Settings > Connections saves it. Injected through the catalog of the
+// running phone.
+struct Duplicate : Command {
+  bool otherSession = *rc::gen::arbitrary<bool>();
+  explicit Duplicate(const Model&) {}
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.paired.has_value());
+    RC_PRE(!m.duplicated);
+    RC_PRE(!m.pairing);
+    RC_PRE(m.writable);
+  }
+  void apply(Model& m) const override {
+    m.duplicated = true;
+    m.beside[*m.paired] = otherSession ? "session-beside-" + std::string(kNames[*m.paired]) : m.session;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    const int mc = *m.paired;
+    const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
+    auto* saved = s.phone->shell->shared<SavedEnvironmentsController>();
+    RC_ASSERT(saved != nullptr);
+    RC_ASSERT(saved->catalog() != nullptr);
+    const SavedEnvironment copy{id, QString::fromLatin1(kLabels[mc]), QUrl(s.mcs[mc]->origin()), {}};
+    RC_ASSERT(!saved->catalog()->save(copy, QString::fromStdString(next.beside.at(mc))).has_value());
+    saved->connectTo(id);
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << (otherSession ? "Duplicate(other session)" : "Duplicate(same session)"); }
+};
+
+// The user removes one in Settings > Connections, which a tablet shows. The
+// copy of the shell's own goes alone: the phone stays paired, and still holds
+// its threads (#1746).
+struct SettingsRemove : Command {
+  int mc = *rc::gen::inRange(0, kMcs);
+  explicit SettingsRemove(const Model&) {}
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.beside.contains(mc));
+    // As for Forget (#1096).
+    RC_PRE(m.writable);
+  }
+  void apply(Model& m) const override {
+    m.beside.erase(mc);
+    if (m.paired == mc) m.duplicated = false;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    const bool own = m.paired == mc;
+    const QString title = s.mcs[mc]->pairable.threadTitle();
+    const auto shown = [&] {
+      const auto threads = s.phone->shell->store()->threads();
+      return std::any_of(threads.begin(), threads.end(), [&](const sidebar::Thread& thread) { return thread.title == title; });
+    };
+    if (own) RC_ASSERT(halc2::prop::until(shown));
+    // Something open over the copy's link moves to the phone's own, when
+    // both answer.
+    const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
+    McClient* client = s.phone->shell->client();
+    QObject opened;
+    const int probed = s.mcs[mc]->probed;
+    const McClient* link = s.phone->shell->store()->linkServing(id);
+    const bool held = own && client->phase() == McClient::Phase::Ready && link && link->phase() == McClient::Phase::Ready;
+    if (held) {
+      client->subscribe(&opened, {{QStringLiteral("type"), QStringLiteral("probe")}, {QStringLiteral("environmentId"), id}}, [](const QJsonObject&) {});
+      RC_ASSERT(halc2::prop::until([&] { return s.mcs[mc]->probed == probed + 1; }));
+    }
+    s.phone->bridge->dispatch(QStringLiteral("savedEnvironments.remove"),
+                              QVariantMap{{QStringLiteral("id"), id}});
+    if (held) RC_ASSERT(halc2::prop::until([&] { return s.mcs[mc]->probed == probed + 2; }));
+    if (own) RC_ASSERT(shown());
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "SettingsRemove(" << kNames[mc] << ")"; }
+};
+
 // The app is closed and started again over what the device kept. What the
-// MCs held for the phone that went is let go of.
+// MCs held for the phone that went is let go of. The start drops a saved
+// copy of the pairing only when it has the pairing's own session: another
+// may be the newer (#1746).
 struct Restart : Command {
   explicit Restart(const Model&) {}
+  // A record the device cannot write outlives its credential, and the next
+  // start lists it blocked (#1096): such a start is left out until that is fixed.
+  // RC_PRE captures its expression, which evaluates every operand of `&&`.
+  void checkPreconditions(const Model& m) const override {
+    const bool unwritten = m.duplicated && m.paired && !m.writable && m.beside.at(*m.paired) == m.session;
+    RC_PRE(!unwritten);
+  }
   void apply(Model& m) const override {
     ++m.attempt;
     m.pairing = false;
+    if (m.duplicated && m.paired && m.beside.at(*m.paired) == m.session) {
+      m.beside.erase(*m.paired);
+      m.duplicated = false;
+    }
     m.held.clear();
     m.adding = false;
     m.link.reset();
@@ -685,7 +798,7 @@ private slots:
     QVERIFY(rc::check("the phone's pairing agrees with the model", [] {
       Model model;
       Sut sut;
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Disk, Restart>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Pair, Pair, Pair, Release, Release, Offer, Add, Cancel, Forget, Forget, Duplicate, Duplicate, SettingsRemove, SettingsRemove, Disk, Restart, Restart>());
     }));
   }
 };

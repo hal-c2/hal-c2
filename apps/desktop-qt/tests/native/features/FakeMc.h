@@ -92,6 +92,9 @@ public:
   void send(const QJsonObject& frame);
   // Whether a client's socket is open: a frame sent now reaches it.
   bool connected() const { return m_socket && m_socket->state() == QAbstractSocket::ConnectedState; }
+  // Hears what comes on a socket a newer one has replaced, which the MC
+  // otherwise ignores: for a test with two clients on one MC.
+  std::function<void(const QJsonObject& frame)> overheard;
   // Whether the call came on the connection still open.
   bool current(const Rpc& rpc) const { return rpc.socket == m_socket; }
   void reply(const Rpc& rpc, const QJsonValue& result);

@@ -36,7 +36,8 @@ class ShellStore;
 // Actions: `savedEnvironments.pair {link}` pairs with the MC a pairing link
 // names and saves it (nothing is listed when its credential cannot be kept);
 // `savedEnvironments.remove {id}`, the way back out: its connection closes and
-// its record, credential and everything the client kept of it go;
+// its record, credential and everything the client kept of it go, but what
+// was kept stays for the one the client's own connection is open for;
 // `savedEnvironments.retry {id}` tries one again now.
 class SavedEnvironmentsController : public QObject, public NativeController {
   Q_OBJECT
@@ -72,6 +73,13 @@ public:
   // For a client that spends the link itself (apps/mobile-qt's Pairing).
   std::optional<QString> add(const pairing::Result& result);
   void remove(const QString& id);
+  // Drops a saved copy of an environment kept as the shell's own (the
+  // phone's pairing): its connection, record and credential go, but what
+  // the shell kept of the environment stays, as the shell's own
+  // connection serves it. The shell's own credential is not the
+  // catalog's (the phone keeps it in pairing.json), so forgetting the
+  // catalog's copy under the same id cannot delete it.
+  void dropDuplicate(const QString& id);
   // Connects to every saved environment again, for a shell whose rows were
   // emptied under them (NativeShell::close) and that needs them sent afresh.
   void reconnect();
