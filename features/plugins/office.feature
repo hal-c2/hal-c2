@@ -753,7 +753,7 @@ Feature: Office
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view
       Given the office page is open
-      Then the whole office shows and fills the view's width or its height, unless the largest zoom comes first
+      Then the whole office shows, as large as it can be with every art pixel a whole number of screen pixels, unless the largest zoom comes first
       When the user zooms in and then picks Fit
       Then the whole office shows again
 
@@ -761,7 +761,7 @@ Feature: Office
     Scenario: Zooming goes in small steps up to a largest size
       Given the office page is open
       When the user zooms in
-      Then the office grows by about a quarter, with every art pixel the same size
+      Then the office grows by about a quarter, or by one screen pixel per art pixel where that is more, with every art pixel a sharp square of the same size
       When the user zooms in until it can grow no more
       Then zooming in is off
 

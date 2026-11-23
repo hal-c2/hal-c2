@@ -2753,18 +2753,16 @@ Item {
             compare(page.game.claims[lead.ty * W + lead.tx], "t0");
         }
 
-        // The office fills the view by its width or its height, whichever runs
-        // out first, and the zoom buttons step it a little at a time.
+        // The office fits the view as large as whole device pixels per art
+        // pixel allow, and the zoom buttons step it a little at a time.
         function test_the_office_fits_the_view_and_zooms_in_small_steps() {
             plugin.publish(many(9, "t", "working", "typing"));
             tryVerify(() => page.game.columns > 0);
-            const scroller = find("officeScroller");
-            const stage = find("officeStage");
-            verify(stage.width <= scroller.width && stage.height <= scroller.height, "the whole office shows");
-            verify(scroller.width - stage.width <= 8 || scroller.height - stage.height <= 8, "it fills one side of the view");
+            verifyFitsWhole("the fit");
+            const ratio = page.game.devicePixelRatio;
             const fitted = page.game.pixelScale;
             page.game.zoomBy(1.25);
-            verify(page.game.pixelScale > fitted && page.game.pixelScale < fitted * 1.5, "one step zooms in by less than half again");
+            verify(page.game.pixelScale > fitted && page.game.pixelScale <= Math.max(fitted * 1.25 + 0.5 / ratio, fitted + 1 / ratio) + 1e-9, "one step zooms in by about a quarter, or one device pixel");
             page.game.zoom = 1;
             compare(page.game.pixelScale, fitted);
         }
@@ -2782,18 +2780,31 @@ Item {
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
 
-        // A large view fits the office at a scale where zoomed steps snap to
-        // whole device pixels; the fit itself does not snap, so the office
-        // still fills one side of the view.
-        function test_a_large_fit_fills_the_view() {
+        // The whole office shows, each art pixel a whole number of device
+        // pixels, and one more device pixel each would not fit.
+        function verifyFitsWhole(what) {
+            const game = page.game;
+            const ratio = game.devicePixelRatio;
+            const scroller = find("officeScroller");
+            const stage = find("officeStage");
+            const device = game.pixelScale * ratio;
+            fuzzyCompare(device, Math.round(device), 1e-9, what + ": each art pixel is whole device pixels");
+            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, what + ": the whole office shows");
+            const bigger = (device + 1) / ratio;
+            verify(game.pixelWidth * bigger > scroller.width - game.margin || game.pixelHeight * bigger > scroller.height - game.margin || bigger > game.topScale + 1e-9, what + ": as large as fits");
+            verify(!find("officeArt").layer.enabled, what + ": the art is drawn directly");
+        }
+
+        // A large view fits the office as large as whole device pixels allow.
+        function test_a_large_fit_is_as_large_as_whole_pixels_allow() {
             loader.width = 2600;
             loader.height = 1600;
             plugin.publish(many(1, "t", "working", "typing"));
             tryVerify(() => page.game.columns > 0 && page.game.fitScale * page.game.devicePixelRatio >= 4, 1000, "the office fits at 4 device pixels or more");
-            const scroller = find("officeScroller");
-            const stage = find("officeStage");
-            verify(stage.width <= scroller.width + 0.5 && stage.height <= scroller.height + 0.5, "the whole office shows");
-            verify(scroller.width - stage.width <= 8.5 || scroller.height - stage.height <= 8.5, "it fills one side of the view");
+            verifyFitsWhole("a large fit");
+            loader.width = 2611;
+            loader.height = 1633;
+            verifyFitsWhole("a view a little larger");
         }
 
         // Where zoom snaps to whole device pixels, zooming in and back out
@@ -2829,8 +2840,8 @@ Item {
             verify(!find("officeZoomIn").enabled, "zooming in further is off");
         }
 
-        // Fit can sit between whole device pixels; the step from there goes to
-        // the next whole one, not one past it.
+        // A zoom set between whole device pixels shows the whole one below it;
+        // the step from there goes to the next whole one, not one past it.
         function test_a_step_from_between_whole_pixels_goes_to_the_next() {
             plugin.publish(many(1, "t", "working", "typing"));
             tryVerify(() => page.game.columns > 0);
@@ -2840,24 +2851,25 @@ Item {
             fuzzyCompare(page.game.pixelScale * ratio, 4, 1e-9, "3.55 device pixels steps in to 4");
         }
 
-        // At a zoom between whole pixels the art is drawn at a whole number of
-        // device pixels per art pixel and shrunk smoothly, so no art pixel is
-        // drawn wider than another; at a whole zoom it is drawn as it is.
-        function test_art_at_a_fractional_zoom_keeps_its_pixels_even() {
+        // A zoom between whole device pixels shows the whole one below it, so
+        // each art pixel stays a hard block; only an office shown smaller than
+        // one device pixel per art pixel is drawn at one and shrunk smoothly.
+        function test_art_pixels_are_hard_blocks_at_any_zoom() {
             plugin.publish(many(3, "t", "working", "typing"));
             tryVerify(() => page.game.columns > 0);
             const art = find("officeArt");
             const stage = find("officeStage");
             const ratio = page.game.devicePixelRatio;
             page.game.zoom = 3.5 / ratio / page.game.fitScale;
-            const devicePixels = page.game.drawScale * ratio;
-            fuzzyCompare(devicePixels, Math.round(devicePixels), 1e-9, "each art pixel is a whole number of device pixels");
-            verify(page.game.drawScale >= page.game.pixelScale);
+            fuzzyCompare(page.game.pixelScale * ratio, 3, 1e-9, "3.5 device pixels shows 3");
+            verify(!art.layer.enabled, "the art is drawn directly");
+            compare(art.scale, 1);
+            loader.width = 120;
+            loader.height = 90;
+            page.game.zoom = 1;
+            tryVerify(() => page.game.pixelScale * ratio < 1, 1000, "the office is shown under a device pixel per art pixel");
             verify(art.layer.enabled && art.layer.smooth, "the art is shrunk smoothly");
             fuzzyCompare(art.width * art.scale, stage.width, 1e-6);
-            page.game.zoom = 3 / ratio / page.game.fitScale;
-            verify(!art.layer.enabled, "a whole zoom draws the art directly");
-            compare(art.scale, 1);
         }
 
         // Zoomed far in, a step of one device pixel is fine enough, so the

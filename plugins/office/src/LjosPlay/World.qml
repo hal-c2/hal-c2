@@ -88,27 +88,27 @@ Flickable {
     readonly property real minScale: Math.min(1, fitScale)
     property real maxScale: 8
     readonly property real topScale: snapScale(maxScale)
-    readonly property real pixelScale: zoom === 1 ? Math.max(minScale, Math.min(topScale, fitScale)) : snapScale(fitScale * zoom)
-    // Nearest-neighbour art at a fractional scale has uneven pixels, so it is
-    // drawn at the next whole device pixel and shrunk smoothly. From
-    // `crispFrom` on, a zoom snaps to whole device pixels instead.
-    readonly property int crispFrom: 4
+    readonly property real pixelScale: snapScale(zoom === 1 ? Math.min(topScale, fitScale) : fitScale * zoom)
+    // Every art pixel is a whole block of device pixels, so edges stay hard at
+    // any size: a fit rounds down and the rest is margin. Smaller than one
+    // device pixel, the art is drawn at one and shrunk smoothly.
     readonly property real drawScale: Math.ceil(pixelScale * devicePixelRatio - 0.001) / devicePixelRatio
     readonly property bool resampled: drawScale - pixelScale > 0.001
 
     function snapScale(wanted) {
         const ratio = devicePixelRatio;
         const scale = Math.max(minScale, Math.min(maxScale, wanted));
-        const device = scale * ratio;
-        return device >= crispFrom ? Math.min(Math.round(device), Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
+        const device = Math.floor(scale * ratio + 0.001);
+        return device >= 1 ? Math.min(device, Math.floor(maxScale * ratio + 0.001)) / ratio : scale;
     }
 
-    // Zooms from the scale shown, so in and out take the same steps.
+    // Zooms from the scale shown, at least one device pixel a step, so in and
+    // out take the same steps.
     function zoomBy(factor) {
         const ratio = devicePixelRatio;
         let next = pixelScale * factor;
-        if (next * ratio >= crispFrom) {
-            const shown = factor > 1 ? Math.floor(pixelScale * ratio + 0.001) : Math.ceil(pixelScale * ratio - 0.001);
+        if (next * ratio >= 1) {
+            const shown = Math.round(pixelScale * ratio);
             const step = Math.round(next * ratio);
             next = (factor > 1 ? Math.max(step, shown + 1) : Math.min(step, shown - 1)) / ratio;
         }
@@ -577,8 +577,8 @@ Flickable {
 
         objectName: root.stageName
         opacity: root.ready ? 1 : 0
-        x: Math.max(0, (root.width - width) / 2)
-        y: Math.max(0, (root.height - height) / 2)
+        x: Math.max(0, Math.round((root.width - width) / 2 * root.devicePixelRatio) / root.devicePixelRatio)
+        y: Math.max(0, Math.round((root.height - height) / 2 * root.devicePixelRatio) / root.devicePixelRatio)
         width: root.pixelWidth * root.pixelScale
         height: root.pixelHeight * root.pixelScale
 
