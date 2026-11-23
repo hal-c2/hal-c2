@@ -2933,6 +2933,27 @@ Item {
             hit.forceActiveFocus();
             verify(inView(), "the person is scrolled into view");
             compare(page.hovered, far.key);
+            // Its card is beside it, in view too, though the stage goes on.
+            const card = find("officeCard");
+            tryVerify(() => card.visible);
+            const c = card.mapToItem(scroller, 0, 0, card.width, card.height);
+            verify(c.x >= -0.5 && c.y >= -0.5 && c.x + c.width <= scroller.width + 0.5 && c.y + c.height <= scroller.height + 0.5, JSON.stringify(c));
+        }
+
+        // Zoomed in, the page's message is in the middle of the view, not of
+        // the office it is over.
+        function test_the_message_is_in_the_middle_of_the_view_at_any_zoom() {
+            plugin.environments = ["local", "lab"];
+            plugin.publish(many(20, "t", "working", "typing"));
+            tryVerify(() => page.settled);
+            page.game.zoom = page.game.maxScale / page.game.fitScale;
+            page.environment = "lab";
+            compare(message(), "Waiting for the office…");
+            const scroller = find("officeScroller");
+            const text = find("officeMessage");
+            const r = text.mapToItem(scroller, 0, 0, text.width, text.height);
+            fuzzyCompare(r.x + r.width / 2, scroller.width / 2, 1);
+            fuzzyCompare(r.y + r.height / 2, scroller.height / 2, 1);
         }
 
         function test_markup_in_a_title_shows_as_typed() {
@@ -3375,7 +3396,11 @@ Item {
             plugin.publish(many(40, "t", "idle"));
             compare(message(), "Setting up the office…");
             compare(find("officeStage").opacity, 0, "nothing half drawn shows");
-            verify(!find("officePerson:t0").enabled, "nobody can be hovered, reached with Tab or clicked yet");
+            verify(!find("officePerson:t0").visible, "nobody can be hovered or clicked yet");
+            page.game.forceActiveFocus();
+            for (let i = 0; i < 3; i++)
+                keyClick(Qt.Key_Tab);
+            verify(!String(page.Window.activeFocusItem?.objectName ?? "").startsWith("officePerson"), "nor reached with Tab");
             compare(page.game.sheetsPending, 40);
             // The sheets are painted a few a frame, not all at once.
             tryVerify(() => page.game.sheetsPending < 40);
@@ -3387,7 +3412,7 @@ Item {
             compare(page.game.sheetsPending, 0);
             compare(message(), "");
             compare(find("officeStage").opacity, 1);
-            verify(find("officePerson:t0").enabled);
+            verify(find("officePerson:t0").visible);
             verify(page.game.sheetCost > 0, "what a sheet takes is known");
             // The first people are already where they belong.
             for (const id of Object.keys(page.game.actors))

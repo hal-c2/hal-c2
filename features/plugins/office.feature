@@ -758,12 +758,25 @@ Feature: Office
       Then the whole office shows again
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office too big for its view is shrunk to fit
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      Then the whole office shows, shrunk smoothly
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Zooming goes in small steps up to a largest size
-      Given the office page is open
+      Given the office page is open at one screen pixel per art pixel or more
       When the user zooms in
       Then the office grows by about a quarter, or by one screen pixel per art pixel where that is more, with every art pixel a sharp square of the same size
       When the user zooms in until it can grow no more
       Then zooming in is off
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Zooming in from smaller than one screen pixel per art pixel
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      When the user zooms in
+      Then the office grows by about a quarter, still shrunk smoothly, or to one screen pixel per art pixel where that comes first
+      When the user zooms out again
+      Then the office shows as it did before
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown

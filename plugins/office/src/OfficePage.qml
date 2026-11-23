@@ -2412,11 +2412,13 @@ Item {
                     }
                     // Tab walks the people; a focused one shows its card as a
                     // hovered one does, and Return or Space opens its thread.
-                    // Nobody is reachable while the office is being set up.
+                    // Nobody is reachable while the office is being set up:
+                    // hidden, not disabled, as a MouseArea's enabled leaves
+                    // Tab, keys and screen readers in.
                     Touchable {
                         objectName: "officePerson:" + who.key
                         name: who.person?.title ?? qsTr("Person")
-                        enabled: page.settled
+                        visible: page.settled
                         x: 2
                         y: 2
                         width: 12
@@ -2473,12 +2475,15 @@ Item {
                 // game.actors changes in place: its count says when.
                 readonly property var actor: game.actorCount && page.hovered ? game.actors[page.hovered] ?? null : null
                 readonly property var person: page.people.find(p => p.id === page.hovered) ?? null
+                // The part of the stage in view, in the overlay's coordinates.
+                readonly property real viewX: game.contentX - game.overlayItem.parent.x
+                readonly property real viewY: game.contentY - game.overlayItem.parent.y
 
                 objectName: "officeCard"
                 visible: person !== null && actor !== null
                 z: 10
-                x: actor ? Math.max(0, Math.min(game.overlayItem.width - width, (actor.x + 8) * game.pixelScale + 10 * game.pixelScale)) : 0
-                y: actor ? Math.max(0, (actor.y + actor.headY) * game.pixelScale - 4 * game.pixelScale) : 0
+                x: actor ? Math.max(viewX, Math.min(viewX + game.width - width, (actor.x + 8) * game.pixelScale + 10 * game.pixelScale)) : 0
+                y: actor ? Math.max(viewY, Math.min(viewY + game.height - height, (actor.y + actor.headY) * game.pixelScale - 4 * game.pixelScale)) : 0
                 width: Math.min(280, Math.max(160, cardColumn.implicitWidth + 20))
                 height: cardColumn.implicitHeight + 16
                 color: "#211d2a"
@@ -2554,9 +2559,10 @@ Item {
             }
         }
     }
-    // Over the stage, which is hidden until set up.
+    // Over the stage, which is hidden until set up, in the middle of the view
+    // at any zoom.
     Text {
-        parent: game.contentItem
+        parent: game
         objectName: "officeMessage"
         anchors.centerIn: parent
         width: Math.min(parent.width - 32, 420)

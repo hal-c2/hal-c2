@@ -20,8 +20,8 @@ const read = (path) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 
 // A QML document as its imports, the comment over its root, and its root.
-function parse(path) {
-  const lines = read(path).trimEnd().split("\n");
+function parse(path, text = read(path)) {
+  const lines = text.replace(/\r\n/g, "\n").trimEnd().split("\n");
   const start = lines.findIndex((line) => /^[A-Z][\w.]*\s*\{$/.test(line));
   if (start < 0 || lines.at(-1) !== "}")
     throw new Error(`${path}: expected one root object, its braces in the first column`);
@@ -36,10 +36,18 @@ function parse(path) {
 }
 
 if (!existsSync(engine)) git(root, "submodule", "update", "--init", "--", "ljos-play");
-// The bundle names the engine's commit, so it must be what that commit has.
+// The bundle names the engine's commit and is read from it, so files git
+// ignores or does not track never ship; changes not yet committed are refused
+// rather than left out without a word.
 if (git(checkout, "status", "--porcelain", "--", "qml", "LICENSE").trim())
   throw new Error(`${checkout} has changes to the engine: commit them first`);
 const commit = git(checkout, "rev-parse", "HEAD").trim();
+const atCommit = (path) => git(checkout, "show", `${commit}:${path}`);
+const engineParts = git(checkout, "ls-tree", "--name-only", commit, "qml/LjosPlay/")
+  .split("\n")
+  .filter((path) => path.endsWith(".qml"))
+  .sort()
+  .map((path) => parse(path, atCommit(path)));
 
 const qmlIn = (directory) =>
   readdirSync(directory)
@@ -48,7 +56,7 @@ const qmlIn = (directory) =>
     .map((file) => join(directory, file));
 
 const main = parse(page);
-const parts = [...qmlIn(source).filter((path) => path !== page), ...qmlIn(engine)].map(parse);
+const parts = [...qmlIn(source).filter((path) => path !== page).map((path) => parse(path)), ...engineParts];
 const names = new Set();
 for (const part of parts) {
   if (names.has(part.name)) throw new Error(`Two files are called ${part.name}`);
@@ -62,7 +70,7 @@ const output = [
   `// It carries LjosPlay ${commit} (https://github.com/hal-c2/ljos-play),`,
   "// under this license:",
   "//",
-  ...read(join(checkout, "LICENSE"))
+  ...atCommit("LICENSE")
     .trimEnd()
     .split("\n")
     .map((line) => `// ${line}`.trimEnd()),
