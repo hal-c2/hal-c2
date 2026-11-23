@@ -1,8 +1,9 @@
 // Writes ui/OfficePage.qml, the one file clients fetch, from src/: the page,
 // with every other file there and in the engine (the ljos-play submodule,
 // https://github.com/hal-c2/ljos-play) as an inline component of it. `--check`
-// fails when the written file is stale. The submodule is checked out first if
-// it is not yet; to move the engine, check out another commit in it.
+// fails when the written file is stale. The engine is read from the commit the
+// submodule is pinned at, whatever is checked out there; to move it, stage the
+// submodule at another commit first.
 //
 //   node plugins/office/bundle.mjs [--check]
 import { execFileSync } from "node:child_process";
@@ -35,13 +36,26 @@ function parse(path, text = read(path)) {
   };
 }
 
+// The commit the submodule is pinned at, as staged: the bundle names it and is
+// read from it, so neither another checkout in the submodule nor a file git
+// ignores or does not track there ever ships.
+const commit = git(root, "ls-files", "--stage", "--", "ljos-play").split(/\s+/)[1];
+if (!commit) throw new Error(`${checkout} is not a submodule here`);
 if (!existsSync(engine)) git(root, "submodule", "update", "--init", "--", "ljos-play");
-// The bundle names the engine's commit and is read from it, so files git
-// ignores or does not track never ship; changes not yet committed are refused
-// rather than left out without a word.
-if (git(checkout, "status", "--porcelain", "--", "qml", "LICENSE").trim())
-  throw new Error(`${checkout} has changes to the engine: commit them first`);
-const commit = git(checkout, "rev-parse", "HEAD").trim();
+try {
+  git(checkout, "cat-file", "-e", `${commit}^{commit}`);
+} catch {
+  git(checkout, "fetch", "--quiet", "origin", commit);
+}
+const head = git(checkout, "rev-parse", "HEAD").trim();
+const changed = git(checkout, "status", "--porcelain", "--", "qml", "LICENSE").trim();
+if (head !== commit || changed)
+  console.warn(
+    `ljos-play is pinned at ${commit.slice(0, 7)}, which is what the page carries, but ${checkout} has ` +
+      (head !== commit
+        ? `${head.slice(0, 7)} checked out. To move the engine there, \`git add\` the submodule first.`
+        : "uncommitted engine changes. To ship them, commit them there and `git add` the submodule first."),
+  );
 const atCommit = (path) => git(checkout, "show", `${commit}:${path}`);
 const engineParts = git(checkout, "ls-tree", "--name-only", commit, "qml/LjosPlay/")
   .split("\n")
@@ -56,7 +70,12 @@ const qmlIn = (directory) =>
     .map((file) => join(directory, file));
 
 const main = parse(page);
-const parts = [...qmlIn(source).filter((path) => path !== page).map((path) => parse(path)), ...engineParts];
+const parts = [
+  ...qmlIn(source)
+    .filter((path) => path !== page)
+    .map((path) => parse(path)),
+  ...engineParts,
+];
 const names = new Set();
 for (const part of parts) {
   if (names.has(part.name)) throw new Error(`Two files are called ${part.name}`);

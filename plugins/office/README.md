@@ -50,14 +50,18 @@ node plugins/office/bundle.mjs
 node plugins/office/bundle.mjs --check
 ```
 
-The bundler checks the submodule out if it is not yet. To move the engine,
-check out another ljos-play commit in it, bundle, and commit both:
+The bundler reads the engine from the commit the submodule is pinned at, not
+whatever is checked out there, and checks the submodule out if it is not yet.
+To move the engine, check out another ljos-play commit in the submodule, stage
+it, then bundle:
 
 ```bash
+git submodule update --init -- plugins/office/ljos-play
 git -C plugins/office/ljos-play fetch origin
 git -C plugins/office/ljos-play checkout <commit>
+git add plugins/office/ljos-play
 node plugins/office/bundle.mjs
-git add plugins/office/ljos-play plugins/office/ui/OfficePage.qml
+git add plugins/office/ui/OfficePage.qml
 ```
 
 The bundler makes each file in `src/` an inline component, so a file has one
