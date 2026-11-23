@@ -40,7 +40,9 @@ defmodule HalC2.Upgrade.Tree do
   @doc """
   Starts, stops and restarts the children whose specs differ from the snapshot,
   and keeps what it did for `changes/0`: `{:started | :stopped | :restarted |
-  :failed, id}`, a child that did not start being logged and `:failed`.
+  :failed, id}`, a child that did not start being logged and `:failed`. Every install
+  in place ends here on the new code, so the sockets are told of it here
+  (`HalC2.Web.Socket.code_installed/0`).
   """
   def sync do
     before = Map.new(:persistent_term.get(@key, []))
@@ -55,6 +57,7 @@ defmodule HalC2.Upgrade.Tree do
           do: change
 
     :persistent_term.put(@changes, changes)
+    HalC2.Web.Socket.code_installed()
     {:ok, changes}
   end
 

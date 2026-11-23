@@ -702,8 +702,9 @@ defmodule HalC2.Test.Mc do
   @doc """
   Puts back, when the scenario ends, what an upgrade in this VM changes: the
   release environment, the code path, the boot script a restart uses (making a
-  release permanent points `init` at its own), the MC's application specification
-  and the modules `remember_module/1` saw. `release/2` does this; a scenario that
+  release permanent points `init` at its own), the specifications of the
+  applications loaded (a reload gives a library it changed a `-dev.<n>` version) and
+  the modules `remember_module/1` saw. `release/2` does this; a scenario that
   reloads from a checkout without it calls it itself.
   """
   def put_back_on_exit do
@@ -711,7 +712,7 @@ defmodule HalC2.Test.Mc do
       :persistent_term.put({__MODULE__, :release}, true)
       paths = :code.get_path()
       boot = boot_script()
-      {:ok, spec} = :application.get_all_key(:hal_c2)
+      specs = for {app, _, _} <- Application.loaded_applications(), do: spec(app)
 
       ExUnit.Callbacks.on_exit(fn ->
         # A removal of old versions a boot started ends in this scenario's home.
@@ -730,7 +731,7 @@ defmodule HalC2.Test.Mc do
         :code.set_path(paths)
         :ok = :init.make_permanent(boot, false)
         restore_modules()
-        restore_spec(:hal_c2, spec)
+        for {app, spec} <- specs, do: restore_spec(app, spec)
       end)
     end
 
@@ -744,14 +745,19 @@ defmodule HalC2.Test.Mc do
     end
   end
 
-  # An upgrade from a checkout gives the MC's application the new release's version
-  # and modules; the VM's other tests see the ones it started with.
-  defp restore_spec(app, spec) do
-    {:ok, now} = :application.get_all_key(app)
+  defp spec(app) do
+    {:ok, spec} = :application.get_all_key(app)
+    {app, spec}
+  end
 
-    if now[:vsn] != spec[:vsn] do
-      keys = [:description, :vsn, :modules, :registered, :applications, :mod, :start_phases]
-      spec = Keyword.take(spec, keys) ++ [env: Application.get_all_env(app)]
+  # An upgrade from a checkout gives the applications it changed the new release's
+  # version and modules; the VM's other tests see the ones they started with. The
+  # spec goes back whole (a key left out reverts to its default, such as Req's
+  # `optional_applications`), with the environment as it is now.
+  defp restore_spec(app, spec) do
+    with {:ok, now} <- :application.get_all_key(app),
+         true <- now[:vsn] != spec[:vsn] do
+      spec = Keyword.put(spec, :env, Application.get_all_env(app))
 
       :ok =
         :application_controller.change_application_data([{:application, app, spec}], [

@@ -93,7 +93,7 @@ impl WindowMc {
 
     /// The window is gone: what it followed is unsubscribed, its streams
     /// closed, its hooks dropped, and nothing more reaches its controllers.
-    pub fn close(&self) {
+    pub fn close_window(&self) {
         self.hooks.open.set(false);
         let subscriptions = std::mem::take(&mut *self.subscriptions.borrow_mut());
         for id in subscriptions {
@@ -278,6 +278,15 @@ impl Mc for WindowMc {
 
     fn open_expecting(&self, origin: &str, token: &str, environment: &str) -> Result<(), String> {
         self.inner.open_expecting(origin, token, environment)
+    }
+
+    fn open_for(&self) -> String {
+        self.inner.open_for()
+    }
+
+    /// The connection itself; a window that goes is [`WindowMc::close_window`].
+    fn close(&self) {
+        self.inner.close();
     }
 
     // A saved environment's link is the app's, like its route: its owner

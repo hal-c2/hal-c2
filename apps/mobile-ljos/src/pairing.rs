@@ -509,11 +509,27 @@ impl Pairing {
     /// first one paired beside a forgotten one takes its place.
     pub fn start(&mut self, engine: &Engine) {
         let Some(environment) = self.core.paired.clone() else {
-            if !self.promote(engine) {
+            if !self.promote(engine, None) {
                 self.publish(engine);
             }
             return;
         };
+        // An interrupted promote leaves the pairing's own session in the
+        // saved environments too: that copy is dropped. One with another
+        // session stays, as it may be the newer (a tablet's Settings >
+        // Connections saves one there) and the only one that works.
+        if !environment.environment_id.is_empty() {
+            let id = environment.environment_id.clone();
+            let token = environment.token.clone();
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| {
+                if c.catalog().is_some_and(|catalog| {
+                    let copy = catalog.connect(&id);
+                    copy.blocked.is_empty() && copy.credential == token
+                }) {
+                    c.drop_duplicate(engine, &id);
+                }
+            });
+        }
         self.open(engine, &environment);
     }
 
@@ -625,14 +641,15 @@ impl Pairing {
             self.publish(engine);
             return;
         }
-        // Nor is it listed beside itself.
+        // Nor is it listed beside itself. Dropped, not removed: removing
+        // it erases the threads the shell shows of it.
         if !next.environment_id.is_empty() {
             let id = next.environment_id.clone();
             controller::with::<SavedEnvironments, _>(engine, |c, engine| {
                 if c.catalog()
                     .is_some_and(|catalog| catalog.find(&id).is_some())
                 {
-                    c.remove(engine, &id);
+                    c.drop_duplicate(engine, &id);
                 }
             });
         }
@@ -786,31 +803,72 @@ impl Pairing {
             return;
         }
         let had = self.core.paired.is_some();
+        let forgotten_id = self
+            .core
+            .paired
+            .as_ref()
+            .map(|own| own.environment_id.clone())
+            .filter(|own_id| !own_id.is_empty());
         self.core.forgotten();
         self.forgets.set(self.core.forgets);
         // A fresh link ConnectionHealth is spending for it opens nothing:
         // the session it bought would be remembered as this device's.
         controller::with::<ConnectionHealth, _>(engine, |c, engine| c.cancel_pairing(engine));
-        if had && let Some(mc) = controller::mc(engine) {
-            mc.close();
+        if had {
+            let (me, at) = (self.me.clone(), self.core.forgets);
+            hal_c2_shell::close(engine, move |engine, emptied| {
+                if emptied {
+                    return;
+                }
+                // The session is gone, so it is forgotten all the same.
+                me.run_after(engine, move |c: &mut Pairing, engine| {
+                    if c.core.forgets == at {
+                        c.core.error = "The environment is forgotten, but what this device kept of its threads could not be deleted.".into();
+                        c.publish(engine);
+                    }
+                });
+            });
+        }
+        // A saved copy of it (an interrupted promote or re-pair left one)
+        // is forgotten too, credential and all, before another takes its
+        // place: beside_label does not name the shell's own, so the
+        // catalog is asked directly.
+        if let Some(own_id) = &forgotten_id {
+            let own_id = own_id.clone();
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| {
+                if c.catalog()
+                    .is_some_and(|catalog| catalog.find(&own_id).is_some())
+                {
+                    c.remove(engine, &own_id);
+                }
+            });
         }
         // One paired beside it takes its place, so the device stays
-        // paired while it has any.
-        if !self.promote(engine) {
+        // paired while it has any. Never the one just forgotten, even
+        // when removing its saved copy did not take.
+        if !self.promote(engine, forgotten_id.as_deref()) {
             self.publish(engine);
+        }
+        // Closing emptied the rows of those still beside it too: they are
+        // sent again.
+        if had {
+            controller::with::<SavedEnvironments, _>(engine, |c, engine| c.reconnect(engine));
         }
     }
 
     /// With no environment of its own, the shell connects to the first
     /// one paired beside it that it can, which then is its own; false
     /// when none is.
-    fn promote(&mut self, engine: &Engine) -> bool {
+    fn promote(&mut self, engine: &Engine, except: Option<&str>) -> bool {
         if self.core.paired.is_some() {
             return false;
         }
         let candidate = controller::with::<SavedEnvironments, _>(engine, |saved, _| {
             let catalog = saved.catalog()?;
             catalog.environments().iter().find_map(|environment| {
+                if except == Some(environment.id.as_str()) {
+                    return None;
+                }
                 let connection = catalog.connect(&environment.id);
                 connection.blocked.is_empty().then(|| Environment {
                     origin: environment.origin.clone(),

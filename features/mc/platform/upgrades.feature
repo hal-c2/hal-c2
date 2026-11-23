@@ -326,6 +326,14 @@ Feature: MC self-update and release upgrades
     Then only modules whose code changed are loaded
     And a changed supervisor runs its new code without restarting
 
+  # A library's supervisor may set up what it cannot set up twice, so its new code
+  # takes effect the next time it starts.
+  @mc
+  Scenario: A reload loads a library's changed supervisor without starting it again
+    Given MCs started from a checkout that compiled a library's supervisor anew
+    When a developer reloads them after editing code
+    Then the library's new code runs in the supervisor already running
+
   @mc
   Scenario: A reload starts the services the MC's new code adds
     Given MCs started from a checkout whose new code adds services
@@ -426,6 +434,13 @@ Feature: MC self-update and release upgrades
     Given a client connected before an in-place update
     When the socket handles its next frame
     Then its state is migrated to the new version's shape
+
+  # Older code cannot read a newer socket's state: it would hold the socket for good.
+  @mc
+  Scenario: A socket from a newer version is closed as its MC goes back in place
+    Given a client connected to a newer version of the MC
+    When the socket handles its next frame
+    Then it is closed for the client to connect again
 
   @mc
   Scenario: A release MC advertises that it can update itself

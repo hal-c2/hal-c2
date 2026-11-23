@@ -33,6 +33,14 @@ Item {
             Shell.reset();
         }
 
+        function test_aLongAnswerFileStaysInsideTheCard() {
+            const requests = createTemporaryObject(requestsComponent, root, { width: 360 });
+            const name = "Screenshot from 2026-11-22 14-03-22 of a window with a long title.png";
+            Shell.publishTurn({ questions: [{ requestId: "long", canRespond: true, responding: false, questions: [{ id: "q", question: "Which?", options: [], attachments: [{ id: "a", name: name, kind: "image", status: "failed", preview: "", source: null }] }] }] });
+            const retry = () => findChild(requests, "attachmentRetry:" + name);
+            tryVerify(() => retry() !== null && retry().visible && retry().mapToItem(requests, retry().width, 0).x <= requests.width, 3000, "Retry ends inside the card");
+        }
+
         function approval(requestId, fields) {
             return Object.assign({
                 requestId: requestId,

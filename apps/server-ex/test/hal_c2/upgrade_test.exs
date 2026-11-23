@@ -739,6 +739,7 @@ defmodule HalC2.UpgradeTest do
     assert state.terminals == %{}
     assert state.lost == %{}
     assert state.terminal_windows == %{}
+    assert state.unreached == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
 
@@ -888,6 +889,26 @@ defmodule HalC2.UpgradeTest do
     assert_receive {:unwatched, nil}
   end
 
+  # Going back in place keeps sockets: the version before this one reads only v12, and
+  # no version can read one from after it, whose callbacks would call themselves for good.
+  test "a socket is left readable by the version before, and one from a newer is closed" do
+    assert {:push, _hello, state} = HalC2.Web.Socket.init([])
+    assert state.v == 12
+
+    newer = %{state | v: state.v + 1}
+    ping = {~s({"t":"ping"}), [opcode: :text]}
+
+    for handle <- [
+          fn -> HalC2.Web.Socket.handle_in(ping, newer) end,
+          fn -> HalC2.Web.Socket.handle_info(:flush, newer) end
+        ] do
+      # Not answering is how it fails, so it is asked from a process of its own.
+      {pid, ref} = spawn_monitor(fn -> exit({:answered, handle.()}) end)
+      assert_receive {:DOWN, ^ref, :process, ^pid, answer}, 5_000, "the socket never answered"
+      assert {:answered, {:stop, :normal, {1012, _reason}, ^newer}} = answer
+    end
+  end
+
   test "a message without a tag is only for a stream followed before an upgrade" do
     tag = {node(), make_ref()}
 
@@ -912,6 +933,7 @@ defmodule HalC2.UpgradeTest do
         v: 12,
         terminals: %{},
         lost: %{},
+        unreached: %{},
         terminal_windows: %{},
         following: %{},
         trace: nil

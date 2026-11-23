@@ -282,7 +282,13 @@ defmodule HalC2.Test.FakeAcp do
   def configure(context, instance \\ nil, fun) do
     %{dir: dir} = fake(context, instance)
     path = Path.join(dir, "config.json")
-    File.write!(path, JSON.encode!(fun.(JSON.decode!(File.read!(path)))))
+    body = JSON.encode!(fun.(JSON.decode!(File.read!(path))))
+    # A live fake re-reads its config on every command (the scripted turn of a
+    # prompt it has not processed yet included), so replace it atomically: an
+    # in-place rewrite can be read torn, which the fakes treat as no config.
+    tmp = path <> ".tmp-#{System.unique_integer([:positive])}"
+    File.write!(tmp, body)
+    File.rename!(tmp, path)
     context
   end
 

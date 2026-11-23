@@ -5,14 +5,21 @@
 # queue no longer reads the answer, and the commit reached main only if a later entry's run
 # tested it.
 #
-# A queue run that passes answers for the entries ahead of it (merge-queue-stamp.sh).
+# A queue run that passes answers for the entries ahead of it, and one the watchdog started
+# also for its own entry, pass or fail (merge-queue-stamp.sh).
 #
 # Usage: ci-result.sh   (NEEDS, QUEUE, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA,
-#                        GITHUB_SERVER_URL, GITHUB_RUN_ID)
+#                        GITHUB_EVENT_NAME, GITHUB_SERVER_URL, GITHUB_RUN_ID)
 set -euo pipefail
 
 repo=${GITHUB_REPOSITORY:?} sha=${GITHUB_SHA:?}
 here=$(dirname "$0")
+
+# A missed answer leaves entries waiting, and the watchdog answers for them.
+answer() {
+  "$here/merge-queue-stamp.sh" "$sha" "$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID" "$1" ||
+    echo "::warning::Could not give the queue this run's $1; the merge queue watchdog will"
+}
 
 unfinished=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped")
                     | "\(.key): \(.value.result)"' <<<"$NEEDS")
@@ -29,12 +36,13 @@ if [ -n "$unfinished" ]; then
       exit 0
     fi
   fi
+  if [ -n "${QUEUE:-}" ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ]; then
+    answer failure
+  fi
   exit 1
 fi
 
-# This run passed whatever happens next: a missed answer leaves the entries ahead parked,
-# and the watchdog answers for them.
+# This run passed whatever happens next.
 if [ -n "${QUEUE:-}" ]; then
-  "$here/merge-queue-stamp.sh" "$sha" "$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID" ||
-    echo "::warning::Could not answer for the entries ahead; the merge queue watchdog will"
+  answer success
 fi

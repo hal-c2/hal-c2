@@ -187,6 +187,11 @@ pub trait Mc {
     fn open_expecting(&self, origin: &str, token: &str, _environment: &str) -> Result<(), String> {
         self.open(origin, token)
     }
+    /// The environment it is open for, said hello or not; empty from
+    /// [`Mc::close`] on.
+    fn open_for(&self) -> String {
+        self.environment()
+    }
     /// Closes the socket for good: no retry follows.
     fn close(&self) {}
     /// Sends calls and subscriptions addressed to an environment another
@@ -767,6 +772,10 @@ impl Mc for Connection {
         Ok(())
     }
 
+    fn open_for(&self) -> String {
+        self.client.open_for()
+    }
+
     fn close(&self) {
         self.client.close();
     }
@@ -982,12 +991,58 @@ mod reroute_tests {
         ];
         for frame in frames {
             let frame = frame.as_object().cloned().unwrap();
-            let sent = sides.events.send((own.id, McEvent::Frame { id, frame }));
+            let sent = sides.events.send((
+                own.id,
+                McEvent::Frame {
+                    id,
+                    frame,
+                    switched: 0,
+                },
+            ));
             assert!(sent.is_ok());
         }
         heard.borrow_mut().clear();
         assert!(pump.pump(&engine) >= 3);
         assert_eq!(*heard.borrow(), [("first", 3), ("second", 3)]);
+    }
+
+    /// A frame the connection handed over before it was closed is for what
+    /// the close left: it does not refill the emptied store, reopened for
+    /// another or not.
+    #[test]
+    fn a_frame_queued_before_a_close_does_not_refill_the_store() {
+        for reopened in [false, true] {
+            let engine = ljos::App::new("test")
+                .register(crate::register)
+                .build_engine();
+            let mut pump = Pump::new(|| {});
+            let sides = McStreams::new(&mut pump);
+            let own = Connection::spawn(&sides);
+            let id = own.client().handle().next_id() + 1;
+            let mc: Rc<dyn Mc> = own.clone();
+            crate::store::install(&engine, &mc, None);
+            let frame = json!({
+                "t": "shell",
+                "mcs": [{"mc": "mc-a", "environment": {"environmentId": "env-a", "label": "env-a"},
+                         "online": true, "epoch": "e1", "rev": 4}],
+                "rows": [["mc-a", "t1", "thread", {"id": "t1", "title": "t1"}]],
+            });
+            let frame = frame.as_object().cloned().unwrap();
+            let event = McEvent::Frame {
+                id,
+                frame,
+                switched: 0,
+            };
+            assert!(sides.events.send((own.id, event)).is_ok());
+            mc.close();
+            crate::store::clear(&engine, |_, _| {});
+            if reopened {
+                mc.open("http://127.0.0.1:9", "token").unwrap();
+            }
+            pump.pump(&engine);
+            let listed = crate::store::with(&engine, |s| s.threads().len());
+            assert_eq!(listed, 0, "reopened: {reopened}");
+        }
     }
 
     #[test]

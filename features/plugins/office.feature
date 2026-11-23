@@ -3,7 +3,10 @@
 #   plugins/office/mc/office.ex (the MC part: who is in the office, what each does, who talks to whom; the office topic)
 #   plugins/office/mc/floor.ex (the office topic's people, reviewers among them, and talks)
 #   plugins/code-review/mc/code_review.ex (launch_thread/5: a review thread's plugin mark)
-#   plugins/office/ui/OfficePage.qml (the pixel-art office: people, pets, furniture, movers, walking, talking, the review corner, project marks)
+#   plugins/office/src/OfficePage.qml (the pixel-art office: who sits where, movers, talking, the review corner, project marks)
+#   plugins/office/src/OfficeArt.qml, plugins/office/src/Furniture.qml (people, pets, furniture and the room as drawn)
+#   plugins/office/ljos-play/qml/LjosPlay/World.qml, plugins/office/ljos-play/qml/LjosPlay/Actor.qml (the clock, camera, tiles and walking)
+#   plugins/office/bundle.mjs (writes plugins/office/ui/OfficePage.qml, the file clients fetch, from src/)
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
 #   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
@@ -208,6 +211,12 @@ Feature: Office
       Then the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
 
     @mc
+    Scenario: A message too long for plugins to hear whole is still a talk
+      Given threads "Lead" and "Reviewer" in the project "api"
+      When the agent of "Lead" sends "Reviewer" a message of 5,000 characters
+      Then the office has a "message" talk from "Lead" to "Reviewer" saying "…"
+
+    @mc
     Scenario: A worker that ends its turn talks back to its parent with its last message
       Given a thread "Lead" with a worker "Write the tests"
       When the worker ends its turn saying "All 12 tests pass"
@@ -220,11 +229,11 @@ Feature: Office
       Then the office has the newest 40 talks
 
     @mc
-    Scenario: A talk leaves the office ten minutes after it was said
+    Scenario: A talk leaves the office thirty seconds after it was said
       Given threads "Lead" and "Reviewer" in the project "api"
       When the agent of "Lead" sends "Reviewer" the message "Please look at the diff"
       Then the office has a "message" talk from "Lead" to "Reviewer" saying "Please look at the diff"
-      When ten minutes pass with nothing else said or done
+      When thirty seconds pass with nothing else said or done
       Then the office has no talks
 
   Rule: The office page draws it
@@ -253,6 +262,11 @@ Feature: Office
       When the office runs for a while
       Then nobody stands on a desk, a wall or any other furniture
       And no two people stop on the same spot
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The wall between the office and the break room has no hole
+      Given the office has grown its break room
+      Then the wall between the rooms is painted from the top wall down to the floor
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person walks through someone standing in its way
@@ -353,6 +367,17 @@ Feature: Office
       Then the person of "Lead" walks up next to the person of "Reviewer", beside it rather than above or below it
       And they face each other and "Please look at the diff" shows in a speech bubble
       And afterwards "Lead" goes back to what it was doing
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A speech bubble is over a neighbour's icon
+      Given "Lead" talks beside someone whose agent asks the user something
+      Then the speech bubble of "Lead" is drawn over the question mark
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk shows the words the office has for it now
+      Given the office has a "delegate" talk from "Lead" to "Worker" saying "…"
+      When the office's talk comes to say "Fix the parser" before it is over
+      Then "Fix the parser" shows in the speech bubble of "Lead"
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A person spoken to on its way stops only on a spot nobody else has
@@ -658,10 +683,46 @@ Feature: Office
       And neither steps aside, waits or goes around
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk heard before both are in the office waits for them
+      Given the office has "Lead" and not yet its new worker
+      When the office has a "delegate" talk from "Lead" to that worker
+      And the worker joins the office while the office still has the talk
+      Then "Lead" walks up to the worker and says it, once
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The talks from before the office page opened are not played
+      Given the office has a "message" talk from "Lead" to "Reviewer"
+      When the office page opens
+      Then "Lead" does not walk over to say it
+      When the office has another "message" talk from "Lead" to "Reviewer"
+      Then "Lead" walks up to "Reviewer" and says that one
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A talk that waited until it was no longer current is not played
+      Given "Lead" is talking to "Reviewer" and has a talk for "Coder" waiting
+      When the waiting talk leaves the office
+      Then "Lead" never walks over to "Coder" to say it
+      And the talk under way goes on to its end
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office back in sight shows what is happening now
+      Given the office page was out of sight, or the machine asleep, for over 5 seconds
+      And meanwhile threads joined and left the office and talked
+      When the page is in sight again
+      Then everyone in the office now is where they belong, at desks that are already there
+      And nobody walks in, carries a desk or says what was said meanwhile
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: A glance away leaves the office as it was
+      Given "Lead" is talking and a mover carries a desk in
+      When the page is out of sight for a second
+      Then the talk and the move go on from where they were
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: A talk to someone still outside waits for them to come in
       Given the office has threads "Lead" and "Newcomer", with "Newcomer" still outside the door
       When the office has a "message" talk from "Lead" to "Newcomer"
-      Then "Lead" waits until "Newcomer" has come in, however long that takes
+      Then "Lead" waits for "Newcomer" to come in, for as long as the office still has the talk
       And then walks up to "Newcomer" and says it
 
     @desktop @mobile @backlog-desktop @backlog-mobile
@@ -691,18 +752,31 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view
-      Given the office page is open
-      Then the whole office shows and fills the view's width or its height, unless the largest zoom comes first
+      Given the office page is open at one screen pixel per art pixel or more
+      Then the whole office shows, as large as it can be with every art pixel a whole number of screen pixels, unless the largest zoom comes first
       When the user zooms in and then picks Fit
       Then the whole office shows again
 
     @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: An office too big for its view is shrunk to fit
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      Then the whole office shows, shrunk smoothly
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: Zooming goes in small steps up to a largest size
-      Given the office page is open
+      Given the office page is open at one screen pixel per art pixel or more
       When the user zooms in
-      Then the office grows by about a quarter, with every art pixel the same size
+      Then the office grows by about a quarter, or by one screen pixel per art pixel where that is more, with every art pixel a sharp square of the same size
       When the user zooms in until it can grow no more
       Then zooming in is off
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: Zooming in from smaller than one screen pixel per art pixel
+      Given the office page is open in a view too small to show the office at one screen pixel per art pixel
+      When the user zooms in
+      Then the office grows by about a quarter, still shrunk smoothly, or to one screen pixel per art pixel where that comes first
+      When the user zooms out again
+      Then the office shows as it did before
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office holds still while it is not shown

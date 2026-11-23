@@ -68,6 +68,17 @@ void Pairing::start() {
     promote();
     return;
   }
+  // An interrupted promote leaves the pairing's own session in the saved
+  // environments too: that copy is dropped. One with another session stays,
+  // as it may be the newer (a tablet's Settings > Connections saves one
+  // there) and the only one that works.
+  if (!m_paired->environmentId.isEmpty()) {
+    auto* saved = m_shell->shared<SavedEnvironmentsController>();
+    if (saved && saved->catalog()) {
+      const EnvironmentCatalog::Connection copy = saved->catalog()->connect(m_paired->environmentId);
+      if (copy.blocked.isEmpty() && copy.credential == m_paired->token) saved->dropDuplicate(m_paired->environmentId);
+    }
+  }
   // The environment it paired with, not whichever answers at its address now.
   m_shell->client()->setCredentialExpiry(m_paired->expiresAt);
   m_shell->open(m_paired->origin, m_paired->token, m_paired->environmentId);
@@ -231,8 +242,14 @@ void Pairing::paired(const pairing::Result& result) {
   // The same environment with a new session: what the shell shows of it stays.
   if (m_paired) m_shell->client()->close();
   const bool moved = m_paired && m_paired->origin != next.origin;
-  // Nor is it listed beside itself.
-  if (auto* saved = beside(environmentId)) saved->remove(environmentId);
+  // Nor is it listed beside itself: beside() does not name the shell's
+  // own, so the catalog is asked directly. Dropped, not removed: removing
+  // it erases the threads the shell shows of it.
+  if (!environmentId.isEmpty()) {
+    if (auto* saved = m_shell->shared<SavedEnvironmentsController>()) {
+      if (saved->catalog() && saved->catalog()->find(environmentId)) saved->dropDuplicate(environmentId);
+    }
+  }
   m_paired = next;
   m_saved = true;
   m_adding = false;
@@ -293,24 +310,32 @@ void Pairing::forget(const QString& id) {
   // The session is gone, so the environment is forgotten whatever follows;
   // what the device had kept of its threads may still be on disk.
   const bool closed = m_paired.has_value();
+  const QString forgottenId = m_paired ? m_paired->environmentId : QString();
   const bool emptied = !closed || m_shell->close();
   m_paired.reset();
   m_adding = false;
   m_link.clear();
   m_offered.clear();
   m_error = emptied ? QString() : tr("The environment is forgotten, but what this device kept of its threads could not be deleted.");
+  auto* saved = m_shell->shared<SavedEnvironmentsController>();
+  // A saved copy of it (an interrupted promote or re-pair left one) is
+  // forgotten too, credential and all, before another takes its place:
+  // beside() does not name the shell's own, so the catalog is asked
+  // directly.
+  if (!forgottenId.isEmpty() && saved && saved->catalog() && saved->catalog()->find(forgottenId)) saved->remove(forgottenId);
   // One paired beside it takes its place, so the device stays paired while it has any.
   // With none to, the rows closing emptied, those beside it too, are sent again.
-  auto* saved = m_shell->shared<SavedEnvironmentsController>();
-  if (!promote() && closed && saved) saved->reconnect();
+  // Never the one just forgotten, even when removing its saved copy did not take.
+  if (!promote(forgottenId) && closed && saved) saved->reconnect();
   publish();
 }
 
-bool Pairing::promote() {
+bool Pairing::promote(const QString& exceptId) {
   auto* saved = m_shell->shared<SavedEnvironmentsController>();
   EnvironmentCatalog* catalog = saved ? saved->catalog() : nullptr;
   if (m_paired || !catalog) return false;
   for (const SavedEnvironment& environment : catalog->environments()) {
+    if (!exceptId.isEmpty() && environment.id == exceptId) continue;
     const EnvironmentCatalog::Connection connection = catalog->connect(environment.id);
     if (!connection.blocked.isEmpty()) continue;
     const Environment next{environment.origin, connection.credential, environment.label, environment.id, environment.expiresAt};
