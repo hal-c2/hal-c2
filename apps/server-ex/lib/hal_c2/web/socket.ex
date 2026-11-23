@@ -110,8 +110,9 @@ defmodule HalC2.Web.Socket do
   @doc """
   Tells this MC's sockets that code was installed in place (`HalC2.Upgrade.Tree.sync/0`).
   The code before may have stopped their node news and kept their state, so each hears
-  MCs again and follows again what it watches on those here now. Only sockets are told:
-  a connection that is none yet has no clause for a message it doesn't know.
+  MCs again and takes those here now as just back, for its watches and lost terminals.
+  Only sockets are told: a connection that is none yet has no clause for a message it
+  doesn't know.
   """
   def code_installed do
     with listener when is_pid(listener) <- Process.whereis(HalC2.Web.Listener),
@@ -1027,7 +1028,7 @@ defmodule HalC2.Web.Socket do
   defp hear_mcs_again do
     :ok = :net_kernel.monitor_nodes(false, node_type: :all)
     hear_mcs()
-    for mc <- Node.list(), do: await_ready(mc)
+    for mc <- Node.list(), do: send(self(), {:nodeup, mc, []})
     :ok
   end
 

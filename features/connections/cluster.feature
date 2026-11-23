@@ -343,6 +343,15 @@ Feature: Clustering one person's machines
     And watching it again shows the settings as they are now
 
   @mc
+  Scenario: A client's lost terminal is attached again as its MC is upgraded in place
+    Given a client connected to the first of two members that can lose each other
+    And it follows a terminal on the second member
+    And older code stopped its socket hearing members come back
+    When the members lose each other, the terminal is lost and they meet again
+    And the client's MC is upgraded in place
+    Then the client is told to attach the second member's terminal again
+
+  @mc
   Scenario: A client follows a thread on another member by its environment
     Given a client connected to the first member
     When it follows a thread that lives on the second member by that member's environment
