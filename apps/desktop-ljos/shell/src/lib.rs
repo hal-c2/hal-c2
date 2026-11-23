@@ -137,6 +137,9 @@ pub fn register(engine: &Engine) {
     highlighter::register(engine);
     code_highlighter::register(engine);
     browser::register(engine);
+    // Qt.labs.lottieqt, for a user shell's LottieAnimation (the dashboard
+    // example's cat); the bricks have none of their own.
+    ljos_lottie::register(engine);
     device::register(engine);
     device_screen::register(engine);
     local_transcriber::register(engine);
@@ -235,6 +238,22 @@ pub struct Launch {
 struct Kept {
     cache_dir: std::cell::RefCell<Option<PathBuf>>,
     allow_local_folder_import: std::cell::Cell<bool>,
+    opened: std::cell::RefCell<Vec<OpenedListener>>,
+}
+
+/// What [`on_opened`] keeps.
+type OpenedListener = Rc<dyn Fn(&Engine, &session::Session)>;
+
+/// Calls `f` with each session [`open`] connects with, once it has (as
+/// NativeShell::opened): a host that keeps the session for the next start
+/// (the phone) hears of one bought by pairing again (ConnectionHealth)
+/// as of its own.
+pub fn on_opened(engine: &Engine, f: impl Fn(&Engine, &session::Session) + 'static) {
+    engine
+        .extension::<Kept>()
+        .opened
+        .borrow_mut()
+        .push(Rc::new(f));
 }
 
 /// Connects to the MC `session` names, as NativeShell::open does: the MC
@@ -245,14 +264,22 @@ struct Kept {
 /// cache, as one started with an MC does; its controllers are active
 /// already and follow the MC's rows as they come. An error says why the
 /// connection could not be opened; nothing has changed then. Nothing is
-/// kept for the next start: the host names its MC again, and in-app
-/// pairings are kept by the saved environments.
+/// kept for the next start here: the host names its MC again, in-app
+/// pairings are kept by the saved environments, and a host that keeps
+/// its session itself hears of it ([`on_opened`]).
 ///
 /// A controller may call it from its own callback (an in-app pairing): the
 /// store's listeners hear of the change once no controller is running.
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
-    mc.open(&session.origin, &session.token)?;
+    // A session that names its environment opens at an MC that must serve
+    // it (mobile-qt's Pairing::start): whichever answers at the address now
+    // is not taken for the one paired with.
+    if session.environment_id.is_empty() {
+        mc.open(&session.origin, &session.token)?;
+    } else {
+        mc.open_expecting(&session.origin, &session.token, &session.environment_id)?;
+    }
     // NativeShell::opened: the MC on this machine needs no network, one on
     // another does. ConnectionHealth's own pairing, which is running
     // already, says so itself.
@@ -276,6 +303,10 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     }
     let origin = session.origin.clone();
     bridge.defer(engine, move |engine| store::open(engine, &origin));
+    let listeners = kept.opened.borrow().clone();
+    for listener in listeners {
+        listener(engine, session);
+    }
     Ok(())
 }
 
@@ -302,6 +333,18 @@ pub fn has_mc(engine: &Engine) -> bool {
 /// one, the shell store subscribes to it and they activate on its first
 /// snapshot, previewing what the cache kept until then.
 pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
+    start_with(engine, launch, mc, Vec::new());
+}
+
+/// [`start`] with controllers of the app's own beside the shell's (the
+/// phone's, in apps/mobile-ljos): built, activated and offered actions in
+/// name order with the rest, their state keys declared the same way.
+pub fn start_with(
+    engine: &Engine,
+    launch: &Launch,
+    mc: Rc<dyn mc::Mc>,
+    extra: Vec<controller::Registration>,
+) {
     let bridge = bridge::Bridge::of(engine);
     if let Some(origin) = &launch.mc_origin {
         bridge.set_mc_origin(engine, origin);
@@ -347,7 +390,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     // Each window keeps its panel and terminals under its own directory
     // of this one (ShellWindows::windowDir).
     controller::set_state_dir(engine, launch.state_dir.clone());
-    controller::start(engine, mc.clone(), controllers::registrations());
+    let mut registrations = controllers::registrations();
+    registrations.extend(extra);
+    controller::start(engine, mc.clone(), registrations);
     controllers::settings::Settings::of(engine).set_device_path(
         engine,
         launch

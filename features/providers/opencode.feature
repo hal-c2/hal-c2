@@ -600,6 +600,8 @@ Feature: OpenCode
     Then the thread still shows its model
     And if OpenCode rejects the model the user can pick another and retry
 
+  # Backlog: a stop while the session opens still sends the prompt, then cancels it
+  # (hal-c2#1737).
   @backlog
   Scenario: Deleting a thread whose OpenCode turn was interrupted before its message was sent
     Given the user sent a message to an OpenCode thread

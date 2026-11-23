@@ -12,6 +12,7 @@ defmodule HalC2.Steps.Orchestration.Commands do
 
   step "{string} was last visited at {int}:{int} and is at sequence {int}",
        %{args: [thread, hour, minute, seq]} = context do
+    context = Map.put(context, :utc_day, Date.utc_today())
     {{:ok, _}, context} = World.dispatch(context, visit(context, thread, hour, minute))
     Map.put(context, :sequence, bump(context, thread, seq))
   end
@@ -1401,7 +1402,8 @@ defmodule HalC2.Steps.Orchestration.Commands do
   end
 
   defp visit(context, thread, hour, minute) do
-    at = DateTime.utc_now() |> DateTime.to_date() |> DateTime.new!(Time.new!(hour, minute, 0))
+    day = context[:utc_day] || Date.utc_today()
+    at = DateTime.new!(day, Time.new!(hour, minute, 0))
 
     %{
       "type" => "thread.visit",

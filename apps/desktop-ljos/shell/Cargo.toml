@@ -50,6 +50,9 @@ ljos = { workspace = true, features = ["shell", "user-qml", "render", "media", "
 # QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
 # device::register.
 ljos_quick3d.workspace = true
+# Qt.labs.lottieqt for a shell's LottieAnimation (the dashboard example's
+# cat), registered in register().
+ljos_lottie.workspace = true
 # The browser tabs (QtWebEngine: BrowserPanel): pages Chromium draws
 # off-screen through CEF. The cef crate fetches CEF's distribution once into
 # CEF_PATH (README, "Browser pages") and copies its runtime beside the

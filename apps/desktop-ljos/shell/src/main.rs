@@ -105,9 +105,10 @@ mod loaded;
 
 /// The entry: Main.qml, the ShellLoader (src/runtime.rs).
 const ROOT: &str = hal_c2_shell::runtime::MAIN;
-/// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
-/// names it.
-const APP_ID: &str = "hal-c2";
+/// The desktop entry the release installs (hal-c2-ljos.desktop,
+/// mise-tasks/release/install/desktop-ljos): its own, beside desktop-qt's
+/// hal-c2.
+const APP_ID: &str = "hal-c2-ljos";
 /// A development shell's (main.cpp).
 const DEV_APP_ID: &str = "hal-c2-dev";
 /// A packaged build sets HAL_C2_RELEASE as it builds, as CMake's Release

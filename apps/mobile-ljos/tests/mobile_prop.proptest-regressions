@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ecf0d0281a53d9c7e2c0c34aed3e1a53c95abd6d59a19f519e9311fe9432a404 # shrinks to starts_paired = false, actions = [Begin(true), Cancel]
+cc e755c8ab1006236801b0975e0b0a2559c345ed06d917bdd1768b2f2bef3f2b1e # shrinks to starts_paired = false, actions = [Begin(true), Begin(false)]

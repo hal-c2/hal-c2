@@ -2986,6 +2986,9 @@ defmodule HalC2.OrchestrationTest do
 
       File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(promote)
+      # The queue runs on once the steer is answered: left to, it starts "third" and
+      # "fourth" on the fake Codex the next test configures.
+      _ = await_statuses(thread_id, ["completed", "cancelled", "completed", "completed"])
     end
 
     # #105: Codex took the steer and ended its turn before it said so. The message is
@@ -3141,7 +3144,8 @@ defmodule HalC2.OrchestrationTest do
       await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
 
-      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      earlier = earlier_run(thread_id, run_id)
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.(earlier))
       assert [%{"status" => "running"}] = commands(thread_id)
       assert terminated(log) == []
 
@@ -3386,7 +3390,8 @@ defmodule HalC2.OrchestrationTest do
       conn = :sys.get_state(runtime_pid(thread_id)).conn
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
 
-      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      earlier = earlier_run(thread_id, run_id)
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.(earlier))
       assert Process.alive?(conn)
       assert ["running", "running"] = Enum.map(background_items(thread_id), & &1["status"])
 
@@ -3650,7 +3655,8 @@ defmodule HalC2.OrchestrationTest do
       session = :sys.get_state(pid).session
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
 
-      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      earlier = earlier_run(thread_id, run_id)
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.(earlier))
       assert Process.alive?(session)
 
       assert ["running", "running"] =
@@ -5743,6 +5749,18 @@ defmodule HalC2.OrchestrationTest do
   defp current(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
   defp runs(state), do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+  # A run that started before `run_id` and ended. A stop has to name one the thread has
+  # to reach its runtime (#461).
+  defp earlier_run(thread_id, run_id) do
+    run = StreamState.get(current(thread_id), "run")[run_id]
+    earlier = %{run | "id" => "run:earlier", "ordinal" => run["ordinal"] - 1}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [{"run", "run:earlier", %{"s" => earlier}}])
+
+    "run:earlier"
+  end
 
   # Stands in for the thread's session in `registry`: it exits as a released session
   # would when it is asked `tag` (a request, or the tag of one). The real session, if

@@ -276,6 +276,10 @@ impl Mc for WindowMc {
         self.inner.open(origin, token)
     }
 
+    fn open_expecting(&self, origin: &str, token: &str, environment: &str) -> Result<(), String> {
+        self.inner.open_expecting(origin, token, environment)
+    }
+
     // A saved environment's link is the app's, like its route: its owner
     // binds what it hears.
     fn spawn_link(&self) -> Option<Rc<dyn Mc>> {

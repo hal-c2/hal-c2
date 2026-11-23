@@ -559,6 +559,23 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
+  step "the trace file's folder holds the file {string} beside the trace file's backups",
+       %{args: [name]} = context do
+    dir = Path.dirname(HalC2.Traces.path())
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, name), "not a backup\n")
+    context
+  end
+
+  step ~r/^"(?<name>server\.trace\.ndjson\..+)" is kept$/, %{args: [name]} = context do
+    # The next record is what finds the file full and rolls it over.
+    HalC2.Traces.finished("trace.rolled", %{}, System.system_time(:millisecond))
+    assert File.stat!("#{HalC2.Traces.path()}.1").size == 10 * @mib
+    kept = Path.join(Path.dirname(HalC2.Traces.path()), name)
+    assert File.read!(kept) == "not a backup\n"
+    context
+  end
+
   step "it moves aside as the newest backup and the oldest backup is dropped", context do
     # The next record is what finds the file full.
     HalC2.Traces.finished("trace.rolled", %{}, System.system_time(:millisecond))

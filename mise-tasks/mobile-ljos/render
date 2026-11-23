@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Render the phone shell on Ljós without a window to .hal-c2/mobile-ljos.png (--render FILE, --size WxH, --settle MS, --action NAME, --url LINK, --home-dir DIR)"
+#MISE dir="{{config_root}}/apps/mobile-ljos"
+set -euo pipefail
+root="$(cd ../.. && pwd)"
+args=("$@")
+# The pairing screen until this home pairs, then the thread list: what
+# the phone opens to. A --home-dir among the args replaces this one.
+[[ " $* " == *" --home-dir"* ]] || args=(--home-dir "$root/.hal-c2/mobile-ljos" "${args[@]}")
+[[ " $* " == *" --render"* ]] || args=(--render "$root/.hal-c2/mobile-ljos.png" "${args[@]}")
+exec mise exec -- cargo run --release -q -p hal_c2_mobile -- "${args[@]}"

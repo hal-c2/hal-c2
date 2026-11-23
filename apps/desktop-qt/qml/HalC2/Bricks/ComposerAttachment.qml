@@ -15,8 +15,13 @@ Row {
     readonly property bool failed: attachment.status === "failed"
     readonly property string label: source !== null ? (source.windowTitle.length > 0 ? qsTr("%1 · %2").arg(source.appName).arg(source.windowTitle) : source.appName) : attachment.name
 
+    readonly property string upload: failed ? qsTr("(upload failed)") : attachment.status !== "uploading" ? "" : (attachment.progress ?? -1) >= 0 ? qsTr("(uploading %1%)").arg(Math.round(attachment.progress * 100)) : qsTr("(uploading…)")
+
     // Whether the user may take it away; an answer on its way keeps its files.
     property bool removable: true
+    // The room the chip has: a longer label elides, so the buttons after it stay in reach.
+    property real maximumWidth: Infinity
+    readonly property real besideLabel: (tile.visible ? tile.width + spacing : 0) + (open.width + spacing) + (retry.visible ? retry.width + spacing : 0) + (accessibility.visible ? accessibility.width + spacing : 0)
     signal removeRequested
     signal retryRequested
     // The attachment opened to look at.
@@ -84,8 +89,10 @@ Row {
     ShellButton {
         objectName: "attachment:" + chip.attachment.name
         implicitHeight: Theme.control.sm
+        width: Math.min(implicitWidth, Math.max(0, chip.maximumWidth - chip.besideLabel))
         iconName: chip.attachment.kind === "file" ? "file-text" : "image"
-        text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? (chip.attachment.progress ?? -1) >= 0 ? qsTr("%1 (uploading %2%)").arg(chip.label).arg(Math.round(chip.attachment.progress * 100)) : qsTr("%1 (uploading…)").arg(chip.label) : chip.label
+        text: chip.upload.length > 0 ? chip.label + " " + chip.upload : chip.label
+        keptEnd: chip.upload
         tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Theme.type.meta.size
         Accessible.name: chip.removable ? qsTr("Remove %1").arg(chip.label) : chip.label
@@ -95,6 +102,7 @@ Row {
     }
 
     ShellButton {
+        id: open
         objectName: "attachmentOpen:" + chip.attachment.name
         implicitHeight: Theme.control.sm
         subtle: true
@@ -105,6 +113,7 @@ Row {
     }
 
     ShellButton {
+        id: retry
         objectName: "attachmentRetry:" + chip.attachment.name
         visible: chip.failed
         implicitHeight: Theme.control.sm
@@ -116,6 +125,7 @@ Row {
     }
 
     ShellButton {
+        id: accessibility
         objectName: "attachmentAccessibility:" + chip.attachment.name
         visible: chip.source !== null
         implicitHeight: Theme.control.sm

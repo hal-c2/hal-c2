@@ -90,19 +90,24 @@ defmodule HalC2.Test.Features do
   # Test names carry the Examples name, so two kept tables of one outline that
   # share a name (usually both unnamed) would define the same test twice and
   # ExUnit would refuse the whole file. Name the unnamed tables by position,
-  # but only then: a single kept table keeps today's test names.
+  # but only then: a single kept table keeps today's test names. A position's name
+  # that a kept table already has moves on to the next free one.
   defp name_examples(scenario) do
     case Map.get(scenario, :examples) do
       examples when is_list(examples) and length(examples) > 1 ->
         if examples |> Enum.map(& &1.name) |> Enum.uniq() |> length() == length(examples) do
           scenario
         else
-          named =
+          {named, _taken} =
             examples
             |> Enum.with_index(1)
-            |> Enum.map(fn
-              {%{name: name} = table, _position} when is_binary(name) and name != "" -> table
-              {table, position} -> %{table | name: "table #{position}"}
+            |> Enum.map_reduce(MapSet.new(examples, & &1.name), fn
+              {%{name: name} = table, _position}, taken when is_binary(name) and name != "" ->
+                {table, taken}
+
+              {table, position}, taken ->
+                name = free_name(position, taken)
+                {%{table | name: name}, MapSet.put(taken, name)}
             end)
 
           %{scenario | examples: named}
@@ -111,6 +116,11 @@ defmodule HalC2.Test.Features do
       _ ->
         scenario
     end
+  end
+
+  defp free_name(position, taken) do
+    name = "table #{position}"
+    if MapSet.member?(taken, name), do: free_name(position + 1, taken), else: name
   end
 
   # These mount another machine's folder with FUSE and the machine-files helper

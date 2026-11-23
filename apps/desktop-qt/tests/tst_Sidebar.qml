@@ -435,6 +435,16 @@ Item {
             compare(findChild(sidebar, "emptyAddProject").visible, false);
         }
 
+        // A phone's home says where projects come from instead (HomeScreen.qml).
+        function test_emptyListWithoutAddProjectOffersNone() {
+            const next = Object.assign(JSON.parse(JSON.stringify(Shell.state.sidebar)), { active: [], projects: [] });
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root, { offersAddProject: false });
+            tryCompare(findChild(sidebar, "list"), "count", 0);
+            compare(findChild(sidebar, "emptyText").text, "No projects yet");
+            compare(findChild(sidebar, "emptyAddProject").visible, false);
+        }
+
         // Scenario: Adding a project from the thread list (features/threads/sidebar-list.feature)
         function test_addProjectChoosesAFolder() {
             Shell.localFolderImportEnabled = true;

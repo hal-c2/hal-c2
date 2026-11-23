@@ -17,12 +17,16 @@ pub const DEFAULT_SHELL: &str = "Main";
 /// The key of `<config>/shell.qml` among the directories' files.
 pub const USER_SHELL: &str = "shell";
 
-/// The import path: the user's modules, the bricks' root, this app's, then
-/// the user's shell.
+/// The import path: the user's modules, the bricks' root, this app's, any
+/// further roots an app over this shell brings (the phone's `HalC2.Mobile`),
+/// then the user's shell.
 #[derive(Clone, Debug)]
 pub struct Roots {
     pub bricks: PathBuf,
     pub shell: PathBuf,
+    /// Roots after this app's own, each once: another app's modules over
+    /// the same bricks and `HalC2.Shell` (apps/mobile-ljos's phone QML).
+    pub extra: Vec<PathBuf>,
     /// The config dir. Its `qml` comes first, so the user's modules and
     /// brick overrides win (desktop-qt prepends it to the import path), and
     /// its `shell.qml`, with the files beside it, is [`USER_SHELL`].
@@ -38,6 +42,7 @@ impl Roots {
         Roots {
             bricks: app.join("../desktop-qt/qml"),
             shell: app.join("qml"),
+            extra: Vec::new(),
             user: None,
         }
     }
@@ -48,6 +53,7 @@ impl Roots {
         Roots {
             bricks: dir.clone(),
             shell: dir,
+            extra: Vec::new(),
             user: None,
         }
     }
@@ -76,6 +82,9 @@ impl Roots {
         }
         dirs.push(canonical(&self.bricks)?);
         dirs.push(canonical(&self.shell)?);
+        for root in &self.extra {
+            dirs.push(canonical(root)?);
+        }
         if let Some(user) = user.filter(|u| u.join("shell.qml").is_file()) {
             dirs.push(canonical(user)?);
         }
@@ -99,4 +108,32 @@ pub fn compile(roots: &Roots) -> Result<Compiled, String> {
     crate::register(&snapshot);
     let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
     ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn another_apps_roots_come_after_this_ones_and_before_the_users_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            path.canonicalize().unwrap()
+        };
+        let (bricks, shell, phone, user) =
+            (made("bricks"), made("shell"), made("phone"), made("user"));
+        std::fs::write(user.join("shell.qml"), "").unwrap();
+        let roots = Roots {
+            bricks: bricks.clone(),
+            shell: shell.clone(),
+            extra: vec![phone.clone(), bricks.clone()],
+            user: Some(user.clone()),
+        };
+        assert_eq!(
+            roots.dirs().unwrap(),
+            [bricks.clone(), shell.clone(), phone.clone(), user.clone()]
+        );
+    }
 }
