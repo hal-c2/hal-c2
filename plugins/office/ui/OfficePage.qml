@@ -145,6 +145,8 @@ Item {
     property int arrivals: 0
     property bool primed: false
     property real now: 0
+    // The wall clock at the page's last tick (see catchUp()).
+    property real tickedAt: Date.now()
     property int ticks: 0
     // When the screens last changed and next change (see updateScreens()).
     property real screensSeen: 0
@@ -258,6 +260,9 @@ Item {
 
     onEnvironmentChanged: reset()
     onOfficeChanged: take(office)
+    // As it is shown again, not at the clock's first tick: what is said between is now.
+    onApplicationActiveChanged: if (visible && applicationActive) checkClock()
+    onVisibleChanged: if (visible && applicationActive) checkClock()
     onProjectIconsChanged: updateMarks()
     Component.onCompleted: follow()
 
@@ -2002,6 +2007,9 @@ Item {
     }
 
     function take(value) {
+        // An empty office has no clock running, and nothing to catch up on.
+        if (page.visible && page.applicationActive && !page.animating)
+            page.tickedAt = Date.now();
         const people = value?.people ?? [];
         sync(people);
         // A closure with nothing left to carry out closes now: the clock may
@@ -2012,6 +2020,43 @@ Item {
         page.primed = value !== null && value !== undefined;
         updateWalking();
         settle(value);
+    }
+
+    function checkClock() {
+        const now = Date.now();
+        const stood = now - page.tickedAt > 5000;
+        page.tickedAt = now;
+        if (stood)
+            catchUp();
+    }
+
+    // The clock stood still, the page out of sight or the machine asleep: what
+    // happened meanwhile is over, and the office is drawn as it is now, with
+    // everyone and every desk where they belong and nothing from then said.
+    function catchUp() {
+        if (!page.primed)
+            return;
+        for (const actor of Object.values(page.actors)) {
+            if (actor.talk)
+                endTalk(actor);
+            actor.queue = [];
+            actor.bubble = "";
+        }
+        for (const id of Object.keys(page.movers))
+            removeMover(id);
+        page.jobs = [];
+        page.outside = [];
+        page.doorOpensAt = 0;
+        page.primed = false;
+        take(page.office);
+        for (const actor of Object.values(page.actors)) {
+            if (actor.goal) {
+                place(actor, actor.goal.x, actor.goal.y, false);
+                actor.path = [];
+            }
+            render(actor);
+        }
+        updateWalking();
     }
 
     // The office is settled once `value`, this machine's office, has been
@@ -3150,19 +3195,40 @@ Item {
 
     // ── Talks ───────────────────────────────────────────────────────────────
 
-    // New talks walk their speaker over. The first time the page sees an office,
-    // only the talks of the last minute and a half are new.
+    // Only what is being said walks a speaker over: not the talks an office
+    // already has when it is first seen or caught up with (see catchUp()), nor
+    // one still waiting its turn when the topic drops it. A talk can come
+    // before one of its two, as a hand-off mostly does before its worker's row:
+    // it is heard once both are here, for as long as the topic keeps it. The
+    // topic can give a talk its words late ("…" until then): one waiting,
+    // walking over or being said takes the ones it has now.
     function hear(talks) {
-        const fresh = Date.now() - 90000;
+        const current = {};
+        for (const talk of talks) {
+            if (talk)
+                current[talk.id] = talk;
+        }
+        for (const actor of Object.values(page.actors)) {
+            actor.queue = actor.queue.filter(t => current[t.id]).map(t => current[t.id]);
+            const talk = actor.talk;
+            const now = talk ? current[talk.id] : undefined;
+            if (!now)
+                continue;
+            talk.text = spoken(now.text);
+            if (talk.phase === "say")
+                actor.bubble = talk.text;
+        }
         for (const talk of talks) {
             if (!talk || page.seen[talk.id])
                 continue;
-            page.seen[talk.id] = true;
-            if (!page.primed && Date.parse(talk.at) < fresh)
+            if (!page.primed || talk.from === talk.to) {
+                page.seen[talk.id] = true;
                 continue;
+            }
             const from = page.actors[talk.from];
-            if (!from || !page.actors[talk.to] || talk.from === talk.to)
+            if (!from || !page.actors[talk.to])
                 continue;
+            page.seen[talk.id] = true;
             // A speaker keeps at most three talks waiting. When they are full, a
             // talk to someone inside takes the place of the oldest one to
             // someone still outside the door.
@@ -3172,6 +3238,10 @@ Item {
             if (from.queue.length < 3)
                 from.queue.push(talk);
         }
+    }
+
+    function spoken(text) {
+        return (text ?? "").replace(/\s+/g, " ").slice(0, 120);
     }
 
     // Starts the speaker's first talk whose listener is inside. One to someone
@@ -3195,8 +3265,9 @@ Item {
             return;
         other.heldBy = actor.id;
         actor.talk = {
+            id: talk.id,
             to: talk.to,
-            text: (talk.text ?? "").replace(/\s+/g, " ").slice(0, 120),
+            text: spoken(talk.text),
             kind: talk.kind,
             phase: "go",
             deadline: page.now + 25000,
@@ -4270,7 +4341,10 @@ Item {
         interval: page.walking ? 40 : 200
         repeat: true
         running: page.animating
-        onTriggered: page.tick(interval)
+        onTriggered: {
+            page.checkClock();
+            page.tick(interval);
+        }
     }
 
     // Refits after a resize. A timer rather than Qt.callLater, so that a

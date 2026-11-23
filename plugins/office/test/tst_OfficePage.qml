@@ -2144,6 +2144,177 @@ Item {
             runUntil(() => arrived(actor("lead")) && actor("lead").goal.kind === "desk", 2000, "the speaker goes back to work");
         }
 
+        function test_a_talk_heard_before_both_are_in_the_office_waits_for_them_data() {
+            return [
+                {
+                    tag: "the listener comes after",
+                    late: "worker"
+                },
+                {
+                    tag: "the speaker comes after",
+                    late: "lead"
+                }
+            ];
+        }
+
+        // A hand-off heard before its worker is named is "…" until the office knows.
+        function test_a_talk_takes_the_text_the_office_has_for_it_now() {
+            const people = many(4, "t", "working", "typing");
+            const said = (first, second) => [
+                Object.assign(message_to("first", "t0", "t1"), { text: first }),
+                Object.assign(message_to("second", "t0", "t2"), { text: second })
+            ];
+            plugin.publish(people);
+            plugin.publish(people, said("…", "…"));
+            page.advance(1);
+            const a = actor("t0");
+            compare(a.talk?.text, "…", "the first is on its way over");
+            compare(a.queue.length, 1, "the second waits");
+            plugin.publish(people, said("Fix the\nparser", "Write the tests"));
+            compare(a.talk.text, "Fix the parser", "the one walking over takes it");
+            compare(a.queue[0].text, "Write the tests", "so does the one waiting");
+            runUntil(() => a.talk?.phase === "say", 2000, "the first is said");
+            page.advance(1);
+            compare(page.overlays["t0"].bubble, "Fix the parser");
+            plugin.publish(people, said("Fix the lexer", "Write the tests"));
+            page.advance(1);
+            compare(page.overlays["t0"].bubble, "Fix the lexer", "so does the one being said");
+        }
+
+        // A hand-off's call often ends before its worker's row reaches the office.
+        function test_a_talk_heard_before_both_are_in_the_office_waits_for_them(data) {
+            const both = [person("lead", "Lead", "working", "typing"), person("worker", "Worker", "working", "typing")];
+            const early = both.filter(p => p.id !== data.late);
+            const talks = [
+                {
+                    id: "delegate:worker",
+                    from: "lead",
+                    to: "worker",
+                    kind: "delegate",
+                    text: "Fix the parser",
+                    at: new Date().toISOString()
+                }
+            ];
+            plugin.publish(early);
+            page.advance(25);
+            plugin.publish(early, talks);
+            page.advance(25);
+            plugin.publish(both, talks);
+            runUntil(() => actor("lead").talk?.phase === "say", 2000, "the talk waits for both");
+            page.advance(1);
+            compare(page.overlays["lead"].bubble, "Fix the parser");
+            plugin.publish(both, talks);
+            compare(actor("lead").queue.length, 0, "a talk is heard once");
+        }
+
+        // The MC ends a talk, by its own clock: the page never does by a talk's age.
+        function test_a_talk_waits_as_long_as_the_office_has_it_whatever_its_age() {
+            const lead = person("lead", "Lead", "working", "typing");
+            const talks = [
+                {
+                    id: "delegate:worker",
+                    from: "lead",
+                    to: "worker",
+                    kind: "delegate",
+                    text: "Fix the parser",
+                    at: new Date(Date.now() - 120000).toISOString()
+                }
+            ];
+            plugin.publish([lead]);
+            plugin.publish([lead], talks);
+            plugin.publish([lead, person("worker", "Worker", "working", "typing")], talks);
+            compare(actor("lead").queue.length, 1, "the talk waits as long as the topic keeps it");
+        }
+
+        function message_to(id, from, to) {
+            return {
+                id: id,
+                from: from,
+                to: to,
+                kind: "message",
+                text: id,
+                at: new Date().toISOString()
+            };
+        }
+
+        // The office shows what is happening, never what happened before it was looked at.
+        function test_talks_there_when_the_office_opens_are_not_played() {
+            const talks = [message_to("before", "t0", "t1"), message_to("early", "t0", "t2")];
+            plugin.publish(many(2, "t", "working", "typing"), talks);
+            compare(actor("t0").queue.length, 0, "a talk from before the page opened stays quiet");
+            plugin.publish(many(3, "t", "working", "typing"), talks);
+            compare(actor("t0").queue.length, 0, "also once its listener has come");
+            plugin.publish(many(3, "t", "working", "typing"), talks.concat([message_to("now", "t0", "t1")]));
+            runUntil(() => actor("t0").talk?.phase === "say", 2000, "a talk said now is played");
+            compare(actor("t0").talk.text, "now");
+        }
+
+        function test_a_talk_still_waiting_when_the_office_drops_it_is_not_played() {
+            const people = many(4, "t", "working", "typing");
+            plugin.publish(people);
+            plugin.publish(people, [message_to("first", "t0", "t1")]);
+            page.advance(1);
+            compare(actor("t0").talk?.text, "first");
+            plugin.publish(people, [message_to("first", "t0", "t1"), message_to("second", "t0", "t2")]);
+            compare(actor("t0").queue.length, 1, "the second waits for the first");
+            plugin.publish(people, []);
+            compare(actor("t0").queue.length, 0, "it is no longer what is happening");
+            compare(actor("t0").talk?.text, "first", "the one under way goes on");
+        }
+
+        function test_an_office_shown_again_shows_what_is_happening_now() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(4, "t", "working", "typing"), [message_to("under way", "t0", "t1")]);
+            page.advance(1);
+            verify(actor("t0").talk, "a talk is under way as the page goes out of sight");
+            // Ten minutes out of sight: most of a new team came, t3 left, and they talked.
+            page.tickedAt = Date.now() - 600000;
+            const people = many(3, "t", "working", "typing").concat(many(8, "n", "working", "typing"));
+            plugin.publish(people, [message_to("meanwhile", "t2", "t1"), message_to("to new", "t1", "n0")]);
+            verify(page.outside.length > 0 && page.moves > 0, "their coming in has piled up");
+            page.applicationActive = true;
+            tryVerify(() => Date.now() - page.tickedAt < 5000, 5000, "the clock runs again");
+            page.applicationActive = false;
+            compare(page.outside.length, 0, "nobody waits to walk in");
+            compare(page.moves, 0, "nobody carries a desk");
+            compare(page.deskCount, people.length, "the desks are those of the people here now");
+            for (const p of people) {
+                const a = actor(p.id);
+                compare(a.talk, null, p.id + " plays no talk from before");
+                compare(a.queue.length, 0, p.id + " has none waiting");
+                compare(a.bubble, "", p.id + " says nothing old");
+                verify(arrived(a), p.id + " is where it belongs");
+            }
+            checkFloor();
+        }
+
+        function test_a_talk_said_just_as_the_office_is_shown_again_is_played() {
+            const people = many(3, "t", "working", "typing");
+            plugin.publish(people);
+            page.tickedAt = Date.now() - 600000;
+            page.applicationActive = true;
+            // Said before the clock's first tick.
+            plugin.publish(people, [message_to("now", "t0", "t1")]);
+            wait(300);
+            page.applicationActive = false;
+            const a = actor("t0");
+            verify(a.talk || a.queue.length, "it is not taken for one from before");
+            runUntil(() => a.talk?.phase === "say", 2000, "it is played");
+            compare(a.talk.text, "now");
+        }
+
+        function test_a_glance_away_leaves_the_walks_and_talks_under_way() {
+            plugin.publish(many(4, "t", "working", "typing"));
+            plugin.publish(many(5, "t", "working", "typing"), [message_to("now", "t0", "t1")]);
+            page.advance(1);
+            page.tickedAt = Date.now() - 1000;
+            page.applicationActive = true;
+            tryVerify(() => Date.now() - page.tickedAt < 500, 5000, "the clock runs again");
+            page.applicationActive = false;
+            compare(actor("t0").talk?.text, "now");
+            verify(page.moves > 0, "the new desk is still carried in");
+        }
+
         function test_a_person_spoken_to_stops_to_listen_and_then_goes_on() {
             // Lead and C get the desks side by side.
             plugin.publish([person("lead", "Lead", "working", "typing"), person("b", "B", "working", "typing"), person("c", "C", "working", "typing")]);
@@ -2936,7 +3107,8 @@ Item {
             }
         }
 
-        // A talk to someone still outside the door waits for it to come in:
+        // A talk to someone still outside the door waits for it to come in, while
+        // the office still has it:
         // the speaker's time to find its listener starts only then.
         function test_a_talk_waits_for_its_listener_to_come_in() {
             plugin.publish(many(4, "t", "working", "typing"));

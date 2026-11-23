@@ -334,6 +334,25 @@ defmodule HalC2.Steps.Plugins.Office do
     |> send_message(from, to, text)
   end
 
+  step ~r/^the agent of "([^"]+)" sends "([^"]+)" a message of 5,000 characters$/,
+       %{args: [from, to]} = context do
+    thread = World.thread_id(context, to)
+
+    # Plugins hear each one's last 4,000 characters, so all of a send's short result.
+    heard =
+      HalC2.Orchestration.TurnWriter.observed_item(%{
+        "input" => %{"threadId" => thread, "message" => String.duplicate("x", 5_000)},
+        "output" => %{"threadId" => thread, "status" => "sent"}
+      })
+
+    fields =
+      "mcp__hal-c2__hal_c2_thread_send"
+      |> call(%{})
+      |> Map.merge(Map.take(heard, ["input", "output"]))
+
+    context |> start_turn(from) |> item(from, fields)
+  end
+
   step "its agent sends the worker {int} messages", %{args: [n]} = context do
     context = start_turn(context, context.lead)
 
@@ -357,9 +376,9 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
-  # Every talk said ten minutes earlier, and the timer the plugin set for the first
+  # Every talk said thirty seconds earlier, and the timer the plugin set for the first
   # to grow too old fired: nothing else happens to make it look again.
-  step "ten minutes pass with nothing else said or done", context do
+  step "thirty seconds pass with nothing else said or done", context do
     office = Process.whereis(HalC2Plugins.Office)
     test = self()
 
@@ -369,7 +388,7 @@ defmodule HalC2.Steps.Plugins.Office do
       %{state | floor: %{state.floor | talks: talks}}
     end)
 
-    assert_received {:expire_in, ms} when is_integer(ms) and ms <= 600_001
+    assert_received {:expire_in, ms} when is_integer(ms) and ms <= 30_001
     send(office, :expire)
     context
   end
@@ -642,7 +661,7 @@ defmodule HalC2.Steps.Plugins.Office do
 
   defp earlier(iso) do
     {:ok, at, _} = DateTime.from_iso8601(iso)
-    at |> DateTime.add(-600_000, :millisecond) |> DateTime.to_iso8601()
+    at |> DateTime.add(-30_000, :millisecond) |> DateTime.to_iso8601()
   end
 
   defp save(context, patch) do
