@@ -3,6 +3,8 @@
 #MISE dir="{{config_root}}"
 #MISE depends=["release:{{os()}}"]
 set -euo pipefail
+# shellcheck source=scripts/lib/replace-install.sh
+source scripts/lib/replace-install.sh
 
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
 
@@ -12,11 +14,9 @@ if [[ $(uname -s) == Darwin ]]; then
   app="$HOME/Applications/HAL-C2.app"
   mkdir -p "$HOME/Applications"
   # Unpacked beside its place and moved in, so the app is never half there.
-  tmp="$(mktemp -d "$HOME/Applications/.hal-c2.XXXXXX")"
-  ditto -x -k release/hal-c2-qt-"$version"-darwin-*.zip "$tmp"
-  rm -rf "$app"
-  mv "$tmp/HAL-C2.app" "$app"
-  rmdir "$tmp"
+  staged_install "$app"
+  ditto -x -k release/hal-c2-qt-"$version"-darwin-*.zip "$staging"
+  swap_install "$staging/HAL-C2.app"
   echo "$app"
   exit 0
 fi

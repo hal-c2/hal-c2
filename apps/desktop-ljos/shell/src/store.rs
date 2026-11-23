@@ -1122,6 +1122,8 @@ struct Slot {
     holding: Cell<u32>,
     /// What the frames applied while held changed, not told yet.
     pending: Cell<Changes>,
+    /// What [`clear`]'s callers hear, told by [`deliver`] with an engine.
+    cleared: Rc<RefCell<Vec<Waiting>>>,
 }
 
 /// Puts a store over `cache` in the engine and subscribes it to `mc`'s
@@ -1340,13 +1342,19 @@ pub fn deliver(engine: &Engine) {
     }
     let changes = store.borrow_mut().take_kept();
     settle(engine, changes);
+    let cleared = engine.extension::<Slot>().cleared.clone();
+    let cleared = std::mem::take(&mut *cleared.borrow_mut());
+    for done in cleared {
+        done(engine);
+    }
 }
 
-/// [`ShellStore::clear`] on the engine's store; `done` hears false when the
-/// cache could not be emptied.
-pub fn clear(engine: &Engine, done: impl FnOnce(bool) + 'static) {
+/// [`ShellStore::clear`] on the engine's store; `done` hears, from
+/// [`deliver`], false when the cache could not be emptied. With nothing kept
+/// to empty it hears true at once.
+pub fn clear(engine: &Engine, done: impl FnOnce(&Engine, bool) + 'static) {
     let Some(store) = get(engine) else {
-        return done(true);
+        return done(engine, true);
     };
     store.borrow_mut().forget();
     // The threads shown go first (ThreadStore, on the origin change), so
@@ -1359,8 +1367,15 @@ pub fn clear(engine: &Engine, done: impl FnOnce(bool) + 'static) {
         },
     );
     match cache(engine) {
-        Some(cache) => cache.clear(done),
-        None => done(true),
+        Some(cache) => {
+            let cleared = engine.extension::<Slot>().cleared.clone();
+            cache.clear(move |emptied| {
+                cleared
+                    .borrow_mut()
+                    .push(Box::new(move |engine| done(engine, emptied)));
+            });
+        }
+        None => done(engine, true),
     }
     settle(engine, Changes::changed(true));
 }

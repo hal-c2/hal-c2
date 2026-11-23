@@ -423,7 +423,7 @@ fn a_window_controllers_mc_answers_as_its_window_and_not_once_it_is_gone() {
     hub.mc.answer(engine, "probe.after", Ok(Json::Null));
     assert_eq!(ran_as.borrow().len(), 1, "nothing reaches a closed window");
 
-    mc.close();
+    mc.close_window();
     assert_eq!(hub.mc.subscriptions().len(), before);
 }
 

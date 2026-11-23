@@ -19,8 +19,10 @@
 //! Actions: `savedEnvironments.pair {link}` pairs with the MC a pairing link
 //! names and saves it (nothing is listed when its credential cannot be kept);
 //! `savedEnvironments.remove {id}`, the way back out: its connection, record
-//! and credential go; `savedEnvironments.retry {id}` tries its connection
-//! again now, or reads its credential again (asking the keyring anew).
+//! and credential go, and what was kept of it unless the shell's own
+//! connection is open for it; `savedEnvironments.retry {id}` tries its
+//! connection again now, or reads its credential again (asking the keyring
+//! anew).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -422,9 +424,45 @@ impl SavedEnvironments {
         self.publish(engine);
     }
 
+    /// Drops a saved copy of an environment kept as the shell's own (the
+    /// phone's pairing): its connection, record and credential go, but
+    /// what the shell kept of the environment stays, as the shell's own
+    /// connection serves it. The shell's own credential is not the
+    /// catalog's (the phone keeps it in pairing.json), so forgetting the
+    /// catalog's copy under the same id cannot delete it.
+    pub fn drop_duplicate(&mut self, engine: &Engine, id: &str) {
+        self.disconnect(engine, id, false);
+        // What was held on its link is the shell's own to hold now.
+        self.mc.reroute();
+        self.blocked.remove(id);
+        if let Some(catalog) = &mut self.catalog {
+            catalog.forget(id);
+        }
+        self.publish(engine);
+    }
+
+    /// Connects each saved environment again, for a shell that emptied what
+    /// they listed (SavedEnvironmentsController::reconnect).
+    pub fn reconnect(&mut self, engine: &Engine) {
+        let ids: Vec<String> = self
+            .catalog
+            .iter()
+            .flat_map(|catalog| catalog.environments())
+            .map(|environment| environment.id.clone())
+            .collect();
+        for id in ids {
+            self.connect_to(engine, &id);
+        }
+        self.publish(engine);
+    }
+
     /// The way back out of one beside the shell's own, as
     /// `savedEnvironments.remove` does; the phone's Pairing calls it too.
     pub fn remove(&mut self, engine: &Engine, id: &str) {
+        // A copy of the shell's own: what is kept of it is still shown.
+        if id == self.mc.open_for() {
+            return self.drop_duplicate(engine, id);
+        }
         self.disconnect(engine, id, true);
         self.blocked.remove(id);
         if let Some(catalog) = &mut self.catalog {

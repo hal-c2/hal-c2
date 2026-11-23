@@ -665,6 +665,8 @@ Item {
                         }
 
                         Flow {
+                            id: answerFilesFlow
+
                             Layout.fillWidth: true
                             visible: (questionItem.modelData.attachments ?? []).length > 0
                             spacing: Theme.space.sm
@@ -676,6 +678,7 @@ Item {
                                     required property var modelData
 
                                     attachment: modelData
+                                    maximumWidth: answerFilesFlow.width > 0 ? answerFilesFlow.width : Infinity
                                     // An answer on its way keeps its files.
                                     removable: !(requests.question?.responding ?? false)
                                     onRemoveRequested: Shell.dispatch("composer.question.attachment.remove", {

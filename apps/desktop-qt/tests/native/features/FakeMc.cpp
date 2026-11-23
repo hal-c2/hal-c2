@@ -416,8 +416,11 @@ void FakeMc::accept() {
 }
 
 void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
-  if (socket != m_socket) return;
   const QJsonObject message = QJsonDocument::fromJson(text.toUtf8()).object();
+  if (socket != m_socket) {
+    if (overheard) overheard(message);
+    return;
+  }
   const QString type = message.value(QLatin1String("t")).toString();
   const int id = message.value(QLatin1String("id")).toInt();
   if (type == QLatin1String("sub")) {

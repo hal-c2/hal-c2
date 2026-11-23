@@ -18,7 +18,8 @@ name: CI
 # (`park`), holding no runner, and when the last passes it marks them passed too
 # (merge-queue-stamp.sh), so the queue merges them together. When the last entry fails and
 # leaves, the watchdog starts the new last one's tests (merge-queue-watchdog.sh), as a
-# workflow_dispatch run with `queue` set, which then counts as a queue run.
+# workflow_dispatch run with `queue` set, which then counts as a queue run. The queue can't
+# see that run's checks, so it copies its answer to where the queue looks (ci-result.sh).
 
 on:
   pull_request:
@@ -44,8 +45,9 @@ permissions:
 concurrency:
   # A promoted entry shares its commit with the parked run, which never ends by itself. Never
   # cancel a queue run: its `CI result` still runs, and lands on the commit red or green
-  # while another run tests it.
-  group: ci-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
+  # while another run tests it. The event is in the group because main's push run has the
+  # commit of the entry that merged, whose parked run may still wait.
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}${{ inputs.queue && '-promoted' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -125,6 +127,9 @@ jobs:
       - name: Claimed desktop/mobile scenarios are selected by their runners
         run: python3 mise-tasks/features/check
 
+      # Here because this job runs on every change, with a checkout and nothing to install.
+      - name: An interrupted desktop install keeps an installed desktop
+        run: python3 scripts/lib/replace-install.test.py
 
   # The one job that saves the build every other MC job restores.
   mc_check:
@@ -214,7 +219,6 @@ jobs:
       - name: Sobelow against its baseline
         run: mix sobelow.check
 
-
   mc:
     name: MC tests
     needs: [changes, mc_check]
@@ -267,7 +271,6 @@ jobs:
         run: mix test
         env:
           HAL_C2_TEST_SLOWEST: 25
-
 
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
@@ -336,7 +339,6 @@ jobs:
           while read -r name; do echo "::warning title=Flaky property::$name"; done <<<"$failed"
         env:
           SHARD: ${{ matrix.shard }}
-
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
   # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
@@ -454,7 +456,6 @@ jobs:
           echo "$globs"
           HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
-
   tui:
     name: TUI
     needs: changes
@@ -507,7 +508,6 @@ jobs:
         env:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
-
 
   # In the queue the first failure decides the entry: these stop the rest of the run so the
   # queue drops it now, not when the slowest proof ends. A job that ran into its timeout
@@ -608,16 +608,29 @@ jobs:
   # The check main's ruleset requires, since the jobs above vary with the change and matrix
   # entries change their names. A skipped job passes; a failed or cancelled one does not,
   # except in a queue run whose entry has left the queue (ci-result.sh). In the queue it
-  # also answers for the entries ahead, which its commit holds. It holds the run's other
-  # write permission, and runs no project code either.
+  # also answers for the entries ahead, which its commit holds, and in a promoted run for
+  # its own entry. It can write checks, so it runs no project code either.
   result:
     name: CI result
-    needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui, park]
+    needs:
+      [
+        changes,
+        pr_assets,
+        ledger,
+        mc_check,
+        mc_audit,
+        mc,
+        mc_props,
+        mc_proofs,
+        mc_scenarios,
+        tui,
+        park,
+      ]
     # Also after a cancel in the queue, which the stop jobs cause: the queue needs an answer.
     if: ${{ always() && (github.event_name == 'merge_group' || inputs.queue || !cancelled()) }}
     permissions:
       contents: read
-      checks: write # answering for the entries ahead
+      checks: write # answering for queue entries
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -631,3 +644,26 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           QUEUE: ${{ (github.event_name == 'merge_group' || inputs.queue) && 'true' || '' }}
           GH_TOKEN: ${{ github.token }}
+
+  # GitHub sends no workflow_run when a run GITHUB_TOKEN started ends, so a promoted run
+  # starts the watchdog itself, after `CI result`, and has a failure reported.
+  follow:
+    name: Wake the merge queue watchdog
+    needs: result
+    if: ${{ always() && inputs.queue }}
+    permissions:
+      actions: write # starting the watchdog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: |
+          args=()
+          if [ "$RESULT" != success ]; then
+            args=(-f run="$GITHUB_RUN_ID" -f attempt="$GITHUB_RUN_ATTEMPT" -f branch="$GITHUB_REF_NAME")
+          fi
+          gh workflow run merge-queue-watchdog.yml "${args[@]}" ||
+            echo "::warning::Could not start the merge queue watchdog; its schedule will"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.result.result }}
