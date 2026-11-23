@@ -752,7 +752,7 @@ Feature: Office
 
     @desktop @mobile @backlog-desktop @backlog-mobile
     Scenario: The office fits its view
-      Given the office page is open
+      Given the office page is open at one screen pixel per art pixel or more
       Then the whole office shows, as large as it can be with every art pixel a whole number of screen pixels, unless the largest zoom comes first
       When the user zooms in and then picks Fit
       Then the whole office shows again
