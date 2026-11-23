@@ -12,7 +12,7 @@ mkdir -p "$dir"
 # --retry alone gives up at once on a 403, which the release host also sends for a blip.
 # The retry window starts with the first attempt, so it outlasts --max-time (a stalled
 # attempt still gets retried) and ends early enough that the last attempt fits the
-# step's 10 minutes: 360 s, plus one 120 s attempt.
+# 10 minutes of the CI step that runs only this script: 360 s, plus one 120 s attempt.
 curl -sSfL --retry 5 --retry-all-errors --retry-max-time 360 --max-time 120 -o "$dir/$asset.tar.gz" \
   "https://github.com/BurntSushi/ripgrep/releases/download/$version/$asset.tar.gz"
 echo "$sha256  $dir/$asset.tar.gz" | sha256sum -c -
