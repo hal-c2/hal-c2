@@ -589,6 +589,32 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  # #1774: the MC's GitHub config starts with `helper =`, which drops the helpers
+  # before it; re-exported empty, its GIT_CONFIG_VALUE_<n> must still reach git.
+  test "submodules are fetched when the environment of the MC configures an empty value",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    lib = repo!(context.dir, "lib", "lib.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/empty-value")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    included = Path.join(context.dir, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "2",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
+    })
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/lib.txt")) == "lib\n"
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a submodule its .gitmodules says not to update still gets its pinned commit", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     inner = repo!(context.dir, "inner", "inner.txt")

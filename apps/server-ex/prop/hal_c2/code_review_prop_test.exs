@@ -124,7 +124,8 @@ defmodule HalC2.CodeReviewPropTest do
 
     vars =
       ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE
-         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
+         GIT_CONFIG_VALUE_1)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
     apps = ~w(gh_command codex_command settings_check_ms home)a
@@ -136,10 +137,17 @@ defmodule HalC2.CodeReviewPropTest do
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", Path.join(fx, "remotes"))
     # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    # Beside it, an include with an empty value, as the MC's GitHub config starts
+    # with `helper =` (#1774): the submodules `unchecked/0` looks for still arrive.
+    included = Path.join(fx, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
     System.put_env(%{
-      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_COUNT" => "2",
       "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
-      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+      "GIT_CONFIG_VALUE_0" => "https://github.com/",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
     })
 
     Application.put_env(:hal_c2, :gh_command, "gh")
