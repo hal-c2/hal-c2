@@ -3,7 +3,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
   `HalC2.OpenShell.Operations` against a model of one Settings operation at a time:
   clients ask for operations (some with arguments it does not take), the running one
   reports steps and ends with an outcome, raises, or is killed, and the service
-  restarts.
+  restarts, with the clock where it was or stepped back below every run before.
 
   This test is the subscriber, and its runner stands in for
   `HalC2.OpenShell.Command.run/2`: a process that tells the test it started and does
@@ -15,8 +15,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
       a boolean is refused `invalid` and starts nothing;
     * an operation starts with no steps and no result, and is given only its true flags;
     * each operation's number is larger than every one before it, across restarts too,
-      and its reply and every frame of it carry that number; 0 before any since a
-      restart;
+      and its reply and every frame of it carry that number; before any since a
+      restart there is no operation, and the number is larger than every run's before
+      the restart, so a client waiting on a run sees that it went with the old server;
     * its steps are shown in order, the last 20 of them, while it runs;
     * it ends with its outcome (ok or not, with an error's code), a raise or a kill
       ending it not ok, and every subscriber is told each change;
@@ -40,10 +41,18 @@ defmodule HalC2.OpenShellOperationsPropTest do
         home = HalC2.Prop.scratch_home("openshell-operations")
         Process.put(:runners, [])
         Process.put(:numbers, [])
+        Process.put(:boots, [])
         drain()
 
         test = self()
-        HalC2.Prop.start_services([{Operations, runner: &runner(test, &1, &2)}])
+        clock = :atomics.new(1, signed: true)
+        :atomics.put(clock, 1, System.os_time(:microsecond))
+        Process.put(:clock, clock)
+
+        HalC2.Prop.start_services([
+          {Operations, runner: &runner(test, &1, &2), clock: fn -> :atomics.get(clock, 1) end}
+        ])
+
         {:ok, _} = Operations.subscribe(self())
 
         {history, state, result} =
@@ -66,18 +75,18 @@ defmodule HalC2.OpenShellOperationsPropTest do
   # --- model ----------------------------------------------------------------------
 
   # operation: the one running or last run; run: which run it is, counting every
-  # run this test started (0: none since a restart); started: how many runs this
-  # test started; running: whether it runs; steps: its steps so far; result: how it
-  # ended, as `{ok, code}`.
+  # run this test started (:boot: none since a restart, numbered when the server
+  # started); started: how many runs this test started; running: whether it runs;
+  # steps: its steps so far; result: how it ended, as `{ok, code}`.
   def initial_state,
-    do: %{operation: nil, run: 0, started: 0, running: false, steps: [], result: nil}
+    do: %{operation: nil, run: :boot, started: 0, running: false, steps: [], result: nil}
 
   def command(state) do
     frequency(
       [
         {4, {:call, __MODULE__, :run, [input()]}},
         {1, {:call, __MODULE__, :state, []}},
-        {1, {:call, __MODULE__, :restart, []}}
+        {1, {:call, __MODULE__, :restart, [oneof([:on, :back])]}}
       ] ++
         if(state.running,
           do: [
@@ -179,7 +188,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
 
   defp step(state, {:call, _, :state, []}), do: {state, snapshot(state)}
 
-  defp step(state, {:call, _, :restart, []}) do
+  defp step(state, {:call, _, :restart, [_clock]}) do
     state = %{initial_state() | started: state.started}
     {state, snapshot(state)}
   end
@@ -213,9 +222,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
   def run(input) do
     case Operations.run(input) do
       {:ok, reply} ->
-        # Larger than every number before it.
+        # Larger than every number before it, the servers' starts too.
         numbers = Process.get(:numbers)
-        true = Enum.all?(numbers, &(&1 < reply["run"]))
+        true = Enum.all?(numbers ++ Process.get(:boots), &(&1 < reply["run"]))
         Process.put(:numbers, numbers ++ [reply["run"]])
         changed = notified()
         ^changed = model(reply)
@@ -256,8 +265,11 @@ defmodule HalC2.OpenShellOperationsPropTest do
     model(state)
   end
 
-  # The subscription goes with the server; the test subscribes to the new one.
-  def restart do
+  # The subscription goes with the server; the test subscribes to the new one. The
+  # clock goes on, or back below every number before.
+  def restart(clock) do
+    now = if clock == :back, do: 1, else: System.os_time(:microsecond)
+    :atomics.put(Process.get(:clock), 1, now)
     :ok = HalC2.Prop.restart_service(Operations)
     {:ok, state} = Operations.subscribe(self())
     model(state)
@@ -290,19 +302,27 @@ defmodule HalC2.OpenShellOperationsPropTest do
     end
   end
 
-  # A run's number as the how-manieth run this test started it is, 0 as 0.
+  # A run's number as the how-manieth run this test started it is. With no
+  # operation it is when the server started: :boot, once it is larger than every
+  # run's before it and no smaller than an earlier server's start.
   defp model(state),
     do: %{
       operation: state["operation"],
-      run:
-        if(state["run"] == 0,
-          do: 0,
-          else: Enum.find_index(Process.get(:numbers), &(&1 == state["run"])) + 1
-        ),
+      run: number(state),
       running: state["running"],
       steps: state["steps"],
       result: state["result"] && {state["result"]["ok"], state["result"]["code"]}
     }
+
+  defp number(%{"operation" => nil, "run" => run}) do
+    boots = Process.get(:boots)
+    true = Enum.all?(Process.get(:numbers), &(&1 < run)) and Enum.all?(boots, &(&1 <= run))
+    Process.put(:boots, boots ++ [run])
+    :boot
+  end
+
+  defp number(%{"run" => run}),
+    do: Enum.find_index(Process.get(:numbers), &(&1 == run)) + 1
 
   defp drain do
     receive do

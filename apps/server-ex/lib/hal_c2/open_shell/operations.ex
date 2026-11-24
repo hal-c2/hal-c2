@@ -12,10 +12,13 @@ defmodule HalC2.OpenShell.Operations do
   (`run`), its steps so far, and the outcome once it ended, worded for Settings
   (`HalC2.OpenShell.Command.settings_error/1`). A client tells its own run's frames
   from older ones by the number its reply carries: each run's is larger than the
-  last's, across restarts too, as it starts from the clock in microseconds; 0 is
-  none since this server started. An operation runs in a process of
-  its own, unlinked, so a restart of this server never stops one halfway; the lock
-  keeps a second from starting under it.
+  last's, across restarts of this server (its last number outlives it) and of the
+  MC (it starts from the clock in microseconds). Until this server runs one, there
+  is no operation and the number is when it started, larger than any run before
+  it: a client still waiting on a run that sees that knows the server restarted
+  and the run's outcome went with it. An operation runs
+  in a process of its own, unlinked, so a restart of this server never stops one
+  halfway; the lock keeps a second from starting under it.
 
   Nothing a client sends names a path, an archive or a URL: the input is the
   operation and its `drain` and `force` flags, and any other key is refused. What
@@ -111,8 +114,12 @@ defmodule HalC2.OpenShell.Operations do
     {:ok,
      %{
        runner: Keyword.get(opts, :runner),
+       # The wall clock in microseconds, but for a test's.
+       clock: Keyword.get(opts, :clock),
        job: nil,
-       run: 0,
+       # When this server started: above every run before it, so a client waiting
+       # on a run sees the restart.
+       run: number(Keyword.get(opts, :clock)),
        operation: nil,
        steps: [],
        result: nil,
@@ -146,7 +153,7 @@ defmodule HalC2.OpenShell.Operations do
     state = %{
       state
       | job: {token, {pid, monitor}},
-        run: max(state.run + 1, System.os_time(:microsecond)),
+        run: number(Map.get(state, :clock)),
         operation: operation,
         steps: [],
         result: nil
@@ -235,6 +242,24 @@ defmodule HalC2.OpenShell.Operations do
       "result" => state.result
     }
   end
+
+  # The last number handed out, kept where a restart of this server (not of the MC)
+  # leaves it.
+  @numbered {__MODULE__, :run}
+
+  # A number above every one before it: above the last this MC handed out, and from
+  # the clock so above every one before the MC started too. A clock stepped back
+  # across an MC restart can give one below an earlier run's; a client waiting on a
+  # run tells that from its frames, whose number goes below the last one's
+  # (SandboxSettingsController.cpp, apps/tui's sandboxes.ts).
+  defp number(clock) do
+    run = max(:persistent_term.get(@numbered, 0) + 1, now(clock))
+    :persistent_term.put(@numbered, run)
+    run
+  end
+
+  defp now(nil), do: System.os_time(:microsecond)
+  defp now(clock), do: clock.()
 
   defp changed(state),
     do: HalC2.Watchers.notify(state.watchers, {:hal_c2_openshell, node(), snapshot(state)})

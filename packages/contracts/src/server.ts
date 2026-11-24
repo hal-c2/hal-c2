@@ -508,7 +508,12 @@ export const OpenShellOperationState = Schema.Struct({
   operation: Schema.NullOr(ServerOpenShellOperation),
   /**
    * Its number: larger for each run than for the last, so a client tells its own
-   * run's frames (by the number its reply carries) from older ones. 0 before any.
+   * run's frames (by the number its reply carries) from older ones. With no
+   * operation, none has run since the MC started, and it is when the MC started:
+   * larger than any run before, so a client waiting on a run that sees it knows the
+   * MC restarted and the run's outcome is lost. A clock set back across an MC
+   * restart can number below earlier runs; a frame numbered below the one before it
+   * on the same subscription says the MC restarted too.
    */
   run: NonNegativeInt,
   running: Schema.Boolean,
