@@ -8,8 +8,10 @@ defmodule HalC2.OpenShell.Route do
   and `ANTHROPIC_AUTH_TOKEN`, Codex's `-c model_provider=…` launch arguments and the
   variable they name for the key. A base URL is taken from the plugin's own
   instances only, and only one the sandbox can reach without being let through to
-  anything else: a proxy on this machine, at the address the sandbox reaches this
-  machine by (the review broker's, `HalC2.OpenShell.Broker`) and that port alone.
+  anything else: a proxy on this machine's 127.0.0.1, at the address the sandbox
+  reaches this machine by (the review broker's, `HalC2.OpenShell.Broker`) and that port
+  alone. Rootless Podman forwards that address to the host's 127.0.0.1 and no other,
+  so a proxy on another loopback address, `[::1]` or `127.0.0.2`, is refused too.
   `endpoint/2` turns the pick into the policy's endpoint and what the agent dials.
 
   A proxy on another machine is refused. OpenShell 0.1.7 binds a credential to an
@@ -189,6 +191,10 @@ defmodule HalC2.OpenShell.Route do
         {:error,
          "A review sandbox reaches a CLIProxyAPI on this machine only, and this provider's is #{shown(url)}: OpenShell cannot hold the sandbox to TLS, so the proxy's key could cross the network unencrypted."}
 
+      String.downcase(uri.host) not in ["127.0.0.1", "localhost"] ->
+        {:error,
+         "A review sandbox reaches this machine at 127.0.0.1 only, and this provider's CLIProxyAPI is at #{shown(url)}. Have CLIProxyAPI listen on 127.0.0.1."}
+
       true ->
         {:ok, %{scheme: uri.scheme, port: uri.port, prefix: prefix}}
     end
@@ -235,13 +241,11 @@ defmodule HalC2.OpenShell.Route do
     present(value)
   end
 
-  defp loopback?("localhost"), do: true
-
   defp loopback?(host) do
     case :inet.parse_address(String.to_charlist(String.trim(host, "[") |> String.trim("]"))) do
       {:ok, {127, _, _, _}} -> true
       {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
-      _ -> false
+      _ -> String.downcase(host) == "localhost"
     end
   end
 

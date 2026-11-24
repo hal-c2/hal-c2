@@ -9,8 +9,8 @@ defmodule HalC2.OpenShellRoutePropTest do
 
     * an instance that is not the plugin's, with a base URL other than its API's own,
       is refused;
-    * a plugin's instance on this machine is reached at the sandbox's address for
-      this machine, its addresses pinned, at the proxy's port alone;
+    * a plugin's instance on this machine's 127.0.0.1 is reached, at the sandbox's
+      address for this machine, its addresses pinned, at the proxy's port alone;
     * one elsewhere is refused, over https too: OpenShell binds the key to a host and
       port, not to TLS;
     * the path the agent dials under is plain segments, never a query, a fragment or
@@ -29,8 +29,8 @@ defmodule HalC2.OpenShellRoutePropTest do
     dialed: "host.containers.internal.",
     ips: ["10.0.0.5"]
   }
-  @local ~w(127.0.0.1 127.1.2.3 localhost [::1])
-  @hosts @local ++ ~w(192.168.1.4 proxy.example.com Proxy.Example.COM)
+  @local ~w(127.0.0.1 localhost)
+  @hosts @local ++ ~w(127.1.2.3 [::1] 192.168.1.4 proxy.example.com Proxy.Example.COM)
   @paths ["", "/", "/team", "/a/b", "/../x", "/%2e%2e", "/a b", "/v0/management"]
   @extras ["", "?x=1", "#f"]
   @keys ["client-key", "client-key", "client-key", ""]
@@ -53,6 +53,18 @@ defmodule HalC2.OpenShellRoutePropTest do
     env = Map.new(instance["environment"], &{&1["name"], &1["value"]})
     args = OptionParser.split(get_in(instance, ["config", "launchArgs"]) || "")
     {instance["driver"], %{env: env, args: args}}
+  end
+
+  # A base URL a plugin's instance on this machine can have, its key set.
+  defp local do
+    let [
+      scheme <- elements(~w(http https)),
+      host <- elements(@local),
+      port <- oneof([nil, integer(1, 65_535)]),
+      path <- elements(["", "/", "/team", "/a/b", "/a.b/c-d_e"])
+    ] do
+      "#{scheme}://#{host}#{if port, do: ":#{port}"}#{path}"
+    end
   end
 
   defp upstream("claudeAgent"), do: "ANTHROPIC_API_KEY"
@@ -102,6 +114,17 @@ defmodule HalC2.OpenShellRoutePropTest do
         {:ok, _} ->
           false
       end
+    end
+  end
+
+  property "a plugin's instance on this machine's 127.0.0.1 with its key is taken" do
+    forall {name, base} <- {elements(~w(claude codex)), local()} do
+      {driver, instance} = instance(name, base, "client-key")
+
+      match?(
+        {:ok, %{key: "client-key", proxy: %{}}},
+        Route.pick(driver, Map.put(instance, :plugin?, true), upstream(driver))
+      )
     end
   end
 end

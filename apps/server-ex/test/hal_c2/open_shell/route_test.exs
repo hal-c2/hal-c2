@@ -112,8 +112,18 @@ defmodule HalC2.OpenShell.RouteTest do
     end
 
     test "one on this machine keeps its path" do
-      assert {:ok, %{proxy: proxy}} = pick(plugin("claude", "http://[::1]:8317/team"))
+      assert {:ok, %{proxy: proxy}} = pick(plugin("claude", "http://127.0.0.1:8317/team"))
       assert %{url: "http://host.containers.internal.:8317/team"} = Route.endpoint(proxy, @host)
+    end
+
+    # Rootless Podman forwards the sandbox's host address to 127.0.0.1 alone.
+    test "one on another loopback address is refused, naming 127.0.0.1" do
+      for base <- ["http://[::1]:8317", "http://127.0.0.2:8317"] do
+        assert {:error, message} = pick(plugin("claude", base))
+        assert message =~ "listen on 127.0.0.1"
+      end
+
+      assert {:ok, _} = pick(plugin("claude", "http://LocalHost:8317"))
     end
 
     # OpenShell would inject the key into a plain http request to that host and port too.
