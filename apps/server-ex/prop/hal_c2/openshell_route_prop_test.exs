@@ -11,8 +11,8 @@ defmodule HalC2.OpenShellRoutePropTest do
       is refused;
     * a plugin's instance on this machine is reached at the sandbox's address for
       this machine, its addresses pinned, at the proxy's port alone;
-    * one elsewhere is reached over https at its exact host, with no address of this
-      machine;
+    * one elsewhere is refused, over https too: OpenShell binds the key to a host and
+      port, not to TLS;
     * the path the agent dials under is plain segments, never a query, a fragment or
       credentials;
     * the client key is never in the agent's command or environment.
@@ -29,7 +29,8 @@ defmodule HalC2.OpenShellRoutePropTest do
     dialed: "host.containers.internal.",
     ips: ["10.0.0.5"]
   }
-  @hosts ~w(127.0.0.1 127.1.2.3 localhost [::1] 192.168.1.4 proxy.example.com Proxy.Example.COM)
+  @local ~w(127.0.0.1 127.1.2.3 localhost [::1])
+  @hosts @local ++ ~w(192.168.1.4 proxy.example.com Proxy.Example.COM)
   @paths ["", "/", "/team", "/a/b", "/../x", "/%2e%2e", "/a b", "/v0/management"]
   @extras ["", "?x=1", "#f"]
   @keys ["client-key", "client-key", "client-key", ""]
@@ -85,15 +86,11 @@ defmodule HalC2.OpenShellRoutePropTest do
           {command, environment} = Route.agent(driver, endpoint.url, upstream(driver))
           shown = Enum.join(command ++ Map.keys(environment) ++ Map.values(environment), " ")
 
+          # Only a proxy on this machine is taken, reached as the sandbox reaches it.
           placed =
-            if proxy.loopback? do
-              endpoint.host == @host.host and
-                endpoint.ips == @host.ips and uri.host == @host.dialed
-            else
-              proxy.scheme == "https" and endpoint.ips == [] and
-                endpoint.host == String.downcase(URI.parse(base).host) and
-                uri.host == endpoint.host
-            end
+            Enum.any?(@local, &String.contains?(base, "://#{&1}")) and
+              endpoint.host == @host.host and endpoint.ips == @host.ips and
+              uri.host == @host.dialed
 
           placed and uri.scheme == proxy.scheme and endpoint.port == proxy.port and
             uri.port == proxy.port and
