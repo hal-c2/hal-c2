@@ -201,12 +201,18 @@ defmodule HalC2.Mcp do
   defp project(thread_id), do: thread(thread_id)["projectId"]
 
   defp thread(thread_id) do
-    with pid when is_pid(pid) <- Process.whereis(HalC2.Streams.Registry),
-         %{} = thread <- HalC2.Streams.get(thread_id, "thread", thread_id) do
-      thread
-    else
+    case read_thread(thread_id) do
+      %{} = thread -> thread
       _ -> %{}
     end
+  end
+
+  # The thread as its stream holds it, nil when its stream holds no thread, or
+  # `:unreadable` without streams to ask.
+  defp read_thread(thread_id) do
+    if Process.whereis(HalC2.Streams.Registry),
+      do: HalC2.Streams.get(thread_id, "thread", thread_id),
+      else: :unreadable
   end
 
   @doc """
@@ -215,8 +221,10 @@ defmodule HalC2.Mcp do
   launches carried the `"tools"` mark is kept to its plugin's tools too, as every
   review now is.
   """
-  def kept_to(thread_id) do
-    case thread(thread_id)["plugin"] do
+  def kept_to(thread_id), do: plugin_kept(thread(thread_id))
+
+  defp plugin_kept(thread) do
+    case thread["plugin"] do
       %{"id" => id, "tools" => "plugin"} when is_binary(id) -> id
       %{"id" => "code-review", "kind" => "review"} -> "code-review"
       _ -> nil
@@ -227,10 +235,18 @@ defmodule HalC2.Mcp do
   # restored with a reattached program or kept over a release upgrade) is narrowed
   # to the thread's plugin's tools when the thread is kept to them. It is never
   # widened: one that reaches more than `wanted/1` says rotates at the next preparation.
+  # `:unreadable` when the thread cannot be read to tell: the credential is then
+  # neither scoped nor honoured until it can.
   defp kept(caller) do
-    case kept_to(caller.thread_id) do
-      nil -> Map.put_new(caller, :plugin, nil)
-      plugin -> %{caller | capabilities: MapSet.new()} |> Map.put(:plugin, plugin)
+    case read_thread(caller.thread_id) do
+      :unreadable ->
+        :unreadable
+
+      thread ->
+        case plugin_kept(thread || %{}) do
+          nil -> {:ok, Map.put_new(caller, :plugin, nil)}
+          plugin -> {:ok, %{caller | capabilities: MapSet.new()} |> Map.put(:plugin, plugin)}
+        end
     end
   end
 
@@ -350,14 +366,19 @@ defmodule HalC2.Mcp do
   def handle_request(authorization, headers, body) do
     with {:ok, token} <- mcp_bearer(authorization),
          [{_, caller, last_alive}] <- :ets.lookup(@table, token),
-         :ok <- alive(token, caller, last_alive) do
-      caller = scoped(token, caller)
-
+         :ok <- alive(token, caller, last_alive),
+         {:ok, caller} <- scoped(token, caller) do
       case JSON.decode(body) do
         {:ok, %{"method" => method} = request} -> answer(request, method, caller, headers)
         _ -> {400, %{}, rpc_error(nil, -32700, "Parse error")}
       end
     else
+      :unreadable ->
+        Logger.warning("refused an MCP request whose thread could not be read to scope it")
+
+        {503, %{"retry-after" => "1", "cache-control" => "no-store"},
+         rpc_error(nil, -32603, "HAL-C2 cannot read this thread right now; try again.")}
+
       refused ->
         # Which part was wrong, never the credential itself (upstream #23782).
         reason = if is_binary(refused), do: refused, else: "unknown_or_expired_token"
@@ -373,13 +394,15 @@ defmodule HalC2.Mcp do
   end
 
   # A credential minted before credentials named a plugin, still live after a release
-  # upgrade, takes its thread's scope (`kept/1`) at its first request here.
-  defp scoped(_token, caller) when is_map_key(caller, :plugin), do: caller
+  # upgrade, takes its thread's scope (`kept/1`) at its first request here that can
+  # read the thread. Until then it is refused, and stays unscoped so the next tries again.
+  defp scoped(_token, caller) when is_map_key(caller, :plugin), do: {:ok, caller}
 
   defp scoped(token, caller) do
-    caller = kept(caller)
-    :ets.update_element(@table, token, {2, caller})
-    caller
+    with {:ok, caller} <- kept(caller) do
+      :ets.update_element(@table, token, {2, caller})
+      {:ok, caller}
+    end
   end
 
   defp mcp_bearer(authorization) do
@@ -663,10 +686,21 @@ defmodule HalC2.Mcp do
   def restore(credentials) do
     if :ets.whereis(@table) != :undefined do
       now = System.monotonic_time(:millisecond)
-      for {token, caller, _} <- credentials, do: :ets.insert(@table, {token, kept(caller), now})
+
+      for {token, caller, _} <- credentials,
+          do: :ets.insert(@table, {token, restored(caller), now})
     end
 
     :ok
+  end
+
+  # One whose thread cannot be read yet loses any plugin it named, so its first request
+  # scopes it (`scoped/2`) instead of trusting what the earlier MC wrote.
+  defp restored(caller) do
+    case kept(caller) do
+      {:ok, caller} -> caller
+      :unreadable -> Map.delete(caller, :plugin)
+    end
   end
 
   defp mint(thread_id, instance, {capabilities, plugin}) do

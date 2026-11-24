@@ -188,10 +188,10 @@ shows it apart from the verdict, so you can fix it on the machine and review
 again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
-pull request. HAL-C2 also puts the pull request's description and the
-review comments already on it in the agent's prompt (on this machine, only the
+pull request. HAL-C2 also puts the pull request's description and its
+unresolved review comments in the agent's prompt (on this machine, only the
 comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
-someone else already raised.
+someone else already raised. Resolved comments are not included.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:

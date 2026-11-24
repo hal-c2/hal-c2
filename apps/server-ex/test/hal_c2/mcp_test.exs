@@ -271,6 +271,39 @@ defmodule HalC2.McpTest do
     assert [{"kept-over", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
   end
 
+  # A restored credential whose thread cannot be read is neither honoured nor taken as
+  # unkept: it is refused, stays unscoped, and takes the thread's scope at the first
+  # request that can read it.
+  test "an earlier MC's credential is refused while its thread cannot be read" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    [{_, caller, _}] = HalC2.Mcp.credentials(thread_id)
+    HalC2.Mcp.revoke(thread_id)
+
+    broad =
+      caller |> Map.put(:plugin, nil) |> Map.put(:capabilities, MapSet.new(~w(preview device)))
+
+    stop_supervised!(HalC2.Streams)
+    :ok = HalC2.Mcp.restore([{"old", broad, 0}])
+
+    assert {503, _} = HalC2.Mcp.handle("Bearer old", JSON.encode!(project_list()))
+    assert [{"old", unscoped, _}] = HalC2.Mcp.credentials(thread_id)
+    refute Map.has_key?(unscoped, :plugin)
+
+    start_supervised!(HalC2.Streams)
+    assert denied?("Bearer old", "hal_c2_project_list")
+    assert [{"old", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
+  defp project_list,
+    do: %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => "hal_c2_project_list", "arguments" => %{}}
+    }
+
   # An ordinary plugin thread is not kept: only a code review's old mark is read so.
   test "another plugin's thread without the tools mark keeps HAL-C2's tools" do
     start_supervised!(HalC2.Settings)

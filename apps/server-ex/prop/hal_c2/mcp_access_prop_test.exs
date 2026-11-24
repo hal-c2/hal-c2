@@ -126,16 +126,38 @@ defmodule HalC2.McpAccessPropTest do
     refused?(%{authorization: "Bearer " <> token})
   end
 
+  # The same while the thread's stream cannot be read: whether the credential was
+  # refused outright then, and whether it is refused one of HAL-C2's tools once it can.
+  def reattach_unread(thread) do
+    token = "old-#{System.unique_integer([:positive])}"
+
+    caller = %{
+      thread_id: thread,
+      instance: "reattached",
+      capabilities: MapSet.new(~w(preview device))
+    }
+
+    HalC2.Prop.restart_service(HalC2.Streams, fn ->
+      :ok = HalC2.Mcp.restore([{token, caller, 0}])
+      send(self(), {:while_down, HalC2.Mcp.handle("Bearer " <> token, JSON.encode!(call()))})
+    end)
+
+    unavailable = receive do: ({:while_down, {status, _}} -> status == 503)
+    {unavailable, refused?(%{authorization: "Bearer " <> token})}
+  end
+
   defp refused?(%{authorization: auth}) do
-    body = %{
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(call()))
+    JSON.encode!(result) =~ "capability_denied"
+  end
+
+  defp call do
+    %{
       "jsonrpc" => "2.0",
       "id" => 1,
       "method" => "tools/call",
       "params" => %{"name" => "hal_c2_project_list", "arguments" => %{}}
     }
-
-    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
-    JSON.encode!(result) =~ "capability_denied"
   end
 
   # --- the model -------------------------------------------------------------------
@@ -152,7 +174,8 @@ defmodule HalC2.McpAccessPropTest do
       {4, {:call, __MODULE__, :set, [scope(), oneof(Map.keys(@keys)), value()]}},
       {3, {:call, __MODULE__, :access, [thread()]}},
       {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}},
-      {1, {:call, __MODULE__, :reattach, [thread()]}}
+      {1, {:call, __MODULE__, :reattach, [thread()]}},
+      {1, {:call, __MODULE__, :reattach_unread, [thread()]}}
     ])
   end
 
@@ -177,6 +200,9 @@ defmodule HalC2.McpAccessPropTest do
 
   def postcondition(state, {:call, _, :reattach, [thread]}, result),
     do: result == kept?(state, thread)
+
+  def postcondition(state, {:call, _, :reattach_unread, [thread]}, result),
+    do: result == {true, kept?(state, thread)}
 
   def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
     cond do
