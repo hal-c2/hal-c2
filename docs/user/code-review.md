@@ -108,11 +108,11 @@ retried: publish it again once the limit resets.
 ## Reviews in a sandbox
 
 Every review runs in a sandbox. A sandbox needs [OpenShell on the MC](openshell.md),
-and its agent must be Claude or Codex with an API key, or **Claude via CLIProxyAPI**
-or **Codex via CLIProxyAPI** from the [CLIProxyAPI plugin](plugins.md#cliproxyapi).
-Any other agent, a provider that sends its agent to a base URL of its own, or an MC
-without OpenShell fails the review and says what to set up. A review never falls
-back to running on your machine.
+which **Settings → Review sandboxes** installs, and its agent must be Claude or Codex
+with an API key, or **Claude via CLIProxyAPI** or **Codex via CLIProxyAPI** from the
+[CLIProxyAPI plugin](plugins.md#cliproxyapi). Any other agent, a provider that sends
+its agent to a base URL of its own, or an MC without OpenShell fails the review and
+says what to set up. A review never falls back to running on your machine.
 
 **Review trusted pull requests on this machine** opts out for the pull requests
 HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one

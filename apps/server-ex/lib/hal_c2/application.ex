@@ -111,6 +111,8 @@ defmodule HalC2.Application do
       HalC2.Mcp,
       # The sandboxes untrusted code reviews run in; deletes those an earlier MC left.
       HalC2.OpenShell.Review,
+      # The OpenShell installs and checks Settings runs, one at a time.
+      HalC2.OpenShell.Operations,
       HalC2.Plugins,
       # The Slack connection plugins borrow, made again from the stored tokens.
       HalC2.Slack,

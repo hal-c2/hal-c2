@@ -183,7 +183,7 @@ defmodule HalC2.OpenShell.Platform do
 
   def problem_message("podman-missing"),
     do:
-      "No rootless Podman socket. Install Podman 5 or later and run `systemctl --user enable --now podman.socket` as your own user."
+      "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager; installing OpenShell then starts its socket (`podman.socket`) for you."
 
   def problem_message("podman-too-old"), do: "OpenShell needs Podman 5 or later."
 
@@ -240,9 +240,12 @@ defmodule HalC2.OpenShell.Platform do
   # --- facts -------------------------------------------------------------------------
 
   @doc "The facts `check/1` decides from, gathered from this machine."
+  # `:openshell_facts` stands in for this machine in tests: the facts, or a function
+  # that gathers them each time.
   def facts do
     case Application.get_env(:hal_c2, :openshell_facts) do
       nil -> gather()
+      facts when is_function(facts, 0) -> facts.()
       facts -> facts
     end
   end

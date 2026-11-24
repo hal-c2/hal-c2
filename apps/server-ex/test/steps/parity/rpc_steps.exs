@@ -364,6 +364,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
         World.put_app_env(:openshell_facts, %{os: :darwin, arch: "x86_64", runtime: nil})
         {%{}, context}
 
+      # A check that only says it ran: nothing touches this machine's OpenShell.
+      "server.runOpenShellOperation" ->
+        World.put_app_env(:openshell_operation_runner, fn _, _ -> {:ok, "Checked."} end)
+        {%{"operation" => "check"}, context}
+
       "server.get" <> history
       when history in ~w(ProcessResourceHistory ResourceTelemetryHistory) ->
         {%{"windowMs" => 60_000, "bucketMs" => 5_000}, context}
@@ -696,6 +701,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
       case method do
         "server.updateServer" ->
           [HalC2.Upgrade]
+
+        "server.runOpenShellOperation" ->
+          [HalC2.OpenShell.Operations]
 
         "server.getBackgroundPolicy" ->
           [HalC2.BackgroundPolicy]

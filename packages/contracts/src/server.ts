@@ -440,6 +440,22 @@ export const ServerOpenShellProblem = Schema.Struct({
 });
 export type ServerOpenShellProblem = typeof ServerOpenShellProblem.Type;
 
+/** What Settings can run on the environment's OpenShell (`server.runOpenShellOperation`). */
+export const ServerOpenShellOperation = Schema.Literals([
+  "install",
+  "check",
+  "rotate",
+  "uninstall",
+]);
+export type ServerOpenShellOperation = typeof ServerOpenShellOperation.Type;
+
+/** An operation Settings offers now, under the MC's label (Install, Update, Repair, ...). */
+export const ServerOpenShellAction = Schema.Struct({
+  operation: ServerOpenShellOperation,
+  label: TrimmedNonEmptyString,
+});
+export type ServerOpenShellAction = typeof ServerOpenShellAction.Type;
+
 export const ServerOpenShellStatus = Schema.Struct({
   supported: Schema.Boolean,
   ready: Schema.Boolean,
@@ -449,8 +465,76 @@ export const ServerOpenShellStatus = Schema.Struct({
   /** The version this MC pins. */
   pinnedVersion: TrimmedNonEmptyString,
   problems: Schema.Array(ServerOpenShellProblem),
+  /** The operations that fit this state, in the order Settings shows them. */
+  actions: Schema.Array(ServerOpenShellAction),
+  /**
+   * Whether this session may run them (`access:write` and `terminal:operate`);
+   * `manageReason` says what it lacks when it may not.
+   */
+  canManage: Schema.Boolean,
+  manageReason: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type ServerOpenShellStatus = typeof ServerOpenShellStatus.Type;
+
+/**
+ * `server.runOpenShellOperation`: runs one operation, the code `hal-c2-service
+ * openshell` runs, and answers with it running. Its steps and outcome arrive on the
+ * `openShell` shape. `drain` names the sandboxes of this MC's its user agreed to
+ * delete first (uninstall, update), as the `sandboxes-running` outcome that asked
+ * listed them; when the MC finds one it does not name, nothing is deleted and the
+ * outcome is `sandboxes-changed`, naming the set to ask about again. `force` goes
+ * ahead when they cannot be counted. Nothing else is taken: what gets installed is
+ * the MC's pinned release.
+ */
+export const ServerOpenShellOperationInput = Schema.Struct({
+  operation: ServerOpenShellOperation,
+  drain: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  force: Schema.optional(Schema.Boolean),
+});
+export type ServerOpenShellOperationInput = typeof ServerOpenShellOperationInput.Type;
+
+/**
+ * How an operation ended. `code` is the failure's (`sandboxes-running`,
+ * `sandboxes-changed`, `sandboxes-unknown`, `busy`, ...); with `sandboxes-running`
+ * or `sandboxes-changed`, `sandboxes` is how many reviews going ahead stops and
+ * `drain` their names, what a yes sends back. A session that cannot run operations
+ * is shown the outcome without its detail: `message` only says how it ended, and
+ * `drain` is null.
+ */
+export const ServerOpenShellOperationResult = Schema.Struct({
+  ok: Schema.Boolean,
+  code: Schema.NullOr(TrimmedNonEmptyString),
+  message: Schema.String,
+  sandboxes: Schema.NullOr(NonNegativeInt),
+  drain: Schema.NullOr(Schema.Array(TrimmedNonEmptyString)),
+});
+export type ServerOpenShellOperationResult = typeof ServerOpenShellOperationResult.Type;
+
+/** The operation running or last run on the environment, as the `openShell` shape shows it. */
+export const OpenShellOperationState = Schema.Struct({
+  operation: Schema.NullOr(ServerOpenShellOperation),
+  /**
+   * Its number: larger for each run than for the last, so a client tells its own
+   * run's frames (by the number its reply carries) from older ones. With no
+   * operation, none has run since the MC started, and it is when the MC started:
+   * larger than any run before, so a client waiting on a run that sees it knows the
+   * MC restarted and the run's outcome is lost. A clock set back across an MC
+   * restart can number below earlier runs; a frame numbered below the one before it
+   * on the same subscription says the MC restarted too.
+   */
+  run: NonNegativeInt,
+  running: Schema.Boolean,
+  /** Its steps so far, the last 20. */
+  steps: Schema.Array(Schema.String),
+  result: Schema.NullOr(ServerOpenShellOperationResult),
+});
+export type OpenShellOperationState = typeof OpenShellOperationState.Type;
+
+/** Another operation is running (`busy`), or the input is not one the MC takes (`invalid`). */
+export class ServerOpenShellOperationError extends Schema.TaggedError<ServerOpenShellOperationError>()(
+  "ServerOpenShellOperationError",
+  { reason: Schema.Literals(["invalid", "busy"]), message: TrimmedNonEmptyString },
+) {}
 
 /** The status could not be read in time. */
 export class ServerOpenShellStatusError extends Schema.TaggedError<ServerOpenShellStatusError>()(
