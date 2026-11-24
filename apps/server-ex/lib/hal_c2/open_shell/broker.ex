@@ -28,7 +28,8 @@ defmodule HalC2.OpenShell.Broker do
 
   @doc """
   Starts the listener, linked to the caller (`HalC2.OpenShell.Review`), and answers
-  where a sandbox reaches it: `{:ok, %{host, port, path, ips, url}, pid}`.
+  where a sandbox reaches it: `{:ok, %{host, dialed, port, path, ips, url}, pid}`, `dialed`
+  being the name the agent dials this machine by.
   """
   def listen do
     config = Application.get_env(:hal_c2, :openshell_broker, [])
@@ -52,6 +53,7 @@ defmodule HalC2.OpenShell.Broker do
       {:ok,
        %{
          host: host,
+         dialed: dialed,
          port: port,
          path: @path,
          ips: Keyword.get_lazy(config, :ips, &default_ips/0),

@@ -108,9 +108,11 @@ retried: publish it again once the limit resets.
 ## Reviews in a sandbox
 
 Every review runs in a sandbox. A sandbox needs [OpenShell on the MC](openshell.md),
-which **Settings → Review sandboxes** installs, and its agent must be Claude or Codex with an API key. Any other agent, or an MC
-without OpenShell, fails the review and says what to set up. A review never falls
-back to running on your machine.
+which **Settings → Review sandboxes** installs, and its agent must be Claude or Codex
+with an API key, or **Claude via CLIProxyAPI** or **Codex via CLIProxyAPI** from the
+[CLIProxyAPI plugin](plugins.md#cliproxyapi). Any other agent, a provider that sends
+its agent to a base URL of its own, or an MC without OpenShell fails the review and
+says what to set up. A review never falls back to running on your machine.
 
 **Review trusted pull requests on this machine** opts out for the pull requests
 HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one
@@ -121,15 +123,17 @@ reviewed in a sandbox either way. The old **Sandbox every review** switch is gon
 and whatever it was set to, reviews start out sandboxed.
 
 The agent reviews a copy of the pull request's commits and has no access to your
-machine, your GitHub login or HAL-C2's tools. It reaches only its model's API and
-one tool to report with. The first report it sends is the review, and its sandbox
+machine, your GitHub login or HAL-C2's tools. It reaches only its model's requests,
+on the model's API or on the proxy, and one tool to report with; the key is added to
+those requests on their way out and is never in the sandbox. The first report it sends is the review, and its sandbox
 is deleted then. The Reviews page, the review's thread and its row in the thread
 list say a review runs in a sandbox.
 
 The sandbox brings its own copy of the agent, so the agent doesn't have to be
 installed or signed in on the MC, and the MC's version of it doesn't matter. None
 of the MC's agent settings, skills or task lists reach the sandbox, and what the
-review uses counts against its API key, not your account's usage limits. The
+review uses counts against its API key, or the accounts signed in to CLIProxyAPI,
+not the MC's own sign-in. The
 settings list an agent's models only when it is installed on the MC, so install
 it there to pick a model.
 
