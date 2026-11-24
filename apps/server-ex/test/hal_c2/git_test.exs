@@ -71,4 +71,19 @@ defmodule HalC2.GitTest do
     assert {:ok, %{status: 0, out: "\nseen\n"}} =
              HalC2.Git.run(dir, ["config", "--get-all", "hal.probe"], env: env)
   end
+
+  test "a variable both unset and set to an empty value stays unset", %{tmp_dir: dir} do
+    env = [
+      {"GIT_CONFIG_COUNT", "1"},
+      {"GIT_CONFIG_KEY_0", "hal.probe"},
+      {"GIT_CONFIG_VALUE_0", ""}
+    ]
+
+    args = ["config", "--get", "hal.probe"]
+    assert {:ok, %{status: 0, out: "\n"}} = HalC2.Git.run(dir, args, env: env)
+
+    # Unset, the value is missing and git refuses the key.
+    assert {:ok, %{status: 128}} =
+             HalC2.Git.run(dir, args, env: env, unset: ["GIT_CONFIG_VALUE_0"])
+  end
 end
