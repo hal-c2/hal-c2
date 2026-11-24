@@ -392,7 +392,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       # A run that ended while the session opened never reaches the agent, nor does
       # the thread it was to hand a new session.
       case started(state) do
-        :ok -> {:reply, :ok, prompt(state, turn)}
+        :ok -> {:reply, :ok, prompt(handed_fresh(state, turn), turn)}
         :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
@@ -1497,7 +1497,11 @@ defmodule HalC2.Acp.ThreadRuntime do
       with :ok <- authenticate(state, driver),
            {:ok, forked} <- fork_first(state, turn),
            {:ok, session_id, state} <- open_session(state, forked) do
-        if session_id != turn.native_thread_id, do: record_session(state, session_id)
+        # A session in place of a lost one is the thread's once it has been handed the
+        # thread (`handed_fresh/2`): until then a new runtime finds the lost one again.
+        if session_id != turn.native_thread_id and not Map.get(state, :fresh_start, false),
+          do: record_session(state, session_id)
+
         Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
 
         {:ok,
@@ -1801,6 +1805,15 @@ defmodule HalC2.Acp.ThreadRuntime do
   # leaves the new session as empty as it found it: the next turn hands it the thread.
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
+
+  # The new session holds the thread once this turn reaches the agent, so it becomes
+  # the one the thread resumes.
+  defp handed_fresh(state, %{fresh_start: true}) do
+    record_session(state, state.session_id)
+    state
+  end
+
+  defp handed_fresh(state, _turn), do: state
 
   defp new_session(state, turn) do
     servers = mcp_servers(state, turn)

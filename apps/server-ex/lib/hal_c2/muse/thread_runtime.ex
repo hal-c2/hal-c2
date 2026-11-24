@@ -224,7 +224,7 @@ defmodule HalC2.Muse.ThreadRuntime do
       # A run that ended while the session opened never reaches Muse, nor does the
       # thread it was to hand a new session.
       case started(state) do
-        :ok -> {:reply, :ok, send_turn(state, turn)}
+        :ok -> {:reply, :ok, send_turn(handed_fresh(state, turn), turn)}
         :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
@@ -492,7 +492,11 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     with {:ok, state} <- open_host(state, host, instance, turn),
          {:ok, state} <- open_session(state, turn) do
-      if state.session != turn.native_thread_id, do: record_session(state)
+      # A session in place of a lost one is the thread's once it has been handed the
+      # thread (`handed_fresh/2`): until then a new runtime finds the lost one again.
+      if state.session != turn.native_thread_id and not Map.get(state, :fresh_start, false),
+        do: record_session(state)
+
       {:ok, state}
     end
   end
@@ -571,6 +575,15 @@ defmodule HalC2.Muse.ThreadRuntime do
   # the new session as empty as it found it: the next turn hands it the thread.
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
+
+  # The new session holds the thread once this turn reaches Muse, so it becomes the one
+  # the thread resumes.
+  defp handed_fresh(state, %{fresh_start: true}) do
+    record_session(state)
+    state
+  end
+
+  defp handed_fresh(state, _turn), do: state
 
   defp start_session(state, turn) do
     id = Muse.command_id()

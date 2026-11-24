@@ -142,12 +142,24 @@ def save_providers(value):
     json.dump(value, open(PROVIDERS_FILE, "w"))
 
 sessions = 0
-# With `loseSessions`, a launch that finds DIR/NAME.lost (which it removes) cannot
-# resume or load a session an earlier launch made.
+# With `loseSessions`, a launch that finds DIR/NAME.lost (which it removes) has lost
+# every session an earlier launch made, and no later launch finds them either.
 LOST_FILE = os.path.join(DIR, NAME + ".lost")
+MADE_FILE = os.path.join(DIR, NAME + ".sessions")
+GONE_FILE = os.path.join(DIR, NAME + ".gone")
 lost = bool(CONTROL.get("loseSessions")) and os.path.exists(LOST_FILE)
+
+def read_ids(path):
+    try:
+        return set(open(path).read().split())
+    except OSError:
+        return set()
+
 if lost:
     os.remove(LOST_FILE)
+    with open(GONE_FILE, "a") as f:
+        f.write("".join(sid + "\n" for sid in read_ids(MADE_FILE)))
+gone = read_ids(GONE_FILE)
 mine = set()
 held = None          # a prompt held until session/cancel: (id, session)
 asked = {}           # our request id -> (kind, prompt id, session)
@@ -404,12 +416,16 @@ for line in sys.stdin:
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
     elif method == "session/new" and CONTROL.get("sessionError"):
         send({"id": mid, "error": {"code": -32000, "message": CONTROL["sessionError"]}})
-    elif method in ("session/resume", "session/load") and lost and params.get("sessionId") not in mine:
+    elif method in ("session/resume", "session/load") and (
+        (lost and params.get("sessionId") not in mine) or params.get("sessionId") in gone):
         send({"id": mid, "error": {"code": -32002, "message": "Session not found"}})
     elif method in ("session/new", "session/resume", "session/load"):
         sessions += 1
         sid = params.get("sessionId") or "%s-%d-%d" % (NAME, os.getpid(), sessions)
         mine.add(sid)
+        if CONTROL.get("loseSessions"):
+            with open(MADE_FILE, "a") as f:
+                f.write(sid + "\n")
         result = {"configOptions": config_options()}
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
