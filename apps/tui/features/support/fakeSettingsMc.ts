@@ -5,6 +5,7 @@
 // unsupported. Every call is kept in `calls` with the environment it addressed.
 import type {
   AuthAccessStreamEvent,
+  OpenShellOperationState,
   ResourceTelemetrySnapshot,
   ScheduledTask,
   ServerSettings,
@@ -35,6 +36,10 @@ export interface FakeSettingsMc {
   /** Called when the client starts watching scheduled tasks. */
   onScheduledTasksSubscribe: (() => void) | null;
   readonly emitTelemetry: (snapshot: ResourceTelemetrySnapshot) => void;
+  /** The OpenShell operation running or last run; set it, then `emitOpenShellOperation`. */
+  openShellOperation: OpenShellOperationState;
+  /** Tell whoever follows the OpenShell operation what `openShellOperation` holds now. */
+  readonly emitOpenShellOperation: () => void;
   /** How many clients watch the resource monitor right now. */
   readonly telemetryWatchers: () => number;
   onTelemetrySubscribe: (() => void) | null;
@@ -79,6 +84,7 @@ export function fakeSettingsMc(): FakeSettingsMc {
   const limitWatchers = new Set<(snapshot: UsageLimitsSnapshot) => void>();
   const accessWatchers = new Set<(event: AuthAccessStreamEvent) => void>();
   const settingsWatchers = new Set<(settings: ServerSettings) => void>();
+  const openShellWatchers = new Set<(state: OpenShellOperationState) => void>();
   const fake: FakeSettingsMc = {
     emitServerSettings: (settings) => {
       for (const watcher of settingsWatchers) watcher(settings);
@@ -107,6 +113,10 @@ export function fakeSettingsMc(): FakeSettingsMc {
     },
     telemetryWatchers: () => telemetryWatchers.size,
     onTelemetrySubscribe: null,
+    openShellOperation: { operation: null, running: false, steps: [], result: null },
+    emitOpenShellOperation: () => {
+      for (const watcher of openShellWatchers) watcher(fake.openShellOperation);
+    },
     presence: null,
     streams: null,
     client: {
@@ -154,6 +164,14 @@ export function fakeSettingsMc(): FakeSettingsMc {
         fake.onAuthAccessSubscribe?.();
         return () => {
           accessWatchers.delete(onEvent);
+        };
+      },
+      // Like the openShell shape, a subscriber gets the operation at once.
+      subscribeOpenShellOperation: (onState) => {
+        openShellWatchers.add(onState);
+        onState(fake.openShellOperation);
+        return () => {
+          openShellWatchers.delete(onState);
         };
       },
       subscribeResourceTelemetry: (onSnapshot) => {

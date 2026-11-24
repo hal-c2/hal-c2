@@ -1,4 +1,8 @@
-import type { ServerOpenShellStatus } from "@hal-c2/contracts";
+import type {
+  OpenShellOperationState,
+  ServerOpenShellOperation,
+  ServerOpenShellStatus,
+} from "@hal-c2/contracts";
 
 import type { SectionHost, SectionItem, SettingsSection } from "../settingsSections.ts";
 import { errorText } from "./shared.ts";
@@ -9,31 +13,52 @@ const MODES: Record<string, string> = {
   foreground: "the dev run",
 };
 
+const RUNNING: Record<ServerOpenShellOperation, string> = {
+  install: "Installing OpenShell…",
+  check: "Checking OpenShell…",
+  rotate: "Replacing OpenShell's certificates…",
+  uninstall: "Removing OpenShell…",
+};
+
+type Flags = { readonly drain?: boolean; readonly force?: boolean };
+
+const reviews = (count: number) => `${count} review${count === 1 ? "" : "s"}`;
+
 /**
  * Review sandboxes: whether this environment can run code reviews in an
  * OpenShell sandbox and, when it can't, what is wrong and what to do, from the
- * MC's `server.getOpenShellStatus`. Read when the page opens and on Refresh.
+ * MC's `server.getOpenShellStatus`, read when the page opens, on Refresh and
+ * after each operation. The actions the status offers (Install, Check, Rotate
+ * certificates, Uninstall, …) run with `server.runOpenShellOperation`; their
+ * steps and outcome come from the openShell shape, so an operation another
+ * device started shows here too. An operation that would stop this MC's
+ * reviews asks first, and runs again with `drain` (or `force`) on a yes.
  */
 export function sandboxesSection(host: SectionHost): SettingsSection {
   let status: ServerOpenShellStatus | null = null;
   let error: string | null = null;
   let loading = false;
   let generation = 0;
+  let operation: OpenShellOperationState | null = null;
+  // The operation this page asked for, until its outcome arrives.
+  let asked: ServerOpenShellOperation | null = null;
+  let refusal: string | null = null;
+  let unsubscribe: (() => void) | null = null;
 
   const read = () => {
-    const asked = ++generation;
+    const reading = ++generation;
     loading = true;
     void host.track(
       host.client.mcCall<ServerOpenShellStatus>("server.getOpenShellStatus", {}).then(
         (next) => {
-          if (asked !== generation) return;
+          if (reading !== generation) return;
           loading = false;
           status = next;
           error = null;
           host.refresh();
         },
         (cause: unknown) => {
-          if (asked !== generation) return;
+          if (reading !== generation) return;
           loading = false;
           status = null;
           error = errorText(cause);
@@ -42,6 +67,46 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
       ),
     );
     host.refresh();
+  };
+
+  const run = (name: ServerOpenShellOperation, flags: Flags = {}) => {
+    asked = name;
+    refusal = null;
+    void host.track(
+      host.client.mcCall("server.runOpenShellOperation", { operation: name, ...flags }).then(
+        () => undefined,
+        (cause: unknown) => {
+          if (asked === name) asked = null;
+          refusal = errorText(cause);
+          host.refresh();
+        },
+      ),
+    );
+    host.refresh();
+  };
+
+  // An outcome this page asked for may need the user's yes to go on.
+  const answer = (name: ServerOpenShellOperation, result: OpenShellOperationState["result"]) => {
+    if (result === null || result.ok) return;
+    if (result.code === "sandboxes-running" && result.sandboxes !== null) {
+      host.confirm(`Stop ${reviews(result.sandboxes)} and go ahead? ${result.message}`, () =>
+        run(name, { drain: true }),
+      );
+    } else if (result.code === "sandboxes-unknown") {
+      host.confirm(`Go ahead anyway? ${result.message}`, () => run(name, { force: true }));
+    }
+  };
+
+  const follow = (next: OpenShellOperationState) => {
+    const ended = operation !== null && operation.running && !next.running;
+    operation = next;
+    if (!next.running && next.result !== null && asked !== null && asked === next.operation) {
+      asked = null;
+      answer(next.operation, next.result);
+    }
+    // What is installed changed: say so.
+    if (ended) read();
+    else host.refresh();
   };
 
   const summary = (): SectionItem[] => {
@@ -94,13 +159,58 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     ];
   };
 
+  // The operation running or last run: what it is doing, then how it went.
+  const progress = (): SectionItem[] => {
+    const items: SectionItem[] = [];
+    if (operation !== null && operation.operation !== null) {
+      items.push({ kind: "blank" });
+      if (operation.running) {
+        items.push({ kind: "note", text: RUNNING[operation.operation], tone: "accent" });
+      }
+      for (const step of operation.steps) {
+        items.push({ kind: "note", text: step, tone: "dim", indent: 2 });
+      }
+      if (!operation.running && operation.result !== null) {
+        items.push({
+          kind: "note",
+          text: operation.result.message,
+          tone: operation.result.ok ? "success" : "error",
+        });
+      }
+    }
+    if (refusal !== null) {
+      items.push({ kind: "blank" }, { kind: "note", text: refusal, tone: "error" });
+    }
+    return items;
+  };
+
+  const actions = (): SectionItem[] => {
+    if (status === null || status.actions.length === 0) return [];
+    const busy = operation?.running === true;
+    const rows: SectionItem[] = status.actions.map((action) =>
+      status!.canManage && !busy
+        ? {
+            kind: "row",
+            id: `operation:${action.operation}`,
+            label: action.label,
+            run: () => run(action.operation),
+          }
+        : { kind: "row", id: `operation:${action.operation}`, label: action.label, tone: "dim" },
+    );
+    if (!status.canManage && status.manageReason !== null) {
+      rows.push({ kind: "note", text: status.manageReason, tone: "dim", indent: 2 });
+    }
+    return [{ kind: "blank" }, ...rows];
+  };
+
   return {
     id: "sandboxes",
     commands: () => [
       {
         id: "section.sandboxes",
         title: "Review sandboxes",
-        keywords: "openshell sandbox code review gateway podman docker container isolation install",
+        keywords:
+          "openshell sandbox code review gateway podman docker container isolation install uninstall rotate certificates check",
         action: "section.open",
         payload: { id: "sandboxes" },
       },
@@ -108,15 +218,24 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     open: () => {
       status = null;
       error = null;
+      operation = null;
+      asked = null;
+      refusal = null;
+      unsubscribe?.();
+      unsubscribe = host.client.subscribeOpenShellOperation(follow);
       read();
     },
     close: () => {
       generation += 1;
+      unsubscribe?.();
+      unsubscribe = null;
     },
     page: () => ({
       title: "review sandboxes",
       items: [
         ...summary(),
+        ...progress(),
+        ...actions(),
         { kind: "blank" },
         loading
           ? { kind: "row", id: "refresh", label: "Checking…", tone: "dim" }

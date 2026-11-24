@@ -1416,10 +1416,15 @@ export function makeV3Session(input: {
         (_request: object, _message, cause) => cause,
       ),
       [WS_METHODS.subscribeProjectClones]: projectClones,
+      [WS_METHODS.serverSubscribeOpenShellOperation]: () =>
+        shapeStream(socket, { type: "openShell", mc }, (frame) =>
+          frame.t === "openShell" ? [frame.operation] : [],
+        ),
       ...Object.fromEntries(
         [
           WS_METHODS.serverGetProcessDiagnostics,
           WS_METHODS.serverGetOpenShellStatus,
+          WS_METHODS.serverRunOpenShellOperation,
           WS_METHODS.serverSignalProcess,
           WS_METHODS.serverGetTraceDiagnostics,
           WS_METHODS.serverGetHostResources,

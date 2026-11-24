@@ -59,6 +59,8 @@ export type ScheduledTasksShape = { readonly type: "scheduledTasks"; readonly mc
 /** Pairing links and clients of the MC the socket is connected to. */
 export type AuthAccessShape = { readonly type: "authAccess" };
 export type ProjectClonesShape = { readonly type: "projectClones"; readonly mc: string };
+/** The OpenShell operation Settings runs (`HalC2.OpenShell.Operations`), at once and on every step. */
+export type OpenShellShape = { readonly type: "openShell"; readonly mc: string };
 export type PreviewShape = { readonly type: "preview"; readonly mc: string };
 export type ResourceTelemetryShape = { readonly type: "resourceTelemetry"; readonly mc: string };
 export type LocalServersShape = { readonly type: "localServers"; readonly mc: string };
@@ -104,6 +106,7 @@ export type Shape =
   | ScheduledTasksShape
   | AuthAccessShape
   | ProjectClonesShape
+  | OpenShellShape
   | PreviewShape
   | ResourceTelemetryShape
   | LocalServersShape

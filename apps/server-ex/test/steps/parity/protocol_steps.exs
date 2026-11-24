@@ -715,6 +715,10 @@ defmodule HalC2.Steps.Parity.Shapes do
         assert %{"t" => "projectClones", "clones" => clones} = frame
         assert is_list(clones)
 
+      {"openShell", [frame]} ->
+        assert %{"t" => "openShell", "operation" => %{"running" => false, "steps" => []}} =
+                 frame
+
       {"preview", []} ->
         :ok
 
