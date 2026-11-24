@@ -1053,7 +1053,7 @@ defmodule HalC2.OpenShell.Review do
 
   defp not_installed,
     do:
-      "Reviews of untrusted pull requests run in an OpenShell sandbox, and OpenShell is not installed on this MC. Run `hal-c2-service openshell install`."
+      "Code reviews run in an OpenShell sandbox, and OpenShell is not installed on this MC. Settings → Review sandboxes shows what it still needs. Run `hal-c2-service openshell install`."
 
   defp driver_name("claudeAgent"), do: "Claude"
   defp driver_name("codex"), do: "Codex"
