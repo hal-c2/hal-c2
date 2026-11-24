@@ -112,7 +112,8 @@ every review with **Sandbox every review** on. HAL-C2 trusts a pull request open
 by a member or collaborator of the repository, or by one of your **Trusted logins**,
 unless its commits come from someone else's fork. With the switch off, reviews of the
 pull requests it trusts run on your machine. A sandbox needs
-[OpenShell on the MC](openshell.md), and its agent must be Claude or Codex with an API
+[OpenShell on the MC](openshell.md), which **Settings → Review sandboxes** installs,
+and its agent must be Claude or Codex with an API
 key; any other agent, or an MC without OpenShell, fails the review and says what to
 set up.
 

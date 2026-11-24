@@ -1,7 +1,8 @@
 // Settings → Review sandboxes (SandboxSettingsController, SandboxSettings.qml):
 // the @shared Settings scenarios of features/mc/platform/openshell.feature,
-// against a MC whose `server.getOpenShellStatus` this file fakes from what the
-// scenario says about the machine.
+// against a MC whose `server.getOpenShellStatus`, `server.runOpenShellOperation`
+// and openShell shape this file fakes from what the scenario says about the
+// machine.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -15,8 +16,15 @@ namespace {
 
 const QString kPinned = QStringLiteral("0.1.7");
 const QString kIntelMac = QStringLiteral("OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.");
-const QString kNotInstalled = QStringLiteral("Run `hal-c2-service openshell install` to install it.");
-const QString kFailure = QStringLiteral("OpenShell's status did not answer within 20 seconds. Try again, or run `hal-c2-service openshell status` on the MC's machine.");
+const QString kNotInstalled = QStringLiteral("Press Install to install it.");
+const QString kFailure = QStringLiteral("OpenShell's status did not answer within 20 seconds. Refresh to try again.");
+const QStringList kInstallSteps{QStringLiteral("Checking this machine"), QStringLiteral("Checking the gateway's configuration"),
+                                QStringLiteral("Starting the gateway")};
+const QString kInstalled = QStringLiteral("OpenShell installed, 0.1.7, listening on https://127.0.0.1:17670.");
+const QString kRemoved = QStringLiteral("OpenShell removed.");
+const QString kManageReason = QStringLiteral(
+    "Installing and managing OpenShell needs a session that can manage this machine and use its terminal (access:write, terminal:operate). "
+    "Pair this device with a link that grants them.");
 
 // What the MC's machine is, as the scenario says.
 struct FakeOpenShell {
@@ -24,16 +32,42 @@ struct FakeOpenShell {
   bool gateway = false;  // the user runs a gateway
   bool pointed = false;  // and pointed the MC at it
   bool failing = false;
+  bool managed = false;       // a gateway this MC installed and runs
+  int reviews = 0;            // this MC's review sandboxes on it
+  bool cannotManage = false;  // paired without access:write and terminal:operate
+  // The openShell shape's state: the operation running or last run.
+  QJsonObject operation{{QStringLiteral("operation"), QJsonValue()}, {QStringLiteral("running"), false},
+                        {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
+  // Each server.runOpenShellOperation's payload.
+  QList<QJsonObject> runs;
 };
+
+QJsonObject action(const QString& operation, const QString& label) {
+  return {{QStringLiteral("operation"), operation}, {QStringLiteral("label"), label}};
+}
 
 QJsonObject status(const FakeOpenShell& machine) {
   const auto problem = [](const QString& code, const QString& message) {
     return QJsonArray{QJsonObject{{QStringLiteral("code"), code}, {QStringLiteral("message"), message}}};
   };
-  const bool ready = !machine.intelMac && machine.gateway && machine.pointed;
+  const bool external = !machine.intelMac && machine.gateway && machine.pointed;
+  const bool ready = machine.managed || external;
+  const QJsonArray actions = machine.intelMac ? QJsonArray()
+                             : machine.managed
+                                 ? QJsonArray{action(QStringLiteral("check"), QStringLiteral("Check")),
+                                              action(QStringLiteral("rotate"), QStringLiteral("Rotate certificates")),
+                                              action(QStringLiteral("uninstall"), QStringLiteral("Uninstall"))}
+                             : external ? QJsonArray{action(QStringLiteral("check"), QStringLiteral("Check")),
+                                                     action(QStringLiteral("uninstall"), QStringLiteral("Stop using it"))}
+                                        : QJsonArray{action(QStringLiteral("install"), QStringLiteral("Install"))};
   return {{QStringLiteral("supported"), !machine.intelMac},
           {QStringLiteral("ready"), ready},
-          {QStringLiteral("mode"), ready ? QJsonValue(QStringLiteral("external")) : QJsonValue()},
+          {QStringLiteral("mode"), machine.managed ? QJsonValue(QStringLiteral("managed"))
+                                   : external      ? QJsonValue(QStringLiteral("external"))
+                                                   : QJsonValue()},
+          {QStringLiteral("actions"), actions},
+          {QStringLiteral("canManage"), !machine.cannotManage},
+          {QStringLiteral("manageReason"), machine.cannotManage ? QJsonValue(kManageReason) : QJsonValue()},
           {QStringLiteral("version"), ready ? QJsonValue(kPinned) : QJsonValue()},
           {QStringLiteral("pinnedVersion"), kPinned},
           {QStringLiteral("problems"), machine.intelMac ? problem(QStringLiteral("intel-mac"), kIntelMac)
@@ -41,7 +75,63 @@ QJsonObject status(const FakeOpenShell& machine) {
                                                         : problem(QStringLiteral("not-installed"), kNotInstalled)}};
 }
 
+QJsonObject result(bool ok, const QJsonValue& code, const QString& message, const QJsonValue& sandboxes = QJsonValue()) {
+  return {{QStringLiteral("ok"), ok}, {QStringLiteral("code"), code}, {QStringLiteral("message"), message}, {QStringLiteral("sandboxes"), sandboxes}};
+}
+
+// The operation's new state, to everyone following the openShell shape.
+void emitOperation(FakeMc& mc, const QJsonObject& operation) {
+  mc.part<FakeOpenShell>().operation = operation;
+  for (const int id : mc.subscribers(QStringLiteral("openShell"))) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operation}});
+  }
+}
+
 const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("openShell"), [&mc](int id, const QJsonObject&) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id},
+             {QStringLiteral("operation"), mc.part<FakeOpenShell>().operation}});
+  });
+  // Like the MC, the reply is the operation running; its steps and outcome go
+  // to whoever follows the openShell shape.
+  mc.onRpc(QStringLiteral("server.runOpenShellOperation"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeOpenShell& machine = mc.part<FakeOpenShell>();
+    machine.runs.append(rpc.payload);
+    if (machine.cannotManage) return mc.refuse(rpc, QStringLiteral("This session may not access:write."));
+    const QString operation = rpc.payload.value(QLatin1String("operation")).toString();
+    const QJsonObject running{{QStringLiteral("operation"), operation}, {QStringLiteral("running"), true},
+                              {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
+    mc.reply(rpc, running);
+    emitOperation(mc, running);
+    const auto finish = [&mc, running](const QStringList& steps, const QJsonObject& outcome) {
+      QJsonObject done = running;
+      done.insert(QStringLiteral("running"), false);
+      done.insert(QStringLiteral("steps"), QJsonArray::fromStringList(steps));
+      done.insert(QStringLiteral("result"), outcome);
+      emitOperation(mc, done);
+    };
+    if (operation == QLatin1String("install")) {
+      for (qsizetype at = 1; at <= kInstallSteps.size(); ++at) {
+        QJsonObject step = running;
+        step.insert(QStringLiteral("steps"), QJsonArray::fromStringList(kInstallSteps.mid(0, at)));
+        emitOperation(mc, step);
+      }
+      machine.managed = true;
+      finish(kInstallSteps, result(true, QJsonValue(), kInstalled));
+    } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !rpc.payload.value(QLatin1String("drain")).toBool()) {
+      finish({}, result(false, QStringLiteral("sandboxes-running"),
+                        QStringLiteral("%1 of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; "
+                                       "or let them finish first.")
+                            .arg(machine.reviews),
+                        machine.reviews));
+    } else if (operation == QLatin1String("uninstall")) {
+      machine.reviews = 0;
+      machine.managed = false;
+      finish({QStringLiteral("Removing the gateway")}, result(true, QJsonValue(), kRemoved));
+    } else {
+      finish({}, result(true, QJsonValue(), QStringLiteral("OpenShell passed its checks.")));
+    }
+  });
   mc.onRpc(QStringLiteral("server.getOpenShellStatus"), [&mc](const FakeMc::Rpc& rpc) {
     const FakeOpenShell& machine = mc.part<FakeOpenShell>();
     if (machine.failing) mc.refuse(rpc, kFailure, {{QStringLiteral("_tag"), QStringLiteral("ServerOpenShellStatusError")}});
@@ -66,6 +156,25 @@ QString text(World& world, const QString& objectName) {
 void landed(World& world) {
   world.waitFor([&] { return !section(world).value(QStringLiteral("loading"), true).toBool(); },
                 [&] { return QStringLiteral("the sandbox status to land; the section is %1").arg(show(section(world))); });
+}
+
+QVariantMap operation(World& world) {
+  return section(world).value(QStringLiteral("operation")).toMap();
+}
+
+// Waits for the operation to end and the status read after it to land.
+void settled(World& world) {
+  world.waitFor(
+      [&] {
+        const QVariantMap now = operation(world);
+        return !now.isEmpty() && !now.value(QStringLiteral("running")).toBool() && !section(world).value(QStringLiteral("loading")).toBool();
+      },
+      [&] { return QStringLiteral("the operation to end and the status to land; the section is %1").arg(show(section(world))); });
+}
+
+void expectText(World& world, const QString& objectName, const QString& expected) {
+  const QString shown = text(world, objectName);
+  expect(shown == expected, QStringLiteral("%1 says \"%2\", not \"%3\"").arg(objectName, shown, expected));
 }
 
 void expectSummary(World& world, const QString& summary) {
@@ -117,6 +226,88 @@ const Steps steps([] {
     expectSummary(world, QStringLiteral("Could not read whether review sandboxes can run here."));
     expect(text(world, QStringLiteral("sandboxDetail")) == kFailure, QStringLiteral("the page does not say what the MC said"));
     expect(world.brick->item(QStringLiteral("sandboxRefresh"))->isEnabled(), QStringLiteral("the user cannot ask again"));
+  });
+
+  step(QStringLiteral("an OpenShell gateway this MC runs, with a sandbox of this MC's and one of someone else's"),
+       [](World& world, const Captures&, const Table&) {
+         machine(world).managed = true;
+         // Someone else's sandbox is the MC's to leave alone; only this MC's are counted.
+         machine(world).reviews = 1;
+       });
+  step(QStringLiteral("the user's device was paired without the right to manage the MC's machine"),
+       [](World& world, const Captures&, const Table&) { machine(world).cannotManage = true; });
+
+  step(QStringLiteral("they press \"([^\"]+)\" in the sandbox settings"), [](World& world, const Captures& c, const Table&) {
+    QString operation;
+    for (const QVariant& value : section(world).value(QStringLiteral("actions")).toList()) {
+      if (value.toMap().value(QStringLiteral("label")).toString() == c[0]) operation = value.toMap().value(QStringLiteral("operation")).toString();
+    }
+    expect(!operation.isEmpty(), QStringLiteral("the page offers no \"%1\"; the section is %2").arg(c[0], show(section(world))));
+    world.brick->grab();
+    world.brick->click(QStringLiteral("sandboxAction:") + operation);
+    settled(world);
+  });
+
+  step(QStringLiteral("the sandbox settings show the install's steps"), [](World& world, const Captures&, const Table&) {
+    for (qsizetype at = 0; at < kInstallSteps.size(); ++at) expectText(world, QStringLiteral("sandboxStep:%1").arg(at), kInstallSteps[at]);
+  });
+  step(QStringLiteral("they read that OpenShell was installed"), [](World& world, const Captures&, const Table&) {
+    expectText(world, QStringLiteral("sandboxResult"), kInstalled);
+    expectSummary(world, QStringLiteral("Review sandboxes can run here."));
+    expectText(world, QStringLiteral("sandboxDetail"), QStringLiteral("OpenShell %1, run by this MC.").arg(kPinned));
+  });
+  step(QStringLiteral("the sandbox settings offer to uninstall it"), [](World& world, const Captures&, const Table&) {
+    world.brick->grab();
+    for (const QString& operation : {QStringLiteral("check"), QStringLiteral("rotate"), QStringLiteral("uninstall")}) {
+      QQuickItem* button = world.brick->find(QStringLiteral("sandboxAction:") + operation);
+      expect(button != nullptr && button->isEnabled(), QStringLiteral("the page does not offer %1").arg(operation));
+    }
+    // Install is offered again only once it is uninstalled.
+    expect(world.brick->find(QStringLiteral("sandboxAction:install")) == nullptr, QStringLiteral("the page still offers Install"));
+  });
+  step(QStringLiteral("the sandbox settings offer to install it"), [](World& world, const Captures&, const Table&) {
+    world.brick->grab();
+    QQuickItem* install = world.brick->find(QStringLiteral("sandboxAction:install"));
+    expect(install != nullptr && install->isEnabled(), QStringLiteral("the page does not offer Install"));
+    expect(world.brick->find(QStringLiteral("sandboxAction:uninstall")) == nullptr, QStringLiteral("the page still offers Uninstall"));
+    expectText(world, QStringLiteral("sandboxProblem:not-installed"), kNotInstalled);
+  });
+
+  step(QStringLiteral("they are asked whether to stop (\\d+) reviews?"), [](World& world, const Captures& c, const Table&) {
+    const int count = c[0].toInt();
+    const QString question = QStringLiteral("Stop %1 review%2 and go ahead?").arg(count).arg(count == 1 ? QString() : QStringLiteral("s"));
+    world.brick->grab();
+    expect(text(world, QStringLiteral("sandboxConfirmText")).startsWith(question),
+           QStringLiteral("the page asks \"%1\"").arg(text(world, QStringLiteral("sandboxConfirmText"))));
+    // Nothing was stopped yet: the first uninstall asked without draining.
+    const QList<QJsonObject> runs = machine(world).runs;
+    expect(runs == QList<QJsonObject>{QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")}}},
+           QStringLiteral("the MC was asked %1 times").arg(runs.size()));
+  });
+  step(QStringLiteral("they agree to stop it"), [](World& world, const Captures&, const Table&) {
+    world.brick->click(QStringLiteral("sandboxConfirmYes"));
+    // The last uninstall's outcome is on the page until this one's lands.
+    world.waitFor(
+        [&] {
+          return operation(world).value(QStringLiteral("result")).toMap().value(QStringLiteral("message")).toString() == kRemoved &&
+                 !section(world).value(QStringLiteral("loading")).toBool();
+        },
+        [&] { return QStringLiteral("the drained uninstall to end; the section is %1").arg(show(section(world))); });
+  });
+  step(QStringLiteral("they read that OpenShell was removed, its review stopped first"), [](World& world, const Captures&, const Table&) {
+    expectText(world, QStringLiteral("sandboxResult"), kRemoved);
+    expect(machine(world).runs.last() == QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")}, {QStringLiteral("drain"), true}},
+           QStringLiteral("the second uninstall did not drain"));
+    expect(!world.brick->item(QStringLiteral("sandboxConfirm"))->isVisible(), QStringLiteral("the page still asks"));
+  });
+
+  step(QStringLiteral("the sandbox settings' actions are off, and say which access the device lacks"), [](World& world, const Captures&, const Table&) {
+    expectText(world, QStringLiteral("sandboxManageReason"), kManageReason);
+    expect(!world.brick->item(QStringLiteral("sandboxAction:install"))->isEnabled(), QStringLiteral("Install is on"));
+    // Nor does the controller run it when asked anyway.
+    world.bridge().dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), QStringLiteral("install")}});
+    world.sync();
+    expect(machine(world).runs.isEmpty(), QStringLiteral("the MC was asked to install"));
   });
 });
 

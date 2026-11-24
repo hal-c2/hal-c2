@@ -519,7 +519,7 @@ ColumnLayout {
         Toggle {
             key: "sandboxEveryReview"
             title: qsTr("Sandbox every review")
-            description: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+            description: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, which Settings → Review sandboxes installs, and Claude or Codex with an API key.")
         }
 
         // Side by side where they fit, one under the other on a narrow screen.
