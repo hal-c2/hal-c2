@@ -392,7 +392,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       # A run that ended while the session opened never reaches the agent, nor does
       # the thread it was to hand a new session.
       case started(state) do
-        :ok -> {:reply, :ok, prompt(handed_fresh(state, turn), turn)}
+        :ok -> {:reply, :ok, prompt(state, turn)}
         :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
@@ -1806,8 +1806,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
 
-  # The new session holds the thread once this turn reaches the agent, so it becomes
-  # the one the thread resumes.
+  # The new session holds the thread once this turn's prompt is sent (`prompt/2`), so it
+  # becomes the one the thread resumes.
   defp handed_fresh(state, %{fresh_start: true}) do
     record_session(state, state.session_id)
     state
@@ -4958,7 +4958,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
 
         %{
-          state
+          handed_fresh(state, turn)
           | announce: false,
             announced: if(announce?, do: current, else: state.announced),
             prompt: true,
@@ -4966,9 +4966,9 @@ defmodule HalC2.Acp.ThreadRuntime do
         }
 
       # An attachment changed under the turn since it was checked; the typed
-      # text is not sent without it.
+      # text is not sent without it, nor is the thread a new session was to be handed.
       {:error, message} ->
-        end_turn(state, "failed", message)
+        end_turn(unsent_fresh(state, turn), "failed", message)
     end
   end
 

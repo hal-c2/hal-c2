@@ -224,7 +224,7 @@ defmodule HalC2.Muse.ThreadRuntime do
       # A run that ended while the session opened never reaches Muse, nor does the
       # thread it was to hand a new session.
       case started(state) do
-        :ok -> {:reply, :ok, send_turn(handed_fresh(state, turn), turn)}
+        :ok -> {:reply, :ok, send_turn(state, turn)}
         :ended -> {:reply, :ok, %{unsent_fresh(state, turn) | turn: nil}}
       end
     else
@@ -576,8 +576,8 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
 
-  # The new session holds the thread once this turn reaches Muse, so it becomes the one
-  # the thread resumes.
+  # The new session holds the thread once Muse takes this turn (`start/2`), so it
+  # becomes the one the thread resumes.
   defp handed_fresh(state, %{fresh_start: true}) do
     record_session(state)
     state
@@ -723,7 +723,8 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp send_turn(state, turn) do
     case Regex.run(~r/^\/compact(?:\s|$)/, String.trim(turn.text || "")) do
-      [_] -> compact(state)
+      # A compaction hands Muse nothing of the thread.
+      [_] -> compact(unsent_fresh(state, turn))
       nil -> start(state, turn)
     end
   end
@@ -763,16 +764,18 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     case command(state, "turn/start", params) do
       {:ok, %{"turnId" => id}} when id == state.native ->
-        state
+        handed_fresh(state, turn)
 
       # A turn this run does not own may still be running there: the host stops.
       {:ok, _} ->
-        state |> end_turn("failed", "Muse started the turn under another id") |> close_host()
+        unsent_fresh(state, turn)
+        |> end_turn("failed", "Muse started the turn under another id")
+        |> close_host()
 
       # A refusal on the subscription quota carries it in the error's data, as the
       # turn's own failure does: the thread is Limited, not just failed.
       {:error, reason} ->
-        end_turn(state, "failed", start_refusal(reason))
+        end_turn(unsent_fresh(state, turn), "failed", start_refusal(reason))
     end
   end
 
