@@ -199,7 +199,7 @@ defmodule HalC2.OpenShell.Route do
       # does not name, and the request stays on the host either way.
       uri.scheme == "https" ->
         {:error,
-         "A review sandbox reaches this machine's CLIProxyAPI over http, and this provider's is #{shown(url)}. Use http://127.0.0.1:#{uri.port}#{prefix} instead."}
+         "A review sandbox reaches this machine's CLIProxyAPI over http, and this provider's is #{shown(url)}. Use the proxy's http address on 127.0.0.1 instead."}
 
       true ->
         {:ok, %{scheme: uri.scheme, port: uri.port, prefix: prefix}}

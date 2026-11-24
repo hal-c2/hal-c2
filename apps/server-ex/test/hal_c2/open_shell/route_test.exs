@@ -137,8 +137,11 @@ defmodule HalC2.OpenShell.RouteTest do
 
     # The sandbox dials the broker's alias, which a certificate for localhost does not name.
     test "one on this machine over https is refused, naming the http address" do
-      assert {:error, message} = pick(plugin("claude", "https://localhost:8317/team"))
-      assert message =~ "Use http://127.0.0.1:8317/team instead"
+      for driver <- ~w(claude codex),
+          base <- ["https://localhost:8317/team", "https://localhost"] do
+        assert {:error, message} = pick(plugin(driver, base))
+        assert message =~ "Use the proxy's http address on 127.0.0.1 instead."
+      end
     end
 
     test "one with a query, credentials or a fragment is refused" do
