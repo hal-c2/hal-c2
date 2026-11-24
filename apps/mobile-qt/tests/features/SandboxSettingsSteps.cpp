@@ -43,7 +43,7 @@ struct FakeOpenShell {
   int reviews = 0;            // this MC's review sandboxes on it
   bool cannotManage = false;  // paired without access:write and terminal:operate
   // The openShell shape's state: the operation running or last run.
-  QJsonObject operation{{S("operation"), QJsonValue()}, {S("running"), false}, {S("steps"), QJsonArray()}, {S("result"), QJsonValue()}};
+  QJsonObject operation{{S("operation"), QJsonValue()}, {S("run"), 0}, {S("running"), false}, {S("steps"), QJsonArray()}, {S("result"), QJsonValue()}};
   // Each server.runOpenShellOperation's payload.
   QList<QJsonObject> runs;
 };
@@ -97,14 +97,15 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onShape(S("openShell"), [&mc](int id, const QJsonObject&) {
     mc.send({{S("t"), S("openShell")}, {S("id"), id}, {S("operation"), mc.part<FakeOpenShell>().operation}});
   });
-  // Like the MC, the reply is the operation running; its steps and outcome go
-  // to whoever follows the openShell shape.
+  // Like the MC, the reply is the operation running, numbered; its steps and
+  // outcome go to whoever follows the openShell shape.
   mc.onRpc(S("server.runOpenShellOperation"), [&mc](const FakeMc::Rpc& rpc) {
     FakeOpenShell& machine = mc.part<FakeOpenShell>();
     machine.runs.append(rpc.payload);
     if (machine.cannotManage) return mc.refuse(rpc, S("This session may not access:write."));
     const S operation = rpc.payload.value(QLatin1String("operation")).toString();
-    const QJsonObject running{{S("operation"), operation}, {S("running"), true}, {S("steps"), QJsonArray()}, {S("result"), QJsonValue()}};
+    const QJsonObject running{{S("operation"), operation}, {S("run"), machine.runs.size()}, {S("running"), true}, {S("steps"), QJsonArray()},
+                              {S("result"), QJsonValue()}};
     mc.reply(rpc, running);
     emitOperation(mc, running);
     const auto finish = [&mc, running](const QStringList& steps, const QJsonObject& outcome) {

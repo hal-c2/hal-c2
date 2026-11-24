@@ -95,8 +95,8 @@ function machine(ctx: World): Machine {
       manageReason: state.cannotManage ? MANAGE_REASON : null,
     };
   });
-  // Like the MC, the reply is the operation running; its steps and outcome go to
-  // whoever follows the openShell shape.
+  // Like the MC, the reply is the operation running, numbered; its steps and
+  // outcome go to whoever follows the openShell shape.
   mc(ctx).on(
     "server.runOpenShellOperation",
     (payload: { operation: ServerOpenShellOperation; drain?: boolean }) => {
@@ -108,6 +108,7 @@ function machine(ctx: World): Machine {
       };
       const running: OpenShellOperationState = {
         operation: payload.operation,
+        run: fake.callsTo("server.runOpenShellOperation").length,
         running: true,
         steps: [],
         result: null,

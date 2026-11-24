@@ -91,6 +91,25 @@ defmodule HalC2.OpenShell.OperationsTest do
     {_runner, :check, []} = started()
   end
 
+  # A client tells its own run's frames from older ones by this number.
+  test "each run's number is larger than the last's, and its reply and frames carry it", %{
+    server: server
+  } do
+    assert {:ok, %{"run" => 0, "operation" => nil}} = Operations.state(server)
+
+    assert {:ok, %{"run" => first}} = Operations.run(%{"operation" => "check"}, server)
+    {runner, :check, []} = started()
+    assert %{"run" => ^first, "running" => true} = changed()
+    send(runner, {:step, "Checking"})
+    assert %{"run" => ^first, "steps" => ["Checking"]} = changed()
+    send(runner, {:answer, {:ok, "fine"}})
+    assert %{"run" => ^first, "running" => false} = changed()
+
+    assert {:ok, %{"run" => second}} = Operations.run(%{"operation" => "check"}, server)
+    assert second > first
+    assert %{"run" => ^second, "running" => true} = changed()
+  end
+
   test "an error is worded for Settings, with the sandboxes it would stop", %{server: server} do
     assert {:ok, _} = Operations.run(%{"operation" => "uninstall"}, server)
     {runner, :uninstall, []} = started()

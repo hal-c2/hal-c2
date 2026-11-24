@@ -40,7 +40,7 @@ struct FakeOpenShell {
   int reviews = 0;            // this MC's review sandboxes on it
   bool cannotManage = false;  // paired without access:write and terminal:operate
   // The openShell shape's state: the operation running or last run.
-  QJsonObject operation{{QStringLiteral("operation"), QJsonValue()}, {QStringLiteral("running"), false},
+  QJsonObject operation{{QStringLiteral("operation"), QJsonValue()}, {QStringLiteral("run"), 0}, {QStringLiteral("running"), false},
                         {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
   // Each server.runOpenShellOperation's payload.
   QList<QJsonObject> runs;
@@ -102,15 +102,15 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id},
              {QStringLiteral("operation"), mc.part<FakeOpenShell>().operation}});
   });
-  // Like the MC, the reply is the operation running; its steps and outcome go
-  // to whoever follows the openShell shape.
+  // Like the MC, the reply is the operation running, numbered; its steps and
+  // outcome go to whoever follows the openShell shape.
   mc.onRpc(QStringLiteral("server.runOpenShellOperation"), [&mc](const FakeMc::Rpc& rpc) {
     FakeOpenShell& machine = mc.part<FakeOpenShell>();
     machine.runs.append(rpc.payload);
     if (machine.cannotManage) return mc.refuse(rpc, QStringLiteral("This session may not access:write."));
     const QString operation = rpc.payload.value(QLatin1String("operation")).toString();
-    const QJsonObject running{{QStringLiteral("operation"), operation}, {QStringLiteral("running"), true},
-                              {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
+    const QJsonObject running{{QStringLiteral("operation"), operation}, {QStringLiteral("run"), machine.runs.size()},
+                              {QStringLiteral("running"), true}, {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
     mc.reply(rpc, running);
     emitOperation(mc, running);
     const auto finish = [&mc, running](const QStringList& steps, const QJsonObject& outcome) {

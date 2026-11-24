@@ -9,7 +9,9 @@
 // reviews in the way, and the user agrees to stop them or not; the MC runs
 // one operation at a time and refuses a second, and the user may press an
 // action again before the first run's frame lands (before or after its
-// reply, or after a frame from before the run), which runs nothing more. After every step the
+// reply, or after a frame from before the run), which runs nothing more; and
+// the connection may drop between a run's reply and its first frame, the run
+// ending before the page follows the shape again. After every step the
 // published section is what the model says: the latest read's answer, loading
 // while one is out; the operation as the openShell shape last said while the
 // page was open; and a question only about an outcome this page asked for.
@@ -46,6 +48,7 @@ struct Operation {
   QString name;  // "" before any
   bool running = false;
   Outcome outcome = Outcome::None;
+  int run = 0;  // the MC's number for it, larger for each run; the model's are 0
   bool operator==(const Operation&) const = default;
 };
 
@@ -144,6 +147,7 @@ QJsonObject operationJson(const Operation& operation) {
                          {QStringLiteral("message"), QStringLiteral("It failed.")}, {QStringLiteral("sandboxes"), QJsonValue()}};
   }
   return {{QStringLiteral("operation"), operation.name.isEmpty() ? QJsonValue() : QJsonValue(operation.name)},
+          {QStringLiteral("run"), operation.run},
           {QStringLiteral("running"), operation.running},
           {QStringLiteral("steps"), QJsonArray()},
           {QStringLiteral("result"), result}};
@@ -160,6 +164,7 @@ struct Shell {
   QList<FakeMc::Rpc> held;
   QSet<QString> reached;
   Operation operation;  // the MC's
+  int lastRun = 0;      // the MC's number for the latest run
   QList<QJsonObject> runs;
   // The MC holds its openShell frames from here on (`releaseFrames`).
   bool holdingFrames = false;
@@ -182,7 +187,7 @@ struct Shell {
     mc.onRpc(QStringLiteral("server.runOpenShellOperation"), [this](const FakeMc::Rpc& rpc) {
       runs.append(rpc.payload);
       if (operation.running) return mc.refuse(rpc, kBusy);
-      const Operation next{rpc.payload.value(QLatin1String("operation")).toString(), true, Outcome::None};
+      const Operation next = start(rpc.payload.value(QLatin1String("operation")).toString());
       mc.reply(rpc, operationJson(next));
       emitOperation(next);
     });
@@ -200,6 +205,9 @@ struct Shell {
     if (answer == Answer::Fails) mc.refuse(rpc, kFailure, {{QStringLiteral("_tag"), QStringLiteral("ServerOpenShellStatusError")}});
     else mc.reply(rpc, statusJson(answer));
   }
+
+  // A run the MC starts, with the next number.
+  Operation start(const QString& name) { return {name, true, Outcome::None, ++lastRun}; }
 
   // The MC's operation changes, and everyone following the shape hears it.
   void emitOperation(const Operation& next) {
@@ -223,6 +231,13 @@ struct Shell {
 
   NavigationController* navigation() const { return native.controller<NavigationController>(); }
   QVariantMap section() const { return bridge.state()->value(QStringLiteral("sandboxSettings")).toMap(); }
+
+  // The connection drops; the app connects again and follows the shapes again.
+  void reconnect() {
+    mc.drop();
+    RC_ASSERT(prop::until([this] { return !native.client()->isReady(); }));
+    RC_ASSERT(prop::until([this] { return native.client()->isReady() && !mc.subscribers(QStringLiteral("openShell")).isEmpty(); }));
+  }
 
   // Waits for whatever the MC has sent so far to reach the page.
   void barrier() {
@@ -488,11 +503,13 @@ struct Stale : Command {
     const QVariantMap payload{{QStringLiteral("operation"), operation}};
     if (runs) {
       shell.reached.insert(QStringLiteral("a frame from before the run"));
+      Operation old = frame;
+      old.run = shell.lastRun;
       shell.holdingFrames = true;
       shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
       shell.barrier();
       for (const int id : shell.mc.subscribers(QStringLiteral("openShell"))) {
-        shell.mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operationJson(frame)}});
+        shell.mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operationJson(old)}});
       }
       shell.barrier();
       shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
@@ -509,6 +526,53 @@ struct Stale : Command {
   }
 };
 
+// The user runs an action, its reply lands, and the connection drops before
+// its first frame; the run ends before the app follows the shape again. The
+// first frame after reconnecting, the run ended, settles it: the actions come
+// back, the status is read again, and an outcome that stops reviews asks.
+struct Dropped : Command {
+  QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
+  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 4));
+
+  // A read out would be lost with the connection.
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.holding); }
+  void apply(Model& model) const override {
+    if (!(model.open && model.offers(operation) && !model.shown.running)) return;
+    model.run(operation);
+    model.mcOperation.running = false;
+    model.mcOperation.outcome = outcome;
+    model.shown = model.mcOperation;
+    model.askedFor.clear();
+    if (outcome == Outcome::Stops) model.confirm = operation;
+    model.ask();
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    const bool runs = model.open && model.offers(operation) && !model.shown.running;
+    const qsizetype before = shell.runs.size();
+    if (runs) {
+      shell.reached.insert(QStringLiteral("dropped between a run's reply and its frame"));
+      shell.holdingFrames = true;
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), operation}});
+      // The MC answers in order, so the barrier's reply follows the run's.
+      shell.barrier();
+      shell.heldFrames.clear();
+      shell.holdingFrames = false;
+      shell.mc.drop();
+      shell.operation.running = false;
+      shell.operation.outcome = outcome;
+      shell.reconnect();
+      shell.barrier();
+    } else {
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), operation}});
+    }
+    check(next, shell);
+    RC_ASSERT(shell.runs.size() == before + (runs ? 1 : 0));
+  }
+  void show(std::ostream& os) const override { os << "Dropped(" << operation.toStdString() << ", " << kOutcomeNames[int(outcome)] << ")"; }
+};
+
 // Another device starts an operation on the MC.
 struct Elsewhere : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
@@ -521,7 +585,7 @@ struct Elsewhere : Command {
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
     apply(next);
-    shell.emitOperation({operation, true, Outcome::None});
+    shell.emitOperation(shell.start(operation));
     check(next, shell);
   }
   void show(std::ostream& os) const override { os << "Elsewhere(" << operation.toStdString() << ")"; }
@@ -608,7 +672,7 @@ private slots:
       check(initial, shell);
       rc::state::check(initial, shell,
                        rc::state::gen::execOneOfWithArgs<Open, Open, Refresh, Refresh, Change, Change, Hold, AnswerOne, AnswerOne, Release,
-                                                         Run, Run, Twice, Stale, Elsewhere, Finish, Finish, Confirm, Cancel>());
+                                                         Run, Run, Twice, Stale, Dropped, Elsewhere, Finish, Finish, Confirm, Cancel>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked to stop reviews")), "asked before stopping reviews");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("agreed while another ran")), "agreed while another device's operation ran");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended while away")), "an operation that ended while the page was left");
@@ -618,6 +682,7 @@ private slots:
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed twice at once")), "an action pressed twice before its run's reply");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed again after the reply")), "an action pressed again after its run's reply, before its frame");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("a frame from before the run")), "a frame from before a run, then a second press");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("dropped between a run's reply and its frame")), "the connection dropped between a run's reply and its frame");
     }));
   }
 };

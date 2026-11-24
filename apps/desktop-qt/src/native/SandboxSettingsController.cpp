@@ -20,9 +20,10 @@
 //   confirm: {text} | null}
 // where state is what the last answer said (loading until one lands) and
 // `loading` is whether a read is out. Only the latest read lands. `busy` is
-// whether an operation runs on the MC, or one this page asked for has not yet
-// been refused or shown running in a frame; the actions are off while it is or when
-// this session may not manage the MC's machine (manageReason says why).
+// whether an operation runs on the MC, or one this page asked for has been
+// neither refused nor followed by a frame of its run (by the number its reply
+// carries); the actions are off while it is or when this session may not manage
+// the MC's machine (manageReason says why).
 // `confirm` asks before an operation this page asked for stops this MC's
 // reviews (or runs without knowing whether it would).
 //
@@ -122,6 +123,7 @@ private:
     m_operation = QJsonObject();
     m_asked.clear();
     m_starting = false;
+    m_awaited = -1;
     m_refusal.clear();
     clearConfirm();
     if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
@@ -141,12 +143,16 @@ private:
     m_subscription = -1;
     m_asked.clear();
     m_starting = false;
+    m_awaited = -1;
     m_refusal.clear();
     clearConfirm();
     publish();
   }
 
   bool busy() const { return m_starting || m_operation.value(QLatin1String("running")).toBool(); }
+
+  // A frame's or reply's run number: 0 before any run, -1 before any frame.
+  static qint64 runOf(const QJsonObject& state) { return state.isEmpty() ? -1 : state.value(QLatin1String("run")).toInteger(); }
 
   bool offered(const QString& operation) const {
     for (const QJsonValue& value : m_status.value(QLatin1String("actions")).toArray()) {
@@ -179,13 +185,21 @@ private:
   void run(const QString& operation, const QJsonObject& flags) {
     m_asked = operation;
     m_starting = true;
+    m_awaited = -1;
     m_refusal.clear();
     clearConfirm();
     QJsonObject payload = flags;
     payload.insert(QStringLiteral("operation"), operation);
+    const quint64 request = ++m_request;
     m_client->call(this, m_client->environment(), QStringLiteral("server.runOpenShellOperation"), payload,
-                   [this, operation](const QJsonValue&, const std::optional<QString>& error) {
-                     if (!error) return;
+                   [this, operation, request](const QJsonValue& result, const std::optional<QString>& error) {
+                     if (!error) {
+                       // The reply names the run; a frame of it that came first settles it now.
+                       if (request != m_request || !m_starting) return;
+                       m_awaited = runOf(result.toObject());
+                       if (runOf(m_operation) >= m_awaited) settle(m_operation);
+                       return;
+                     }
                      m_starting = false;
                      if (m_asked == operation) m_asked.clear();
                      m_refusal = error->isEmpty() ? QStringLiteral("The MC did not say why.") : *error;
@@ -196,23 +210,29 @@ private:
 
   // The openShell shape: the operation running or last run on the MC.
   void follow(const QJsonObject& next) {
-    const QString operation = next.value(QLatin1String("operation")).toString();
-    const bool running = next.value(QLatin1String("running")).toBool();
-    // The actions stay off from a run until a frame shows it running: its reply
-    // may land before or after that frame, and a second press in between would
-    // be refused as busy, and that refusal would forget what this page asked
-    // for. A frame from before the run (the shape's first, another device's
-    // last) is shown, but neither reopens the actions nor answers the run.
-    if (m_starting && !(running && operation == m_asked)) {
+    // The actions stay off from a run until its reply has named it and a frame
+    // of it (or a later run) has landed: a second press in between would be
+    // refused as busy, and that refusal would forget what this page asked for.
+    // A frame from before the run (the shape's first, another device's last) is
+    // shown, but neither reopens the actions nor answers the run. Whichever of
+    // the reply and the frame lands second settles it, so a run that ended
+    // while the connection was down settles on the first frame after it.
+    if (m_starting && (m_awaited < 0 || runOf(next) < m_awaited)) {
       m_operation = next;
       publish();
       return;
     }
+    settle(next);
+  }
+
+  void settle(const QJsonObject& next) {
+    const QString operation = next.value(QLatin1String("operation")).toString();
+    const bool running = next.value(QLatin1String("running")).toBool();
     const bool ended = busy() && !running;
     m_operation = next;
     m_starting = false;
     const QJsonValue result = next.value(QLatin1String("result"));
-    if (!running && result.isObject() && !m_asked.isEmpty() && m_asked == operation) {
+    if (!running && result.isObject() && !m_asked.isEmpty() && m_asked == operation && runOf(next) == m_awaited) {
       m_asked.clear();
       answer(operation, result.toObject());
     }
@@ -334,8 +354,13 @@ private:
   QJsonObject m_operation;
   // The operation this page asked for, until its outcome arrives.
   QString m_asked;
-  // A run this page sent that no frame has shown running yet and the MC has not refused.
+  // A run this page sent that the MC has not refused and no frame of has
+  // landed since its reply.
   bool m_starting = false;
+  // The run's number, from its reply: -1 until it lands.
+  qint64 m_awaited = -1;
+  // The latest run asked for, so an older one's reply is not taken for it.
+  quint64 m_request = 0;
   QString m_refusal;
   // What a yes reruns: the operation and the flag (drain or force) it adds.
   QString m_confirmOperation;

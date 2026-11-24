@@ -113,7 +113,7 @@ export function fakeSettingsMc(): FakeSettingsMc {
     },
     telemetryWatchers: () => telemetryWatchers.size,
     onTelemetrySubscribe: null,
-    openShellOperation: { operation: null, running: false, steps: [], result: null },
+    openShellOperation: { operation: null, run: 0, running: false, steps: [], result: null },
     emitOpenShellOperation: () => {
       for (const watcher of openShellWatchers) watcher(fake.openShellOperation);
     },

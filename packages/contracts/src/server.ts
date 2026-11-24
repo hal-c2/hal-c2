@@ -506,6 +506,11 @@ export type ServerOpenShellOperationResult = typeof ServerOpenShellOperationResu
 /** The operation running or last run on the environment, as the `openShell` shape shows it. */
 export const OpenShellOperationState = Schema.Struct({
   operation: Schema.NullOr(ServerOpenShellOperation),
+  /**
+   * Its number: larger for each run than for the last, so a client tells its own
+   * run's frames (by the number its reply carries) from older ones. 0 before any.
+   */
+  run: NonNegativeInt,
   running: Schema.Boolean,
   /** Its steps so far, the last 20. */
   steps: Schema.Array(Schema.String),

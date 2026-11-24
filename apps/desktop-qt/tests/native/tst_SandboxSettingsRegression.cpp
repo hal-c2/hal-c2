@@ -25,6 +25,7 @@ struct Mc {
   bool finishAtOnce = true;
   int runs = 0;
   QJsonObject operation{{QStringLiteral("operation"), QJsonValue()},
+                        {QStringLiteral("run"), 0},
                         {QStringLiteral("running"), false},
                         {QStringLiteral("steps"), QJsonArray()},
                         {QStringLiteral("result"), QJsonValue()}};
@@ -55,6 +56,7 @@ struct Mc {
         return mc.refuse(rpc, QStringLiteral("OpenShell's uninstall is already running on this MC. Try uninstall again once it finishes."));
       }
       operation = {{QStringLiteral("operation"), QStringLiteral("uninstall")},
+                   {QStringLiteral("run"), runs},
                    {QStringLiteral("running"), true},
                    {QStringLiteral("steps"), QJsonArray()},
                    {QStringLiteral("result"), QJsonValue()}};
@@ -65,12 +67,17 @@ struct Mc {
   }
 
   void finish() {
+    end();
+    emitAll();
+  }
+
+  // The run ends, and nobody is told.
+  void end() {
     operation[QStringLiteral("running")] = false;
     operation[QStringLiteral("result")] = QJsonObject{{QStringLiteral("ok"), false},
                                                       {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
                                                       {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
                                                       {QStringLiteral("sandboxes"), 1}};
-    emitAll();
   }
 
   void emitTo(int id) { sendTo(id, operation); }
@@ -88,6 +95,11 @@ struct Mc {
   void releaseFrames() {
     holding = false;
     for (const auto& [id, frame] : std::exchange(held, {})) send(id, frame);
+  }
+  // The frames held are lost with the connection.
+  void dropFrames() {
+    holding = false;
+    held.clear();
   }
 
 private:
@@ -116,6 +128,14 @@ struct Shell {
   }
 
   QVariantMap section() const { return bridge.state()->value(QStringLiteral("sandboxSettings")).toMap(); }
+
+  // Waits for what the MC has sent so far: it answers in order.
+  void barrier(FakeMc& mc) {
+    bool done = false;
+    native.client()->call(&native, mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+                          [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
+    QTRY_VERIFY(done);
+  }
   void go(const QString& path) { native.controller<NavigationController>()->open(NavigationController::Route::settings(path)); }
 };
 
@@ -201,6 +221,34 @@ private slots:
     QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
     QCOMPARE(mc.runs, 1);
     QVERIFY(shell.section().value(QStringLiteral("refusal")).isNull());
+  }
+
+  // The connection dropped after the run's reply and before its first frame,
+  // and the run ended before the page followed the shape again: the first
+  // frame after reconnecting, the run ended, was taken for one from before the
+  // run, so the page stayed busy and its outcome asked nothing until reopened.
+  void aRunThatEndedWhileTheConnectionWasDownSettles() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.finishAtOnce = false;
+    Shell shell(home, mc.mc);
+    shell.native.client()->setRetryDelays({20});
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    mc.holdFrames();
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), QStringLiteral("uninstall")}});
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.runs, 1);
+    mc.dropFrames();
+    mc.mc.drop();
+    mc.end();
+
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
+    QVERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
+    QVERIFY(!shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
+    QCOMPARE(mc.runs, 1);
   }
 };
 

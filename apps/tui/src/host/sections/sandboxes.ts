@@ -42,11 +42,15 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   let operation: OpenShellOperationState | null = null;
   // The operation this page asked for, until its outcome arrives.
   let asked: ServerOpenShellOperation | null = null;
-  // A run this page sent that no frame has shown running yet and the MC has not
-  // refused. The actions stay off until then: its reply may land before or after that
-  // frame, and a second press in between would be refused as busy, and that
-  // refusal would forget what this page asked for.
+  // A run this page sent that the MC has not refused and no frame of has landed
+  // since its reply. The actions stay off until then: a second press in between
+  // would be refused as busy, and that refusal would forget what this page asked
+  // for.
   let starting = false;
+  // The run's number, from its reply: null until it lands.
+  let awaited: number | null = null;
+  // The latest run asked for, so an older one's reply is not taken for it.
+  let request = 0;
   let refusal: string | null = null;
   let unsubscribe: (() => void) | null = null;
 
@@ -79,17 +83,29 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   const run = (name: ServerOpenShellOperation, flags: Flags = {}) => {
     asked = name;
     starting = true;
+    awaited = null;
     refusal = null;
+    const sent = ++request;
     void host.track(
-      host.client.mcCall("server.runOpenShellOperation", { operation: name, ...flags }).then(
-        () => undefined,
-        (cause: unknown) => {
-          starting = false;
-          if (asked === name) asked = null;
-          refusal = errorText(cause);
-          host.refresh();
-        },
-      ),
+      host.client
+        .mcCall<OpenShellOperationState>("server.runOpenShellOperation", {
+          operation: name,
+          ...flags,
+        })
+        .then(
+          (reply) => {
+            // The reply names the run; a frame of it that came first settles it now.
+            if (sent !== request || !starting) return;
+            awaited = reply.run;
+            if (operation !== null && operation.run >= awaited) settle(operation);
+          },
+          (cause: unknown) => {
+            starting = false;
+            if (asked === name) asked = null;
+            refusal = errorText(cause);
+            host.refresh();
+          },
+        ),
     );
     host.refresh();
   };
@@ -108,16 +124,28 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
 
   const follow = (next: OpenShellOperationState) => {
     // A frame from before the run (the shape's first, another device's last) is
-    // shown, but neither reopens the actions nor answers the run.
-    if (starting && !(next.running && next.operation === asked)) {
+    // shown, but neither reopens the actions nor answers the run. Whichever of
+    // the reply and the run's frame lands second settles it, so a run that ended
+    // while the connection was down settles on the first frame after it.
+    if (starting && (awaited === null || next.run < awaited)) {
       operation = next;
       host.refresh();
       return;
     }
+    settle(next);
+  };
+
+  const settle = (next: OpenShellOperationState) => {
     const ended = busy() && !next.running;
     operation = next;
     starting = false;
-    if (!next.running && next.result !== null && asked !== null && asked === next.operation) {
+    if (
+      !next.running &&
+      next.result !== null &&
+      asked !== null &&
+      asked === next.operation &&
+      next.run === awaited
+    ) {
       asked = null;
       answer(next.operation, next.result);
     }
@@ -239,6 +267,7 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
       operation = null;
       asked = null;
       starting = false;
+      awaited = null;
       refusal = null;
       unsubscribe?.();
       unsubscribe = host.client.subscribeOpenShellOperation(follow);
@@ -246,6 +275,7 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     },
     close: () => {
       generation += 1;
+      request += 1;
       unsubscribe?.();
       unsubscribe = null;
     },

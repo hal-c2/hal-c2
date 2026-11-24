@@ -9,8 +9,9 @@ import type { TuiSettingsSectionState } from "../settingsSections.ts";
 const STOPS = "1 of this MC's review sandboxes is on the gateway.";
 
 // An MC with a gateway it runs and one of its reviews on it. A run starts the
-// operation and answers at once; its frames wait for `emit`, so a test can press
-// again before the first one lands. A second run while one runs is refused as busy.
+// operation, numbered, and answers at once; its frames wait for `emit`, so a test
+// can press again before the first one lands. A second run while one runs is
+// refused as busy.
 function boot() {
   const fake = fakeClient();
   const mc = fake.settings;
@@ -32,7 +33,13 @@ function boot() {
         "OpenShell's uninstall is already running on this MC. Try uninstall again once it finishes.",
       );
     }
-    state = { operation: payload.operation, running: true, steps: [], result: null };
+    state = {
+      operation: payload.operation,
+      run: state.run + 1,
+      running: true,
+      steps: [],
+      result: null,
+    };
     return state;
   });
   const emit = (next: OpenShellOperationState) => {
@@ -85,6 +92,7 @@ describe("review sandboxes", () => {
     // Another device's last uninstall, sent before this run started, lands first.
     mc.openShellOperation = {
       operation: "uninstall",
+      run: 0,
       running: false,
       steps: [],
       result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
@@ -105,6 +113,29 @@ describe("review sandboxes", () => {
     await host.settled();
     expect(host.state.get("mode")).toBe("sectionConfirm");
     expect(page().lines.join("\n")).not.toContain("already running");
+    host.destroy();
+  });
+
+  it("a run that ended while the connection was down settles on the first frame after it", async () => {
+    const { fake, mc, host, page, emit, state } = boot();
+    fake.connect();
+    host.dispatch("section.open", { id: "sandboxes" });
+    await host.settled();
+
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    await host.settled();
+    expect(mc.callsTo("server.runOpenShellOperation")).toHaveLength(1);
+    // The connection drops before the running frame, and the run ends before the
+    // shape is followed again: its first frame then is the run, ended.
+    emit({
+      ...state(),
+      running: false,
+      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+    });
+    await host.settled();
+    expect(host.state.get("mode")).toBe("sectionConfirm");
+    expect(page().confirm?.lines.join(" ")).toContain("Stop 1 review and go ahead?");
+    expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
     host.destroy();
   });
 });

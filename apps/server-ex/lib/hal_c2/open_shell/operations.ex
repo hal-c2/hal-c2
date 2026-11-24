@@ -8,9 +8,12 @@ defmodule HalC2.OpenShell.Operations do
   `[busy]` (`HalC2.OpenShell.Install`).
 
   Its state, `OpenShellOperationState`, is what the `openShell` shape shows each
-  subscriber, again on every change: the operation running or last run, its steps
-  so far, and the outcome once it ended, worded for Settings
-  (`HalC2.OpenShell.Command.settings_error/1`). An operation runs in a process of
+  subscriber, again on every change: the operation running or last run, its number
+  (`run`), its steps so far, and the outcome once it ended, worded for Settings
+  (`HalC2.OpenShell.Command.settings_error/1`). A client tells its own run's frames
+  from older ones by the number its reply carries: each run's is larger than the
+  last's, across restarts too, as it starts from the clock in microseconds; 0 is
+  none since this server started. An operation runs in a process of
   its own, unlinked, so a restart of this server never stops one halfway; the lock
   keeps a second from starting under it.
 
@@ -109,6 +112,7 @@ defmodule HalC2.OpenShell.Operations do
      %{
        runner: Keyword.get(opts, :runner),
        job: nil,
+       run: 0,
        operation: nil,
        steps: [],
        result: nil,
@@ -142,6 +146,7 @@ defmodule HalC2.OpenShell.Operations do
     state = %{
       state
       | job: {token, {pid, monitor}},
+        run: max(state.run + 1, System.os_time(:microsecond)),
         operation: operation,
         steps: [],
         result: nil
@@ -224,6 +229,7 @@ defmodule HalC2.OpenShell.Operations do
   defp snapshot(state) do
     %{
       "operation" => state.operation,
+      "run" => state.run,
       "running" => state.job != nil,
       "steps" => state.steps,
       "result" => state.result

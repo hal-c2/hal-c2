@@ -14,6 +14,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
       nothing; one with an unknown operation, an unknown argument or a flag that is not
       a boolean is refused `invalid` and starts nothing;
     * an operation starts with no steps and no result, and is given only its true flags;
+    * each operation's number is larger than every one before it, across restarts too,
+      and its reply and every frame of it carry that number; 0 before any since a
+      restart;
     * its steps are shown in order, the last 20 of them, while it runs;
     * it ends with its outcome (ok or not, with an error's code), a raise or a kill
       ending it not ok, and every subscriber is told each change;
@@ -36,6 +39,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
       trap_exit do
         home = HalC2.Prop.scratch_home("openshell-operations")
         Process.put(:runners, [])
+        Process.put(:numbers, [])
         drain()
 
         test = self()
@@ -61,9 +65,12 @@ defmodule HalC2.OpenShellOperationsPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # operation: the one running or last run; running: whether it runs; steps: its
-  # steps so far; result: how it ended, as `{ok, code}`.
-  def initial_state, do: %{operation: nil, running: false, steps: [], result: nil}
+  # operation: the one running or last run; run: which run it is, counting every
+  # run this test started (0: none since a restart); started: how many runs this
+  # test started; running: whether it runs; steps: its steps so far; result: how it
+  # ended, as `{ok, code}`.
+  def initial_state,
+    do: %{operation: nil, run: 0, started: 0, running: false, steps: [], result: nil}
 
   def command(state) do
     frequency(
@@ -136,7 +143,16 @@ defmodule HalC2.OpenShellOperationsPropTest do
         {state, {:refused, "busy"}}
 
       true ->
-        state = %{state | operation: input["operation"], running: true, steps: [], result: nil}
+        state = %{
+          state
+          | operation: input["operation"],
+            run: state.started + 1,
+            started: state.started + 1,
+            running: true,
+            steps: [],
+            result: nil
+        }
+
         flags = for {key, true} <- Enum.sort(Map.delete(input, "operation")), do: key
         {state, {:started, snapshot(state), flags}}
     end
@@ -163,8 +179,10 @@ defmodule HalC2.OpenShellOperationsPropTest do
 
   defp step(state, {:call, _, :state, []}), do: {state, snapshot(state)}
 
-  defp step(_state, {:call, _, :restart, []}),
-    do: {initial_state(), snapshot(initial_state())}
+  defp step(state, {:call, _, :restart, []}) do
+    state = %{initial_state() | started: state.started}
+    {state, snapshot(state)}
+  end
 
   defp finish(state, result) do
     state = %{state | running: false, result: result}
@@ -184,6 +202,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
   defp snapshot(state),
     do: %{
       operation: state.operation,
+      run: state.run,
       running: state.running,
       steps: state.steps,
       result: state.result
@@ -194,6 +213,10 @@ defmodule HalC2.OpenShellOperationsPropTest do
   def run(input) do
     case Operations.run(input) do
       {:ok, reply} ->
+        # Larger than every number before it.
+        numbers = Process.get(:numbers)
+        true = Enum.all?(numbers, &(&1 < reply["run"]))
+        Process.put(:numbers, numbers ++ [reply["run"]])
         changed = notified()
         ^changed = model(reply)
         assert_receive {:runner, pid, operation, opts}, 5_000
@@ -267,9 +290,15 @@ defmodule HalC2.OpenShellOperationsPropTest do
     end
   end
 
+  # A run's number as the how-manieth run this test started it is, 0 as 0.
   defp model(state),
     do: %{
       operation: state["operation"],
+      run:
+        if(state["run"] == 0,
+          do: 0,
+          else: Enum.find_index(Process.get(:numbers), &(&1 == state["run"])) + 1
+        ),
       running: state["running"],
       steps: state["steps"],
       result: state["result"] && {state["result"]["ok"], state["result"]["code"]}
