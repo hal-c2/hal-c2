@@ -121,6 +121,10 @@ Item {
 
         function cleanup() {
             loader.source = "";
+            // A test that minimized the window and failed mid-way leaves it
+            // minimized for every test after it.
+            if (test.Window.window && test.Window.window.visibility === Window.Minimized)
+                test.Window.window.showNormal();
             Shell.state = Object.assign({}, Shell.state, {
                 projectIcons: undefined
             });
