@@ -562,10 +562,10 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
-  # A client writes the whole document, but `plugins` is the host's: whatever it sends
-  # there, no plugin is turned on or off, granted more or less, or set otherwise.
-  defp act(s, {:call, _, :client_write, [_id, _edit]}),
-    do: if(s.broken, do: {s, {:tag, "ServerSettingsError"}}, else: {s, :ok})
+  # A client writes the whole document, but `plugins` is the host's: a write that
+  # changes it is refused, one that leaves it out keeps the host's, and either way no
+  # plugin is turned on or off, granted more or less, or set otherwise.
+  defp act(s, {:call, _, :client_write, [_id, _edit]}), do: {s, {:client_write, s.broken}}
 
   defp act(s, {:call, _, :disable, [id]}) do
     case s.held[id] do
@@ -914,6 +914,15 @@ defmodule HalC2.PluginsPropTest do
        do: []
 
   defp reply_problems({:exactly, value}, value), do: []
+
+  defp reply_problems({:client_write, broken}, {:client_write, changed, reply}) do
+    case reply do
+      {:error, %{"_tag" => "ServerSettingsError"}} when broken or changed -> []
+      {:ok, _} when not broken and not changed -> []
+      _ -> [{:reply, {:client_write, broken, changed}, reply}]
+    end
+  end
+
   defp reply_problems({:check, ok}, {:ok, %{"ok" => ok}}), do: []
   defp reply_problems({:file, content}, {:ok, %{"content" => content}}), do: []
   defp reply_problems(expect, reply), do: [{:reply, expect, reply}]
@@ -1111,14 +1120,18 @@ defmodule HalC2.PluginsPropTest do
   def disable(id), do: {Plugins.handle("disable", %{"id" => id}), observe()}
 
   # What a client does: reads the document, changes `plugins.<id>` and writes it back.
+  # The reply carries whether the client changed the key it sent.
   def client_write(id, edit) do
     {:ok, %{"settings" => settings, "version" => version}} =
       HalC2.Rpc.handle("hal-c2.readSettings", %{})
 
     edited = edit_plugins(settings, id, edit)
+    changed = Map.has_key?(edited, "plugins") and edited["plugins"] != settings["plugins"]
 
-    {HalC2.Rpc.handle("hal-c2.writeSettings", %{"settings" => edited, "version" => version}),
-     observe()}
+    reply =
+      HalC2.Rpc.handle("hal-c2.writeSettings", %{"settings" => edited, "version" => version})
+
+    {{:client_write, changed, reply}, observe()}
   end
 
   defp edit_plugins(settings, _id, :drop_all), do: Map.delete(settings, "plugins")

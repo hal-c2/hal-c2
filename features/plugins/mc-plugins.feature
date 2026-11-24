@@ -9,6 +9,7 @@
 #   apps/server-ex/lib/hal_c2/plugins.ex, apps/server-ex/lib/hal_c2/plugins/kinds.ex (settings_changed: settings live, else a restart)
 #   apps/server-ex/lib/hal_c2/rpc.ex (required_scopes: what saving a plugin's settings needs)
 #   apps/server-ex/lib/hal_c2/plugins.ex (exec settings and calls need terminal:operate)
+#   apps/server-ex/lib/hal_c2/settings.ex (a client's write keeps the MC's plugins key)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex, apps/server-ex/lib/hal_c2/vcs.ex (git hosts)
 #   docs/orchestration-v2/provider-capability-system.md (adapter contract)
 #   docs/internals/providers.md (route by instance, setup never as a health-check side effect)
@@ -149,6 +150,15 @@ Feature: MC plugins
     When it saves a plugin setting that names the program the plugin runs
     Then the save is refused for want of the shell's scope
     And the previous settings are kept
+
+  # A client's settings document carries plugins as the MC holds them. Only the plugin
+  # calls change them, so a write that edits them is refused rather than dropped.
+  @mc
+  Scenario: A plugin is not turned off or granted more through the settings document
+    Given the plugin "jira-tools" is enabled
+    When a client writes the settings document with "jira-tools" turned off and granted more
+    Then the write is refused, naming the calls that change plugins
+    And "jira-tools" still runs with what it was granted
 
   @mc
   Scenario: Secret plugin settings are stored separately and never sent back to clients

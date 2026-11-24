@@ -1130,7 +1130,8 @@ defmodule HalC2.Plugins do
   end
 
   @impl true
-  # A client may turn plugins on or off by writing the settings document itself.
+  # The host's own writes and `plugins` records a client's save filtered
+  # (`HalC2.Plugins.Host.seal_records/3`) reach the plugins here.
   def handle_info({:hal_c2_settings, _mc, _settings}, state),
     do: {:noreply, state |> reconcile() |> push()}
 

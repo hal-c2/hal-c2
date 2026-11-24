@@ -318,7 +318,7 @@ defmodule HalC2.PluginsTest do
     assert {:ok, "swap"} = call("runner", "swap", :all)
   end
 
-  test "a client's settings write keeps whether a plugin is on, what it was granted and its settings" do
+  test "a client's settings write cannot change whether a plugin is on, what it was granted or its settings" do
     package("notes", "1", ["slack:read"])
     Plugins.handle("rescan", %{})
 
@@ -328,24 +328,39 @@ defmodule HalC2.PluginsTest do
     assert {:ok, _} = save("notes", %{"count" => 2})
     held = HalC2.Settings.settings()["plugins"]
 
+    # A change is refused, and says where plugins change instead.
     for edit <- [
           &put_in(&1, ["plugins", "notes", "enabled"], false),
           &put_in(&1, ["plugins", "notes", "granted"], ["slack:read", "slack:write"]),
           &put_in(&1, ["plugins", "notes", "settings", "count"], 9),
           &put_in(&1, ["plugins", "other"], %{"enabled" => true, "granted" => ["slack:write"]}),
-          &Map.delete(&1, "plugins")
+          &Map.put(&1, "plugins", %{})
         ] do
       {:ok, %{"settings" => settings, "version" => version}} =
         HalC2.Rpc.handle("hal-c2.readSettings", %{})
 
-      assert {:ok, _} =
+      assert {:error, %{"_tag" => "ServerSettingsError", "message" => message}} =
                HalC2.Rpc.handle("hal-c2.writeSettings", %{
-                 "settings" => edit.(settings),
+                 "settings" => edit.(Map.put(settings, "enableAssistantStreaming", true)),
                  "version" => version
                })
 
+      assert message =~ "plugins.enable"
       assert HalC2.Settings.settings()["plugins"] == held
+      refute HalC2.Settings.settings()["enableAssistantStreaming"]
     end
+
+    # A document without the key keeps the MC's copy.
+    {:ok, %{"settings" => settings, "version" => version}} =
+      HalC2.Rpc.handle("hal-c2.readSettings", %{})
+
+    assert {:ok, _} =
+             HalC2.Rpc.handle("hal-c2.writeSettings", %{
+               "settings" => Map.delete(settings, "plugins"),
+               "version" => version
+             })
+
+    assert HalC2.Settings.settings()["plugins"] == held
 
     # The rest of the document is the client's.
     {:ok, %{"settings" => settings, "version" => version}} =

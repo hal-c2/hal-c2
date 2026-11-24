@@ -410,8 +410,9 @@ defmodule HalC2.Settings do
   @doc """
   Replaces the document if it is still at `version`; returns the new version. A
   `:client` document (a client's, an agent's, any caller's but the plugin host's) keeps
-  the MC's `plugins` key (`HalC2.Plugins.Host.seal_records/3`); `HalC2.Plugins` writes
-  as the `:host`.
+  the MC's `plugins` key (`HalC2.Plugins.Host.seal_records/3`): one that leaves the key
+  out keeps the MC's copy, and one that changes it is refused with a
+  `ServerSettingsError`. `HalC2.Plugins` writes as the `:host`.
   """
   def put(settings, version, writer \\ :client) when writer in [:client, :host],
     do: GenServer.call(__MODULE__, {:put, settings, version, writer})
@@ -727,16 +728,24 @@ defmodule HalC2.Settings do
   @impl true
   def handle_call({:put, settings, version, writer}, from, %{version: version} = state) do
     {:reply, reply, state} =
-      handle_call(
-        {:update,
-         &carry_over(
-           HalC2.Plugins.Host.seal_records(settings, state.settings, writer == :client),
-           state.settings,
-           &1
-         )},
-        from,
-        state
-      )
+      if writer == :client and Map.has_key?(settings, "plugins") and
+           settings["plugins"] != state.settings["plugins"] do
+        {:reply,
+         {:error,
+          "Plugins change through plugins.enable, plugins.disable and plugins.saveSettings, " <>
+            "not the settings document."}, state}
+      else
+        handle_call(
+          {:update,
+           &carry_over(
+             HalC2.Plugins.Host.seal_records(settings, state.settings, writer == :client),
+             state.settings,
+             &1
+           )},
+          from,
+          state
+        )
+      end
 
     # A client is answered with the error type it knows (`ServerSettingsError`).
     reply =

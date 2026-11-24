@@ -529,6 +529,38 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context
   end
 
+  step "a client writes the settings document with {string} turned off and granted more",
+       %{args: [id]} = context do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    edited =
+      settings
+      |> put_in(["plugins", id, "enabled"], false)
+      |> update_in(["plugins", id, "granted"], &Enum.uniq((&1 || []) ++ ["slack:write"]))
+
+    {reply, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => edited, "version" => version})
+
+    context
+    |> Map.put(:reply, reply)
+    |> Map.put(:plugin, id)
+    |> Map.put(:granted_before, Fixtures.entry(id)["granted"])
+  end
+
+  step "the write is refused, naming the calls that change plugins", context do
+    assert {:error, message, %{"_tag" => "ServerSettingsError"}} = context.reply
+    assert message =~ "plugins.disable"
+    context
+  end
+
+  step "{string} still runs with what it was granted", %{args: [id]} = context do
+    assert %{"status" => "running", "enabled" => true} = entry = Fixtures.entry(id)
+    assert entry["granted"] == context.granted_before
+    refute "slack:write" in (HalC2.Settings.settings()["plugins"][id]["granted"] || [])
+    context
+  end
+
   step "the user saves a token for {string}", %{args: [id]} = context do
     context = Fixtures.install(context, id)
 
