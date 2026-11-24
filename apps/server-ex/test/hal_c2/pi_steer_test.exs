@@ -3,6 +3,10 @@ defmodule HalC2.PiSteerTest do
 
   alias HalC2.Pi.ThreadRuntime
 
+  # Each message waited on is certain to come; ExUnit's 100ms default fails a busy
+  # runner that schedules the stand-in or the steer's task late.
+  @wait 5_000
+
   setup do
     start_supervised!({Registry, keys: :unique, name: HalC2.Pi.Registry})
     :ok
@@ -29,7 +33,7 @@ defmodule HalC2.PiSteerTest do
         catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
       end)
 
-    assert_receive :steer_received
+    assert_receive :steer_received, @wait
     Process.exit(pid, :kill)
 
     assert Task.await(task)
@@ -48,7 +52,7 @@ defmodule HalC2.PiSteerTest do
         loop(parent, steer_reply)
       end)
 
-    assert_receive :registered
+    assert_receive :registered, @wait
     on_exit(fn -> Process.exit(pid, :kill) end)
     pid
   end
