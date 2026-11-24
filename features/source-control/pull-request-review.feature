@@ -83,6 +83,7 @@
 #   apps/server/src/persistence/PullRequestFilesViewed.ts
 #   apps/server/src/persistence/Migrations/053_PullRequestFilesViewed.ts
 #   apps/web/src/components/pullRequest/PullRequestMarkdown.tsx
+#   apps/desktop-qt/qml/HalC2/Bricks/PullRequestReviewPanel.qml, apps/desktop-qt/src/ShellBridge.cpp (Shell.openWebLink)
 #   apps/web/src/components/pullRequest/pullRequestMarkdown.logic.ts, PullRequestMarkdownEditor.tsx
 #   apps/web/src/components/pullRequest/pullRequestReactions.logic.ts, PullRequestGhosts.tsx
 #   apps/web/src/components/pullRequest/PullRequestSummaryTab.test.tsx, pullRequestSummaryScroll.logic.ts
@@ -892,8 +893,43 @@ Feature: Reviewing a pull request
     Examples:
       | address                       | outcome                             |
       | https://preview.example.dev   | opens "https://preview.example.dev" |
-      | mailto:ops@example.com        | opens a mail to "ops@example.com"   |
+      | mailto:ops@example.com        | is plain text                       |
       | javascript:alert(1)           | is plain text                       |
+
+  # #1801: what a pull request's author, reviewers and commenters wrote is theirs, and a link
+  # in it can show one address and lead to another. Only a web address opens, in the browser.
+  # The panel's QML tests cover this (tst_RightPanel); the feature runners' steps are #1808.
+  @desktop @mobile @backlog-desktop @backlog-mobile
+  Scenario Outline: A link in a pull request's text opens only when it is a web address
+    Given a comment on pull request 42 links "the docs" to "<address>"
+    When the user opens "the docs" in the comment
+    Then <outcome>
+
+    Examples:
+      | address                  | outcome                                          |
+      | https://example.com/docs | "https://example.com/docs" opens in the browser  |
+      | http://example.com/docs  | "http://example.com/docs" opens in the browser   |
+      | file:///etc/hosts        | nothing opens                                    |
+      | hal-c2://new?prompt=hi   | nothing opens and no thread starts               |
+      | mailto:ops@example.com   | nothing opens                                    |
+      | slack://open             | nothing opens                                    |
+
+  # #1802: markup in a pull request's text is shown as written, never drawn or loaded.
+  @desktop @mobile @backlog-desktop @backlog-mobile
+  Scenario Outline: Markup in a pull request's text is shown as written and loads nothing
+    Given the <part> of pull request 42 holds "<b>hi</b> <img src=\"https://tracker.example/p.png\">"
+    When the user reads pull request 42
+    Then the <part> shows "<b>hi</b> <img src=\"https://tracker.example/p.png\">" as written
+    And no image is loaded
+
+    Examples:
+      | part                               |
+      | title                              |
+      | description                        |
+      | author's name of a review comment  |
+      | body of a review comment           |
+      | body of a conversation comment     |
+      | name of a check                    |
 
   # Legacy: apps/web/src/components/pullRequest/pullRequestMarkdown.logic.ts (remarkPullRequestAutolinks)
   @backlog @desktop

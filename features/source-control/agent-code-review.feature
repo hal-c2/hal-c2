@@ -1200,6 +1200,19 @@ Feature: Agent code review
       Then its verdict, summary and comments are shown
       And the user can dismiss comments, and publish it once shown how it is posted
 
+    # #1801, #1802: the agent read a pull request anyone can open, so what it wrote is
+    # untrusted. The page's QML tests cover this (tst_ReviewsPage); the runners' steps are #1808.
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: A review's findings show their markup as written and open only web links
+      Given the review of #13 is waiting with a summary that links "the guide" to "https://example.com/guide" and shows an HTML image
+      And a comment of the review links "hosts" to "file:///etc/hosts"
+      When the user opens the review of #13 on the "Reviews" page
+      Then the summary shows the HTML image as written and loads nothing
+      When the user opens "the guide"
+      Then "https://example.com/guide" opens in the browser
+      When the user opens "hosts"
+      Then nothing opens
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a check the machine blocked as a problem of the machine
       Given the review of #13 is waiting with a check its machine blocked
