@@ -95,6 +95,7 @@ Rectangle {
                 Text {
                     objectName: "reviewTitle"
                     Layout.fillWidth: true
+                    textFormat: Text.PlainText
                     text: root.detail.title ?? qsTr("Pull request #%1").arg(root.source?.number ?? 0)
                     elide: Text.ElideRight
                     color: root.foreground
@@ -103,6 +104,7 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
+                    textFormat: Text.PlainText
                     text: ["#" + (root.source?.number ?? 0), root.detail.stateLabel ?? "", root.detail.author ?? "", root.detail.branches ?? ""].filter(part => part.length > 0).join(" · ")
                     elide: Text.ElideRight
                     color: root.muted
@@ -268,6 +270,7 @@ Rectangle {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
+                    textFormat: Text.PlainText
                     text: root.source?.status === "error" ? root.source.message : root.source?.status === "loading" ? qsTr("Loading the pull request…") : ""
                     color: root.source?.status === "error" ? root.errorColor : root.muted
                     font.pixelSize: Theme.type.body.size
@@ -313,6 +316,7 @@ Rectangle {
                         Text {
                             objectName: "reviewStackTitle"
                             Layout.fillWidth: true
+                            textFormat: Text.PlainText
                             text: stackSection.shown ? qsTr("Stack #%1 · layer %2 of %3 onto %4").arg(stackSection.stack.number).arg(stackSection.stack.position).arg(stackSection.stack.size).arg(stackSection.stack.base) : ""
                             color: root.foreground
                             font.pixelSize: Theme.type.meta.size
@@ -327,6 +331,7 @@ Rectangle {
                             Text {
                                 objectName: "reviewStackNotice"
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: stackSection.stack.notice ?? ""
                                 color: root.warningColor
                                 font.pixelSize: Theme.type.meta.size
@@ -408,6 +413,7 @@ Rectangle {
                         Layout.fillWidth: true
                         visible: (root.detail.behindBy ?? 0) > 0
                         wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
                         text: (root.detail.behindBy ?? 0) === 1 ? qsTr("This branch is %n commit behind its base.", "", 1) : qsTr("This branch is %n commits behind its base.", "", root.detail.behindBy ?? 0)
                         color: root.warningColor
                         font.pixelSize: Theme.type.meta.size
@@ -419,21 +425,21 @@ Rectangle {
                         color: root.errorColor
                         font.pixelSize: Theme.type.meta.size
                     }
-                    Text {
+                    // The author's text: Markdown escapes its markup and loads no images, and
+                    // its links open only on the web.
+                    Markdown {
                         objectName: "reviewDescription"
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        textFormat: Text.MarkdownText
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
-                        color: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
-                        font.pixelSize: Theme.type.body.size
-                        linkColor: Theme.link
-                        onLinkActivated: link => Qt.openUrlExternally(link)
+                        textColor: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
+                        fontSize: Theme.type.body.size
+                        onLinkActivated: link => Shell.openWebLink(link)
                     }
                     Text {
                         Layout.fillWidth: true
                         visible: (root.detail.labels ?? []).length > 0
                         wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
                         text: qsTr("Labels: %1").arg((root.detail.labels ?? []).join(", "))
                         color: root.muted
                         font.pixelSize: Theme.type.meta.size
@@ -442,6 +448,7 @@ Rectangle {
                         Layout.fillWidth: true
                         visible: (root.detail.reviewers ?? []).length > 0
                         wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
                         text: qsTr("Reviewers: %1").arg((root.detail.reviewers ?? []).join(", "))
                         color: root.muted
                         font.pixelSize: Theme.type.meta.size
@@ -477,12 +484,14 @@ Rectangle {
                             }
                             Text {
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: parent.modelData.name
                                 elide: Text.ElideRight
                                 color: root.foreground
                                 font.pixelSize: Theme.type.meta.size
                             }
                             Text {
+                                textFormat: Text.PlainText
                                 text: parent.modelData.status
                                 color: root.checkColor(parent.modelData.status)
                                 font.pixelSize: Theme.type.caption.size
@@ -543,6 +552,7 @@ Rectangle {
 
                                         Text {
                                             Layout.fillWidth: true
+                                            textFormat: Text.PlainText
                                             text: reviewThread.modelData.path + (reviewThread.modelData.line > 0 ? ":" + reviewThread.modelData.line : "") + (reviewThread.modelData.outdated ? qsTr(" · outdated") : "") + (reviewThread.modelData.resolved ? qsTr(" · resolved") : "")
                                             elide: Text.ElideMiddle
                                             color: root.muted
@@ -559,15 +569,32 @@ Rectangle {
                                     Repeater {
                                         model: reviewThread.modelData.resolved ? [] : reviewThread.modelData.comments
 
-                                        delegate: Text {
+                                        delegate: ColumnLayout {
+                                            id: threadComment
+
                                             required property var modelData
 
+                                            objectName: "reviewThreadComment"
                                             Layout.fillWidth: true
-                                            wrapMode: Text.Wrap
-                                            text: "<b>" + modelData.author + "</b> " + modelData.body
-                                            textFormat: Text.StyledText
-                                            color: root.foreground
-                                            font.pixelSize: Theme.type.meta.size
+                                            spacing: 2
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: threadComment.modelData.author
+                                                textFormat: Text.PlainText
+                                                elide: Text.ElideRight
+                                                color: root.foreground
+                                                font.pixelSize: Theme.type.meta.size
+                                                font.weight: Font.DemiBold
+                                            }
+                                            Markdown {
+                                                Layout.fillWidth: true
+                                                visible: threadComment.modelData.body.length > 0
+                                                text: threadComment.modelData.body
+                                                textColor: root.foreground
+                                                fontSize: Theme.type.meta.size
+                                                onLinkActivated: link => Shell.openWebLink(link)
+                                            }
                                         }
                                     }
                                 }
@@ -586,21 +613,20 @@ Rectangle {
 
                         Text {
                             Layout.fillWidth: true
+                            textFormat: Text.PlainText
                             text: [comment.modelData.author, comment.modelData.reviewState.length > 0 ? comment.modelData.reviewState.toLowerCase().replace("_", " ") : "", comment.modelData.path].filter(part => part.length > 0).join(" · ")
                             elide: Text.ElideRight
                             color: root.muted
                             font.pixelSize: Theme.type.caption.size
                         }
-                        Text {
+                        Markdown {
+                            objectName: "reviewConversationBody"
                             Layout.fillWidth: true
                             visible: comment.modelData.body.length > 0
-                            wrapMode: Text.Wrap
-                            textFormat: Text.MarkdownText
                             text: comment.modelData.body
-                            color: root.foreground
-                            font.pixelSize: Theme.type.meta.size
-                            linkColor: Theme.link
-                            onLinkActivated: link => Qt.openUrlExternally(link)
+                            textColor: root.foreground
+                            fontSize: Theme.type.meta.size
+                            onLinkActivated: link => Shell.openWebLink(link)
                         }
                     }
                 }
@@ -639,6 +665,7 @@ Rectangle {
                         Layout.fillWidth: true
                         visible: text.length > 0
                         wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
                         text: root.source?.problem ?? ""
                         color: root.errorColor
                         font.pixelSize: Theme.type.meta.size
@@ -730,6 +757,7 @@ Rectangle {
             Label {
                 objectName: "reviewStackConfirmTitle"
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: stackConfirm.question.title ?? ""
                 color: root.foreground
                 font.pixelSize: Theme.type.title.size
@@ -739,6 +767,7 @@ Rectangle {
             Label {
                 objectName: "reviewStackConfirmDescription"
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: stackConfirm.question.description ?? ""
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Theme.type.body.size
@@ -848,6 +877,7 @@ Rectangle {
 
                             Text {
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: candidate.modelData.title
                                 elide: Text.ElideRight
                                 color: candidate.enabled ? root.foreground : root.muted
@@ -856,6 +886,7 @@ Rectangle {
                             Text {
                                 Layout.fillWidth: true
                                 visible: text.length > 0
+                                textFormat: Text.PlainText
                                 text: candidate.modelData.project
                                 elide: Text.ElideRight
                                 color: root.muted

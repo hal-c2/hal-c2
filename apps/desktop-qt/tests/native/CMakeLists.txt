@@ -25,6 +25,11 @@ target_compile_definitions(tst_FolderExplorer PRIVATE HAL_C2_TEST_SOURCE_DIR="${
 target_link_libraries(tst_FolderExplorer PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 add_test(NAME FolderExplorer COMMAND tst_FolderExplorer)
 set_tests_properties(FolderExplorer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software")
+# What links from untrusted text (pull requests, reviews) may open.
+add_executable(tst_WebLinks tst_WebLinks.cpp ../../src/ShellBridge.cpp)
+target_include_directories(tst_WebLinks PRIVATE ../../src)
+target_link_libraries(tst_WebLinks PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Test)
+add_test(NAME WebLinks COMMAND tst_WebLinks)
 add_executable(tst_LocalFolderModel tst_LocalFolderModel.cpp ../../src/LocalFolderModel.cpp)
 target_include_directories(tst_LocalFolderModel PRIVATE ../../src)
 target_link_libraries(tst_LocalFolderModel PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Test)

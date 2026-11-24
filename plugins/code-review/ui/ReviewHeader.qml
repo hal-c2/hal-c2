@@ -182,6 +182,7 @@ Rectangle {
             Text {
                 objectName: "codeReviewVerdict"
                 visible: text.length > 0
+                textFormat: Text.PlainText
                 text: header.verdictText(header.verdict)
                 color: header.tone
                 font.pixelSize: Theme.type.meta.size
@@ -209,7 +210,7 @@ Rectangle {
                 subtle: true
                 visible: (header.review?.url ?? "").length > 0
                 text: qsTr("Open on GitHub")
-                onClicked: Qt.openUrlExternally(header.review.url)
+                onClicked: Shell.openWebLink(header.review.url)
             }
         }
 

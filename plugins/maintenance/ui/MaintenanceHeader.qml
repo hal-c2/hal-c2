@@ -131,7 +131,7 @@ Rectangle {
                 subtle: true
                 visible: (header.run?.prUrl ?? "").length > 0
                 text: qsTr("Open on GitHub")
-                onClicked: Qt.openUrlExternally(header.run.prUrl)
+                onClicked: Shell.openWebLink(header.run.prUrl)
             }
         }
 

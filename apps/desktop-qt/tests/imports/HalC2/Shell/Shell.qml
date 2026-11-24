@@ -13,6 +13,8 @@ QtObject {
     property var dispatchedActions: []
     property int dispatchCount: 0
     property var openedExternally: []
+    // What openWebLink was handed (ShellBridge refuses anything but a web address; tst_WebLinks).
+    property var webLinks: []
     property bool echoTextEdits: true
     property bool localFolderImportEnabled: false
     // The clipboard: its text and the files clipboardFiles reads.
@@ -81,6 +83,7 @@ QtObject {
         dispatchedActions = [];
         dispatchCount = 0;
         openedExternally = [];
+        webLinks = [];
         state = {
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
@@ -143,6 +146,11 @@ QtObject {
 
     function openExternal(url) {
         openedExternally = openedExternally.concat([String(url)]);
+    }
+
+    function openWebLink(url) {
+        webLinks = webLinks.concat([String(url)]);
+        return true;
     }
 
     function localDirectoryPath(url) {
