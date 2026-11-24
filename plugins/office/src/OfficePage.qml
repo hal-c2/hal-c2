@@ -42,7 +42,12 @@ Item {
     implicitWidth: 900
     implicitHeight: 600
 
-    property bool applicationActive: Qt.application.state === Qt.ApplicationActive
+    // Whether the office can be seen at all: the app neither hidden nor
+    // suspended, its window not minimized. A window without focus still shows
+    // it, so the office goes on for someone watching it from another window.
+    property bool inSight: Qt.application.state !== Qt.ApplicationHidden
+        && Qt.application.state !== Qt.ApplicationSuspended
+        && Window.visibility !== Window.Minimized && Window.visibility !== Window.Hidden
     // Movers at work and desks waiting for one.
     property int moves: 0
     // The office as drawn: its size in tiles, its furniture, each desk and
@@ -1685,7 +1690,7 @@ Item {
             seed: 0x0ff1ce
             columns: 0
             rows: 0
-            active: page.applicationActive
+            active: page.inSight
             busy: game.actorCount > 0 || page.moves > 0
             tickedAt: Date.now()
             entrance: page.world?.entrance ?? [0, 0]
