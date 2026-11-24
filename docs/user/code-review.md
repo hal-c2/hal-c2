@@ -120,7 +120,9 @@ of your **Trusted logins**, unless their commits come from someone else's fork. 
 it on, those reviews run here, so the pull request's code and text reach your
 machine, its files and its credentials. The agent still gets only its tool to report
 with, none of HAL-C2's others, and of the review comments already on the pull
-request it reads only those left by people HAL-C2 trusts. Every other pull request is
+request, HAL-C2 puts only those left by people it trusts in the agent's prompt.
+The agent runs commands as you, though, so it could still fetch the others with
+your GitHub login. Every other pull request is
 reviewed in a sandbox either way. The old **Sandbox every review** switch is gone,
 and whatever it was set to, reviews start out sandboxed.
 
@@ -186,9 +188,9 @@ shows it apart from the verdict, so you can fix it on the machine and review
 again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
-pull request. The agent also reads the pull request's description and the
-review comments already on it (on this machine, only those of people HAL-C2
-trusts), so it can judge the change against what it says it does and leave out what
+pull request. HAL-C2 also puts the pull request's description and the
+review comments already on it in the agent's prompt (on this machine, only the
+comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
 someone else already raised.
 
 **Publishing** decides what reaches GitHub, for every repository or per

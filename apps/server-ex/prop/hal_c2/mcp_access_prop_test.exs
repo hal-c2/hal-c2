@@ -16,8 +16,10 @@ defmodule HalC2.McpAccessPropTest do
 
   @moduletag timeout: :infinity
 
-  @projects %{"t-a" => "p-a", "t-b" => "p-b", "t-r" => "p-a"}
-  @kept "t-r"
+  @projects %{"t-a" => "p-a", "t-b" => "p-b", "t-r" => "p-a", "t-o" => "p-b"}
+  # Kept to the code-review plugin's tools: "t-r" by the `"tools"` mark, "t-o" by the
+  # mark of a review launched before launches carried it.
+  @kept ~w(t-r t-o)
   @keys %{"preview" => "enableAgentBrowserAccess", "device" => "enableAgentDeviceAccess"}
 
   property "a thread's agent reaches what its project allows",
@@ -47,9 +49,20 @@ defmodule HalC2.McpAccessPropTest do
   # --- the real thing --------------------------------------------------------------
 
   def launch(thread) do
-    plugin = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
     row = %{"id" => thread, "projectId" => @projects[thread]}
-    row = if thread == @kept, do: Map.put(row, "plugin", plugin), else: row
+
+    row =
+      case thread do
+        "t-r" ->
+          Map.put(row, "plugin", %{"id" => "code-review", "kind" => "review", "tools" => "plugin"})
+
+        "t-o" ->
+          Map.put(row, "plugin", %{"id" => "code-review", "kind" => "review"})
+
+        _ ->
+          row
+      end
+
     {:ok, _} = HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => row}}])
 
     :ok
@@ -98,6 +111,21 @@ defmodule HalC2.McpAccessPropTest do
     end
   end
 
+  # A program an earlier MC started reattaches here with the credential that MC gave it:
+  # every capability, and no plugin named. Whether it is refused one of HAL-C2's tools.
+  def reattach(thread) do
+    token = "old-#{System.unique_integer([:positive])}"
+
+    caller = %{
+      thread_id: thread,
+      instance: "reattached",
+      capabilities: MapSet.new(~w(preview device))
+    }
+
+    :ok = HalC2.Mcp.restore([{token, caller, 0}])
+    refused?(%{authorization: "Bearer " <> token})
+  end
+
   defp refused?(%{authorization: auth}) do
     body = %{
       "jsonrpc" => "2.0",
@@ -123,7 +151,8 @@ defmodule HalC2.McpAccessPropTest do
       {2, {:call, __MODULE__, :launch, [thread()]}},
       {4, {:call, __MODULE__, :set, [scope(), oneof(Map.keys(@keys)), value()]}},
       {3, {:call, __MODULE__, :access, [thread()]}},
-      {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}}
+      {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}},
+      {1, {:call, __MODULE__, :reattach, [thread()]}}
     ])
   end
 
@@ -146,15 +175,20 @@ defmodule HalC2.McpAccessPropTest do
   def postcondition(state, {:call, _, :access, [thread]}, result),
     do: result == expected(state, thread)
 
+  def postcondition(state, {:call, _, :reattach, [thread]}, result),
+    do: result == kept?(state, thread)
+
   def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
     cond do
-      thread == @kept and MapSet.member?(state.launched, thread) -> result == {:plugin, true}
+      kept?(state, thread) -> result == {:plugin, true}
       MapSet.member?(expected(state, thread), "preview") -> result == {:hal_c2, false}
       true -> result == :none
     end
   end
 
   def postcondition(_state, _call, result), do: result == :ok
+
+  defp kept?(state, thread), do: thread in @kept and MapSet.member?(state.launched, thread)
 
   defp expected(state, thread) do
     project = if MapSet.member?(state.launched, thread), do: @projects[thread]

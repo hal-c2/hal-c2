@@ -211,12 +211,26 @@ defmodule HalC2.Mcp do
 
   @doc """
   The plugin whose agent tools alone the agent of `thread_id` gets, or nil: the
-  plugin that started it with `tools: :plugin`.
+  plugin that started it with `tools: :plugin`. A code review started before
+  launches carried the `"tools"` mark is kept to its plugin's tools too, as every
+  review now is.
   """
   def kept_to(thread_id) do
     case thread(thread_id)["plugin"] do
       %{"id" => id, "tools" => "plugin"} when is_binary(id) -> id
+      %{"id" => "code-review", "kind" => "review"} -> "code-review"
       _ -> nil
+    end
+  end
+
+  # A credential this MC did not mint for the thread as it stands (an earlier MC's,
+  # restored with a reattached program or kept over a release upgrade) is narrowed
+  # to the thread's plugin's tools when the thread is kept to them. It is never
+  # widened: one that reaches more than `wanted/1` says rotates at the next preparation.
+  defp kept(caller) do
+    case kept_to(caller.thread_id) do
+      nil -> Map.put_new(caller, :plugin, nil)
+      plugin -> %{caller | capabilities: MapSet.new()} |> Map.put(:plugin, plugin)
     end
   end
 
@@ -337,6 +351,8 @@ defmodule HalC2.Mcp do
     with {:ok, token} <- mcp_bearer(authorization),
          [{_, caller, last_alive}] <- :ets.lookup(@table, token),
          :ok <- alive(token, caller, last_alive) do
+      caller = scoped(token, caller)
+
       case JSON.decode(body) do
         {:ok, %{"method" => method} = request} -> answer(request, method, caller, headers)
         _ -> {400, %{}, rpc_error(nil, -32700, "Parse error")}
@@ -354,6 +370,16 @@ defmodule HalC2.Mcp do
            "message" => "A valid provider-scoped MCP bearer credential is required."
          }}
     end
+  end
+
+  # A credential minted before credentials named a plugin, still live after a release
+  # upgrade, takes its thread's scope (`kept/1`) at its first request here.
+  defp scoped(_token, caller) when is_map_key(caller, :plugin), do: caller
+
+  defp scoped(token, caller) do
+    caller = kept(caller)
+    :ets.update_element(@table, token, {2, caller})
+    caller
   end
 
   defp mcp_bearer(authorization) do
@@ -630,11 +656,14 @@ defmodule HalC2.Mcp do
       else: []
   end
 
-  @doc "Honours credentials an earlier MC gave a program this one reattached to."
+  @doc """
+  Honours credentials an earlier MC gave a program this one reattached to, each kept
+  to its thread's plugin's tools when the thread is (`kept_to/1`), whatever it carried.
+  """
   def restore(credentials) do
     if :ets.whereis(@table) != :undefined do
       now = System.monotonic_time(:millisecond)
-      for {token, caller, _} <- credentials, do: :ets.insert(@table, {token, caller, now})
+      for {token, caller, _} <- credentials, do: :ets.insert(@table, {token, kept(caller), now})
     end
 
     :ok

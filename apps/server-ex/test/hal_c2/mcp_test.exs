@@ -236,31 +236,63 @@ defmodule HalC2.McpTest do
     refute Enum.any?(kept, &(&1 =~ "delegate_task"))
   end
 
-  # A credential minted before credentials named a plugin, as a restored one is, is not
-  # what a kept thread wants: preparing it rotates, and the old token stops working.
-  test "a kept thread's unscoped credential rotates at preparation" do
+  # A code review launched before launches carried the `"tools"` mark is kept to its
+  # plugin's tools like one launched since: preparing gives it the kept server, and a
+  # broad credential an earlier MC gave its program is narrowed as it is restored, so
+  # the reattached agent keeps its report tool and reaches nothing of HAL-C2's.
+  test "a review launched before the tools mark is kept to its plugin's tools" do
     start_supervised!(HalC2.Settings)
-    mark = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
-    thread_id = launch("hello", %{}, plugin: mark)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
     await_statuses(thread_id, ["completed"])
-    %{authorization: kept} = HalC2.Mcp.for_agent(thread_id, "codex")
-    "Bearer " <> token = kept
 
-    [{^token, caller, _}] = HalC2.Mcp.credentials(thread_id)
+    assert HalC2.Mcp.kept_to(thread_id) == "code-review"
+    assert %{report: true, authorization: auth} = HalC2.Mcp.for_agent(thread_id, "codex")
+    assert denied?(auth, "hal_c2_thread_list")
+
+    # An earlier MC's credential for it: every capability, and no plugin named.
+    [{_, caller, _}] = HalC2.Mcp.credentials(thread_id)
     HalC2.Mcp.revoke(thread_id)
-    :ok = HalC2.Mcp.restore([{"old-" <> token, Map.delete(caller, :plugin), 0}])
 
-    refute HalC2.Mcp.prepared?(thread_id, "codex")
-    assert %{report: true, authorization: fresh} = HalC2.Mcp.for_agent(thread_id, "codex")
-    refute fresh == "Bearer old-" <> token
+    broad =
+      caller |> Map.delete(:plugin) |> Map.put(:capabilities, MapSet.new(~w(preview device)))
 
-    assert {401, _} =
-             HalC2.Mcp.handle(
-               "Bearer old-" <> token,
-               ~s({"jsonrpc":"2.0","id":1,"method":"ping"})
-             )
+    :ok = HalC2.Mcp.restore([{"old", broad, 0}])
 
+    assert denied?("Bearer old", "hal_c2_thread_list")
+    assert HalC2.Mcp.capabilities(thread_id, "codex") == MapSet.new()
     assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert %{report: true, authorization: "Bearer old"} = HalC2.Mcp.for_agent(thread_id, "codex")
+
+    # One still in the table over a release upgrade takes the same scope at its first call.
+    HalC2.Mcp.revoke(thread_id)
+    :ets.insert(HalC2.Mcp.Credentials, {"kept-over", broad, System.monotonic_time(:millisecond)})
+
+    assert denied?("Bearer kept-over", "hal_c2_thread_list")
+    assert [{"kept-over", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
+  # An ordinary plugin thread is not kept: only a code review's old mark is read so.
+  test "another plugin's thread without the tools mark keeps HAL-C2's tools" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "issue-tracker", "kind" => "implement"})
+    await_statuses(thread_id, ["completed"])
+
+    assert HalC2.Mcp.kept_to(thread_id) == nil
+    assert %{authorization: auth} = server = HalC2.Mcp.for_agent(thread_id, "codex")
+    refute Map.has_key?(server, :report)
+    refute denied?(auth, "hal_c2_project_list")
+  end
+
+  defp denied?(auth, name) do
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => name, "arguments" => %{}}
+    }
+
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+    JSON.encode!(result) =~ "capability_denied"
   end
 
   # New code loaded over a running server (a release upgrade) migrates it through
