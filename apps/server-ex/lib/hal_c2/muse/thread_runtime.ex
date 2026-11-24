@@ -723,8 +723,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp send_turn(state, turn) do
     case Regex.run(~r/^\/compact(?:\s|$)/, String.trim(turn.text || "")) do
-      # A compaction hands Muse nothing of the thread.
-      [_] -> compact(unsent_fresh(state, turn))
+      [_] -> compact(state)
       nil -> start(state, turn)
     end
   end
