@@ -68,9 +68,12 @@ const INLINE = new RegExp(
 
 /**
  * A link the terminal may open: the web, mail, or a path. A message's text is
- * untrusted, so any other scheme (`javascript:`, `data:`, `file:`) is no link.
+ * untrusted, so any other scheme (`javascript:`, `data:`, `file:`) is no link,
+ * nor a network path (`//host/share`, `\\host\share`): the terminal's opener
+ * would reach that host, which may answer with the user's credentials.
  */
 export function isSafeLink(url: string): boolean {
+  if (/^\s*[\\/][\\/]/.test(url)) return false;
   const scheme = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
   return scheme === undefined || scheme === "http" || scheme === "https" || scheme === "mailto";
 }
