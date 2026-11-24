@@ -25,7 +25,8 @@
 // carries); the actions are off while it is or when this session may not manage
 // the MC's machine (manageReason says why).
 // `confirm` asks before an operation this page asked for stops this MC's
-// reviews (or runs without knowing whether it would).
+// reviews (or runs without knowing whether it would). `refusal` also says when
+// the MC restarted before the run this page asked for told how it went.
 //
 // Actions: `sandboxSettings.refresh`, `sandboxSettings.run` {operation},
 // `sandboxSettings.confirm`, `sandboxSettings.cancel`.
@@ -33,6 +34,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVariantMap>
+#include <optional>
 
 #include "McClient.h"
 #include "NativeController.h"
@@ -125,6 +127,8 @@ private:
     m_starting = false;
     m_awaited = -1;
     m_refusal.clear();
+    m_followed = false;
+    m_known.reset();
     clearConfirm();
     if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("openShell")},
@@ -137,10 +141,12 @@ private:
   }
 
   // What this page asked for is forgotten: an outcome that lands while it is
-  // closed is not asked about when it opens again.
+  // closed is not asked about when it opens again, and a reply that lands after
+  // it reopens touches nothing.
   void closePage() {
     if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
     m_subscription = -1;
+    ++m_request;
     m_asked.clear();
     m_starting = false;
     m_awaited = -1;
@@ -192,16 +198,19 @@ private:
     payload.insert(QStringLiteral("operation"), operation);
     const quint64 request = ++m_request;
     m_client->call(this, m_client->environment(), QStringLiteral("server.runOpenShellOperation"), payload,
-                   [this, operation, request](const QJsonValue& result, const std::optional<QString>& error) {
+                   [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+                     // Only the latest press on this opening of the page: one from
+                     // before the page closed, or before a later press, is forgotten.
+                     if (request != m_request) return;
                      if (!error) {
                        // The reply names the run; a frame of it that came first settles it now.
-                       if (request != m_request || !m_starting) return;
+                       if (!m_starting) return;
                        m_awaited = runOf(result.toObject());
                        if (runOf(m_operation) >= m_awaited) settle(m_operation);
                        return;
                      }
                      m_starting = false;
-                     if (m_asked == operation) m_asked.clear();
+                     m_asked.clear();
                      m_refusal = error->isEmpty() ? QStringLiteral("The MC did not say why.") : *error;
                      publish();
                    });
@@ -210,6 +219,16 @@ private:
 
   // The openShell shape: the operation running or last run on the MC.
   void follow(const QJsonObject& next) {
+    // The MC sends a subscription's frames in order, and the first after a
+    // reconnect is its state then, so a number below the last frame's is from an
+    // MC whose clock went back across a restart (operations.ex's number/1). The
+    // old MC's numbers then say nothing of the new one's runs.
+    const qint64 number = runOf(next);
+    const bool back = m_followed && number < m_last;
+    if (back) m_known.reset();
+    if (!m_followed && !next.value(QLatin1String("running")).toBool()) m_known = number;
+    m_followed = true;
+    m_last = number;
     // The actions stay off from a run until its reply has named it and a frame
     // of it (or a later run) has landed: a second press in between would be
     // refused as busy, and that refusal would forget what this page asked for.
@@ -217,15 +236,29 @@ private:
     // shown, but neither reopens the actions nor answers the run. Whichever of
     // the reply and the frame lands second settles it, so a run that ended
     // while the connection was down settles on the first frame after it.
-    if (m_starting && (m_awaited < 0 || runOf(next) < m_awaited)) {
+    if (m_starting && !back && (m_awaited < 0 || number < m_awaited)) {
       m_operation = next;
-      publish();
+      if (!reread(next, false)) publish();
       return;
     }
-    settle(next);
+    settle(next, back);
   }
 
-  void settle(const QJsonObject& next) {
+  // What is installed may have changed once a run ended: the status is read
+  // again for each run seen ended, once, whether or not this page saw it run (it
+  // may have ended on another device while the connection was down), and for a
+  // run this page saw going that went with a restart (`ended`).
+  bool reread(const QJsonObject& next, bool ended) {
+    const qint64 number = runOf(next);
+    if (!m_open || next.value(QLatin1String("running")).toBool() || m_known == number ||
+        (next.value(QLatin1String("operation")).toString().isEmpty() && !ended))
+      return false;
+    m_known = number;
+    read();
+    return true;
+  }
+
+  void settle(const QJsonObject& next, bool back = false) {
     const QString operation = next.value(QLatin1String("operation")).toString();
     const bool running = next.value(QLatin1String("running")).toBool();
     const bool ended = busy() && !running;
@@ -235,13 +268,19 @@ private:
     if (!running && result.isObject() && !m_asked.isEmpty() && m_asked == operation && runOf(next) == m_awaited) {
       m_asked.clear();
       answer(operation, result.toObject());
+    } else if (!m_asked.isEmpty() && m_awaited >= 0 && (back || (operation.isEmpty() && runOf(next) > m_awaited))) {
+      // A frame with no operation is from an MC that has run none since it
+      // started, and its number is when it started. Above the run's number, it
+      // started after the run did: it restarted, and the run's outcome went with
+      // the old one. This holds whatever the frame's order: a frame from before
+      // the run (the shape's first, one sent before a reconnect) carries a
+      // smaller number, as the run's is larger than every number before it. An
+      // MC whose clock went back across the restart numbers below the run, and
+      // the number going below the last frame's says so instead.
+      m_asked.clear();
+      m_refusal = QStringLiteral("The MC restarted during the run; check the status and try again.");
     }
-    // What is installed changed: say so.
-    if (ended && m_open) {
-      read();
-    } else {
-      publish();
-    }
+    if (!reread(next, ended)) publish();
   }
 
   // An outcome this page asked for may need the user's yes to go on.
@@ -362,6 +401,12 @@ private:
   // The latest run asked for, so an older one's reply is not taken for it.
   quint64 m_request = 0;
   QString m_refusal;
+  // A frame of this opening has landed, and the last one's number.
+  bool m_followed = false;
+  qint64 m_last = 0;
+  // The ended run the status was last read for: the one the shape's first frame
+  // showed ended (the read the page opened with covers it), then each one after.
+  std::optional<qint64> m_known;
   // What a yes reruns: the operation and the flag (drain or force) it adds.
   QString m_confirmOperation;
   QString m_confirmFlag;

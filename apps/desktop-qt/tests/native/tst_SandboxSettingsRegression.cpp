@@ -2,6 +2,7 @@
 
 #include <QtTest>
 
+#include <optional>
 #include <utility>
 
 #include "FakeMc.h"
@@ -23,7 +24,11 @@ const QString kGeneral = QStringLiteral("/settings/general");
 struct Mc {
   FakeMc mc;
   bool finishAtOnce = true;
+  // The next run is held, unanswered, in `heldRun`.
+  bool holdRun = false;
+  std::optional<FakeMc::Rpc> heldRun;
   int runs = 0;
+  int reads = 0;
   QJsonObject operation{{QStringLiteral("operation"), QJsonValue()},
                         {QStringLiteral("run"), 0},
                         {QStringLiteral("running"), false},
@@ -39,6 +44,7 @@ struct Mc {
     });
     mc.onShape(QStringLiteral("openShell"), [this](int id, const QJsonObject&) { emitTo(id); });
     mc.onRpc(QStringLiteral("server.getOpenShellStatus"), [this](const FakeMc::Rpc& rpc) {
+      ++reads;
       mc.reply(rpc, QJsonObject{{QStringLiteral("supported"), true},
                                 {QStringLiteral("ready"), true},
                                 {QStringLiteral("mode"), QStringLiteral("managed")},
@@ -52,6 +58,10 @@ struct Mc {
     });
     mc.onRpc(QStringLiteral("server.runOpenShellOperation"), [this](const FakeMc::Rpc& rpc) {
       ++runs;
+      if (std::exchange(holdRun, false)) {
+        heldRun = rpc;
+        return;
+      }
       if (operation.value(QLatin1String("running")).toBool()) {
         return mc.refuse(rpc, QStringLiteral("OpenShell's uninstall is already running on this MC. Try uninstall again once it finishes."));
       }
@@ -83,6 +93,16 @@ struct Mc {
   void emitTo(int id) { sendTo(id, operation); }
   void emitAll() {
     for (const int id : mc.subscribers(QStringLiteral("openShell"))) emitTo(id);
+  }
+
+  // The MC restarts and loses what it ran: no operation, numbered when it
+  // started, above every run before, or below them with its clock gone back.
+  void restart(bool back = false) {
+    operation = {{QStringLiteral("operation"), QJsonValue()},
+                 {QStringLiteral("run"), back ? 0 : runs + 1000},
+                 {QStringLiteral("running"), false},
+                 {QStringLiteral("steps"), QJsonArray()},
+                 {QStringLiteral("result"), QJsonValue()}};
   }
 
   // Sends `frame` to every follower at once: one it had sent before the run.
@@ -249,6 +269,130 @@ private slots:
     QVERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
     QVERIFY(!shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
     QCOMPARE(mc.runs, 1);
+  }
+
+  // A refusal of a press made before the page was left landed after it was
+  // opened again and pressed again: it took the new press for its own, and
+  // forgot the page had asked, so the new run's outcome asked nothing before
+  // stopping the review.
+  void aRefusalFromBeforeThePageClosedLeavesTheNewPressAlone() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.finishAtOnce = false;
+    Shell shell(home, mc.mc);
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    const QVariantMap uninstall{{QStringLiteral("operation"), QStringLiteral("uninstall")}};
+    mc.holdRun = true;
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), uninstall);
+    shell.barrier(mc.mc);
+    QVERIFY(mc.heldRun.has_value());
+
+    shell.go(kGeneral);
+    shell.go(kSandboxes);
+    shell.barrier(mc.mc);
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), uninstall);
+    QTRY_VERIFY(shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
+    QCOMPARE(mc.runs, 2);
+
+    mc.mc.refuse(*mc.heldRun, QStringLiteral("OpenShell's status did not answer in time."));
+    shell.barrier(mc.mc);
+    QVERIFY(shell.section().value(QStringLiteral("refusal")).isNull());
+    mc.finish();
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
+  }
+
+  // The MC restarted during a run, before its first frame or after: the frames
+  // after it never carried the run's number, so the page stayed busy until
+  // another run started. With its clock gone back, the restarted MC numbers
+  // below the run.
+  void anMcThatRestartedDuringTheRunSettlesIt_data() {
+    QTest::addColumn<bool>("seen");
+    QTest::addColumn<bool>("back");
+    QTest::newRow("before its first frame") << false << false;
+    QTest::newRow("while it runs") << true << false;
+    QTest::newRow("while it runs, its clock back") << true << true;
+  }
+  void anMcThatRestartedDuringTheRunSettlesIt() {
+    QFETCH(bool, seen);
+    QFETCH(bool, back);
+    QTemporaryDir home;
+    Mc mc;
+    mc.finishAtOnce = false;
+    Shell shell(home, mc.mc);
+    shell.native.client()->setRetryDelays({20});
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    if (!seen) mc.holdFrames();
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), QStringLiteral("uninstall")}});
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.runs, 1);
+    if (!seen) {
+      // A frame from before the run, with no operation, keeps the page waiting.
+      mc.stale(QJsonObject{{QStringLiteral("operation"), QJsonValue()},
+                           {QStringLiteral("run"), 0},
+                           {QStringLiteral("running"), false},
+                           {QStringLiteral("steps"), QJsonArray()},
+                           {QStringLiteral("result"), QJsonValue()}});
+      shell.barrier(mc.mc);
+      QVERIFY(shell.section().value(QStringLiteral("busy")).toBool());
+      QVERIFY(shell.section().value(QStringLiteral("refusal")).isNull());
+      mc.dropFrames();
+    } else {
+      QVERIFY(shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
+    }
+    mc.restart(back);
+    mc.mc.drop();
+
+    QTRY_COMPARE(shell.section().value(QStringLiteral("refusal")).toString(),
+                 QStringLiteral("The MC restarted during the run; check the status and try again."));
+    QVERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
+    QVERIFY(shell.section().value(QStringLiteral("operation")).isNull());
+    QTRY_COMPARE(mc.reads, 2);
+  }
+
+  // Another device installed while the connection was down, and the first
+  // frame after reconnecting showed its run ended: the outcome showed, but the
+  // status still offered what it had before, as only a run the page saw going
+  // read it again.
+  void aRunAnotherDeviceEndedWhileTheConnectionWasDownReadsTheStatus() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.runs = 5;
+    mc.operation = {{QStringLiteral("operation"), QStringLiteral("uninstall")},
+                    {QStringLiteral("run"), mc.runs},
+                    {QStringLiteral("running"), false},
+                    {QStringLiteral("steps"), QJsonArray()},
+                    {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true},
+                                                           {QStringLiteral("code"), QJsonValue()},
+                                                           {QStringLiteral("message"), QStringLiteral("OpenShell removed.")},
+                                                           {QStringLiteral("sandboxes"), QJsonValue()}}}};
+    Shell shell(home, mc.mc);
+    shell.native.client()->setRetryDelays({20});
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    // The read the page opens with covers the run its first frame shows.
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.reads, 1);
+
+    mc.mc.drop();
+    mc.operation[QStringLiteral("operation")] = QStringLiteral("install");
+    mc.operation[QStringLiteral("run")] = ++mc.runs;
+    QTRY_COMPARE(shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("operation")).toString(), QStringLiteral("install"));
+    QTRY_COMPARE(mc.reads, 2);
+
+    // The same run again reads nothing more: the first barrier lands after the
+    // frame, the second after any read the frame sent.
+    mc.emitAll();
+    shell.barrier(mc.mc);
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.reads, 2);
   }
 };
 

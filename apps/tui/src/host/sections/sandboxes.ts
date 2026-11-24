@@ -52,6 +52,11 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   // The latest run asked for, so an older one's reply is not taken for it.
   let request = 0;
   let refusal: string | null = null;
+  // The last frame's number, once one of this opening has landed.
+  let last: number | null = null;
+  // The ended run the status was last read for: the one the shape's first frame
+  // showed ended (the read the page opened with covers it), then each one after.
+  let known: number | null = null;
   let unsubscribe: (() => void) | null = null;
 
   const read = () => {
@@ -100,8 +105,11 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
             if (operation !== null && operation.run >= awaited) settle(operation);
           },
           (cause: unknown) => {
+            // Only the latest press on this opening of the page: one from before
+            // the page closed, or before a later press, is forgotten.
+            if (sent !== request) return;
             starting = false;
-            if (asked === name) asked = null;
+            asked = null;
             refusal = errorText(cause);
             host.refresh();
           },
@@ -123,19 +131,38 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   };
 
   const follow = (next: OpenShellOperationState) => {
+    // The MC sends a subscription's frames in order, and the first after a
+    // reconnect is its state then, so a number below the last frame's is from an
+    // MC whose clock went back across a restart (operations.ex's number/1).
+    const back = last !== null && next.run < last;
+    // The old MC's numbers say nothing of the new one's runs.
+    if (back) known = null;
+    if (last === null && !next.running) known = next.run;
+    last = next.run;
     // A frame from before the run (the shape's first, another device's last) is
     // shown, but neither reopens the actions nor answers the run. Whichever of
     // the reply and the run's frame lands second settles it, so a run that ended
     // while the connection was down settles on the first frame after it.
-    if (starting && (awaited === null || next.run < awaited)) {
+    if (starting && !back && (awaited === null || next.run < awaited)) {
       operation = next;
-      host.refresh();
+      if (!reread(next, false)) host.refresh();
       return;
     }
-    settle(next);
+    settle(next, back);
   };
 
-  const settle = (next: OpenShellOperationState) => {
+  // What is installed may have changed once a run ended: the status is read again
+  // for each run seen ended, once, whether or not this page saw it run (it may have
+  // ended on another device while the connection was down), and for a run this
+  // page saw going that went with a restart (`ended`).
+  const reread = (next: OpenShellOperationState, ended: boolean) => {
+    if (next.running || next.run === known || (next.operation === null && !ended)) return false;
+    known = next.run;
+    read();
+    return true;
+  };
+
+  const settle = (next: OpenShellOperationState, back = false) => {
     const ended = busy() && !next.running;
     operation = next;
     starting = false;
@@ -148,10 +175,23 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     ) {
       asked = null;
       answer(next.operation, next.result);
+    } else if (
+      asked !== null &&
+      awaited !== null &&
+      (back || (next.operation === null && next.run > awaited))
+    ) {
+      // A frame with no operation is from an MC that has run none since it
+      // started, and its number is when it started. Above the run's number, it
+      // started after the run did: it restarted, and the run's outcome went with
+      // the old one. This holds whatever the frame's order: a frame from before
+      // the run (the shape's first, one sent before a reconnect) carries a
+      // smaller number, as the run's is larger than every number before it. An
+      // MC whose clock went back across the restart numbers below the run, and
+      // the number going below the last frame's says so instead.
+      asked = null;
+      refusal = "The MC restarted during the run; check the status and try again.";
     }
-    // What is installed changed: say so.
-    if (ended) read();
-    else host.refresh();
+    if (!reread(next, ended)) host.refresh();
   };
 
   const summary = (): SectionItem[] => {
@@ -269,6 +309,8 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
       starting = false;
       awaited = null;
       refusal = null;
+      last = null;
+      known = null;
       unsubscribe?.();
       unsubscribe = host.client.subscribeOpenShellOperation(follow);
       read();

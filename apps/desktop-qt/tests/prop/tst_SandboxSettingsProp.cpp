@@ -11,7 +11,12 @@
 // action again before the first run's frame lands (before or after its
 // reply, or after a frame from before the run), which runs nothing more; and
 // the connection may drop between a run's reply and its first frame, the run
-// ending before the page follows the shape again. After every step the
+// ending before the page follows the shape again; and the MC may restart, while
+// a run this page asked for goes (before its first frame or after) or not,
+// losing what it ran: it then shows no operation, numbered above every run
+// before, or below every one when its clock went back; and another device may
+// run an operation to its end while the connection is down, the status it reads
+// changing with it. After every step the
 // published section is what the model says: the latest read's answer, loading
 // while one is out; the operation as the openShell shape last said while the
 // page was open; and a question only about an outcome this page asked for.
@@ -37,6 +42,7 @@ namespace {
 
 const QString kFailure = QStringLiteral("OpenShell's status did not answer within 20 seconds.");
 const QString kBusy = QStringLiteral("OpenShell's install is already running on this MC.");
+const QString kRestarted = QStringLiteral("The MC restarted during the run; check the status and try again.");
 
 // How an operation ends.
 enum class Outcome { None, Ok, Stops, Fails };
@@ -69,7 +75,7 @@ struct Model {
   Operation shown;        // the page's: the MC's while open, as it was when left
   QString askedFor;       // the operation this page asked for, until its outcome
   QString confirm;        // the operation a yes reruns with drain
-  bool refused = false;
+  QString refusal;
 
   bool offers(const QString& operation) const {
     if (!landed) return false;
@@ -81,11 +87,11 @@ struct Model {
   // The user's, or a yes': the MC refuses while one runs.
   void run(const QString& operation) {
     askedFor = operation;
-    refused = false;
+    refusal.clear();
     confirm.clear();
     if (mcOperation.running) {
       askedFor.clear();
-      refused = true;
+      refusal = kBusy;
       return;
     }
     mcOperation = {operation, true, Outcome::None};
@@ -164,7 +170,10 @@ struct Shell {
   QList<FakeMc::Rpc> held;
   QSet<QString> reached;
   Operation operation;  // the MC's
-  int lastRun = 0;      // the MC's number for the latest run
+  // The MC's number for the latest run, or when it started if it ran none since,
+  // and the smallest it has given: an MC whose clock went back starts below it.
+  int lastRun = 1'000'000'000;
+  int lowest = lastRun;
   QList<QJsonObject> runs;
   // The MC holds its openShell frames from here on (`releaseFrames`).
   bool holdingFrames = false;
@@ -253,7 +262,7 @@ struct Shell {
     navigation()->open(NavigationController::Route::settings(QStringLiteral("/settings/general")));
     release();
     answer = Answer::NotInstalled;
-    operation = {};
+    operation = {QString(), false, Outcome::None, lastRun};
     // Through the page once, so what it shows of an operation is the MC's.
     navigation()->open(NavigationController::Route::settings(QStringLiteral("/settings/sandboxes")));
     RC_ASSERT(prop::until([this] { return section().value(QStringLiteral("operation")).isNull() && !section().value(QStringLiteral("loading")).toBool(); }));
@@ -298,7 +307,7 @@ QVariantMap expected(const Model& model) {
           {QStringLiteral("busy"), model.shown.running},
           {QStringLiteral("operation"), operation},
           {QStringLiteral("confirm"), !model.confirm.isEmpty()},
-          {QStringLiteral("refusal"), model.refused ? QVariant(kBusy) : QVariant()}};
+          {QStringLiteral("refusal"), model.refusal.isEmpty() ? QVariant() : QVariant(model.refusal)}};
 }
 
 QVariantMap shown(const QVariantMap& section) {
@@ -348,7 +357,7 @@ struct Open : Command {
     } else {
       model.askedFor.clear();
       model.confirm.clear();
-      model.refused = false;
+      model.refusal.clear();
     }
   }
   void run(const Model& model, Shell& shell) const override {
@@ -503,7 +512,10 @@ struct Stale : Command {
     const QVariantMap payload{{QStringLiteral("operation"), operation}};
     if (runs) {
       shell.reached.insert(QStringLiteral("a frame from before the run"));
+      // Numbered as the MC's operation then; an MC that ran none since it started
+      // shows none.
       Operation old = frame;
+      if (shell.operation.name.isEmpty()) old = {};
       old.run = shell.lastRun;
       shell.holdingFrames = true;
       shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
@@ -573,6 +585,76 @@ struct Dropped : Command {
   void show(std::ostream& os) const override { os << "Dropped(" << operation.toStdString() << ", " << kOutcomeNames[int(outcome)] << ")"; }
 };
 
+// The MC restarts and loses what it ran: it shows no operation, numbered
+// when it started, above every run before. Before that the user may run an
+// action, its reply landing and its first frame too, or not. A run this page
+// asked for that had not told how it went settles: the actions come back, the
+// status is read again, and the page says the MC restarted. With its clock gone
+// back it numbers below every run before, and the page tells the restart by its
+// number going below the last frame's.
+struct Restarted : Command {
+  QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
+  bool press = *rc::gen::arbitrary<bool>();
+  bool seen = *rc::gen::arbitrary<bool>();
+  bool back = *rc::gen::arbitrary<bool>();
+
+  // A read out would be lost with the connection.
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.holding); }
+  bool runs(const Model& model) const { return press && model.open && model.offers(operation) && !model.shown.running; }
+  void apply(Model& model) const override {
+    if (runs(model)) model.run(operation);
+    model.mcOperation = {};
+    if (!model.open) return;
+    const bool ended = model.shown.running;
+    model.shown = model.mcOperation;
+    if (!model.askedFor.isEmpty()) {
+      model.askedFor.clear();
+      model.refusal = kRestarted;
+    }
+    if (ended) model.ask();
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    if (runs(model)) {
+      shell.reached.insert(seen ? QStringLiteral("restarted while a run went") : QStringLiteral("restarted before a run's frame"));
+      shell.holdingFrames = true;
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), operation}});
+      // The MC answers in order, so the barrier's reply follows the run's.
+      shell.barrier();
+      if (seen) {
+        shell.releaseFrames();
+        shell.barrier();
+      }
+    } else if (!model.askedFor.isEmpty()) {
+      shell.reached.insert(QStringLiteral("restarted while a run went"));
+    }
+    shell.heldFrames.clear();
+    shell.holdingFrames = false;
+    if (back) {
+      shell.reached.insert(QStringLiteral("restarted with the clock back"));
+      shell.lastRun = shell.lowest -= 1000;
+    } else {
+      shell.lastRun += 1000;
+    }
+    shell.operation = {QString(), false, Outcome::None, shell.lastRun};
+    if (model.open) {
+      shell.reconnect();
+    } else {
+      shell.mc.drop();
+      RC_ASSERT(prop::until([&shell] { return !shell.native.client()->isReady(); }));
+      RC_ASSERT(prop::until([&shell] { return shell.native.client()->isReady(); }));
+    }
+    shell.barrier();
+    check(next, shell);
+  }
+  void show(std::ostream& os) const override {
+    os << "Restarted(";
+    if (press) os << operation.toStdString() << (seen ? ", its frame seen" : ", before its frame") << (back ? ", " : "");
+    os << (back ? "its clock back" : "") << ")";
+  }
+};
+
 // Another device starts an operation on the MC.
 struct Elsewhere : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
@@ -589,6 +671,43 @@ struct Elsewhere : Command {
     check(next, shell);
   }
   void show(std::ostream& os) const override { os << "Elsewhere(" << operation.toStdString() << ")"; }
+};
+
+// Another device runs an operation to its end while the connection is down,
+// and what the status says changes with it. The first frame after reconnecting
+// shows it ended, and the page reads the status again, once.
+struct Missed : Command {
+  QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
+  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 4));
+  Answer answer = static_cast<Answer>(*rc::gen::inRange(0, 4));
+
+  // A read out would be lost with the connection.
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.holding && !model.mcOperation.running); }
+  void apply(Model& model) const override {
+    model.mc = answer;
+    model.mcOperation = {operation, false, outcome};
+    if (!model.open) return;
+    model.shown = model.mcOperation;
+    model.ask();
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    if (model.open) shell.reached.insert(QStringLiteral("ended elsewhere while the connection was down"));
+    shell.answer = answer;
+    shell.operation = {operation, false, outcome, ++shell.lastRun};
+    if (model.open) shell.reconnect();
+    shell.barrier();
+    check(next, shell);
+    // Again, as the same run: the status was read for it once.
+    if (model.open) {
+      shell.emitOperation(shell.operation);
+      check(next, shell);
+    }
+  }
+  void show(std::ostream& os) const override {
+    os << "Missed(" << operation.toStdString() << " " << kOutcomeNames[int(outcome)] << ", then " << kAnswerNames[int(answer)] << ")";
+  }
 };
 
 // The MC's operation ends; the page reads the status again if it saw it run,
@@ -672,7 +791,7 @@ private slots:
       check(initial, shell);
       rc::state::check(initial, shell,
                        rc::state::gen::execOneOfWithArgs<Open, Open, Refresh, Refresh, Change, Change, Hold, AnswerOne, AnswerOne, Release,
-                                                         Run, Run, Twice, Stale, Dropped, Elsewhere, Finish, Finish, Confirm, Cancel>());
+                                                         Run, Run, Twice, Stale, Dropped, Restarted, Missed, Elsewhere, Finish, Finish, Confirm, Cancel>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked to stop reviews")), "asked before stopping reviews");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("agreed while another ran")), "agreed while another device's operation ran");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended while away")), "an operation that ended while the page was left");
@@ -683,6 +802,10 @@ private slots:
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed again after the reply")), "an action pressed again after its run's reply, before its frame");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("a frame from before the run")), "a frame from before a run, then a second press");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("dropped between a run's reply and its frame")), "the connection dropped between a run's reply and its frame");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("restarted before a run's frame")), "the MC restarted between a run's reply and its frame");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("restarted while a run went")), "the MC restarted while a run this page asked for went");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("restarted with the clock back")), "the MC restarted with its clock gone back");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended elsewhere while the connection was down")), "another device's operation ended while the connection was down");
     }));
   }
 };

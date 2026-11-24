@@ -27,7 +27,7 @@ function boot() {
     manageReason: null,
   }));
   let state: OpenShellOperationState = mc.openShellOperation;
-  mc.on("server.runOpenShellOperation", (payload: { operation: "uninstall" }) => {
+  const start = (payload: { operation: "uninstall" }) => {
     if (state.running) {
       throw new Error(
         "OpenShell's uninstall is already running on this MC. Try uninstall again once it finishes.",
@@ -41,7 +41,8 @@ function boot() {
       result: null,
     };
     return state;
-  });
+  };
+  mc.on("server.runOpenShellOperation", start);
   const emit = (next: OpenShellOperationState) => {
     state = next;
     mc.openShellOperation = next;
@@ -49,8 +50,12 @@ function boot() {
   };
   const host = createHost({ client: fake.client, size: { columns: 120, rows: 40 }, log: () => {} });
   const page = () => host.state.get("settingsSection") as TuiSettingsSectionState;
-  return { fake, mc, host, page, emit, state: () => state };
+  return { fake, mc, host, page, emit, start, state: () => state };
 }
+
+// Every reply and frame already sent lands; for a test holding a reply back,
+// which `settled()` would wait on.
+const landed = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("review sandboxes", () => {
   for (const when of ["at once", "after the first run's reply"] as const) {
@@ -135,6 +140,130 @@ describe("review sandboxes", () => {
     await host.settled();
     expect(host.state.get("mode")).toBe("sectionConfirm");
     expect(page().confirm?.lines.join(" ")).toContain("Stop 1 review and go ahead?");
+    expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
+    host.destroy();
+  });
+
+  it("a refusal from before the page closed leaves the press after it reopened alone", async () => {
+    const { fake, mc, host, page, emit, start, state } = boot();
+    fake.connect();
+    host.dispatch("section.open", { id: "sandboxes" });
+    await host.settled();
+
+    let refuse: (cause: Error) => void = () => {};
+    mc.on(
+      "server.runOpenShellOperation",
+      () =>
+        new Promise((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    host.dispatch("section.close");
+    mc.on("server.runOpenShellOperation", start);
+    host.dispatch("section.open", { id: "sandboxes" });
+    await landed();
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    await landed();
+    expect(mc.callsTo("server.runOpenShellOperation")).toHaveLength(2);
+
+    // The first press's refusal lands now, after the second press started.
+    refuse(new Error("OpenShell's status did not answer in time."));
+    await host.settled();
+    expect(page().lines.join("\n")).not.toContain("did not answer in time");
+
+    emit(state());
+    emit({
+      ...state(),
+      running: false,
+      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+    });
+    await host.settled();
+    expect(host.state.get("mode")).toBe("sectionConfirm");
+    expect(page().confirm?.lines.join(" ")).toContain("Stop 1 review and go ahead?");
+    host.destroy();
+  });
+
+  for (const when of [
+    "before its first frame",
+    "while it runs",
+    "while it runs, its clock stepped back",
+  ] as const) {
+    it(`an MC that restarted ${when} settles the run as lost`, async () => {
+      const { fake, mc, host, page, emit, state } = boot();
+      fake.connect();
+      host.dispatch("section.open", { id: "sandboxes" });
+      await host.settled();
+
+      host.dispatch("section.activate", { id: "operation:uninstall" });
+      await host.settled();
+      if (when !== "before its first frame") {
+        emit(state());
+      } else {
+        // A frame from before the run, with no operation, neither reopens the
+        // actions nor says the MC restarted.
+        mc.openShellOperation = {
+          operation: null,
+          run: 0,
+          running: false,
+          steps: [],
+          result: null,
+        };
+        mc.emitOpenShellOperation();
+        await host.settled();
+        expect(page().lines.join("\n")).not.toContain("restarted");
+      }
+      host.dispatch("section.activate", { id: "operation:uninstall" });
+      await host.settled();
+      expect(mc.callsTo("server.runOpenShellOperation")).toHaveLength(1);
+
+      // The restarted MC has run nothing, numbered when it started: after the run,
+      // or below the last frame's for a clock stepped back.
+      const run =
+        when === "while it runs, its clock stepped back" ? state().run - 1 : state().run + 1_000;
+      emit({ operation: null, run, running: false, steps: [], result: null });
+      await host.settled();
+      expect(page().lines.join("\n")).toContain(
+        "The MC restarted during the run; check the status and try again.",
+      );
+      expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
+      host.dispatch("section.activate", { id: "operation:uninstall" });
+      await host.settled();
+      expect(mc.callsTo("server.runOpenShellOperation")).toHaveLength(2);
+      host.destroy();
+    });
+  }
+
+  it("a run another device ended while the connection was down reads the status again, once", async () => {
+    const { fake, mc, host, emit } = boot();
+    // The page opens on a run that ended: the read it opens with covers it.
+    mc.openShellOperation = {
+      operation: "uninstall",
+      run: 5,
+      running: false,
+      steps: [],
+      result: { ok: true, code: null, message: "OpenShell removed.", sandboxes: null },
+    };
+    fake.connect();
+    host.dispatch("section.open", { id: "sandboxes" });
+    await host.settled();
+    mc.emitOpenShellOperation();
+    await host.settled();
+    expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(1);
+
+    // The first frame after reconnecting: another device installed meanwhile.
+    const installed: OpenShellOperationState = {
+      operation: "install",
+      run: 6,
+      running: false,
+      steps: [],
+      result: { ok: true, code: null, message: "OpenShell installed.", sandboxes: null },
+    };
+    emit(installed);
+    await host.settled();
+    expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
+    emit(installed);
+    await host.settled();
     expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
     host.destroy();
   });
