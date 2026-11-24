@@ -885,7 +885,7 @@ Feature: Reviewing a pull request
 
   # Upstream #22110: links a bot wrote as HTML in a comment could not be followed on the phone.
   @backlog @desktop @mobile
-  Scenario Outline: A link written as HTML in a comment can be followed only when it is a web or mail address
+  Scenario Outline: A link written as HTML in a comment can be followed only when it is a web address
     Given a comment on pull request 42 holds an HTML anchor "Preview" to "<address>"
     When the user reads the comment
     Then "Preview" <outcome>
@@ -913,6 +913,20 @@ Feature: Reviewing a pull request
       | hal-c2://new?prompt=hi   | nothing opens and no thread starts               |
       | mailto:ops@example.com   | nothing opens                                    |
       | slack://open             | nothing opens                                    |
+
+  # As in an agent's reply, a plain click selects text, and a link opens on a Ctrl-click (Cmd on
+  # macOS) or a tap. The same holds for a code review's summary and comments and a planner
+  # run's summary.
+  @desktop @backlog-desktop
+  Scenario Outline: A link in a pull request's text opens only on a Ctrl-click
+    Given a comment on pull request 42 links "the docs" to "https://example.com/docs"
+    When the user clicks "the docs" <how>
+    Then <result>
+
+    Examples:
+      | how                         | result                                          |
+      | without holding Ctrl        | nothing opens                                   |
+      | holding Ctrl (Cmd on macOS) | "https://example.com/docs" opens in the browser |
 
   # #1802: markup in a pull request's text is shown as written, never drawn or loaded.
   @desktop @mobile @backlog-desktop @backlog-mobile
