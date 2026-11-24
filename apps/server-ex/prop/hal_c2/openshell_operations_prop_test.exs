@@ -26,6 +26,8 @@ defmodule HalC2.OpenShellOperationsPropTest do
       ending it not ok, and every subscriber is told each change;
     * a restart while one runs takes it back: it is still running under its number,
       its steps from before are gone, and its later steps and its outcome are shown;
+      one that ends while no server is there is shown ended with its outcome (not ok
+      when it was killed) under its number;
       after a restart while none runs there is no operation, and a new one may start.
   """
 
@@ -101,7 +103,8 @@ defmodule HalC2.OpenShellOperationsPropTest do
             {4, {:call, __MODULE__, :step, [oneof(~w(Downloading Starting Checking))]}},
             {2, {:call, __MODULE__, :answer, [answer()]}},
             {1, {:call, __MODULE__, :raise_in_runner, []}},
-            {1, {:call, __MODULE__, :kill_runner, []}}
+            {1, {:call, __MODULE__, :kill_runner, []}},
+            {1, {:call, __MODULE__, :end_while_down, [oneof([answer(), :kill])]}}
           ],
           else: []
         )
@@ -147,7 +150,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
   end
 
   def precondition(state, {:call, _, name, _})
-      when name in [:step, :answer, :raise_in_runner, :kill_runner],
+      when name in [:step, :answer, :raise_in_runner, :kill_runner, :end_while_down],
       do: state.running
 
   def precondition(_state, _call), do: true
@@ -210,6 +213,15 @@ defmodule HalC2.OpenShellOperationsPropTest do
     do: finish(state, {false, nil})
 
   defp step(state, {:call, _, :state, []}), do: {state, snapshot(state)}
+
+  defp step(state, {:call, _, :end_while_down, [ending]}) do
+    {state, _} = step(state, {:call, __MODULE__, :restart, [:on]})
+
+    case ending do
+      :kill -> finish(state, {false, nil})
+      answer -> step(state, {:call, __MODULE__, :answer, [answer]})
+    end
+  end
 
   defp step(state, {:call, _, :restart, [_clock]}) do
     state =
@@ -287,6 +299,27 @@ defmodule HalC2.OpenShellOperationsPropTest do
   def kill_runner do
     Process.exit(Process.get(:runner), :kill)
     notified()
+  end
+
+  # The service goes down, the runner answers or is killed while none is there to
+  # hear it, and a new one starts.
+  def end_while_down(ending) do
+    runner = Process.get(:runner)
+
+    :ok =
+      HalC2.Prop.restart_service(Operations, fn ->
+        ref = Process.monitor(runner)
+
+        case ending do
+          :kill -> Process.exit(runner, :kill)
+          answer -> send(runner, {:answer, answer})
+        end
+
+        receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+      end)
+
+    {:ok, state} = Operations.subscribe(self())
+    model(state)
   end
 
   def state do

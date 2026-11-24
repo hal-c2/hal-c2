@@ -152,15 +152,16 @@ defmodule HalC2.OpenShell.Operations do
   end
 
   # The run an earlier server under this name left running, taken back. One whose
-  # process has gone since ended without this server seeing how.
-  defp adopt(state, %{token: token, pid: pid, operation: operation, run: run}) do
+  # process has gone since ended while no server heard it: with the outcome it
+  # noted, or without one when it was killed.
+  defp adopt(state, %{token: token, pid: pid, operation: operation, run: run} = job) do
     state = %{state | run: run, operation: operation}
 
     if Process.alive?(pid) do
       %{state | job: {token, {pid, Process.monitor(pid)}}}
     else
       note_running(state, nil)
-      %{state | result: lost(operation, :gone)}
+      %{state | result: noted(job, token) || lost(operation, :gone)}
     end
   end
 
@@ -176,6 +177,24 @@ defmodule HalC2.OpenShell.Operations do
   defp note_running(%{name: name}, job),
     do: :persistent_term.put({__MODULE__, :running, name}, job)
 
+  # The job's answer, noted before it tells the server: a server that is not there
+  # yet, or that hears the job go before the answer, finds it here. Only while the
+  # note is still this job's.
+  defp note_answer(nil, _token, _result), do: :ok
+
+  defp note_answer(name, token, result) do
+    case running(name) do
+      %{token: ^token} = job ->
+        :persistent_term.put({__MODULE__, :running, name}, Map.put(job, :answer, result))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp noted(%{token: token, answer: result}, token), do: outcome(result)
+  defp noted(_job, _token), do: nil
+
   @impl true
   def handle_call({:run, operation, _opts}, _from, %{job: {_, _}} = state) do
     {:reply,
@@ -188,7 +207,8 @@ defmodule HalC2.OpenShell.Operations do
   def handle_call({:run, operation, opts}, _from, state) do
     # The job tells the server by its name, so one started after a restart hears
     # the rest of it.
-    server = state.name || self()
+    name = state.name
+    server = name || self()
     token = make_ref()
 
     runner =
@@ -198,7 +218,9 @@ defmodule HalC2.OpenShell.Operations do
 
     {pid, monitor} =
       spawn_monitor(fn ->
-        tell(server, {:done, token, attempt(runner, operation, opts ++ [progress: progress])})
+        result = attempt(runner, operation, opts ++ [progress: progress])
+        note_answer(name, token, result)
+        tell(server, {:done, token, result})
       end)
 
     state = %{
@@ -238,9 +260,10 @@ defmodule HalC2.OpenShell.Operations do
     finish(state, outcome(result))
   end
 
-  # Its process went without an answer: killed, since `attempt/3` catches the rest.
-  def handle_info({:DOWN, monitor, :process, _pid, reason}, %{job: {_, {_, monitor}}} = state) do
-    finish(state, lost(state.operation, reason))
+  # Its process went without an answer: killed, since `attempt/3` catches the rest,
+  # or it told a server under this name before this one was there to hear it.
+  def handle_info({:DOWN, monitor, :process, _pid, reason}, %{job: {token, {_, monitor}}} = state) do
+    finish(state, noted(running(state.name), token) || lost(state.operation, reason))
   end
 
   def handle_info({:DOWN, monitor, :process, pid, _}, state),

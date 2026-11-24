@@ -171,10 +171,14 @@ defmodule HalC2.Prop do
     receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
-  @doc "Stops the service `id` and starts it again, as a crash or an upgrade would."
-  def restart_service(id) do
+  @doc """
+  Stops the service `id` and starts it again, as a crash or an upgrade would, running
+  `between` while it is down.
+  """
+  def restart_service(id, between \\ fn -> :ok end) do
     sup = Process.get({__MODULE__, :services})
     :ok = Supervisor.terminate_child(sup, id)
+    between.()
     {:ok, _} = Supervisor.restart_child(sup, id)
     :ok
   end

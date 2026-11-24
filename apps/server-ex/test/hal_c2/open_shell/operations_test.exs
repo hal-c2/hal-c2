@@ -203,6 +203,35 @@ defmodule HalC2.OpenShell.OperationsTest do
     assert {:ok, %{"operation" => nil, "running" => false}} = Operations.state(again)
   end
 
+  # It told the name while no server held it, so only its note says how it went.
+  test "a run that ended while no server was there shows how it ended under its number", %{
+    runner: runner
+  } do
+    name = :"openshell_operations_#{System.unique_integer([:positive])}"
+    first = start_supervised!({Operations, name: name, runner: runner}, id: :first)
+
+    assert {:ok, %{"run" => run}} = Operations.run(%{"operation" => "install"}, first)
+    {job, :install, []} = started()
+    :ok = stop_supervised(:first)
+    ref = Process.monitor(job)
+    send(job, {:answer, {:ok, "OpenShell installed."}})
+    assert_receive {:DOWN, ^ref, :process, _, :normal}
+
+    restarted = start_supervised!({Operations, name: name, runner: runner}, id: :again)
+
+    assert {:ok,
+            %{
+              "run" => ^run,
+              "running" => false,
+              "result" => %{"ok" => true, "message" => "OpenShell installed."}
+            }} = Operations.state(restarted)
+
+    # Ended: the next server under the name starts with none.
+    :ok = stop_supervised(:again)
+    again = start_supervised!({Operations, name: name, runner: runner}, id: :third)
+    assert {:ok, %{"operation" => nil, "result" => nil}} = Operations.state(again)
+  end
+
   @tag :capture_log
   test "a run that went while no server was there ends not ok under its number", %{
     runner: runner
