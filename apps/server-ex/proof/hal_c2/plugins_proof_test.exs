@@ -31,6 +31,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_call {:set_enabled, _, _, _}" => "set_enabled",
       "HalC2.Plugins handle_call {:restart, _}" => "restart",
       "HalC2.Plugins handle_call {:save_settings, _, _, _}" => "save_settings",
+      # The shape a release upgrade can find queued, answered as a save without the shell.
+      "HalC2.Plugins handle_call {:save_settings, _, _}" => "save_settings",
       "HalC2.Plugins handle_call :rescan" => "rescan",
       "HalC2.Plugins handle_call {:subscribe, _, _}" => "subscribe",
       "HalC2.Plugins handle_cast {:worker, _, _, _}" => "worker",

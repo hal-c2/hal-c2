@@ -965,6 +965,12 @@ defmodule HalC2.Plugins do
     end
   end
 
+  # A save the code before this release queued (one a release upgrade's suspend held in
+  # the mailbox) did not say whether its session may use the shell, so it is taken as one
+  # that may not: what it changes outside `exec` settings is saved, the rest refused.
+  def handle_call({:save_settings, id, input}, from, state),
+    do: handle_call({:save_settings, id, input, false}, from, state)
+
   def handle_call({:save_settings, id, input, shell?}, _from, state) do
     case state.plugins[id] do
       %{module: module, package: package} = plugin when module != nil or package != nil ->

@@ -292,6 +292,18 @@ defmodule HalC2.PluginsTest do
     assert stored("runner")["program"] == "/elsewhere"
   end
 
+  # The shape the release before this one sent, which an upgrade can find in the mailbox.
+  test "a save queued before an upgrade is answered as one without the shell's scope" do
+    exec_package("runner")
+    assert {:ok, _} = save("runner", %{"program" => "/opt/runner"})
+
+    assert {:error, %{"_tag" => "EnvironmentScopeRequiredError"}} =
+             GenServer.call(Plugins, {:save_settings, "runner", %{"program" => "/elsewhere"}})
+
+    assert {:ok, _} = GenServer.call(Plugins, {:save_settings, "runner", %{"count" => 4}})
+    assert stored("runner") == %{"program" => "/opt/runner", "count" => 4}
+  end
+
   test "the settings list says which settings are marked exec" do
     exec_package("runner")
 
