@@ -119,7 +119,10 @@ function machine(ctx: World): Machine {
           finish([], {
             ok: false,
             code: "sandboxes-running",
-            message: `${state.reviews} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first.`,
+            message:
+              state.reviews === 1
+                ? "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
+                : `${state.reviews} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first.`,
             sandboxes: state.reviews,
           });
         } else if (payload.operation === "uninstall") {

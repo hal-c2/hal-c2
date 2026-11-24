@@ -120,9 +120,12 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       finish(kInstallSteps, result(true, QJsonValue(), kInstalled));
     } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !rpc.payload.value(QLatin1String("drain")).toBool()) {
       finish({}, result(false, QStringLiteral("sandboxes-running"),
-                        QStringLiteral("%1 of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; "
-                                       "or let them finish first.")
-                            .arg(machine.reviews),
+                        machine.reviews == 1
+                            ? QStringLiteral("1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; "
+                                             "or let it finish first.")
+                            : QStringLiteral("%1 of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their "
+                                             "reviews; or let them finish first.")
+                                  .arg(machine.reviews),
                         machine.reviews));
     } else if (operation == QLatin1String("uninstall")) {
       machine.reviews = 0;
