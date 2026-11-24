@@ -20,11 +20,11 @@ runs it as a service of your own user, and talks to it only over mutual TLS.
 | macOS on Apple Silicon                                                     | Docker Desktop 28 or later                    |
 
 Intel Macs are not supported, and neither is an MC running under Rosetta. On Linux,
-installing OpenShell starts Podman's socket (`podman.socket`) when Podman is
-installed but its socket is not running, and says so. HAL-C2 never installs Podman or
+installing OpenShell starts Podman's socket through your systemd user unit
+`podman.socket` when Podman is installed but its socket is not running, and says so. HAL-C2 never installs Podman or
 Docker itself: without them, the install says what to install. To use a Podman socket
-somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`; `DOCKER_HOST` is not
-read.
+somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`, and start it yourself before
+installing: the install never starts a socket named there. `DOCKER_HOST` is not read.
 
 The runtime must be able to hold each sandbox to its CPU, memory and process limits:
 cgroup v2, with the `cpu`, `memory` and `pids` controllers delegated to your user. Most
@@ -161,7 +161,8 @@ Settings cannot set up the machine itself. A missing or wrong container runtime,
 an old system, or a cgroup setup is fixed on the MC's machine: install Podman 5 or
 later with its package manager (Docker Desktop 28 or later on a Mac), or update the
 system, then press **Install** in Settings. On Linux it starts Podman's socket for
-you.
+you through systemd's `podman.socket` unit. A socket you named in
+`HAL_C2_OPENSHELL_DOCKER_SOCKET` it leaves alone: start that one yourself.
 
 | Code                                                                                                                                          | What to do                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
