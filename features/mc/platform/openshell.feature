@@ -445,7 +445,7 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the check is refused because the install is running
     And the install succeeds
 
-  @mc
+  @mc @shared
   Scenario: Settings says what to install on a machine without Podman or Docker
     Given a machine that has no Podman
     When the user opens the sandbox settings

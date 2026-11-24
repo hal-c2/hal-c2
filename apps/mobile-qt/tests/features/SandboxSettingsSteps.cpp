@@ -21,6 +21,9 @@ using S = QString;
 const S kPinned = S("0.1.7");
 const S kIntelMac = S("OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.");
 const S kNotInstalled = S("Press Install to install it.");
+const S kNoPodman = S(
+    "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press Install: it starts Podman's "
+    "socket for you.");
 const S kFailure = S("OpenShell's status did not answer within 20 seconds. Refresh to try again.");
 const QStringList kInstallSteps{S("Checking this machine"), S("Checking the gateway's configuration"), S("Starting the gateway")};
 const S kInstalled = S("OpenShell installed, 0.1.7, listening on https://127.0.0.1:17670.");
@@ -32,6 +35,7 @@ const S kManageReason = S(
 // What the MC's machine is, as the scenario says.
 struct FakeOpenShell {
   bool intelMac = false;
+  bool noPodman = false;
   bool gateway = false;
   bool pointed = false;
   bool failing = false;
@@ -58,7 +62,7 @@ QJsonObject status(const FakeOpenShell& machine) {
                                               action(S("uninstall"), S("Uninstall"))}
                              : external ? QJsonArray{action(S("check"), S("Check")), action(S("uninstall"), S("Stop using it"))}
                                         : QJsonArray{action(S("install"), S("Install"))};
-  return {{S("supported"), !machine.intelMac},
+  QJsonObject answer{{S("supported"), !machine.intelMac},
           {S("ready"), ready},
           {S("mode"), machine.managed ? QJsonValue(S("managed")) : external ? QJsonValue(S("external")) : QJsonValue()},
           {S("actions"), actions},
@@ -69,6 +73,12 @@ QJsonObject status(const FakeOpenShell& machine) {
           {S("problems"), machine.intelMac ? problem(S("intel-mac"), kIntelMac)
                           : ready          ? QJsonArray()
                                            : problem(S("not-installed"), kNotInstalled)}};
+  // Like the MC: no Podman is a platform problem, and Install starts its socket once it is there.
+  if (machine.noPodman) {
+    answer.insert(S("supported"), false);
+    answer.insert(S("problems"), problem(S("podman-missing"), kNoPodman));
+  }
+  return answer;
 }
 
 QJsonObject result(bool ok, const QJsonValue& code, const S& message, const QJsonValue& sandboxes = QJsonValue()) {
@@ -161,6 +171,7 @@ QQuickItem* actionButton(World& world, const S& label) {
 const Steps steps([] {
   step(S("a Linux machine with rootless Podman"), [](World&, const Captures&, const Table&) {});
   step(S("a machine that is an Intel Mac"), [](World& world, const Captures&, const Table&) { machine(world).intelMac = true; });
+  step(S("a machine that has no Podman"), [](World& world, const Captures&, const Table&) { machine(world).noPodman = true; });
   step(S("a gateway the user runs, with its CA and a client certificate"), [](World& world, const Captures&, const Table&) { machine(world).gateway = true; });
   step(S("the user points the MC at it"), [](World& world, const Captures&, const Table&) { machine(world).pointed = true; });
   step(S("the MC cannot say whether review sandboxes can run"), [](World& world, const Captures&, const Table&) { machine(world).failing = true; });
@@ -196,6 +207,11 @@ const Steps steps([] {
     reads(world, S("sandboxSummary"), S("Review sandboxes can't run here yet."));
     reads(world, S("sandboxProblem:not-installed"), kNotInstalled);
     reads(world, S("sandboxDetail"), S("OpenShell %1 is the version this MC pins.").arg(kPinned));
+  });
+  step(S("they read that Podman must be installed first, and that Install starts its socket"), [](World& world, const Captures&, const Table&) {
+    reads(world, S("sandboxProblem:podman-missing"), kNoPodman);
+    world.waitFor([&] { return actionButton(world, S("Install")) != nullptr && actionButton(world, S("Install"))->isEnabled(); },
+                  [&] { return S("the page to offer Install; the screen says: %1").arg(screenTexts(world)); });
   });
   step(S("they read that review sandboxes can run here"), [](World& world, const Captures&, const Table&) {
     reads(world, S("sandboxSummary"), S("Review sandboxes can run here."));

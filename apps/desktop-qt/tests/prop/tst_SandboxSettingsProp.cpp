@@ -9,7 +9,7 @@
 // reviews in the way, and the user agrees to stop them or not; the MC runs
 // one operation at a time and refuses a second, and the user may press an
 // action again before the first run's frame lands (before or after its
-// reply), which runs nothing more. After every step the
+// reply, or after a frame from before the run), which runs nothing more. After every step the
 // published section is what the model says: the latest read's answer, loading
 // while one is out; the operation as the openShell shape last said while the
 // page was open; and a question only about an outcome this page asked for.
@@ -469,6 +469,46 @@ struct Twice : Command {
   void show(std::ostream& os) const override { os << "Twice(" << operation.toStdString() << (afterReply ? ", after its reply" : "") << ")"; }
 };
 
+// A frame from before the run lands after the press and before the run's own:
+// the shape's first frame, or another device's last, that ended any way. The
+// user presses again once it has landed. It neither reopens the actions nor
+// answers the run, so the second press runs nothing and no question comes of it.
+struct Stale : Command {
+  QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
+  Operation frame{QLatin1String(kOperations[*rc::gen::inRange(0, 3)]), false, static_cast<Outcome>(*rc::gen::inRange(1, 4))};
+
+  void apply(Model& model) const override {
+    if (model.open && model.offers(operation) && !model.shown.running) model.run(operation);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    const bool runs = model.open && model.offers(operation) && !model.shown.running;
+    const qsizetype before = shell.runs.size();
+    const QVariantMap payload{{QStringLiteral("operation"), operation}};
+    if (runs) {
+      shell.reached.insert(QStringLiteral("a frame from before the run"));
+      shell.holdingFrames = true;
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
+      shell.barrier();
+      for (const int id : shell.mc.subscribers(QStringLiteral("openShell"))) {
+        shell.mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operationJson(frame)}});
+      }
+      shell.barrier();
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
+      shell.barrier();
+      shell.releaseFrames();
+    } else {
+      shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
+    }
+    check(next, shell);
+    RC_ASSERT(shell.runs.size() == before + (runs ? 1 : 0));
+  }
+  void show(std::ostream& os) const override {
+    os << "Stale(" << operation.toStdString() << ", after " << frame.name.toStdString() << " " << kOutcomeNames[int(frame.outcome)] << ")";
+  }
+};
+
 // Another device starts an operation on the MC.
 struct Elsewhere : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
@@ -568,7 +608,7 @@ private slots:
       check(initial, shell);
       rc::state::check(initial, shell,
                        rc::state::gen::execOneOfWithArgs<Open, Open, Refresh, Refresh, Change, Change, Hold, AnswerOne, AnswerOne, Release,
-                                                         Run, Run, Twice, Elsewhere, Finish, Finish, Confirm, Cancel>());
+                                                         Run, Run, Twice, Stale, Elsewhere, Finish, Finish, Confirm, Cancel>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked to stop reviews")), "asked before stopping reviews");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("agreed while another ran")), "agreed while another device's operation ran");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended while away")), "an operation that ended while the page was left");
@@ -577,6 +617,7 @@ private slots:
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("refreshed while reading")), "a refresh while a read is out");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed twice at once")), "an action pressed twice before its run's reply");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed again after the reply")), "an action pressed again after its run's reply, before its frame");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("a frame from before the run")), "a frame from before a run, then a second press");
     }));
   }
 };

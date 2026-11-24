@@ -15,6 +15,8 @@ const PINNED = "0.1.7";
 const INTEL_MAC =
   "OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.";
 const NOT_INSTALLED = "Press Install to install it.";
+const NO_PODMAN =
+  "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press Install: it starts Podman's socket for you.";
 const FAILURE = "OpenShell's status did not answer within 20 seconds. Refresh to try again.";
 const INSTALL_STEPS = [
   "Checking this machine",
@@ -28,6 +30,7 @@ const MANAGE_REASON =
 
 interface Machine {
   intelMac: boolean;
+  noPodman: boolean;
   gateway: boolean;
   pointed: boolean;
   failing: boolean;
@@ -49,6 +52,7 @@ function machine(ctx: World): Machine {
   if (found) return found;
   found = {
     intelMac: false,
+    noPodman: false,
     gateway: false,
     pointed: false,
     failing: false,
@@ -63,16 +67,19 @@ function machine(ctx: World): Machine {
     const external = !state.intelMac && state.gateway && state.pointed;
     const ready = state.managed || external;
     return {
-      supported: !state.intelMac,
+      // Like the MC: no Podman is a platform problem, and Install starts its socket once it is there.
+      supported: !state.intelMac && !state.noPodman,
       ready,
       mode: state.managed ? "managed" : external ? "external" : null,
       version: ready ? PINNED : null,
       pinnedVersion: PINNED,
       problems: state.intelMac
         ? [{ code: "intel-mac", message: INTEL_MAC }]
-        : ready
-          ? []
-          : [{ code: "not-installed", message: NOT_INSTALLED }],
+        : state.noPodman
+          ? [{ code: "podman-missing", message: NO_PODMAN }]
+          : ready
+            ? []
+            : [{ code: "not-installed", message: NOT_INSTALLED }],
       actions: state.intelMac
         ? []
         : state.managed
@@ -165,6 +172,9 @@ step("a Linux machine with rootless Podman", (ctx: World) => {
 step("a machine that is an Intel Mac", (ctx: World) => {
   machine(ctx).intelMac = true;
 });
+step("a machine that has no Podman", (ctx: World) => {
+  machine(ctx).noPodman = true;
+});
 step("a gateway the user runs, with its CA and a client certificate", (ctx: World) => {
   machine(ctx).gateway = true;
 });
@@ -186,6 +196,14 @@ step("the MC can say again and the user refreshes the sandbox settings", async (
   machine(ctx).failing = false;
   await chooseRow(ctx, "Refresh");
 });
+
+step(
+  "they read that Podman must be installed first, and that Install starts its socket",
+  async (ctx: World) => {
+    await reads(ctx, [NO_PODMAN]);
+    expect(pageText(ctx)).toContain("Install");
+  },
+);
 
 step("they read that OpenShell does not run on an Intel Mac", async (ctx: World) => {
   await reads(ctx, ["Review sandboxes can't run on this machine.", INTEL_MAC]);

@@ -106,6 +106,33 @@ defmodule HalC2.OpenShell.CommandTest do
       refute message =~ "hal-c2-service"
     end
 
+    test "a service problem names Update when Update is what Settings offers" do
+      problems = ["update-available", "service-missing", "service-outdated", "service-stopped"]
+      outdated = status(%{"mode" => "managed", "problems" => problems})
+
+      assert {:ok, %{"actions" => [%{"label" => "Update"} | _], "problems" => messages}} =
+               Command.settings_status(fn -> outdated end)
+
+      for %{"message" => message} <- messages do
+        assert message =~ "Update"
+        refute message =~ "Repair"
+      end
+    end
+
+    test "a dev run's old gateway is still to update, by the dev run, not a button" do
+      dev = status(%{"mode" => "foreground", "problems" => ["update-available"]})
+
+      assert {:ok,
+              %{
+                "actions" => actions,
+                "problems" => [%{"code" => "update-available", "message" => message}]
+              }} = Command.settings_status(fn -> dev end)
+
+      refute Enum.any?(actions, &(&1["operation"] == "install"))
+      assert message =~ "mise run openshell"
+      refute message =~ "Press"
+    end
+
     test "a user's own gateway is checked or stopped being used" do
       assert Command.settings_actions(status(%{"mode" => "external"})) == [
                %{"operation" => "check", "label" => "Check"},

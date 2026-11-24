@@ -73,4 +73,38 @@ describe("review sandboxes", () => {
       host.destroy();
     });
   }
+
+  it("a frame from before the run keeps the actions off and asks nothing", async () => {
+    const { fake, mc, host, page, emit, state } = boot();
+    fake.connect();
+    host.dispatch("section.open", { id: "sandboxes" });
+    await host.settled();
+
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    await host.settled();
+    // Another device's last uninstall, sent before this run started, lands first.
+    mc.openShellOperation = {
+      operation: "uninstall",
+      running: false,
+      steps: [],
+      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+    };
+    mc.emitOpenShellOperation();
+    await host.settled();
+    expect(host.state.get("mode")).not.toBe("sectionConfirm");
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    await host.settled();
+    expect(mc.callsTo("server.runOpenShellOperation")).toHaveLength(1);
+
+    emit(state());
+    emit({
+      ...state(),
+      running: false,
+      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+    });
+    await host.settled();
+    expect(host.state.get("mode")).toBe("sectionConfirm");
+    expect(page().lines.join("\n")).not.toContain("already running");
+    host.destroy();
+  });
 });

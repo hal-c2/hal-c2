@@ -42,8 +42,8 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   let operation: OpenShellOperationState | null = null;
   // The operation this page asked for, until its outcome arrives.
   let asked: ServerOpenShellOperation | null = null;
-  // A run this page sent that no frame has shown yet and the MC has not refused.
-  // The actions stay off until then: its reply may land before or after that
+  // A run this page sent that no frame has shown running yet and the MC has not
+  // refused. The actions stay off until then: its reply may land before or after that
   // frame, and a second press in between would be refused as busy, and that
   // refusal would forget what this page asked for.
   let starting = false;
@@ -107,6 +107,13 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   };
 
   const follow = (next: OpenShellOperationState) => {
+    // A frame from before the run (the shape's first, another device's last) is
+    // shown, but neither reopens the actions nor answers the run.
+    if (starting && !(next.running && next.operation === asked)) {
+      operation = next;
+      host.refresh();
+      return;
+    }
     const ended = busy() && !next.running;
     operation = next;
     starting = false;

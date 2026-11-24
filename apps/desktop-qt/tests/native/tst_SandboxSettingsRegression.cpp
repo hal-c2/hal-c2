@@ -2,6 +2,8 @@
 
 #include <QtTest>
 
+#include <utility>
+
 #include "FakeMc.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -71,11 +73,33 @@ struct Mc {
     emitAll();
   }
 
-  void emitTo(int id) {
-    mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operation}});
-  }
+  void emitTo(int id) { sendTo(id, operation); }
   void emitAll() {
     for (const int id : mc.subscribers(QStringLiteral("openShell"))) emitTo(id);
+  }
+
+  // Sends `frame` to every follower at once: one it had sent before the run.
+  void stale(const QJsonObject& frame) {
+    for (const int id : mc.subscribers(QStringLiteral("openShell"))) send(id, frame);
+  }
+
+  // Holds the openShell frames from here on, until `releaseFrames`.
+  void holdFrames() { holding = true; }
+  void releaseFrames() {
+    holding = false;
+    for (const auto& [id, frame] : std::exchange(held, {})) send(id, frame);
+  }
+
+private:
+  bool holding = false;
+  QList<std::pair<int, QJsonObject>> held;
+
+  void sendTo(int id, const QJsonObject& frame) {
+    if (holding) held.append({id, frame});
+    else send(id, frame);
+  }
+  void send(int id, const QJsonObject& frame) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), frame}});
   }
 };
 
@@ -135,6 +159,44 @@ private slots:
     shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), uninstall);
     QTRY_VERIFY(shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
 
+    mc.finish();
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
+    QCOMPARE(mc.runs, 1);
+    QVERIFY(shell.section().value(QStringLiteral("refusal")).isNull());
+  }
+
+  // A frame from before the run (another device's last uninstall, or the
+  // shape's first frame) cleared what kept the actions off: a second press then
+  // sent a second run, the MC refused it as busy, and the first run's outcome
+  // asked nothing before stopping the review. The stale frame's own outcome
+  // was also taken for this run's.
+  void aFrameFromBeforeTheRunKeepsTheActionsOff() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.finishAtOnce = false;
+    Shell shell(home, mc.mc);
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    const QVariantMap uninstall{{QStringLiteral("operation"), QStringLiteral("uninstall")}};
+    mc.holdFrames();
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), uninstall);
+    QTRY_COMPARE(mc.runs, 1);
+    mc.stale(QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")},
+                         {QStringLiteral("running"), false},
+                         {QStringLiteral("steps"), QJsonArray()},
+                         {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), false},
+                                                                {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
+                                                                {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
+                                                                {QStringLiteral("sandboxes"), 1}}}});
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("result")).isNull());
+    QVERIFY(shell.section().value(QStringLiteral("confirm")).isNull());
+    QVERIFY(shell.section().value(QStringLiteral("busy")).toBool());
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), uninstall);
+
+    mc.releaseFrames();
+    QTRY_VERIFY(shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("running")).toBool());
     mc.finish();
     QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
     QCOMPARE(mc.runs, 1);

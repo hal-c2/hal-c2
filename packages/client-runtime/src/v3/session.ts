@@ -1417,8 +1417,15 @@ export function makeV3Session(input: {
       ),
       [WS_METHODS.subscribeProjectClones]: projectClones,
       [WS_METHODS.serverSubscribeOpenShellOperation]: () =>
-        shapeStream(socket, { type: "openShell", mc }, (frame) =>
-          frame.t === "openShell" ? [frame.operation] : [],
+        shapeStream(
+          socket,
+          { type: "openShell", mc },
+          (frame) => (frame.t === "openShell" ? [frame.operation] : []),
+          (frame) =>
+            new ClusterRpcError(
+              String(frame.reason ?? "OpenShell's operations are unavailable."),
+              frame,
+            ),
         ),
       ...Object.fromEntries(
         [

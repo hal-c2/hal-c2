@@ -17,6 +17,9 @@ namespace {
 const QString kPinned = QStringLiteral("0.1.7");
 const QString kIntelMac = QStringLiteral("OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.");
 const QString kNotInstalled = QStringLiteral("Press Install to install it.");
+const QString kNoPodman = QStringLiteral(
+    "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press Install: it starts Podman's "
+    "socket for you.");
 const QString kFailure = QStringLiteral("OpenShell's status did not answer within 20 seconds. Refresh to try again.");
 const QStringList kInstallSteps{QStringLiteral("Checking this machine"), QStringLiteral("Checking the gateway's configuration"),
                                 QStringLiteral("Starting the gateway")};
@@ -29,6 +32,7 @@ const QString kManageReason = QStringLiteral(
 // What the MC's machine is, as the scenario says.
 struct FakeOpenShell {
   bool intelMac = false;
+  bool noPodman = false;
   bool gateway = false;  // the user runs a gateway
   bool pointed = false;  // and pointed the MC at it
   bool failing = false;
@@ -60,7 +64,7 @@ QJsonObject status(const FakeOpenShell& machine) {
                              : external ? QJsonArray{action(QStringLiteral("check"), QStringLiteral("Check")),
                                                      action(QStringLiteral("uninstall"), QStringLiteral("Stop using it"))}
                                         : QJsonArray{action(QStringLiteral("install"), QStringLiteral("Install"))};
-  return {{QStringLiteral("supported"), !machine.intelMac},
+  QJsonObject answer{{QStringLiteral("supported"), !machine.intelMac},
           {QStringLiteral("ready"), ready},
           {QStringLiteral("mode"), machine.managed ? QJsonValue(QStringLiteral("managed"))
                                    : external      ? QJsonValue(QStringLiteral("external"))
@@ -73,6 +77,12 @@ QJsonObject status(const FakeOpenShell& machine) {
           {QStringLiteral("problems"), machine.intelMac ? problem(QStringLiteral("intel-mac"), kIntelMac)
                                        : ready          ? QJsonArray()
                                                         : problem(QStringLiteral("not-installed"), kNotInstalled)}};
+  // Like the MC: no Podman is a platform problem, and Install starts its socket once it is there.
+  if (machine.noPodman) {
+    answer.insert(QStringLiteral("supported"), false);
+    answer.insert(QStringLiteral("problems"), problem(QStringLiteral("podman-missing"), kNoPodman));
+  }
+  return answer;
 }
 
 QJsonObject result(bool ok, const QJsonValue& code, const QString& message, const QJsonValue& sandboxes = QJsonValue()) {
@@ -188,6 +198,7 @@ void expectSummary(World& world, const QString& summary) {
 const Steps steps([] {
   step(QStringLiteral("a Linux machine with rootless Podman"), [](World&, const Captures&, const Table&) {});
   step(QStringLiteral("a machine that is an Intel Mac"), [](World& world, const Captures&, const Table&) { machine(world).intelMac = true; });
+  step(QStringLiteral("a machine that has no Podman"), [](World& world, const Captures&, const Table&) { machine(world).noPodman = true; });
   step(QStringLiteral("a gateway the user runs, with its CA and a client certificate"),
        [](World& world, const Captures&, const Table&) { machine(world).gateway = true; });
   step(QStringLiteral("the user points the MC at it"), [](World& world, const Captures&, const Table&) { machine(world).pointed = true; });
@@ -218,6 +229,11 @@ const Steps steps([] {
     expectSummary(world, QStringLiteral("Review sandboxes can't run here yet."));
     expect(text(world, QStringLiteral("sandboxProblem:not-installed")) == kNotInstalled, QStringLiteral("the page does not say how to install it"));
     expect(text(world, QStringLiteral("sandboxDetail")).contains(kPinned), QStringLiteral("the page does not name the version the MC pins"));
+  });
+  step(QStringLiteral("they read that Podman must be installed first, and that Install starts its socket"), [](World& world, const Captures&, const Table&) {
+    expectText(world, QStringLiteral("sandboxProblem:podman-missing"), kNoPodman);
+    QQuickItem* install = world.brick->find(QStringLiteral("sandboxAction:install"));
+    expect(install != nullptr && install->isEnabled(), QStringLiteral("the page does not offer Install"));
   });
   step(QStringLiteral("they read that review sandboxes can run here"), [](World& world, const Captures&, const Table&) {
     expectSummary(world, QStringLiteral("Review sandboxes can run here."));

@@ -243,7 +243,7 @@ defmodule HalC2.OpenShell.Command do
 
       {:ok, {:ok, status}} ->
         actions = settings_actions(status)
-        label = install_label(actions)
+        label = install_label(status, actions)
 
         {:ok,
          %{
@@ -318,35 +318,44 @@ defmodule HalC2.OpenShell.Command do
 
   defp action(operation, label), do: %{"operation" => operation, "label" => label}
 
-  defp install_label(actions),
+  # Settings offers no install for a dev run's gateway: it is updated by running
+  # the dev run again (`foreground_command/0`), which a client cannot do.
+  defp install_label(%{"mode" => "foreground"}, _actions), do: :dev_run
+
+  defp install_label(_status, actions),
     do: Enum.find_value(actions, "Install", &(&1["operation"] == "install" && &1["label"]))
 
   @doc """
   What a status problem means and what to do in Settings, where `label` is the
-  install action's (Install, Update or Repair); the CLI's wording is
+  install action's (Install, Update or Repair), or `:dev_run` for a dev run's
+  gateway, which Settings offers no install for; the CLI's wording is
   `problem_message/1`.
   """
   def settings_problem_message("not-installed", _label), do: "Press Install to install it."
 
-  def settings_problem_message("update-available", _label),
-    do: "This MC pins OpenShell #{Manifest.version()}. Press Update to update."
+  def settings_problem_message("update-available", :dev_run),
+    do:
+      "This MC pins OpenShell #{Manifest.version()}. Stop the dev gateway, then run `mise run openshell` again to update it."
 
-  def settings_problem_message("service-missing", _label),
-    do: "The gateway's service is gone. Press Repair to put it back."
+  def settings_problem_message("update-available", label),
+    do: "This MC pins OpenShell #{Manifest.version()}. Press #{label} to update."
+
+  def settings_problem_message("service-missing", label),
+    do: "The gateway's service is gone. Press #{label} to put it back."
 
   def settings_problem_message("service-not-ours", label),
     do:
-      "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit on the MC's machine, then press #{label}."
+      "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit on the MC's machine, then #{press(label)}."
 
   def settings_problem_message("home-moved", label),
     do:
-      "OpenShell was installed when this HAL-C2 home was at another path, and that path's gateway service is still there. Stop and remove it, or run the MC from the path it was installed at, then press #{label}."
+      "OpenShell was installed when this HAL-C2 home was at another path, and that path's gateway service is still there. Stop and remove it, or run the MC from the path it was installed at, then #{press(label)}."
 
-  def settings_problem_message("service-outdated", _label),
-    do: "The gateway's service is not the one this MC writes. Press Repair to rewrite it."
+  def settings_problem_message("service-outdated", label),
+    do: "The gateway's service is not the one this MC writes. Press #{label} to rewrite it."
 
-  def settings_problem_message("service-stopped", _label),
-    do: "The gateway's service is not running. Its log says why; Repair restarts it."
+  def settings_problem_message("service-stopped", label),
+    do: "The gateway's service is not running. Its log says why; #{label} restarts it."
 
   def settings_problem_message("gateway-shared", _label),
     do:
@@ -354,9 +363,12 @@ defmodule HalC2.OpenShell.Command do
 
   def settings_problem_message("podman-missing", label),
     do:
-      "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press #{label}: it starts Podman's socket for you."
+      "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then #{press(label)}: it starts Podman's socket for you."
 
   def settings_problem_message(code, _label), do: problem_message(code)
+
+  defp press(:dev_run), do: "run `mise run openshell` again"
+  defp press(label), do: "press #{label}"
 
   @doc """
   A lifecycle command's error as Settings shows it: `%{"code", "message",

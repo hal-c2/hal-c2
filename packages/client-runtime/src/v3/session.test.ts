@@ -259,6 +259,33 @@ describe("makeV3Session", () => {
     }),
   );
 
+  it.effect("fails the OpenShell operation's stream when the MC refuses it", () =>
+    Effect.gen(function* () {
+      const socket = {
+        subscribe: (shape: { readonly type: string }, listener: (frame: ShapeFrame) => void) => {
+          queueMicrotask(() =>
+            listener(
+              shape.type === "openShell"
+                ? { t: "error", reason: "MC unavailable: noconnection" }
+                : { t: "config", mc: "hal_c2@here", config: CONFIG },
+            ),
+          );
+          return () => {};
+        },
+      } as unknown as ClusterSocket;
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+
+      const error = yield* Effect.flip(
+        session.client[WS_METHODS.serverSubscribeOpenShellOperation]({} as never).pipe(
+          Stream.runDrain,
+        ),
+      );
+
+      expect(error).toBeInstanceOf(ClusterRpcError);
+      expect((error as unknown as ClusterRpcError).message).toBe("MC unavailable: noconnection");
+    }),
+  );
+
   it.effect("fails as the contract's error when the MC refuses", () =>
     Effect.gen(function* () {
       const { socket } = socketAnswering(() =>

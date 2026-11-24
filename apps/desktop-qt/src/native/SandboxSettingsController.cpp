@@ -21,7 +21,7 @@
 // where state is what the last answer said (loading until one lands) and
 // `loading` is whether a read is out. Only the latest read lands. `busy` is
 // whether an operation runs on the MC, or one this page asked for has not yet
-// been refused or shown in a frame; the actions are off while it is or when
+// been refused or shown running in a frame; the actions are off while it is or when
 // this session may not manage the MC's machine (manageReason says why).
 // `confirm` asks before an operation this page asked for stops this MC's
 // reviews (or runs without knowing whether it would).
@@ -196,15 +196,23 @@ private:
 
   // The openShell shape: the operation running or last run on the MC.
   void follow(const QJsonObject& next) {
-    const bool ended = busy() && !next.value(QLatin1String("running")).toBool();
-    m_operation = next;
-    // The actions stay off from a run until a frame shows it: its reply may land
-    // before or after that frame, and a second press in between would be refused
-    // as busy, and that refusal would forget what this page asked for.
-    m_starting = false;
     const QString operation = next.value(QLatin1String("operation")).toString();
+    const bool running = next.value(QLatin1String("running")).toBool();
+    // The actions stay off from a run until a frame shows it running: its reply
+    // may land before or after that frame, and a second press in between would
+    // be refused as busy, and that refusal would forget what this page asked
+    // for. A frame from before the run (the shape's first, another device's
+    // last) is shown, but neither reopens the actions nor answers the run.
+    if (m_starting && !(running && operation == m_asked)) {
+      m_operation = next;
+      publish();
+      return;
+    }
+    const bool ended = busy() && !running;
+    m_operation = next;
+    m_starting = false;
     const QJsonValue result = next.value(QLatin1String("result"));
-    if (!next.value(QLatin1String("running")).toBool() && result.isObject() && !m_asked.isEmpty() && m_asked == operation) {
+    if (!running && result.isObject() && !m_asked.isEmpty() && m_asked == operation) {
       m_asked.clear();
       answer(operation, result.toObject());
     }
@@ -326,7 +334,7 @@ private:
   QJsonObject m_operation;
   // The operation this page asked for, until its outcome arrives.
   QString m_asked;
-  // A run this page sent that no frame has shown yet and the MC has not refused.
+  // A run this page sent that no frame has shown running yet and the MC has not refused.
   bool m_starting = false;
   QString m_refusal;
   // What a yes reruns: the operation and the flag (drain or force) it adds.

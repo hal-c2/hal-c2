@@ -154,7 +154,14 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 Review sandboxes**, on any client connected to the MC, shows the same answer, with
 the Settings action that fixes it, so you can see whether reviews can run in a
 sandbox there, and set it up, without a shell on its machine. In Settings, press
-**Install** wherever the table says to run `install`.
+**Install** (or **Update**, or **Repair**, whichever it offers) wherever the table
+says to run `install`.
+
+Settings cannot set up the machine itself. A missing or wrong container runtime,
+an old system, or a cgroup setup is fixed on the MC's machine: install Podman 5 or
+later with its package manager (Docker Desktop 28 or later on a Mac), or update the
+system, then press **Install** in Settings. On Linux it starts Podman's socket for
+you.
 
 | Code                                                                                                                                          | What to do                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
