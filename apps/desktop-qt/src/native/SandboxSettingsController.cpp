@@ -20,8 +20,9 @@
 //   confirm: {text} | null}
 // where state is what the last answer said (loading until one lands) and
 // `loading` is whether a read is out. Only the latest read lands. `busy` is
-// whether an operation runs on the MC; the actions are off while it does or
-// when this session may not manage the MC's machine (manageReason says why).
+// whether an operation runs on the MC, or one this page asked for has not yet
+// been refused or shown in a frame; the actions are off while it is or when
+// this session may not manage the MC's machine (manageReason says why).
 // `confirm` asks before an operation this page asked for stops this MC's
 // reviews (or runs without knowing whether it would).
 //
@@ -120,6 +121,7 @@ private:
   void openPage() {
     m_operation = QJsonObject();
     m_asked.clear();
+    m_starting = false;
     m_refusal.clear();
     clearConfirm();
     if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
@@ -138,12 +140,13 @@ private:
     if (m_subscription >= 0) m_client->unsubscribe(m_subscription);
     m_subscription = -1;
     m_asked.clear();
+    m_starting = false;
     m_refusal.clear();
     clearConfirm();
     publish();
   }
 
-  bool busy() const { return m_operation.value(QLatin1String("running")).toBool(); }
+  bool busy() const { return m_starting || m_operation.value(QLatin1String("running")).toBool(); }
 
   bool offered(const QString& operation) const {
     for (const QJsonValue& value : m_status.value(QLatin1String("actions")).toArray()) {
@@ -175,6 +178,7 @@ private:
 
   void run(const QString& operation, const QJsonObject& flags) {
     m_asked = operation;
+    m_starting = true;
     m_refusal.clear();
     clearConfirm();
     QJsonObject payload = flags;
@@ -182,6 +186,7 @@ private:
     m_client->call(this, m_client->environment(), QStringLiteral("server.runOpenShellOperation"), payload,
                    [this, operation](const QJsonValue&, const std::optional<QString>& error) {
                      if (!error) return;
+                     m_starting = false;
                      if (m_asked == operation) m_asked.clear();
                      m_refusal = error->isEmpty() ? QStringLiteral("The MC did not say why.") : *error;
                      publish();
@@ -193,6 +198,10 @@ private:
   void follow(const QJsonObject& next) {
     const bool ended = busy() && !next.value(QLatin1String("running")).toBool();
     m_operation = next;
+    // The actions stay off from a run until a frame shows it: its reply may land
+    // before or after that frame, and a second press in between would be refused
+    // as busy, and that refusal would forget what this page asked for.
+    m_starting = false;
     const QString operation = next.value(QLatin1String("operation")).toString();
     const QJsonValue result = next.value(QLatin1String("result"));
     if (!next.value(QLatin1String("running")).toBool() && result.isObject() && !m_asked.isEmpty() && m_asked == operation) {
@@ -317,6 +326,8 @@ private:
   QJsonObject m_operation;
   // The operation this page asked for, until its outcome arrives.
   QString m_asked;
+  // A run this page sent that no frame has shown yet and the MC has not refused.
+  bool m_starting = false;
   QString m_refusal;
   // What a yes reruns: the operation and the flag (drain or force) it adds.
   QString m_confirmOperation;

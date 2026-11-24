@@ -42,6 +42,11 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   let operation: OpenShellOperationState | null = null;
   // The operation this page asked for, until its outcome arrives.
   let asked: ServerOpenShellOperation | null = null;
+  // A run this page sent that no frame has shown yet and the MC has not refused.
+  // The actions stay off until then: its reply may land before or after that
+  // frame, and a second press in between would be refused as busy, and that
+  // refusal would forget what this page asked for.
+  let starting = false;
   let refusal: string | null = null;
   let unsubscribe: (() => void) | null = null;
 
@@ -69,13 +74,17 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     host.refresh();
   };
 
+  const busy = () => starting || operation?.running === true;
+
   const run = (name: ServerOpenShellOperation, flags: Flags = {}) => {
     asked = name;
+    starting = true;
     refusal = null;
     void host.track(
       host.client.mcCall("server.runOpenShellOperation", { operation: name, ...flags }).then(
         () => undefined,
         (cause: unknown) => {
+          starting = false;
           if (asked === name) asked = null;
           refusal = errorText(cause);
           host.refresh();
@@ -98,8 +107,9 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   };
 
   const follow = (next: OpenShellOperationState) => {
-    const ended = operation !== null && operation.running && !next.running;
+    const ended = busy() && !next.running;
     operation = next;
+    starting = false;
     if (!next.running && next.result !== null && asked !== null && asked === next.operation) {
       asked = null;
       answer(next.operation, next.result);
@@ -186,14 +196,15 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
 
   const actions = (): SectionItem[] => {
     if (status === null || status.actions.length === 0) return [];
-    const busy = operation?.running === true;
     const rows: SectionItem[] = status.actions.map((action) =>
-      status!.canManage && !busy
+      status!.canManage && !busy()
         ? {
             kind: "row",
             id: `operation:${action.operation}`,
             label: action.label,
-            run: () => run(action.operation),
+            run: () => {
+              if (!busy()) run(action.operation);
+            },
           }
         : { kind: "row", id: `operation:${action.operation}`, label: action.label, tone: "dim" },
     );
@@ -220,6 +231,7 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
       error = null;
       operation = null;
       asked = null;
+      starting = false;
       refusal = null;
       unsubscribe?.();
       unsubscribe = host.client.subscribeOpenShellOperation(follow);

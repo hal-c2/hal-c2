@@ -7,7 +7,9 @@
 // status offers (`server.runOpenShellOperation`), another device starts an
 // operation of its own, an operation ends well, badly or with this MC's
 // reviews in the way, and the user agrees to stop them or not; the MC runs
-// one operation at a time and refuses a second. After every step the
+// one operation at a time and refuses a second, and the user may press an
+// action again before the first run's frame lands (before or after its
+// reply), which runs nothing more. After every step the
 // published section is what the model says: the latest read's answer, loading
 // while one is out; the operation as the openShell shape last said while the
 // page was open; and a question only about an outcome this page asked for.
@@ -135,7 +137,7 @@ QJsonObject operationJson(const Operation& operation) {
                          {QStringLiteral("sandboxes"), QJsonValue()}};
   } else if (operation.outcome == Outcome::Stops) {
     result = QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
-                         {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes are on the gateway.")},
+                         {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
                          {QStringLiteral("sandboxes"), 1}};
   } else if (operation.outcome == Outcome::Fails) {
     result = QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("code"), QStringLiteral("failed")},
@@ -159,6 +161,9 @@ struct Shell {
   QSet<QString> reached;
   Operation operation;  // the MC's
   QList<QJsonObject> runs;
+  // The MC holds its openShell frames from here on (`releaseFrames`).
+  bool holdingFrames = false;
+  QList<QJsonObject> heldFrames;
 
   Shell() {
     mc.onShape(QStringLiteral("config"), [this](int id, const QJsonObject&) {
@@ -200,8 +205,15 @@ struct Shell {
   void emitOperation(const Operation& next) {
     operation = next;
     for (const int id : mc.subscribers(QStringLiteral("openShell"))) {
-      mc.send({{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operationJson(next)}});
+      const QJsonObject frame{{QStringLiteral("t"), QStringLiteral("openShell")}, {QStringLiteral("id"), id}, {QStringLiteral("operation"), operationJson(next)}};
+      if (holdingFrames) heldFrames.append(frame);
+      else mc.send(frame);
     }
+  }
+
+  void releaseFrames() {
+    holdingFrames = false;
+    for (const QJsonObject& frame : std::exchange(heldFrames, {})) mc.send(frame);
   }
 
   void release() {
@@ -427,6 +439,36 @@ struct Run : Command {
   void show(std::ostream& os) const override { os << "Run(" << operation.toStdString() << ")"; }
 };
 
+// The user presses an action twice before the first run's frame lands: at
+// once, or once its reply has landed. The second press runs nothing; a second
+// run would be refused as busy, and the page would forget it had asked.
+struct Twice : Command {
+  QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
+  bool afterReply = *rc::gen::arbitrary<bool>();
+
+  void apply(Model& model) const override {
+    if (model.open && model.offers(operation) && !model.shown.running) model.run(operation);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model next = model;
+    apply(next);
+    const bool runs = model.open && model.offers(operation) && !model.shown.running;
+    if (runs) shell.reached.insert(afterReply ? QStringLiteral("pressed again after the reply") : QStringLiteral("pressed twice at once"));
+    const qsizetype before = shell.runs.size();
+    const QVariantMap payload{{QStringLiteral("operation"), operation}};
+    shell.holdingFrames = true;
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
+    // The MC answers in order, so the barrier's reply follows the run's.
+    if (afterReply) shell.barrier();
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), payload);
+    shell.barrier();
+    shell.releaseFrames();
+    check(next, shell);
+    RC_ASSERT(shell.runs.size() == before + (runs ? 1 : 0));
+  }
+  void show(std::ostream& os) const override { os << "Twice(" << operation.toStdString() << (afterReply ? ", after its reply" : "") << ")"; }
+};
+
 // Another device starts an operation on the MC.
 struct Elsewhere : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
@@ -526,13 +568,15 @@ private slots:
       check(initial, shell);
       rc::state::check(initial, shell,
                        rc::state::gen::execOneOfWithArgs<Open, Open, Refresh, Refresh, Change, Change, Hold, AnswerOne, AnswerOne, Release,
-                                                         Run, Run, Elsewhere, Finish, Finish, Confirm, Cancel>());
+                                                         Run, Run, Twice, Elsewhere, Finish, Finish, Confirm, Cancel>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked to stop reviews")), "asked before stopping reviews");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("agreed while another ran")), "agreed while another device's operation ran");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended while away")), "an operation that ended while the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("stale answer")), "an answer to a read a newer one replaced");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("answer after leaving")), "an answer after the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("refreshed while reading")), "a refresh while a read is out");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed twice at once")), "an action pressed twice before its run's reply");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("pressed again after the reply")), "an action pressed again after its run's reply, before its frame");
     }));
   }
 };
