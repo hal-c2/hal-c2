@@ -8,10 +8,15 @@ defmodule HalC2.OpenShell.Route do
   and `ANTHROPIC_AUTH_TOKEN`, Codex's `-c model_provider=…` launch arguments and the
   variable they name for the key. A base URL is taken from the plugin's own
   instances only, and only one the sandbox can reach without being let through to
-  anything else: a proxy on this machine, over http, at the address the sandbox
-  reaches this machine by (the review broker's, `HalC2.OpenShell.Broker`) and that
-  port alone, or one elsewhere over https at its exact host. `endpoint/2` turns the
-  pick into the policy's endpoint and what the agent dials.
+  anything else: a proxy on this machine, at the address the sandbox reaches this
+  machine by (the review broker's, `HalC2.OpenShell.Broker`) and that port alone.
+  `endpoint/2` turns the pick into the policy's endpoint and what the agent dials.
+
+  A proxy on another machine is refused. OpenShell 0.1.7 binds a credential to an
+  endpoint's host, port and path, never to TLS: its forward proxy injects the key into
+  a plain `http://` request to that host and port as well, so a sandboxed agent could
+  send the proxy key across the network in the clear. On this machine that request
+  stays on the host.
 
   Either way the key is the provider's, which OpenShell injects into the model's
   requests, and the policy lets through that driver's model requests alone, so a
@@ -27,7 +32,7 @@ defmodule HalC2.OpenShell.Route do
   in, read from `env` and then `system` (the MC's environment).
 
   `{:ok, %{key: key, proxy: nil}}` for the API's own host, `{:ok, %{key: key, proxy:
-  %{scheme, host, port, prefix, loopback?}}}` for a proxy, else `{:error, message}`.
+  %{scheme, port, prefix}}}` for a proxy on this machine, else `{:error, message}`.
   """
   def pick(driver, %{env: env, args: args, plugin?: plugin?}, upstream_key, system \\ %{}) do
     with {:ok, base, key_var} <- base(driver, env, args) do
@@ -59,10 +64,10 @@ defmodule HalC2.OpenShell.Route do
   binds every one there), so a proxy on 127.0.0.1 alone would refuse it; the review is
   refused up front with a reason instead (#1786).
   """
-  def reachable(%{proxy: %{loopback?: true}}, "docker"),
+  def reachable(%{proxy: %{}}, "docker"),
     do:
       {:error,
-       "A review sandbox on Docker cannot reach a CLIProxyAPI that listens on this machine's 127.0.0.1 only. Review with OpenShell on Podman, or connect the CLIProxyAPI plugin to a proxy over https."}
+       "A review sandbox on Docker cannot reach a CLIProxyAPI that listens on this machine's 127.0.0.1 only. Review through CLIProxyAPI with OpenShell on Podman, or with the API's own key."}
 
   def reachable(route, _runtime), do: {:ok, route}
 
@@ -71,22 +76,12 @@ defmodule HalC2.OpenShell.Route do
   sandbox reaching this machine as `host` (`%{host, dialed, ips}`, the broker's):
   `%{host, port, ips, url}`.
   """
-  def endpoint(%{loopback?: true} = proxy, host) do
+  def endpoint(proxy, host) do
     %{
       host: host.host,
       port: proxy.port,
       ips: host.ips,
       url: "#{proxy.scheme}://#{host.dialed}:#{proxy.port}#{proxy.prefix}"
-    }
-  end
-
-  def endpoint(proxy, _host) do
-    %{
-      host: proxy.host,
-      port: proxy.port,
-      ips: [],
-      url:
-        "https://#{if String.contains?(proxy.host, ":"), do: "[#{proxy.host}]", else: proxy.host}:#{proxy.port}#{proxy.prefix}"
     }
   end
 
@@ -190,23 +185,12 @@ defmodule HalC2.OpenShell.Route do
         {:error,
          "#{name(driver)}'s base URL in this provider has a path a review sandbox does not take."}
 
-      loopback?(uri.host) ->
-        {:ok,
-         %{scheme: uri.scheme, host: uri.host, port: uri.port, prefix: prefix, loopback?: true}}
-
-      uri.scheme == "http" ->
+      not loopback?(uri.host) ->
         {:error,
-         "A review sandbox reaches a CLIProxyAPI on another machine over https only, and this provider's is #{shown(url)}."}
+         "A review sandbox reaches a CLIProxyAPI on this machine only, and this provider's is #{shown(url)}: OpenShell cannot hold the sandbox to TLS, so the proxy's key could cross the network unencrypted."}
 
       true ->
-        {:ok,
-         %{
-           scheme: "https",
-           host: String.downcase(uri.host),
-           port: uri.port,
-           prefix: prefix,
-           loopback?: false
-         }}
+        {:ok, %{scheme: uri.scheme, port: uri.port, prefix: prefix}}
     end
   end
 

@@ -1270,11 +1270,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
     refute Enum.any?(Map.values(env), &(&1 =~ context.proxy.key))
-    context
+    Map.put(context, :agent, agent)
   end
 
+  # The driver's model requests (`HalC2.OpenShell.Review`'s), each method and path,
+  # with none added.
   step "its sandbox lets the agent send its model's requests to the proxy's port and nothing else",
-       context do
+       %{agent: agent} = context do
     assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
     assert [model] = spec.policy.network_policies["model"].endpoints
 
@@ -1283,14 +1285,18 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     assert model.credential_binding.provider != ""
 
-    requests = Enum.map(model.rules, &{&1.allow.method, &1.allow.path})
-    assert requests != []
+    expected =
+      case agent do
+        "Codex" ->
+          [{"POST", "/v1/responses"}, {"POST", "/v1/responses/compact"}, {"GET", "/v1/models"}]
 
-    assert Enum.all?(requests, fn {_, path} ->
-             path =~ ~r"^/v1/(messages|responses|models)(/|$)"
-           end)
+        "Claude" ->
+          [{"POST", "/v1/messages"}, {"POST", "/v1/messages/count_tokens"}, {"GET", "/v1/models"}]
+      end
 
-    refute Enum.any?(requests, fn {method, path} -> method == "*" or path =~ "*" end)
+    assert model.rules |> Enum.map(&{&1.allow.method, &1.allow.path}) |> Enum.sort() ==
+             Enum.sort(expected)
+
     context
   end
 

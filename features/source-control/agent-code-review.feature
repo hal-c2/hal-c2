@@ -542,7 +542,7 @@ Feature: Agent code review
     # The CLIProxyAPI plugin's Claude and Codex (#1781): the proxy on this machine is
     # reached as the report broker is, at the proxy's port alone, and it answers more
     # than the model's requests, its management API among them.
-    @mc
+    @mc @plugin-cliproxyapi
     Scenario Outline: A sandboxed review through CLIProxyAPI reaches the proxy's model requests and nothing else
       Given pull requests are not trusted and OpenShell is installed
       And a fake CLIProxyAPI

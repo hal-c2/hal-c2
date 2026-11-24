@@ -70,9 +70,7 @@ defmodule HalC2.OpenShell.RouteTest do
       assert message =~ "on Docker cannot reach a CLIProxyAPI"
     end
 
-    test "a proxy elsewhere, or the API's own host, is reached on Docker too" do
-      {:ok, remote} = pick(plugin("claude", "https://proxy.example.com"))
-      assert {:ok, ^remote} = Route.reachable(remote, "docker")
+    test "the API's own host is reached on Docker too" do
       upstream = %{key: "k", proxy: nil}
       assert {:ok, ^upstream} = Route.reachable(upstream, "docker")
     end
@@ -83,7 +81,7 @@ defmodule HalC2.OpenShell.RouteTest do
       assert {:ok, %{key: "client-key", proxy: proxy}} =
                pick(plugin("claude", "http://127.0.0.1:8317"))
 
-      assert %{loopback?: true, port: 8317, prefix: "", scheme: "http"} = proxy
+      assert %{port: 8317, prefix: "", scheme: "http"} = proxy
 
       assert Route.endpoint(proxy, @host) == %{
                host: "host.containers.internal",
@@ -97,7 +95,7 @@ defmodule HalC2.OpenShell.RouteTest do
       assert {:ok, %{key: "client-key", proxy: proxy}} =
                pick(plugin("codex", "http://localhost:8400/"))
 
-      assert %{loopback?: true, port: 8400, prefix: ""} = proxy
+      assert %{port: 8400, prefix: ""} = proxy
       %{url: url} = Route.endpoint(proxy, @host)
 
       {command, environment} = Route.agent("codex", url, "OPENAI_API_KEY")
@@ -113,23 +111,21 @@ defmodule HalC2.OpenShell.RouteTest do
              ]
     end
 
-    test "one connected to elsewhere over https is reached at its exact host, its path kept" do
-      assert {:ok, %{proxy: proxy}} = pick(plugin("claude", "https://Proxy.Example.com/team"))
-      assert %{loopback?: false, host: "proxy.example.com", port: 443, prefix: "/team"} = proxy
-
-      assert Route.endpoint(proxy, @host) == %{
-               host: "proxy.example.com",
-               port: 443,
-               ips: [],
-               url: "https://proxy.example.com:443/team"
-             }
+    test "one on this machine keeps its path" do
+      assert {:ok, %{proxy: proxy}} = pick(plugin("claude", "http://[::1]:8317/team"))
+      assert %{url: "http://host.containers.internal.:8317/team"} = Route.endpoint(proxy, @host)
     end
 
-    test "one elsewhere over http, or with a query, credentials or a fragment, is refused" do
-      assert {:error, message} = pick(plugin("codex", "http://192.168.1.4:8317"))
-      assert message =~ "over https only"
-      assert message =~ "http://192.168.1.4"
+    # OpenShell would inject the key into a plain http request to that host and port too.
+    test "one on another machine is refused, over https as well" do
+      for base <- ["http://192.168.1.4:8317", "https://Proxy.Example.com/team"] do
+        assert {:error, message} = pick(plugin("codex", base))
+        assert message =~ "on this machine only"
+        assert message =~ URI.parse(base).scheme <> "://"
+      end
+    end
 
+    test "one with a query, credentials or a fragment is refused" do
       for base <- ["http://127.0.0.1:8317?x=1", "http://user:pw@127.0.0.1:8317"] do
         assert {:error, message} = pick(plugin("claude", base))
         assert message =~ "credentials, a query or a fragment"
@@ -138,7 +134,7 @@ defmodule HalC2.OpenShell.RouteTest do
     end
 
     test "one whose path climbs out of where it points is refused" do
-      for base <- ["http://127.0.0.1:8317/../v0", "https://proxy.example.com/./x"] do
+      for base <- ["http://127.0.0.1:8317/../v0", "https://localhost/./x"] do
         assert {:error, message} = pick(plugin("claude", base))
         assert message =~ "a path a review sandbox does not take"
       end
