@@ -389,10 +389,12 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
+  # Forgejo has no bots or mannequins: every author is a user, whose standing in the
+  # repository is not read here.
   defp remark(kind, user, body, at),
     do: %{
       "kind" => kind,
-      "author" => %{"login" => login(user)},
+      "author" => %{"login" => login(user), "isUser" => true},
       "body" => body || "",
       "createdAt" => utc(at)
     }

@@ -25,6 +25,12 @@ defmodule HalC2.Mcp do
   credential minted anyway carries no browser capability, so the choice holds
   everywhere the token is honoured.
 
+  A thread a plugin started with `tools: :plugin` (`HalC2.Plugins.Host.launch_thread/4`,
+  a code review's) gets a credential kept to that plugin's agent tools: it lists and
+  calls nothing else, and its server is marked `report: true` so runtimes tell the
+  agent nothing of orchestration. The plugin's tools are not HAL-C2's, so the access
+  settings do not withhold them.
+
   Tool definitions (`priv/mcp_tools.json`, `priv/mcp_mc_tools.json`) and the instructions
   agents get (`priv/mcp_instructions.md`) are edited in place.
   """
@@ -65,18 +71,28 @@ defmodule HalC2.Mcp do
   (`for_agent/2`), and runtimes relaunch when `prepared?/2` goes false.
   """
   def current(thread_id, instance) do
-    with [[token, capabilities]] <-
-           :ets.match(
-             @table,
-             {:"$1", %{thread_id: thread_id, instance: instance, capabilities: :"$2"}, :_}
-           ),
-         true <- MapSet.member?(capabilities, "preview") do
-      %{url: endpoint(), authorization: "Bearer " <> token}
-    else
-      _ -> nil
+    case :ets.match_object(@table, {:_, %{thread_id: thread_id, instance: instance}, :_}) do
+      [{token, caller, _}] ->
+        {capabilities, plugin} = carries(caller)
+        served(token, capabilities, plugin)
+
+      _ ->
+        nil
     end
   rescue
     ArgumentError -> nil
+  end
+
+  # The server a credential is handed out as: kept to a plugin's tools, or HAL-C2's
+  # while the user lets agents reach them.
+  defp served(token, capabilities, plugin) do
+    server = %{url: endpoint(), authorization: "Bearer " <> token}
+
+    cond do
+      is_binary(plugin) -> Map.put(server, :report, true)
+      MapSet.member?(capabilities, "preview") -> server
+      true -> nil
+    end
   end
 
   @doc """
@@ -87,10 +103,12 @@ defmodule HalC2.Mcp do
   strand, and it gains one at its next ordinary relaunch.
   """
   def prepared?(thread_id, instance) do
-    case capabilities(thread_id, instance) do
-      nil -> true
-      capabilities -> capabilities == agent_access(thread_id)
+    case :ets.match_object(@table, {:_, %{thread_id: thread_id, instance: instance}, :_}) do
+      [] -> true
+      [{_, caller, _} | _] -> carries(caller) == wanted(thread_id)
     end
+  rescue
+    ArgumentError -> true
   end
 
   @doc "The MCP endpoint agents reach this MC at."
@@ -180,18 +198,46 @@ defmodule HalC2.Mcp do
   # thread's first turn would read the environment's settings and its second turn
   # its project's, launching differently (#1452). Without streams (tools, some
   # tests) there is no thread to read, so the environment's settings apply.
-  defp project(thread_id) do
+  defp project(thread_id), do: thread(thread_id)["projectId"]
+
+  defp thread(thread_id) do
     with pid when is_pid(pid) <- Process.whereis(HalC2.Streams.Registry),
-         %{"projectId" => project} <- HalC2.Streams.get(thread_id, "thread", thread_id) do
-      project
+         %{} = thread <- HalC2.Streams.get(thread_id, "thread", thread_id) do
+      thread
     else
+      _ -> %{}
+    end
+  end
+
+  @doc """
+  The plugin whose agent tools alone the agent of `thread_id` gets, or nil: the
+  plugin that started it with `tools: :plugin`.
+  """
+  def kept_to(thread_id) do
+    case thread(thread_id)["plugin"] do
+      %{"id" => id, "tools" => "plugin"} when is_binary(id) -> id
       _ -> nil
+    end
+  end
+
+  # What a credential carries, as `wanted/1` says it: one an earlier MC minted, before
+  # credentials named a plugin, reaches no plugin's tools alone.
+  defp carries(caller), do: {caller.capabilities, Map.get(caller, :plugin)}
+
+  # What the credential of `thread_id` should carry: `{capabilities, plugin}`. One kept
+  # to a plugin's tools reaches nothing of HAL-C2's.
+  defp wanted(thread_id) do
+    case kept_to(thread_id) do
+      nil -> {agent_access(thread_id), nil}
+      plugin -> {MapSet.new(), plugin}
     end
   end
 
   @doc """
   The MCP server to give the agent of `thread_id`, or nil when the user keeps HAL-C2's
-  tools from agents (`enableAgentBrowserAccess`, which gates the whole server).
+  tools from agents (`enableAgentBrowserAccess`, which gates the whole server). A
+  thread kept to its plugin's tools (`kept_to/1`) gets a server of those alone, marked
+  `report: true`.
   """
   def for_agent(thread_id, instance) do
     # Preparing the session resolves (or rotates) its credential first, so a
@@ -199,9 +245,9 @@ defmodule HalC2.Mcp do
     # itself ends up withheld. Call this only where a session is prepared;
     # a read mid-session goes through `current/2` and never rotates.
     if Process.whereis(__MODULE__) do
-      token = GenServer.call(__MODULE__, {:prepare, thread_id, instance})
-      server = %{url: endpoint(), authorization: "Bearer " <> token}
-      if MapSet.member?(agent_access(thread_id), "preview"), do: server
+      {capabilities, plugin} = wanted(thread_id)
+      token = GenServer.call(__MODULE__, {:prepare, thread_id, instance, capabilities, plugin})
+      served(token, capabilities, plugin)
     end
   end
 
@@ -238,6 +284,8 @@ defmodule HalC2.Mcp do
   `instructions/1`, so the two cannot disagree.
   """
   def workers_only?(nil), do: false
+  # A server kept to a plugin's tools has no workers to hand work to.
+  def workers_only?(%{report: true}), do: false
 
   def workers_only?(_mcp),
     do: Process.whereis(HalC2.Settings) != nil and HalC2.Settings.hal_c2_subagents?()
@@ -258,7 +306,12 @@ defmodule HalC2.Mcp do
   section only when its credential carries the preview capability, so an
   agent is never promised tools every call would refuse.
   """
-  def instructions_for(caller, opts \\ []) do
+  def instructions_for(caller, opts \\ [])
+
+  def instructions_for(%{plugin: plugin}, _opts) when is_binary(plugin),
+    do: "This server has only the tools of the HAL-C2 plugin that started this thread."
+
+  def instructions_for(caller, opts) do
     capabilities = Map.get(caller, :capabilities, MapSet.new(["preview"]))
 
     HalC2.Mcp.Instructions.for_session([capabilities: capabilities] ++ opts) <>
@@ -400,7 +453,7 @@ defmodule HalC2.Mcp do
         {200, %{}, result(id, %{})}
 
       "tools/list" ->
-        {200, %{}, result(id, %{"tools" => HalC2.Mcp.Tools.list() ++ plugin_tools(caller)})}
+        {200, %{}, result(id, %{"tools" => listed(caller)})}
 
       "tools/call" ->
         %{"name" => name} = params = request["params"] || %{}
@@ -423,6 +476,12 @@ defmodule HalC2.Mcp do
     end
   end
 
+  # A caller kept to its plugin's tools lists those alone.
+  defp listed(%{plugin: plugin} = caller) when is_binary(plugin),
+    do: HalC2.Plugins.tools_of(plugin, caller.thread_id)
+
+  defp listed(caller), do: HalC2.Mcp.Tools.list() ++ plugin_tools(caller)
+
   # Tools of the enabled tool packs and extensions (`HalC2.Plugins`) for the caller's
   # thread; HAL-C2's own keep their names.
   defp plugin_tools(caller) do
@@ -432,6 +491,15 @@ defmodule HalC2.Mcp do
 
   # A tool's answer as MCP content; a failure is an error result the agent can read.
   # `tool_use` is the provider's id for the call, which Claude sends.
+  defp call(name, arguments, %{plugin: plugin} = caller, _tool_use) when is_binary(plugin) do
+    answer =
+      HalC2.Plugins.call_tool_of(plugin, name, arguments, caller.thread_id) ||
+        {:error, "capability_denied",
+         "This thread has only the tools of the plugin that started it, and #{name} is not one."}
+
+    content(answer)
+  end
+
   defp call(name, arguments, caller, tool_use) do
     valid = validate(name, arguments)
 
@@ -451,6 +519,10 @@ defmodule HalC2.Mcp do
             HalC2.Mcp.Tools.call(name, arguments, caller)
       end
 
+    content(answer)
+  end
+
+  defp content(answer) do
     case answer do
       {:ok, value} ->
         %{
@@ -516,7 +588,7 @@ defmodule HalC2.Mcp do
     token =
       case :ets.match(@table, {:"$1", %{thread_id: thread_id, instance: instance}, :_}) do
         [[token] | _] -> token
-        [] -> mint(thread_id, instance, agent_access(thread_id))
+        [] -> mint(thread_id, instance, wanted(thread_id))
       end
 
     {:reply, token, state}
@@ -526,24 +598,23 @@ defmodule HalC2.Mcp do
   # credential whose capabilities no longer match the settings rotates —
   # the old token is revoked as its replacement is minted, and the caller
   # hands the new one to the session it is about to open.
-  def handle_call({:prepare, thread_id, instance}, _from, state) do
-    capabilities = agent_access(thread_id)
+  # `{capabilities, plugin}` is what `wanted/1` read for the thread, in the caller.
+  def handle_call({:prepare, thread_id, instance, capabilities, plugin}, _from, state) do
+    wanted = {capabilities, plugin}
 
     token =
-      case :ets.match(
-             @table,
-             {:"$1", %{thread_id: thread_id, instance: instance, capabilities: :"$2"}, :_}
-           ) do
-        [[token, ^capabilities] | _] ->
-          token
-
-        [[old, _stale] | _] ->
-          :ets.delete(@table, old)
-          drop_sessions(%{thread_id: thread_id, instance: instance})
-          mint(thread_id, instance, capabilities)
+      case :ets.match_object(@table, {:_, %{thread_id: thread_id, instance: instance}, :_}) do
+        [{token, caller, _} | _] ->
+          if carries(caller) == wanted do
+            token
+          else
+            :ets.delete(@table, token)
+            drop_sessions(%{thread_id: thread_id, instance: instance})
+            mint(thread_id, instance, wanted)
+          end
 
         [] ->
-          mint(thread_id, instance, capabilities)
+          mint(thread_id, instance, wanted)
       end
 
     {:reply, token, state}
@@ -569,13 +640,15 @@ defmodule HalC2.Mcp do
     :ok
   end
 
-  defp mint(thread_id, instance, capabilities) do
+  defp mint(thread_id, instance, {capabilities, plugin}) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
 
     caller = %{
       thread_id: thread_id,
       instance: instance,
       capabilities: capabilities,
+      # The plugin whose agent tools alone this credential reaches, or nil.
+      plugin: plugin,
       environment_id: HalC2.Environment.id()
     }
 

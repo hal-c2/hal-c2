@@ -16,7 +16,8 @@ defmodule HalC2.McpAccessPropTest do
 
   @moduletag timeout: :infinity
 
-  @projects %{"t-a" => "p-a", "t-b" => "p-b"}
+  @projects %{"t-a" => "p-a", "t-b" => "p-b", "t-r" => "p-a"}
+  @kept "t-r"
   @keys %{"preview" => "enableAgentBrowserAccess", "device" => "enableAgentDeviceAccess"}
 
   property "a thread's agent reaches what its project allows",
@@ -46,10 +47,10 @@ defmodule HalC2.McpAccessPropTest do
   # --- the real thing --------------------------------------------------------------
 
   def launch(thread) do
-    {:ok, _} =
-      HalC2.Streams.commit(thread, :thread, [
-        {"thread", thread, %{"s" => %{"id" => thread, "projectId" => @projects[thread]}}}
-      ])
+    plugin = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
+    row = %{"id" => thread, "projectId" => @projects[thread]}
+    row = if thread == @kept, do: Map.put(row, "plugin", plugin), else: row
+    {:ok, _} = HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => row}}])
 
     :ok
   end
@@ -87,7 +88,27 @@ defmodule HalC2.McpAccessPropTest do
 
   def access(thread), do: HalC2.Mcp.agent_access(thread)
 
-  def prepare(thread, instance), do: HalC2.Mcp.for_agent(thread, instance) != nil
+  # Which server the agent gets, and whether its credential is refused one of HAL-C2's
+  # own tools.
+  def prepare(thread, instance) do
+    case HalC2.Mcp.for_agent(thread, instance) do
+      nil -> :none
+      %{report: true} = server -> {:plugin, refused?(server)}
+      server -> {:hal_c2, refused?(server)}
+    end
+  end
+
+  defp refused?(%{authorization: auth}) do
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => "hal_c2_project_list", "arguments" => %{}}
+    }
+
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+    JSON.encode!(result) =~ "capability_denied"
+  end
 
   # --- the model -------------------------------------------------------------------
 
@@ -125,8 +146,13 @@ defmodule HalC2.McpAccessPropTest do
   def postcondition(state, {:call, _, :access, [thread]}, result),
     do: result == expected(state, thread)
 
-  def postcondition(state, {:call, _, :prepare, [thread, _]}, result),
-    do: result == MapSet.member?(expected(state, thread), "preview")
+  def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
+    cond do
+      thread == @kept and MapSet.member?(state.launched, thread) -> result == {:plugin, true}
+      MapSet.member?(expected(state, thread), "preview") -> result == {:hal_c2, false}
+      true -> result == :none
+    end
+  end
 
   def postcondition(_state, _call, result), do: result == :ok
 

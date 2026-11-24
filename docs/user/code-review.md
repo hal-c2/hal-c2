@@ -117,8 +117,10 @@ back to running on your machine.
 **Review trusted pull requests on this machine** opts out for the pull requests
 HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one
 of your **Trusted logins**, unless their commits come from someone else's fork. With
-it on, those reviews run here as an ordinary agent, so the pull request's code and
-text reach your machine, its files and its credentials. Every other pull request is
+it on, those reviews run here, so the pull request's code and text reach your
+machine, its files and its credentials. The agent still gets only its tool to report
+with, none of HAL-C2's others, and of the review comments already on the pull
+request it reads only those left by people HAL-C2 trusts. Every other pull request is
 reviewed in a sandbox either way. The old **Sandbox every review** switch is gone,
 and whatever it was set to, reviews start out sandboxed.
 
@@ -185,8 +187,9 @@ again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. The agent also reads the pull request's description and the
-review comments already on it, so it can judge the change against what it says
-it does and leave out what someone else already raised.
+review comments already on it (on this machine, only those of people HAL-C2
+trusts), so it can judge the change against what it says it does and leave out what
+someone else already raised.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:

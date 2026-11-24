@@ -141,7 +141,10 @@ defmodule HalC2.Pi do
           [
             {"HAL_C2_MCP_URL", (mcp && mcp.url) || ""},
             {"HAL_C2_MCP_BEARER_TOKEN",
-             (mcp && String.replace_prefix(mcp.authorization, "Bearer ", "")) || ""}
+             (mcp && String.replace_prefix(mcp.authorization, "Bearer ", "")) || ""},
+            # A server kept to a plugin's tools (`HalC2.Mcp.kept_to/1`): the agent is told
+            # nothing of orchestration.
+            {"HAL_C2_MCP_PLUGIN_TOOLS", if(mcp && mcp[:report], do: "1", else: "")}
           ] ++
           if(extension && mode, do: [{"HAL_C2_PI_RUNTIME_MODE", mode}], else: [])
 

@@ -163,6 +163,106 @@ defmodule HalC2.McpTest do
     :sys.resume(shell)
   end
 
+  # A plugin's thread launched with `tools: :plugin` (an unsandboxed code review) gets
+  # a server of its plugin's agent tools alone, whatever the access settings say, and
+  # nothing of HAL-C2's orchestration: not listed, not callable, not described.
+  test "a thread kept to its plugin's tools reaches none of HAL-C2's", %{dir: dir} do
+    log = Path.join(dir, "codex.log")
+    System.put_env("FAKE_CODEX_LOG", log)
+    on_exit(fn -> System.delete_env("FAKE_CODEX_LOG") end)
+    start_supervised!(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          @project => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    mark = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
+    thread_id = launch("hello", %{}, plugin: mark)
+    await_statuses(thread_id, ["completed"])
+
+    assert HalC2.Mcp.kept_to(thread_id) == "code-review"
+    assert HalC2.Mcp.agent_access(thread_id) == MapSet.new()
+    assert %{report: true, authorization: auth} = server = HalC2.Mcp.for_agent(thread_id, "codex")
+    refute HalC2.Mcp.workers_only?(server)
+    assert HalC2.Mcp.current(thread_id, "codex") == server
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    # Preparing again keeps the token.
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == server
+
+    # Codex got that server, and no word of orchestration with its turn.
+    requests = for line <- File.stream!(log), do: JSON.decode!(line)
+    assert Enum.any?(requests, &(JSON.encode!(&1) =~ auth))
+
+    assert [turn | _] = for(%{"method" => "turn/start", "params" => p} <- requests, do: p)
+    refute JSON.encode!(turn) =~ "hal_c2_orchestration_"
+
+    rpc = fn method, params ->
+      body = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
+      {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+      result
+    end
+
+    # No plugin runs here, so the list is empty rather than HAL-C2's.
+    assert %{"tools" => []} = rpc.("tools/list", %{})
+
+    for name <- ~w(hal_c2_thread_list delegate_task preview_snapshot) do
+      assert %{"isError" => true, "content" => [%{"text" => text}]} =
+               rpc.("tools/call", %{"name" => name, "arguments" => %{}})
+
+      assert text =~ "capability_denied"
+    end
+
+    assert %{"instructions" => instructions} =
+             rpc.("initialize", %{"protocolVersion" => "2025-06-18"})
+
+    assert instructions =~ "only the tools of the HAL-C2 plugin"
+    refute instructions =~ "delegate_task"
+  end
+
+  # Claude takes the kept server as the sandbox broker's: allowed without a prompt, and
+  # no orchestration instructions in its system prompt.
+  test "a Claude run on a server kept to its plugin's tools is told nothing of orchestration" do
+    server = %{url: "http://127.0.0.1:1/mcp", authorization: "Bearer t"}
+    kept = HalC2.Claude.Protocol.cli_args(mcp: Map.put(server, :report, true))
+    ordinary = HalC2.Claude.Protocol.cli_args(mcp: server)
+
+    assert ["--allowedTools", "mcp__hal-c2"] -- kept == []
+    assert Enum.any?(ordinary, &(&1 =~ "delegate_task"))
+    refute Enum.any?(kept, &(&1 =~ "delegate_task"))
+  end
+
+  # A credential minted before credentials named a plugin, as a restored one is, is not
+  # what a kept thread wants: preparing it rotates, and the old token stops working.
+  test "a kept thread's unscoped credential rotates at preparation" do
+    start_supervised!(HalC2.Settings)
+    mark = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
+    thread_id = launch("hello", %{}, plugin: mark)
+    await_statuses(thread_id, ["completed"])
+    %{authorization: kept} = HalC2.Mcp.for_agent(thread_id, "codex")
+    "Bearer " <> token = kept
+
+    [{^token, caller, _}] = HalC2.Mcp.credentials(thread_id)
+    HalC2.Mcp.revoke(thread_id)
+    :ok = HalC2.Mcp.restore([{"old-" <> token, Map.delete(caller, :plugin), 0}])
+
+    refute HalC2.Mcp.prepared?(thread_id, "codex")
+    assert %{report: true, authorization: fresh} = HalC2.Mcp.for_agent(thread_id, "codex")
+    refute fresh == "Bearer old-" <> token
+
+    assert {401, _} =
+             HalC2.Mcp.handle(
+               "Bearer old-" <> token,
+               ~s({"jsonrpc":"2.0","id":1,"method":"ping"})
+             )
+
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+  end
+
   # New code loaded over a running server (a release upgrade) migrates it through
   # code_change, never init. A server started before MCP sessions were kept
   # has no sessions table; its initialize raised, the endpoint answered 500,
@@ -601,7 +701,7 @@ defmodule HalC2.McpTest do
     end
   end
 
-  defp launch(text, overrides \\ %{}) do
+  defp launch(text, overrides \\ %{}, opts \\ []) do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
@@ -624,7 +724,8 @@ defmodule HalC2.McpTest do
             }
           },
           overrides
-        )
+        ),
+        opts
       )
 
     thread_id

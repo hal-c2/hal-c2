@@ -99,6 +99,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "closes the code fences the agent's prose leaves open; text, no claim or run state",
       "HalC2Plugins.CodeReview.comment_body/2" =>
         "the text of an inline comment as posted; no claim or run state",
+      "HalC2Plugins.CodeReview.existing_comments/4" =>
+        "the review comments the agent's prompt quotes; text, no claim or run state",
       "HalC2Plugins.CodeReview handle_call {:preview, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:settings, _}" =>

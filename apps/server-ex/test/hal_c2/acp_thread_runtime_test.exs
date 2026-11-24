@@ -311,6 +311,45 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
     {_, 0} = System.cmd("kill", ["-USR1", File.read!(trace <> ".waiting")])
   end
 
+  # A plugin's thread kept to its tools (an unsandboxed code review) gets HAL-C2's
+  # server of those tools alone, and its prompt says nothing of orchestration.
+  test "an agent kept to its plugin's tools gets that server and no orchestration instructions",
+       %{work: work, dir: dir} do
+    start_supervised!(HalC2.Mcp)
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.launch_thread(
+        %{
+          "commandId" => "cmd-#{thread_id}",
+          "threadId" => thread_id,
+          "projectId" => "project-1",
+          "title" => "Review",
+          "modelSelection" => %{"instanceId" => "grok", "model" => "grok-4"},
+          "runtimeMode" => "full-access",
+          "interactionMode" => "default",
+          "workspaceStrategy" => %{"type" => "existing_worktree", "worktreePath" => work},
+          "initialMessage" => %{"messageId" => "m1", "text" => "say done", "attachments" => []}
+        },
+        plugin: %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
+      )
+
+    await_statuses(thread_id, ["completed"])
+    assert %{report: true, authorization: auth} = HalC2.Mcp.current(thread_id, "grok")
+
+    trace =
+      for line <- File.stream!(Path.join(dir, "grok.log")),
+          %{"in" => %{"method" => method, "params" => params}} <- [JSON.decode!(line)],
+          do: {method, params}
+
+    assert [servers] = for({"session/new", p} <- trace, do: p["mcpServers"])
+    assert JSON.encode!(servers) =~ auth
+    assert [prompt] = for({"session/prompt", p} <- trace, do: JSON.encode!(p["prompt"]))
+    assert prompt =~ "say done"
+    refute prompt =~ "hal_c2_orchestration_instructions"
+  end
+
   defp await_waiting_file(thread_id, path) do
     if File.exists?(path) do
       :ok

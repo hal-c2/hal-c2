@@ -497,7 +497,9 @@ defmodule HalC2.Plugins.Host do
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
   thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`
   made for it, and never on this machine; the plugin must have opened that sandbox
-  itself. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  itself. `tools: :plugin` gives its agent only the tools the plugin offers agents
+  (`agentTools`), never the rest of HAL-C2's (`HalC2.Mcp.for_agent/2`). A plugin
+  whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
   which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
   credentials and checkout for them do not travel, so a moved thread would run without
   them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`), as
@@ -508,6 +510,7 @@ defmodule HalC2.Plugins.Host do
          :ok <- if(opts[:sandboxed], do: own_sandbox(id, input["threadId"]), else: :ok) do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
       mark = if opts[:sandboxed], do: Map.put(mark, "sandboxed", true), else: mark
+      mark = if opts[:tools] == :plugin, do: Map.put(mark, "tools", "plugin"), else: mark
       mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input
