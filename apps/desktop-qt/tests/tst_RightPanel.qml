@@ -1321,6 +1321,20 @@ Item {
             mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.LeftButton, Qt.ControlModifier);
         }
 
+        // Right-clicks `word` in a Markdown brick's prose: the menu for text someone
+        // else wrote opens, never the app's link menu (which opens a path in the files).
+        function verifyLinkMenuIsTheWebOne(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            const box = prose.positionToRectangle(prose.getText(0, prose.length).indexOf(word) + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.RightButton);
+            const menu = findChild(markdown, "webLinkMenu");
+            verify(menu, "the link's menu only opens or copies it");
+            tryCompare(menu, "visible", true);
+            menu.close();
+            tryVerify(() => findChild(markdown, "webLinkMenu") === null);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+
         // Shown as written, with nothing in it loaded: no image, no markup.
         function verifyShownAsText(markdown, written) {
             const prose = findChild(markdown, "markdownProse");
@@ -1348,6 +1362,7 @@ Item {
             verifyShownAsText(description, "<img src=\"https://tracker.example/raw.png\">");
             ctrlClickWord(description, "docs");
             compare(Shell.webLinks, ["https://example.com/docs"]);
+            verifyLinkMenuIsTheWebOne(description, "docs");
 
             mouseClick(findChild(panel, "reviewSection-conversation"));
             const comment = findChild(panel, "reviewThreadComment");
@@ -1359,12 +1374,14 @@ Item {
             verifyShownAsText(threadBody, "<img src=\"https://tracker.example/t.png\">");
             ctrlClickWord(threadBody, "here");
             compare(Shell.webLinks, ["https://example.com/docs", "file:///etc/hosts"], "the helper is the one to refuse a file");
+            verifyLinkMenuIsTheWebOne(threadBody, "here");
 
             const reply = findChild(panel, "reviewConversationBody");
             tryVerify(() => reply && reply.visible);
             verifyShownAsText(reply, "<img src=\"https://tracker.example/c.png\">");
             ctrlClickWord(reply, "run");
             compare(Shell.webLinks, ["https://example.com/docs", "file:///etc/hosts", "https://example.com/run"]);
+            verifyLinkMenuIsTheWebOne(reply, "run");
             compare(Shell.openedExternally, [], "nothing goes through the app's own link handling");
         }
 

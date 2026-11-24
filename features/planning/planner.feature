@@ -484,7 +484,7 @@ Feature: Planner
       And the run's summary has "The order looks right"
 
     # #1801: an agent wrote the run's summary from issues anyone can file.
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-high
     Scenario: A link in a run's summary opens only when it is a web address
       Given the run of "Give feedback" finished with a summary that links "the plan" to "https://example.com/plan" and "notes" to "file:///etc/hosts"
       When the user opens "the plan" in the run's summary

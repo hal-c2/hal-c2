@@ -433,6 +433,7 @@ Rectangle {
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
                         textColor: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
                         fontSize: Theme.type.body.size
+                        webLinksOnly: true
                         onLinkActivated: link => Shell.openWebLink(link)
                     }
                     Text {
@@ -593,6 +594,7 @@ Rectangle {
                                                 text: threadComment.modelData.body
                                                 textColor: root.foreground
                                                 fontSize: Theme.type.meta.size
+                                                webLinksOnly: true
                                                 onLinkActivated: link => Shell.openWebLink(link)
                                             }
                                         }
@@ -626,6 +628,7 @@ Rectangle {
                             text: comment.modelData.body
                             textColor: root.foreground
                             fontSize: Theme.type.meta.size
+                            webLinksOnly: true
                             onLinkActivated: link => Shell.openWebLink(link)
                         }
                     }

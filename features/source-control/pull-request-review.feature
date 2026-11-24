@@ -884,7 +884,10 @@ Feature: Reviewing a pull request
     Then the address the description holds is opened
 
   # Upstream #22110: links a bot wrote as HTML in a comment could not be followed on the phone.
-  @backlog @desktop @mobile
+  # Dropped by #1802: markup in a pull request's text shows as written, an HTML anchor included,
+  # so "Preview" is never drawn as a link. The address written in the anchor is a link of its own
+  # (the scenario after this one).
+  @dropped @desktop @mobile
   Scenario Outline: A link written as HTML in a comment can be followed only when it is a web address
     Given a comment on pull request 42 holds an HTML anchor "Preview" to "<address>"
     When the user reads the comment
@@ -896,10 +899,20 @@ Feature: Reviewing a pull request
       | mailto:ops@example.com        | is plain text                       |
       | javascript:alert(1)           | is plain text                       |
 
+  # #1802: the anchor is markup and shows as written; a web address in it is linked like any
+  # other address written out in the text, and opens by the rules below.
+  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
+  Scenario: An HTML anchor in a comment shows as written, and the web address in it is a link
+    Given a comment on pull request 42 holds an HTML anchor "Preview" to "https://preview.example.dev"
+    When the user reads the comment
+    Then the anchor shows as written
+    And "Preview" is not a link
+    And "https://preview.example.dev" in it links to "https://preview.example.dev"
+
   # #1801: what a pull request's author, reviewers and commenters wrote is theirs, and a link
   # in it can show one address and lead to another. Only a web address opens, in the browser.
   # The panel's QML tests cover this (tst_RightPanel); the feature runners' steps are #1808.
-  @desktop @mobile @backlog-desktop @backlog-mobile
+  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: A link in a pull request's text opens only when it is a web address
     Given a comment on pull request 42 links "the docs" to "<address>"
     When the user opens "the docs" in the comment
@@ -914,10 +927,21 @@ Feature: Reviewing a pull request
       | mailto:ops@example.com   | nothing opens                                    |
       | slack://open             | nothing opens                                    |
 
+  # #1801: a link's words can name one address and lead to another, so where it goes is shown
+  # before it opens. The desktop names it as the pointer rests on the link, and its menu (a
+  # right-click, or holding it) only opens or copies it (tst_Markdown, tst_TextEditMenu); the
+  # feature runners' steps are #1808. On a phone a tap opens it at once: #1815.
+  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A link in a pull request's text shows where it goes before it opens
+    Given a comment on pull request 42 links "the docs" to "https://example.com/docs"
+    When the user points at "the docs" in the comment
+    Then "https://example.com/docs" is shown
+    And nothing opens
+
   # As in an agent's reply, a plain click selects text, and a link opens on a Ctrl-click (Cmd on
   # macOS) or a tap. The same holds for a code review's summary and comments and a planner
   # run's summary.
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario Outline: A link in a pull request's text opens only on a Ctrl-click
     Given a comment on pull request 42 links "the docs" to "https://example.com/docs"
     When the user clicks "the docs" <how>
@@ -929,7 +953,7 @@ Feature: Reviewing a pull request
       | holding Ctrl (Cmd on macOS) | "https://example.com/docs" opens in the browser |
 
   # #1802: markup in a pull request's text is shown as written, never drawn or loaded.
-  @desktop @mobile @backlog-desktop @backlog-mobile
+  @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: Markup in a pull request's text is shown as written and loads nothing
     Given the <part> of pull request 42 holds "<b>hi</b> <img src=\"https://tracker.example/p.png\">"
     When the user reads pull request 42

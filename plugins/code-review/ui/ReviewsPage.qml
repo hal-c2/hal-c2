@@ -909,6 +909,7 @@ Item {
                         text: findings.review?.summary ?? ""
                         textColor: page.foreground
                         fontSize: Theme.type.body.size
+                        webLinksOnly: true
                         onLinkActivated: link => Shell.openWebLink(link)
                     }
 
@@ -1014,6 +1015,7 @@ Item {
                                     text: comment.modelData.body
                                     textColor: page.foreground
                                     fontSize: Theme.type.body.size
+                                    webLinksOnly: true
                                     onLinkActivated: link => Shell.openWebLink(link)
                                 }
                             }

@@ -2072,6 +2072,7 @@ Item {
                             text: runsColumn.run?.summary ?? ""
                             textColor: page.foreground
                             fontSize: Theme.type.body.size
+                            webLinksOnly: true
                             onLinkActivated: link => Shell.openWebLink(link)
                         }
 

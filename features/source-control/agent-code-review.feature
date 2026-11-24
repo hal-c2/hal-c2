@@ -1202,7 +1202,7 @@ Feature: Agent code review
 
     # #1801, #1802: the agent read a pull request anyone can open, so what it wrote is
     # untrusted. The page's QML tests cover this (tst_ReviewsPage); the runners' steps are #1808.
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui @priority-high
     Scenario: A review's findings show their markup as written and open only web links
       Given the review of #13 is waiting with a summary that links "the guide" to "https://example.com/guide" and shows an HTML image
       And a comment of the review links "hosts" to "file:///etc/hosts"

@@ -337,6 +337,20 @@ Item {
             mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.LeftButton, Qt.ControlModifier);
         }
 
+        // Right-clicks `word` in a Markdown brick's prose: the menu for text someone
+        // else wrote opens, never the app's link menu (which opens a path in the files).
+        function verifyLinkMenuIsTheWebOne(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            const box = prose.positionToRectangle(prose.getText(0, prose.length).indexOf(word) + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.RightButton);
+            const menu = findChild(markdown, "webLinkMenu");
+            verify(menu, "the link's menu only opens or copies it");
+            tryCompare(menu, "visible", true);
+            menu.close();
+            tryVerify(() => findChild(markdown, "webLinkMenu") === null);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+
         // What the review agent wrote about a pull request anyone can open shows its
         // markup as text and loads nothing, and its links, like the pull request's
         // own, go to Shell.openWebLink, which opens only web addresses.
@@ -378,6 +392,8 @@ Item {
             verify(!/<img/i.test(findChild(body, "markdownProse").text), "nothing in a comment loads");
             ctrlClickWord(body, "hosts");
             compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts"]);
+            verifyLinkMenuIsTheWebOne(summary, "guide");
+            verifyLinkMenuIsTheWebOne(body, "hosts");
 
             clickShown("codeReviewOpenOnGitHub");
             compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts", "https://github.com/acme/api/pull/13"]);
