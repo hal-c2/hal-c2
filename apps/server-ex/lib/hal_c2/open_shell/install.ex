@@ -1425,10 +1425,13 @@ defmodule HalC2.OpenShell.Install do
   end
 
   # A Linux user's Podman whose socket is not running, though its unit is installed,
-  # has it started; any other machine is left as it is for `platform/0` to judge.
-  # A socket the user named (`HAL_C2_OPENSHELL_DOCKER_SOCKET`) is never Podman's to
-  # start: it is found, or reported missing, as named.
-  defp podman_socket(%{os: :linux, runtime: nil}, opts) do
+  # has it started: no socket file, or one left behind that nothing answers on (a
+  # stopped `podman.socket` keeps its file). Any other machine is left as it is for
+  # `platform/0` to judge. A socket the user named (`HAL_C2_OPENSHELL_DOCKER_SOCKET`)
+  # is probed as Docker's and never Podman's to start: it is found, or reported
+  # missing, as named.
+  defp podman_socket(%{os: :linux, runtime: runtime}, opts)
+       when runtime == nil or (runtime.kind == :podman and runtime.reachable == false) do
     if HalC2.Service.manager() == :systemd and
          HalC2.Service.probe("systemctl", [
            "--user",

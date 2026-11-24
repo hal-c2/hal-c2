@@ -6,6 +6,7 @@ defmodule HalC2.OpenShell.InstallTest do
   alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Install
   alias HalC2.OpenShell.Manifest
+  alias HalC2.OpenShell.Platform
   alias HalC2.OpenShell.Service
   alias HalC2.Test.FakeOpenShell
   alias HalC2.Test.Storage
@@ -216,6 +217,27 @@ defmodule HalC2.OpenShell.InstallTest do
       assert_received {:step, "Starting Podman's socket (podman.socket)"}
       assert File.exists?(active)
 
+      assert "systemctl --user enable --now podman.socket" in Storage.service_calls(ctx.log)
+    end
+
+    test "Podman's socket file left behind, with nothing answering: install starts the socket",
+         ctx do
+      # What `Platform.facts/0` sees there: the file, and no runtime behind it.
+      path = Path.join(System.tmp_dir!(), "p#{System.unique_integer([:positive])}.sock")
+      {:ok, listen} = :gen_tcp.listen(0, ifaddr: {:local, path})
+      :ok = :gen_tcp.close(listen)
+      on_exit(fn -> File.rm(path) end)
+
+      assert %{kind: :podman, reachable: false} = stopped = Platform.probe_runtime(:podman, path)
+
+      active = Path.join(ctx.bin, "podman-socket-active")
+      File.touch!(Path.join(ctx.bin, "podman-unit"))
+
+      Application.put_env(:hal_c2, :openshell_facts, fn ->
+        if File.exists?(active), do: @facts, else: %{@facts | runtime: stopped}
+      end)
+
+      assert {:ok, _} = install(ctx, "0.1.7")
       assert "systemctl --user enable --now podman.socket" in Storage.service_calls(ctx.log)
     end
 
