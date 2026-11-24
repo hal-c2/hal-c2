@@ -411,11 +411,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
     for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
-    # A machine whose Podman socket the install started asked for that first.
-    calls = Storage.service_calls(context.openshell.log)
-
+    # Podman's socket, which an install can start, is a step of its own.
     calls =
-      if context[:podman_socket_started], do: tl(calls), else: calls
+      Storage.service_calls(context.openshell.log) |> Enum.reject(&(&1 =~ "podman.socket"))
 
     assert calls == [
              "systemctl --user stop #{Service.reap_name(:timer)}",
@@ -1018,7 +1016,63 @@ defmodule HalC2.Steps.Platform.OpenShell do
   end
 
   step "they agree to stop it", context do
-    run_from_settings(context, %{"operation" => context.operation["operation"], "drain" => true})
+    # The yes names the reviews it was asked about.
+    run_from_settings(context, %{
+      "operation" => context.operation["operation"],
+      "drain" => context.operation["result"]["drain"]
+    })
+  end
+
+  step "another of this MC's reviews starts on the gateway", context do
+    FakeOpenShell.put_sandbox(context.gateway, "review-2", %{
+      OpenShell.owner_label() => OpenShell.owner()
+    })
+
+    context
+  end
+
+  step "they are asked again whether to stop {int} reviews, as the reviews changed",
+       %{args: [count]} = context do
+    assert %{
+             "ok" => false,
+             "code" => "sandboxes-changed",
+             "sandboxes" => ^count,
+             "drain" => ["review-1", "review-2"],
+             "message" => message
+           } = context.operation["result"]
+
+    assert message =~ "changed"
+    context
+  end
+
+  step "no review was stopped", context do
+    assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) |> Enum.sort() ==
+             ["review-1", "review-2", "theirs"]
+
+    assert OpenShell.state() != nil
+    context
+  end
+
+  step "a device paired without the right to manage the MC's machine watches the sandbox settings",
+       context do
+    Mc.ensure(HalC2.OpenShell.Operations)
+    access = Mc.pair(HalC2.Auth.standard_scopes(), "A watching device")
+
+    viewer =
+      context.mc
+      |> Mc.connect_as(access)
+      |> Mc.sub(7_778, %{"type" => "openShell", "mc" => Atom.to_string(node())})
+
+    {_, viewer} = Mc.await(viewer, &(&1["t"] == "openShell"))
+    Map.put(context, :viewer, viewer)
+  end
+
+  step "the watching device reads only that the install finished", context do
+    {%{"operation" => %{"result" => result}}, _} =
+      Mc.await(context.viewer, &(&1["t"] == "openShell" and &1["operation"]["result"] != nil))
+
+    assert %{"ok" => true, "message" => "OpenShell's install finished.", "drain" => nil} = result
+    context
   end
 
   step "they read that OpenShell was removed, its review stopped first", context do
@@ -1087,6 +1141,52 @@ defmodule HalC2.Steps.Platform.OpenShell do
     Map.merge(context, %{check: check, operation: operation, settings_client: client})
   end
 
+  step ~s(the user presses "Install" in the sandbox settings and, while it runs, the MC's operations restart),
+       context do
+    test = self()
+    context = operations(context)
+    runner = Application.fetch_env!(:hal_c2, :openshell_operation_runner)
+
+    # The install waits for the test, so the restart comes while it runs.
+    FakeOpenShell.put_env(
+      openshell_operation_runner: fn operation, opts ->
+        send(test, {:install_running, self()})
+        receive do: (:go -> runner.(operation, opts))
+      end
+    )
+
+    {%{"run" => run}, client} =
+      Mc.call!(context.settings_client, context.mc.environment, "server.runOpenShellOperation", %{
+        "operation" => "install"
+      })
+
+    assert_receive {:install_running, install}, 5_000
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.OpenShell.Operations)
+    Mc.ensure(HalC2.OpenShell.Operations)
+
+    # Settings, reconnecting, subscribes to the operations again.
+    client = Mc.sub(client, 7_779, %{"type" => "openShell", "mc" => Atom.to_string(node())})
+    {%{"operation" => reconnected}, client} = Mc.await(client, &(&1["t"] == "openShell"))
+
+    send(install, :go)
+    {operation, client} = finished(client)
+
+    Map.merge(context, %{
+      run: run,
+      reconnected: reconnected,
+      operation: operation,
+      settings_client: client
+    })
+  end
+
+  step "the sandbox settings show the install still running, under its number", context do
+    run = context.run
+
+    assert %{"operation" => "install", "running" => true, "run" => ^run} = context.reconnected
+    assert %{"run" => ^run} = context.operation
+    context
+  end
+
   step "the check is refused because the install is running", context do
     assert {:error, message, %{"_tag" => "ServerOpenShellOperationError", "reason" => "busy"}} =
              context.check
@@ -1119,12 +1219,35 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
-  step "Podman's socket was started for the user", context do
-    assert ["systemctl --user enable --now podman.socket" | _] =
-             Storage.service_calls(context.openshell.log)
+  step "Podman's socket was started for the user, and set to start at login", context do
+    assert podman_calls(context) == [
+             "systemctl --user start podman.socket",
+             "systemctl --user enable podman.socket"
+           ]
 
     assert File.exists?(Path.join(context.openshell.bin, "podman-socket-active"))
-    Map.put(context, :podman_socket_started, true)
+    assert File.exists?(Path.join(context.openshell.bin, "podman-socket-enabled"))
+    assert OpenShell.state()["podman_socket"] == "enabled"
+    context
+  end
+
+  step "Podman's socket is stopped again, and no longer starts at login", context do
+    assert :ok = context.result
+    assert List.last(podman_calls(context)) == "systemctl --user disable --now podman.socket"
+    refute File.exists?(Path.join(context.openshell.bin, "podman-socket-active"))
+    refute File.exists?(Path.join(context.openshell.bin, "podman-socket-enabled"))
+    context
+  end
+
+  step "Podman's socket is stopped again, and was never set to start at login", context do
+    assert podman_calls(context) == [
+             "systemctl --user start podman.socket",
+             "systemctl --user stop podman.socket"
+           ]
+
+    refute File.exists?(Path.join(context.openshell.bin, "podman-socket-active"))
+    refute File.exists?(Path.join(context.openshell.bin, "podman-socket-enabled"))
+    context
   end
 
   step "they read that review sandboxes can run here", context do
@@ -1295,6 +1418,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
   end
 
   defp reset_calls(context), do: File.write!(context.openshell.log, "")
+
+  defp podman_calls(context),
+    do: Storage.service_calls(context.openshell.log) |> Enum.filter(&(&1 =~ "podman.socket"))
 
   defp new_certificates(context) do
     old = ca()

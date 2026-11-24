@@ -18,11 +18,20 @@ defmodule HalC2.OpenShell.Operations do
   it: a client still waiting on a run that sees that knows the server restarted
   and the run's outcome went with it. An operation runs
   in a process of its own, unlinked, so a restart of this server never stops one
-  halfway; the lock keeps a second from starting under it.
+  halfway; the lock keeps a second from starting under it. A server started while
+  one still runs takes it back (`HalC2.OpenShell.Operations`'s own name only): it
+  shows it running, under its number, and its later steps and its outcome, so a
+  client reconnecting after the restart sees it go on and end. The steps from
+  before the restart are not kept.
 
   Nothing a client sends names a path, an archive or a URL: the input is the
-  operation and its `drain` and `force` flags, and any other key is refused. What
-  is installed is the pinned manifest's.
+  operation, `drain` (the names of the sandboxes its user agreed to delete, from
+  the `sandboxes-running` outcome that asked) and `force`, and any other key is
+  refused. What is installed is the pinned manifest's.
+
+  The detail of an outcome (its message, which can name the gateway's address and
+  paths on this machine, and the names a drain sends back) is for sessions that
+  may run operations: `viewed/2` is what the others see.
   """
   use GenServer
 
@@ -86,19 +95,30 @@ defmodule HalC2.OpenShell.Operations do
       extra != [] ->
         invalid("Unknown arguments: #{Enum.join(Enum.sort(extra), ", ")}.")
 
-      Enum.any?(flags, fn {_, value} -> not is_boolean(value) end) ->
-        invalid("drain and force are true or false.")
+      not names?(Map.get(flags, "drain", [])) ->
+        invalid("drain is the names of the sandboxes to delete.")
+
+      not is_boolean(Map.get(flags, "force", false)) ->
+        invalid("force is true or false.")
 
       operation == "check" and flags != %{} ->
         invalid("check takes neither drain nor force.")
 
       true ->
-        {:ok, operation, for({key, true} <- flags, do: {String.to_existing_atom(key), true})}
+        {:ok, operation,
+         Enum.flat_map(flags, fn
+           {"drain", names} -> [drain: names]
+           {"force", true} -> [force: true]
+           {"force", false} -> []
+         end)}
     end
   end
 
   defp parse(_input),
     do: invalid("The operation is one of #{Enum.join(@operations, ", ")}.")
+
+  defp names?(names),
+    do: is_list(names) and Enum.all?(names, &(is_binary(&1) and &1 != ""))
 
   defp invalid(message), do: refusal("invalid", message)
 
@@ -111,21 +131,50 @@ defmodule HalC2.OpenShell.Operations do
 
   @impl true
   def init(opts) do
-    {:ok,
-     %{
-       runner: Keyword.get(opts, :runner),
-       # The wall clock in microseconds, but for a test's.
-       clock: Keyword.get(opts, :clock),
-       job: nil,
-       # When this server started: above every run before it, so a client waiting
-       # on a run sees the restart.
-       run: number(Keyword.get(opts, :clock)),
-       operation: nil,
-       steps: [],
-       result: nil,
-       watchers: %{}
-     }}
+    name = Keyword.get(opts, :name, __MODULE__)
+
+    state = %{
+      name: name,
+      runner: Keyword.get(opts, :runner),
+      # The wall clock in microseconds, but for a test's.
+      clock: Keyword.get(opts, :clock),
+      job: nil,
+      # When this server started: above every run before it, so a client waiting
+      # on a run sees the restart.
+      run: number(Keyword.get(opts, :clock)),
+      operation: nil,
+      steps: [],
+      result: nil,
+      watchers: %{}
+    }
+
+    {:ok, adopt(state, running(name))}
   end
+
+  # The run an earlier server under this name left running, taken back. One whose
+  # process has gone since ended without this server seeing how.
+  defp adopt(state, %{token: token, pid: pid, operation: operation, run: run}) do
+    state = %{state | run: run, operation: operation}
+
+    if Process.alive?(pid) do
+      %{state | job: {token, {pid, Process.monitor(pid)}}}
+    else
+      note_running(state, nil)
+      %{state | result: lost(operation, :gone)}
+    end
+  end
+
+  defp adopt(state, nil), do: state
+
+  # Where a run is noted while it runs, for a server started under the same name to
+  # take back: only a named server's, as only it is found again.
+  defp running(nil), do: nil
+  defp running(name), do: :persistent_term.get({__MODULE__, :running, name}, nil)
+
+  defp note_running(%{name: nil}, _job), do: :ok
+
+  defp note_running(%{name: name}, job),
+    do: :persistent_term.put({__MODULE__, :running, name}, job)
 
   @impl true
   def handle_call({:run, operation, _opts}, _from, %{job: {_, _}} = state) do
@@ -137,17 +186,19 @@ defmodule HalC2.OpenShell.Operations do
   end
 
   def handle_call({:run, operation, opts}, _from, state) do
-    server = self()
+    # The job tells the server by its name, so one started after a restart hears
+    # the rest of it.
+    server = state.name || self()
     token = make_ref()
 
     runner =
       state.runner || Application.get_env(:hal_c2, :openshell_operation_runner, &Command.run/2)
 
-    progress = fn step -> send(server, {:step, token, step}) end
+    progress = fn step -> tell(server, {:step, token, step}) end
 
     {pid, monitor} =
       spawn_monitor(fn ->
-        send(server, {:done, token, attempt(runner, operation, opts ++ [progress: progress])})
+        tell(server, {:done, token, attempt(runner, operation, opts ++ [progress: progress])})
       end)
 
     state = %{
@@ -159,6 +210,7 @@ defmodule HalC2.OpenShell.Operations do
         result: nil
     }
 
+    note_running(state, %{token: token, pid: pid, operation: operation, run: state.run})
     changed(state)
     {:reply, {:ok, snapshot(state)}, state}
   end
@@ -188,15 +240,7 @@ defmodule HalC2.OpenShell.Operations do
 
   # Its process went without an answer: killed, since `attempt/3` catches the rest.
   def handle_info({:DOWN, monitor, :process, _pid, reason}, %{job: {_, {_, monitor}}} = state) do
-    Logger.error("OpenShell's #{state.operation} stopped without an outcome: #{inspect(reason)}")
-
-    finish(state, %{
-      "ok" => false,
-      "code" => nil,
-      "message" =>
-        "OpenShell's #{state.operation} stopped before it finished. The MC's log says why; Refresh shows what is installed now.",
-      "sandboxes" => nil
-    })
+    finish(state, lost(state.operation, reason))
   end
 
   def handle_info({:DOWN, monitor, :process, pid, _}, state),
@@ -204,7 +248,21 @@ defmodule HalC2.OpenShell.Operations do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  defp lost(operation, reason) do
+    Logger.error("OpenShell's #{operation} stopped without an outcome: #{inspect(reason)}")
+
+    %{
+      "ok" => false,
+      "code" => nil,
+      "message" =>
+        "OpenShell's #{operation} stopped before it finished. The MC's log says why; Refresh shows what is installed now.",
+      "sandboxes" => nil,
+      "drain" => nil
+    }
+  end
+
   defp finish(state, result) do
+    note_running(state, nil)
     state = %{state | job: nil, result: result}
     changed(state)
     {:noreply, state}
@@ -223,7 +281,7 @@ defmodule HalC2.OpenShell.Operations do
   end
 
   defp outcome({:ok, text}),
-    do: %{"ok" => true, "code" => nil, "message" => text, "sandboxes" => nil}
+    do: %{"ok" => true, "code" => nil, "message" => text, "sandboxes" => nil, "drain" => nil}
 
   defp outcome({:error, message}) when is_binary(message),
     do: Map.put(Command.settings_error(message), "ok", false)
@@ -231,6 +289,45 @@ defmodule HalC2.OpenShell.Operations do
   defp outcome(other) do
     Logger.error("OpenShell's operation answered #{inspect(other)}")
     outcome({:error, "The operation gave no outcome the MC understands."})
+  end
+
+  @doc """
+  What a session holding `scopes` is shown of `snapshot`: all of it when it may run
+  operations (`scopes/0`); otherwise the operation, its steps, and how it ended
+  as ok or not, its problem's code and how many reviews it would stop, but not its
+  message or the sandboxes' names.
+  """
+  def viewed(snapshot, scopes) do
+    case {manage(scopes), snapshot["result"]} do
+      {%{"canManage" => true}, _} ->
+        snapshot
+
+      {_, nil} ->
+        snapshot
+
+      {_, result} ->
+        %{
+          snapshot
+          | "result" => %{result | "message" => viewed_message(snapshot, result), "drain" => nil}
+        }
+    end
+  end
+
+  defp viewed_message(%{"operation" => operation}, %{"ok" => true}),
+    do: "OpenShell's #{operation} finished."
+
+  defp viewed_message(%{"operation" => operation}, %{"code" => code}),
+    do:
+      "OpenShell's #{operation} failed#{if code, do: " (#{code})"}. A session that can manage this machine sees why."
+
+  # A step or the outcome, for the server under `server` now, if there is one.
+  defp tell(server, message) when is_pid(server), do: send(server, message)
+
+  defp tell(server, message) do
+    case Process.whereis(server) do
+      nil -> :ok
+      pid -> send(pid, message)
+    end
   end
 
   defp snapshot(state) do

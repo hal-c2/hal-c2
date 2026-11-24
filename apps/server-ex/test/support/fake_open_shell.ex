@@ -217,6 +217,10 @@ defmodule HalC2.Test.FakeOpenShell do
 
   def sandboxes(%{store: store}), do: Agent.get(store, & &1.sandboxes)
 
+  @doc "Takes a sandbox out of the fake's store as if its review had ended."
+  def delete_sandbox(%{store: store}, name),
+    do: Agent.update(store, &update_in(&1.sandboxes, fn all -> Map.delete(all, name) end))
+
   @doc "Puts a provider in the fake's store as if someone had created it."
   def put_provider(%{store: store}, name, labels) do
     entry = %{type: "openai", credentials: %{}, labels: labels}

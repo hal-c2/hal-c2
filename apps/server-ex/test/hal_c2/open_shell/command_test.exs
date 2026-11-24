@@ -142,22 +142,42 @@ defmodule HalC2.OpenShell.CommandTest do
   end
 
   describe "settings_error/1" do
-    test "running sandboxes are counted, and the CLI's flag is not named" do
-      assert %{"code" => "sandboxes-running", "sandboxes" => 3, "message" => message} =
+    test "running sandboxes are counted and named, and the CLI's flag is not named" do
+      assert %{
+               "code" => "sandboxes-running",
+               "sandboxes" => 3,
+               "drain" => ["review-a", "review-b", "review-c"],
+               "message" => message
+             } =
                Command.settings_error(
-                 "[sandboxes-running] 3 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."
+                 "[sandboxes-running] 3 of this MC's sandboxes are on the gateway (review-a, review-b, review-c). Let their reviews finish, or pass --drain to delete them."
                )
 
       assert message =~ "3 of this MC's review sandboxes are on the gateway"
       refute message =~ "--drain"
 
-      assert %{"sandboxes" => 1, "message" => one} =
+      assert %{"sandboxes" => 1, "drain" => ["review-a"], "message" => one} =
                Command.settings_error(
-                 "[sandboxes-running] 1 of this MC's sandboxes is on the gateway. Let its review finish, or pass --drain to delete it."
+                 "[sandboxes-running] 1 of this MC's sandboxes is on the gateway (review-a). Let its review finish, or pass --drain to delete it."
                )
 
       assert one =~
                "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review"
+    end
+
+    test "running reviews that changed since the yes are asked about again, by name" do
+      assert %{
+               "code" => "sandboxes-changed",
+               "sandboxes" => 2,
+               "drain" => ["review-a", "review-b"],
+               "message" => message
+             } =
+               Command.settings_error(
+                 "[sandboxes-changed] The running reviews changed since they were confirmed: 2 of this MC's sandboxes are on the gateway (review-a, review-b). Check them again before deleting them."
+               )
+
+      assert message =~ "changed since you confirmed"
+      assert message =~ "2 of this MC's review sandboxes are on the gateway"
     end
 
     test "a busy lock and a platform problem are worded for Settings" do
@@ -178,7 +198,8 @@ defmodule HalC2.OpenShell.CommandTest do
       assert Command.settings_error("Downloading failed: timeout") == %{
                "code" => nil,
                "message" => "Downloading failed: timeout",
-               "sandboxes" => nil
+               "sandboxes" => nil,
+               "drain" => nil
              }
     end
   end

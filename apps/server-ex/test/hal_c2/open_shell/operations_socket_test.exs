@@ -69,7 +69,8 @@ defmodule HalC2.OpenShell.OperationsSocketTest do
     refute_received {:started, _, _}
   end
 
-  test "a session that can runs one, and every subscriber sees it through", %{mc: mc} do
+  test "a session that can runs one, and every subscriber sees it through, the detail only it",
+       %{mc: mc} do
     scopes = ["orchestration:read", "access:write", "terminal:operate"]
     client = Mc.connect_as(mc, Mc.pair(scopes, "Manager"))
     watcher = Mc.connect_as(mc, Mc.pair(["orchestration:read"], "Watcher"))
@@ -91,11 +92,12 @@ defmodule HalC2.OpenShell.OperationsSocketTest do
     {running, client} =
       Mc.call!(client, mc.environment, "server.runOpenShellOperation", %{
         "operation" => "uninstall",
-        "drain" => true
+        "drain" => ["review-1"]
       })
 
     assert %{"operation" => "uninstall", "running" => true} = running
-    assert_receive {:started, :uninstall, [drain: true]}
+    assert_receive {:started, :uninstall, [drain: ["review-1"]]}
+    client = Mc.sub(client, 2, shape())
 
     assert {{:error, _, %{"_tag" => "ServerOpenShellOperationError", "reason" => "busy"}}, _} =
              Mc.call(client, mc.environment, "server.runOpenShellOperation", %{
@@ -106,23 +108,75 @@ defmodule HalC2.OpenShell.OperationsSocketTest do
       Mc.await(watcher, &(&1["t"] == "openShell" and &1["operation"]["steps"] != []))
 
     assert_receive {:runner, runner}
-    send(runner, {:answer, {:ok, "OpenShell removed."}})
+    # What the CLI prints too: the gateway's address and the log's path.
+    done = "OpenShell removed. Log: /home/user/.local/state/hal-c2/openshell.log"
+    send(runner, {:answer, {:ok, done}})
 
     {%{"operation" => operation}, _} =
       Mc.await(watcher, &(&1["t"] == "openShell" and &1["operation"]["result"] != nil))
 
-    assert %{"running" => false, "result" => %{"ok" => true, "message" => "OpenShell removed."}} =
-             operation
+    assert %{
+             "running" => false,
+             "result" => %{"ok" => true, "message" => "OpenShell's uninstall finished."}
+           } = operation
+
+    {%{"operation" => operation}, _} =
+      Mc.await(client, &(&1["t"] == "openShell" and &1["operation"]["result"] != nil))
+
+    assert %{"running" => false, "result" => %{"ok" => true, "message" => ^done}} = operation
+  end
+
+  test "a failure's message and the sandboxes it names are the manager's alone" do
+    result = %{
+      "ok" => false,
+      "code" => "sandboxes-running",
+      "message" => "2 of this MC's review sandboxes are on the gateway.",
+      "sandboxes" => 2,
+      "drain" => ["review-a", "review-b"]
+    }
+
+    snapshot = %{
+      "operation" => "install",
+      "run" => 1,
+      "running" => false,
+      "steps" => [],
+      "result" => result
+    }
+
+    assert Operations.viewed(snapshot, :all) == snapshot
+    assert Operations.viewed(snapshot, Operations.scopes()) == snapshot
+
+    assert %{
+             "result" => %{
+               "ok" => false,
+               "code" => "sandboxes-running",
+               "sandboxes" => 2,
+               "drain" => nil,
+               "message" => message
+             }
+           } = Operations.viewed(snapshot, ["orchestration:read"])
+
+    assert message =~ "install failed (sandboxes-running)"
   end
 
   test "arguments it does not take are refused before anything runs", %{mc: mc} do
     client = Mc.connect(mc)
 
-    assert {{:error, _, %{"_tag" => "ServerOpenShellOperationError", "reason" => "invalid"}}, _} =
-             Mc.call(client, mc.environment, "server.runOpenShellOperation", %{
-               "operation" => "install",
-               "archive" => "/home/user/openshell.tar.gz"
-             })
+    # A drain names the sandboxes its user agreed to delete: never "whatever is there".
+    inputs = [
+      %{"operation" => "install", "archive" => "/home/user/openshell.tar.gz"}
+      | for(
+          drain <- [true, "review-1", [""], [1]],
+          do: %{"operation" => "uninstall", "drain" => drain}
+        )
+    ]
+
+    Enum.reduce(inputs, client, fn input, client ->
+      assert {{:error, _, %{"_tag" => "ServerOpenShellOperationError", "reason" => "invalid"}},
+              client} = Mc.call(client, mc.environment, "server.runOpenShellOperation", input)
+
+      client
+    end)
 
     refute_received {:started, _, _}
   end

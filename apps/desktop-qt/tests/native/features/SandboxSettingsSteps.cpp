@@ -85,8 +85,25 @@ QJsonObject status(const FakeOpenShell& machine) {
   return answer;
 }
 
-QJsonObject result(bool ok, const QJsonValue& code, const QString& message, const QJsonValue& sandboxes = QJsonValue()) {
-  return {{QStringLiteral("ok"), ok}, {QStringLiteral("code"), code}, {QStringLiteral("message"), message}, {QStringLiteral("sandboxes"), sandboxes}};
+QJsonObject result(bool ok, const QJsonValue& code, const QString& message, const QJsonValue& sandboxes = QJsonValue(),
+                   const QJsonValue& drain = QJsonValue()) {
+  return {{QStringLiteral("ok"), ok}, {QStringLiteral("code"), code}, {QStringLiteral("message"), message}, {QStringLiteral("sandboxes"), sandboxes}, {QStringLiteral("drain"), drain}};
+}
+
+// This MC's reviews on the gateway, by the names the MC gives them.
+QJsonArray reviewNames(int count) {
+  QJsonArray names;
+  for (int at = 1; at <= count; ++at) names.append(QStringLiteral("review-%1").arg(at));
+  return names;
+}
+
+// Like the MC, a drain deletes only when it names every review there is.
+bool drainsAll(const QJsonObject& payload, int count) {
+  const QJsonArray drain = payload.value(QLatin1String("drain")).toArray();
+  for (const QJsonValue& name : reviewNames(count)) {
+    if (!drain.contains(name)) return false;
+  }
+  return true;
 }
 
 // The operation's new state, to everyone following the openShell shape.
@@ -128,15 +145,18 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       }
       machine.managed = true;
       finish(kInstallSteps, result(true, QJsonValue(), kInstalled));
-    } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !rpc.payload.value(QLatin1String("drain")).toBool()) {
-      finish({}, result(false, QStringLiteral("sandboxes-running"),
-                        machine.reviews == 1
+    } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !drainsAll(rpc.payload, machine.reviews)) {
+      // A drain that does not name them all was confirmed before others started.
+      const bool confirmed = rpc.payload.contains(QLatin1String("drain"));
+      finish({}, result(false, confirmed ? QStringLiteral("sandboxes-changed") : QStringLiteral("sandboxes-running"),
+                        (confirmed ? QStringLiteral("The running reviews changed since you confirmed. ") : QString()) +
+                        (machine.reviews == 1
                             ? QStringLiteral("1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; "
                                              "or let it finish first.")
                             : QStringLiteral("%1 of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their "
                                              "reviews; or let them finish first.")
-                                  .arg(machine.reviews),
-                        machine.reviews));
+                                  .arg(machine.reviews)),
+                        machine.reviews, reviewNames(machine.reviews)));
     } else if (operation == QLatin1String("uninstall")) {
       machine.reviews = 0;
       machine.managed = false;
@@ -304,18 +324,31 @@ const Steps steps([] {
            QStringLiteral("the MC was asked %1 times").arg(runs.size()));
   });
   step(QStringLiteral("they agree to stop it"), [](World& world, const Captures&, const Table&) {
+    const auto message = [&] { return operation(world).value(QStringLiteral("result")).toMap().value(QStringLiteral("message")).toString(); };
+    const QString asked = message();
     world.brick->click(QStringLiteral("sandboxConfirmYes"));
     // The last uninstall's outcome is on the page until this one's lands.
-    world.waitFor(
-        [&] {
-          return operation(world).value(QStringLiteral("result")).toMap().value(QStringLiteral("message")).toString() == kRemoved &&
-                 !section(world).value(QStringLiteral("loading")).toBool();
-        },
-        [&] { return QStringLiteral("the drained uninstall to end; the section is %1").arg(show(section(world))); });
+    world.waitFor([&] { return message() != asked && !section(world).value(QStringLiteral("loading")).toBool(); },
+                  [&] { return QStringLiteral("the drained uninstall to end; the section is %1").arg(show(section(world))); });
+  });
+  step(QStringLiteral("another of this MC's reviews starts on the gateway"),
+       [](World& world, const Captures&, const Table&) { ++machine(world).reviews; });
+  step(QStringLiteral("they are asked again whether to stop (\\d+) reviews, as the reviews changed"), [](World& world, const Captures& c, const Table&) {
+    const QString question = QStringLiteral("Stop %1 reviews and go ahead? The running reviews changed since you confirmed.").arg(c[0]);
+    world.brick->grab();
+    expect(world.brick->item(QStringLiteral("sandboxConfirm"))->isVisible() && text(world, QStringLiteral("sandboxConfirmText")).startsWith(question),
+           QStringLiteral("the page asks \"%1\"").arg(text(world, QStringLiteral("sandboxConfirmText"))));
+    // The yes named only the review it was asked about.
+    expect(machine(world).runs.last() ==
+               QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")}, {QStringLiteral("drain"), QJsonArray{QStringLiteral("review-1")}}},
+           QStringLiteral("the yes did not name the review it asked about"));
+  });
+  step(QStringLiteral("no review was stopped"), [](World& world, const Captures&, const Table&) {
+    expect(machine(world).reviews == 2 && machine(world).managed, QStringLiteral("a review was stopped, or OpenShell removed"));
   });
   step(QStringLiteral("they read that OpenShell was removed, its review stopped first"), [](World& world, const Captures&, const Table&) {
     expectText(world, QStringLiteral("sandboxResult"), kRemoved);
-    expect(machine(world).runs.last() == QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")}, {QStringLiteral("drain"), true}},
+    expect(machine(world).runs.last() == QJsonObject{{QStringLiteral("operation"), QStringLiteral("uninstall")}, {QStringLiteral("drain"), QJsonArray{QStringLiteral("review-1")}}},
            QStringLiteral("the second uninstall did not drain"));
     expect(!world.brick->item(QStringLiteral("sandboxConfirm"))->isVisible(), QStringLiteral("the page still asks"));
   });

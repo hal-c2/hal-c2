@@ -25,7 +25,9 @@
 // carries); the actions are off while it is or when this session may not manage
 // the MC's machine (manageReason says why).
 // `confirm` asks before an operation this page asked for stops this MC's
-// reviews (or runs without knowing whether it would). `refusal` also says when
+// reviews (or runs without knowing whether it would); a yes names the reviews it
+// asked about (`drain`), and the MC asks again when others run by then
+// (`sandboxes-changed`). `refusal` also says when
 // the MC restarted before the run this page asked for told how it went.
 //
 // Actions: `sandboxSettings.refresh`, `sandboxSettings.run` {operation},
@@ -106,9 +108,9 @@ public:
     } else if (action == QLatin1String("sandboxSettings.confirm")) {
       if (m_confirmOperation.isEmpty()) return true;
       const QString operation = m_confirmOperation;
-      const QString flag = m_confirmFlag;
+      const QJsonObject flags = m_confirmFlags;
       clearConfirm();
-      run(operation, {{flag, true}});
+      run(operation, flags);
     } else if (action == QLatin1String("sandboxSettings.cancel")) {
       clearConfirm();
       publish();
@@ -169,7 +171,7 @@ private:
 
   void clearConfirm() {
     m_confirmOperation.clear();
-    m_confirmFlag.clear();
+    m_confirmFlags = QJsonObject();
     m_confirmText.clear();
   }
 
@@ -272,8 +274,9 @@ private:
       // A frame with no operation is from an MC that has run none since it
       // started, and its number is when it started. Above the run's number, it
       // started after the run did: it restarted, and the run's outcome went with
-      // the old one. That may be only its Operations service, whose unlinked
-      // job still runs and holds the lock, so the words promise no retry. This
+      // the old one (a restart of only its Operations service takes the run back
+      // and shows it going on). Whether the run's work got done is unknown, so
+      // the words promise no retry. This
       // holds whatever the frame's order: a frame from before the run (the
       // shape's first, one sent before a reconnect) carries a smaller number, as
       // the run's is larger than every number before it. An MC whose clock went
@@ -290,14 +293,15 @@ private:
     if (result.value(QLatin1String("ok")).toBool()) return;
     const QString code = result.value(QLatin1String("code")).toString();
     const QString message = result.value(QLatin1String("message")).toString();
-    const QJsonValue sandboxes = result.value(QLatin1String("sandboxes"));
-    if (code == QLatin1String("sandboxes-running") && sandboxes.isDouble()) {
+    const QJsonArray drain = result.value(QLatin1String("drain")).toArray();
+    if ((code == QLatin1String("sandboxes-running") || code == QLatin1String("sandboxes-changed")) && !drain.isEmpty()) {
+      // The yes names what it was asked about: the MC deletes no other review.
       m_confirmOperation = operation;
-      m_confirmFlag = QStringLiteral("drain");
-      m_confirmText = QStringLiteral("Stop %1 and go ahead? %2").arg(reviews(sandboxes.toInt()), message);
+      m_confirmFlags = QJsonObject{{QStringLiteral("drain"), drain}};
+      m_confirmText = QStringLiteral("Stop %1 and go ahead? %2").arg(reviews(int(drain.size())), message);
     } else if (code == QLatin1String("sandboxes-unknown")) {
       m_confirmOperation = operation;
-      m_confirmFlag = QStringLiteral("force");
+      m_confirmFlags = QJsonObject{{QStringLiteral("force"), true}};
       m_confirmText = QStringLiteral("Go ahead anyway? %1").arg(message);
     }
   }
@@ -409,9 +413,9 @@ private:
   // The ended run the status was last read for: the one the shape's first frame
   // showed ended (the read the page opened with covers it), then each one after.
   std::optional<qint64> m_known;
-  // What a yes reruns: the operation and the flag (drain or force) it adds.
+  // What a yes reruns: the operation and what it adds, the drain's names or force.
   QString m_confirmOperation;
-  QString m_confirmFlag;
+  QJsonObject m_confirmFlags;
   QString m_confirmText;
 };
 

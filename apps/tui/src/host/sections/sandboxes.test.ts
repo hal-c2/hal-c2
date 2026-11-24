@@ -76,7 +76,13 @@ describe("review sandboxes", () => {
       emit({
         ...state(),
         running: false,
-        result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+        result: {
+          ok: false,
+          code: "sandboxes-running",
+          message: STOPS,
+          sandboxes: 1,
+          drain: ["review-1"],
+        },
       });
       await host.settled();
       expect(host.state.get("mode")).toBe("sectionConfirm");
@@ -100,7 +106,13 @@ describe("review sandboxes", () => {
       run: 0,
       running: false,
       steps: [],
-      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+      result: {
+        ok: false,
+        code: "sandboxes-running",
+        message: STOPS,
+        sandboxes: 1,
+        drain: ["review-1"],
+      },
     };
     mc.emitOpenShellOperation();
     await host.settled();
@@ -113,7 +125,13 @@ describe("review sandboxes", () => {
     emit({
       ...state(),
       running: false,
-      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+      result: {
+        ok: false,
+        code: "sandboxes-running",
+        message: STOPS,
+        sandboxes: 1,
+        drain: ["review-1"],
+      },
     });
     await host.settled();
     expect(host.state.get("mode")).toBe("sectionConfirm");
@@ -135,7 +153,13 @@ describe("review sandboxes", () => {
     emit({
       ...state(),
       running: false,
-      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+      result: {
+        ok: false,
+        code: "sandboxes-running",
+        message: STOPS,
+        sandboxes: 1,
+        drain: ["review-1"],
+      },
     });
     await host.settled();
     expect(host.state.get("mode")).toBe("sectionConfirm");
@@ -176,7 +200,13 @@ describe("review sandboxes", () => {
     emit({
       ...state(),
       running: false,
-      result: { ok: false, code: "sandboxes-running", message: STOPS, sandboxes: 1 },
+      result: {
+        ok: false,
+        code: "sandboxes-running",
+        message: STOPS,
+        sandboxes: 1,
+        drain: ["review-1"],
+      },
     });
     await host.settled();
     expect(host.state.get("mode")).toBe("sectionConfirm");
@@ -234,6 +264,57 @@ describe("review sandboxes", () => {
     });
   }
 
+  it("a yes names the reviews it asked about, and asks again when they changed", async () => {
+    const { fake, mc, host, page, emit, state } = boot();
+    fake.connect();
+    host.dispatch("section.open", { id: "sandboxes" });
+    await host.settled();
+
+    host.dispatch("section.activate", { id: "operation:uninstall" });
+    await host.settled();
+    emit({
+      ...state(),
+      running: false,
+      result: {
+        ok: false,
+        code: "sandboxes-running",
+        message: STOPS,
+        sandboxes: 1,
+        drain: ["review-1"],
+      },
+    });
+    await host.settled();
+    host.dispatch("section.confirm.yes");
+    await host.settled();
+    expect(mc.callsTo("server.runOpenShellOperation").at(-1)?.payload).toEqual({
+      operation: "uninstall",
+      drain: ["review-1"],
+    });
+
+    // Another review started before the yes: the MC deleted nothing and names both.
+    emit({
+      ...state(),
+      running: false,
+      result: {
+        ok: false,
+        code: "sandboxes-changed",
+        message: "The running reviews changed since you confirmed.",
+        sandboxes: 2,
+        drain: ["review-1", "review-2"],
+      },
+    });
+    await host.settled();
+    expect(host.state.get("mode")).toBe("sectionConfirm");
+    expect(page().confirm?.lines.join(" ")).toContain("Stop 2 reviews and go ahead?");
+    host.dispatch("section.confirm.yes");
+    await host.settled();
+    expect(mc.callsTo("server.runOpenShellOperation").at(-1)?.payload).toEqual({
+      operation: "uninstall",
+      drain: ["review-1", "review-2"],
+    });
+    host.destroy();
+  });
+
   it("a run another device ended while the connection was down reads the status again, once", async () => {
     const { fake, mc, host, emit } = boot();
     // The page opens on a run that ended: the read it opens with covers it.
@@ -242,7 +323,7 @@ describe("review sandboxes", () => {
       run: 5,
       running: false,
       steps: [],
-      result: { ok: true, code: null, message: "OpenShell removed.", sandboxes: null },
+      result: { ok: true, code: null, message: "OpenShell removed.", sandboxes: null, drain: null },
     };
     fake.connect();
     host.dispatch("section.open", { id: "sandboxes" });
@@ -257,7 +338,13 @@ describe("review sandboxes", () => {
       run: 6,
       running: false,
       steps: [],
-      result: { ok: true, code: null, message: "OpenShell installed.", sandboxes: null },
+      result: {
+        ok: true,
+        code: null,
+        message: "OpenShell installed.",
+        sandboxes: null,
+        drain: null,
+      },
     };
     emit(installed);
     await host.settled();

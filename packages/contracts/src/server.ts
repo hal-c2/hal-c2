@@ -479,27 +479,34 @@ export type ServerOpenShellStatus = typeof ServerOpenShellStatus.Type;
 /**
  * `server.runOpenShellOperation`: runs one operation, the code `hal-c2-service
  * openshell` runs, and answers with it running. Its steps and outcome arrive on the
- * `openShell` shape. `drain` deletes this MC's sandboxes first (uninstall, update);
- * `force` goes ahead when they cannot be counted. Nothing else is taken: what gets
- * installed is the MC's pinned release.
+ * `openShell` shape. `drain` names the sandboxes of this MC's its user agreed to
+ * delete first (uninstall, update), as the `sandboxes-running` outcome that asked
+ * listed them; when the MC finds one it does not name, nothing is deleted and the
+ * outcome is `sandboxes-changed`, naming the set to ask about again. `force` goes
+ * ahead when they cannot be counted. Nothing else is taken: what gets installed is
+ * the MC's pinned release.
  */
 export const ServerOpenShellOperationInput = Schema.Struct({
   operation: ServerOpenShellOperation,
-  drain: Schema.optional(Schema.Boolean),
+  drain: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   force: Schema.optional(Schema.Boolean),
 });
 export type ServerOpenShellOperationInput = typeof ServerOpenShellOperationInput.Type;
 
 /**
  * How an operation ended. `code` is the failure's (`sandboxes-running`,
- * `sandboxes-unknown`, `busy`, ...); with `sandboxes-running`, `sandboxes` is how many
- * reviews going ahead with `drain` stops.
+ * `sandboxes-changed`, `sandboxes-unknown`, `busy`, ...); with `sandboxes-running`
+ * or `sandboxes-changed`, `sandboxes` is how many reviews going ahead stops and
+ * `drain` their names, what a yes sends back. A session that cannot run operations
+ * is shown the outcome without its detail: `message` only says how it ended, and
+ * `drain` is null.
  */
 export const ServerOpenShellOperationResult = Schema.Struct({
   ok: Schema.Boolean,
   code: Schema.NullOr(TrimmedNonEmptyString),
   message: Schema.String,
   sandboxes: Schema.NullOr(NonNegativeInt),
+  drain: Schema.NullOr(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ServerOpenShellOperationResult = typeof ServerOpenShellOperationResult.Type;
 

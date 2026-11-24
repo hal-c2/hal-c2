@@ -20,7 +20,7 @@ const RUNNING: Record<ServerOpenShellOperation, string> = {
   uninstall: "Removing OpenShell…",
 };
 
-type Flags = { readonly drain?: boolean; readonly force?: boolean };
+type Flags = { readonly drain?: ReadonlyArray<string>; readonly force?: boolean };
 
 const reviews = (count: number) => `${count} review${count === 1 ? "" : "s"}`;
 
@@ -32,7 +32,8 @@ const reviews = (count: number) => `${count} review${count === 1 ? "" : "s"}`;
  * certificates, Uninstall, …) run with `server.runOpenShellOperation`; their
  * steps and outcome come from the openShell shape, so an operation another
  * device started shows here too. An operation that would stop this MC's
- * reviews asks first, and runs again with `drain` (or `force`) on a yes.
+ * reviews asks first, and runs again on a yes with `drain` naming the reviews it
+ * asked about (or `force`); when others run by then the MC asks again.
  */
 export function sandboxesSection(host: SectionHost): SettingsSection {
   let status: ServerOpenShellStatus | null = null;
@@ -121,9 +122,15 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
   // An outcome this page asked for may need the user's yes to go on.
   const answer = (name: ServerOpenShellOperation, result: OpenShellOperationState["result"]) => {
     if (result === null || result.ok) return;
-    if (result.code === "sandboxes-running" && result.sandboxes !== null) {
-      host.confirm(`Stop ${reviews(result.sandboxes)} and go ahead? ${result.message}`, () =>
-        run(name, { drain: true }),
+    const drain = result.drain;
+    if (
+      (result.code === "sandboxes-running" || result.code === "sandboxes-changed") &&
+      drain !== null &&
+      drain.length > 0
+    ) {
+      // The yes names what it was asked about: the MC deletes no other review.
+      host.confirm(`Stop ${reviews(drain.length)} and go ahead? ${result.message}`, () =>
+        run(name, { drain }),
       );
     } else if (result.code === "sandboxes-unknown") {
       host.confirm(`Go ahead anyway? ${result.message}`, () => run(name, { force: true }));
@@ -183,8 +190,9 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
       // A frame with no operation is from an MC that has run none since it
       // started, and its number is when it started. Above the run's number, it
       // started after the run did: it restarted, and the run's outcome went with
-      // the old one. That may be only its Operations service, whose unlinked
-      // job still runs and holds the lock, so the words promise no retry. This
+      // the old one (a restart of only its Operations service takes the run back
+      // and shows it going on). Whether the run's work got done is unknown, so
+      // the words promise no retry. This
       // holds whatever the frame's order: a frame from before the run (the
       // shape's first, one sent before a reconnect) carries a smaller number, as
       // the run's is larger than every number before it. An MC whose clock went

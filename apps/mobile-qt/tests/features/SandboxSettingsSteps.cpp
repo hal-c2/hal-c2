@@ -81,8 +81,25 @@ QJsonObject status(const FakeOpenShell& machine) {
   return answer;
 }
 
-QJsonObject result(bool ok, const QJsonValue& code, const S& message, const QJsonValue& sandboxes = QJsonValue()) {
-  return {{S("ok"), ok}, {S("code"), code}, {S("message"), message}, {S("sandboxes"), sandboxes}};
+QJsonObject result(bool ok, const QJsonValue& code, const S& message, const QJsonValue& sandboxes = QJsonValue(),
+                   const QJsonValue& drain = QJsonValue()) {
+  return {{S("ok"), ok}, {S("code"), code}, {S("message"), message}, {S("sandboxes"), sandboxes}, {S("drain"), drain}};
+}
+
+// This MC's reviews on the gateway, by the names the MC gives them.
+QJsonArray reviewNames(int count) {
+  QJsonArray names;
+  for (int at = 1; at <= count; ++at) names.append(S("review-%1").arg(at));
+  return names;
+}
+
+// Like the MC, a drain deletes only when it names every review there is.
+bool drainsAll(const QJsonObject& payload, int count) {
+  const QJsonArray drain = payload.value(QLatin1String("drain")).toArray();
+  for (const QJsonValue& name : reviewNames(count)) {
+    if (!drain.contains(name)) return false;
+  }
+  return true;
 }
 
 // The operation's new state, to everyone following the openShell shape.
@@ -123,15 +140,18 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       }
       machine.managed = true;
       finish(kInstallSteps, result(true, QJsonValue(), kInstalled));
-    } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !rpc.payload.value(QLatin1String("drain")).toBool()) {
-      finish({}, result(false, S("sandboxes-running"),
-                        machine.reviews == 1
+    } else if (operation == QLatin1String("uninstall") && machine.reviews > 0 && !drainsAll(rpc.payload, machine.reviews)) {
+      // A drain that does not name them all was confirmed before others started.
+      const bool confirmed = rpc.payload.contains(QLatin1String("drain"));
+      finish({}, result(false, confirmed ? S("sandboxes-changed") : S("sandboxes-running"),
+                        (confirmed ? S("The running reviews changed since you confirmed. ") : QString()) +
+                        (machine.reviews == 1
                             ? S("1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; "
                                 "or let it finish first.")
                             : S("%1 of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; "
                                 "or let them finish first.")
-                                  .arg(machine.reviews),
-                        machine.reviews));
+                                  .arg(machine.reviews)),
+                        machine.reviews, reviewNames(machine.reviews)));
     } else if (operation == QLatin1String("uninstall")) {
       machine.reviews = 0;
       machine.managed = false;
@@ -273,9 +293,22 @@ const Steps steps([] {
            S("the MC was asked %1 times").arg(machine(world).runs.size()));
   });
   step(S("they agree to stop it"), [](World& world, const Captures&, const Table&) { world.tap(S("sandboxConfirmYes")); });
+  step(S("another of this MC's reviews starts on the gateway"), [](World& world, const Captures&, const Table&) { ++machine(world).reviews; });
+  step(S("they are asked again whether to stop (\\d+) reviews, as the reviews changed"), [](World& world, const Captures& c, const Table&) {
+    const S question = S("Stop %1 reviews and go ahead? The running reviews changed since you confirmed.").arg(c[0]);
+    world.waitFor([&] { return world.find(S("sandboxConfirmText")) != nullptr && world.find(S("sandboxConfirmText"))->isVisible() &&
+                               world.find(S("sandboxConfirmText"))->property("text").toString().startsWith(question); },
+                  [&] { return S("the page to ask \"%1\"; the screen says: %2").arg(question, screenTexts(world)); });
+    // The yes named only the review it was asked about.
+    expect(machine(world).runs.last() == QJsonObject{{S("operation"), S("uninstall")}, {S("drain"), QJsonArray{S("review-1")}}},
+           S("the yes did not name the review it asked about"));
+  });
+  step(S("no review was stopped"), [](World& world, const Captures&, const Table&) {
+    expect(machine(world).reviews == 2 && machine(world).managed, S("a review was stopped, or OpenShell removed"));
+  });
   step(S("they read that OpenShell was removed, its review stopped first"), [](World& world, const Captures&, const Table&) {
     reads(world, S("sandboxResult"), kRemoved);
-    expect(machine(world).runs.last() == QJsonObject{{S("operation"), S("uninstall")}, {S("drain"), true}}, S("the second uninstall did not drain"));
+    expect(machine(world).runs.last() == QJsonObject{{S("operation"), S("uninstall")}, {S("drain"), QJsonArray{S("review-1")}}}, S("the second uninstall did not drain"));
   });
 
   step(S("the sandbox settings' actions are off, and say which access the device lacks"), [](World& world, const Captures&, const Table&) {

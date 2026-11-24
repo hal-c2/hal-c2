@@ -99,13 +99,14 @@ function machine(ctx: World): Machine {
   // outcome go to whoever follows the openShell shape.
   mc(ctx).on(
     "server.runOpenShellOperation",
-    (payload: { operation: ServerOpenShellOperation; drain?: boolean }) => {
+    (payload: { operation: ServerOpenShellOperation; drain?: ReadonlyArray<string> }) => {
       if (state.cannotManage) throw new Error("This session may not access:write.");
       const fake = mc(ctx);
       const emit = (next: OpenShellOperationState) => {
         fake.openShellOperation = next;
         fake.emitOpenShellOperation();
       };
+      const names = Array.from({ length: state.reviews }, (_, at) => `review-${at + 1}`);
       const running: OpenShellOperationState = {
         operation: payload.operation,
         run: fake.callsTo("server.runOpenShellOperation").length,
@@ -122,16 +123,30 @@ function machine(ctx: World): Machine {
             emit({ ...running, steps: INSTALL_STEPS.slice(0, at) });
           }
           state.managed = true;
-          finish(INSTALL_STEPS, { ok: true, code: null, message: INSTALLED, sandboxes: null });
-        } else if (payload.operation === "uninstall" && state.reviews > 0 && !payload.drain) {
+          finish(INSTALL_STEPS, {
+            ok: true,
+            code: null,
+            message: INSTALLED,
+            sandboxes: null,
+            drain: null,
+          });
+        } else if (
+          payload.operation === "uninstall" &&
+          names.some((name) => !(payload.drain ?? []).includes(name))
+        ) {
+          // Like the MC: a drain deletes only when it names every review it finds.
+          const stops =
+            names.length === 1
+              ? "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
+              : `${names.length} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first.`;
           finish([], {
             ok: false,
-            code: "sandboxes-running",
-            message:
-              state.reviews === 1
-                ? "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
-                : `${state.reviews} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first.`,
-            sandboxes: state.reviews,
+            code: payload.drain ? "sandboxes-changed" : "sandboxes-running",
+            message: payload.drain
+              ? `The running reviews changed since you confirmed. ${stops}`
+              : stops,
+            sandboxes: names.length,
+            drain: names,
           });
         } else if (payload.operation === "uninstall") {
           state.reviews = 0;
@@ -141,6 +156,7 @@ function machine(ctx: World): Machine {
             code: null,
             message: REMOVED,
             sandboxes: null,
+            drain: null,
           });
         } else {
           finish([], {
@@ -148,6 +164,7 @@ function machine(ctx: World): Machine {
             code: null,
             message: "OpenShell passed its checks.",
             sandboxes: null,
+            drain: null,
           });
         }
       });
@@ -278,6 +295,27 @@ step(/^they are asked whether to stop (\d+) reviews?$/, async (ctx: World, spell
   expect(runs.map((call) => call.payload)).toEqual([{ operation: "uninstall" }]);
 });
 
+step("another of this MC's reviews starts on the gateway", (ctx: World) => {
+  machine(ctx).reviews += 1;
+});
+
+step(
+  /^they are asked again whether to stop (\d+) reviews, as the reviews changed$/,
+  async (ctx: World, spelled: string) => {
+    const question = sectionState(ctx).confirm?.lines.join(" ") ?? "";
+    expect(words(question)).toContain(`Stop ${Number(spelled)} reviews and go ahead?`);
+    expect(words(question)).toContain("changed since you confirmed");
+  },
+);
+
+step("no review was stopped", (ctx: World) => {
+  // The yes named the review it was asked about, and the MC found another.
+  const runs = mc(ctx).callsTo("server.runOpenShellOperation");
+  expect(runs.at(-1)?.payload).toEqual({ operation: "uninstall", drain: ["review-1"] });
+  expect(machine(ctx).reviews).toBe(2);
+  expect(machine(ctx).managed).toBe(true);
+});
+
 step("they agree to stop it", async (ctx: World) => {
   await pressKey(ctx, "y");
   await settle(ctx);
@@ -286,7 +324,7 @@ step("they agree to stop it", async (ctx: World) => {
 step("they read that OpenShell was removed, its review stopped first", async (ctx: World) => {
   await reads(ctx, [REMOVED]);
   const runs = mc(ctx).callsTo("server.runOpenShellOperation");
-  expect(runs.at(-1)?.payload).toEqual({ operation: "uninstall", drain: true });
+  expect(runs.at(-1)?.payload).toEqual({ operation: "uninstall", drain: ["review-1"] });
 });
 
 step(

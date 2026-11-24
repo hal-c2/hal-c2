@@ -87,7 +87,8 @@ struct Mc {
     operation[QStringLiteral("result")] = QJsonObject{{QStringLiteral("ok"), false},
                                                       {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
                                                       {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
-                                                      {QStringLiteral("sandboxes"), 1}};
+                                                      {QStringLiteral("sandboxes"), 1},
+                                                      {QStringLiteral("drain"), QJsonArray{QStringLiteral("review-1")}}};
   }
 
   void emitTo(int id) { sendTo(id, operation); }
@@ -229,7 +230,8 @@ private slots:
                          {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), false},
                                                                 {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
                                                                 {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
-                                                                {QStringLiteral("sandboxes"), 1}}}});
+                                                                {QStringLiteral("sandboxes"), 1},
+                                                      {QStringLiteral("drain"), QJsonArray{QStringLiteral("review-1")}}}}});
     QTRY_VERIFY(!shell.section().value(QStringLiteral("operation")).toMap().value(QStringLiteral("result")).isNull());
     QVERIFY(shell.section().value(QStringLiteral("confirm")).isNull());
     QVERIFY(shell.section().value(QStringLiteral("busy")).toBool());

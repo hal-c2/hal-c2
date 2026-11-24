@@ -372,17 +372,21 @@ defmodule HalC2.OpenShell.Command do
 
   @doc """
   A lifecycle command's error as Settings shows it: `%{"code", "message",
-  "sandboxes"}`, its first problem's code, each line's message worded for Settings
-  (the CLI's names flags and commands), and for `sandboxes-running` how many this
-  MC has on the gateway, which a client names when it asks before stopping them.
+  "sandboxes", "drain"}`, its first problem's code, each line's message worded for
+  Settings (the CLI's names flags and commands), and for `sandboxes-running` (or
+  `sandboxes-changed`, when they are not the ones confirmed) how many this MC has
+  on the gateway, which a client names when it asks before stopping them, and
+  their names, which it sends back as `drain` once its user said yes.
   """
   def settings_error(message) do
     lines = message |> String.split("\n", trim: true) |> Enum.map(&settings_line/1)
+    drain = Enum.find_value(lines, &elem(&1, 2))
 
     %{
       "code" => Enum.find_value(lines, &elem(&1, 0)),
       "message" => lines |> Enum.map(&elem(&1, 1)) |> Enum.join("\n"),
-      "sandboxes" => Enum.find_value(lines, &elem(&1, 2))
+      "sandboxes" => drain && length(drain),
+      "drain" => drain
     }
   end
 
@@ -393,24 +397,23 @@ defmodule HalC2.OpenShell.Command do
     end
   end
 
-  defp sandboxes("sandboxes-running", text) do
-    case Integer.parse(text) do
-      {count, _} -> count
-      :error -> nil
+  # The names `HalC2.OpenShell.Install` lists in parentheses.
+  defp sandboxes(code, text) when code in ["sandboxes-running", "sandboxes-changed"] do
+    case Regex.run(~r/on the gateway \(([^()]+)\)/, text) do
+      [_, names] -> String.split(names, ", ")
+      nil -> nil
     end
   end
 
   defp sandboxes(_code, _text), do: nil
 
-  defp settings_text("sandboxes-running", text) do
-    case sandboxes("sandboxes-running", text) do
-      1 ->
-        "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
+  defp settings_text("sandboxes-running", text),
+    do: on_gateway(sandboxes("sandboxes-running", text))
 
-      count ->
-        "#{count} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
-    end
-  end
+  defp settings_text("sandboxes-changed", text),
+    do:
+      "The running reviews changed since you confirmed. " <>
+        on_gateway(sandboxes("sandboxes-changed", text))
 
   defp settings_text("sandboxes-unknown", text),
     do:
@@ -438,6 +441,18 @@ defmodule HalC2.OpenShell.Command do
       do: settings_problem_message(code, "Install"),
       else: String.replace(text, Install.offline_hint(), settings_offline_hint())
   end
+
+  defp on_gateway([_]),
+    do:
+      "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
+
+  defp on_gateway(names) when is_list(names),
+    do:
+      "#{length(names)} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
+
+  defp on_gateway(nil),
+    do:
+      "This MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
 
   defp settings_offline_hint,
     do:

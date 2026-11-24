@@ -98,12 +98,24 @@ Feature: The OpenShell gateway review sandboxes run in
     And the gateway opens the database in that home
     And the gateway's service is this home's own
 
+  # Started for the install's checks, set to start at login only once the gateway
+  # runs, and undone by the uninstall: what installing changed and nothing else.
   @mc
   Scenario: Installing starts Podman's socket when Podman is installed but its socket is not running
     Given a machine whose Podman is installed with its socket stopped
     When the user installs OpenShell
-    Then Podman's socket was started for the user
+    Then Podman's socket was started for the user, and set to start at login
     And the gateway runs as a service of the user's, on loopback
+    When the user uninstalls OpenShell
+    Then Podman's socket is stopped again, and no longer starts at login
+
+  @mc
+  Scenario: An install that fails stops the Podman socket it started
+    Given a machine whose Podman is installed with its socket stopped
+    And the gateway rejects its configuration
+    When the user installs OpenShell
+    Then the install is refused because the preflight failed
+    And Podman's socket is stopped again, and was never set to start at login
 
   @mc
   Scenario: Installing starts no Podman socket where Podman is not installed
@@ -433,16 +445,45 @@ Feature: The OpenShell gateway review sandboxes run in
     Then they read that OpenShell was removed, its review stopped first
     And the sandbox settings offer to install it
 
+  # A yes names the reviews it was asked about; one that started since is not
+  # stopped on that yes.
+  @mc @shared
+  Scenario: Settings asks again when another review started before the user agreed
+    Given an OpenShell gateway this MC runs, with a sandbox of this MC's and one of someone else's
+    When the user opens the sandbox settings
+    And they press "Uninstall" in the sandbox settings
+    Then they are asked whether to stop 1 review
+    When another of this MC's reviews starts on the gateway
+    And they agree to stop it
+    Then they are asked again whether to stop 2 reviews, as the reviews changed
+    And no review was stopped
+
   @mc @shared
   Scenario: Settings' actions are off on a device that cannot manage the MC's machine
     Given the user's device was paired without the right to manage the MC's machine
     When the user opens the sandbox settings
     Then the sandbox settings' actions are off, and say which access the device lacks
 
+  # The outcome's message can name the gateway's address and paths on the MC's
+  # machine: a device that cannot manage it reads only how the operation ended.
+  @mc
+  Scenario: A device that cannot manage the MC's machine sees how an operation ended, not its detail
+    Given a device paired without the right to manage the MC's machine watches the sandbox settings
+    When the user opens the sandbox settings
+    And they press "Install" in the sandbox settings
+    Then they read that OpenShell was installed
+    And the watching device reads only that the install finished
+
   @mc
   Scenario: Settings runs one OpenShell operation at a time
     When the user presses "Install" in the sandbox settings and, while it runs, presses "Check"
     Then the check is refused because the install is running
+    And the install succeeds
+
+  @mc
+  Scenario: An operation still running when Settings' operations restart is shown going on, and how it ends
+    When the user presses "Install" in the sandbox settings and, while it runs, the MC's operations restart
+    Then the sandbox settings show the install still running, under its number
     And the install succeeds
 
   @mc @shared

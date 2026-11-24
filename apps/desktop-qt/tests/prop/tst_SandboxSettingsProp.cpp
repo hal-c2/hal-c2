@@ -6,7 +6,8 @@
 // a newer read was asked, or after the page was left. The user runs what the
 // status offers (`server.runOpenShellOperation`), another device starts an
 // operation of its own, an operation ends well, badly or with this MC's
-// reviews in the way, and the user agrees to stop them or not; the MC runs
+// reviews in the way, or more of them than a yes named, and the user agrees to
+// stop the ones it was asked about or not; the MC runs
 // one operation at a time and refuses a second, and the user may press an
 // action again before the first run's frame lands (before or after its
 // reply, or after a frame from before the run), which runs nothing more; and
@@ -45,8 +46,18 @@ const QString kBusy = QStringLiteral("OpenShell's install is already running on 
 const QString kRestarted = QStringLiteral("The MC lost track of the run; check the status before trying again.");
 
 // How an operation ends.
-enum class Outcome { None, Ok, Stops, Fails };
-const char* const kOutcomeNames[] = {"none", "ok", "stops-reviews", "fails"};
+// Stops: it would stop a review; Changed: a yes named fewer reviews than run now.
+enum class Outcome { None, Ok, Stops, Fails, Changed };
+const char* const kOutcomeNames[] = {"none", "ok", "stops-reviews", "fails", "reviews-changed"};
+
+// Whether an outcome asks before stopping reviews, and the reviews it names.
+bool asks(Outcome outcome) {
+  return outcome == Outcome::Stops || outcome == Outcome::Changed;
+}
+QJsonArray named(Outcome outcome) {
+  if (outcome == Outcome::Changed) return {QStringLiteral("review-a"), QStringLiteral("review-b")};
+  return {QStringLiteral("review-a")};
+}
 const char* const kOperations[] = {"install", "check", "uninstall"};
 
 // The openShell shape's state: the operation running or last run.
@@ -75,6 +86,7 @@ struct Model {
   Operation shown;        // the page's: the MC's while open, as it was when left
   QString askedFor;       // the operation this page asked for, until its outcome
   QString confirm;        // the operation a yes reruns with drain
+  QJsonArray drain;       // the reviews the yes names, the ones it asked about
   QString refusal;
 
   bool offers(const QString& operation) const {
@@ -147,7 +159,11 @@ QJsonObject operationJson(const Operation& operation) {
   } else if (operation.outcome == Outcome::Stops) {
     result = QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("code"), QStringLiteral("sandboxes-running")},
                          {QStringLiteral("message"), QStringLiteral("1 of this MC's review sandboxes is on the gateway.")},
-                         {QStringLiteral("sandboxes"), 1}};
+                         {QStringLiteral("sandboxes"), 1}, {QStringLiteral("drain"), named(Outcome::Stops)}};
+  } else if (operation.outcome == Outcome::Changed) {
+    result = QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("code"), QStringLiteral("sandboxes-changed")},
+                         {QStringLiteral("message"), QStringLiteral("The running reviews changed since you confirmed.")},
+                         {QStringLiteral("sandboxes"), 2}, {QStringLiteral("drain"), named(Outcome::Changed)}};
   } else if (operation.outcome == Outcome::Fails) {
     result = QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("code"), QStringLiteral("failed")},
                          {QStringLiteral("message"), QStringLiteral("It failed.")}, {QStringLiteral("sandboxes"), QJsonValue()}};
@@ -499,7 +515,7 @@ struct Twice : Command {
 // answers the run, so the second press runs nothing and no question comes of it.
 struct Stale : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
-  Operation frame{QLatin1String(kOperations[*rc::gen::inRange(0, 3)]), false, static_cast<Outcome>(*rc::gen::inRange(1, 4))};
+  Operation frame{QLatin1String(kOperations[*rc::gen::inRange(0, 3)]), false, static_cast<Outcome>(*rc::gen::inRange(1, 5))};
 
   void apply(Model& model) const override {
     if (model.open && model.offers(operation) && !model.shown.running) model.run(operation);
@@ -544,7 +560,7 @@ struct Stale : Command {
 // back, the status is read again, and an outcome that stops reviews asks.
 struct Dropped : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
-  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 4));
+  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 5));
 
   // A read out would be lost with the connection.
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.holding); }
@@ -555,7 +571,10 @@ struct Dropped : Command {
     model.mcOperation.outcome = outcome;
     model.shown = model.mcOperation;
     model.askedFor.clear();
-    if (outcome == Outcome::Stops) model.confirm = operation;
+    if (asks(outcome)) {
+      model.confirm = operation;
+      model.drain = named(outcome);
+    }
     model.ask();
   }
   void run(const Model& model, Shell& shell) const override {
@@ -678,7 +697,7 @@ struct Elsewhere : Command {
 // shows it ended, and the page reads the status again, once.
 struct Missed : Command {
   QString operation = QLatin1String(kOperations[*rc::gen::inRange(0, 3)]);
-  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 4));
+  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 5));
   Answer answer = static_cast<Answer>(*rc::gen::inRange(0, 4));
 
   // A read out would be lost with the connection.
@@ -713,7 +732,7 @@ struct Missed : Command {
 // The MC's operation ends; the page reads the status again if it saw it run,
 // and asks about an outcome it asked for that stops reviews.
 struct Finish : Command {
-  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 4));
+  Outcome outcome = static_cast<Outcome>(*rc::gen::inRange(1, 5));
 
   void checkPreconditions(const Model& model) const override { RC_PRE(model.mcOperation.running); }
   void apply(Model& model) const override {
@@ -723,7 +742,10 @@ struct Finish : Command {
     model.shown = model.mcOperation;
     if (!model.askedFor.isEmpty() && model.askedFor == model.mcOperation.name) {
       model.askedFor.clear();
-      if (outcome == Outcome::Stops) model.confirm = model.mcOperation.name;
+      if (asks(outcome)) {
+        model.confirm = model.mcOperation.name;
+        model.drain = named(outcome);
+      }
     }
     model.ask();
   }
@@ -732,6 +754,7 @@ struct Finish : Command {
     apply(next);
     if (!model.open) shell.reached.insert(QStringLiteral("ended while away"));
     if (!next.confirm.isEmpty()) shell.reached.insert(QStringLiteral("asked to stop reviews"));
+    if (!next.confirm.isEmpty() && outcome == Outcome::Changed) shell.reached.insert(QStringLiteral("asked again, the reviews changed"));
     Operation ended = shell.operation;
     ended.running = false;
     ended.outcome = outcome;
@@ -741,7 +764,8 @@ struct Finish : Command {
   void show(std::ostream& os) const override { os << "Finish(" << kOutcomeNames[int(outcome)] << ")"; }
 };
 
-// The user agrees to stop the reviews: the operation runs again, drained.
+// The user agrees to stop the reviews: the operation runs again, draining the
+// reviews it asked about.
 struct Confirm : Command {
   void apply(Model& model) const override {
     if (model.confirm.isEmpty()) return;
@@ -757,7 +781,7 @@ struct Confirm : Command {
     check(next, shell);
     if (!model.confirm.isEmpty()) {
       RC_ASSERT(shell.runs.size() == before + 1);
-      RC_ASSERT(shell.runs.last() == (QJsonObject{{QStringLiteral("operation"), model.confirm}, {QStringLiteral("drain"), true}}));
+      RC_ASSERT(shell.runs.last() == (QJsonObject{{QStringLiteral("operation"), model.confirm}, {QStringLiteral("drain"), model.drain}}));
     } else {
       RC_ASSERT(shell.runs.size() == before);
     }
@@ -793,6 +817,7 @@ private slots:
                        rc::state::gen::execOneOfWithArgs<Open, Open, Refresh, Refresh, Change, Change, Hold, AnswerOne, AnswerOne, Release,
                                                          Run, Run, Twice, Stale, Dropped, Restarted, Missed, Elsewhere, Finish, Finish, Confirm, Cancel>());
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked to stop reviews")), "asked before stopping reviews");
+      RC_CLASSIFY(shell.reached.contains(QStringLiteral("asked again, the reviews changed")), "asked again as the reviews changed");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("agreed while another ran")), "agreed while another device's operation ran");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("ended while away")), "an operation that ended while the page was left");
       RC_CLASSIFY(shell.reached.contains(QStringLiteral("stale answer")), "an answer to a read a newer one replaced");

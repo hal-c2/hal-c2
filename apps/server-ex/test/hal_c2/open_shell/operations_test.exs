@@ -29,7 +29,7 @@ defmodule HalC2.OpenShell.OperationsTest do
 
     server = start_supervised!({Operations, name: nil, runner: runner})
     {:ok, _} = Operations.subscribe(self(), nil, server)
-    %{server: server}
+    %{server: server, runner: runner}
   end
 
   defp started do
@@ -47,12 +47,12 @@ defmodule HalC2.OpenShell.OperationsTest do
   } do
     assert {:ok, %{"operation" => "uninstall", "running" => true, "steps" => []}} =
              Operations.run(
-               %{"operation" => "uninstall", "drain" => true, "force" => false},
+               %{"operation" => "uninstall", "drain" => ["review-1"], "force" => false},
                server
              )
 
     {runner, :uninstall, opts} = started()
-    assert opts == [drain: true]
+    assert opts == [drain: ["review-1"]]
     assert %{"running" => true} = changed()
 
     send(runner, {:step, "Removing the gateway"})
@@ -155,13 +155,78 @@ defmodule HalC2.OpenShell.OperationsTest do
       runner,
       {:answer,
        {:error,
-        "[sandboxes-running] 2 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}}
+        "[sandboxes-running] 2 of this MC's sandboxes are on the gateway (review-a, review-b). Let their reviews finish, or pass --drain to delete them."}}
     )
 
+    # The names are what a yes sends back as `drain`.
     assert %{
              "running" => false,
-             "result" => %{"ok" => false, "code" => "sandboxes-running", "sandboxes" => 2}
+             "result" => %{
+               "ok" => false,
+               "code" => "sandboxes-running",
+               "sandboxes" => 2,
+               "drain" => ["review-a", "review-b"],
+               "message" => message
+             }
            } = changed()
+
+    assert message =~ "2 of this MC's review sandboxes"
+    refute message =~ "--drain"
+  end
+
+  # A server under the MC's name, restarted while its run goes on.
+  test "a server started while a run goes on takes it back, and hears how it ends", %{
+    runner: runner
+  } do
+    name = :"openshell_operations_#{System.unique_integer([:positive])}"
+    first = start_supervised!({Operations, name: name, runner: runner}, id: :first)
+
+    assert {:ok, %{"run" => run}} = Operations.run(%{"operation" => "uninstall"}, first)
+    {job, :uninstall, []} = started()
+    :ok = stop_supervised(:first)
+
+    restarted = start_supervised!({Operations, name: name, runner: runner}, id: :again)
+    {:ok, _} = Operations.subscribe(self(), nil, restarted)
+
+    assert {:ok, %{"operation" => "uninstall", "run" => ^run, "running" => true}} =
+             Operations.state(restarted)
+
+    send(job, {:step, "Removing the gateway"})
+    assert %{"run" => ^run, "steps" => ["Removing the gateway"]} = changed()
+    send(job, {:answer, {:ok, "OpenShell removed."}})
+
+    assert %{"run" => ^run, "running" => false, "result" => %{"ok" => true}} = changed()
+
+    # Ended: the next server under the name starts with none.
+    :ok = stop_supervised(:again)
+    again = start_supervised!({Operations, name: name, runner: runner}, id: :third)
+    assert {:ok, %{"operation" => nil, "running" => false}} = Operations.state(again)
+  end
+
+  @tag :capture_log
+  test "a run that went while no server was there ends not ok under its number", %{
+    runner: runner
+  } do
+    name = :"openshell_operations_#{System.unique_integer([:positive])}"
+    first = start_supervised!({Operations, name: name, runner: runner}, id: :first)
+
+    assert {:ok, %{"run" => run}} = Operations.run(%{"operation" => "rotate"}, first)
+    {job, :rotate, []} = started()
+    :ok = stop_supervised(:first)
+    ref = Process.monitor(job)
+    Process.exit(job, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    restarted = start_supervised!({Operations, name: name, runner: runner}, id: :again)
+
+    assert {:ok,
+            %{
+              "run" => ^run,
+              "running" => false,
+              "result" => %{"ok" => false, "message" => message}
+            }} = Operations.state(restarted)
+
+    assert message =~ "stopped before it finished"
   end
 
   @tag :capture_log
@@ -190,6 +255,9 @@ defmodule HalC2.OpenShell.OperationsTest do
           %{"operation" => "reap"},
           %{"operation" => "install", "archive" => "/tmp/openshell.tar.gz"},
           %{"operation" => "install", "drain" => "yes"},
+          %{"operation" => "install", "drain" => true},
+          %{"operation" => "install", "drain" => [""]},
+          %{"operation" => "install", "force" => "yes"},
           %{"operation" => "check", "force" => true},
           "install"
         ] do

@@ -2206,8 +2206,11 @@ defmodule HalC2.Web.Socket do
   defp watched_frame({:hal_c2_project_clones, mc, clones}, _state),
     do: {{:project_clones, mc}, "projectClones", %{"clones" => clones}}
 
-  defp watched_frame({:hal_c2_openshell, mc, operation}, _state),
-    do: {{:openshell, mc}, "openShell", %{"operation" => operation}}
+  # An operation's detail is for a session that may run one.
+  defp watched_frame({:hal_c2_openshell, mc, operation}, state),
+    do:
+      {{:openshell, mc}, "openShell",
+       %{"operation" => HalC2.OpenShell.Operations.viewed(operation, state.scopes)}}
 
   defp watched_frame({:hal_c2_scheduled_tasks, mc, tasks}, _state),
     do: {{:scheduled_tasks, mc}, "scheduledTasks", %{"tasks" => tasks}}

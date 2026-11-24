@@ -16,8 +16,11 @@ defmodule HalC2.OpenShell.Install do
   says why.
 
   Updating or rotating refuses while this MC's sandboxes exist, since their
-  gateway is about to stop (`drain: true` deletes them first), and while they
-  cannot be counted on a gateway that still listens (`force: true` goes ahead).
+  gateway is about to stop, and while they cannot be counted on a gateway that
+  still listens (`force: true` goes ahead). `drain: true` deletes them first;
+  `drain: names`, what Settings sends once its user confirmed those, deletes them
+  only if every one found is among the names, and refuses with `[sandboxes-changed]`
+  otherwise.
   A gateway run as a service must stop before anything of it is copied or
   replaced. One the dev run started is that shell's process, which the MC cannot
   stop: nothing changes under it while it listens. Reuse and uninstall never
@@ -59,9 +62,12 @@ defmodule HalC2.OpenShell.Install do
   command takes it; Settings shows them).
 
   On Linux, a user whose Podman is installed but whose socket is not running gets
-  it started (`systemctl --user enable --now podman.socket`), and the progress
-  says so. Nothing else is installed for them: without Podman the install fails
-  with what to install.
+  it started for the install (`systemctl --user start podman.socket`), and the
+  progress says so. An install that then fails stops it again; one that succeeds
+  enables it, so it starts at login, and records that in the state
+  (`"podman_socket" => "enabled"`) for `uninstall/1` to undo. A socket that was
+  already running is left as it was. Nothing else is installed for them: without
+  Podman the install fails with what to install.
   """
   def install(opts \\ []), do: exclusive(fn -> install_now(opts) end)
 
@@ -77,36 +83,50 @@ defmodule HalC2.OpenShell.Install do
          :ok <- Service.moved(previous),
          :ok <- foreground_stopped(previous),
          :ok <- step(opts, "Checking this machine"),
-         :ok <- podman_socket(Platform.facts(), opts),
-         {:ok, platform} <- platform(),
-         {:ok, release} <- release(platform.target, opts) do
-      staging(fn staging ->
-        state = %{
-          "mode" => mode,
-          "version" => release.version,
-          "port" => (previous && previous["port"]) || free_port(),
-          "driver" => platform.driver,
-          "socket" => platform.socket,
-          "network" => platform.network,
-          "previous" => previous && previous["version"],
-          "instance" => OpenShell.instance()
-        }
+         {:ok, started} <- podman_socket(Platform.facts(), opts) do
+      result =
+        with {:ok, platform} <- platform(),
+             {:ok, release} <- release(platform.target, opts),
+             do: install_release(previous, mode, platform, release, opts)
 
-        state = Map.put(state, "endpoint", "https://127.0.0.1:#{state["port"]}")
-        config = Path.join(staging, "gateway.toml")
-
-        with :ok <- stage_release(release, staging, opts),
-             :ok <- ensure_pki(state["version"]),
-             :ok <- File.write(config, Config.render(atomize(state))),
-             :ok <- step(opts, "Checking the gateway's configuration"),
-             :ok <- preflight(state["version"], config),
-             :ok <- drained(previous, opts) do
-          switch(previous, state, opts, fn ->
-            HalC2.Paths.write_replace(OpenShell.config_path(), File.read!(config), 0o600)
-          end)
-        end
-      end)
+      podman_settled(started, result)
     end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp install_release(previous, mode, platform, release, opts) do
+    staging(fn staging ->
+      state = %{
+        "mode" => mode,
+        "version" => release.version,
+        "port" => (previous && previous["port"]) || free_port(),
+        "driver" => platform.driver,
+        "socket" => platform.socket,
+        "network" => platform.network,
+        "previous" => previous && previous["version"],
+        "instance" => OpenShell.instance()
+      }
+
+      # Podman's socket this MC enabled stays recorded across updates.
+      state =
+        if previous && previous["podman_socket"],
+          do: Map.put(state, "podman_socket", previous["podman_socket"]),
+          else: state
+
+      state = Map.put(state, "endpoint", "https://127.0.0.1:#{state["port"]}")
+      config = Path.join(staging, "gateway.toml")
+
+      with :ok <- stage_release(release, staging, opts),
+           :ok <- ensure_pki(state["version"]),
+           :ok <- File.write(config, Config.render(atomize(state))),
+           :ok <- step(opts, "Checking the gateway's configuration"),
+           :ok <- preflight(state["version"], config),
+           :ok <- drained(previous, opts) do
+        switch(previous, state, opts, fn ->
+          HalC2.Paths.write_replace(OpenShell.config_path(), File.read!(config), 0o600)
+        end)
+      end
+    end)
   end
 
   @doc """
@@ -726,24 +746,46 @@ defmodule HalC2.OpenShell.Install do
 
   defp drain_reviews([], _conn, _opts), do: :ok
 
-  defp drain_reviews([_] = sandboxes, conn, opts) do
-    if opts[:drain],
-      do: with(:ok <- step(opts, "Deleting 1 review sandbox"), do: delete_all(conn, sandboxes)),
-      else:
+  # `drain: true` (the CLI's `--drain`) deletes the sandboxes found now; a list of
+  # names (what Settings confirmed) deletes them only if every one found now is among
+  # those, and refuses with the set found otherwise.
+  defp drain_reviews(sandboxes, conn, opts) do
+    names = sandboxes |> Enum.map(& &1.name) |> Enum.sort()
+
+    case opts[:drain] do
+      true ->
+        delete_reviews(sandboxes, conn, opts)
+
+      confirmed when is_list(confirmed) ->
+        if names -- confirmed == [],
+          do: delete_reviews(sandboxes, conn, opts),
+          else:
+            {:error,
+             "[sandboxes-changed] The running reviews changed since they were confirmed: #{on_gateway(names)}. Check them again before deleting them."}
+
+      _ ->
         {:error,
-         "[sandboxes-running] 1 of this MC's sandboxes is on the gateway. Let its review finish, or pass --drain to delete it."}
+         "[sandboxes-running] #{on_gateway(names)}. " <>
+           if(length(names) == 1,
+             do: "Let its review finish, or pass --drain to delete it.",
+             else: "Let their reviews finish, or pass --drain to delete them."
+           )}
+    end
   end
 
-  defp drain_reviews(sandboxes, conn, opts) do
-    if opts[:drain],
-      do:
-        with(
-          :ok <- step(opts, "Deleting #{length(sandboxes)} review sandboxes"),
-          do: delete_all(conn, sandboxes)
-        ),
-      else:
-        {:error,
-         "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
+  # How many of this MC's sandboxes are on the gateway, and their names, which
+  # `HalC2.OpenShell.Command.settings_error/1` reads back.
+  defp on_gateway([name]), do: "1 of this MC's sandboxes is on the gateway (#{name})"
+
+  defp on_gateway(names),
+    do: "#{length(names)} of this MC's sandboxes are on the gateway (#{Enum.join(names, ", ")})"
+
+  defp delete_reviews([_] = sandboxes, conn, opts),
+    do: with(:ok <- step(opts, "Deleting 1 review sandbox"), do: delete_all(conn, sandboxes))
+
+  defp delete_reviews(sandboxes, conn, opts) do
+    with :ok <- step(opts, "Deleting #{length(sandboxes)} review sandboxes"),
+         do: delete_all(conn, sandboxes)
   end
 
   # The dev run's gateway is that shell's own process, which the MC cannot stop or
@@ -1367,7 +1409,8 @@ defmodule HalC2.OpenShell.Install do
   @doc """
   Removes the gateway this MC runs (its unit, binary, certificates, configuration
   and database), or forgets the one it reused. Refuses while this MC's sandboxes
-  exist on it, unless `drain: true` (`force: true` when they cannot be listed).
+  exist on it, unless `:drain` (`force: true` when they cannot be listed). Stops
+  and disables Podman's socket if installing OpenShell enabled it.
   """
   def uninstall(opts \\ []), do: exclusive(fn -> uninstall_now(opts) end)
 
@@ -1392,7 +1435,7 @@ defmodule HalC2.OpenShell.Install do
             OpenShell.delete_state()
           end
 
-          :ok
+          podman_released(state)
         end
     end
   end
@@ -1425,26 +1468,30 @@ defmodule HalC2.OpenShell.Install do
   end
 
   # A Linux user's Podman whose socket is not running, though its unit is installed,
-  # has it started: no socket file, or one left behind that nothing answers on (a
-  # stopped `podman.socket` keeps its file). Any other machine is left as it is for
+  # has it started for this install: no socket file, or one left behind that nothing
+  # answers on (a stopped `podman.socket` keeps its file). Answers `{:ok, started}`:
+  # nil when nothing was started, else whether the unit was already enabled, which
+  # `podman_settled/2` leaves as it found it. Any other machine is left as it is for
   # `platform/0` to judge. A socket the user named (`HAL_C2_OPENSHELL_DOCKER_SOCKET`)
   # is probed as Docker's and never Podman's to start: it is found, or reported
   # missing, as named.
   defp podman_socket(%{os: :linux, runtime: runtime}, opts)
        when runtime == nil or (runtime.kind == :podman and runtime.reachable == false) do
-    if HalC2.Service.manager() == :systemd and
-         HalC2.Service.probe("systemctl", [
-           "--user",
-           "show",
-           "podman.socket",
-           "--property=LoadState",
-           "--value"
-         ]) == {:ok, "loaded"} do
+    with :systemd <- HalC2.Service.manager(),
+         {:ok, unit} <-
+           HalC2.Service.probe("systemctl", [
+             "--user",
+             "show",
+             "podman.socket",
+             "--property=LoadState,UnitFileState",
+             "--value"
+           ]),
+         ["loaded" | enabled] <- String.split(unit, "\n", trim: true) do
       step(opts, "Starting Podman's socket (podman.socket)")
 
-      case HalC2.Service.command("systemctl", ["--user", "enable", "--now", "podman.socket"]) do
+      case podman_systemctl(["start"]) do
         {:exit, 0, _} ->
-          :ok
+          {:ok, if(enabled == ["enabled"], do: :enabled, else: :disabled)}
 
         {:exit, status, out} ->
           {:error,
@@ -1454,11 +1501,63 @@ defmodule HalC2.OpenShell.Install do
           {:error, "[podman-socket-failed] Podman's socket did not start: #{reason}"}
       end
     else
-      :ok
+      _ -> {:ok, nil}
     end
   end
 
-  defp podman_socket(_facts, _opts), do: :ok
+  defp podman_socket(_facts, _opts), do: {:ok, nil}
+
+  defp podman_systemctl(args),
+    do: HalC2.Service.command("systemctl", ["--user"] ++ args ++ ["podman.socket"])
+
+  # A socket this install started is stopped again when it failed, as it was
+  # before. Once it succeeded, one that was not enabled is enabled, to start at
+  # login, and recorded as this MC's.
+  defp podman_settled(nil, result), do: result
+  defp podman_settled(:enabled, {:ok, state}), do: {:ok, state}
+
+  defp podman_settled(:disabled, {:ok, state}) do
+    case podman_systemctl(["enable"]) do
+      {:exit, 0, _} ->
+        state = Map.put(state, "podman_socket", "enabled")
+        OpenShell.put_state(state)
+        {:ok, state}
+
+      failed ->
+        {:error,
+         "[podman-socket-failed] OpenShell #{state["version"]} is installed and running, but Podman's socket could not be enabled to start at login (#{podman_failure(failed)}). Run `systemctl --user enable podman.socket`."}
+    end
+  end
+
+  defp podman_settled(_started, {:error, reason}) do
+    case podman_systemctl(["stop"]) do
+      {:exit, 0, _} ->
+        {:error, reason}
+
+      failed ->
+        {:error,
+         "#{reason}\nPodman's socket, started for this install, did not stop again (#{podman_failure(failed)})."}
+    end
+  end
+
+  # Uninstall undoes what `podman_settled/2` did: only a socket this MC enabled.
+  defp podman_released(%{"podman_socket" => "enabled"}) do
+    case podman_systemctl(["disable", "--now"]) do
+      {:exit, 0, _} ->
+        :ok
+
+      failed ->
+        {:error,
+         "[podman-socket-failed] OpenShell was removed, but Podman's socket, which installing it enabled, could not be disabled (#{podman_failure(failed)}). Run `systemctl --user disable --now podman.socket`."}
+    end
+  end
+
+  defp podman_released(_state), do: :ok
+
+  defp podman_failure({:exit, status, out}),
+    do: String.trim("systemctl exited #{status}: #{String.trim(out)}")
+
+  defp podman_failure({:error, reason}), do: to_string(reason)
 
   # Runs `fun` holding this home's lifecycle lock, or fails at once while another
   # command holds it: waiting could outlast the other's whole update.

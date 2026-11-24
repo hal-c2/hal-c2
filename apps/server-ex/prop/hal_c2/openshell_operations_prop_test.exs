@@ -11,9 +11,12 @@ defmodule HalC2.OpenShellOperationsPropTest do
   service sends its subscribers. The promises checked:
 
     * one operation at a time: a request while one runs is refused `busy` and starts
-      nothing; one with an unknown operation, an unknown argument or a flag that is not
-      a boolean is refused `invalid` and starts nothing;
-    * an operation starts with no steps and no result, and is given only its true flags;
+      nothing; one with an unknown operation, an unknown argument, a `force` that is
+      not a boolean or a `drain` that is not a list of sandbox names (`true` among
+      them: a drain names what its user agreed to delete) is refused `invalid` and
+      starts nothing;
+    * an operation starts with no steps and no result, and is given its drain's names
+      and `force` only when true;
     * each operation's number is larger than every one before it, across restarts too,
       and its reply and every frame of it carry that number; before any since a
       restart there is no operation, and the number is larger than every run's before
@@ -21,7 +24,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
     * its steps are shown in order, the last 20 of them, while it runs;
     * it ends with its outcome (ok or not, with an error's code), a raise or a kill
       ending it not ok, and every subscriber is told each change;
-    * after a restart nothing is running, and a new operation may start.
+    * a restart while one runs takes it back: it is still running under its number,
+      its steps from before are gone, and its later steps and its outcome are shown;
+      after a restart while none runs there is no operation, and a new one may start.
   """
 
   use ExUnit.Case, async: false
@@ -43,6 +48,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
         Process.put(:numbers, [])
         Process.put(:boots, [])
         drain()
+        # The run the last case's runners were killed under is not this case's to
+        # take back.
+        :persistent_term.erase({Operations, :running, Operations})
 
         test = self()
         clock = :atomics.new(1, signed: true)
@@ -86,7 +94,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
       [
         {4, {:call, __MODULE__, :run, [input()]}},
         {1, {:call, __MODULE__, :state, []}},
-        {1, {:call, __MODULE__, :restart, [oneof([:on, :back])]}}
+        {2, {:call, __MODULE__, :restart, [oneof([:on, :back])]}}
       ] ++
         if(state.running,
           do: [
@@ -107,12 +115,21 @@ defmodule HalC2.OpenShellOperationsPropTest do
          Map.put(flags, "operation", operation)
        end},
       {1, oneof([%{}, %{"operation" => "reap"}, %{"operation" => "install", "archive" => "x"}])},
-      {1, %{"operation" => "install", "drain" => "yes"}}
+      {1,
+       oneof([
+         %{"operation" => "install", "drain" => "yes"},
+         %{"operation" => "install", "drain" => true},
+         %{"operation" => "uninstall", "drain" => [""]},
+         %{"operation" => "install", "force" => "yes"}
+       ])}
     ])
   end
 
   defp flags do
-    let [drain <- oneof([nil, true, false]), force <- oneof([nil, true, false])] do
+    let [
+      drain <- oneof([nil, [], ["review-a"], ["review-a", "review-b"]]),
+      force <- oneof([nil, true, false])
+    ] do
       %{"drain" => drain, "force" => force} |> Map.reject(fn {_, v} -> v == nil end)
     end
   end
@@ -122,7 +139,9 @@ defmodule HalC2.OpenShellOperationsPropTest do
       {:ok, "done"},
       {:error, "Downloading failed: timeout"},
       {:error,
-       "[sandboxes-running] 2 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."},
+       "[sandboxes-running] 2 of this MC's sandboxes are on the gateway (review-a, review-b). Let their reviews finish, or pass --drain to delete them."},
+      {:error,
+       "[sandboxes-changed] The running reviews changed since they were confirmed: 1 of this MC's sandboxes is on the gateway (review-c). Check them again before deleting them."},
       {:error, HalC2.OpenShell.Install.busy()}
     ])
   end
@@ -162,7 +181,11 @@ defmodule HalC2.OpenShellOperationsPropTest do
             result: nil
         }
 
-        flags = for {key, true} <- Enum.sort(Map.delete(input, "operation")), do: key
+        flags =
+          for {key, value} <- Enum.sort(Map.delete(input, "operation")),
+              value != false,
+              do: {String.to_existing_atom(key), value}
+
         {state, {:started, snapshot(state), flags}}
     end
   end
@@ -189,7 +212,11 @@ defmodule HalC2.OpenShellOperationsPropTest do
   defp step(state, {:call, _, :state, []}), do: {state, snapshot(state)}
 
   defp step(state, {:call, _, :restart, [_clock]}) do
-    state = %{initial_state() | started: state.started}
+    state =
+      if state.running,
+        do: %{state | steps: []},
+        else: %{initial_state() | started: state.started}
+
     {state, snapshot(state)}
   end
 
@@ -202,8 +229,11 @@ defmodule HalC2.OpenShellOperationsPropTest do
        when operation in ~w(install check rotate uninstall) do
     flags = Map.delete(input, "operation")
 
-    Enum.all?(flags, fn {key, value} -> key in ~w(drain force) and is_boolean(value) end) and
-      (operation != "check" or flags == %{})
+    Enum.all?(flags, fn
+      {"drain", names} -> is_list(names) and Enum.all?(names, &(is_binary(&1) and &1 != ""))
+      {"force", value} -> is_boolean(value)
+      _ -> false
+    end) and (operation != "check" or flags == %{})
   end
 
   defp valid?(_input), do: false
@@ -232,8 +262,7 @@ defmodule HalC2.OpenShellOperationsPropTest do
         ^operation = String.to_existing_atom(input["operation"])
         Process.put(:runner, pid)
         Process.put(:runners, [pid | Process.get(:runners)])
-        flags = opts |> Keyword.delete(:progress) |> Keyword.keys() |> Enum.map(&to_string/1)
-        {:started, changed, Enum.sort(flags)}
+        {:started, changed, opts |> Keyword.delete(:progress) |> Enum.sort()}
 
       {:error, %{"_tag" => "ServerOpenShellOperationError", "reason" => reason}} ->
         {:refused, reason}

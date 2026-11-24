@@ -22,7 +22,10 @@ runs it as a service of your own user, and talks to it only over mutual TLS.
 
 Intel Macs are not supported, and neither is an MC running under Rosetta. On Linux,
 installing OpenShell starts Podman's socket through your systemd user unit
-`podman.socket` when Podman is installed but its socket is not running, and says so. HAL-C2 never installs Podman or
+`podman.socket` when Podman is installed but its socket is not running, and says so.
+Once the install succeeds it sets the socket to start at login; an install that
+fails stops the socket it started. Uninstalling stops it and turns that off again,
+but only when the install was what turned it on. HAL-C2 never installs Podman or
 Docker itself: without them, the install says what to install. To use a Podman socket
 somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`, and start it yourself before
 installing: the install never starts a socket named there. `DOCKER_HOST` is not read.
@@ -76,7 +79,8 @@ host networking setting does not need to be on.
 
 An update, a rotation or an uninstall waits while this MC has sandboxes running.
 Add `--drain` to delete them first; Settings asks whether to stop those reviews and
-does the same on a yes. Only the sandboxes this MC created are touched.
+does the same on a yes. A yes stops only the reviews it asked about: if another
+started in the meantime, Settings asks again. Only the sandboxes this MC created are touched.
 If the gateway is running but cannot say which sandboxes it holds
 (`sandboxes-unknown`), they wait too; `--force`, or a yes in Settings, goes ahead
 anyway and ends any that run. If the gateway's service does not stop (`gateway-stop-failed`), or its files
