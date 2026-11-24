@@ -75,6 +75,56 @@ defmodule HalC2.AcpModelSwitchTest do
              {"completed", "model: acme/fast at low with 1 earlier turns"}
   end
 
+  test "a lost session is handed the thread after a failed switch and a stopped session",
+       %{dir: dir} do
+    assert {"completed", _} = turn("m0", "acme/smart", "which model", "low")
+    assert {"failed", ""} = turn("m1", "acme/broken", "try the broken model", nil)
+    assert {"completed", _} = turn("m2", "acme/smart", "which model", "low")
+
+    # The agent loses its sessions with the runtime.
+    File.write!(Path.join(dir, "grok.lost"), "")
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, @tid)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    # The new session will not switch to this model: the turn is never sent.
+    assert {"failed", ""} = turn("m3", "acme/broken", "try the broken model", nil)
+
+    # "Stop session" before the next turn.
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "provider-session.detach",
+        "threadId" => @tid,
+        "providerSessionId" => HalC2.Orchestration.Entities.provider_session_id("grok", @tid)
+      })
+
+    assert turn("m4", "acme/fast", "which model", "low") ==
+             {"completed", "model: acme/fast at low with 2 earlier turns"}
+  end
+
+  # The prompt that was to hand the new session the thread never reached it: the agent
+  # exited first. The run began a turn and failed, so its conversation is unconfirmed
+  # (`HalC2.Orchestration.Handoff`'s `new_conversation`) and the next turn opens another
+  # session with the thread rather than resuming that empty one.
+  test "a lost session is handed the thread after the agent exited before the prompt",
+       %{dir: dir} do
+    assert turn("m0", "acme/smart", "which model", "max") ==
+             {"completed", "model: acme/smart at max"}
+
+    File.write!(Path.join(dir, "grok.lost"), "")
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, @tid)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    File.write!(Path.join(dir, "grok.crash"), "")
+    assert {"failed", ""} = turn("m1", "acme/smart", "which model", "max")
+
+    assert {"completed", "model: acme/fast at low with " <> _} =
+             turn("m2", "acme/fast", "which model", "low")
+  end
+
   defp turn(id, model, text, level) do
     options = if level, do: [%{"id" => "reasoningEffort", "value" => level}], else: []
 

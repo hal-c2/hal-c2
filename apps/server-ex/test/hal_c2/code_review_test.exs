@@ -157,7 +157,10 @@ defmodule HalC2.CodeReviewTest do
           "activation" => "selective",
           "publishing" => "draft",
           "reviewNewPushes" => false,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          # The fake agents run here: these tests review trusted pull requests on
+          # this machine unless they say otherwise.
+          "reviewTrustedOnThisMachine" => true
         }
       })
 
@@ -589,6 +592,32 @@ defmodule HalC2.CodeReviewTest do
     :ok = apply(checkout, :release, [])
   end
 
+  # #1774: the MC's GitHub config starts with `helper =`, which drops the helpers
+  # before it; re-exported empty, its GIT_CONFIG_VALUE_<n> must still reach git.
+  test "submodules are fetched when the environment of the MC configures an empty value",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    lib = repo!(context.dir, "lib", "lib.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/empty-value")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    included = Path.join(context.dir, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "2",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
+    })
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/lib.txt")) == "lib\n"
+    :ok = apply(checkout, :release, [])
+  end
+
   test "a submodule its .gitmodules says not to update still gets its pinned commit", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     inner = repo!(context.dir, "inner", "inner.txt")
@@ -785,6 +814,14 @@ defmodule HalC2.CodeReviewTest do
            ]) =~
              "submodules could not all be fetched on the reviewing machine, so checks " <>
                "that need them are blocked there: git submodule failed: no route"
+
+    # #1774: a sandbox never gets them, which is no setup problem on the machine.
+    sandboxed =
+      apply(@server, :prompt, [settings, review, Map.put(checkout, "submodules", :sandboxed)])
+
+    assert sandboxed =~ "never fetched into a sandbox"
+    assert sandboxed =~ "under notRun"
+    refute sandboxed =~ "blocked there"
   end
 
   test "a review asked for before its pull request is listed starts at the head of the pull request",
@@ -2900,19 +2937,25 @@ defmodule HalC2.CodeReviewTest do
     assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
   end
 
-  test "a trusted pull request is reviewed on this machine unless every review is sandboxed",
+  test "a trusted pull request is reviewed in a sandbox unless the user reviews trusted ones here",
        context do
     sandboxed? = &apply(@server, :sandboxed?, [&1, &2])
+    here = %{"reviewTrustedOnThisMachine" => true}
     review = start_review()
     assert %{"author" => %{"login" => "octocat"}} = review["trust"]
-    assert sandboxed?.(%{}, review) == false
-    assert sandboxed?.(%{"sandboxEveryReview" => true}, review) == true
+    assert sandboxed?.(%{}, review) == true
+    assert sandboxed?.(%{"reviewTrustedOnThisMachine" => false}, review) == true
+    assert sandboxed?.(here, review) == false
 
-    # Nor is one whose author was not read yet, or is no member or collaborator.
-    assert sandboxed?.(%{}, Map.delete(review, "trust")) == true
+    # The old setting, stored as false while that was its default, sandboxes nothing less.
+    assert sandboxed?.(%{"sandboxEveryReview" => false}, review) == true
+
+    # One whose author was not read yet, or is no member or collaborator, is sandboxed
+    # whatever the setting says.
+    assert sandboxed?.(here, Map.delete(review, "trust")) == true
     rules!(context, head: 1, association: "NONE")
     refresh()
-    assert sandboxed?.(%{}, review()) == true
+    assert sandboxed?.(here, review()) == true
   end
 
   # A comment dismissed while its review was being posted changed what the page showed

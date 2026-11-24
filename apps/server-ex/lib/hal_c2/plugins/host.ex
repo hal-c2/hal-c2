@@ -53,8 +53,8 @@ defmodule HalC2.Plugins.Host do
   so `name` is the one the user gave the instance), for a plugin that starts threads
   to pick from:
   `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
-  "availability", "auth" => %{"status"}, "models" => [%{"slug", "name",
-  "isDefault", "options"}]}`.
+  "availability", "auth" => %{"status"}, "sandboxable", "models" => [%{"slug",
+  "name", "isDefault", "options"}]}`.
 
   `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
   `"opencode"`, `"acpRegistry"` for an agent from the ACP registry, a provider
@@ -63,7 +63,9 @@ defmodule HalC2.Plugins.Host do
   (`ready`, `warning`, `error`, `disabled`), `availability` (`available`,
   `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
   are the instance's provider status, for a plugin that offers only the instances
-  that can run a thread now. An instance's settings and messages are left out.
+  that can run a thread now. `sandboxable` is whether its agent can run in an
+  OpenShell review sandbox (`HalC2.OpenShell.Review.supported?/1`). An instance's
+  settings and messages are left out.
 
   A model's `options` are its option descriptors (`%{"id", "label", "type",
   "options"}`) — reasoning effort among them — for a plugin that picks a model for
@@ -82,6 +84,7 @@ defmodule HalC2.Plugins.Host do
          # A snapshot without one is available (`ServerProvider.availability`).
          "availability" => provider["availability"] || "available",
          "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
+         "sandboxable" => HalC2.OpenShell.Review.supported?(provider["driver"]),
          "models" =>
            for model <- provider["models"] || [] do
              %{

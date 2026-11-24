@@ -492,7 +492,11 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     with {:ok, state} <- open_host(state, host, instance, turn),
          {:ok, state} <- open_session(state, turn) do
-      if state.session != turn.native_thread_id, do: record_session(state)
+      # A session in place of a lost one is the thread's once it has been handed the
+      # thread (`handed_fresh/2`): until then a new runtime finds the lost one again.
+      if state.session != turn.native_thread_id and not Map.get(state, :fresh_start, false),
+        do: record_session(state)
+
       {:ok, state}
     end
   end
@@ -571,6 +575,15 @@ defmodule HalC2.Muse.ThreadRuntime do
   # the new session as empty as it found it: the next turn hands it the thread.
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
+
+  # The new session holds the thread once Muse takes this turn (`start/2`), so it
+  # becomes the one the thread resumes.
+  defp handed_fresh(state, %{fresh_start: true}) do
+    record_session(state)
+    state
+  end
+
+  defp handed_fresh(state, _turn), do: state
 
   defp start_session(state, turn) do
     id = Muse.command_id()
@@ -710,7 +723,9 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp send_turn(state, turn) do
     case Regex.run(~r/^\/compact(?:\s|$)/, String.trim(turn.text || "")) do
-      [_] -> compact(state)
+      # A turn that starts afresh carries the thread around its text (`Handoff.afresh/1`),
+      # so it is no bare `/compact`; should one be, the next turn still hands the thread.
+      [_] -> compact(unsent_fresh(state, turn))
       nil -> start(state, turn)
     end
   end
@@ -750,16 +765,18 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     case command(state, "turn/start", params) do
       {:ok, %{"turnId" => id}} when id == state.native ->
-        state
+        handed_fresh(state, turn)
 
       # A turn this run does not own may still be running there: the host stops.
       {:ok, _} ->
-        state |> end_turn("failed", "Muse started the turn under another id") |> close_host()
+        unsent_fresh(state, turn)
+        |> end_turn("failed", "Muse started the turn under another id")
+        |> close_host()
 
       # A refusal on the subscription quota carries it in the error's data, as the
       # turn's own failure does: the thread is Limited, not just failed.
       {:error, reason} ->
-        end_turn(state, "failed", start_refusal(reason))
+        end_turn(unsent_fresh(state, turn), "failed", start_refusal(reason))
     end
   end
 

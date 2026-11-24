@@ -58,6 +58,14 @@ defmodule HalC2.PluginsHostProvidersTest do
            } = listed()
   end
 
+  # The code-review settings warn when the picked agent's reviews would fail closed.
+  test "an instance says whether its agent can review in a sandbox" do
+    assert %{
+             "codex" => %{"sandboxable" => true},
+             "claude-work" => %{"sandboxable" => true}
+           } = listed()
+  end
+
   test "each instance carries its provider status in the snapshot's vocabulary" do
     for {_, entry} <- listed() do
       assert is_boolean(entry["enabled"])
@@ -81,7 +89,7 @@ defmodule HalC2.PluginsHostProvidersTest do
 
     for {_, entry} <- entries do
       assert Map.keys(entry) --
-               ~w(instanceId name driverKind enabled installed status availability auth models) ==
+               ~w(instanceId name driverKind enabled installed status availability auth sandboxable models) ==
                []
     end
   end

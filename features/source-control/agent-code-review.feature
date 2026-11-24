@@ -13,6 +13,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 #   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
 
 @plugin-code-review
 Feature: Agent code review
@@ -21,6 +22,8 @@ Feature: Agent code review
   agent and the prompt it gets, and what happens with what it finds. Reviews show up as
   a page, as threads that look like reviews, or both.
 
+  # The MC's steps review trusted pull requests on this machine, where the fake agents
+  # run, unless a scenario keeps the default of sandboxing every review.
   Background:
     Given an MC running the plugin "code-review" with GitHub as its host
     And the project "api" whose remote is "acme/api" on GitHub
@@ -509,15 +512,20 @@ Feature: Agent code review
       Then its thread works in a checkout of the head of #12
       And the checkout of #12 has "third_party/lib" at the commit its head pins
 
-  Rule: An untrusted pull request is reviewed in a sandbox
+  Rule: Every review runs in a sandbox, unless the user reviews trusted pull requests here
 
-    The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
-    sandbox: a checkout of the pull request made from a bundle, a home of its own, no
-    credential in its environment, and a network that reaches only its model's own
-    requests on the model's API and the one tool it reports with. Its turns take no
-    checkpoint: git here would run this machine's filters on whatever files the pull
-    request's attributes send through them. A pull request is untrusted as the rule on who gets
-    reviews says, and its review still waits for the user's approval of its head.
+    The agent reviewing a pull request runs in an OpenShell sandbox: a checkout of the
+    pull request made from a bundle, a home of its own, no credential in its
+    environment, and a network that reaches only its model's own requests on the
+    model's API and the one tool it reports with. Its turns take no checkpoint: git here
+    would run this machine's filters on whatever files the pull request's attributes
+    send through them. A review that cannot have its sandbox fails, saying what to set
+    up, and never runs on this machine instead. With "Review trusted pull requests on
+    this machine" on, a pull request HAL-C2 trusts is reviewed here as an ordinary agent;
+    one it does not trust, as the rule on who gets reviews says, is sandboxed whatever
+    the setting says, and its review still waits for the user's approval of its head.
+    The setting replaces "Sandbox every review", whose stored value is not read: a
+    saved form stored its old default of off.
 
     @mc
     Scenario: An untrusted pull request is reviewed in a sandbox, deleted once the agent reports
@@ -528,6 +536,17 @@ Feature: Agent code review
       And its sandbox and the sandbox's provider are deleted
       And git on this machine took no checkpoint of the review's checkout
 
+    # The submodules would come with this machine's credentials, from the addresses and
+    # at the commits the pull request names, into a sandbox whose report is posted.
+    @mc
+    Scenario: A sandboxed review gets no submodules, and its agent is told why
+      Given pull requests are not trusted and OpenShell is installed
+      And the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the sandbox's checkout has no "third_party/lib"
+      And the agent of #12 is told its sandbox gets no submodules
+
     # The API key is the user's, and the rest of the API opens the rest of their
     # account with it, their uploaded files among them.
     @mc
@@ -537,11 +556,40 @@ Feature: Agent code review
       Then its sandbox lets the agent send its model's requests and nothing else on the model's API
 
     @mc
-    Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
+    Scenario: By default a trusted pull request is reviewed in a sandbox too
       Given pull requests are trusted and OpenShell is installed
-      And "code-review" sandboxes every review
+      And "code-review" keeps its default of sandboxing every review
       When #12 is reviewed
       Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: With "Review trusted pull requests on this machine" on, a trusted pull request is reviewed here
+      Given pull requests are trusted and OpenShell is installed
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then its thread works in a checkout of the head of #12
+      And no review sandbox was made
+
+    @mc
+    Scenario: With "Review trusted pull requests on this machine" on, an untrusted pull request is still reviewed in a sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: By default a trusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
+      Given pull requests are trusted
+      And "code-review" keeps its default of sandboxing every review
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+      And no agent ran on this machine for the review of #12
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: The settings warn that an agent that cannot run in a sandbox fails its reviews
+      Given "code-review" reviews with an agent that cannot run in a sandbox
+      When the user opens the settings of "code-review"
+      Then they read that its reviews fail, and to pick Claude or Codex
 
     @mc
     Scenario: A sandboxed Claude review takes none of this machine's Claude settings
