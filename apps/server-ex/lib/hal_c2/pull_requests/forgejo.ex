@@ -350,7 +350,8 @@ defmodule HalC2.PullRequests.Forgejo do
   @doc """
   What has been said on the pull request, in the fields `GitHub.activity/1` names
   them: `comments` holds its conversation comments (`kind` `"comment"`) and its
-  reviews (`"review"`), each with `author.login`, `body` and `createdAt`; each inline
+  reviews (`"review"`), each with `author.login`, `body` and `createdAt` (and the
+  author's `association`, as `trust/2` judges it); each inline
   review comment is a `reviewThreads` entry of its own (`path`, `line`, `isResolved`,
   `comments`), as Forgejo's API does not group replies. An error when any of them
   cannot be read in full.
@@ -361,18 +362,30 @@ defmodule HalC2.PullRequests.Forgejo do
 
     # A review that cannot be read must not pass for one never posted: the code review
     # plugin reposts only when its own is absent.
-    with {:ok, _} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}"),
+    with {:ok, pull} <- get(ctx.cwd, target, "#{base}/pulls/#{ctx.number}"),
          {:ok, reviews} <- pages(ctx.cwd, target, "#{base}/pulls/#{ctx.number}/reviews"),
          {:ok, comments} <- issue_comments(ctx.cwd, target, base, ctx.number),
          {:ok, review_comments} <- review_comments(ctx.cwd, target, base, ctx.number, reviews) do
+      # Collaborators that cannot be read count as none: their comments then pass
+      # for a stranger's, which only keeps them from a review on this machine.
+      collaborators =
+        case collaborators(ctx.cwd, target, ctx.repository) do
+          {:ok, collaborators} -> collaborators
+          _ -> MapSet.new()
+        end
+
+      remark = fn kind, user, body, at ->
+        remark(kind, user, association(user, owner(pull), collaborators), body, at)
+      end
+
       remarks =
         for c <- comments,
-            do: remark("comment", c["user"], c["body"], c["created_at"])
+            do: remark.("comment", c["user"], c["body"], c["created_at"])
 
       verdicts =
         for r <- reviews,
             r["state"] in ~w(APPROVED REQUEST_CHANGES COMMENT),
-            do: remark("review", r["user"], r["body"], r["submitted_at"])
+            do: remark.("review", r["user"], r["body"], r["submitted_at"])
 
       threads =
         for c <- review_comments do
@@ -381,7 +394,7 @@ defmodule HalC2.PullRequests.Forgejo do
             "line" =>
               Enum.find([c["position"], c["original_position"]], &(is_integer(&1) and &1 > 0)),
             "isResolved" => c["resolver"] != nil,
-            "comments" => [remark("review", c["user"], c["body"], c["created_at"])]
+            "comments" => [remark.("review", c["user"], c["body"], c["created_at"])]
           }
         end
 
@@ -389,15 +402,28 @@ defmodule HalC2.PullRequests.Forgejo do
     end
   end
 
-  # Forgejo has no bots or mannequins: every author is a user, whose standing in the
-  # repository is not read here.
-  defp remark(kind, user, body, at),
+  # Forgejo has no bots or mannequins: every author is a user.
+  defp remark(kind, user, association, body, at),
     do: %{
       "kind" => kind,
-      "author" => %{"login" => login(user), "isUser" => true},
+      "author" => %{"login" => login(user), "isUser" => true, "association" => association},
       "body" => body || "",
       "createdAt" => utc(at)
     }
+
+  defp owner(pull), do: down(login(get_in(pull, ["base", "repo", "owner"])) || "")
+
+  # A user's standing in the repository, as GitHub's `authorAssociation` names it.
+  defp association(user, owner, collaborators) do
+    name = down(login(user) || "")
+
+    cond do
+      name == "" -> "NONE"
+      name == owner -> "OWNER"
+      MapSet.member?(collaborators, name) -> "COLLABORATOR"
+      true -> "NONE"
+    end
+  end
 
   @doc "Who is signed in to the pull request's server, as `{:ok, login}`."
   def signed_in(ctx) do
@@ -425,18 +451,7 @@ defmodule HalC2.PullRequests.Forgejo do
          {:ok, events} <- timeline(ctx.cwd, target, base, ctx.number),
          {:ok, comments} <- issue_comments(ctx.cwd, target, base, ctx.number) do
       viewer = viewer(ctx.cwd, target)
-      owner = down(login(get_in(pull, ["base", "repo", "owner"])) || "")
-
-      association = fn user ->
-        name = down(login(user) || "")
-
-        cond do
-          name == "" -> "NONE"
-          name == owner -> "OWNER"
-          MapSet.member?(collaborators, name) -> "COLLABORATOR"
-          true -> "NONE"
-        end
-      end
+      association = &association(&1, owner(pull), collaborators)
 
       as_actor = fn user ->
         case login(user) do

@@ -194,6 +194,43 @@ defmodule HalC2.PullRequests.ForgejoReviewTest do
            ] = threads
   end
 
+  test "activity names each author's standing in the repository, as trust does",
+       %{tmp_dir: tmp} do
+    inline = fn login ->
+      %{"user" => %{"login" => login}, "path" => "lib/cart.ex", "position" => 3, "body" => "?"}
+    end
+
+    {base, _} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/pulls/7/reviews/1/comments" =>
+            {200, [inline.("maint"), inline.("acme"), inline.("stranger")]}
+        })
+      )
+
+    assert {:ok, %{"comments" => comments, "reviewThreads" => threads}} =
+             Forgejo.activity(ctx(base))
+
+    assert Enum.all?(comments, &(&1["author"]["association"] == "NONE"))
+
+    assert ["COLLABORATOR", "OWNER", "NONE"] =
+             for(%{"comments" => [c]} <- threads, do: c["author"]["association"])
+
+    # Collaborators it may not read count as none, and the activity still reads.
+    {base, _} =
+      serve(
+        tmp,
+        routes("reviewer", %{
+          "/api/v1/repos/acme/shop/collaborators" => {403, %{"message" => "no"}},
+          "/api/v1/repos/acme/shop/pulls/7/reviews/1/comments" => {200, [inline.("maint")]}
+        })
+      )
+
+    assert {:ok, %{"reviewThreads" => [%{"comments" => [c]}]}} = Forgejo.activity(ctx(base))
+    assert c["author"]["association"] == "NONE"
+  end
+
   # Forgejo answers an issue's comments all at once and ignores `page` and `limit`.
   test "an issue's many comments are read once, not once a page", %{tmp_dir: tmp} do
     many =
