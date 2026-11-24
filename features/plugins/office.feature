@@ -784,6 +784,18 @@ Feature: Office
       When the user switches to the Threads tab
       Then the office stops animating until its page is shown again
 
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office goes on in a window without focus
+      Given the office page is open and its threads are working
+      When the user works in another window, with the office still on screen
+      Then the office goes on animating
+
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office holds still while its window is minimized
+      Given the office page is open and its threads are working
+      When the user minimizes its window
+      Then the office stops animating until the window is shown again
+
   Rule: Reviewers sit in a corner of their own
 
     @desktop @mobile @backlog-desktop @backlog-mobile
