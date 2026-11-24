@@ -103,6 +103,28 @@ defmodule HalC2.AcpModelSwitchTest do
              {"completed", "model: acme/fast at low with 2 earlier turns"}
   end
 
+  # The prompt that was to hand the new session the thread never reached it: the agent
+  # exited first. The run began a turn and failed, so its conversation is unconfirmed
+  # (`HalC2.Orchestration.Handoff`'s `new_conversation`) and the next turn opens another
+  # session with the thread rather than resuming that empty one.
+  test "a lost session is handed the thread after the agent exited before the prompt",
+       %{dir: dir} do
+    assert turn("m0", "acme/smart", "which model", "max") ==
+             {"completed", "model: acme/smart at max"}
+
+    File.write!(Path.join(dir, "grok.lost"), "")
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, @tid)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    File.write!(Path.join(dir, "grok.crash"), "")
+    assert {"failed", ""} = turn("m1", "acme/smart", "which model", "max")
+
+    assert {"completed", "model: acme/fast at low with " <> _} =
+             turn("m2", "acme/fast", "which model", "low")
+  end
+
   defp turn(id, model, text, level) do
     options = if level, do: [%{"id" => "reasoningEffort", "value" => level}], else: []
 

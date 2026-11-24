@@ -147,6 +147,7 @@ sessions = 0
 LOST_FILE = os.path.join(DIR, NAME + ".lost")
 MADE_FILE = os.path.join(DIR, NAME + ".sessions")
 GONE_FILE = os.path.join(DIR, NAME + ".gone")
+CRASH_FILE = os.path.join(DIR, NAME + ".crash")
 lost = bool(CONTROL.get("loseSessions")) and os.path.exists(LOST_FILE)
 
 def read_ids(path):
@@ -185,6 +186,11 @@ def title_json(text):
 
 def prompt(pid, sid, text):
     global held, legacy_mode
+    # With DIR/NAME.crash present (which it removes), the agent exits as the prompt arrives,
+    # before its session holds any of it.
+    if os.path.exists(CRASH_FILE):
+        os.remove(CRASH_FILE)
+        os._exit(1)
     # Closes its output and keeps running, deaf to its input (upstream #21323).
     if "close output" in text and "<conversation_history>" not in text:
         log({"event": "closed", "at": time.time()})

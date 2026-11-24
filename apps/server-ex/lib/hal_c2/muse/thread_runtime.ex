@@ -723,7 +723,9 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp send_turn(state, turn) do
     case Regex.run(~r/^\/compact(?:\s|$)/, String.trim(turn.text || "")) do
-      [_] -> compact(state)
+      # A turn that starts afresh carries the thread around its text (`Handoff.afresh/1`),
+      # so it is no bare `/compact`; should one be, the next turn still hands the thread.
+      [_] -> compact(unsent_fresh(state, turn))
       nil -> start(state, turn)
     end
   end
