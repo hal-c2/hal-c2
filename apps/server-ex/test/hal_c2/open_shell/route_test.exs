@@ -50,6 +50,32 @@ defmodule HalC2.OpenShell.RouteTest do
 
       assert {:ok, %{proxy: nil}} = Route.pick("claudeAgent", claude, "ANTHROPIC_API_KEY")
     end
+
+    test "OpenAI's own address is no proxy, by variable or by launch argument" do
+      for env <- [%{"OPENAI_BASE_URL" => "https://api.openai.com/v1/"}, %{}],
+          args <- [[], ["-c", ~s(openai_base_url="https://api.openai.com/v1")]],
+          env != %{} or args != [] do
+        codex = %{env: Map.put(env, "OPENAI_API_KEY", "k"), args: args, plugin?: false}
+        assert {:ok, %{key: "k", proxy: nil}} = Route.pick("codex", codex, "OPENAI_API_KEY")
+      end
+    end
+  end
+
+  describe "the container runtime" do
+    test "a proxy on this machine's loopback is refused on Docker, with the reason" do
+      {:ok, route} = pick(plugin("claude", "http://127.0.0.1:8317"))
+      assert {:ok, ^route} = Route.reachable(route, "podman")
+      assert {:ok, ^route} = Route.reachable(route, nil)
+      assert {:error, message} = Route.reachable(route, "docker")
+      assert message =~ "on Docker cannot reach a CLIProxyAPI"
+    end
+
+    test "a proxy elsewhere, or the API's own host, is reached on Docker too" do
+      {:ok, remote} = pick(plugin("claude", "https://proxy.example.com"))
+      assert {:ok, ^remote} = Route.reachable(remote, "docker")
+      upstream = %{key: "k", proxy: nil}
+      assert {:ok, ^upstream} = Route.reachable(upstream, "docker")
+    end
   end
 
   describe "the CLIProxyAPI plugin's instances" do

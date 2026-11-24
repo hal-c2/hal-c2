@@ -52,6 +52,21 @@ defmodule HalC2.OpenShell.Route do
   end
 
   @doc """
+  Whether a sandbox on container runtime `runtime` (OpenShell's driver, `"docker"` or
+  `"podman"`) reaches `route`'s proxy (`pick/4`'s). On rootless Podman the sandbox's
+  proxy connects to this machine from loopback, so a proxy listening on 127.0.0.1 takes
+  it. On Docker that traffic arrives on another interface (`HalC2.OpenShell.Broker`
+  binds every one there), so a proxy on 127.0.0.1 alone would refuse it; the review is
+  refused up front with a reason instead (#1786).
+  """
+  def reachable(%{proxy: %{loopback?: true}}, "docker"),
+    do:
+      {:error,
+       "A review sandbox on Docker cannot reach a CLIProxyAPI that listens on this machine's 127.0.0.1 only. Review with OpenShell on Podman, or connect the CLIProxyAPI plugin to a proxy over https."}
+
+  def reachable(route, _runtime), do: {:ok, route}
+
+  @doc """
   The policy endpoint and the base URL the agent dials for `proxy` (`pick/3`'s), the
   sandbox reaching this machine as `host` (`%{host, dialed, ips}`, the broker's):
   `%{host, port, ips, url}`.
@@ -118,8 +133,13 @@ defmodule HalC2.OpenShell.Route do
     case unquote_toml(config["model_provider"]) do
       provider when provider in [nil, "openai"] ->
         case present(env["OPENAI_BASE_URL"]) || unquote_toml(config["openai_base_url"]) do
-          nil -> {:ok, nil, nil}
-          url -> {:ok, url, "OPENAI_API_KEY"}
+          nil ->
+            {:ok, nil, nil}
+
+          url ->
+            if String.trim_trailing(url, "/") == "https://api.openai.com/v1",
+              do: {:ok, nil, nil},
+              else: {:ok, url, "OPENAI_API_KEY"}
         end
 
       provider ->

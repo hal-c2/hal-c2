@@ -666,7 +666,8 @@ defmodule HalC2.OpenShell.Review do
              },
              model.key,
              %{model.key => System.get_env(model.key)}
-           ) do
+           ),
+         {:ok, route} <- Route.reachable(route, HalC2.OpenShell.state()["driver"]) do
       {:ok, Map.merge(model, %{credentials: %{model.key => route.key}, proxy: route.proxy})}
     end
   end
