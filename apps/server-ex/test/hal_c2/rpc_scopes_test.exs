@@ -4,13 +4,28 @@ defmodule HalC2.RpcScopesTest do
   alias HalC2.Rpc
 
   test "plugin code and self-update need the admin pair" do
-    for method <- ~w(plugins.rescan plugins.enable plugins.restart plugins.compile
+    for method <- ~w(plugins.rescan plugins.enable plugins.disable plugins.restart plugins.compile
                      server.updateServer server.updateServerWithProgress) do
       assert Rpc.required_scopes(method, %{}) == ["access:write", "terminal:operate"],
              method
     end
 
     assert Rpc.required_scopes("plugins.list", %{}) == ["orchestration:operate"]
+  end
+
+  test "a settings write is checked on the MC it changes, with the caller's scopes" do
+    changed = %{
+      "settings" => %{"providerInstances" => %{"x" => %{"binaryPath" => "/opt/other"}}},
+      "version" => 0
+    }
+
+    assert {:error,
+            %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => "terminal:operate"}} =
+             Rpc.handle_with_scopes("hal-c2.writeSettings", changed, ~w(orchestration:operate))
+
+    assert "hal-c2.writeSettings" in Rpc.scoped_methods()
+    assert "plugins.saveSettings" in Rpc.scoped_methods()
+    assert "plugins.call" in Rpc.scoped_methods()
   end
 
   test "registering or moving a workspace root needs terminal:operate" do

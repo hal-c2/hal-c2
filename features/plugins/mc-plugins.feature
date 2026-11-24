@@ -8,6 +8,7 @@
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
 #   apps/server-ex/lib/hal_c2/plugins.ex, apps/server-ex/lib/hal_c2/plugins/kinds.ex (settings_changed: settings live, else a restart)
 #   apps/server-ex/lib/hal_c2/rpc.ex (required_scopes: what saving a plugin's settings needs)
+#   apps/server-ex/lib/hal_c2/plugins.ex (exec settings and calls need terminal:operate)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex, apps/server-ex/lib/hal_c2/vcs.ex (git hosts)
 #   docs/orchestration-v2/provider-capability-system.md (adapter contract)
 #   docs/internals/providers.md (route by instance, setup never as a health-check side effect)
@@ -141,8 +142,8 @@ Feature: MC plugins
     Then the save is refused with the plugin's message
     And the previous settings are kept
 
-  # hal-c2/hal-c2#1675: as hal-c2.writeSettings asks the shell's scope for a provider's binary.
-  @mc @backlog
+  # As hal-c2.writeSettings asks the shell's scope for a provider's binary.
+  @mc
   Scenario: A session without the shell's scope cannot change what a plugin runs
     Given a session that may operate but not use the shell
     When it saves a plugin setting that names the program the plugin runs

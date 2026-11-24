@@ -332,20 +332,40 @@ defmodule HalC2.Rpc do
 
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
-  @doc "Handles `projects.writeFile` with the caller's scopes on the environment's MC."
+  @scoped_methods ~w(projects.writeFile hal-c2.writeSettings plugins.saveSettings plugins.call)
+
+  @doc """
+  Methods whose scopes depend on the environment's MC (its projects, settings or
+  plugins), which `handle_with_scopes/3` checks there; the socket checks only the
+  scope every call of the method needs.
+  """
+  def scoped_methods, do: @scoped_methods
+
+  @doc """
+  Handles one of `scoped_methods/0` with the caller's scopes on the environment's MC.
+  A plugin's own settings and calls are checked by `HalC2.Plugins`, in the step that
+  saves or calls.
+  """
   @spec handle_with_scopes(String.t(), term(), [String.t()] | :all) ::
           {:ok, term()} | {:error, String.t() | map()}
-  def handle_with_scopes("projects.writeFile" = method, payload, scopes) do
-    scope = required_scope(method, payload)
+  def handle_with_scopes("plugins." <> method, payload, scopes)
+      when method in ~w(saveSettings call),
+      do: HalC2.Plugins.handle(method, payload, scopes)
 
-    if scopes == :all or scope in scopes do
+  def handle_with_scopes(method, payload, scopes) when method in @scoped_methods do
+    missing =
+      if scopes == :all,
+        do: nil,
+        else: Enum.find(required_scopes(method, payload), &(&1 not in scopes))
+
+    if missing == nil do
       handle(method, payload)
     else
       {:error,
        %{
          "_tag" => "EnvironmentScopeRequiredError",
-         "requiredScope" => scope,
-         "message" => "#{scope} is required"
+         "requiredScope" => missing,
+         "message" => "#{missing} is required"
        }}
     end
   end
@@ -465,8 +485,9 @@ defmodule HalC2.Rpc do
       when method in ~w(invite join remove switch update),
       do: ["access:write", "terminal:operate"]
 
+  # Turning a plugin off revokes what it was granted, as turning it on grants it.
   def required_scopes("plugins." <> method, _payload)
-      when method in ~w(rescan enable restart compile),
+      when method in ~w(rescan enable disable restart compile),
       do: ["access:write", "terminal:operate"]
 
   def required_scopes("server." <> method, _payload)

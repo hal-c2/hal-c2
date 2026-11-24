@@ -59,6 +59,7 @@
     },
     {
       "key": "repositories",
+      "exec": true,
       "label": "Repositories",
       "type": "list",
       "default": [],
@@ -110,6 +111,7 @@
     },
     {
       "key": "trustedLogins",
+      "exec": true,
       "label": "Trusted logins",
       "type": "list",
       "default": [],
@@ -158,6 +160,7 @@
     },
     {
       "key": "provider",
+      "exec": true,
       "label": "Agent",
       "type": "text",
       "default": "claudeAgent",
@@ -179,6 +182,7 @@
     },
     {
       "key": "runtimeMode",
+      "exec": true,
       "label": "Access",
       "type": "choice",
       "options": [
@@ -192,6 +196,7 @@
     },
     {
       "key": "reviewTrustedOnThisMachine",
+      "exec": true,
       "label": "Review trusted pull requests on this machine",
       "type": "boolean",
       "default": false,

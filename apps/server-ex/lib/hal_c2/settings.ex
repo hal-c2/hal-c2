@@ -407,8 +407,14 @@ defmodule HalC2.Settings do
     ArgumentError -> {%{}, 0}
   end
 
-  @doc "Replaces the document if it is still at `version`; returns the new version."
-  def put(settings, version), do: GenServer.call(__MODULE__, {:put, settings, version})
+  @doc """
+  Replaces the document if it is still at `version`; returns the new version. A
+  `:client` document (a client's, an agent's, any caller's but the plugin host's) keeps
+  the MC's `plugins` key (`HalC2.Plugins.Host.seal_records/3`); `HalC2.Plugins` writes
+  as the `:host`.
+  """
+  def put(settings, version, writer \\ :client) when writer in [:client, :host],
+    do: GenServer.call(__MODULE__, {:put, settings, version, writer})
 
   def watch(pid, ref \\ nil) do
     GenServer.call(__MODULE__, {:watch, pid, ref})
@@ -719,12 +725,12 @@ defmodule HalC2.Settings do
   end
 
   @impl true
-  def handle_call({:put, settings, version}, from, %{version: version} = state) do
+  def handle_call({:put, settings, version, writer}, from, %{version: version} = state) do
     {:reply, reply, state} =
       handle_call(
         {:update,
          &carry_over(
-           HalC2.Plugins.Host.seal_records(settings, state.settings, true),
+           HalC2.Plugins.Host.seal_records(settings, state.settings, writer == :client),
            state.settings,
            &1
          )},
@@ -751,7 +757,7 @@ defmodule HalC2.Settings do
   def handle_call({:update, fun}, _from, state),
     do: save_reply(state, fn disk -> fun.(disk) end)
 
-  def handle_call({:put, _settings, _version}, _from, state),
+  def handle_call({:put, _settings, _version, _writer}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
   def handle_call({:edit_keybindings, fun}, _from, state) do

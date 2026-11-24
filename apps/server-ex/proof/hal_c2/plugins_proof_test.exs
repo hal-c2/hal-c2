@@ -30,7 +30,7 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.unsubscribe/2" => "unsubscribe",
       "HalC2.Plugins handle_call {:set_enabled, _, _, _}" => "set_enabled",
       "HalC2.Plugins handle_call {:restart, _}" => "restart",
-      "HalC2.Plugins handle_call {:save_settings, _, _}" => "save_settings",
+      "HalC2.Plugins handle_call {:save_settings, _, _, _}" => "save_settings",
       "HalC2.Plugins handle_call :rescan" => "rescan",
       "HalC2.Plugins handle_call {:subscribe, _, _}" => "subscribe",
       "HalC2.Plugins handle_cast {:worker, _, _, _}" => "worker",
@@ -43,7 +43,7 @@ defmodule HalC2.PluginsProofTest do
     },
     abstracts: %{
       "HalC2.Plugins.start_link/1" => "starts the host; kill-host stands for its starting again",
-      "HalC2.Plugins.handle/2" => @dispatch,
+      "HalC2.Plugins.handle/3" => @dispatch,
       "HalC2.Plugins.adapters/0" => @reads,
       "HalC2.Plugins.api_version/0" => @reads,
       "HalC2.Plugins.declared/1" => @consent,
@@ -78,6 +78,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_call {:running, _}" => @reads,
       "HalC2.Plugins handle_call {:running?, _}" => @reads,
       "HalC2.Plugins handle_call {:context, _}" => @reads,
+      "HalC2.Plugins handle_call {:context, _, _, _}" =>
+        "refuses a call the manifest marks exec without the shell's scope, else reads as {:context, _}",
       "HalC2.Plugins handle_call {:file, _, _}" => @reads,
       "HalC2.Plugins handle_call {:subscribe_topic, _, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:unsubscribe_topic, _, _, _, _}" => @topics,

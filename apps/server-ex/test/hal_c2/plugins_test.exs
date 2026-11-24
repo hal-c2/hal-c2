@@ -245,6 +245,125 @@ defmodule HalC2.PluginsTest do
     assert {:ok, %{"enabled" => true}} = Plugins.handle("enable", %{"id" => "notes"})
   end
 
+  @operator ~w(orchestration:read orchestration:operate)
+
+  test "a save without the shell's scope cannot change a setting the manifest marks exec" do
+    exec_package("runner")
+    assert {:ok, _} = save("runner", %{"program" => "/opt/runner", "key" => "k1"})
+
+    for change <- [
+          %{"program" => "/elsewhere"},
+          %{"program" => nil},
+          %{"key" => "k2"},
+          %{"key" => nil},
+          %{"count" => 2, "program" => "/elsewhere"}
+        ] do
+      assert {:error,
+              %{
+                "_tag" => "EnvironmentScopeRequiredError",
+                "requiredScope" => "terminal:operate",
+                "message" => message
+              }} = save("runner", change, @operator),
+             inspect(change)
+
+      assert message =~ "terminal:operate"
+    end
+
+    assert stored("runner") == %{"program" => "/opt/runner", "key" => @marker}
+
+    # What leaves every marked value as the plugin uses it is an operate save: the same
+    # program, the secret's marker, and plain settings.
+    assert {:ok, _} =
+             save(
+               "runner",
+               %{"program" => "/opt/runner", "key" => @marker, "count" => 3},
+               @operator
+             )
+
+    assert stored("runner") == %{"program" => "/opt/runner", "key" => @marker, "count" => 3}
+
+    # A saved null is the default; one already at it changes nothing.
+    exec_package("defaults")
+    assert {:ok, _} = save("defaults", %{"program" => nil, "key" => nil}, @operator)
+
+    assert {:ok, _} =
+             save("runner", %{"program" => "/elsewhere"}, @operator ++ ["terminal:operate"])
+
+    assert stored("runner")["program"] == "/elsewhere"
+  end
+
+  test "the settings list says which settings are marked exec" do
+    exec_package("runner")
+
+    assert [
+             %{"key" => "program", "exec" => true},
+             %{"key" => "key", "exec" => true},
+             %{"key" => "count"} = count
+           ] = listed("runner")["settingsSchema"]
+
+    refute Map.has_key?(count, "exec")
+  end
+
+  test "a call the manifest marks exec needs the shell's scope" do
+    exec_package("runner")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "runner", "acceptPermissions" => []})
+
+    assert {:error,
+            %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => "terminal:operate"}} =
+             call("runner", "swap", @operator)
+
+    assert {:ok, "status"} = call("runner", "status", @operator)
+    assert {:ok, "swap"} = call("runner", "swap", @operator ++ ["terminal:operate"])
+    assert {:ok, "swap"} = call("runner", "swap", :all)
+  end
+
+  test "a client's settings write keeps whether a plugin is on, what it was granted and its settings" do
+    package("notes", "1", ["slack:read"])
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, _} =
+             Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => ["slack:read"]})
+
+    assert {:ok, _} = save("notes", %{"count" => 2})
+    held = HalC2.Settings.settings()["plugins"]
+
+    for edit <- [
+          &put_in(&1, ["plugins", "notes", "enabled"], false),
+          &put_in(&1, ["plugins", "notes", "granted"], ["slack:read", "slack:write"]),
+          &put_in(&1, ["plugins", "notes", "settings", "count"], 9),
+          &put_in(&1, ["plugins", "other"], %{"enabled" => true, "granted" => ["slack:write"]}),
+          &Map.delete(&1, "plugins")
+        ] do
+      {:ok, %{"settings" => settings, "version" => version}} =
+        HalC2.Rpc.handle("hal-c2.readSettings", %{})
+
+      assert {:ok, _} =
+               HalC2.Rpc.handle("hal-c2.writeSettings", %{
+                 "settings" => edit.(settings),
+                 "version" => version
+               })
+
+      assert HalC2.Settings.settings()["plugins"] == held
+    end
+
+    # The rest of the document is the client's.
+    {:ok, %{"settings" => settings, "version" => version}} =
+      HalC2.Rpc.handle("hal-c2.readSettings", %{})
+
+    assert {:ok, _} =
+             HalC2.Rpc.handle("hal-c2.writeSettings", %{
+               "settings" => Map.put(settings, "enableAssistantStreaming", true),
+               "version" => version
+             })
+
+    assert HalC2.Settings.settings()["enableAssistantStreaming"] == true
+
+    # Turning it off goes through the host.
+    assert {:ok, %{"enabled" => false}} = Plugins.handle("disable", %{"id" => "notes"})
+    assert HalC2.Settings.settings()["plugins"]["notes"]["enabled"] == false
+  end
+
   test "a plugin that takes settings live keeps its process, and work in it, through a save" do
     pid = enable_worker("live", :live)
 
@@ -820,8 +939,11 @@ defmodule HalC2.PluginsTest do
     refute_received {:heard, "listener", %{"n" => 2}, _}
   end
 
-  defp save(id, settings),
-    do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
+  defp save(id, settings, scopes \\ :all),
+    do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings}, scopes)
+
+  defp call(id, method, scopes),
+    do: Plugins.handle("call", %{"id" => id, "method" => method, "input" => %{}}, scopes)
 
   defp stored(id), do: get_in(HalC2.Settings.settings(), ["plugins", id, "settings"]) || %{}
   defp compile(id), do: Plugins.handle("compile", %{"id" => id})
@@ -877,6 +999,40 @@ defmodule HalC2.PluginsTest do
         }
       })
     )
+  end
+
+  # A package whose manifest marks a program, a secret key and the call `swap` exec, and
+  # leaves a count and the call `status` plain. Its MC part answers each call's name.
+  defp exec_package(id) do
+    dir = Path.join(plugins_dir(), id)
+    File.rm_rf!(dir)
+    File.mkdir_p!(Path.join(dir, "mc"))
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{
+        "id" => id,
+        "name" => id,
+        "version" => "1",
+        "description" => "A package that runs a program.",
+        "apiVersion" => 1,
+        "execCalls" => ["swap"],
+        "settings" => [
+          %{"key" => "program", "label" => "Program", "type" => "text", "exec" => true},
+          %{"key" => "key", "label" => "Key", "type" => "secret", "exec" => true},
+          %{"key" => "count", "label" => "Count", "type" => "number", "default" => 1}
+        ]
+      })
+    )
+
+    File.write!(Path.join([dir, "mc", "runner.ex"]), """
+    defmodule HalC2PluginsTest.Exec#{Macro.camelize(id)} do
+      @behaviour HalC2.Plugins.Extension
+      def call(method, _input, _context), do: {:ok, method}
+    end
+    """)
+
+    Plugins.handle("rescan", %{})
   end
 
   # A package with MC sources `[{name, source}]`, replacing what the directory held.

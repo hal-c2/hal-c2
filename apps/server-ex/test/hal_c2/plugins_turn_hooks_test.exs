@@ -1059,7 +1059,7 @@ defmodule HalC2.PluginsTurnHooksTest do
         {id, %{"enabled" => true, "granted" => granted, "settings" => saved[id] || %{}}}
       end)
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
   end
 
   # A feed for the extension `id`, as the plugin host starts one; it tells the test
