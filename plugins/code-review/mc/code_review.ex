@@ -2289,7 +2289,8 @@ defmodule HalC2Plugins.CodeReview do
   # A sandboxed review's checkout has no submodules: fetched here, they would come with
   # this machine's credentials from the addresses and at the commits a pull request
   # names, maybe one the watch does not trust, into a sandbox whose report is posted.
-  # The agent is told so, rather than meeting git's errors in a sandbox with no network.
+  # The agent is told so, rather than meeting git's errors in a sandbox that
+  # reaches only its model and the MC.
   defp unfetched(checkout) do
     if File.regular?(Path.join(checkout["path"], ".gitmodules")),
       do: Map.put(checkout, "submodules", :sandboxed),
@@ -2644,7 +2645,7 @@ defmodule HalC2Plugins.CodeReview do
 
   defp submodules_line(:sandboxed),
     do:
-      "This review runs in a sandbox, whose checkout has none of the submodules the head pins: they are never fetched into a sandbox, which has no network and no credentials. Do not try to fetch them; list each check that needs them under notRun with that reason."
+      "This review runs in a sandbox, whose checkout has none of the submodules the head pins: they are never fetched into a sandbox, which reaches only its model and the MC and holds no credentials. Do not try to fetch them; list each check that needs them under notRun with that reason."
 
   defp submodules_line(reason),
     do:
