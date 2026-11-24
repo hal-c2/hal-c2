@@ -135,6 +135,12 @@ defmodule HalC2.OpenShell.RouteTest do
       end
     end
 
+    # The sandbox dials the broker's alias, which a certificate for localhost does not name.
+    test "one on this machine over https is refused, naming the http address" do
+      assert {:error, message} = pick(plugin("claude", "https://localhost:8317/team"))
+      assert message =~ "Use http://127.0.0.1:8317/team instead"
+    end
+
     test "one with a query, credentials or a fragment is refused" do
       for base <- ["http://127.0.0.1:8317?x=1", "http://user:pw@127.0.0.1:8317"] do
         assert {:error, message} = pick(plugin("claude", base))

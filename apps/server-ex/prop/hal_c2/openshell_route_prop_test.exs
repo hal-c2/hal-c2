@@ -9,8 +9,9 @@ defmodule HalC2.OpenShellRoutePropTest do
 
     * an instance that is not the plugin's, with a base URL other than its API's own,
       is refused;
-    * a plugin's instance on this machine's 127.0.0.1 is reached, at the sandbox's
-      address for this machine, its addresses pinned, at the proxy's port alone;
+    * a plugin's instance on this machine's 127.0.0.1 is reached over http, at the
+      sandbox's address for this machine, its addresses pinned, at the proxy's port
+      alone;
     * one elsewhere is refused, over https too: OpenShell binds the key to a host and
       port, not to TLS;
     * the path the agent dials under is plain segments, never a query, a fragment or
@@ -55,15 +56,14 @@ defmodule HalC2.OpenShellRoutePropTest do
     {instance["driver"], %{env: env, args: args}}
   end
 
-  # A base URL a plugin's instance on this machine can have, its key set.
+  # An http base URL a plugin's instance on this machine can have.
   defp local do
     let [
-      scheme <- elements(~w(http https)),
       host <- elements(@local),
       port <- oneof([nil, integer(1, 65_535)]),
       path <- elements(["", "/", "/team", "/a/b", "/a.b/c-d_e"])
     ] do
-      "#{scheme}://#{host}#{if port, do: ":#{port}"}#{path}"
+      "http://#{host}#{if port, do: ":#{port}"}#{path}"
     end
   end
 
@@ -104,7 +104,8 @@ defmodule HalC2.OpenShellRoutePropTest do
               endpoint.host == @host.host and endpoint.ips == @host.ips and
               uri.host == @host.dialed
 
-          placed and uri.scheme == proxy.scheme and endpoint.port == proxy.port and
+          placed and uri.scheme == "http" and proxy.scheme == "http" and
+            endpoint.port == proxy.port and
             uri.port == proxy.port and
             uri.userinfo == nil and uri.query == nil and uri.fragment == nil and
             (uri.path || "") =~ ~r/\A(\/[A-Za-z0-9_.-]+)*\z/ and

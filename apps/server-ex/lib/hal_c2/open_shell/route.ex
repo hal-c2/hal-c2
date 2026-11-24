@@ -195,6 +195,12 @@ defmodule HalC2.OpenShell.Route do
         {:error,
          "A review sandbox reaches this machine at 127.0.0.1 only, and this provider's CLIProxyAPI is at #{shown(url)}. Have CLIProxyAPI listen on 127.0.0.1."}
 
+      # The sandbox dials the broker's alias, which a certificate for this machine
+      # does not name, and the request stays on the host either way.
+      uri.scheme == "https" ->
+        {:error,
+         "A review sandbox reaches this machine's CLIProxyAPI over http, and this provider's is #{shown(url)}. Use http://127.0.0.1:#{uri.port}#{prefix} instead."}
+
       true ->
         {:ok, %{scheme: uri.scheme, port: uri.port, prefix: prefix}}
     end
