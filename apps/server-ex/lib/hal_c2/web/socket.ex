@@ -68,6 +68,7 @@ defmodule HalC2.Web.Socket do
     devices: HalC2.Devices,
     slack: HalC2.Slack,
     project_clones: HalC2.ProjectClones,
+    openshell: HalC2.OpenShell.Operations,
     scheduled_tasks: HalC2.ScheduledTasks,
     background_policy: HalC2.BackgroundPolicy,
     pull_request_refreshes: HalC2.PullRequests.Refreshes,
@@ -78,7 +79,8 @@ defmodule HalC2.Web.Socket do
   @watched ~w(hal_c2_settings hal_c2_themes hal_c2_usage_limit_sources hal_c2_keybindings
               hal_c2_providers_changed hal_c2_usage_limits_command hal_c2_upgraded
               hal_c2_auth_access hal_c2_resource_telemetry hal_c2_preview hal_c2_local_servers
-              hal_c2_devices hal_c2_slack hal_c2_project_clones hal_c2_scheduled_tasks
+              hal_c2_devices hal_c2_slack hal_c2_project_clones hal_c2_openshell
+              hal_c2_scheduled_tasks
               hal_c2_background_policy hal_c2_pull_request_refreshes hal_c2_plugins
               hal_c2_plugin_topic hal_c2_worktree_setup hal_c2_provider_install
               hal_c2_provider_auth hal_c2_vcs hal_c2_terminals hal_c2_space_presence)a
@@ -653,7 +655,7 @@ defmodule HalC2.Web.Socket do
         method == "projects.writeFile" ->
           {HalC2.Rpc, :handle_with_scopes, [method, payload || %{}, state.scopes]}
 
-        method == "hal-c2.createPairingLink" ->
+        method in ["hal-c2.createPairingLink", "server.getOpenShellStatus"] ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.scopes]}
 
         method in @session_methods ->
@@ -2101,6 +2103,7 @@ defmodule HalC2.Web.Socket do
   defp snapshot({:devices, mc}, {:ok, value}), do: {:hal_c2_devices, mc, value}
   defp snapshot({:slack, mc}, {:ok, value}), do: {:hal_c2_slack, mc, value}
   defp snapshot({:project_clones, mc}, {:ok, value}), do: {:hal_c2_project_clones, mc, value}
+  defp snapshot({:openshell, mc}, {:ok, value}), do: {:hal_c2_openshell, mc, value}
   defp snapshot({:scheduled_tasks, mc}, {:ok, value}), do: {:hal_c2_scheduled_tasks, mc, value}
 
   defp snapshot({:background_policy, mc}, {:ok, value}),
@@ -2202,6 +2205,9 @@ defmodule HalC2.Web.Socket do
 
   defp watched_frame({:hal_c2_project_clones, mc, clones}, _state),
     do: {{:project_clones, mc}, "projectClones", %{"clones" => clones}}
+
+  defp watched_frame({:hal_c2_openshell, mc, operation}, _state),
+    do: {{:openshell, mc}, "openShell", %{"operation" => operation}}
 
   defp watched_frame({:hal_c2_scheduled_tasks, mc, tasks}, _state),
     do: {{:scheduled_tasks, mc}, "scheduledTasks", %{"tasks" => tasks}}

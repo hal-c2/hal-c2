@@ -11,7 +11,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   import ExUnit.Assertions
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Client, Config, Install, Manifest, Platform, Service}
+  alias HalC2.OpenShell.{Client, Command, Config, Install, Manifest, Platform, Service}
   alias HalC2.Test.{FakeOpenShell, Mc, Storage, SystemdUnit}
 
   @podman %{
@@ -411,7 +411,13 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
     for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
-    assert Storage.service_calls(context.openshell.log) == [
+    # A machine whose Podman socket the install started asked for that first.
+    calls = Storage.service_calls(context.openshell.log)
+
+    calls =
+      if context[:podman_socket_started], do: tl(calls), else: calls
+
+    assert calls == [
              "systemctl --user stop #{Service.reap_name(:timer)}",
              "systemctl --user stop #{Service.reap_name(:systemd)}",
              "systemctl --user stop #{Service.name(:systemd)}",
@@ -929,12 +935,12 @@ defmodule HalC2.Steps.Platform.OpenShell do
   # --- the settings' status (server.getOpenShellStatus) ------------------------------
 
   step "the user opens the sandbox settings", context do
-    {result, _client} =
-      context.mc
-      |> Mc.connect()
-      |> Mc.call!(context.mc.environment, "server.getOpenShellStatus")
+    context = operations(context)
 
-    Map.put(context, :settings, result)
+    {result, client} =
+      Mc.call!(context.settings_client, context.mc.environment, "server.getOpenShellStatus")
+
+    Map.merge(context, %{settings: result, settings_client: client})
   end
 
   step "they read that OpenShell does not run on an Intel Mac", context do
@@ -947,8 +953,178 @@ defmodule HalC2.Steps.Platform.OpenShell do
   step "they read that OpenShell is not installed, and how to install it", context do
     assert %{"supported" => true, "ready" => false, "mode" => nil} = context.settings
     assert %{"code" => "not-installed", "message" => message} = hd(context.settings["problems"])
-    assert message =~ "hal-c2-service openshell install"
+    assert message == "Press Install to install it."
+    assert %{"operation" => "install", "label" => "Install"} in context.settings["actions"]
     context
+  end
+
+  # --- Settings' operations (server.runOpenShellOperation, the openShell shape) -------
+
+  step "they press {string} in the sandbox settings", %{args: [label]} = context do
+    run_from_settings(context, action(context, label))
+  end
+
+  step "the sandbox settings show the install's steps", context do
+    for step <- [
+          "Checking this machine",
+          "Checking the gateway's configuration",
+          "Starting the gateway"
+        ],
+        do:
+          assert(
+            step in context.operation["steps"],
+            "steps: #{inspect(context.operation["steps"])}"
+          )
+
+    context
+  end
+
+  step "they read that OpenShell was installed", context do
+    assert %{"ok" => true, "message" => "OpenShell installed, " <> _} =
+             context.operation["result"]
+
+    context
+  end
+
+  step "the sandbox settings offer to uninstall it", context do
+    context = reread(context)
+    assert %{"operation" => "uninstall", "label" => "Uninstall"} in context.settings["actions"]
+    context
+  end
+
+  step "the sandbox settings offer to install it", context do
+    context = reread(context)
+    assert context.settings["actions"] == [%{"operation" => "install", "label" => "Install"}]
+    context
+  end
+
+  step "they are asked whether to stop {int} review(s)", %{args: [count]} = context do
+    assert %{
+             "ok" => false,
+             "code" => "sandboxes-running",
+             "sandboxes" => ^count,
+             "message" => message
+           } =
+             context.operation["result"]
+
+    refute message =~ "--drain"
+
+    assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) |> Enum.sort() == [
+             "review-1",
+             "theirs"
+           ]
+
+    context
+  end
+
+  step "they agree to stop it", context do
+    run_from_settings(context, %{"operation" => context.operation["operation"], "drain" => true})
+  end
+
+  step "they read that OpenShell was removed, its review stopped first", context do
+    assert %{"ok" => true, "message" => "OpenShell removed."} = context.operation["result"]
+    assert OpenShell.state() == nil
+    assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) == ["theirs"]
+    context
+  end
+
+  step "the user's device was paired without the right to manage the MC's machine", context do
+    access = Mc.pair(HalC2.Auth.standard_scopes(), "A standard device")
+    Map.put(context, :settings_client, Mc.connect_as(context.mc, access))
+  end
+
+  step "the sandbox settings' actions are off, and say which access the device lacks", context do
+    assert %{"canManage" => false, "manageReason" => reason, "actions" => [_ | _]} =
+             context.settings
+
+    assert reason =~ "access:write"
+
+    assert {{:error, _,
+             %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => "access:write"}}, _} =
+             Mc.call(
+               context.settings_client,
+               context.mc.environment,
+               "server.runOpenShellOperation",
+               %{
+                 "operation" => "install"
+               }
+             )
+
+    assert OpenShell.state() == nil
+    context
+  end
+
+  step ~s(the user presses "Install" in the sandbox settings and, while it runs, presses "Check"),
+       context do
+    test = self()
+    context = operations(context)
+    runner = Application.fetch_env!(:hal_c2, :openshell_operation_runner)
+
+    # The install waits for the test, so the check is asked for while it runs.
+    FakeOpenShell.put_env(
+      openshell_operation_runner: fn operation, opts ->
+        send(test, {:install_running, self()})
+        receive do: (:go -> runner.(operation, opts))
+      end
+    )
+
+    context = context |> operations() |> watch_operations()
+
+    {_, client} =
+      Mc.call!(context.settings_client, context.mc.environment, "server.runOpenShellOperation", %{
+        "operation" => "install"
+      })
+
+    assert_receive {:install_running, install}, 5_000
+
+    {check, client} =
+      Mc.call(client, context.mc.environment, "server.runOpenShellOperation", %{
+        "operation" => "check"
+      })
+
+    send(install, :go)
+    {operation, client} = finished(client)
+    Map.merge(context, %{check: check, operation: operation, settings_client: client})
+  end
+
+  step "the check is refused because the install is running", context do
+    assert {:error, message, %{"_tag" => "ServerOpenShellOperationError", "reason" => "busy"}} =
+             context.check
+
+    assert message =~ "install is already running"
+    context
+  end
+
+  step "the install succeeds", context do
+    assert %{"operation" => "install", "result" => %{"ok" => true}} = context.operation
+    assert OpenShell.state()["mode"] == "managed"
+    context
+  end
+
+  step "they read that Podman must be installed first, and that Install starts its socket",
+       context do
+    assert %{"code" => "podman-missing", "message" => message} =
+             Enum.find(context.settings["problems"], &(&1["code"] == "podman-missing"))
+
+    assert message =~ "package manager"
+    assert message =~ "press Install: it starts Podman's socket for you"
+    assert context.settings["actions"] == [%{"operation" => "install", "label" => "Install"}]
+    context
+  end
+
+  step "a machine whose Podman is installed with its socket stopped", context do
+    active = Path.join(context.openshell.bin, "podman-socket-active")
+    File.touch!(Path.join(context.openshell.bin, "podman-unit"))
+    put_facts(fn -> if File.exists?(active), do: @linux, else: %{@linux | runtime: nil} end)
+    context
+  end
+
+  step "Podman's socket was started for the user", context do
+    assert ["systemctl --user enable --now podman.socket" | _] =
+             Storage.service_calls(context.openshell.log)
+
+    assert File.exists?(Path.join(context.openshell.bin, "podman-socket-active"))
+    Map.put(context, :podman_socket_started, true)
   end
 
   step "they read that review sandboxes can run here", context do
@@ -1011,6 +1187,100 @@ defmodule HalC2.Steps.Platform.OpenShell do
   end
 
   defp installed(context, result), do: Map.put(context, :result, result)
+
+  # Settings' operations run here as the CLI's do (`HalC2.OpenShell.Command.run/2`),
+  # from the fake release in place of the manifest's download, with the check after
+  # start passing. The client is the MC's own unless a step paired a device.
+  defp operations(context) do
+    unless Application.get_env(:hal_c2, :openshell_operation_runner) do
+      FakeOpenShell.put_env(
+        openshell_operation_runner: fn operation, opts ->
+          {release, archive} = release(context, Manifest.version())
+
+          Command.run(
+            operation,
+            opts ++ [release: release, archive: archive, smoke: fn _ -> :ok end]
+          )
+        end
+      )
+    end
+
+    Mc.ensure(HalC2.OpenShell.Operations)
+    Map.put_new_lazy(context, :settings_client, fn -> Mc.connect(context.mc) end)
+  end
+
+  # The settings' subscription to the operations, past its first frame.
+  defp watch_operations(%{watching: true} = context), do: context
+
+  defp watch_operations(context) do
+    client =
+      Mc.sub(context.settings_client, 7_777, %{
+        "type" => "openShell",
+        "mc" => Atom.to_string(node())
+      })
+
+    {_, client} = Mc.await(client, &(&1["t"] == "openShell"))
+    Map.merge(context, %{settings_client: client, watching: true})
+  end
+
+  defp action(context, label) do
+    %{"operation" => operation} =
+      Enum.find(context.settings["actions"], &(&1["label"] == label)) ||
+        flunk("no #{label} in #{inspect(context.settings["actions"])}")
+
+    %{"operation" => operation}
+  end
+
+  # Runs `input` as Settings does, and waits for its outcome on the openShell shape.
+  defp run_from_settings(context, input) do
+    context = context |> operations() |> watch_operations()
+
+    id = System.unique_integer([:positive])
+
+    client =
+      Mc.rpc(
+        context.settings_client,
+        context.mc.environment,
+        id,
+        "server.runOpenShellOperation",
+        input
+      )
+
+    {reply, operation, client} = outcome(client, id, nil, nil)
+    assert %{"t" => "rpc.result"} = reply
+    Map.merge(context, %{operation: operation, settings_client: client})
+  end
+
+  # The run's reply and the frame with its outcome, in whichever order they come.
+  defp outcome(client, _id, reply, operation) when reply != nil and operation != nil,
+    do: {reply, operation, client}
+
+  defp outcome(client, id, reply, operation) do
+    {frame, client} =
+      Mc.await(client, fn frame ->
+        (frame["id"] == id and frame["t"] in ["rpc.result", "rpc.error"]) or
+          (frame["t"] == "openShell" and frame["operation"]["result"] != nil)
+      end)
+
+    if frame["t"] == "openShell",
+      do: outcome(client, id, reply, frame["operation"]),
+      else: outcome(client, id, frame, operation)
+  end
+
+  defp finished(client) do
+    {%{"operation" => operation}, client} =
+      Mc.await(client, &(&1["t"] == "openShell" and &1["operation"]["result"] != nil))
+
+    {operation, client}
+  end
+
+  # Settings reads the status again once an operation ended.
+  defp reread(context) do
+    {result, client} =
+      Mc.call!(context.settings_client, context.mc.environment, "server.getOpenShellStatus")
+
+    Map.merge(context, %{settings: result, settings_client: client})
+  end
 
   # Runs `fun` as the MC of another HAL-C2 home on the same machine and user.
   defp in_other_home(context, fun) do

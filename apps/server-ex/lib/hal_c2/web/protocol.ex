@@ -43,6 +43,9 @@ defmodule HalC2.Web.Protocol do
       again on every change
     * `{"type": "projectClones", "mc": n}`: that MC's project clones in
       progress (`ProjectCloneSnapshot[]`), then the whole list on every change
+    * `{"type": "openShell", "mc": n}`: the OpenShell operation that MC's Settings
+      runs, or ran last (`OpenShellOperationState`, `HalC2.OpenShell.Operations`),
+      then again on every step and its outcome
     * `{"type": "scheduledTasks", "mc": n}`: that MC's scheduled tasks, then
       the whole list again whenever one changes
     * `{"type": "backgroundPolicy", "mc": n}`: that MC's background policy
@@ -141,6 +144,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "scheduledTasks", "id", "tasks"} (ScheduledTask[])
       {"t": "backgroundPolicy", "id", "policy"} (BackgroundPolicySnapshot)
       {"t": "projectClones", "id", "clones"} (ProjectCloneSnapshot[])
+      {"t": "openShell", "id", "operation"} (OpenShellOperationState)
       {"t": "preview", "id", "event"} (PreviewEvent)
       {"t": "previewAutomation", "id", "event"} (PreviewAutomationStreamEvent)
       {"t": "end", "id"}   (the shape is over; unsubscribed)
@@ -209,10 +213,11 @@ defmodule HalC2.Web.Protocol do
   # desktopUpdateControl, resourceTelemetry, localServers, devices, slack, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
   # and are asked of that MC by name. projectClones is routed because a client
-  # starts a clone on any environment with a routed rpc and follows it there. A
+  # starts a clone on any environment with a routed rpc and follows it there, and
+  # openShell for the same reason: Settings runs an operation on its environment. A
   # plugin's UI parts follow the environment the plugin is installed on.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
-             pullRequestRefreshes projectClones plugins plugin spacePresence)
+             pullRequestRefreshes projectClones openShell plugins plugin spacePresence)
 
   @doc "The shape types a client may name by environment rather than MC."
   def routed, do: @routed
@@ -354,6 +359,10 @@ defmodule HalC2.Web.Protocol do
 
   defp decode_shape(%{"type" => "projectClones", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:project_clones, mc}}
+  end
+
+  defp decode_shape(%{"type" => "openShell", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:openshell, mc}}
   end
 
   defp decode_shape(%{"type" => "scheduledTasks", "mc" => mc}, mcs) do

@@ -15,6 +15,9 @@
 #   environment form), 40 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   does not carry providerInstall or desktopUpdateControl. relayClientInstall left with HAL-C2 Connect
 #   (connections/hal-c2-connect.feature).
+#   openShell (apps/server-ex/lib/hal_c2/open_shell/operations.ex) is the MC's own: the
+#   TypeScript server had no OpenShell, so it stands in for no method and is listed only
+#   with the host frames.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   mc/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
 
@@ -173,6 +176,7 @@ Feature: Protocol 3 wire parity
       | gitAction          | gitAction          | a git action progresses                         | id, event    |
       | serverUpdate       | serverUpdate       | a version move progresses                       | id, event    |
       | desktopUpdateControl | desktopUpdateControl | the MC asks the desktop app to update           | id, event    |
+      | openShell          | openShell          | an OpenShell operation runs from Settings       | id, operation |
 
   @mc
   Scenario Outline: The MC refuses <case> with "<reason>"

@@ -417,6 +417,15 @@ defmodule HalC2.Test.Storage do
       is-enabled) [ -f "$state/enabled" ] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
       is-active) [ -f "$state/active" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
     esac
+    # The user's Podman: its unit is installed with `podman-unit`, and starting its
+    # socket fails with `podman-socket-fails`.
+    case "$*" in
+      *podman.socket*)
+        if [ "$2" = show ]; then [ -f "$state/podman-unit" ] && echo loaded || echo not-found; exit 0; fi
+        echo "systemctl $*" >> "#{log}"
+        [ -f "$state/podman-socket-fails" ] && { echo "Job for podman.socket failed."; exit 1; }
+        touch "$state/podman-socket-active"; exit 0 ;;
+    esac
     echo "systemctl $*" >> "#{log}"
     case "$*" in
       *-reap.*)

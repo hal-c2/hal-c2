@@ -201,6 +201,41 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.ls!(Path.join(OpenShell.root(), "staging")) == []
     end
 
+    test "Podman installed with its socket stopped: install starts the socket, and says so",
+         ctx do
+      active = Path.join(ctx.bin, "podman-socket-active")
+      File.touch!(Path.join(ctx.bin, "podman-unit"))
+
+      Application.put_env(:hal_c2, :openshell_facts, fn ->
+        if File.exists?(active), do: @facts, else: %{@facts | runtime: nil}
+      end)
+
+      test = self()
+      assert {:ok, _} = install(ctx, "0.1.7", progress: &send(test, {:step, &1}))
+
+      assert_received {:step, "Starting Podman's socket (podman.socket)"}
+      assert File.exists?(active)
+
+      assert "systemctl --user enable --now podman.socket" in Storage.service_calls(ctx.log)
+    end
+
+    test "Podman's socket that does not start, or no Podman at all, installs nothing", ctx do
+      Application.put_env(:hal_c2, :openshell_facts, %{@facts | runtime: nil})
+      File.touch!(Path.join(ctx.bin, "podman-unit"))
+      File.touch!(Path.join(ctx.bin, "podman-socket-fails"))
+
+      assert {:error, "[podman-socket-failed]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "exited 1"
+      assert OpenShell.state() == nil
+
+      # Without Podman's unit nothing is started: the user is told what to install.
+      File.rm!(Path.join(ctx.bin, "podman-unit"))
+      calls = Storage.service_calls(ctx.log)
+      assert {:error, "[podman-missing]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "package manager"
+      assert Storage.service_calls(ctx.log) == calls
+    end
+
     test "a failed preflight or a wrong hash installs nothing", ctx do
       File.write!(Path.join(ctx.control, "preflight"), "1")
       assert {:error, message} = install(ctx, "0.1.7")

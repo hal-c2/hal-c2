@@ -19,7 +19,10 @@
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (hal-c2-service openshell ...)
 #   mise-tasks/openshell/_default (the dev run)
 #   https://github.com/hal-c2/hal-c2/issues/1420 (Settings shows whether review sandboxes can run)
-#   packages/contracts/src/rpc.ts (server.getOpenShellStatus), packages/contracts/src/server.ts (ServerOpenShellStatus)
+#   https://github.com/hal-c2/hal-c2/issues/1777 (Settings installs, checks, rotates and uninstalls OpenShell)
+#   apps/server-ex/lib/hal_c2/open_shell/operations.ex (one operation at a time, its steps and outcome)
+#   packages/contracts/src/rpc.ts (server.getOpenShellStatus, server.runOpenShellOperation),
+#   packages/contracts/src/server.ts (ServerOpenShellStatus, OpenShellOperationState)
 #   apps/desktop-qt/src/native/SandboxSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/SandboxSettings.qml
 #   apps/tui/src/host/sections/sandboxes.ts
 #   docs/user/openshell.md
@@ -94,6 +97,20 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the gateway's service runs the gateway from that path, as written
     And the gateway opens the database in that home
     And the gateway's service is this home's own
+
+  @mc
+  Scenario: Installing starts Podman's socket when Podman is installed but its socket is not running
+    Given a machine whose Podman is installed with its socket stopped
+    When the user installs OpenShell
+    Then Podman's socket was started for the user
+    And the gateway runs as a service of the user's, on loopback
+
+  @mc
+  Scenario: Installing starts no Podman socket where Podman is not installed
+    Given a machine that has no Podman
+    When the user installs OpenShell
+    Then the install is refused because "podman-missing"
+    And the service manager was asked nothing
 
   @mc
   Scenario: Installing lets the gateway keep running after the user logs out
@@ -395,3 +412,41 @@ Feature: The OpenShell gateway review sandboxes run in
     Then they read that the sandbox status could not be read
     When the MC can say again and the user refreshes the sandbox settings
     Then they read that OpenShell is not installed, and how to install it
+
+  # https://github.com/hal-c2/hal-c2/issues/1777: server.runOpenShellOperation runs the CLI's own
+  # commands; the openShell shape shows every device the steps and the outcome.
+  @mc @shared
+  Scenario: Settings installs OpenShell and shows each step
+    When the user opens the sandbox settings
+    And they press "Install" in the sandbox settings
+    Then the sandbox settings show the install's steps
+    And they read that OpenShell was installed
+    And the sandbox settings offer to uninstall it
+
+  @mc @shared
+  Scenario: Settings asks before an uninstall stops this MC's reviews
+    Given an OpenShell gateway this MC runs, with a sandbox of this MC's and one of someone else's
+    When the user opens the sandbox settings
+    And they press "Uninstall" in the sandbox settings
+    Then they are asked whether to stop 1 review
+    When they agree to stop it
+    Then they read that OpenShell was removed, its review stopped first
+    And the sandbox settings offer to install it
+
+  @mc @shared
+  Scenario: Settings' actions are off on a device that cannot manage the MC's machine
+    Given the user's device was paired without the right to manage the MC's machine
+    When the user opens the sandbox settings
+    Then the sandbox settings' actions are off, and say which access the device lacks
+
+  @mc
+  Scenario: Settings runs one OpenShell operation at a time
+    When the user presses "Install" in the sandbox settings and, while it runs, presses "Check"
+    Then the check is refused because the install is running
+    And the install succeeds
+
+  @mc
+  Scenario: Settings says what to install on a machine without Podman or Docker
+    Given a machine that has no Podman
+    When the user opens the sandbox settings
+    Then they read that Podman must be installed first, and that Install starts its socket

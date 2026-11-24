@@ -52,9 +52,16 @@ defmodule HalC2.OpenShell.Install do
   @doc """
   Installs the pinned gateway, or updates or repairs the one installed, and
   returns `{:ok, state}` (`HalC2.OpenShell.state/0`) or `{:error, message}`.
-  Options: `:archive` (a local copy of the pinned archive), `:drain`, `:force`, and
+  Options: `:archive` (a local copy of the pinned archive), `:drain`, `:force`,
   `service: false`, which stages everything but leaves starting the gateway to
-  `foreground_command/0` (the dev run, `mise run openshell`).
+  `foreground_command/0` (the dev run, `mise run openshell`), and `:progress`, a
+  function called with each step's description as it starts (every lifecycle
+  command takes it; Settings shows them).
+
+  On Linux, a user whose Podman is installed but whose socket is not running gets
+  it started (`systemctl --user enable --now podman.socket`), and the progress
+  says so. Nothing else is installed for them: without Podman the install fails
+  with what to install.
   """
   def install(opts \\ []), do: exclusive(fn -> install_now(opts) end)
 
@@ -69,6 +76,8 @@ defmodule HalC2.OpenShell.Install do
          :ok <- Service.owned(),
          :ok <- Service.moved(previous),
          :ok <- foreground_stopped(previous),
+         :ok <- step(opts, "Checking this machine"),
+         :ok <- podman_socket(Platform.facts(), opts),
          {:ok, platform} <- platform(),
          {:ok, release} <- release(platform.target, opts) do
       staging(fn staging ->
@@ -89,6 +98,7 @@ defmodule HalC2.OpenShell.Install do
         with :ok <- stage_release(release, staging, opts),
              :ok <- ensure_pki(state["version"]),
              :ok <- File.write(config, Config.render(atomize(state))),
+             :ok <- step(opts, "Checking the gateway's configuration"),
              :ok <- preflight(state["version"], config),
              :ok <- drained(previous, opts) do
           switch(previous, state, opts, fn ->
@@ -115,6 +125,7 @@ defmodule HalC2.OpenShell.Install do
           with :ok <- Service.owned(),
                :ok <- Service.moved(state),
                :ok <- foreground_stopped(state),
+               :ok <- step(opts, "Issuing new certificates"),
                :ok <- issue(state["version"], pki),
                :ok <- drained(state, opts) do
             rotated = Map.put(state, "instance", OpenShell.instance())
@@ -137,6 +148,8 @@ defmodule HalC2.OpenShell.Install do
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
   defp switch(previous, state, opts, prepare) do
+    if previous && previous["mode"] == "managed", do: step(opts, "Stopping the gateway")
+
     with {:ok, backup} <- stop_and_backup(previous) do
       result =
         with :ok <- prepare.(),
@@ -211,6 +224,7 @@ defmodule HalC2.OpenShell.Install do
   # Undoes a `switch/4` to `state` that failed, back to `previous` and its backup.
   # A new gateway that will not stop keeps its files: nothing goes back under it.
   defp rollback(previous, state, backup, opts, reason) do
+    step(opts, "Putting back what was there")
     stopped = if state["mode"] == "managed", do: Service.stop(), else: :ok
 
     case stopped do
@@ -264,7 +278,11 @@ defmodule HalC2.OpenShell.Install do
   defp start(%{"mode" => "foreground"}, _opts), do: :ok
 
   defp start(state, opts) do
-    with :ok <- Service.install(state), do: smoke_fun(opts).(state)
+    step(opts, "Starting the gateway")
+
+    with :ok <- Service.install(state),
+         :ok <- step(opts, "Checking the gateway"),
+         do: smoke_fun(opts).(state)
   end
 
   @doc """
@@ -323,6 +341,14 @@ defmodule HalC2.OpenShell.Install do
   defp stage_release(release, staging, opts) do
     archive = Path.join(staging, release.name)
 
+    step(
+      opts,
+      if(opts[:archive],
+        do: "Reading OpenShell #{release.version}'s archive",
+        else: "Downloading OpenShell #{release.version}"
+      )
+    )
+
     with :ok <- fetch(release, archive, opts[:archive]),
          :ok <- verify(archive, release.sha256),
          {:ok, bin} <- extract(archive, Path.join(staging, "release")) do
@@ -365,7 +391,8 @@ defmodule HalC2.OpenShell.Install do
     end
   end
 
-  defp offline_hint,
+  @doc false
+  def offline_hint,
     do:
       " Without network access, download it elsewhere and pass it with `--archive <file>`; it is checked against the same hash."
 
@@ -701,7 +728,11 @@ defmodule HalC2.OpenShell.Install do
 
   defp drain_reviews(sandboxes, conn, opts) do
     if opts[:drain],
-      do: delete_all(conn, sandboxes),
+      do:
+        with(
+          :ok <- step(opts, "Deleting #{length(sandboxes)} review sandboxes"),
+          do: delete_all(conn, sandboxes)
+        ),
       else:
         {:error,
          "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
@@ -1342,6 +1373,7 @@ defmodule HalC2.OpenShell.Install do
              :ok <- Service.moved(state),
              :ok <- foreground_stopped(state),
              :ok <- drained(state, opts),
+             :ok <- step(opts, "Removing the gateway"),
              :ok <- if(state["mode"] == "managed", do: service_stopped(), else: :ok),
              :ok <- if(state["mode"] == "managed", do: Service.uninstall(), else: :ok) do
           if state["mode"] != "external" do
@@ -1364,11 +1396,58 @@ defmodule HalC2.OpenShell.Install do
   def check(opts \\ []) do
     exclusive(fn ->
       case OpenShell.state() do
-        nil -> {:error, not_installed()}
-        state -> smoke(state, opts)
+        nil ->
+          {:error, not_installed()}
+
+        state ->
+          step(opts, "Checking the gateway")
+          smoke(state, opts)
       end
     end)
   end
+
+  # Tells `opts[:progress]` the step that starts now.
+  defp step(opts, text) do
+    case opts[:progress] do
+      progress when is_function(progress, 1) -> progress.(text)
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  # A Linux user's Podman whose socket is not running, though its unit is installed,
+  # has it started; any other machine is left as it is for `platform/0` to judge.
+  # A socket the user named (`HAL_C2_OPENSHELL_DOCKER_SOCKET`) is never Podman's to
+  # start: it is found, or reported missing, as named.
+  defp podman_socket(%{os: :linux, runtime: nil}, opts) do
+    if HalC2.Service.manager() == :systemd and
+         HalC2.Service.probe("systemctl", [
+           "--user",
+           "show",
+           "podman.socket",
+           "--property=LoadState",
+           "--value"
+         ]) == {:ok, "loaded"} do
+      step(opts, "Starting Podman's socket (podman.socket)")
+
+      case HalC2.Service.command("systemctl", ["--user", "enable", "--now", "podman.socket"]) do
+        {:exit, 0, _} ->
+          :ok
+
+        {:exit, status, out} ->
+          {:error,
+           "[podman-socket-failed] Podman's socket did not start (systemctl exited #{status}): #{String.trim(out)}"}
+
+        {:error, reason} ->
+          {:error, "[podman-socket-failed] Podman's socket did not start: #{reason}"}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp podman_socket(_facts, _opts), do: :ok
 
   # Runs `fun` holding this home's lifecycle lock, or fails at once while another
   # command holds it: waiting could outlast the other's whole update.

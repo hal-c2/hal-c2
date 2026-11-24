@@ -66,13 +66,7 @@ defmodule HalC2.OpenShell.Command do
            ]
          ) do
       {opts, ["install"], []} ->
-        with {:ok, state} <- Install.install(Keyword.take(opts, [:archive, :drain, :force])) do
-          verb =
-            if state["previous"], do: "updated from #{state["previous"]} to", else: "installed,"
-
-          {:ok,
-           "OpenShell #{verb} #{state["version"]}, listening on #{state["endpoint"]}. Log: #{OpenShell.log_path()}"}
-        end
+        run(:install, Keyword.take(opts, [:archive, :drain, :force]))
 
       # The dev run (`mise run openshell`): stages the gateway, and writes the line
       # that runs it in the foreground to the script the task then executes.
@@ -89,17 +83,10 @@ defmodule HalC2.OpenShell.Command do
         {:ok, format_status(Install.status())}
 
       {_opts, ["check"], []} ->
-        with :ok <- Install.check(), do: {:ok, "OpenShell passed its checks."}
+        run(:check, [])
 
       {opts, ["rotate"], []} ->
-        with {:ok, state} <- Install.rotate(Keyword.take(opts, [:drain, :force])) do
-          if state["mode"] == "foreground",
-            do:
-              {:ok,
-               "OpenShell's certificates were replaced. Start the dev gateway again (`mise run openshell`) to use them."},
-            else:
-              {:ok, "OpenShell's certificates were replaced, and the gateway restarted on them."}
-        end
+        run(:rotate, Keyword.take(opts, [:drain, :force]))
 
       {opts, ["reuse", endpoint], []} ->
         with {:ok, _} <- Install.reuse(endpoint, Keyword.take(opts, [:ca, :cert, :key])),
@@ -109,12 +96,44 @@ defmodule HalC2.OpenShell.Command do
         with :ok <- reaps_here(opts[:root]), do: reap()
 
       {opts, ["uninstall"], []} ->
-        with :ok <- Install.uninstall(Keyword.take(opts, [:drain, :force])),
-             do: {:ok, "OpenShell removed."}
+        run(:uninstall, Keyword.take(opts, [:drain, :force]))
 
       _ ->
         {:error, @usage}
     end
+  end
+
+  @doc """
+  One of the lifecycle commands Settings runs too (`HalC2.OpenShell.Operations`), as
+  `{:ok, text}` or `{:error, message}`: `:install` (also update and repair), `:check`,
+  `:rotate` or `:uninstall`, with the options `HalC2.OpenShell.Install` takes for it.
+  """
+  def run(:install, opts) do
+    with {:ok, state} <- Install.install(opts) do
+      verb =
+        if state["previous"], do: "updated from #{state["previous"]} to", else: "installed,"
+
+      {:ok,
+       "OpenShell #{verb} #{state["version"]}, listening on #{state["endpoint"]}. Log: #{OpenShell.log_path()}"}
+    end
+  end
+
+  def run(:check, opts) do
+    with :ok <- Install.check(opts), do: {:ok, "OpenShell passed its checks."}
+  end
+
+  def run(:rotate, opts) do
+    with {:ok, state} <- Install.rotate(opts) do
+      if state["mode"] == "foreground",
+        do:
+          {:ok,
+           "OpenShell's certificates were replaced. Start the dev gateway again (`mise run openshell`) to use them."},
+        else: {:ok, "OpenShell's certificates were replaced, and the gateway restarted on them."}
+    end
+  end
+
+  def run(:uninstall, opts) do
+    with :ok <- Install.uninstall(opts), do: {:ok, "OpenShell removed."}
   end
 
   # A reaper's unit names the OpenShell directory of the home it was written for. One
@@ -193,9 +212,12 @@ defmodule HalC2.OpenShell.Command do
 
   @doc """
   `server.getOpenShellStatus`: `HalC2.OpenShell.Install.status/0` as a client's
-  settings show it, with each problem's message. Read when a client asks, never
-  pushed. `{:error, %{"_tag" => "ServerOpenShellStatusError"}}` when it takes longer
-  than `timeout` ms, or fails; a failure's details go to the MC's log, not the client.
+  settings show it: each problem's message names the Settings action that fixes it
+  (`settings_problem_message/2`), and `actions` are the operations Settings offers
+  (`settings_actions/1`, run by `HalC2.OpenShell.Operations`). Read when a client
+  asks, never pushed. `{:error, %{"_tag" => "ServerOpenShellStatusError"}}` when it
+  takes longer than `timeout` ms, or fails; a failure's details go to the MC's log,
+  not the client.
   """
   def settings_status(status \\ &Install.status/0, timeout \\ @status_timeout) do
     # Caught inside the task: it is linked, so a raise would take the RPC down with it.
@@ -216,10 +238,13 @@ defmodule HalC2.OpenShell.Command do
          %{
            "_tag" => "ServerOpenShellStatusError",
            "message" =>
-             "OpenShell's status could not be read. Run `hal-c2-service openshell status` on the MC's machine to see why."
+             "OpenShell's status could not be read; the MC's log says why. Refresh to try again."
          }}
 
       {:ok, {:ok, status}} ->
+        actions = settings_actions(status)
+        label = install_label(actions)
+
         {:ok,
          %{
            "supported" => status["supported"],
@@ -230,8 +255,9 @@ defmodule HalC2.OpenShell.Command do
            "problems" =>
              for(
                code <- status["problems"],
-               do: %{"code" => code, "message" => problem_message(code)}
-             )
+               do: %{"code" => code, "message" => settings_problem_message(code, label)}
+             ),
+           "actions" => actions
          }}
 
       _ ->
@@ -239,10 +265,167 @@ defmodule HalC2.OpenShell.Command do
          %{
            "_tag" => "ServerOpenShellStatusError",
            "message" =>
-             "OpenShell's status did not answer within #{div(timeout, 1000)} seconds. Try again, or run `hal-c2-service openshell status` on the MC's machine."
+             "OpenShell's status did not answer within #{div(timeout, 1000)} seconds. Refresh to try again."
          }}
     end
   end
+
+  # What no install fixes: OpenShell has no build for this host.
+  @host_problems ~w(intel-mac unsupported-os unsupported-arch glibc-too-old kernel-too-old
+                    landlock-missing)
+
+  @doc """
+  The operations Settings offers for a status, as `[%{"operation", "label"}]`:
+  Install where OpenShell can be installed and is not; Update or Repair while a
+  gateway this MC runs needs it; Check, Rotate certificates and Uninstall for one
+  it runs; Check and Stop using it for a user's own gateway (`reuse`).
+  """
+  def settings_actions(status) do
+    problems = status["problems"]
+
+    case status["mode"] do
+      nil ->
+        if Enum.any?(problems, &(&1 in @host_problems)),
+          do: [],
+          else: [action("install", "Install")]
+
+      "managed" ->
+        repair =
+          cond do
+            "update-available" in problems -> [action("install", "Update")]
+            problems != [] -> [action("install", "Repair")]
+            true -> []
+          end
+
+        repair ++
+          [
+            action("check", "Check"),
+            action("rotate", "Rotate certificates"),
+            action("uninstall", "Uninstall")
+          ]
+
+      "foreground" ->
+        [
+          action("check", "Check"),
+          action("rotate", "Rotate certificates"),
+          action("uninstall", "Uninstall")
+        ]
+
+      "external" ->
+        [action("check", "Check"), action("uninstall", "Stop using it")]
+    end
+  end
+
+  defp action(operation, label), do: %{"operation" => operation, "label" => label}
+
+  defp install_label(actions),
+    do: Enum.find_value(actions, "Install", &(&1["operation"] == "install" && &1["label"]))
+
+  @doc """
+  What a status problem means and what to do in Settings, where `label` is the
+  install action's (Install, Update or Repair); the CLI's wording is
+  `problem_message/1`.
+  """
+  def settings_problem_message("not-installed", _label), do: "Press Install to install it."
+
+  def settings_problem_message("update-available", _label),
+    do: "This MC pins OpenShell #{Manifest.version()}. Press Update to update."
+
+  def settings_problem_message("service-missing", _label),
+    do: "The gateway's service is gone. Press Repair to put it back."
+
+  def settings_problem_message("service-not-ours", label),
+    do:
+      "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit on the MC's machine, then press #{label}."
+
+  def settings_problem_message("home-moved", label),
+    do:
+      "OpenShell was installed when this HAL-C2 home was at another path, and that path's gateway service is still there. Stop and remove it, or run the MC from the path it was installed at, then press #{label}."
+
+  def settings_problem_message("service-outdated", _label),
+    do: "The gateway's service is not the one this MC writes. Press Repair to rewrite it."
+
+  def settings_problem_message("service-stopped", _label),
+    do: "The gateway's service is not running. Its log says why; Repair restarts it."
+
+  def settings_problem_message("gateway-shared", _label),
+    do:
+      "Another HAL-C2 environment has sandboxes on this gateway, so this MC makes none there. Give each environment a gateway of its own."
+
+  def settings_problem_message("podman-missing", label),
+    do:
+      "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press #{label}: it starts Podman's socket for you."
+
+  def settings_problem_message(code, _label), do: problem_message(code)
+
+  @doc """
+  A lifecycle command's error as Settings shows it: `%{"code", "message",
+  "sandboxes"}`, its first problem's code, each line's message worded for Settings
+  (the CLI's names flags and commands), and for `sandboxes-running` how many this
+  MC has on the gateway, which a client names when it asks before stopping them.
+  """
+  def settings_error(message) do
+    lines = message |> String.split("\n", trim: true) |> Enum.map(&settings_line/1)
+
+    %{
+      "code" => Enum.find_value(lines, &elem(&1, 0)),
+      "message" => lines |> Enum.map(&elem(&1, 1)) |> Enum.join("\n"),
+      "sandboxes" => Enum.find_value(lines, &elem(&1, 2))
+    }
+  end
+
+  defp settings_line(line) do
+    case Regex.run(~r/^\[([a-z0-9-]+)\] (.*)$/s, line) do
+      [_, code, text] -> {code, settings_text(code, text), sandboxes(code, text)}
+      nil -> {nil, String.replace(line, Install.offline_hint(), settings_offline_hint()), nil}
+    end
+  end
+
+  defp sandboxes("sandboxes-running", text) do
+    case Integer.parse(text) do
+      {count, _} -> count
+      :error -> nil
+    end
+  end
+
+  defp sandboxes(_code, _text), do: nil
+
+  defp settings_text("sandboxes-running", text) do
+    count = sandboxes("sandboxes-running", text)
+
+    "#{count} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
+  end
+
+  defp settings_text("sandboxes-unknown", text),
+    do:
+      String.replace(
+        text,
+        "Try again once it answers, or pass --force to go ahead.",
+        "Try again once it answers, or go ahead anyway."
+      )
+
+  defp settings_text("external", text),
+    do:
+      String.replace(
+        text,
+        "Run `hal-c2-service openshell uninstall` first to install one of its own.",
+        "Press Stop using it first, then Install to run one of its own."
+      )
+
+  defp settings_text("not-installed", _text), do: "OpenShell is not installed. Press Install."
+
+  defp settings_text("busy", _text),
+    do: "Another OpenShell command is running on this MC's home. Try again once it finishes."
+
+  defp settings_text(code, text) do
+    if Platform.problem_message(code) == text,
+      do: settings_problem_message(code, "Install"),
+      else: String.replace(text, Install.offline_hint(), settings_offline_hint())
+  end
+
+  defp settings_offline_hint,
+    do:
+      " Without network access, copy the archive to the MC's machine and install it there with `hal-c2-service openshell install --archive <file>`; it is checked against the same hash."
 
   @doc "What a status problem means and what to do about it."
   def problem_message("not-installed"),
