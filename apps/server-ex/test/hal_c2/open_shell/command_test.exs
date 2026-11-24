@@ -121,8 +121,16 @@ defmodule HalC2.OpenShell.CommandTest do
                  "[sandboxes-running] 3 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."
                )
 
-      assert message =~ "3 of this MC's review sandboxes"
+      assert message =~ "3 of this MC's review sandboxes are on the gateway"
       refute message =~ "--drain"
+
+      assert %{"sandboxes" => 1, "message" => one} =
+               Command.settings_error(
+                 "[sandboxes-running] 1 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."
+               )
+
+      assert one =~
+               "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review"
     end
 
     test "a busy lock and a platform problem are worded for Settings" do

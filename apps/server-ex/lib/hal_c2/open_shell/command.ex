@@ -391,9 +391,13 @@ defmodule HalC2.OpenShell.Command do
   defp sandboxes(_code, _text), do: nil
 
   defp settings_text("sandboxes-running", text) do
-    count = sandboxes("sandboxes-running", text)
+    case sandboxes("sandboxes-running", text) do
+      1 ->
+        "1 of this MC's review sandboxes is on the gateway. Going ahead deletes it, which stops its review; or let it finish first."
 
-    "#{count} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
+      count ->
+        "#{count} of this MC's review sandboxes are on the gateway. Going ahead deletes them, which stops their reviews; or let them finish first."
+    end
   end
 
   defp settings_text("sandboxes-unknown", text),
