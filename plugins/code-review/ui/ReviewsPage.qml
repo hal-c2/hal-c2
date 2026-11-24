@@ -698,7 +698,7 @@ Item {
                             font.weight: Font.DemiBold
                         }
 
-                        // The agent of an untrusted pull request runs in an OpenShell sandbox.
+                        // A review whose agent ran in an OpenShell sandbox: every review, unless the user reviews trusted pull requests here.
                         Text {
                             objectName: "codeReviewSandboxed"
                             visible: findings.review?.sandboxed === true

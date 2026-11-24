@@ -516,10 +516,24 @@ ColumnLayout {
             }
         }
 
+        // Reviews run in a sandbox, and fail rather than run here when they cannot:
+        // an agent that cannot run in one fails every review it would sandbox.
+        Label {
+            objectName: "codeReviewSandboxAgent"
+            Layout.fillWidth: true
+            visible: settings.provider !== null && settings.provider.sandboxable === false
+            text: settings.values.reviewTrustedOnThisMachine === true
+                ? qsTr("%1 cannot run in a sandbox yet, so reviews of pull requests HAL-C2 does not trust fail. Pick Claude or Codex to review them.").arg(settings.provider?.name ?? "")
+                : qsTr("Every review runs in a sandbox, which %1 cannot run in yet, so its reviews fail. Pick Claude or Codex.").arg(settings.provider?.name ?? "")
+            color: settings.errorColor
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.body.size
+        }
+
         Toggle {
-            key: "sandboxEveryReview"
-            title: qsTr("Sandbox every review")
-            description: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+            key: "reviewTrustedOnThisMachine"
+            title: qsTr("Review trusted pull requests on this machine")
+            description: qsTr("Off, every review runs in an OpenShell sandbox, with Claude or Codex and an API key; Settings → Review sandboxes shows whether this MC can make one. On, reviews of pull requests HAL-C2 trusts run here as an ordinary agent: the pull request's code and text then reach this machine, its files and its credentials. A pull request opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork, is reviewed in a sandbox either way.")
         }
 
         // Side by side where they fit, one under the other on a narrow screen.

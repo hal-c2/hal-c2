@@ -2311,12 +2311,17 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   @doc """
-  Whether the review of pull request `review` runs in an OpenShell sandbox: when
-  the watch does not trust its pull request (`untrusted/2`), approved or not, or the
-  settings sandbox every review.
+  Whether the review of pull request `review` runs in an OpenShell sandbox: always,
+  unless the user chose to review trusted pull requests on this machine and the
+  watch trusts this one (`untrusted/2`). A sandbox that cannot open fails the review;
+  it never runs here instead.
+
+  The opt-out is a key of its own so that no stored value of the old
+  `sandboxEveryReview`, which a saved settings form wrote as `false` while that was
+  its default, can keep a review out of the sandbox.
   """
   def sandboxed?(settings, review),
-    do: settings["sandboxEveryReview"] == true or untrusted(settings, review) != nil
+    do: settings["reviewTrustedOnThisMachine"] != true or untrusted(settings, review) != nil
 
   # The review's sandbox, with its checkout made from the plugin's clone at the
   # commit checked out here.
