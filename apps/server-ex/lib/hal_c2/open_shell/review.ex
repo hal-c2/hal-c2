@@ -25,8 +25,9 @@ defmodule HalC2.OpenShell.Review do
   import Kernel, except: [binding: 1]
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Broker, Client, Policy, Service}
+  alias HalC2.OpenShell.{Broker, Client, Policy, Route, Service}
   alias HalC2.OpenShell.Proto.Openshell.V1, as: Pb
+  alias HalC2.Plugins.Host
 
   require Logger
 
@@ -100,6 +101,18 @@ defmodule HalC2.OpenShell.Review do
   def command(driver), do: @drivers[driver].command
 
   @doc """
+  The argv the agent of sandboxed `turn` on `driver` runs as: `command/1`'s, with
+  what routes it through the instance's CLIProxyAPI when the review does
+  (`HalC2.OpenShell.Route`).
+  """
+  def command(%{ids: %{thread: thread_id}}, driver) do
+    case binding(thread_id) do
+      %{command: command} -> command
+      _ -> command(driver)
+    end
+  end
+
+  @doc """
   The live binding of sandboxed thread `thread_id`, or nil:
   `%{sandbox, workdir, home, mcp, conn, deadline, timeout_seconds, on_limit}`.
   """
@@ -131,10 +144,9 @@ defmodule HalC2.OpenShell.Review do
       name: binding.sandbox,
       workdir: binding.workdir,
       environment:
-        Map.merge(
-          %{"HOME" => binding.home, "GIT_CONFIG_NOSYSTEM" => "1"},
-          Map.new(environment)
-        ),
+        %{"HOME" => binding.home, "GIT_CONFIG_NOSYSTEM" => "1"}
+        |> Map.merge(Map.get(binding, :environment, %{}))
+        |> Map.merge(Map.new(environment)),
       timeout_seconds: max(binding.deadline - now(), 1),
       on_limit: {__MODULE__, :close, [binding.thread_id, "output"]}
     }
@@ -276,15 +288,11 @@ defmodule HalC2.OpenShell.Review do
           deadline: deadline
         })
 
+      {endpoint, agent} = endpoint(driver, model, broker)
+
       policy =
         Policy.review(%{
-          model: %{
-            host: model.host,
-            port: 443,
-            requests: model.requests,
-            binaries: model.binaries,
-            provider: name
-          },
+          model: Map.merge(endpoint, %{binaries: model.binaries, provider: name}),
           broker: broker,
           tool: spec.tool
         })
@@ -319,6 +327,8 @@ defmodule HalC2.OpenShell.Review do
             deadline: deadline,
             commit: spec.head,
             tokens: spec.tokens,
+            command: elem(agent, 0),
+            environment: elem(agent, 1),
             # `report`: the server is the broker, with the one tool and none of HAL-C2's.
             mcp: %{url: broker.url, authorization: "Bearer " <> token, report: true}
           }
@@ -639,20 +649,56 @@ defmodule HalC2.OpenShell.Review do
 
   # --- making one -------------------------------------------------------------------------
 
+  # The driver's model with the key its provider holds and the route its requests
+  # take (`Route.pick/4`): its API's own host, or the CLIProxyAPI plugin's proxy. The
+  # provider holds the key under the variable the upstream API's takes either way, so
+  # the profile and the sign-in are the same.
   defp model(driver, instance) do
-    case @drivers[driver] do
-      nil ->
-        {:error, refusal(nil, driver)}
-
-      model ->
-        key = HalC2.Settings.instance_env(instance)[model.key] || System.get_env(model.key)
-
-        if is_binary(key) and key != "",
-          do: {:ok, Map.put(model, :credentials, %{model.key => key})},
-          else:
-            {:error,
-             "A review sandbox needs #{model.key} for #{driver_name(driver)}: a sign-in on this machine does not reach the sandbox. Set it in the provider's environment in Settings."}
+    with {:ok, model} <- driver_model(driver),
+         {:ok, args} <- launch_args(driver, instance),
+         {:ok, route} <-
+           Route.pick(
+             driver,
+             %{
+               env: HalC2.Settings.instance_env(instance),
+               args: args,
+               plugin?: instance in Host.added_instances(HalC2.Settings.settings(), "cliproxyapi")
+             },
+             model.key,
+             %{model.key => System.get_env(model.key)}
+           ) do
+      {:ok, Map.merge(model, %{credentials: %{model.key => route.key}, proxy: route.proxy})}
     end
+  end
+
+  defp driver_model(driver) do
+    case @drivers[driver] do
+      nil -> {:error, refusal(nil, driver)}
+      model -> {:ok, model}
+    end
+  end
+
+  defp launch_args("codex", instance) do
+    with {:error, why} <- HalC2.Codex.Provider.launch_args(instance),
+         do: {:error, "This provider's Codex launch arguments cannot be read: #{why}."}
+  end
+
+  defp launch_args(_driver, _instance), do: {:ok, []}
+
+  # The policy's model endpoint (`Policy.review/1`'s, without binaries and provider)
+  # and the agent's `{command, environment}`. A proxy on this machine is reached as the
+  # broker is, at the proxy's port alone (`Route.endpoint/2`), and the requests keep
+  # its path.
+  defp endpoint(driver, %{proxy: nil} = model, _broker),
+    do:
+      {%{host: model.host, port: 443, requests: model.requests, ips: []}, {command(driver), %{}}}
+
+  defp endpoint(driver, %{proxy: proxy} = model, broker) do
+    at = Route.endpoint(proxy, %{host: broker.host, dialed: broker.dialed, ips: broker.ips})
+    requests = for {method, path} <- model.requests, do: {method, proxy.prefix <> path}
+
+    {%{host: at.host, port: at.port, requests: requests, ips: at.ips},
+     Route.agent(driver, at.url, model.key)}
   end
 
   # The provider profile a review's API key is held under: the key alone, as the

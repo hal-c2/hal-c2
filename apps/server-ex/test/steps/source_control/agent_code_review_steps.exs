@@ -32,6 +32,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     "commented" => "comment"
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
+  # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
 
@@ -1194,6 +1195,102 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     checkout = Path.join(context.sandbox_root, "src")
     assert World.git!(checkout, ~w(rev-parse HEAD)) == context.heads[number]
     assert World.git!(checkout, ~w(remote)) == ""
+    context
+  end
+
+  # --- through CLIProxyAPI (#1781) ----------------------------------------------------------
+  # The plugin's instances as the CLIProxyAPI plugin puts them, running on its fake
+  # (`HalC2.Steps.Plugins.CliProxyApi`); the host takes them out of the settings when
+  # the plugin is not on.
+
+  step "{string} reviews with {string} from the CLIProxyAPI plugin",
+       %{args: [@id, label]} = context do
+    {id, key, model} =
+      case label do
+        "Codex via CLIProxyAPI" ->
+          {"plugin_cliproxyapi_codex", "CLIPROXYAPI_API_KEY", "gpt-5.5"}
+
+        "Claude via CLIProxyAPI" ->
+          {"plugin_cliproxyapi_claude", "ANTHROPIC_AUTH_TOKEN", "claude-haiku-4-5"}
+      end
+
+    assert %{"displayName" => ^label} = HalC2.Settings.settings()["providerInstances"][id]
+    assert client_key = HalC2.Settings.instance_env(id)[key]
+
+    context
+    |> save(%{"provider" => id, "model" => model})
+    |> Map.put(:proxy, %{port: context.fake.port, key: client_key})
+  end
+
+  step "{string} reviews with a Codex of its own whose base URL is {string}",
+       %{args: [@id, base]} = context do
+    instance = %{
+      "driver" => "codex",
+      "displayName" => "My proxy",
+      "enabled" => true,
+      "environment" => [proxy_key("MY_KEY")],
+      "config" => %{
+        "launchArgs" =>
+          "-c model_provider=mine -c model_providers.mine.base_url=#{base} " <>
+            "-c model_providers.mine.env_key=MY_KEY -c model_providers.mine.wire_api=responses"
+      }
+    }
+
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "my_proxy"], instance)
+      )
+
+    save(context, %{"provider" => "my_proxy"})
+  end
+
+  step "its agent runs {word} in a sandbox through the proxy, with no credential in its environment",
+       %{args: [agent]} = context do
+    env =
+      case agent do
+        "Codex" ->
+          assert_receive {:sandbox_exec, ["codex", "app-server" | config],
+                          %{workdir: "/review/src", environment: env}},
+                         15_000
+
+          # The broker's address in these scenarios stands for this machine's.
+          assert "model_providers.review.base_url=http://127.0.0.1:#{context.proxy.port}/v1" in config
+
+          assert "model_providers.review.env_key=OPENAI_API_KEY" in config
+          env
+
+        "Claude" ->
+          assert_receive {:sandbox_exec, ["claude" | _],
+                          %{workdir: "/review/src", environment: env}},
+                         15_000
+
+          assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:#{context.proxy.port}"
+          env
+      end
+
+    refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
+    refute Enum.any?(Map.values(env), &(&1 =~ context.proxy.key))
+    context
+  end
+
+  step "its sandbox lets the agent send its model's requests to the proxy's port and nothing else",
+       context do
+    assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
+    assert [model] = spec.policy.network_policies["model"].endpoints
+
+    assert {model.host, model.port, model.allowed_ips} ==
+             {"127.0.0.1", context.proxy.port, ["127.0.0.1"]}
+
+    assert model.credential_binding.provider != ""
+
+    requests = Enum.map(model.rules, &{&1.allow.method, &1.allow.path})
+    assert requests != []
+
+    assert Enum.all?(requests, fn {_, path} ->
+             path =~ ~r"^/v1/(messages|responses|models)(/|$)"
+           end)
+
+    refute Enum.any?(requests, fn {method, path} -> method == "*" or path =~ "*" end)
     context
   end
 
@@ -2818,6 +2915,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # its review starts on the user's approval of its head (`start/2`). No model's API
   # key is in the MC's environment, whatever the runner's holds, until `gateway/1`
   # puts one there.
+  # The proxy's client key, sensitive as the plugin puts it.
+  defp proxy_key(name), do: %{"name" => name, "value" => "sk-test-proxy", "sensitive" => true}
+
   defp trust(context, trusted) do
     World.put_os_env("OPENAI_API_KEY", nil)
     World.put_os_env("ANTHROPIC_API_KEY", nil)

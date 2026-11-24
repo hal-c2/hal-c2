@@ -1990,7 +1990,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        Keyword.merge(opts,
          add_dirs: [],
          sandbox: sandbox,
-         command: HalC2.OpenShell.Review.command("claudeAgent")
+         command: HalC2.OpenShell.Review.command(turn, "claudeAgent")
        )}
     end
   end

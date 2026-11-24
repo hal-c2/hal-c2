@@ -239,8 +239,9 @@ CLIProxyAPI routes Claude and Codex through
 to several Claude or Codex subscriptions and takes turns between them, or sends your
 own API keys upstream. Turned on, it runs the proxy on the machine, listening on
 127.0.0.1 only, and adds **Claude via CLIProxyAPI** and **Codex via CLIProxyAPI**
-to **Settings → Providers**. Agents you start with those use the proxy; your own
-Claude and Codex instances and logins are left as they are.
+to **Settings → Providers**. Agents you start with those use the proxy, and so can
+[reviews in a sandbox](code-review.md#reviews-in-a-sandbox); your own Claude and
+Codex instances and logins are left as they are.
 
 To start, turn the plugin on, open its **CLIProxyAPI** tab and click **Sign in to
 Claude** or **Sign in to Codex**. Open the address it shows in a browser on any

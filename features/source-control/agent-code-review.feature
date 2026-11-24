@@ -13,6 +13,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 #   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1781 (sandboxed reviews through the CLIProxyAPI plugin's providers)
+#   apps/server-ex/lib/hal_c2/open_shell/route.ex (where a sandboxed agent's model requests go)
 
 @plugin-code-review
 Feature: Agent code review
@@ -514,7 +516,8 @@ Feature: Agent code review
     The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
     sandbox: a checkout of the pull request made from a bundle, a home of its own, no
     credential in its environment, and a network that reaches only its model's own
-    requests on the model's API and the one tool it reports with. Its turns take no
+    requests on the model's API, or on the CLIProxyAPI plugin's proxy, and the one tool
+    it reports with. Its turns take no
     checkpoint: git here would run this machine's filters on whatever files the pull
     request's attributes send through them. A pull request is untrusted as the rule on who gets
     reviews says, and its review still waits for the user's approval of its head.
@@ -535,6 +538,32 @@ Feature: Agent code review
       Given pull requests are not trusted and OpenShell is installed
       When #12 is reviewed
       Then its sandbox lets the agent send its model's requests and nothing else on the model's API
+
+    # The CLIProxyAPI plugin's Claude and Codex (#1781): the proxy on this machine is
+    # reached as the report broker is, at the proxy's port alone, and it answers more
+    # than the model's requests, its management API among them.
+    @mc
+    Scenario Outline: A sandboxed review through CLIProxyAPI reaches the proxy's model requests and nothing else
+      Given pull requests are not trusted and OpenShell is installed
+      And a fake CLIProxyAPI
+      And the CLIProxyAPI plugin runs the fake binary
+      And "code-review" reviews with "<agent> via CLIProxyAPI" from the CLIProxyAPI plugin
+      When #12 is reviewed
+      Then its agent runs <agent> in a sandbox through the proxy, with no credential in its environment
+      And its sandbox lets the agent send its model's requests to the proxy's port and nothing else
+      And the review of #12 is finished with the agent's verdict
+
+      Examples:
+        | agent  |
+        | Codex  |
+        | Claude |
+
+    @mc
+    Scenario: A sandboxed review on a provider with a base URL of its own is not run
+      Given pull requests are not trusted and OpenShell is installed
+      And "code-review" reviews with a Codex of its own whose base URL is "http://127.0.0.1:8317/v1"
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "on CLIProxyAPI through the CLIProxyAPI plugin's provider."
 
     @mc
     Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
