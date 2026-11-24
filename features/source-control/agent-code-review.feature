@@ -529,8 +529,6 @@ Feature: Agent code review
       And its sandbox and the sandbox's provider are deleted
       And git on this machine took no checkpoint of the review's checkout
 
-    # The API key is the user's, and the rest of the API opens the rest of their
-    # account with it, their uploaded files among them.
     # The submodules would come with this machine's credentials, from the addresses and
     # at the commits the pull request names, into a sandbox whose report is posted.
     @mc
@@ -542,6 +540,8 @@ Feature: Agent code review
       And the sandbox's checkout has no "third_party/lib"
       And the agent of #12 is told its sandbox gets no submodules
 
+    # The API key is the user's, and the rest of the API opens the rest of their
+    # account with it, their uploaded files among them.
     @mc
     Scenario: A review sandbox reaches its model's requests and nothing else on the model's API
       Given pull requests are not trusted and OpenShell is installed
