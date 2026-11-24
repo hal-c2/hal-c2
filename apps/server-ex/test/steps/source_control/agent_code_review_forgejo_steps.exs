@@ -93,7 +93,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
       "repositories" => [repository],
       "activation" => "selective",
       "publishing" => "draft",
-      "readReviewMd" => false
+      "readReviewMd" => false,
+      # The fake agents run here.
+      "reviewTrustedOnThisMachine" => true
     })
   end
 

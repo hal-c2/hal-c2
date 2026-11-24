@@ -56,13 +56,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     assert %{"status" => "running"} = Fixtures.entry(@id)
 
+    # The fake agents run here: a trusted pull request is reviewed on this machine
+    # unless the scenario keeps the default of sandboxing every review.
     context
     |> Map.merge(%{prs: %{}, heads: %{}})
     |> save(%{
       "provider" => "codex",
       "model" => "fake/one",
       "prompt" => @prompt,
-      "pollMinutes" => 60
+      "pollMinutes" => 60,
+      "reviewTrustedOnThisMachine" => true
     })
     |> watch()
   end
@@ -939,8 +942,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     trust(context, false)
   end
 
-  step "{string} sandboxes every review", %{args: [@id]} = context do
-    save(context, %{"sandboxEveryReview" => true})
+  step "pull requests are trusted", context do
+    trust(context, true)
+  end
+
+  # Saved as null, the setting goes back to its default.
+  step "{string} keeps its default of sandboxing every review", %{args: [@id]} = context do
+    save(context, %{"reviewTrustedOnThisMachine" => nil})
+  end
+
+  step "{string} reviews trusted pull requests on this machine", %{args: [@id]} = context do
+    save(context, %{"reviewTrustedOnThisMachine" => true})
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -1251,6 +1263,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert review["error"] =~ "used up its token budget"
+    context
+  end
+
+  # Asked once the review's thread works in its checkout, which comes after its sandbox.
+  step "no review sandbox was made", context do
+    refute_received {:openshell_request, "CreateSandbox", _}
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    context
+  end
+
+  step "no agent ran on this machine for the review of \#{int}", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["sandboxed"] == true
+    assert HalC2.Streams.get(review["threadId"], "thread", review["threadId"]) == nil
     context
   end
 
@@ -2765,7 +2791,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     settings =
       Map.merge(
-        %{"provider" => "codex", "model" => "fake/one", "prompt" => @prompt, "pollMinutes" => 60},
+        %{
+          "provider" => "codex",
+          "model" => "fake/one",
+          "prompt" => @prompt,
+          "pollMinutes" => 60,
+          "reviewTrustedOnThisMachine" => true
+        },
         settings
       )
 

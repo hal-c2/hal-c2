@@ -191,11 +191,11 @@
       "description": "The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands."
     },
     {
-      "key": "sandboxEveryReview",
-      "label": "Sandbox every review",
+      "key": "reviewTrustedOnThisMachine",
+      "label": "Review trusted pull requests on this machine",
       "type": "boolean",
       "default": false,
-      "description": "Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key."
+      "description": "Off, every review runs in an OpenShell sandbox, with Claude or Codex and an API key; Settings → Review sandboxes shows whether this MC can make one. On, reviews of pull requests HAL-C2 trusts run here as an ordinary agent: the pull request's code and text then reach this machine, its files and its credentials. A pull request opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork, is reviewed in a sandbox either way."
     },
     {
       "key": "sandboxMinutes",

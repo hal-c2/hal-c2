@@ -1624,7 +1624,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           "reviewNewPushes" => true,
           "readReviewMd" => false,
           "reviewsPerAuthorPerDay" => 0,
-          "reviewsPerRepositoryPerDay" => @per_repository
+          "reviewsPerRepositoryPerDay" => @per_repository,
+          # The fake agents run here.
+          "reviewTrustedOnThisMachine" => true
         }
       })
 

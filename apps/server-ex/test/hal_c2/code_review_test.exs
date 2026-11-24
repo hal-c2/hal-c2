@@ -157,7 +157,10 @@ defmodule HalC2.CodeReviewTest do
           "activation" => "selective",
           "publishing" => "draft",
           "reviewNewPushes" => false,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          # The fake agents run here: these tests review trusted pull requests on
+          # this machine unless they say otherwise.
+          "reviewTrustedOnThisMachine" => true
         }
       })
 
@@ -2900,19 +2903,25 @@ defmodule HalC2.CodeReviewTest do
     assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
   end
 
-  test "a trusted pull request is reviewed on this machine unless every review is sandboxed",
+  test "a trusted pull request is reviewed in a sandbox unless the user reviews trusted ones here",
        context do
     sandboxed? = &apply(@server, :sandboxed?, [&1, &2])
+    here = %{"reviewTrustedOnThisMachine" => true}
     review = start_review()
     assert %{"author" => %{"login" => "octocat"}} = review["trust"]
-    assert sandboxed?.(%{}, review) == false
-    assert sandboxed?.(%{"sandboxEveryReview" => true}, review) == true
+    assert sandboxed?.(%{}, review) == true
+    assert sandboxed?.(%{"reviewTrustedOnThisMachine" => false}, review) == true
+    assert sandboxed?.(here, review) == false
 
-    # Nor is one whose author was not read yet, or is no member or collaborator.
-    assert sandboxed?.(%{}, Map.delete(review, "trust")) == true
+    # The old setting, stored as false while that was its default, sandboxes nothing less.
+    assert sandboxed?.(%{"sandboxEveryReview" => false}, review) == true
+
+    # One whose author was not read yet, or is no member or collaborator, is sandboxed
+    # whatever the setting says.
+    assert sandboxed?.(here, Map.delete(review, "trust")) == true
     rules!(context, head: 1, association: "NONE")
     refresh()
-    assert sandboxed?.(%{}, review()) == true
+    assert sandboxed?.(here, review()) == true
   end
 
   # A comment dismissed while its review was being posted changed what the page showed
