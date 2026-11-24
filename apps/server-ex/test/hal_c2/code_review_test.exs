@@ -811,6 +811,14 @@ defmodule HalC2.CodeReviewTest do
            ]) =~
              "submodules could not all be fetched on the reviewing machine, so checks " <>
                "that need them are blocked there: git submodule failed: no route"
+
+    # #1774: a sandbox never gets them, which is no setup problem on the machine.
+    sandboxed =
+      apply(@server, :prompt, [settings, review, Map.put(checkout, "submodules", :sandboxed)])
+
+    assert sandboxed =~ "never fetched into a sandbox"
+    assert sandboxed =~ "under notRun"
+    refute sandboxed =~ "blocked there"
   end
 
   test "a review asked for before its pull request is listed starts at the head of the pull request",

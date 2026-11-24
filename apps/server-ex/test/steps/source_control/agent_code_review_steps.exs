@@ -1197,6 +1197,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the sandbox's checkout has no {string}", %{args: [path]} = context do
+    checkout = Path.join(context.sandbox_root, "src")
+    assert File.read!(Path.join(checkout, ".gitmodules")) =~ path
+    refute File.exists?(Path.join([checkout, path, "README.md"]))
+    context
+  end
+
+  step "the agent of \#{int} is told its sandbox gets no submodules",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["threadId"])
+    prompt = prompt(review["threadId"])
+    assert prompt =~ "never fetched into a sandbox", prompt
+    refute prompt =~ "blocked there", prompt
+    context
+  end
+
   step "its sandbox lets the agent send its model's requests and nothing else on the model's API",
        context do
     assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000

@@ -149,7 +149,9 @@ The checkout carries the submodules the pull request's head pins, fetched over
 HTTP(S) or SSH, never over `git://` or from a path on your machine; the plugin's copy
 keeps their objects, so later reviews fetch only what is new. When a submodule cannot
 be fetched, the review still runs, and its agent reports the checks that needed it
-as blocked on the reviewing machine. A review in a sandbox gets no submodules.
+as blocked on the reviewing machine. A review in a sandbox gets no submodules: they would
+be fetched with this machine's credentials from wherever the pull request points them. Its
+agent reports the checks that need them as not run.
 
 The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and the
 others listed under it are filled in for each pull request. How the agent

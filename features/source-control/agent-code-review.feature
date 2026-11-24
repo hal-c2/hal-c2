@@ -13,6 +13,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 #   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
 
 @plugin-code-review
 Feature: Agent code review
@@ -527,6 +528,17 @@ Feature: Agent code review
       And the review of #12 is finished with the agent's verdict
       And its sandbox and the sandbox's provider are deleted
       And git on this machine took no checkpoint of the review's checkout
+
+    # The submodules would come with this machine's credentials, from the addresses and
+    # at the commits the pull request names, into a sandbox whose report is posted.
+    @mc
+    Scenario: A sandboxed review gets no submodules, and its agent is told why
+      Given pull requests are not trusted and OpenShell is installed
+      And the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the sandbox's checkout has no "third_party/lib"
+      And the agent of #12 is told its sandbox gets no submodules
 
     # The API key is the user's, and the rest of the API opens the rest of their
     # account with it, their uploaded files among them.

@@ -2187,7 +2187,11 @@ defmodule HalC2Plugins.CodeReview do
            :ok <- approved_head(settings, review, checkout, clone),
            # A sandbox gets the two refs alone, so only a checkout the agent works in
            # here gets its submodules.
-           checkout = if(sandboxed, do: checkout, else: submodules(clone, checkout, remote)),
+           checkout =
+             if(sandboxed,
+               do: unfetched(checkout),
+               else: submodules(clone, checkout, remote)
+             ),
            # The attempt's refs are done with once nothing is made from them: at once
            # for a worktree, after its sandbox for a sandboxed review.
            :ok <- if(sandboxed, do: :ok, else: Checkout.release()),
@@ -2280,6 +2284,17 @@ defmodule HalC2Plugins.CodeReview do
       :ok -> checkout
       {:error, reason} -> Map.put(checkout, "submodules", reason)
     end
+  end
+
+  # A sandboxed review's checkout has no submodules: fetched here, they would come with
+  # this machine's credentials from the addresses and at the commits a pull request
+  # names, maybe one the watch does not trust, into a sandbox whose report is posted.
+  # The agent is told so, rather than meeting git's errors in a sandbox that
+  # reaches only its model and the MC.
+  defp unfetched(checkout) do
+    if File.regular?(Path.join(checkout["path"], ".gitmodules")),
+      do: Map.put(checkout, "submodules", :sandboxed),
+      else: checkout
   end
 
   # A pull request the watch does not trust is reviewed only at the commit the user
@@ -2617,8 +2632,7 @@ defmodule HalC2Plugins.CodeReview do
       review_md && "The repository's REVIEW.md says:\n#{review_md}",
       body,
       review["checksLine"],
-      checkout["submodules"] &&
-        "The checkout's submodules could not all be fetched on the reviewing machine, so checks that need them are blocked there: #{checkout["submodules"]}",
+      submodules_line(checkout["submodules"]),
       existing,
       previous,
       @report
@@ -2626,6 +2640,16 @@ defmodule HalC2Plugins.CodeReview do
     |> Enum.reject(&is_nil/1)
     |> Enum.map_join("\n\n", &String.trim/1)
   end
+
+  defp submodules_line(nil), do: nil
+
+  defp submodules_line(:sandboxed),
+    do:
+      "This review runs in a sandbox, whose checkout has none of the submodules the head pins: they are never fetched into a sandbox, which reaches only its model and the MC and holds no credentials. Do not try to fetch them; list each check that needs them under notRun with that reason."
+
+  defp submodules_line(reason),
+    do:
+      "The checkout's submodules could not all be fetched on the reviewing machine, so checks that need them are blocked there: #{reason}"
 
   # The agent's report, its comments placed on the lines of the change; a comment on
   # a line the change does not show goes into the summary.
