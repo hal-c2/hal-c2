@@ -123,6 +123,12 @@ impl ShellBridge {
     }
 
     #[qml(invokable)]
+    fn open_web_link(cx: &Cx, url: Value) -> bool {
+        let url = cx.engine.to_js_string(&url);
+        Bridge(cx.this).open_web_link(cx.engine, &url)
+    }
+
+    #[qml(invokable)]
     fn open_app(cx: &Cx, url: Value) -> bool {
         let url = cx.engine.to_js_string(&url);
         Bridge(cx.this).open_app(cx.engine, &url)
@@ -949,6 +955,22 @@ impl Bridge {
         opened
     }
 
+    /// Opens a link from text someone else wrote (a pull request, its
+    /// comments, a review) in the browser: an http or https address only
+    /// (`web_link`), never one of the app's own, a file or another app's.
+    /// False when it is anything else, or nothing opened it.
+    pub fn open_web_link(self, engine: &Engine, url: &str) -> bool {
+        if !web_link(url) {
+            eprintln!("hal-c2: not opening a link from untrusted text that is not a web address");
+            return false;
+        }
+        let opened = Platform::of(engine).open_url().open(url);
+        if !opened {
+            eprintln!("hal-c2: cannot open {url}");
+        }
+        opened
+    }
+
     /// Hands a link to another app (`slack:`, `mailto:`) to the platform's
     /// opener, the user having agreed; never a web, local or inline address
     /// (desktop-qt's `PagePermissions::engineScheme`). False when it is one,
@@ -1084,6 +1106,21 @@ impl Drop for Reset<'_> {
     }
 }
 
+/// Whether `open_web_link` hands `url` to the browser: an http or https
+/// address with a host, as desktop-qt's `ShellBridge::webLink`.
+fn web_link(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    // `https:path` and `https:///path` have no host, though the url crate
+    // would read one into them.
+    let authority = rest.strip_prefix("//").unwrap_or("");
+    matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
+        && !authority.is_empty()
+        && !authority.starts_with(['/', '\\', '?', '#'])
+        && url::Url::parse(url).is_ok_and(|u| u.host_str().is_some_and(|h| !h.is_empty()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,5 +1235,31 @@ mod tests {
         let url = "file:///.file/id=6571367.2773272/";
         assert!(is_file_reference(url.strip_prefix("file://").unwrap()));
         assert_eq!(local_path(url), None);
+    }
+
+    // desktop-qt's tst_WebLinks: only a web address with a host opens.
+    #[test]
+    fn only_a_web_address_is_a_web_link() {
+        for url in [
+            "https://github.com/acme/shop/pull/42",
+            "http://example.com/a?b=c#d",
+            "HTTPS://example.com",
+        ] {
+            assert!(web_link(url), "{url} opens");
+        }
+        for url in [
+            "hal-c2://new?prompt=hello",
+            "file:///etc/hosts",
+            "mailto:someone@example.com",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "slack://open",
+            "https:relative/path",
+            "https:///path",
+            "src/cart.ts#L12",
+            "",
+        ] {
+            assert!(!web_link(url), "{url} is refused");
+        }
     }
 }
