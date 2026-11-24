@@ -12,7 +12,7 @@ defmodule HalC2.Test.FakeSandbox do
   - `codex login --with-api-key` keeps its stdin as the sandbox's Codex login, and
     tells `test` `{:sandbox_login, key}`: as 0.117's, the fake's Codex turn fails
     without one;
-  - `codex app-server` and `claude` are agents in Elixir that answer their handshakes
+  - `codex app-server` (with any `-c` overrides) and `claude` are agents in Elixir that answer their handshakes
     and play one turn per message: they report through the MCP server they were given,
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
     `opts[:tokens]` tokens used (0), and finish the turn. Claude also reports
@@ -127,7 +127,7 @@ defmodule HalC2.Test.FakeSandbox do
     io.exit.(0)
   end
 
-  defp run(["codex", "app-server"], io, s), do: agent(io, s, "", &codex/3)
+  defp run(["codex", "app-server" | _], io, s), do: agent(io, s, "", &codex/3)
   defp run(["claude" | _], io, s), do: agent(io, s, "", &claude/3)
   defp run(_command, io, _s), do: io.exit.(127)
 

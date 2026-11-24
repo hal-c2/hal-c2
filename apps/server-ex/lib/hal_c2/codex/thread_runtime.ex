@@ -1390,7 +1390,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn),
          {:ok, conn} <-
            Connection.start_link(
-             cmd: HalC2.OpenShell.Review.command("codex"),
+             cmd: HalC2.OpenShell.Review.command(turn, "codex"),
              sandbox: sandbox,
              handler: self(),
              log: ids.thread,
