@@ -726,6 +726,14 @@ defmodule HalC2.OpenShell.Install do
 
   defp drain_reviews([], _conn, _opts), do: :ok
 
+  defp drain_reviews([_] = sandboxes, conn, opts) do
+    if opts[:drain],
+      do: with(:ok <- step(opts, "Deleting 1 review sandbox"), do: delete_all(conn, sandboxes)),
+      else:
+        {:error,
+         "[sandboxes-running] 1 of this MC's sandboxes is on the gateway. Let its review finish, or pass --drain to delete it."}
+  end
+
   defp drain_reviews(sandboxes, conn, opts) do
     if opts[:drain],
       do:

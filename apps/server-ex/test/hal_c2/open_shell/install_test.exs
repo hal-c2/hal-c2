@@ -916,7 +916,8 @@ defmodule HalC2.OpenShell.InstallTest do
     end
 
     test "an update refuses while this MC's sandboxes run, and drain deletes only those", ctx do
-      assert {:error, "[sandboxes-running] 1 of this MC's" <> _} =
+      assert {:error,
+              "[sandboxes-running] 1 of this MC's sandboxes is on the gateway. Let its review finish, or pass --drain to delete it."} =
                install(ctx, "0.1.7", service: false)
 
       assert OpenShell.state()["version"] == "0.1.6"
@@ -926,8 +927,29 @@ defmodule HalC2.OpenShell.InstallTest do
                "theirs"
              ]
 
-      assert {:ok, %{"version" => "0.1.7"}} = install(ctx, "0.1.7", service: false, drain: true)
+      test = self()
+
+      assert {:ok, %{"version" => "0.1.7"}} =
+               install(ctx, "0.1.7",
+                 service: false,
+                 drain: true,
+                 progress: &send(test, {:step, &1})
+               )
+
+      assert_received {:step, "Deleting 1 review sandbox"}
       assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) == ["theirs"]
+    end
+
+    test "two of this MC's sandboxes are counted in the plural", ctx do
+      FakeOpenShell.put_sandbox(ctx.gateway, "review-2", owned())
+
+      assert {:error,
+              "[sandboxes-running] 2 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."} =
+               Install.uninstall()
+
+      test = self()
+      assert :ok = Install.uninstall(drain: true, progress: &send(test, {:step, &1}))
+      assert_received {:step, "Deleting 2 review sandboxes"}
     end
 
     test "the isolation check's leftover sandboxes are deleted without a drain", ctx do

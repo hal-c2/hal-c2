@@ -126,7 +126,7 @@ defmodule HalC2.OpenShell.CommandTest do
 
       assert %{"sandboxes" => 1, "message" => one} =
                Command.settings_error(
-                 "[sandboxes-running] 1 of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."
+                 "[sandboxes-running] 1 of this MC's sandboxes is on the gateway. Let its review finish, or pass --drain to delete it."
                )
 
       assert one =~
