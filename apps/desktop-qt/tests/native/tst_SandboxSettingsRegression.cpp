@@ -349,7 +349,7 @@ private slots:
     mc.mc.drop();
 
     QTRY_COMPARE(shell.section().value(QStringLiteral("refusal")).toString(),
-                 QStringLiteral("The MC restarted during the run; check the status and try again."));
+                 QStringLiteral("The MC lost track of the run; check the status before trying again."));
     QVERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
     QVERIFY(shell.section().value(QStringLiteral("operation")).isNull());
     QTRY_COMPARE(mc.reads, 2);

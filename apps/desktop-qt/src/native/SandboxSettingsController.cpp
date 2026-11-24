@@ -272,13 +272,15 @@ private:
       // A frame with no operation is from an MC that has run none since it
       // started, and its number is when it started. Above the run's number, it
       // started after the run did: it restarted, and the run's outcome went with
-      // the old one. This holds whatever the frame's order: a frame from before
-      // the run (the shape's first, one sent before a reconnect) carries a
-      // smaller number, as the run's is larger than every number before it. An
-      // MC whose clock went back across the restart numbers below the run, and
-      // the number going below the last frame's says so instead.
+      // the old one. That may be only its Operations service, whose unlinked
+      // job still runs and holds the lock, so the words promise no retry. This
+      // holds whatever the frame's order: a frame from before the run (the
+      // shape's first, one sent before a reconnect) carries a smaller number, as
+      // the run's is larger than every number before it. An MC whose clock went
+      // back across the restart numbers below the run, and the number going
+      // below the last frame's says so instead.
       m_asked.clear();
-      m_refusal = QStringLiteral("The MC restarted during the run; check the status and try again.");
+      m_refusal = QStringLiteral("The MC lost track of the run; check the status before trying again.");
     }
     if (!reread(next, ended)) publish();
   }

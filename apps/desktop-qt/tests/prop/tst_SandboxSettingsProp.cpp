@@ -42,7 +42,7 @@ namespace {
 
 const QString kFailure = QStringLiteral("OpenShell's status did not answer within 20 seconds.");
 const QString kBusy = QStringLiteral("OpenShell's install is already running on this MC.");
-const QString kRestarted = QStringLiteral("The MC restarted during the run; check the status and try again.");
+const QString kRestarted = QStringLiteral("The MC lost track of the run; check the status before trying again.");
 
 // How an operation ends.
 enum class Outcome { None, Ok, Stops, Fails };

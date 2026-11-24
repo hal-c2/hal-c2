@@ -224,7 +224,7 @@ describe("review sandboxes", () => {
       emit({ operation: null, run, running: false, steps: [], result: null });
       await host.settled();
       expect(page().lines.join("\n")).toContain(
-        "The MC restarted during the run; check the status and try again.",
+        "The MC lost track of the run; check the status before trying again.",
       );
       expect(mc.callsTo("server.getOpenShellStatus")).toHaveLength(2);
       host.dispatch("section.activate", { id: "operation:uninstall" });
