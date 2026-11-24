@@ -796,6 +796,12 @@ Feature: Office
       When the user minimizes its window
       Then the office stops animating until the window is shown again
 
+    @desktop @mobile @backlog-desktop @backlog-mobile
+    Scenario: The office holds still while its window is covered or on another workspace
+      Given the office page is open and its threads are working
+      When another window covers its window, or the user switches to another workspace
+      Then the office stops animating until its window is on screen again
+
   Rule: Reviewers sit in a corner of their own
 
     @desktop @mobile @backlog-desktop @backlog-mobile

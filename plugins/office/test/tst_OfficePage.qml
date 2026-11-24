@@ -82,6 +82,21 @@ Item {
         }
     }
 
+    // A window whose frames a test draws: a covered one draws none.
+    Component {
+        id: coveredWindow
+        QtObject {
+            signal frameSwapped
+            function update() {
+            }
+        }
+    }
+
+    SignalSpy {
+        id: resumes
+        signalName: "resumed"
+    }
+
     Loader {
         id: loader
 
@@ -3507,6 +3522,32 @@ Item {
             tryVerify(() => !page.game.running, 5000, "a minimized office holds still");
             window.showNormal();
             tryVerify(() => page.game.running, 5000, "and goes on once it is back");
+        }
+
+        function test_a_covered_office_holds_still_until_it_is_drawn_again() {
+            // A compositor draws no frames of a window it does not show
+            // (covered, or on another workspace), though Qt still has it
+            // visible and active.
+            loader.source = "";
+            loader.setSource(Qt.resolvedUrl("../ui/OfficePage.qml"), {
+                plugin: plugin
+            });
+            tryVerify(() => loader.status === Loader.Ready && plugin.watchers["local/office"] !== undefined);
+            plugin.publish(many(2, "t", "working", "typing"));
+            verify(page.game.running);
+            const frames = createTemporaryObject(coveredWindow, test);
+            page.game.frames = frames;
+            tryVerify(() => !page.game.running, 5000, "a covered office holds still");
+            const now = page.game.now;
+            wait(450);
+            compare(page.game.now, now, "its clock with it");
+            resumes.target = page.game;
+            resumes.clear();
+            page.game.tickedAt = Date.now() - 600000;
+            frames.frameSwapped();
+            verify(page.game.running, "a frame drawn again and it goes on");
+            compare(resumes.count, 1, "catching up on the time away");
+            resumes.target = null;
         }
     }
 }
