@@ -111,10 +111,10 @@ def scenario_globs(surface: str) -> list[str]:
     its default_globs does: tst_Scenarios.qml's `// Scenario: name
     (features/file)` comments and the qt-scenarios.feature files whose
     sources name it. tst_Scenarios.qml proves them on Qt as well."""
-    qml = ROOT / "apps/desktop-qt/tests/tst_Scenarios.qml"
-    if surface != "desktop" or not qml.exists():
+    if surface != "desktop":
         return []
-    text = qml.read_text(encoding="utf-8")
+    qml = ROOT / "apps/desktop-qt/tests/tst_Scenarios.qml"
+    text = qml.read_text(encoding="utf-8") if qml.exists() else ""
     globs = [
         f"{m[1]}:{m[0]}"
         for m in re.findall(r"//\s*Scenario:\s*(.+?)\s*\(features/([^)]+\.feature)\)", text)
@@ -285,9 +285,10 @@ def header_names(path: Path, runner: str) -> bool:
 
 
 def analyse():
-    """Returns (retag, ambiguous, unmatched): retag maps
-    (file, 1-based target line) -> {surface: [rows it covers]};
-    ambiguous carries (surface, row, why) a person must resolve."""
+    """Returns (retag, ambiguous, unmatched, stale, unrun, unclaimed):
+    retag maps (file, 1-based target line) -> {surface: [rows it covers]};
+    ambiguous carries (surface, row, why) a person must resolve; the rest
+    map a surface to the globs or RATCHET ids its default Ljós run fails on."""
     all_rows: dict[str, list[Row]] = {}
     for path in sorted(FEATURES.rglob("*.feature")):
         rel = path.relative_to(FEATURES).as_posix()
@@ -298,6 +299,7 @@ def analyse():
     unmatched: dict[str, list[str]] = {}
     stale: dict[str, list[str]] = {}
     unrun: dict[str, list[str]] = {}
+    unclaimed: dict[str, list[str]] = {}
     known_ids = {f"{rel}: {row.name}" for rel, rows in all_rows.items() for row in rows}
 
     for surface in SURFACES:
@@ -323,6 +325,9 @@ def analyse():
                 if header_names(FEATURES / rel, runner):
                     selected.update(id(row) for row in rows)
         stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
+        # A held scenario since backlogged, dropped or blocked here: the Ljós
+        # runner leaves it out, so its run fails the id as missing.
+        unclaimed[surface] = sorted((ratchet & known_ids) - set(row_ids.values()))
         held: set[int] = set()
         for rel, rows in all_rows.items():
             for row in rows:
@@ -397,10 +402,10 @@ def analyse():
                     else:
                         for r in un:
                             tag_at(rel, ex_line, r)
-    return retag, ambiguous, unmatched, stale, unrun
+    return retag, ambiguous, unmatched, stale, unrun, unclaimed
 
 
-def describe(retag, ambiguous, unmatched, stale, unrun) -> list[str]:
+def describe(retag, ambiguous, unmatched, stale, unrun, unclaimed) -> list[str]:
     out = []
     for surface in SURFACES:
         rows = sorted(
@@ -438,6 +443,14 @@ def describe(retag, ambiguous, unmatched, stale, unrun) -> list[str]:
             )
             for entry in unrun[surface]:
                 out.append(f"  {entry}")
+        if unclaimed.get(surface):
+            out.append(
+                f"@{surface}: {len(unclaimed[surface])} RATCHET id(s) name a scenario this surface no longer claims "
+                f"(backlogged, dropped or blocked; the Ljós run leaves it out and fails it as missing; "
+                f"drop the id or the tag):"
+            )
+            for entry in unclaimed[surface]:
+                out.append(f"  {entry}")
         if unmatched.get(surface):
             out.append(
                 f"@{surface}: {len(unmatched[surface])} glob(s) name no scenario "
@@ -469,13 +482,13 @@ def apply_fix(retag) -> None:
 
 def main() -> int:
     fix = "--fix" in sys.argv[1:]
-    retag, ambiguous, unmatched, stale, unrun = analyse()
+    retag, ambiguous, unmatched, stale, unrun, unclaimed = analyse()
     if fix and retag:
         apply_fix(retag)
         n = sum(len({id(r) for per in [p] for r in per.get(s, [])}) for p in retag.values() for s in SURFACES)
         print(f"features:check: retagged {n} scenario(s) at {len(retag)} tag line(s)")
-        retag, ambiguous, unmatched, stale, unrun = analyse()
-    lines = describe(retag, ambiguous, unmatched, stale, unrun)
+        retag, ambiguous, unmatched, stale, unrun, unclaimed = analyse()
+    lines = describe(retag, ambiguous, unmatched, stale, unrun, unclaimed)
     if lines:
         print("\n".join(lines))
         if not fix and retag:
