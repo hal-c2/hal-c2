@@ -993,19 +993,27 @@ pub fn register(steps: &mut Steps) {
         "the page says when reviews start again, in the user's own time",
         |world, _, _| {
             let until = state(&mut world.mc).paused_until.clone();
+            // The time as the user reads it, not the MC's ISO 8601: the
+            // harness pins the zone to UTC and the locale to en-US (world's
+            // clock), so the fixture's own reading is the one expected —
+            // an invalid or wrongly zoned rendering does not produce it.
+            let at = match chrono::DateTime::parse_from_rfc3339(&until) {
+                Ok(at) => at.with_timezone(&chrono::Utc),
+                Err(_) => fail!("the pause's end is not a time: {until}"),
+            };
+            let expected = format!("They start again at {}.", at.format("%-m/%-d %-I:%M %p"));
             let object_name = format!("codeReviewProblem:{}", world.mc.environment_id);
             let brick = shell(world)?;
             shown_named(world, &object_name)?;
             world.wait_for_with(
-                |w| text_now(w, &object_name, brick).contains("They start again at"),
+                |w| text_now(w, &object_name, brick).contains(&expected),
                 |w| {
                     format!(
-                        "the page to say when reviews start again, not {}",
+                        "the page to say \"{expected}\", not {}",
                         text_now(w, &object_name, brick)
                     )
                 },
             )?;
-            // The time as the user reads it, not the MC's ISO 8601.
             let shown = text_now(world, &object_name, brick);
             expect!(
                 !shown.contains(&until[..16.min(until.len())]),
