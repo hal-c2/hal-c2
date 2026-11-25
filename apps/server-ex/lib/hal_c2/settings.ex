@@ -407,8 +407,15 @@ defmodule HalC2.Settings do
     ArgumentError -> {%{}, 0}
   end
 
-  @doc "Replaces the document if it is still at `version`; returns the new version."
-  def put(settings, version), do: GenServer.call(__MODULE__, {:put, settings, version})
+  @doc """
+  Replaces the document if it is still at `version`; returns the new version. A
+  `:client` document (a client's, an agent's, any caller's but the plugin host's) keeps
+  the MC's `plugins` key (`HalC2.Plugins.Host.seal_records/3`): one that leaves the key
+  out keeps the MC's copy, and one that changes it is refused with a
+  `ServerSettingsError`. `HalC2.Plugins` writes as the `:host`.
+  """
+  def put(settings, version, writer \\ :client) when writer in [:client, :host],
+    do: GenServer.call(__MODULE__, {:put, settings, version, writer})
 
   def watch(pid, ref \\ nil) do
     GenServer.call(__MODULE__, {:watch, pid, ref})
@@ -718,19 +725,44 @@ defmodule HalC2.Settings do
     end
   end
 
+  # The part of the `plugins` key a client could mean to change: whether each plugin is
+  # on, what it was granted and its settings. The host's records of the instances it
+  # added and released (`HalC2.Plugins.Host.seal_records/3`) are left out: a client's
+  # write is sealed to the MC's records anyway, and its copy goes stale on its own
+  # writes, as one deleting a plugin's instance ends the plugin's hold on it.
+  @records ~w(providerInstances releasedInstances)
+
+  defp users_part(%{} = plugins) do
+    for {id, config} <- plugins,
+        part = if(is_map(config), do: Map.drop(config, @records), else: config),
+        part != %{},
+        into: %{},
+        do: {id, part}
+  end
+
+  defp users_part(plugins), do: plugins
+
   @impl true
-  def handle_call({:put, settings, version}, from, %{version: version} = state) do
+  def handle_call({:put, settings, version, writer}, from, %{version: version} = state) do
     {:reply, reply, state} =
-      handle_call(
-        {:update,
-         &carry_over(
-           HalC2.Plugins.Host.seal_records(settings, state.settings, true),
-           state.settings,
-           &1
-         )},
-        from,
-        state
-      )
+      if writer == :client and Map.has_key?(settings, "plugins") and
+           users_part(settings["plugins"]) != users_part(state.settings["plugins"]) do
+        {:reply,
+         {:error,
+          "Plugins change through plugins.enable, plugins.disable and plugins.saveSettings, " <>
+            "not the settings document."}, state}
+      else
+        handle_call(
+          {:update,
+           &carry_over(
+             HalC2.Plugins.Host.seal_records(settings, state.settings, writer == :client),
+             state.settings,
+             &1
+           )},
+          from,
+          state
+        )
+      end
 
     # A client is answered with the error type it knows (`ServerSettingsError`).
     reply =
@@ -751,8 +783,16 @@ defmodule HalC2.Settings do
   def handle_call({:update, fun}, _from, state),
     do: save_reply(state, fn disk -> fun.(disk) end)
 
-  def handle_call({:put, _settings, _version}, _from, state),
+  def handle_call({:put, _settings, _version, _writer}, _from, state),
     do: {:reply, {:error, :stale}, state}
+
+  # A write the release before writers were named queued across an in-place upgrade.
+  # The plugin host wrote from its own process then, so that is the host's; every other
+  # caller's is a client's.
+  def handle_call({:put, settings, version}, {caller, _} = from, state) do
+    writer = if caller == Process.whereis(HalC2.Plugins), do: :host, else: :client
+    handle_call({:put, settings, version, writer}, from, state)
+  end
 
   def handle_call({:edit_keybindings, fun}, _from, state) do
     case edit_keybindings_file(fun) do

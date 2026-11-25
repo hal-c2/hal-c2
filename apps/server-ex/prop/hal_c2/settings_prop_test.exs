@@ -109,6 +109,7 @@ defmodule HalC2.SettingsPropTest do
     frequency(
       [
         {6, {:call, __MODULE__, :put_retry, [doc()]}},
+        {1, {:call, __MODULE__, :put_queued_before_upgrade, [doc()]}},
         {3, {:call, __MODULE__, :put_stale, [stale_version(state), doc()]}},
         {2, {:call, __MODULE__, :put_invalid, [doc()]}},
         {3, {:call, __MODULE__, :merge, [doc()]}},
@@ -227,10 +228,12 @@ defmodule HalC2.SettingsPropTest do
   # A file the user left unreadable is not written over: every save is refused until
   # they repair it.
   def next_state(%{file: :garbage} = state, _result, {:call, _, op, _})
-      when op in [:put_retry, :merge, :drop],
+      when op in [:put_retry, :put_queued_before_upgrade, :merge, :drop],
       do: state
 
-  def next_state(state, _result, {:call, _, :put_retry, [doc]}), do: accepted(state, doc)
+  def next_state(state, _result, {:call, _, op, [doc]})
+      when op in [:put_retry, :put_queued_before_upgrade],
+      do: accepted(state, doc)
 
   def next_state(state, _result, {:call, _, :merge, [patch]}),
     do: accepted(state, Map.merge(state.doc, patch))
@@ -455,11 +458,12 @@ defmodule HalC2.SettingsPropTest do
   defp order(%{"at" => at} = record), do: {0, at, record["by"], record}
 
   def postcondition(%{file: :garbage}, {:call, _, op, _}, result)
-      when op in [:put_retry, :merge, :drop],
+      when op in [:put_retry, :put_queued_before_upgrade, :merge, :drop],
       do: match?({:error, _}, result)
 
-  def postcondition(state, {:call, _, :put_retry, _}, result),
-    do: result == {:ok, state.version + 1}
+  def postcondition(state, {:call, _, op, _}, result)
+      when op in [:put_retry, :put_queued_before_upgrade],
+      do: result == {:ok, state.version + 1}
 
   def postcondition(state, {:call, _, :put_over_hand_edit, _}, result),
     do: result == {:ok, state.version + 2}
@@ -537,6 +541,18 @@ defmodule HalC2.SettingsPropTest do
     case write(doc, version) do
       {:ok, %{"version" => version}} -> {:ok, version}
       {:error, %{"_tag" => "StaleSettings"}} -> put_retry(doc)
+      {:error, %{"_tag" => "ServerSettingsError"}} = refused -> refused
+    end
+  end
+
+  # The same writer, as the release before writers were named sent it, still queued when
+  # an in-place upgrade loads this one.
+  def put_queued_before_upgrade(doc) do
+    {_, version} = Settings.get()
+
+    case GenServer.call(Settings, {:put, doc, version}) do
+      {:ok, version} -> {:ok, version}
+      {:error, :stale} -> put_queued_before_upgrade(doc)
       {:error, %{"_tag" => "ServerSettingsError"}} = refused -> refused
     end
   end

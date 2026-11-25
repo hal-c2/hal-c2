@@ -396,7 +396,7 @@ defmodule HalC2.Web.Router do
 
   # Packages `mix hal_c2.plugins.install` just copied in are compiled and loaded.
   post "/api/plugins/rescan" do
-    with_scope(conn, "orchestration:operate", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       {200, %{"plugins" => HalC2.Plugins.rescan()}}
     end)
   end
@@ -404,7 +404,7 @@ defmodule HalC2.Web.Router do
   # Whether a package's code compiles, without enabling it (`plugins.compile`): 200 when
   # it does, 422 with what the compiler found when it does not.
   post "/api/plugins/:id/compile" do
-    with_scope(conn, "orchestration:operate", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       case HalC2.Plugins.handle("compile", %{"id" => id}) do
         {:ok, %{"ok" => true} = check} -> {200, check}
         {:ok, check} -> {422, check}

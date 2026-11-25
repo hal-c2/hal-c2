@@ -228,15 +228,18 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
-  `settings` over `current`. A document a client wrote (`client?`) gets every plugin's
-  records (`added_instances/2`, `released_instances/2`) from `current`, so a copy the
-  client held from before cannot hand a plugin an id. Every saved document keeps only
-  the recorded ids whose instance it still holds, so the save that deletes a plugin's
-  instance ends the plugin's hold on that id before anything reconciles; and only the
-  released ids it holds no instance under, so one the user takes is not the plugin's.
+  `settings` over `current`. A document a client wrote (`client?`) gets the whole
+  `plugins` key from `current`: whether a plugin is on, what it was granted, its settings
+  and its records (`added_instances/2`, `released_instances/2`) change only through
+  `HalC2.Plugins` (`plugins.enable`, `plugins.disable`, `plugins.saveSettings`), which
+  check the scopes and consent each needs; a copy the client held, or edited, cannot move
+  them. Every saved document keeps only the recorded ids whose instance it still holds,
+  so the save that deletes a plugin's instance ends the plugin's hold on that id before
+  anything reconciles; and only the released ids it holds no instance under, so one the
+  user takes is not the plugin's.
   """
   def seal_records(settings, current, client?) do
-    settings = if client?, do: records_from(settings, current), else: settings
+    settings = if client?, do: plugins_from(settings, current), else: settings
 
     case settings do
       %{"plugins" => %{} = plugins} ->
@@ -269,40 +272,10 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
-  @records ["providerInstances", "releasedInstances"]
-
-  defp records_from(client, current) do
-    theirs = current["plugins"]
-
-    theirs =
-      for {id, %{} = config} <- if(is_map(theirs), do: theirs, else: %{}),
-          records = Map.filter(config, fn {key, ids} -> key in @records and is_list(ids) end),
-          records != %{},
-          into: %{},
-          do: {id, records}
-
-    case client["plugins"] || %{} do
-      %{} = plugins ->
-        plugins =
-          Map.new(plugins, fn
-            {id, %{} = config} -> {id, Map.drop(config, @records)}
-            other -> other
-          end)
-
-        plugins =
-          Enum.reduce(theirs, plugins, fn {id, records}, plugins ->
-            case plugins[id] || %{} do
-              %{} = config -> Map.put(plugins, id, Map.merge(config, records))
-              _ -> plugins
-            end
-          end)
-
-        if plugins == %{} and not Map.has_key?(client, "plugins"),
-          do: client,
-          else: Map.put(client, "plugins", plugins)
-
-      _ ->
-        client
+  defp plugins_from(client, current) do
+    case Map.fetch(current, "plugins") do
+      {:ok, plugins} -> Map.put(client, "plugins", plugins)
+      :error -> Map.delete(client, "plugins")
     end
   end
 

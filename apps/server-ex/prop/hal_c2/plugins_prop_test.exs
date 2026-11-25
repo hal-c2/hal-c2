@@ -28,9 +28,11 @@ defmodule HalC2.PluginsPropTest do
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
   loaded must be as it was, whatever the code does as it compiles), and kill the host
-  itself, and break settings.json and mend it (a document the MC cannot read refuses every
+  itself, break settings.json and mend it (a document the MC cannot read refuses every
   save: enabling, disabling and saving settings answer `ServerSettingsError` and change
-  nothing, and a new version's dropped permissions stay granted). After every step the listing, the document, the code that is loaded and
+  nothing, and a new version's dropped permissions stay granted), and write the settings
+  document as a client does, with `plugins.<id>` changed or dropped (the host's part is
+  kept: what is enabled, granted and set changes only through the host). After every step the listing, the document, the code that is loaded and
   running, what the packages' code did at compile time, the host's monitors, the hooks
   of the running plugins (`HalC2.Plugins.Feed`), and the
   events still waiting for a plugin must agree with the model: an event belongs to the
@@ -170,6 +172,7 @@ defmodule HalC2.PluginsPropTest do
         {2, {:call, __MODULE__, :disable, [held]}},
         {1, {:call, __MODULE__, :restart, [held]}},
         {3, {:call, __MODULE__, :save_settings, [held, settings_input()]}},
+        {2, {:call, __MODULE__, :client_write, [held, client_edit()]}},
         {3, {:call, __MODULE__, :call_plugin, [held]}},
         {3, {:call, __MODULE__, :compile, [held]}},
         {2, {:call, __MODULE__, :file, [held, path()]}},
@@ -293,6 +296,9 @@ defmodule HalC2.PluginsPropTest do
       %{"count" => count, "mode" => mode, "token" => token}
     end
   end
+
+  # What a client's settings write changes in `plugins` besides the rest of the document.
+  defp client_edit, do: oneof([:enable, :disable, :grant, :settings, :drop, :drop_all])
 
   defp settings_input do
     let pairs <-
@@ -555,6 +561,11 @@ defmodule HalC2.PluginsPropTest do
           else: {s, :ok}
     end
   end
+
+  # A client writes the whole document, but `plugins` is the host's: a write that
+  # changes it is refused, one that leaves it out keeps the host's, and either way no
+  # plugin is turned on or off, granted more or less, or set otherwise.
+  defp act(s, {:call, _, :client_write, [_id, _edit]}), do: {s, {:client_write, s.broken}}
 
   defp act(s, {:call, _, :disable, [id]}) do
     case s.held[id] do
@@ -903,6 +914,15 @@ defmodule HalC2.PluginsPropTest do
        do: []
 
   defp reply_problems({:exactly, value}, value), do: []
+
+  defp reply_problems({:client_write, broken}, {:client_write, changed, reply}) do
+    case reply do
+      {:error, %{"_tag" => "ServerSettingsError"}} when broken or changed -> []
+      {:ok, _} when not broken and not changed -> []
+      _ -> [{:reply, {:client_write, broken, changed}, reply}]
+    end
+  end
+
   defp reply_problems({:check, ok}, {:ok, %{"ok" => ok}}), do: []
   defp reply_problems({:file, content}, {:ok, %{"content" => content}}), do: []
   defp reply_problems(expect, reply), do: [{:reply, expect, reply}]
@@ -1098,6 +1118,55 @@ defmodule HalC2.PluginsPropTest do
     do: {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => accepted}), observe()}
 
   def disable(id), do: {Plugins.handle("disable", %{"id" => id}), observe()}
+
+  # What a client does: reads the document, changes `plugins.<id>` and writes it back.
+  # The reply carries whether the client changed the key it sent.
+  def client_write(id, edit) do
+    {:ok, %{"settings" => settings, "version" => version}} =
+      HalC2.Rpc.handle("hal-c2.readSettings", %{})
+
+    edited = edit_plugins(settings, id, edit)
+    changed = Map.has_key?(edited, "plugins") and edited["plugins"] != settings["plugins"]
+
+    reply =
+      HalC2.Rpc.handle("hal-c2.writeSettings", %{"settings" => edited, "version" => version})
+
+    {{:client_write, changed, reply}, observe()}
+  end
+
+  defp edit_plugins(settings, _id, :drop_all), do: Map.delete(settings, "plugins")
+
+  defp edit_plugins(settings, id, :drop),
+    do: Map.update(settings, "plugins", %{}, &Map.delete(&1, id))
+
+  defp edit_plugins(settings, id, edit) do
+    plugins = settings["plugins"] || %{}
+    entry = plugins[id] || %{}
+
+    entry =
+      case edit do
+        :enable ->
+          Map.put(entry, "enabled", true)
+
+        :disable ->
+          Map.put(entry, "enabled", false)
+
+        :grant ->
+          Map.put(
+            entry,
+            "granted",
+            Enum.uniq(
+              (entry["granted"] || []) ++ ["projects:read", "slack:read", "turns:observe"]
+            )
+          )
+
+        :settings ->
+          Map.put(entry, "settings", %{"count" => 7})
+      end
+
+    Map.put(settings, "plugins", Map.put(plugins, id, entry))
+  end
+
   def restart(id), do: {Plugins.handle("restart", %{"id" => id}), observe()}
 
   def save_settings(id, input) do

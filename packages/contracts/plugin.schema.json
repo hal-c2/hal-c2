@@ -93,7 +93,13 @@
               "threads:read",
               "threads:create",
               "threads:organize",
-              "agentTools"
+              "agentTools",
+              "turns:observe",
+              "runs:shape",
+              "threads:steer",
+              "threads:notice",
+              "textGeneration",
+              "providers:configure"
             ]
           },
           "reason": {
@@ -124,6 +130,9 @@
               "description": {
                 "type": "string"
               },
+              "exec": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": ["text"]
@@ -148,6 +157,9 @@
               },
               "description": {
                 "type": "string"
+              },
+              "exec": {
+                "type": "boolean"
               },
               "type": {
                 "type": "string",
@@ -174,6 +186,9 @@
               "description": {
                 "type": "string"
               },
+              "exec": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": ["secret"]
@@ -195,6 +210,9 @@
               },
               "description": {
                 "type": "string"
+              },
+              "exec": {
+                "type": "boolean"
               },
               "type": {
                 "type": "string",
@@ -221,6 +239,9 @@
               "description": {
                 "type": "string"
               },
+              "exec": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": ["number"]
@@ -245,6 +266,9 @@
               },
               "description": {
                 "type": "string"
+              },
+              "exec": {
+                "type": "boolean"
               },
               "type": {
                 "type": "string",
@@ -292,6 +316,9 @@
               "description": {
                 "type": "string"
               },
+              "exec": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": ["list"]
@@ -320,6 +347,9 @@
               "description": {
                 "type": "string"
               },
+              "exec": {
+                "type": "boolean"
+              },
               "type": {
                 "type": "string",
                 "enum": ["object"]
@@ -330,6 +360,13 @@
             "additionalProperties": false
           }
         ]
+      }
+    },
+    "execCalls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "contributes": {
