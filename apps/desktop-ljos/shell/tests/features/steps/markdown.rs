@@ -993,11 +993,14 @@ pub fn register(steps: &mut Steps) {
         "the agent answers with a line of text and, on the next line with no blank line between, a table (.+)",
         |world, c, _| {
             // tst_Markdown.qml's lateTables shapes: the delimiter row makes
-            // the line above it a table's header, wherever it sits.
+            // the line above it a table's header, wherever it sits. Inside
+            // a list item each table line carries the item's content
+            // indent: unindented, the table's first line interrupts the
+            // item (markdown.js's interrupts) and the table is top-level.
             let table = "x | y\n--|--\n1 | 2";
             let text = match c[0].as_str() {
                 "at the top level" => format!("Text before\n{table}"),
-                "inside a list item" => format!("- item\n{table}"),
+                "inside a list item" => "- item\n  x | y\n  --|--\n  1 | 2".to_owned(),
                 "inside a quote" => format!("> quote\n{table}"),
                 other => fail!("unknown place for a table: {other}"),
             };
@@ -1017,11 +1020,28 @@ pub fn register(steps: &mut Steps) {
                     )
                 },
             )?;
+            let mut in_list = false;
             for prose in within(world, message, "markdownProse") {
                 let shown = plain(world, prose)?;
                 expect!(
                     !shown.contains('|'),
                     "the table runs on in the paragraph \"{shown}\""
+                );
+                in_list |= shown.contains("item");
+            }
+            // Inside a list item the table is drawn at the item's indent,
+            // not at the margin as a top-level table is.
+            if in_list {
+                let Some(table) = within(world, message, "markdownSegment")
+                    .into_iter()
+                    .find(|&segment| str_of(world, segment, "kind") == "table")
+                else {
+                    fail!("no table segment in the reply")
+                };
+                let indent = int_of(world, table, "indent");
+                expect!(
+                    indent > 0,
+                    "the table is drawn at indent {indent}, outside the list item"
                 );
             }
             Ok(())
