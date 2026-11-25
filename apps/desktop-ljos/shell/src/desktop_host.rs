@@ -334,13 +334,21 @@ pub fn default_node(executable_dir: &Path, release: bool, from_env: Option<&str>
     executable_dir.join(installed)
 }
 
-/// The third-party license manifest staged beside the host
-/// (scripts/stage-runtime.mjs, or `vp run licenses` in a checkout).
-pub fn licenses_beside(entry: &Path) -> PathBuf {
-    entry
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("../licenses/third-party-licenses.json")
+/// This shell's own third-party license manifest, the one place that
+/// names it: `mise run desktop-ljos:licenses`'s apps/desktop-ljos/licenses/
+/// in a checkout, the staged share's licenses/ in a release
+/// (mise-tasks/release/desktop-ljos). It is this app's, not the host's
+/// beside it, so neither the QML tree's home nor the host's moves it.
+pub fn default_licenses(executable_dir: &Path, release: bool) -> PathBuf {
+    if !release {
+        return Path::new(env!("CARGO_MANIFEST_DIR")).join("../licenses/third-party-licenses.json");
+    }
+    let installed = if cfg!(target_os = "macos") {
+        "../Resources/hal-c2/licenses/third-party-licenses.json"
+    } else {
+        "../share/hal-c2/licenses/third-party-licenses.json"
+    };
+    executable_dir.join(installed)
 }
 
 /// The `--url` link as main.cpp hands it on,
@@ -501,10 +509,17 @@ mod tests {
     }
 
     #[test]
-    fn the_licenses_sit_beside_the_host() {
+    fn the_licenses_are_this_apps_own() {
+        let dir = Path::new("/opt/hal-c2/bin");
+        let installed = if cfg!(target_os = "macos") {
+            "/opt/hal-c2/bin/../Resources/hal-c2/licenses/third-party-licenses.json"
+        } else {
+            "/opt/hal-c2/bin/../share/hal-c2/licenses/third-party-licenses.json"
+        };
+        assert_eq!(default_licenses(dir, true), Path::new(installed));
         assert_eq!(
-            licenses_beside(Path::new("/opt/share/hal-c2/host/main.ts")),
-            Path::new("/opt/share/hal-c2/host/../licenses/third-party-licenses.json")
+            default_licenses(dir, false),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../licenses/third-party-licenses.json")
         );
     }
 
