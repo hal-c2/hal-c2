@@ -580,6 +580,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  @mc_scoped_methods HalC2.Rpc.scoped_methods()
+
   # Whether a relative write's root is a project belongs to the environment's MC, which
   # checks it again with the caller's scopes (`HalC2.Rpc.handle_with_scopes/3`); a write
   # by full path is refused here, before it is routed anywhere.
@@ -589,6 +591,11 @@ defmodule HalC2.Web.Socket do
       do: ["terminal:operate"],
       else: [HalC2.Rpc.required_scope(method)]
   end
+
+  # A settings write is compared with the settings of the MC it changes, and a plugin's
+  # save or call with that MC's plugin: there, with the caller's scopes.
+  defp local_scopes(method, _payload) when method in @mc_scoped_methods,
+    do: [HalC2.Rpc.required_scope(method)]
 
   defp local_scopes(method, payload), do: HalC2.Rpc.required_scopes(method, payload)
 
@@ -652,7 +659,7 @@ defmodule HalC2.Web.Socket do
   defp call_mc(state, socket, mc, method, payload, timeout) do
     {module, fun, args} =
       cond do
-        method == "projects.writeFile" ->
+        method in @mc_scoped_methods ->
           {HalC2.Rpc, :handle_with_scopes, [method, payload || %{}, state.scopes]}
 
         method in ["hal-c2.createPairingLink", "server.getOpenShellStatus"] ->

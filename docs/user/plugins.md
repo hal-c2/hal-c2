@@ -102,6 +102,13 @@ What a plugin asks for limits what it may do on the MC, not in the app: its
 pages and other parts run in the app with the app's access, like any UI plugin,
 so install only plugins you trust.
 
+Turning a plugin on or off, **Look for plugins** and **Check that it compiles**
+need a device that may manage access, as an administrator's may. Settings and
+actions that change what a plugin runs or what it lets reach this machine, such as
+CLIProxyAPI's proxy, its accounts and keys, or Code Review's repositories, agent,
+access and trusted logins, need a device that may use terminals, as an ordinary
+pairing may. A device paired without that is told why its change was refused.
+
 To see whether a plugin's code compiles without turning it on, use **Check that
 it compiles** on its entry; the entry then says where the code fails, until the
 plugin changes or you turn it on. The check grants nothing and leaves nothing

@@ -295,7 +295,7 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     {settings, version} = HalC2.Settings.get()
     granted = %{@keeper => %{"granted" => ["threads:create"]}}
     settings = Map.update(settings, "plugins", granted, &Map.merge(&1, granted))
-    {:ok, _} = HalC2.Settings.put(settings, version)
+    {:ok, _} = HalC2.Settings.put(settings, version, :host)
     keeper(:installed)
   end
 
