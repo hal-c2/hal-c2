@@ -14,7 +14,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
@@ -529,6 +529,11 @@ fn fetch_descriptor_with(
 pub struct StartedMc {
     pub origin: String,
     child: Child,
+    /// The write end of the MC's bootstrap stdin, held open for
+    /// as long as the MC is this shell's: every death of the
+    /// shell process, a native crash included, closes it, and
+    /// the MC stops itself on that EOF (its `stdinLifeline`).
+    stdin: Option<ChildStdin>,
     tail: Arc<Mutex<String>>,
     stopped: bool,
     /// A caller's own slot for this MC's process group (a
@@ -580,20 +585,51 @@ impl StartedMc {
         status
     }
 
+    /// Whether anything of this MC's process group still exists
+    /// (the child itself counts until it is reaped).
+    fn group_alive(&self) -> bool {
+        #[cfg(unix)]
+        {
+            libc::pid_t::try_from(self.child.id()).is_ok_and(group_exists)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// SIGTERM to the MC's process group (mix, erl, and anything they
-    /// spawned); after `grace` it is killed.
+    /// spawned); after `grace` it is killed. The grace is the
+    /// group's, not the wrapper's: the wrapper may exit on the
+    /// SIGTERM while a descendant that ignores it keeps running, so
+    /// cleanup follows the group to its end and only then clears
+    /// the tracking. The child is polled directly, not through
+    /// [`StartedMc::try_wait`], which would clear that tracking at
+    /// the wrapper's exit.
     pub fn stop(&mut self, grace: Duration) {
-        if self.stopped || self.try_wait().is_some() {
+        if self.stopped {
             return;
         }
         self.stopped = true;
+        // Closing the bootstrap pipe lets the MC stop itself on
+        // the EOF beside the group's SIGTERM.
+        drop(self.stdin.take());
         signal_group(&self.child, false);
         let deadline = Instant::now() + grace;
-        while self.try_wait().is_none() && Instant::now() < deadline {
+        let mut exited = false;
+        while Instant::now() < deadline {
+            if !exited {
+                exited = self.child.try_wait().is_ok_and(|s| s.is_some());
+            }
+            if exited && !self.group_alive() {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
-        if self.try_wait().is_none() {
+        if self.group_alive() {
             signal_group(&self.child, true);
+        }
+        if !exited && self.child.try_wait().is_ok_and(|s| s.is_none()) {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
@@ -601,10 +637,23 @@ impl StartedMc {
     }
 }
 
+/// Whether a process group still exists: signal 0 reaches it, or
+/// may not be signalled (EPERM) but is there.
+#[cfg(unix)]
+fn group_exists(pgid: libc::pid_t) -> bool {
+    if pgid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 only checks whether the group may be signalled.
+    let reached = unsafe { libc::kill(-pgid, 0) } == 0;
+    reached || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 /// A started MC nobody stops — a panic unwinding past it, a launch
 /// failing after the spawn, a host dropped on an early return — is
 /// stopped here rather than left running with no owner. One already
-/// exited or stopped makes this a no-op (see [`StartedMc::stop`]).
+/// stopped, or exited with its whole group, makes this a no-op
+/// (see [`StartedMc::stop`]).
 impl Drop for StartedMc {
     fn drop(&mut self) {
         self.stop(Duration::from_millis(1_500));
@@ -683,14 +732,6 @@ fn stop_started_group(pgid: libc::pid_t) {
     signal_started_group(pgid, true);
 }
 
-/// Stops the MC this shell started, if any — the signal handler's
-/// and the panic hook's work, against the process-wide slot. A
-/// found MC was never registered, so this leaves it alone.
-pub fn stop_started_mc() {
-    #[cfg(unix)]
-    stop_started_group(STARTED_MC_PGID.load(Ordering::SeqCst));
-}
-
 /// Stops the MC tracked in `slot` (see [`StartedMc::track_in`]), if
 /// any: a host whose start is still in flight stops its own MC
 /// this way on quit. An empty slot — a found MC, or one already
@@ -715,12 +756,22 @@ extern "C" fn on_termination_signal(signal: libc::c_int) {
     }
 }
 
-/// The Node host's lifeline, in process: SIGINT, SIGTERM and SIGHUP
-/// stop the MC this shell started before the shell dies of the
-/// signal, and a panic on any thread stops it on the way down (its
-/// owner may be another thread that never unwinds). Installed once;
-/// SIGKILL has no in-process answer, as it had none for the host
-/// process itself. A no-op where there are no Unix signals.
+/// The Node host's termination lifeline, in process: SIGINT,
+/// SIGTERM and SIGHUP stop the MC this shell started before the
+/// shell dies of the signal. Installed once; a no-op where there
+/// are no Unix signals.
+///
+/// There is deliberately no panic hook. The profiles in this
+/// workspace do not set `panic`, so they use Rust's default
+/// unwinding, and the shell catches and recovers from some
+/// panics; a hook cannot tell those from a panic that will end
+/// the process, so stopping the MC there would kill live agent
+/// sessions over a recoverable failure. A panic that unwinds the
+/// MC's owner drops [`StartedMc`] and stops it. A panic or native
+/// crash that takes the whole process down without unwinding
+/// closes the bootstrap stdin [`start_mc`] holds open, and the
+/// MC's own stdin lifeline stops it there (see
+/// `HalC2.Desktop` in apps/server-ex).
 pub fn install_mc_lifeline() {
     #[cfg(unix)]
     {
@@ -736,11 +787,6 @@ pub fn install_mc_lifeline() {
                     libc::sigaction(signal, &action, std::ptr::null_mut());
                 }
             }
-            let previous = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                stop_started_mc();
-                previous(info);
-            }));
         });
     }
 }
@@ -748,6 +794,16 @@ pub fn install_mc_lifeline() {
 /// Spawns the MC and hands it the bootstrap line; its output is
 /// logged as `[mc]` and kept as a tail. `node` is what the MC runs
 /// its JavaScript sidecars on (`HAL_C2_NODE_COMMAND`).
+///
+/// The bootstrap asks for the stdin lifeline (`stdinLifeline`)
+/// and the returned [`StartedMc`] holds the pipe's write end
+/// open: the shell process dying by any means closes it, and the
+/// MC stops itself on the EOF. That is the portable half of the
+/// lifeline the Node host got from its own stdin closing when
+/// the Qt shell died — it needs no `PR_SET_PDEATHSIG` (Linux
+/// only, and tied to the spawning thread, which the launch's
+/// worker outlives only sometimes), and it covers macOS the
+/// same way.
 pub fn start_mc(
     launch: &Launch,
     port: u16,
@@ -800,37 +856,57 @@ pub fn start_mc(
     .collect();
     for stream in streams {
         let tail = tail.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stream).lines() {
-                let Ok(line) = line else { break };
-                eprintln!("[mc] {line}");
-                let mut kept = tail.lock().unwrap();
-                kept.push_str(&line);
-                kept.push('\n');
-                if kept.len() > 4_000 {
-                    let cut = kept.len() - 4_000;
-                    let cut = (cut..=kept.len())
-                        .find(|i| kept.is_char_boundary(*i))
-                        .unwrap_or(kept.len());
-                    kept.drain(..cut);
-                }
-            }
-        });
+        std::thread::spawn(move || drain_output(stream, tail));
     }
-    let mut bootstrap = serde_json::json!({"port": port, "host": MC_HOST});
+    let mut bootstrap = serde_json::json!({"port": port, "host": MC_HOST, "stdinLifeline": true});
     if let Some(home) = home {
         bootstrap["halC2Home"] = home.to_string_lossy().into_owned().into();
     }
-    if let Some(mut stdin) = child.stdin.take() {
+    // Kept, not closed: its EOF is the lifeline the bootstrap
+    // asked for, and closing it here would stop the MC at once.
+    let mut stdin = child.stdin.take();
+    if let Some(stdin) = stdin.as_mut() {
         let _ = writeln!(stdin, "{bootstrap}");
     }
     Ok(StartedMc {
         origin: format!("http://{MC_HOST}:{port}"),
         child,
+        stdin,
         tail,
         stopped: false,
         tracked: None,
     })
+}
+
+/// Logs one of the MC's streams as `[mc]` lines and keeps its tail
+/// for error messages, as the Node host forwarded the child's
+/// chunks: read as bytes and decoded lossily, so output that is
+/// not UTF-8 (a release's native diagnostic) garbles its line
+/// instead of ending the drain and losing every line after it.
+fn drain_output(stream: impl Read, tail: Arc<Mutex<String>>) {
+    let mut reader = BufReader::new(stream);
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        match reader.read_until(b'\n', &mut bytes) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let line = String::from_utf8_lossy(&bytes);
+        let line = line.strip_suffix('\n').unwrap_or(&line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        eprintln!("[mc] {line}");
+        let mut kept = tail.lock().unwrap();
+        kept.push_str(line);
+        kept.push('\n');
+        if kept.len() > 4_000 {
+            let cut = kept.len() - 4_000;
+            let cut = (cut..=kept.len())
+                .find(|i| kept.is_char_boundary(*i))
+                .unwrap_or(kept.len());
+            kept.drain(..cut);
+        }
+    }
 }
 
 /// How an exit reads: its code, or its signal's number as Qt reports.
@@ -873,6 +949,45 @@ fn wait_for_mc(
     ))
 }
 
+/// The rendezvous between a launch's spawn and its owner's stop.
+/// The spawn and its registration in [`Live::started_pgid`] run
+/// under this gate's lock, so [`SpawnGate::cancel`] returning
+/// means either nothing will spawn, or what spawned is already
+/// tracked where the stop can reach it. Without it, a stop that
+/// lands after planning but before the spawn returns to a worker
+/// that then starts an MC nobody is left to stop — the updater
+/// replaces the MC on the strength of that stop, and the shell
+/// may quit before the worker's later check cleans the child up.
+#[derive(Default)]
+pub struct SpawnGate {
+    cancelled: Mutex<bool>,
+}
+
+impl SpawnGate {
+    /// No spawn after this, and none in flight untracked: an
+    /// in-flight spawn holds the gate until its MC is tracked.
+    pub fn cancel(&self) {
+        *self.cancelled.lock().unwrap() = true;
+    }
+
+    /// A fresh start may spawn again.
+    pub fn reset(&self) {
+        *self.cancelled.lock().unwrap() = false;
+    }
+
+    /// Runs `spawn` — the spawn itself and its tracking, as one
+    /// step against [`SpawnGate::cancel`] — unless cancelled.
+    fn run<T>(&self, spawn: impl FnOnce() -> Result<T, String>) -> Option<Result<T, String>> {
+        let cancelled = self.cancelled.lock().unwrap();
+        if *cancelled {
+            return None;
+        }
+        let spawned = spawn();
+        drop(cancelled);
+        Some(spawned)
+    }
+}
+
 /// How a launch reads its environment, as [`storage::resolve`] takes it.
 pub type Env = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
@@ -894,6 +1009,9 @@ pub struct Live {
     /// spawn until it exits or is handed over: how a quit during
     /// the start stops it (see [`stop_tracked_mc`]).
     pub started_pgid: Arc<AtomicI32>,
+    /// Whether this launch may still spawn, made one step with
+    /// the tracking above against its owner's stop.
+    pub spawn_gate: Arc<SpawnGate>,
 }
 
 impl Live {
@@ -913,6 +1031,7 @@ impl Live {
             timeout: START_TIMEOUT,
             is_alive: Arc::new(process_is_alive),
             started_pgid: Arc::new(AtomicI32::new(0)),
+            spawn_gate: Arc::default(),
         }
     }
 
@@ -975,8 +1094,19 @@ fn standalone_with_fetch(
         Plan::Found(found) => return Ok((found, None)),
         Plan::Start { launch, port, dirs } => (launch, port, dirs),
     };
-    let mut started = start_mc(&launch, port, args.base_dir.as_deref(), &live.node)?;
-    started.track_in(&live.started_pgid);
+    // The spawn and its tracking are one step against a stop:
+    // cancelled first, nothing spawns; spawned first, the stop
+    // finds it tracked (see [`SpawnGate`]). A found MC never
+    // reaches this.
+    let spawned = live.spawn_gate.run(|| {
+        let mut started = start_mc(&launch, port, args.base_dir.as_deref(), &live.node)?;
+        started.track_in(&live.started_pgid);
+        Ok(started)
+    });
+    let mut started = match spawned {
+        Some(started) => started?,
+        None => return Err("The MC start was stopped before the MC spawned.".into()),
+    };
     match wait_for_mc(&mut started, live.timeout, fetch) {
         Ok(Ok(())) => {}
         Ok(Err(status)) if exit_code(status) == HOME_IN_USE => {
@@ -1027,8 +1157,17 @@ fn not_an_mc(address: &str) -> String {
 /// through the MC crate's pairing exchange.
 pub fn attach(url: &str, home: Option<&Path>, live: &Live) -> Result<Access, String> {
     let link = read_pairing_link(url).ok_or_else(|| not_an_mc(url))?;
-    let descriptor = fetch_descriptor(&link.origin, Duration::from_secs(2))
-        .map_err(|e| format!("Cannot reach the MC at {}: {e}", link.origin))?;
+    // The pairing exchange's own route (and the Node host's
+    // fetch was direct): an inherited proxy that refuses a
+    // loopback, LAN or Tailscale MC must not fail the attach
+    // before the exchange can run, while a remote HTTPS MC
+    // keeps the proxy that may be its only route.
+    let descriptor = fetch_descriptor_with(
+        &link.origin,
+        Duration::from_secs(2),
+        pairing::direct_route(&link.origin),
+    )
+    .map_err(|e| format!("Cannot reach the MC at {}: {e}", link.origin))?;
     if descriptor.is_none() {
         return Err(not_an_mc(&link.origin));
     }
@@ -1332,6 +1471,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             is_alive: Arc::new(process_is_alive),
             started_pgid: Arc::new(AtomicI32::new(0)),
+            spawn_gate: Arc::default(),
         };
         let release_dir = temp.path().join("mc");
         let env: Env = {
@@ -1532,6 +1672,7 @@ mod tests {
             timeout,
             is_alive,
             started_pgid: Arc::new(AtomicI32::new(0)),
+            spawn_gate: Arc::default(),
         };
         (live, temp.path().join("home"), port)
     }
@@ -1612,9 +1753,9 @@ mod tests {
     #[test]
     fn the_spawned_mcs_probe_bypasses_the_environments_proxy() {
         // ureq's default agent reads the proxy environment; the
-        // loopback probe's must not. (The attach preflight keeps
-        // the default policy - only its config is not asserted
-        // here, since it follows the environment either way.)
+        // direct agent the loopback probe (and the attach
+        // preflight, on the same policy as its exchange) is
+        // built with must not.
         assert!(
             descriptor_agent(Duration::from_secs(1), true)
                 .config()
@@ -1665,6 +1806,53 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         };
         assert_gone(sleeper);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_start_spawns_nothing() {
+        // The stop landed before the spawn: the gate the host's
+        // stop cancels keeps the launch from starting an MC after
+        // that stop has returned.
+        let temp = tempfile::tempdir().unwrap();
+        let (live, home, _port) = fake_release_live(
+            &temp,
+            "mkdir -p \"$home\"\nprintf ran > \"$home/ran\"\nsleep 60",
+            Duration::from_secs(10),
+            Arc::new(process_is_alive),
+        );
+        live.spawn_gate.cancel();
+        let error = match standalone_with_fetch(
+            &HostArgs {
+                base_dir: Some(home.clone()),
+                ..HostArgs::default()
+            },
+            &live,
+            &|_, _| Ok(None),
+        ) {
+            Ok(_) => panic!("a cancelled start gives no access"),
+            Err(error) => error,
+        };
+        assert!(error.contains("stopped before"), "{error}");
+        assert!(!home.join("ran").exists(), "the fake MC ran anyway");
+    }
+
+    #[test]
+    fn output_past_invalid_utf8_is_kept() {
+        // Not UTF-8 in the middle: that line garbles, the drain
+        // goes on, and the lines after it still reach the tail a
+        // startup failure is reported with.
+        let tail = Arc::new(Mutex::new(String::new()));
+        drain_output(
+            std::io::Cursor::new(b"before\nbad \xff\xfe bytes\nafter\n".to_vec()),
+            tail.clone(),
+        );
+        let kept = tail.lock().unwrap().clone();
+        assert!(
+            kept.contains("before") && kept.contains("after"),
+            "{kept:?}"
+        );
+        assert!(kept.contains('\u{fffd}'), "{kept:?}");
     }
 
     #[cfg(unix)]
@@ -1758,6 +1946,44 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn stopping_takes_a_descendant_that_ignores_term() {
+        // The wrapper (the outer sh, the group leader) dies on
+        // SIGTERM; its sleep ignores SIGTERM (an ignored signal
+        // stays ignored across exec) and is in the same group.
+        // The stop's grace is the group's: after it, the kill
+        // still reaches the descendant the wrapper left behind.
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("ignoring-pid");
+        let launch = Launch {
+            command: "sh".into(),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "sh -c 'trap \"\" TERM; exec sleep 60' & echo $! > {}; wait",
+                    pid_file.display()
+                ),
+            ],
+            cwd: None,
+        };
+        let mut mc = start_mc(&launch, 4123, None, Path::new("node")).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let ignorer: i64 = loop {
+            if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "the fake MC never slept");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(process_is_alive(ignorer));
+        mc.stop(Duration::from_millis(300));
+        assert!(mc.try_wait().is_some());
+        assert_gone(ignorer);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_started_mc_gets_the_bootstrap_line_and_the_development_environment() {
         let temp = tempfile::tempdir().unwrap();
         let record = temp.path().join("record");
@@ -1766,7 +1992,7 @@ mod tests {
             args: vec![
                 "-c".into(),
                 format!(
-                    "cat > {}; printf 'MIX_ENV=%s NODE=%s BOOT=%s' \"$MIX_ENV\" \"$HAL_C2_NODE_COMMAND\" \"$HAL_C2_BOOTSTRAP_STDIN\"",
+                    "IFS= read -r line; printf %s \"$line\" > {}; printf 'MIX_ENV=%s NODE=%s BOOT=%s' \"$MIX_ENV\" \"$HAL_C2_NODE_COMMAND\" \"$HAL_C2_BOOTSTRAP_STDIN\"",
                     record.display()
                 ),
             ],
@@ -1785,6 +2011,10 @@ mod tests {
         assert_eq!(bootstrap["port"], 4123);
         assert_eq!(bootstrap["host"], "127.0.0.1");
         assert_eq!(bootstrap["halC2Home"], "/scratch/home");
+        // Asked for, and the line arrived while the pipe stays
+        // open behind it: the script exited without waiting for
+        // the EOF whose closing would stop a real MC.
+        assert_eq!(bootstrap["stdinLifeline"], true);
         // Its output is kept until the reader threads land.
         let deadline = Instant::now() + Duration::from_secs(5);
         while mc.output().is_empty() && Instant::now() < deadline {

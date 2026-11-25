@@ -12,9 +12,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::mc_launcher::{self, Live, StartedMc};
+use crate::mc_launcher::{self, Live, SpawnGate, StartedMc};
 
 /// How the host is run: the host arguments (`--attach`, `--dev`,
 /// `--base-dir`, as main.cpp hands them on) and what a launch is
@@ -44,6 +44,9 @@ pub struct DesktopHost {
     /// The process group of an MC a start of this host spawned and
     /// has not handed over yet, so `stop` reaches it mid-start.
     started_pgid: Arc<std::sync::atomic::AtomicI32>,
+    /// Cancels a start that has not spawned yet, and makes a
+    /// spawning start tracked above before `stop` looks there.
+    spawn_gate: Arc<SpawnGate>,
 }
 
 #[derive(Default)]
@@ -58,6 +61,11 @@ struct State {
     /// The run whose MC the watch thread follows, so a run gets one
     /// watch even when an adopted MC adds a second caller.
     watching_run: Option<u64>,
+    /// The run whose `Ready` the shell has been told, recorded
+    /// under this lock right after the telling: a watch (an
+    /// adopted MC's, started by the superseded run) must not
+    /// report that MC's exit before its run's `Ready`.
+    ready_run: Option<u64>,
 }
 
 impl DesktopHost {
@@ -67,6 +75,7 @@ impl DesktopHost {
             events: Arc::new(events),
             state: Arc::default(),
             started_pgid: Arc::default(),
+            spawn_gate: Arc::default(),
         }
     }
 
@@ -74,8 +83,8 @@ impl DesktopHost {
     /// one is a failure.
     pub fn start(&self) {
         // Before anything is spawned: from here on a termination
-        // signal or a panic stops the MC this shell starts, as the
-        // Node host's signal handlers did.
+        // signal stops the MC this shell starts, as the Node
+        // host's signal handlers did.
         mc_launcher::install_mc_lifeline();
         let run = {
             // A host started again (the updater's, after a failed
@@ -86,12 +95,14 @@ impl DesktopHost {
             state.run += 1;
             state.run
         };
+        self.spawn_gate.reset();
         let options = self.options.clone();
         let state = self.state.clone();
         let events = self.events.clone();
         let started_pgid = self.started_pgid.clone();
+        let spawn_gate = self.spawn_gate.clone();
         std::thread::spawn(move || {
-            let result = launch(&options, &started_pgid);
+            let result = launch(&options, &started_pgid, &spawn_gate);
             let mut watch = false;
             let event = match result {
                 Ok((access, started)) => {
@@ -145,8 +156,22 @@ impl DesktopHost {
                 }
                 Err(message) => Event::Failed(message),
             };
-            if state.lock().unwrap().run == run {
+            // A stopped run says nothing: an MC `stop` killed
+            // mid-start launches as a failure here, and a stop
+            // (the updater's, a quit) is not one.
+            let current = {
+                let state = state.lock().unwrap();
+                state.run == run && !state.stopping
+            };
+            if current {
+                let ready = matches!(event, Event::Ready { .. });
                 events(event);
+                if ready {
+                    // Told, and recorded under the lock an adopted
+                    // MC's watch checks: from here that watch may
+                    // report the MC's end, never before this.
+                    state.lock().unwrap().ready_run = Some(run);
+                }
                 // Ready is said before the MC's end can be: the watch
                 // only ever follows it.
                 if watch {
@@ -164,6 +189,12 @@ impl DesktopHost {
             state.stopping = true;
             state.mc.take()
         };
+        // Before the tracked stop looks: from here a start still
+        // in flight either has its MC tracked in this host's slot
+        // or will never spawn one. Without this, a stop between
+        // planning and spawning returned while the worker went on
+        // to start an MC nobody was left to stop.
+        self.spawn_gate.cancel();
         match mc {
             Some(mut mc) => mc.stop(Duration::from_secs(2)),
             // None here may still be starting on the worker thread
@@ -171,7 +202,20 @@ impl DesktopHost {
             // tracked in this host's slot since its spawn, so stop
             // it there. A found MC was never tracked and is left
             // alone.
-            None => mc_launcher::stop_tracked_mc(&self.started_pgid),
+            None => {
+                mc_launcher::stop_tracked_mc(&self.started_pgid);
+                // The tracked stop signals the group; the worker
+                // reaps it and clears the slot. Give it a moment
+                // so the MC is reaped, not only signalled, before
+                // stop returns — the updater replaces the MC on
+                // the strength of this stop.
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while self.started_pgid.load(std::sync::atomic::Ordering::SeqCst) != 0
+                    && Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
         }
     }
 }
@@ -180,6 +224,7 @@ impl DesktopHost {
 fn launch(
     options: &Options,
     started_pgid: &Arc<std::sync::atomic::AtomicI32>,
+    spawn_gate: &Arc<SpawnGate>,
 ) -> Result<(mc_launcher::Access, Option<StartedMc>), String> {
     let args = mc_launcher::parse_host_args(&options.arguments)?;
     let mut live = options.live.clone().unwrap_or_else(|| {
@@ -190,6 +235,7 @@ fn launch(
         )
     });
     live.started_pgid = started_pgid.clone();
+    live.spawn_gate = spawn_gate.clone();
     match &args.attach {
         Some(url) => mc_launcher::attach(url, args.base_dir.as_deref(), &live).map(|a| (a, None)),
         None => mc_launcher::standalone(&args, &live),
@@ -235,6 +281,14 @@ fn watch_loop(run: u64, state: &Arc<Mutex<State>>, events: &Events) {
             let mut state = state.lock().unwrap();
             if state.run != run || state.stopping {
                 return;
+            }
+            // An adopted MC's watch starts before its run has
+            // said `Ready` (the superseded run starts it at the
+            // adoption): its exit is not even looked at until
+            // that `Ready` is recorded, so the shell can never
+            // hear `Failed` before it.
+            if state.ready_run != Some(run) {
+                continue;
             }
             match state.mc.as_mut().and_then(StartedMc::try_wait) {
                 Some(status) => {
@@ -432,6 +486,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             is_alive: Arc::new(mc_launcher::process_is_alive),
             started_pgid: Arc::new(std::sync::atomic::AtomicI32::new(0)),
+            spawn_gate: Arc::default(),
         }
     }
 
@@ -524,7 +579,7 @@ mod tests {
             ],
         );
         live.timeout = Duration::from_secs(60);
-        let (host, _heard) = host_with(
+        let (host, heard) = host_with(
             vec![format!("--base-dir={}", temp.path().join("home").display())],
             live,
         );
@@ -551,6 +606,9 @@ mod tests {
             !mc_launcher::process_is_alive(sleeper),
             "the started MC outlived the stop"
         );
+        // And the stop is not reported as a launch failure: the
+        // worker whose MC the stop killed says nothing.
+        assert!(heard.recv_timeout(Duration::from_millis(500)).is_err());
     }
 
     #[cfg(unix)]
@@ -591,5 +649,46 @@ mod tests {
         let mut mc = state.mc.take().unwrap();
         mc.stop(Duration::from_secs(2));
         assert!(mc.try_wait().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_watch_reports_no_exit_before_its_runs_ready() {
+        // An adopted MC's watch runs before the current run has
+        // published Ready: even with the MC already exited, it
+        // says nothing until that Ready is recorded, then it
+        // reports the exit after it.
+        let mc = mc_launcher::start_mc(
+            &mc_launcher::Launch {
+                command: "sh".into(),
+                args: vec!["-c".into(), "exit 3".into()],
+                cwd: None,
+            },
+            4123,
+            None,
+            Path::new("node"),
+        )
+        .unwrap();
+        let state = Arc::new(Mutex::new(State {
+            mc: Some(mc),
+            run: 7,
+            ..State::default()
+        }));
+        let (sent, heard) = mpsc::channel();
+        let events: Events = Arc::new(move |event| {
+            let _ = sent.send(event);
+        });
+        let watching = state.clone();
+        let watch_events = events.clone();
+        std::thread::spawn(move || watch_loop(7, &watching, &watch_events));
+        // Several polls of an exited MC, and still nothing.
+        assert!(heard.recv_timeout(Duration::from_millis(600)).is_err());
+        state.lock().unwrap().ready_run = Some(7);
+        assert_eq!(
+            heard.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Event::Failed(
+                "The MC exited (code 3, normal exit). Restart HAL-C2 to reconnect.".into()
+            )
+        );
     }
 }

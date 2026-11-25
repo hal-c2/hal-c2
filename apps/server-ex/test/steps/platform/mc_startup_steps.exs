@@ -866,6 +866,29 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     Map.merge(context, %{desktop: %{port: port, hal_c2_home: hal_c2_home, token: token}})
   end
 
+  step "it writes a bootstrap line asking for the standard-input lifeline, then standard input closes",
+       context do
+    test = self()
+    World.put_app_env(:desktop_exit, &send(test, {:desktop_stdin_closed, &1}))
+
+    line = JSON.encode!(%{"stdinLifeline" => true})
+    {:ok, stdin} = StringIO.open(line <> "\n")
+
+    :ok =
+      Task.async(fn ->
+        Process.group_leader(self(), stdin)
+        HalC2.Desktop.configure()
+      end)
+      |> Task.await()
+
+    context
+  end
+
+  step "the MC stops because the desktop app is gone", context do
+    assert_receive {:desktop_stdin_closed, 0}, 1_000
+    context
+  end
+
   step "the MC listens on that host and port", context do
     port = context.desktop.port
     assert {:ok, {{127, 0, 0, 1}, ^port}} = ThousandIsland.listener_info(HalC2.Web.Listener)
