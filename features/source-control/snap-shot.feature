@@ -18,6 +18,9 @@
 # text or capture effects, and directly on macOS, where captures can carry the
 # app's text.
 #   https://github.com/pingdotgg/t3code/pull/28240
+# Waiver: desktop-ljos has no native Snap Shot side on Windows (#1568) or macOS
+# (#1569) yet, so the scenarios tagged @backlog-desktop-ljos pass there only
+# against that shell's test doubles. Landing the native ports removes the tag.
 
 @desktop @priority-low
 Feature: Snap Shot captures another app's window into the draft
@@ -79,6 +82,10 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | platform         | failure                                                    |
       | Linux on Niri    | Niri has no focused window                                 |
+
+    @backlog-desktop-ljos
+    Examples:
+      | platform         | failure                                                    |
       | macOS            | macOS returns an empty image for the window                |
       | Windows          | the Windows window capture does not answer in time         |
       | Windows          | an earlier Windows window capture is still running         |
@@ -130,6 +137,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then nothing is attached and the user is told the window could not be captured
     And the next press of the shortcut captures normally
 
+    @backlog-desktop-ljos
     Examples:
       | step                                          | limit      |
       | macOS taking the picture of the window        | 15 seconds |
@@ -141,7 +149,7 @@ Feature: Snap Shot captures another app's window into the draft
       | step                                          | limit      |
       | macOS finding the window in front             | 5 seconds  |
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario Outline: A capture with no window in front is explained
     Given the desktop app runs on <platform>
     And no window is available to capture
@@ -172,6 +180,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then the attached image is shrunk to fit within 2,560 by 1,600 pixels
 
+    @backlog-desktop-ljos
     Examples:
       | platform         |
       | macOS            |
@@ -189,7 +198,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the image is attached
     And the attachment keeps the window title up to 1,000 characters and the app name up to 255
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario Outline: The attachment names the app the way the user knows it
     Given the desktop app runs on <platform>
     And <window>
@@ -260,6 +269,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then no error is shown
 
   # macOS only: the desktop portal gives only a screenshot.
+  @backlog-desktop-ljos
   Scenario: Including the app's text and controls
     Given the desktop app runs on macOS
     And including app text is on
@@ -434,12 +444,14 @@ Feature: Snap Shot captures another app's window into the draft
     And turning Snap Shot off has the same effect
 
   # On Windows: a desktop portal cannot flash a window or fly an image.
+  @backlog-desktop-ljos
   Scenario: The capture plays its cues
     Given the sound, flash and animation are on
     When the user captures a window
     Then the sound plays, the captured window flashes and the image flies into the draft
 
   # On Windows: a desktop portal has no animation to turn off.
+  @backlog-desktop-ljos
   Scenario: Reduced motion turns the animation off
     Given the system asks for reduced motion
     When the user captures a window

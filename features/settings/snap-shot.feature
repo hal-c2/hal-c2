@@ -25,6 +25,9 @@
 # The Qt desktop captures on Linux Wayland through the desktop portal, Niri's socket
 # and a binding in its config, or the KDE and Hyprland capture helpers, through
 # MacSnapShot on macOS, which alone carries app text, and directly on Windows.
+# Waiver: desktop-ljos has no native Snap Shot side on Windows (#1568) or macOS
+# (#1569) yet, so the scenarios tagged @backlog-desktop-ljos pass there only
+# against that shell's test doubles. Landing the native ports removes the tag.
 
 @desktop @priority-low
 Feature: Snap Shot settings
@@ -43,6 +46,7 @@ Feature: Snap Shot settings
     When the user turns on snapshots
     Then setup asks the user to allow capture and then to choose a shortcut
 
+  @backlog-desktop-ljos
   Scenario Outline: Setup asks for the permissions the platform needs
     Given the desktop app runs on <platform>
     When the user allows capture during setup
@@ -74,11 +78,13 @@ Feature: Snap Shot settings
     When the user turns Snap Shot on
     Then the waiting capture goes ahead
 
+  @backlog-desktop-ljos
   Scenario: The default shortcut presses both Shift keys
     Given the desktop app runs on macOS
     When the user finishes setup without changing the shortcut
     Then the shortcut is pressing both Shift keys
 
+  @backlog-desktop-ljos
   Scenario: Watching for both Shift keys adds no second app to the Dock
     Given the desktop app runs on macOS
     And the shortcut is pressing both Shift keys
@@ -118,6 +124,7 @@ Feature: Snap Shot settings
       | a shortcut the system reserves            | the system reserves it                          |
 
   # The desktop portal gives only a screenshot, so this is macOS's.
+  @backlog-desktop-ljos
   Scenario: Including app text
     Given Snap Shot is on and the desktop app runs on macOS
     When the user turns on including app text
@@ -137,10 +144,14 @@ Feature: Snap Shot settings
     When the user turns <cue> off
     Then captures happen without <effect>
 
-    # The flash and animation rows run on Windows: a desktop portal has no cues, and says so in the panel.
     Examples:
       | cue       | effect                                 |
       | sound     | a sound                                |
+
+    # The flash and animation rows run on Windows: a desktop portal has no cues, and says so in the panel.
+    @backlog-desktop-ljos
+    Examples:
+      | cue       | effect                                 |
       | flash     | a flash on the captured window         |
       | animation | the image flying into the draft        |
 
@@ -231,14 +242,14 @@ Feature: Snap Shot settings
     Then the setup button reads "Manage capture"
     And it reopens setup to revisit access or the shortcut
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: Windows turns capture on without any setup
     Given the desktop app runs on Windows
     When the user turns on snapshots
     Then capture is on and no setup is opened
     And the setup button is not shown
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: macOS hides setup once permissions and the shortcut are in place
     Given the desktop app runs on macOS
     And Screen Recording is allowed, and Accessibility too when app text is included
@@ -248,7 +259,7 @@ Feature: Snap Shot settings
     When the user revokes a permission
     Then the setup button returns as "Continue setup"
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: On macOS, turning on capture needs a test capture that works
     Given the desktop app runs on macOS
     When the user allows capture in setup and the test capture fails
@@ -266,7 +277,7 @@ Feature: Snap Shot settings
     And the message names this app as the one that needs Screen Recording and Accessibility
     And it does not mention GNOME
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: Setup continues after macOS restarts the app for a permission
     Given the desktop app runs on macOS
     And the user allowed Screen Recording and the app had to quit and reopen
@@ -274,7 +285,7 @@ Feature: Snap Shot settings
     Then setup resumes where the user left it, with capture on or off as it was
 
   # Legacy: apps/desktop/src/permissions/MacPermissionHelper.ts
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: macOS shows where to drop the app when a permission must be granted by hand
     Given the desktop app runs on macOS
     When the user is sent to System Settings to allow Screen Recording or Accessibility
@@ -389,7 +400,7 @@ Feature: Snap Shot settings
     Then including app text is off and cannot be turned on
     And the panel says "This desktop only provides a screenshot."
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: Including app text asks for the permission on macOS
     Given Snap Shot is on and the desktop app runs on macOS
     When the user turns on including app text
@@ -602,7 +613,7 @@ Feature: Snap Shot settings
     When the user is on the access step
     Then setup says the desktop may ask for permission when the user first captures
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: macOS permissions are granted one at a time
     Given the desktop app runs on macOS
     When the user is on the access step
@@ -611,7 +622,7 @@ Feature: Snap Shot settings
     And Continue is "Test capture and continue"
     And Accessibility only gates Continue when app text is included
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: The macOS test capture is discarded
     Given the desktop app runs on macOS
     When the user continues past the access step
@@ -924,6 +935,7 @@ Feature: Snap Shot settings
     Then the shortcut row says it is observed and cannot be reserved exclusively
     And it adds "<note>"
 
+    @backlog-desktop-ljos
     Examples:
       | platform | key   | note                                           |
       | macOS    | Shift | no further note                                |
@@ -936,7 +948,7 @@ Feature: Snap Shot settings
       | platform | key   | note                                           |
       | Linux    | Super | This key can also open the system's own menu.  |
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario Outline: A modifier key the system will not let HAL-C2 watch is reported
     Given the desktop app runs on <platform>
     When the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it
@@ -1063,7 +1075,7 @@ Feature: Snap Shot settings
     Then the shortcut stays registered without being released and set up again
     And an approved desktop shortcut session is not dropped
 
-  @desktop
+  @desktop @backlog-desktop-ljos
   Scenario: A permission that macOS grants again brings the shortcut back
     Given the desktop app runs on macOS
     And Snap Shot is on and a permission was revoked so capture needs attention
