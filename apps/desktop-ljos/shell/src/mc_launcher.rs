@@ -598,6 +598,12 @@ impl StartedMc {
         }
     }
 
+    /// This MC's process group (its child's pid, from
+    /// `process_group(0)`), as the host's lifecycle tracks it.
+    pub fn pgid(&self) -> i32 {
+        self.child.id() as i32
+    }
+
     /// SIGTERM to the MC's process group (mix, erl, and anything they
     /// spawned); after `grace` it is killed. The grace is the
     /// group's, not the wrapper's: the wrapper may exit on the
@@ -606,12 +612,6 @@ impl StartedMc {
     /// the tracking. The child is polled directly, not through
     /// [`StartedMc::try_wait`], which would clear that tracking at
     /// the wrapper's exit.
-    /// This MC's process group (its child's pid, from
-    /// `process_group(0)`), as the host's lifecycle tracks it.
-    pub fn pgid(&self) -> i32 {
-        self.child.id() as i32
-    }
-
     pub fn stop(&mut self, grace: Duration) {
         if self.stopped {
             return;
@@ -763,10 +763,17 @@ pub fn stop_tracked_mc(slot: &AtomicI32) {
 /// Stops one started MC's process group by its pgid, waiting out
 /// the grace as [`stop_tracked_mc`] does: how the host stops a
 /// spawned MC its lifecycle still holds as pending, whose
-/// [`StartedMc`] its worker has not handed over yet.
+/// [`StartedMc`] its worker has not handed over yet. A group that
+/// no longer exists is not signalled blind: its worker may have
+/// reaped the leader and the whole group since the pgid was
+/// drained, which frees the number for an unrelated group. While
+/// any member remains the number stays reserved, so a populated
+/// group is still this MC's.
 pub fn stop_group(pgid: i32) {
     #[cfg(unix)]
-    stop_started_group(pgid);
+    if group_exists(pgid) {
+        stop_started_group(pgid);
+    }
     #[cfg(not(unix))]
     let _ = pgid;
 }
@@ -979,20 +986,24 @@ fn wait_for_mc(
 
 /// One launch's permission to spawn, tied to the generation the
 /// host started it with (see `desktop_host`'s lifecycle). The
-/// host's three decisions run under its one lifecycle lock:
-/// `reserve` before the spawn (a stale generation never spawns,
-/// and a stop waits out a reserved spawn), `register` after it
-/// (the spawned MC's group enters the host's owned set, or the
-/// generation went stale and this worker stops what it spawned),
-/// and `abandon` when the spawn itself fails. A launch with no
-/// host generation — a test's direct `standalone` — gets the
-/// unconditional permit.
+/// host's decisions run under its one lifecycle lock: `reserve`
+/// before the spawn (a stale generation never spawns, and a stop
+/// waits out a reserved spawn), `register` after it (the spawned
+/// MC's group enters the host's owned set, or the generation went
+/// stale and this worker stops what it spawned and only then
+/// `abandon`s, releasing the reservation), `abandon` when the
+/// spawn itself fails, and `forget` when a registered MC ended
+/// (or was stopped) without being handed over, so its pgid
+/// leaves the pending set instead of being signalled later. A
+/// launch with no host generation — a test's direct
+/// `standalone` — gets the unconditional permit.
 #[derive(Clone)]
 pub struct SpawnPermit {
     generation: u64,
     reserve: Arc<dyn Fn(u64) -> bool + Send + Sync>,
     register: Arc<dyn Fn(u64, i32) -> bool + Send + Sync>,
     abandon: Arc<dyn Fn(u64) + Send + Sync>,
+    forget: Arc<dyn Fn(i32) + Send + Sync>,
 }
 
 impl SpawnPermit {
@@ -1001,12 +1012,14 @@ impl SpawnPermit {
         reserve: Arc<dyn Fn(u64) -> bool + Send + Sync>,
         register: Arc<dyn Fn(u64, i32) -> bool + Send + Sync>,
         abandon: Arc<dyn Fn(u64) + Send + Sync>,
+        forget: Arc<dyn Fn(i32) + Send + Sync>,
     ) -> SpawnPermit {
         SpawnPermit {
             generation,
             reserve,
             register,
             abandon,
+            forget,
         }
     }
 
@@ -1017,7 +1030,16 @@ impl SpawnPermit {
             Arc::new(|_| true),
             Arc::new(|_, _| true),
             Arc::new(|_| {}),
+            Arc::new(|_| {}),
         )
+    }
+
+    /// The registered MC ended without being handed over: its
+    /// group leaves the host's pending set. Called only once the
+    /// MC is stopped or reaped, so the host never loses track of
+    /// a group that still runs.
+    fn forget(&self, pgid: i32) {
+        (self.forget)(pgid);
     }
 
     /// Spawns through the permit: nothing when the generation is
@@ -1036,7 +1058,11 @@ impl SpawnPermit {
                 if (self.register)(self.generation, started.pgid()) {
                     Some(Ok(started))
                 } else {
+                    // The reservation is released only after the
+                    // rejected child is stopped, so a stop waiting
+                    // it out cannot return while it still runs.
                     started.stop(Duration::from_millis(1_500));
+                    (self.abandon)(self.generation);
                     Some(Err("The MC start was stopped before the MC spawned.".into()))
                 }
             }
@@ -1167,17 +1193,26 @@ fn standalone_with_fetch(
         Some(started) => started?,
         None => return Err("The MC start was stopped before the MC spawned.".into()),
     };
+    // Every path out of here that does not hand `started` back
+    // stops it (or finds it reaped) and forgets its group with
+    // the host, so no dead pgid lingers in its pending set.
     match wait_for_mc(&mut started, live.timeout, fetch) {
         Ok(Ok(())) => {}
         Ok(Err(status)) if exit_code(status) == HOME_IN_USE => {
             // Another MC took the files first, such as the background
             // service starting at login beside the app: the desktop
             // uses that one, as if it had found it above.
+            let pgid = started.pgid();
+            started.stop(Duration::from_millis(1_500));
+            live.spawn_permit.forget(pgid);
             return wait_for_running(&dirs, live.timeout, live.resolution().is_alive)
                 .map(|found| (found, None));
         }
         Ok(Err(status)) => {
             let output = started.output();
+            let pgid = started.pgid();
+            started.stop(Duration::from_millis(1_500));
+            live.spawn_permit.forget(pgid);
             return Err(format!(
                 "The MC failed to start (exit code {}) before it answered.{}",
                 exit_code(status),
@@ -1189,13 +1224,18 @@ fn standalone_with_fetch(
             ));
         }
         Err(e) => {
+            let pgid = started.pgid();
             started.stop(Duration::from_millis(1_500));
+            live.spawn_permit.forget(pgid);
             return Err(e);
         }
     }
-    let token = read_access_token(&dirs.data).ok_or_else(|| {
-        "The MC started but wrote no access token for the desktop app.".to_owned()
-    })?;
+    let Some(token) = read_access_token(&dirs.data) else {
+        let pgid = started.pgid();
+        started.stop(Duration::from_millis(1_500));
+        live.spawn_permit.forget(pgid);
+        return Err("The MC started but wrote no access token for the desktop app.".to_owned());
+    };
     Ok((
         Access {
             origin: started.origin.clone(),
@@ -1887,6 +1927,7 @@ mod tests {
             Arc::new(|_| false),
             Arc::new(|_, _| false),
             Arc::new(|_| {}),
+            Arc::new(|_| {}),
         );
         let error = match standalone_with_fetch(
             &HostArgs {
@@ -1901,6 +1942,58 @@ mod tests {
         };
         assert!(error.contains("stopped before"), "{error}");
         assert!(!home.join("ran").exists(), "the fake MC ran anyway");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rejected_registration_stops_the_child_before_abandoning() {
+        // r4694552417: the reservation a stop waits out is
+        // released (`abandon`) only once the rejected child is
+        // stopped, never at the refusal.
+        use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+        let spawned_pgid = Arc::new(AtomicI32::new(0));
+        let alive_at_abandon = Arc::new(AtomicBool::new(true));
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let in_abandon = spawned_pgid.clone();
+        let seen_alive = alive_at_abandon.clone();
+        let seen_abandoned = abandoned.clone();
+        let permit = SpawnPermit::new(
+            1,
+            Arc::new(|_| true),
+            Arc::new(|_, _| false),
+            Arc::new(move |_| {
+                seen_alive.store(
+                    process_is_alive(i64::from(in_abandon.load(Ordering::SeqCst))),
+                    Ordering::SeqCst,
+                );
+                seen_abandoned.store(true, Ordering::SeqCst);
+            }),
+            Arc::new(|_| {}),
+        );
+        let in_spawn = spawned_pgid.clone();
+        let result = permit.run(|| {
+            let started = start_mc(
+                &Launch {
+                    command: "sh".into(),
+                    args: vec!["-c".into(), "sleep 60".into()],
+                    cwd: None,
+                },
+                4123,
+                None,
+                Path::new("node"),
+            )?;
+            in_spawn.store(started.pgid(), Ordering::SeqCst);
+            Ok(started)
+        });
+        match result {
+            Some(Err(error)) => assert!(error.contains("stopped before"), "{error}"),
+            _ => panic!("a rejected registration gives no MC"),
+        }
+        assert!(abandoned.load(Ordering::SeqCst));
+        assert!(
+            !alive_at_abandon.load(Ordering::SeqCst),
+            "the reservation was released while the rejected child still ran"
+        );
     }
 
     #[test]

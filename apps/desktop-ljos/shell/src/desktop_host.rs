@@ -65,8 +65,14 @@ struct Lifecycle<M = StartedMc> {
     phase: Phase,
     ready_generation: Option<u64>,
     watching_generation: Option<u64>,
+    /// The newest generation a stop has superseded: a hand-over
+    /// from at or before it is a child from before that stop,
+    /// never the current run's to adopt, restart or not.
+    stopped_through: u64,
     /// Spawns reserved and not yet registered or abandoned: a
     /// stop waits these out, so none lands after it has drained.
+    /// A rejected registration keeps its reservation until its
+    /// worker has stopped the child and abandons it.
     inflight: usize,
     pending: BTreeSet<i32>,
     owned: Vec<M>,
@@ -79,6 +85,7 @@ impl<M> Default for Lifecycle<M> {
             phase: Phase::Idle,
             ready_generation: None,
             watching_generation: None,
+            stopped_through: 0,
             inflight: 0,
             pending: BTreeSet::new(),
             owned: Vec::new(),
@@ -106,23 +113,35 @@ impl<M> Lifecycle<M> {
     }
 
     /// A new start: a new generation, everything before it stale.
-    fn begin_start(&mut self) -> u64 {
+    /// Nothing while a stop is in progress: the caller waits it
+    /// out and asks again, so a start can never register into the
+    /// window between that stop's drain and its post-wait drain.
+    fn begin_start(&mut self) -> Option<u64> {
+        if self.phase == Phase::Stopping {
+            return None;
+        }
         self.generation += 1;
         self.phase = Phase::Starting;
         self.ready_generation = None;
         self.watching_generation = None;
-        self.generation
+        Some(self.generation)
     }
 
     /// A stop: also a new generation, so every worker still in
     /// flight is stale from here. Hands back everything alive for
-    /// the caller to stop and reap outside the lock.
-    fn begin_stop(&mut self) -> (Vec<M>, Vec<i32>) {
+    /// the caller to stop and reap outside the lock. Nothing
+    /// while a stop is in progress, as for [`Self::begin_start`]:
+    /// stops serialize too.
+    fn begin_stop(&mut self) -> Option<(Vec<M>, Vec<i32>)> {
+        if self.phase == Phase::Stopping {
+            return None;
+        }
+        self.stopped_through = self.generation;
         self.generation += 1;
         self.phase = Phase::Stopping;
         self.ready_generation = None;
         self.watching_generation = None;
-        self.drain()
+        Some(self.drain())
     }
 
     fn drain(&mut self) -> (Vec<M>, Vec<i32>) {
@@ -151,9 +170,13 @@ impl<M> Lifecycle<M> {
 
     /// After a spawn: the group joins the alive set, or the
     /// generation went stale and the caller stops what it spawned.
+    /// A rejected registration keeps its reservation: a stop
+    /// waiting out `inflight` must not see zero while that child
+    /// still runs. The worker releases it with
+    /// [`Self::abandon_spawn`] once the child is stopped.
     fn register_spawn(&mut self, generation: u64, pgid: i32) -> bool {
-        self.inflight = self.inflight.saturating_sub(1);
         if self.is_current(generation) {
+            self.inflight = self.inflight.saturating_sub(1);
             self.pending.insert(pgid);
             true
         } else {
@@ -173,7 +196,10 @@ impl<M> Lifecycle<M> {
         if self.is_current(generation) && generation == self.generation {
             let replaced = std::mem::replace(&mut self.owned, vec![mc]);
             HandOver::Current(replaced)
-        } else if self.phase != Phase::Stopping && self.owned.is_empty() {
+        } else if self.phase != Phase::Stopping
+            && generation > self.stopped_through
+            && self.owned.is_empty()
+        {
             self.owned.push(mc);
             HandOver::Adopted(self.generation)
         } else {
@@ -240,7 +266,19 @@ impl DesktopHost {
         // signal stops the MC this shell starts, as the Node
         // host's signal handlers did.
         mc_launcher::install_mc_lifeline();
-        let generation = self.shared.0.lock().unwrap().begin_start();
+        // Wait out a stop in progress: `begin_start` refuses
+        // while one runs, so this start cannot land in its
+        // drain-and-wait window.
+        let generation = {
+            let (lock, changed) = (&self.shared.0, &self.shared.1);
+            let mut state = lock.lock().unwrap();
+            loop {
+                if let Some(generation) = state.begin_start() {
+                    break generation;
+                }
+                state = changed.wait(state).unwrap();
+            }
+        };
         let permit = spawn_permit(generation, &self.shared);
         let options = self.options.clone();
         let shared = self.shared.clone();
@@ -304,10 +342,16 @@ impl DesktopHost {
     /// returns. A found MC is left alone.
     pub fn stop(&self) {
         let (lock, drained) = (&self.shared.0, &self.shared.1);
+        // As in `start`: a stop already in progress is waited
+        // out, then this one runs (and finds its work done).
         let (mut owned, mut pending, generation) = {
             let mut state = lock.lock().unwrap();
-            let (owned, pending) = state.begin_stop();
-            (owned, pending, state.generation)
+            loop {
+                if let Some((owned, pending)) = state.begin_stop() {
+                    break (owned, pending, state.generation);
+                }
+                state = drained.wait(state).unwrap();
+            }
         };
         // A spawn reserved before the stop either registers into
         // the (now stale) alive set or is stopped by its own
@@ -336,6 +380,8 @@ impl DesktopHost {
             mc.stop(Duration::from_secs(2));
         }
         lock.lock().unwrap().finish_stop(generation);
+        // A start (or a second stop) waited this stop out.
+        drained.notify_all();
     }
 }
 
@@ -362,6 +408,7 @@ fn spawn_permit(generation: u64, shared: &Shared) -> SpawnPermit {
     let reserve_shared = shared.clone();
     let register_shared = shared.clone();
     let abandon_shared = shared.clone();
+    let forget_shared = shared.clone();
     SpawnPermit::new(
         generation,
         Arc::new(move |generation| reserve_shared.0.lock().unwrap().reserve_spawn(generation)),
@@ -377,6 +424,9 @@ fn spawn_permit(generation: u64, shared: &Shared) -> SpawnPermit {
         Arc::new(move |_| {
             abandon_shared.0.lock().unwrap().abandon_spawn();
             abandon_shared.1.notify_all();
+        }),
+        Arc::new(move |pgid| {
+            forget_shared.0.lock().unwrap().note_exit(pgid);
         }),
     )
 }
@@ -785,8 +835,8 @@ mod tests {
             .unwrap()
         };
         let mut state = Lifecycle::default();
-        state.begin_start();
-        let current = state.begin_start();
+        assert!(state.begin_start().is_some());
+        let current = state.begin_start().unwrap();
         let adopted = fake();
         let adopted_pgid = adopted.pgid();
         let adopted_origin = adopted.origin.clone();
@@ -834,7 +884,7 @@ mod tests {
         {
             let mut state = shared.0.lock().unwrap();
             for _ in 0..7 {
-                state.begin_start();
+                assert!(state.begin_start().is_some());
             }
             state.owned.push(mc);
         }
@@ -864,9 +914,10 @@ mod tests {
         // r4694150733: stop cancels run A, a new start enables run
         // B, and A must not spawn through B's start.
         let mut life: Lifecycle<i32> = Lifecycle::default();
-        let a = life.begin_start();
-        life.begin_stop();
-        let b = life.begin_start();
+        let a = life.begin_start().unwrap();
+        assert!(life.begin_stop().is_some());
+        life.finish_stop(life.generation);
+        let b = life.begin_start().unwrap();
         assert!(!life.reserve_spawn(a));
         assert!(life.reserve_spawn(b));
     }
@@ -877,9 +928,10 @@ mod tests {
         // recording it; B records its own; A resuming must not
         // replace B's marker (B's watch would skip every exit).
         let mut life: Lifecycle<i32> = Lifecycle::default();
-        let a = life.begin_start();
-        life.begin_stop();
-        let b = life.begin_start();
+        let a = life.begin_start().unwrap();
+        assert!(life.begin_stop().is_some());
+        life.finish_stop(life.generation);
+        let b = life.begin_start().unwrap();
         assert!(life.publish_ready(b));
         assert!(!life.publish_ready(a));
         assert_eq!(life.ready_generation, Some(b));
@@ -892,30 +944,114 @@ mod tests {
         // r4694150748: with an adopted MC owned and a second MC
         // pending from a newer spawn, stop hands back both.
         let mut life: Lifecycle<i32> = Lifecycle::default();
-        let a = life.begin_start();
+        let a = life.begin_start().unwrap();
         assert!(life.reserve_spawn(a));
         assert!(life.register_spawn(a, 111));
-        let b = life.begin_start();
+        let b = life.begin_start().unwrap();
         assert!(matches!(life.hand_over(a, 111, 111), HandOver::Adopted(_)));
         assert!(life.reserve_spawn(b));
         assert!(life.register_spawn(b, 222));
-        let (owned, pending) = life.begin_stop();
+        let (owned, pending) = life.begin_stop().unwrap();
         assert_eq!(owned, [111]);
         assert_eq!(pending, [222]);
         assert!(life.owned.is_empty() && life.pending.is_empty());
     }
 
+    #[test]
+    fn a_rejected_spawn_keeps_its_reservation_until_abandoned() {
+        // r4694552417: registration goes stale (a newer start
+        // superseded it), so its worker stops the child itself.
+        // Until that worker abandons, a stop waiting out
+        // `inflight` must not see zero.
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start().unwrap();
+        assert!(life.reserve_spawn(a));
+        let b = life.begin_start().unwrap();
+        assert!(!life.register_spawn(a, 111));
+        assert_eq!(life.inflight, 1);
+        life.abandon_spawn();
+        assert_eq!(life.inflight, 0);
+        // A successful registration releases under the same lock
+        // that joins `pending`, as before.
+        assert!(life.reserve_spawn(b));
+        assert!(life.register_spawn(b, 222));
+        assert_eq!(life.inflight, 0);
+        assert!(life.pending.contains(&222));
+    }
+
+    #[test]
+    fn a_child_from_before_a_stop_is_not_adopted_after_a_restart() {
+        // r4694552432: its worker paused before handing over, the
+        // stop drained and finished, a restart happened: still
+        // nobody's. Without an intervening stop, supersession
+        // still adopts (the current run may run on it as found).
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start().unwrap();
+        assert!(life.begin_stop().is_some());
+        life.finish_stop(life.generation);
+        assert!(life.begin_start().is_some());
+        assert!(matches!(life.hand_over(a, 111, 111), HandOver::Stop(111)));
+        assert!(life.owned.is_empty());
+
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start().unwrap();
+        let b = life.begin_start().unwrap();
+        assert!(matches!(
+            life.hand_over(a, 111, 111),
+            HandOver::Adopted(generation) if generation == b
+        ));
+    }
+
+    #[test]
+    fn no_start_or_second_stop_begins_while_a_stop_runs() {
+        // r4694552442: between a stop's drain and its post-wait
+        // drain the real `stop()` waits unlocked. Transitions
+        // refuse in that window (the host waits and retries), so
+        // the post-wait drain can only take what this stop owns.
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start().unwrap();
+        assert!(life.reserve_spawn(a));
+        assert!(life.register_spawn(a, 111));
+        let (owned, pending) = life.begin_stop().unwrap();
+        assert!(owned.is_empty());
+        assert_eq!(pending, [111]);
+        let stop_generation = life.generation;
+        assert!(life.begin_start().is_none());
+        assert!(life.begin_stop().is_none());
+        assert_eq!(life.generation, stop_generation);
+        assert_eq!(life.phase, Phase::Stopping);
+        let (owned, pending) = life.drain();
+        assert!(owned.is_empty() && pending.is_empty());
+        life.finish_stop(stop_generation);
+        // Afterwards a start registers into its own generation,
+        // and the finished stop has nothing left to drain.
+        let b = life.begin_start().unwrap();
+        assert!(life.reserve_spawn(b));
+        assert!(life.register_spawn(b, 222));
+        assert!(life.pending.contains(&222));
+    }
+
     mod prop {
         use super::*;
         use proptest::prelude::*;
-        use std::collections::BTreeSet;
+        use std::collections::{BTreeMap, BTreeSet};
 
+        // The interleavings the token exists for, one lifecycle
+        // call per action: a spawn sits reserved, then registered,
+        // then handed over, and a stop sits begun (drained, lock
+        // released for its wait) before it finishes, so `Start`
+        // and the spawn steps land between each pair.
         #[derive(Clone, Debug)]
         enum Action {
             Start,
-            Stop,
+            StopBegin,
+            StopFinish,
+            ReserveCurrent,
             ReserveStale,
-            SpawnCurrent,
+            RegisterOldest,
+            AbandonOldest,
+            CleanupRejected,
+            HandOverOldest,
             HandOverStale(i32),
             PublishCurrent,
             PublishStale,
@@ -925,9 +1061,14 @@ mod tests {
         fn action() -> impl Strategy<Value = Action> {
             prop_oneof![
                 Just(Action::Start),
-                Just(Action::Stop),
+                Just(Action::StopBegin),
+                Just(Action::StopFinish),
+                Just(Action::ReserveCurrent),
                 Just(Action::ReserveStale),
-                Just(Action::SpawnCurrent),
+                Just(Action::RegisterOldest),
+                Just(Action::AbandonOldest),
+                Just(Action::CleanupRejected),
+                Just(Action::HandOverOldest),
                 (1000i32..1010).prop_map(Action::HandOverStale),
                 Just(Action::PublishCurrent),
                 Just(Action::PublishStale),
@@ -939,62 +1080,182 @@ mod tests {
             #![proptest_config(ProptestConfig::with_cases(64))]
             #[test]
             fn the_generation_token_keeps_every_interleaving_sound(
-                actions in proptest::collection::vec(action(), 1..40)
+                actions in proptest::collection::vec(action(), 1..48)
             ) {
                 // Fake MCs are their pgids; `alive` is every fake
-                // spawned and not yet stopped or exited.
+                // spawned and not yet stopped or exited. The
+                // in-flight spawns the old model fused into one
+                // `SpawnCurrent` step are explicit: `reserved`
+                // (a reservation, no process yet), `registered`
+                // (spawned, in `pending`, not handed over), and
+                // `rejected` (registration refused it; alive until
+                // its own worker stops it and abandons).
                 let mut life: Lifecycle<i32> = Lifecycle::default();
                 let mut alive: BTreeSet<i32> = BTreeSet::new();
+                let mut reserved: Vec<(u64, i32)> = Vec::new();
+                let mut registered: Vec<(u64, i32)> = Vec::new();
+                let mut rejected: Vec<i32> = Vec::new();
+                let mut pgid_gen: BTreeMap<i32, u64> = BTreeMap::new();
                 let mut next_pgid = 1i32;
-                let mut published: Vec<u64> = Vec::new();
+                // The newest generation a begun stop superseded:
+                // no hand-over from at or before it may be adopted.
+                let mut stopped_through = 0u64;
+                // A stop between its drain and its finish (the
+                // window the real `stop()` waits out unlocked):
+                // its generation and what its first drain took.
+                let mut stopping: Option<(u64, Vec<i32>, Vec<i32>)> = None;
+                // A start (or second stop) asked for while a stop
+                // runs: the real host waits, so it takes effect
+                // after the stop finishes.
+                let mut queued_start = false;
+                let mut queued_stop = false;
                 for action in actions {
                     let current = life.generation;
                     match action {
-                        Action::Start => { life.begin_start(); }
-                        Action::Stop => {
-                            let (owned, pending) = life.begin_stop();
-                            for pgid in owned.iter().chain(&pending) {
-                                alive.remove(pgid);
+                        Action::Start => {
+                            if stopping.is_some() {
+                                prop_assert!(life.begin_start().is_none());
+                                queued_start = true;
+                            } else {
+                                prop_assert!(life.begin_start().is_some());
                             }
-                            // After stop returns, nothing this host
-                            // started is alive or unowned: every
-                            // live fake was handed back above, and
-                            // the lifecycle holds none.
-                            prop_assert!(life.owned.is_empty());
-                            prop_assert!(life.pending.is_empty());
-                            prop_assert!(alive.iter().all(|pgid| !life.pending.contains(pgid)));
-                            prop_assert_eq!(life.ready_generation, None);
+                        }
+                        Action::StopBegin => {
+                            if stopping.is_some() {
+                                prop_assert!(life.begin_stop().is_none());
+                                queued_stop = true;
+                            } else {
+                                stopped_through = stopped_through.max(life.generation);
+                                let (owned, pending) = life.begin_stop().unwrap();
+                                stopping = Some((life.generation, owned, pending));
+                            }
+                        }
+                        Action::StopFinish => {
+                            if let Some((generation, owned, pending)) = stopping.take() {
+                                let (more_owned, more_pending) = life.drain();
+                                // The post-wait drain must not take
+                                // a group a later start registered.
+                                for pgid in more_owned.iter().chain(&more_pending) {
+                                    let from = pgid_gen.get(pgid).copied().unwrap_or(0);
+                                    prop_assert!(
+                                        from <= generation,
+                                        "stop of generation {generation} drained pgid {pgid} from generation {from}"
+                                    );
+                                }
+                                for pgid in owned
+                                    .iter()
+                                    .chain(&pending)
+                                    .chain(&more_owned)
+                                    .chain(&more_pending)
+                                {
+                                    alive.remove(pgid);
+                                }
+                                life.finish_stop(generation);
+                                // After a completed stop, nothing
+                                // this host started is alive or held,
+                                // apart from rejected spawns still
+                                // being stopped by their own worker
+                                // (reserved ones have not spawned;
+                                // when they land they are rejected
+                                // into that same cleanup).
+                                prop_assert!(life.owned.is_empty());
+                                prop_assert!(life.pending.is_empty());
+                                prop_assert!(
+                                    alive.iter().all(|pgid| rejected.contains(pgid)),
+                                    "alive after stop: {alive:?}, rejected: {rejected:?}"
+                                );
+                                prop_assert_eq!(life.ready_generation, None);
+                                if queued_stop {
+                                    queued_stop = false;
+                                    stopped_through =
+                                        stopped_through.max(life.generation);
+                                    let (owned, pending) = life.begin_stop().unwrap();
+                                    stopping = Some((life.generation, owned, pending));
+                                } else if queued_start {
+                                    queued_start = false;
+                                    prop_assert!(life.begin_start().is_some());
+                                }
+                            }
+                        }
+                        Action::ReserveCurrent => {
+                            if life.reserve_spawn(current) {
+                                let pgid = next_pgid;
+                                next_pgid += 1;
+                                pgid_gen.insert(pgid, current);
+                                reserved.push((current, pgid));
+                            }
                         }
                         Action::ReserveStale => {
                             if current > 0 {
                                 prop_assert!(!life.reserve_spawn(current - 1));
                             }
                         }
-                        Action::SpawnCurrent => {
-                            if life.reserve_spawn(current) {
-                                let pgid = next_pgid;
-                                next_pgid += 1;
-                                if life.register_spawn(current, pgid) {
-                                    alive.insert(pgid);
-                                    match life.hand_over(current, pgid, pgid) {
-                                        HandOver::Current(replaced) => {
-                                            for old in replaced { alive.remove(&old); }
-                                        }
-                                        HandOver::Adopted(_) => {}
-                                        HandOver::Stop(mc) => { alive.remove(&mc); }
+                        Action::RegisterOldest => {
+                            if !reserved.is_empty() {
+                                let (generation, pgid) = reserved.remove(0);
+                                alive.insert(pgid);
+                                if life.register_spawn(generation, pgid) {
+                                    registered.push((generation, pgid));
+                                } else {
+                                    rejected.push(pgid);
+                                }
+                            }
+                        }
+                        Action::AbandonOldest => {
+                            if !reserved.is_empty() {
+                                reserved.remove(0);
+                                life.abandon_spawn();
+                            }
+                        }
+                        Action::CleanupRejected => {
+                            if !rejected.is_empty() {
+                                let pgid = rejected.remove(0);
+                                alive.remove(&pgid);
+                                // The worker releases the reservation
+                                // only now, once the child is stopped.
+                                life.abandon_spawn();
+                            }
+                        }
+                        Action::HandOverOldest => {
+                            if !registered.is_empty() {
+                                let (generation, pgid) = registered.remove(0);
+                                match life.hand_over(generation, pgid, pgid) {
+                                    HandOver::Current(replaced) => {
+                                        prop_assert_eq!(generation, life.generation);
+                                        for old in replaced { alive.remove(&old); }
                                     }
+                                    HandOver::Adopted(into) => {
+                                        prop_assert_eq!(into, life.generation);
+                                        prop_assert!(
+                                            generation > stopped_through,
+                                            "adopted pgid {pgid} from generation {generation} at or before the last stop ({stopped_through})"
+                                        );
+                                    }
+                                    HandOver::Stop(mc) => { alive.remove(&mc); }
                                 }
                             }
                         }
                         Action::HandOverStale(pgid) => {
-                            if current > 0 && !alive.contains(&pgid) {
+                            // Generation 0 never had a worker:
+                            // the stale one is `current - 1 >= 1`.
+                            if current > 1
+                                && !alive.contains(&pgid)
+                                && !life.owned.contains(&pgid)
+                                && !life.pending.contains(&pgid)
+                            {
                                 alive.insert(pgid);
+                                pgid_gen.insert(pgid, current - 1);
                                 match life.hand_over(current - 1, pgid, pgid) {
                                     HandOver::Current(_) => {
                                         prop_assert!(false, "stale hand-over became current");
                                     }
                                     HandOver::Adopted(generation) => {
                                         prop_assert_eq!(generation, life.generation);
+                                        prop_assert!(
+                                            current - 1 > stopped_through,
+                                            "adopted pgid {pgid} from generation {} at or before the last stop ({stopped_through})",
+                                            current - 1
+                                        );
                                     }
                                     HandOver::Stop(mc) => { alive.remove(&mc); }
                                 }
@@ -1003,7 +1264,6 @@ mod tests {
                         Action::PublishCurrent => {
                             if life.publish_ready(current) {
                                 prop_assert_eq!(life.ready_generation, Some(current));
-                                published.push(current);
                             }
                         }
                         Action::PublishStale => {
@@ -1011,25 +1271,46 @@ mod tests {
                                 let before = life.ready_generation;
                                 prop_assert!(!life.publish_ready(current - 1));
                                 prop_assert_eq!(life.ready_generation, before);
-                                prop_assert!(!life.may_publish(current - 1) || life.phase == Phase::Stopping);
                             }
                         }
                         Action::ExitOldest => {
-                            if let Some(pgid) = alive.iter().next().copied() {
+                            // An MC ending on its own (a rejected one
+                            // ends through its worker's cleanup).
+                            if let Some(pgid) = alive
+                                .iter()
+                                .find(|pgid| !rejected.contains(pgid))
+                                .copied()
+                            {
                                 alive.remove(&pgid);
                                 life.note_exit(pgid);
                                 life.owned.retain(|mc| *mc != pgid);
+                                registered.retain(|(_, p)| *p != pgid);
                             }
                         }
                     }
                     // After every step: the Ready marker is only
                     // ever the current generation's, at most one MC
-                    // is owned, and no stale generation may speak.
+                    // is owned, everything the lifecycle holds is
+                    // alive and held once, and the reservations a
+                    // stop waits out are exactly the spawns in
+                    // flight (reserved) plus the rejected ones
+                    // their workers have not finished stopping.
                     prop_assert!(life.ready_generation.is_none_or(|g| g == life.generation));
                     prop_assert!(life.owned.len() <= 1);
-                    prop_assert!(published.iter().all(|g| *g <= life.generation));
+                    prop_assert_eq!(
+                        life.inflight,
+                        reserved.len() + rejected.len(),
+                        "inflight {} != reserved {:?} + rejected {:?}",
+                        life.inflight, reserved, rejected
+                    );
+                    prop_assert!(life.owned.iter().all(|pgid| alive.contains(pgid)));
+                    prop_assert!(life.pending.iter().all(|pgid| alive.contains(pgid)));
+                    prop_assert!(
+                        life.owned.iter().all(|pgid| !life.pending.contains(pgid))
+                    );
                     if life.phase == Phase::Stopping {
                         prop_assert!(!life.watch_may_report(life.generation));
+                        prop_assert_eq!(life.ready_generation, None);
                     }
                 }
             }
