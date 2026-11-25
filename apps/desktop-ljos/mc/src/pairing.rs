@@ -218,7 +218,9 @@ pub fn direct_route(origin: &str) -> bool {
     }
     match url.host() {
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
         Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
         None => true,
     }
@@ -343,12 +345,17 @@ mod tests {
             "http://127.0.0.1:3773",
             "https://127.0.0.1:8443",
             "https://[::1]:8443",
+            "https://[::ffff:127.0.0.1]:8443",
             "https://localhost:8443",
             "not a url",
         ] {
             assert!(direct_route(direct), "{direct}");
         }
-        for proxied in ["https://mc.example", "https://192.168.1.4:8443"] {
+        for proxied in [
+            "https://mc.example",
+            "https://192.168.1.4:8443",
+            "https://[::ffff:192.168.1.4]:8443",
+        ] {
             assert!(!direct_route(proxied), "{proxied}");
         }
     }

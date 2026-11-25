@@ -606,6 +606,12 @@ impl StartedMc {
     /// the tracking. The child is polled directly, not through
     /// [`StartedMc::try_wait`], which would clear that tracking at
     /// the wrapper's exit.
+    /// This MC's process group (its child's pid, from
+    /// `process_group(0)`), as the host's lifecycle tracks it.
+    pub fn pgid(&self) -> i32 {
+        self.child.id() as i32
+    }
+
     pub fn stop(&mut self, grace: Duration) {
         if self.stopped {
             return;
@@ -614,6 +620,17 @@ impl StartedMc {
         // Closing the bootstrap pipe lets the MC stop itself on
         // the EOF beside the group's SIGTERM.
         drop(self.stdin.take());
+        // A child already reaped (an exited MC being dropped, the
+        // exit-73 handover) must not be signalled blind: once its
+        // whole group is gone the pgid number is free for an
+        // unrelated group. While any member remains the number
+        // stays reserved, so signalling a still-populated group
+        // is safe; an empty one needs no signal at all.
+        let already_reaped = self.child.try_wait().is_ok_and(|s| s.is_some());
+        if already_reaped && !self.group_alive() {
+            self.clear_started();
+            return;
+        }
         signal_group(&self.child, false);
         let deadline = Instant::now() + grace;
         let mut exited = false;
@@ -741,6 +758,17 @@ pub fn stop_tracked_mc(slot: &AtomicI32) {
     stop_started_group(slot.load(Ordering::SeqCst));
     #[cfg(not(unix))]
     let _ = slot;
+}
+
+/// Stops one started MC's process group by its pgid, waiting out
+/// the grace as [`stop_tracked_mc`] does: how the host stops a
+/// spawned MC its lifecycle still holds as pending, whose
+/// [`StartedMc`] its worker has not handed over yet.
+pub fn stop_group(pgid: i32) {
+    #[cfg(unix)]
+    stop_started_group(pgid);
+    #[cfg(not(unix))]
+    let _ = pgid;
 }
 
 #[cfg(unix)]
@@ -949,42 +977,74 @@ fn wait_for_mc(
     ))
 }
 
-/// The rendezvous between a launch's spawn and its owner's stop.
-/// The spawn and its registration in [`Live::started_pgid`] run
-/// under this gate's lock, so [`SpawnGate::cancel`] returning
-/// means either nothing will spawn, or what spawned is already
-/// tracked where the stop can reach it. Without it, a stop that
-/// lands after planning but before the spawn returns to a worker
-/// that then starts an MC nobody is left to stop — the updater
-/// replaces the MC on the strength of that stop, and the shell
-/// may quit before the worker's later check cleans the child up.
-#[derive(Default)]
-pub struct SpawnGate {
-    cancelled: Mutex<bool>,
+/// One launch's permission to spawn, tied to the generation the
+/// host started it with (see `desktop_host`'s lifecycle). The
+/// host's three decisions run under its one lifecycle lock:
+/// `reserve` before the spawn (a stale generation never spawns,
+/// and a stop waits out a reserved spawn), `register` after it
+/// (the spawned MC's group enters the host's owned set, or the
+/// generation went stale and this worker stops what it spawned),
+/// and `abandon` when the spawn itself fails. A launch with no
+/// host generation — a test's direct `standalone` — gets the
+/// unconditional permit.
+#[derive(Clone)]
+pub struct SpawnPermit {
+    generation: u64,
+    reserve: Arc<dyn Fn(u64) -> bool + Send + Sync>,
+    register: Arc<dyn Fn(u64, i32) -> bool + Send + Sync>,
+    abandon: Arc<dyn Fn(u64) + Send + Sync>,
 }
 
-impl SpawnGate {
-    /// No spawn after this, and none in flight untracked: an
-    /// in-flight spawn holds the gate until its MC is tracked.
-    pub fn cancel(&self) {
-        *self.cancelled.lock().unwrap() = true;
+impl SpawnPermit {
+    pub fn new(
+        generation: u64,
+        reserve: Arc<dyn Fn(u64) -> bool + Send + Sync>,
+        register: Arc<dyn Fn(u64, i32) -> bool + Send + Sync>,
+        abandon: Arc<dyn Fn(u64) + Send + Sync>,
+    ) -> SpawnPermit {
+        SpawnPermit {
+            generation,
+            reserve,
+            register,
+            abandon,
+        }
     }
 
-    /// A fresh start may spawn again.
-    pub fn reset(&self) {
-        *self.cancelled.lock().unwrap() = false;
+    /// No host generation to check: every spawn proceeds.
+    pub fn unconditional() -> SpawnPermit {
+        SpawnPermit::new(
+            0,
+            Arc::new(|_| true),
+            Arc::new(|_, _| true),
+            Arc::new(|_| {}),
+        )
     }
 
-    /// Runs `spawn` — the spawn itself and its tracking, as one
-    /// step against [`SpawnGate::cancel`] — unless cancelled.
-    fn run<T>(&self, spawn: impl FnOnce() -> Result<T, String>) -> Option<Result<T, String>> {
-        let cancelled = self.cancelled.lock().unwrap();
-        if *cancelled {
+    /// Spawns through the permit: nothing when the generation is
+    /// already stale; the spawned MC stopped by this worker and
+    /// an error when it went stale during the spawn, so a stale
+    /// spawn is never left running unowned.
+    fn run(
+        &self,
+        spawn: impl FnOnce() -> Result<StartedMc, String>,
+    ) -> Option<Result<StartedMc, String>> {
+        if !(self.reserve)(self.generation) {
             return None;
         }
-        let spawned = spawn();
-        drop(cancelled);
-        Some(spawned)
+        match spawn() {
+            Ok(mut started) => {
+                if (self.register)(self.generation, started.pgid()) {
+                    Some(Ok(started))
+                } else {
+                    started.stop(Duration::from_millis(1_500));
+                    Some(Err("The MC start was stopped before the MC spawned.".into()))
+                }
+            }
+            Err(error) => {
+                (self.abandon)(self.generation);
+                Some(Err(error))
+            }
+        }
     }
 }
 
@@ -1009,9 +1069,9 @@ pub struct Live {
     /// spawn until it exits or is handed over: how a quit during
     /// the start stops it (see [`stop_tracked_mc`]).
     pub started_pgid: Arc<AtomicI32>,
-    /// Whether this launch may still spawn, made one step with
-    /// the tracking above against its owner's stop.
-    pub spawn_gate: Arc<SpawnGate>,
+    /// Whether this launch may still spawn, checked against its
+    /// owner's generation before and after the spawn.
+    pub spawn_permit: SpawnPermit,
 }
 
 impl Live {
@@ -1031,7 +1091,7 @@ impl Live {
             timeout: START_TIMEOUT,
             is_alive: Arc::new(process_is_alive),
             started_pgid: Arc::new(AtomicI32::new(0)),
-            spawn_gate: Arc::default(),
+            spawn_permit: SpawnPermit::unconditional(),
         }
     }
 
@@ -1096,9 +1156,9 @@ fn standalone_with_fetch(
     };
     // The spawn and its tracking are one step against a stop:
     // cancelled first, nothing spawns; spawned first, the stop
-    // finds it tracked (see [`SpawnGate`]). A found MC never
+    // finds it tracked (see [`SpawnPermit`]). A found MC never
     // reaches this.
-    let spawned = live.spawn_gate.run(|| {
+    let spawned = live.spawn_permit.run(|| {
         let mut started = start_mc(&launch, port, args.base_dir.as_deref(), &live.node)?;
         started.track_in(&live.started_pgid);
         Ok(started)
@@ -1471,7 +1531,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             is_alive: Arc::new(process_is_alive),
             started_pgid: Arc::new(AtomicI32::new(0)),
-            spawn_gate: Arc::default(),
+            spawn_permit: SpawnPermit::unconditional(),
         };
         let release_dir = temp.path().join("mc");
         let env: Env = {
@@ -1672,7 +1732,7 @@ mod tests {
             timeout,
             is_alive,
             started_pgid: Arc::new(AtomicI32::new(0)),
-            spawn_gate: Arc::default(),
+            spawn_permit: SpawnPermit::unconditional(),
         };
         (live, temp.path().join("home"), port)
     }
@@ -1821,7 +1881,13 @@ mod tests {
             Duration::from_secs(10),
             Arc::new(process_is_alive),
         );
-        live.spawn_gate.cancel();
+        let mut live = live;
+        live.spawn_permit = SpawnPermit::new(
+            1,
+            Arc::new(|_| false),
+            Arc::new(|_, _| false),
+            Arc::new(|_| {}),
+        );
         let error = match standalone_with_fetch(
             &HostArgs {
                 base_dir: Some(home.clone()),
@@ -1952,14 +2018,20 @@ mod tests {
         // stays ignored across exec) and is in the same group.
         // The stop's grace is the group's: after it, the kill
         // still reaches the descendant the wrapper left behind.
+        // The descendant publishes its readiness only after the
+        // trap is installed, and the test waits for it: stopping
+        // earlier could let TERM kill both shells and pass even
+        // with the group escalation removed.
         let temp = tempfile::tempdir().unwrap();
         let pid_file = temp.path().join("ignoring-pid");
+        let ready_file = temp.path().join("ignoring-ready");
         let launch = Launch {
             command: "sh".into(),
             args: vec![
                 "-c".into(),
                 format!(
-                    "sh -c 'trap \"\" TERM; exec sleep 60' & echo $! > {}; wait",
+                    "sh -c 'trap \"\" TERM; echo ready > {}; exec sleep 60' & echo $! > {}; wait",
+                    ready_file.display(),
                     pid_file.display()
                 ),
             ],
@@ -1968,12 +2040,16 @@ mod tests {
         let mut mc = start_mc(&launch, 4123, None, Path::new("node")).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let ignorer: i64 = loop {
-            if let Ok(pid) = std::fs::read_to_string(&pid_file)
+            if ready_file.exists()
+                && let Ok(pid) = std::fs::read_to_string(&pid_file)
                 && let Ok(pid) = pid.trim().parse()
             {
                 break pid;
             }
-            assert!(Instant::now() < deadline, "the fake MC never slept");
+            assert!(
+                Instant::now() < deadline,
+                "the descendant never installed its TERM trap"
+            );
             std::thread::sleep(Duration::from_millis(20));
         };
         assert!(process_is_alive(ignorer));

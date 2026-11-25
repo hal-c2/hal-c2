@@ -9,12 +9,20 @@
 //!
 //! What the launch learns arrives on its worker thread; `events` is
 //! meant to post it to the shell's inbox, not to touch the engine.
+//!
+//! The lifecycle is one generation token under one lock
+//! ([`Lifecycle`]): `start` and `stop` each take a new generation,
+//! a worker carries the generation it was started with, and every
+//! spawn, registration and publication checks that generation
+//! under the same lock as the state change. A stale generation
+//! spawns nothing, publishes nothing, and stops what it spawned.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mc_launcher::{self, Live, SpawnGate, StartedMc};
+use crate::mc_launcher::{self, Live, SpawnPermit, StartedMc};
 
 /// How the host is run: the host arguments (`--attach`, `--dev`,
 /// `--base-dir`, as main.cpp hands them on) and what a launch is
@@ -36,36 +44,183 @@ pub enum Event {
 
 type Events = Arc<dyn Fn(Event) + Send + Sync>;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Idle,
+    Starting,
+    Ready,
+    Stopping,
+}
+
+/// The host's whole lifecycle in one piece of state: a
+/// monotonically increasing generation, the current phase, and
+/// every MC this host started that is still alive — `pending`
+/// (spawned, its worker has not handed it over yet, tracked by
+/// process group) and `owned` (handed over, watched until it ends
+/// or is stopped). Generic over the MC handle so the property
+/// test can drive it with fake MCs; the host's is `StartedMc`.
+struct Lifecycle<M = StartedMc> {
+    generation: u64,
+    phase: Phase,
+    ready_generation: Option<u64>,
+    watching_generation: Option<u64>,
+    /// Spawns reserved and not yet registered or abandoned: a
+    /// stop waits these out, so none lands after it has drained.
+    inflight: usize,
+    pending: BTreeSet<i32>,
+    owned: Vec<M>,
+}
+
+impl<M> Default for Lifecycle<M> {
+    fn default() -> Lifecycle<M> {
+        Lifecycle {
+            generation: 0,
+            phase: Phase::Idle,
+            ready_generation: None,
+            watching_generation: None,
+            inflight: 0,
+            pending: BTreeSet::new(),
+            owned: Vec::new(),
+        }
+    }
+}
+
+/// What handing a started MC over decided, under the lock.
+enum HandOver<M> {
+    /// This generation's own: publish for it and watch it. Any MC
+    /// it replaced is the caller's to stop.
+    Current(Vec<M>),
+    /// A superseded generation's, adopted by the current one
+    /// (which may be running on it as a found MC): watch it as
+    /// the current generation's, publish nothing.
+    Adopted(u64),
+    /// Nobody's (stopped, or the current generation owns another):
+    /// the caller's to stop.
+    Stop(M),
+}
+
+impl<M> Lifecycle<M> {
+    fn is_current(&self, generation: u64) -> bool {
+        generation == self.generation && self.phase != Phase::Stopping
+    }
+
+    /// A new start: a new generation, everything before it stale.
+    fn begin_start(&mut self) -> u64 {
+        self.generation += 1;
+        self.phase = Phase::Starting;
+        self.ready_generation = None;
+        self.watching_generation = None;
+        self.generation
+    }
+
+    /// A stop: also a new generation, so every worker still in
+    /// flight is stale from here. Hands back everything alive for
+    /// the caller to stop and reap outside the lock.
+    fn begin_stop(&mut self) -> (Vec<M>, Vec<i32>) {
+        self.generation += 1;
+        self.phase = Phase::Stopping;
+        self.ready_generation = None;
+        self.watching_generation = None;
+        self.drain()
+    }
+
+    fn drain(&mut self) -> (Vec<M>, Vec<i32>) {
+        (
+            std::mem::take(&mut self.owned),
+            std::mem::take(&mut self.pending).into_iter().collect(),
+        )
+    }
+
+    fn finish_stop(&mut self, generation: u64) {
+        if self.generation == generation && self.phase == Phase::Stopping {
+            self.phase = Phase::Idle;
+        }
+    }
+
+    /// Before a spawn: only the current generation, while it is
+    /// starting, and the reservation is what a stop waits out.
+    fn reserve_spawn(&mut self, generation: u64) -> bool {
+        if generation == self.generation && self.phase == Phase::Starting {
+            self.inflight += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// After a spawn: the group joins the alive set, or the
+    /// generation went stale and the caller stops what it spawned.
+    fn register_spawn(&mut self, generation: u64, pgid: i32) -> bool {
+        self.inflight = self.inflight.saturating_sub(1);
+        if self.is_current(generation) {
+            self.pending.insert(pgid);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn abandon_spawn(&mut self) {
+        self.inflight = self.inflight.saturating_sub(1);
+    }
+
+    /// A worker's started MC, handed over: out of `pending`, then
+    /// this generation's own, the current generation's by
+    /// adoption, or nobody's.
+    fn hand_over(&mut self, generation: u64, mc: M, pgid: i32) -> HandOver<M> {
+        self.pending.remove(&pgid);
+        if self.is_current(generation) && generation == self.generation {
+            let replaced = std::mem::replace(&mut self.owned, vec![mc]);
+            HandOver::Current(replaced)
+        } else if self.phase != Phase::Stopping && self.owned.is_empty() {
+            self.owned.push(mc);
+            HandOver::Adopted(self.generation)
+        } else {
+            HandOver::Stop(mc)
+        }
+    }
+
+    fn may_publish(&self, generation: u64) -> bool {
+        self.is_current(generation)
+    }
+
+    /// Records a told `Ready`, only for a generation still
+    /// current at the recording: a stale worker resuming after
+    /// its callback must not overwrite the current one's marker.
+    fn publish_ready(&mut self, generation: u64) -> bool {
+        if self.is_current(generation) {
+            self.ready_generation = Some(generation);
+            self.phase = Phase::Ready;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// An exit is reported only for the current generation, and
+    /// only after its `Ready` was recorded (an adopted MC's watch
+    /// starts before that `Ready`).
+    fn watch_may_report(&self, generation: u64) -> bool {
+        self.is_current(generation) && self.ready_generation == Some(generation)
+    }
+
+    fn note_exit(&mut self, pgid: i32) {
+        self.pending.remove(&pgid);
+    }
+}
+
+type Shared = Arc<(Mutex<Lifecycle>, Condvar)>;
+
 /// The host, once [`DesktopHost::start`]ed.
 pub struct DesktopHost {
     options: Options,
     events: Events,
-    state: Arc<Mutex<State>>,
-    /// The process group of an MC a start of this host spawned and
-    /// has not handed over yet, so `stop` reaches it mid-start.
+    shared: Shared,
+    /// The signal-handler slot for a started MC's group (see
+    /// `mc_launcher::StartedMc::track_in`); the lifecycle's own
+    /// alive set is in [`Lifecycle`].
     started_pgid: Arc<std::sync::atomic::AtomicI32>,
-    /// Cancels a start that has not spawned yet, and makes a
-    /// spawning start tracked above before `stop` looks there.
-    spawn_gate: Arc<SpawnGate>,
-}
-
-#[derive(Default)]
-struct State {
-    /// The MC this shell started, watched until it ends or is stopped.
-    mc: Option<StartedMc>,
-    /// The shell stopped it; its exit is no failure.
-    stopping: bool,
-    /// Which `start` is running; a stopped one's worker hears nothing
-    /// more of the next.
-    run: u64,
-    /// The run whose MC the watch thread follows, so a run gets one
-    /// watch even when an adopted MC adds a second caller.
-    watching_run: Option<u64>,
-    /// The run whose `Ready` the shell has been told, recorded
-    /// under this lock right after the telling: a watch (an
-    /// adopted MC's, started by the superseded run) must not
-    /// report that MC's exit before its run's `Ready`.
-    ready_run: Option<u64>,
 }
 
 impl DesktopHost {
@@ -73,9 +228,8 @@ impl DesktopHost {
         DesktopHost {
             options,
             events: Arc::new(events),
-            state: Arc::default(),
+            shared: Arc::new((Mutex::new(Lifecycle::default()), Condvar::new())),
             started_pgid: Arc::default(),
-            spawn_gate: Arc::default(),
         }
     }
 
@@ -86,145 +240,152 @@ impl DesktopHost {
         // signal stops the MC this shell starts, as the Node
         // host's signal handlers did.
         mc_launcher::install_mc_lifeline();
-        let run = {
-            // A host started again (the updater's, after a failed
-            // install) is a new one: its `ready` attaches and its
-            // MC's exit is reported.
-            let mut state = self.state.lock().unwrap();
-            state.stopping = false;
-            state.run += 1;
-            state.run
-        };
-        self.spawn_gate.reset();
+        let generation = self.shared.0.lock().unwrap().begin_start();
+        let permit = spawn_permit(generation, &self.shared);
         let options = self.options.clone();
-        let state = self.state.clone();
+        let shared = self.shared.clone();
         let events = self.events.clone();
         let started_pgid = self.started_pgid.clone();
-        let spawn_gate = self.spawn_gate.clone();
         std::thread::spawn(move || {
-            let result = launch(&options, &started_pgid, &spawn_gate);
-            let mut watch = false;
-            let event = match result {
-                Ok((access, started)) => {
-                    watch = started.is_some();
-                    let host_state = state.clone();
-                    let replaced = {
-                        let mut state = state.lock().unwrap();
-                        if state.run != run && !state.stopping {
-                            // Superseded while starting. The current
-                            // run may have *found* this very MC and
-                            // said Ready for it, so it is not
-                            // nobody's to stop: it becomes the
-                            // current run's, watched as its own.
-                            if let Some(started) = started {
-                                match adopt_started(&mut state, started) {
-                                    Ok(current) => {
-                                        drop(state);
-                                        watch_mc(current, host_state.clone(), events.clone());
-                                    }
-                                    Err(mut started) => {
-                                        // The current run owns another.
-                                        drop(state);
-                                        started.stop(Duration::from_millis(1_500));
-                                    }
-                                }
+            let result = launch(&options, &started_pgid, permit);
+            match result {
+                Ok((access, Some(started))) => {
+                    let pgid = started.pgid();
+                    let over = shared
+                        .0
+                        .lock()
+                        .unwrap()
+                        .hand_over(generation, started, pgid);
+                    match over {
+                        HandOver::Current(replaced) => {
+                            for mut replaced in replaced {
+                                replaced.stop(Duration::from_millis(1_500));
                             }
-                            return;
-                        }
-                        if state.stopping {
-                            // Stopped while starting: the MC just
-                            // started is nobody's.
-                            drop(state);
-                            if let Some(mut started) = started {
-                                started.stop(Duration::from_millis(1_500));
+                            if publish(
+                                &shared,
+                                &events,
+                                generation,
+                                Event::Ready {
+                                    origin: access.origin,
+                                    token: access.token,
+                                },
+                            ) {
+                                watch_mc(generation, shared.clone(), events.clone());
                             }
-                            return;
                         }
-                        if let Some(started) = started {
-                            state.mc.replace(started)
-                        } else {
-                            None
+                        HandOver::Adopted(current) => {
+                            watch_mc(current, shared.clone(), events.clone());
                         }
-                    };
-                    if let Some(mut replaced) = replaced {
-                        replaced.stop(Duration::from_millis(1_500));
-                    }
-                    Event::Ready {
-                        origin: access.origin,
-                        token: access.token,
+                        HandOver::Stop(mut started) => {
+                            started.stop(Duration::from_millis(1_500));
+                        }
                     }
                 }
-                Err(message) => Event::Failed(message),
-            };
-            // A stopped run says nothing: an MC `stop` killed
-            // mid-start launches as a failure here, and a stop
-            // (the updater's, a quit) is not one.
-            let current = {
-                let state = state.lock().unwrap();
-                state.run == run && !state.stopping
-            };
-            if current {
-                let ready = matches!(event, Event::Ready { .. });
-                events(event);
-                if ready {
-                    // Told, and recorded under the lock an adopted
-                    // MC's watch checks: from here that watch may
-                    // report the MC's end, never before this.
-                    state.lock().unwrap().ready_run = Some(run);
+                Ok((access, None)) => {
+                    publish(
+                        &shared,
+                        &events,
+                        generation,
+                        Event::Ready {
+                            origin: access.origin,
+                            token: access.token,
+                        },
+                    );
                 }
-                // Ready is said before the MC's end can be: the watch
-                // only ever follows it.
-                if watch {
-                    watch_mc(run, state.clone(), events.clone());
+                Err(message) => {
+                    publish(&shared, &events, generation, Event::Failed(message));
                 }
             }
         });
     }
 
-    /// Stops the MC this shell started: SIGTERM to its process
-    /// group, and a kill after the grace. A found MC is left alone.
+    /// Stops every MC this shell started: SIGTERM to each process
+    /// group, and a kill after the grace, each reaped before this
+    /// returns. A found MC is left alone.
     pub fn stop(&self) {
-        let mc = {
-            let mut state = self.state.lock().unwrap();
-            state.stopping = true;
-            state.mc.take()
+        let (lock, drained) = (&self.shared.0, &self.shared.1);
+        let (mut owned, mut pending, generation) = {
+            let mut state = lock.lock().unwrap();
+            let (owned, pending) = state.begin_stop();
+            (owned, pending, state.generation)
         };
-        // Before the tracked stop looks: from here a start still
-        // in flight either has its MC tracked in this host's slot
-        // or will never spawn one. Without this, a stop between
-        // planning and spawning returned while the worker went on
-        // to start an MC nobody was left to stop.
-        self.spawn_gate.cancel();
-        match mc {
-            Some(mut mc) => mc.stop(Duration::from_secs(2)),
-            // None here may still be starting on the worker thread
-            // (a quit while its first compile runs): it has been
-            // tracked in this host's slot since its spawn, so stop
-            // it there. A found MC was never tracked and is left
-            // alone.
-            None => {
-                mc_launcher::stop_tracked_mc(&self.started_pgid);
-                // The tracked stop signals the group; the worker
-                // reaps it and clears the slot. Give it a moment
-                // so the MC is reaped, not only signalled, before
-                // stop returns — the updater replaces the MC on
-                // the strength of this stop.
-                let deadline = Instant::now() + Duration::from_secs(2);
-                while self.started_pgid.load(std::sync::atomic::Ordering::SeqCst) != 0
-                    && Instant::now() < deadline
-                {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
+        // A spawn reserved before the stop either registers into
+        // the (now stale) alive set or is stopped by its own
+        // worker; wait those out, then drain whatever landed, so
+        // nothing this host started outlives the stop.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        {
+            let mut state = lock.lock().unwrap();
+            while state.inflight > 0 && Instant::now() < deadline {
+                let (next, _) = drained
+                    .wait_timeout(state, Duration::from_millis(50))
+                    .unwrap();
+                state = next;
             }
+            let (more_owned, more_pending) = state.drain();
+            owned.extend(more_owned);
+            pending.extend(more_pending);
         }
+        // Owned and pending are disjoint by construction (handing
+        // over moves a group from one to the other), so no group
+        // is signalled twice.
+        for pgid in pending {
+            mc_launcher::stop_group(pgid);
+        }
+        for mut mc in owned {
+            mc.stop(Duration::from_secs(2));
+        }
+        lock.lock().unwrap().finish_stop(generation);
     }
+}
+
+/// Tells the shell, if this generation may still speak: the check
+/// under the lock, the callback outside it, and a `Ready`
+/// recorded under the lock again (and only if still current).
+/// Whether the telling stands.
+fn publish(shared: &Shared, events: &Events, generation: u64, event: Event) -> bool {
+    if !shared.0.lock().unwrap().may_publish(generation) {
+        return false;
+    }
+    let ready = matches!(event, Event::Ready { .. });
+    events(event);
+    if ready {
+        shared.0.lock().unwrap().publish_ready(generation)
+    } else {
+        shared.0.lock().unwrap().may_publish(generation)
+    }
+}
+
+/// The launcher's spawn permission for one generation, decided
+/// under the lifecycle lock.
+fn spawn_permit(generation: u64, shared: &Shared) -> SpawnPermit {
+    let reserve_shared = shared.clone();
+    let register_shared = shared.clone();
+    let abandon_shared = shared.clone();
+    SpawnPermit::new(
+        generation,
+        Arc::new(move |generation| reserve_shared.0.lock().unwrap().reserve_spawn(generation)),
+        Arc::new(move |generation, pgid| {
+            let registered = register_shared
+                .0
+                .lock()
+                .unwrap()
+                .register_spawn(generation, pgid);
+            register_shared.1.notify_all();
+            registered
+        }),
+        Arc::new(move |_| {
+            abandon_shared.0.lock().unwrap().abandon_spawn();
+            abandon_shared.1.notify_all();
+        }),
+    )
 }
 
 /// One launch: the arguments read, then found, started or attached.
 fn launch(
     options: &Options,
     started_pgid: &Arc<std::sync::atomic::AtomicI32>,
-    spawn_gate: &Arc<SpawnGate>,
+    spawn_permit: SpawnPermit,
 ) -> Result<(mc_launcher::Access, Option<StartedMc>), String> {
     let args = mc_launcher::parse_host_args(&options.arguments)?;
     let mut live = options.live.clone().unwrap_or_else(|| {
@@ -235,64 +396,52 @@ fn launch(
         )
     });
     live.started_pgid = started_pgid.clone();
-    live.spawn_gate = spawn_gate.clone();
+    live.spawn_permit = spawn_permit;
     match &args.attach {
         Some(url) => mc_launcher::attach(url, args.base_dir.as_deref(), &live).map(|a| (a, None)),
         None => mc_launcher::standalone(&args, &live),
     }
 }
 
-/// Gives a superseded run's started MC to the current run, which
-/// may be running on it as a found one: Ok with the current run,
-/// whose watch then follows it. Err hands it back to be stopped
-/// when the current run already owns an MC of its own.
-fn adopt_started(state: &mut State, started: StartedMc) -> Result<u64, StartedMc> {
-    if state.mc.is_some() {
-        return Err(started);
-    }
-    state.mc = Some(started);
-    Ok(state.run)
-}
-
 /// Reports the started MC's end, unless the shell stopped it or
 /// another MC holds its files (then the shell's MC is that one, with
 /// the same files' token, and it carries on).
-fn watch_mc(run: u64, state: Arc<Mutex<State>>, events: Events) {
+fn watch_mc(generation: u64, shared: Shared, events: Events) {
     {
-        let mut state = state.lock().unwrap();
-        if state.watching_run == Some(run) {
+        let mut state = shared.0.lock().unwrap();
+        if state.watching_generation == Some(generation) {
             return;
         }
-        state.watching_run = Some(run);
+        state.watching_generation = Some(generation);
     }
     std::thread::spawn(move || {
-        watch_loop(run, &state, &events);
-        let mut state = state.lock().unwrap();
-        if state.watching_run == Some(run) {
-            state.watching_run = None;
+        watch_loop(generation, &shared, &events);
+        let mut state = shared.0.lock().unwrap();
+        if state.watching_generation == Some(generation) {
+            state.watching_generation = None;
         }
     });
 }
 
-fn watch_loop(run: u64, state: &Arc<Mutex<State>>, events: &Events) {
+fn watch_loop(generation: u64, shared: &Shared, events: &Events) {
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let status = {
-            let mut state = state.lock().unwrap();
-            if state.run != run || state.stopping {
+            let mut state = shared.0.lock().unwrap();
+            if !state.is_current(generation) {
                 return;
             }
-            // An adopted MC's watch starts before its run has
-            // said `Ready` (the superseded run starts it at the
-            // adoption): its exit is not even looked at until
-            // that `Ready` is recorded, so the shell can never
-            // hear `Failed` before it.
-            if state.ready_run != Some(run) {
+            if !state.watch_may_report(generation) {
                 continue;
             }
-            match state.mc.as_mut().and_then(StartedMc::try_wait) {
-                Some(status) => {
-                    state.mc.take();
+            let exited = state
+                .owned
+                .iter_mut()
+                .find_map(|mc| mc.try_wait().map(|status| (mc.pgid(), status)));
+            match exited {
+                Some((pgid, status)) => {
+                    state.owned.retain(|mc| mc.pgid() != pgid);
+                    state.note_exit(pgid);
                     status
                 }
                 None => continue,
@@ -300,6 +449,11 @@ fn watch_loop(run: u64, state: &Arc<Mutex<State>>, events: &Events) {
         };
         let code = mc_launcher::exit_code(status);
         if code == mc_launcher::HOME_IN_USE {
+            return;
+        }
+        // Still this generation's to report, checked under the
+        // lock at the telling.
+        if !shared.0.lock().unwrap().watch_may_report(generation) {
             return;
         }
         events(Event::Failed(format!(
@@ -486,7 +640,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             is_alive: Arc::new(mc_launcher::process_is_alive),
             started_pgid: Arc::new(std::sync::atomic::AtomicI32::new(0)),
-            spawn_gate: Arc::default(),
+            spawn_permit: mc_launcher::SpawnPermit::unconditional(),
         }
     }
 
@@ -630,23 +784,30 @@ mod tests {
             )
             .unwrap()
         };
-        let mut state = State {
-            run: 2,
-            ..State::default()
-        };
+        let mut state = Lifecycle::default();
+        state.begin_start();
+        let current = state.begin_start();
         let adopted = fake();
+        let adopted_pgid = adopted.pgid();
         let adopted_origin = adopted.origin.clone();
-        assert!(matches!(adopt_started(&mut state, adopted), Ok(2)));
+        assert!(matches!(
+            state.hand_over(1, adopted, adopted_pgid),
+            HandOver::Adopted(generation) if generation == current
+        ));
         assert_eq!(
-            state.mc.as_ref().map(|mc| mc.origin.as_str()),
+            state.owned.first().map(|mc| mc.origin.as_str()),
             Some(adopted_origin.as_str())
         );
         // With an MC of its own in place, the next superseded one
         // is handed back (the caller stops it; here its Drop does).
         let spare = fake();
-        assert!(adopt_started(&mut state, spare).is_err());
+        let spare_pgid = spare.pgid();
+        assert!(matches!(
+            state.hand_over(1, spare, spare_pgid),
+            HandOver::Stop(_)
+        ));
         // The adopted one is the host's to stop, as its own.
-        let mut mc = state.mc.take().unwrap();
+        let mut mc = state.owned.pop().unwrap();
         mc.stop(Duration::from_secs(2));
         assert!(mc.try_wait().is_some());
     }
@@ -669,26 +830,209 @@ mod tests {
             Path::new("node"),
         )
         .unwrap();
-        let state = Arc::new(Mutex::new(State {
-            mc: Some(mc),
-            run: 7,
-            ..State::default()
-        }));
+        let shared: Shared = Arc::new((Mutex::new(Lifecycle::default()), Condvar::new()));
+        {
+            let mut state = shared.0.lock().unwrap();
+            for _ in 0..7 {
+                state.begin_start();
+            }
+            state.owned.push(mc);
+        }
         let (sent, heard) = mpsc::channel();
         let events: Events = Arc::new(move |event| {
             let _ = sent.send(event);
         });
-        let watching = state.clone();
+        let watching = shared.clone();
         let watch_events = events.clone();
         std::thread::spawn(move || watch_loop(7, &watching, &watch_events));
         // Several polls of an exited MC, and still nothing.
         assert!(heard.recv_timeout(Duration::from_millis(600)).is_err());
-        state.lock().unwrap().ready_run = Some(7);
+        assert!(shared.0.lock().unwrap().publish_ready(7));
         assert_eq!(
             heard.recv_timeout(Duration::from_secs(5)).unwrap(),
             Event::Failed(
                 "The MC exited (code 3, normal exit). Restart HAL-C2 to reconnect.".into()
             )
         );
+    }
+
+    // The three Majors of the generation-token redesign, as plain
+    // regressions (the state machine below covers their class).
+
+    #[test]
+    fn a_stale_worker_cannot_spawn_after_a_restart() {
+        // r4694150733: stop cancels run A, a new start enables run
+        // B, and A must not spawn through B's start.
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start();
+        life.begin_stop();
+        let b = life.begin_start();
+        assert!(!life.reserve_spawn(a));
+        assert!(life.reserve_spawn(b));
+    }
+
+    #[test]
+    fn a_stale_ready_does_not_overwrite_the_current_marker() {
+        // r4694150740: A published Ready and paused before
+        // recording it; B records its own; A resuming must not
+        // replace B's marker (B's watch would skip every exit).
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start();
+        life.begin_stop();
+        let b = life.begin_start();
+        assert!(life.publish_ready(b));
+        assert!(!life.publish_ready(a));
+        assert_eq!(life.ready_generation, Some(b));
+        assert!(life.watch_may_report(b));
+        assert!(!life.watch_may_report(a));
+    }
+
+    #[test]
+    fn a_stop_drains_owned_and_pending_alike() {
+        // r4694150748: with an adopted MC owned and a second MC
+        // pending from a newer spawn, stop hands back both.
+        let mut life: Lifecycle<i32> = Lifecycle::default();
+        let a = life.begin_start();
+        assert!(life.reserve_spawn(a));
+        assert!(life.register_spawn(a, 111));
+        let b = life.begin_start();
+        assert!(matches!(life.hand_over(a, 111, 111), HandOver::Adopted(_)));
+        assert!(life.reserve_spawn(b));
+        assert!(life.register_spawn(b, 222));
+        let (owned, pending) = life.begin_stop();
+        assert_eq!(owned, [111]);
+        assert_eq!(pending, [222]);
+        assert!(life.owned.is_empty() && life.pending.is_empty());
+    }
+
+    mod prop {
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::BTreeSet;
+
+        #[derive(Clone, Debug)]
+        enum Action {
+            Start,
+            Stop,
+            ReserveStale,
+            SpawnCurrent,
+            HandOverStale(i32),
+            PublishCurrent,
+            PublishStale,
+            ExitOldest,
+        }
+
+        fn action() -> impl Strategy<Value = Action> {
+            prop_oneof![
+                Just(Action::Start),
+                Just(Action::Stop),
+                Just(Action::ReserveStale),
+                Just(Action::SpawnCurrent),
+                (1000i32..1010).prop_map(Action::HandOverStale),
+                Just(Action::PublishCurrent),
+                Just(Action::PublishStale),
+                Just(Action::ExitOldest),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+            #[test]
+            fn the_generation_token_keeps_every_interleaving_sound(
+                actions in proptest::collection::vec(action(), 1..40)
+            ) {
+                // Fake MCs are their pgids; `alive` is every fake
+                // spawned and not yet stopped or exited.
+                let mut life: Lifecycle<i32> = Lifecycle::default();
+                let mut alive: BTreeSet<i32> = BTreeSet::new();
+                let mut next_pgid = 1i32;
+                let mut published: Vec<u64> = Vec::new();
+                for action in actions {
+                    let current = life.generation;
+                    match action {
+                        Action::Start => { life.begin_start(); }
+                        Action::Stop => {
+                            let (owned, pending) = life.begin_stop();
+                            for pgid in owned.iter().chain(&pending) {
+                                alive.remove(pgid);
+                            }
+                            // After stop returns, nothing this host
+                            // started is alive or unowned: every
+                            // live fake was handed back above, and
+                            // the lifecycle holds none.
+                            prop_assert!(life.owned.is_empty());
+                            prop_assert!(life.pending.is_empty());
+                            prop_assert!(alive.iter().all(|pgid| !life.pending.contains(pgid)));
+                            prop_assert_eq!(life.ready_generation, None);
+                        }
+                        Action::ReserveStale => {
+                            if current > 0 {
+                                prop_assert!(!life.reserve_spawn(current - 1));
+                            }
+                        }
+                        Action::SpawnCurrent => {
+                            if life.reserve_spawn(current) {
+                                let pgid = next_pgid;
+                                next_pgid += 1;
+                                if life.register_spawn(current, pgid) {
+                                    alive.insert(pgid);
+                                    match life.hand_over(current, pgid, pgid) {
+                                        HandOver::Current(replaced) => {
+                                            for old in replaced { alive.remove(&old); }
+                                        }
+                                        HandOver::Adopted(_) => {}
+                                        HandOver::Stop(mc) => { alive.remove(&mc); }
+                                    }
+                                }
+                            }
+                        }
+                        Action::HandOverStale(pgid) => {
+                            if current > 0 && !alive.contains(&pgid) {
+                                alive.insert(pgid);
+                                match life.hand_over(current - 1, pgid, pgid) {
+                                    HandOver::Current(_) => {
+                                        prop_assert!(false, "stale hand-over became current");
+                                    }
+                                    HandOver::Adopted(generation) => {
+                                        prop_assert_eq!(generation, life.generation);
+                                    }
+                                    HandOver::Stop(mc) => { alive.remove(&mc); }
+                                }
+                            }
+                        }
+                        Action::PublishCurrent => {
+                            if life.publish_ready(current) {
+                                prop_assert_eq!(life.ready_generation, Some(current));
+                                published.push(current);
+                            }
+                        }
+                        Action::PublishStale => {
+                            if current > 0 {
+                                let before = life.ready_generation;
+                                prop_assert!(!life.publish_ready(current - 1));
+                                prop_assert_eq!(life.ready_generation, before);
+                                prop_assert!(!life.may_publish(current - 1) || life.phase == Phase::Stopping);
+                            }
+                        }
+                        Action::ExitOldest => {
+                            if let Some(pgid) = alive.iter().next().copied() {
+                                alive.remove(&pgid);
+                                life.note_exit(pgid);
+                                life.owned.retain(|mc| *mc != pgid);
+                            }
+                        }
+                    }
+                    // After every step: the Ready marker is only
+                    // ever the current generation's, at most one MC
+                    // is owned, and no stale generation may speak.
+                    prop_assert!(life.ready_generation.is_none_or(|g| g == life.generation));
+                    prop_assert!(life.owned.len() <= 1);
+                    prop_assert!(published.iter().all(|g| *g <= life.generation));
+                    if life.phase == Phase::Stopping {
+                        prop_assert!(!life.watch_may_report(life.generation));
+                    }
+                }
+            }
+        }
     }
 }
