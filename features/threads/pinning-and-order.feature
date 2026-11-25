@@ -16,7 +16,7 @@
 #   apps/web/src/hooks/showThreadUndoNotice.ts
 #   apps/web/src/hooks/threadUndo.ts
 #   apps/web/src/hooks/useThreadActions.ts (the title each failed undo reports)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (pinned section, divider)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (pinned section, divider)
 #   apps/desktop-qt/parity/features.backlog.test.ts (sidebar-multi-select-and-reorder)
 #   packages/contracts/src/orchestrationV2.ts (thread.pin, thread.unpin, thread.pin.reorder, thread.active.reorder, thread.pinned, thread.unpinned, thread.pin-reordered, thread.active-reordered)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (pin, unpin, pin.reorder, active.reorder)

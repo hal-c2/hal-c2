@@ -17,7 +17,7 @@
 #   apps/server-ex/lib/hal_c2/text_generation/style.ex (policy, pr_template)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (pr_content)
 #   apps/web/src/components/GitActionsControl.tsx (commit dialog)
-#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (commit dialog)
+#   packages/qml/HalC2/Bricks/GitActions.qml (commit dialog)
 #   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction, its toasts)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (a cluster member's requests)
 #   apps/desktop-qt/tests/tst_GitActions.qml

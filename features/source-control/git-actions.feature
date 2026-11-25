@@ -14,7 +14,7 @@
 #   apps/web/src/shell/ShellGitBridge.tsx
 #   apps/web/src/hooks/useGitActions.ts (the reasons an action is unavailable)
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
-#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
+#   packages/qml/HalC2/Bricks/GitActions.qml
 #   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu, results, init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (vcs.init)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (the error while a cluster member is offline)

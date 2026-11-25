@@ -12,19 +12,19 @@
 #   https://github.com/pingdotgg/t3code/pull/17730
 #   https://github.com/pingdotgg/t3code/pull/25389
 #   https://github.com/pingdotgg/t3code/pull/27892
-#   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
+#   packages/qml/HalC2/Bricks/DefaultShell.qml
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
+#   packages/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
+#   packages/qml/HalC2/Bricks/RightPanel.qml
+#   packages/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
 #   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs;
 #     rightPanel.toggleMaximized opens the tab in the centre, desktop/stage.feature)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/native/features/HeaderSteps.cpp (the header brick laid out offscreen)
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
+#   packages/qml/HalC2/Bricks/TerminalPanel.qml
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.toggle, panel groups)
 #   apps/desktop-qt/tests/tst_Workspace.qml
 #   apps/desktop-qt/tests/tst_RightPanel.qml (native bodies kept while hidden)

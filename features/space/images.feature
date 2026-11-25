@@ -12,7 +12,7 @@
 #   https://github.com/openai/codex/issues/43965 (asking Codex to let the model be chosen)
 #   grok 1.0.70: features.image_gen_model_override, GROK_IMAGE_GEN_MODEL_OVERRIDE
 #   https://docs.x.ai/docs/models (grok-imagine-image, grok-imagine-image-2.0)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (the prompt area, reused for images)
+#   packages/qml/HalC2/Bricks/Composer.qml (the prompt area, reused for images)
 
 Feature: Images in a Space
   A Space keeps images: generated from a prompt by a provider the user already has, or

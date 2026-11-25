@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The desktop's model-and-mode scenarios (features/composer/model-and-mode.feature)
 // for the native picker, one test per scenario by name. The catalogue goes

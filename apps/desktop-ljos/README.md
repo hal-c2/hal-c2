@@ -1,7 +1,7 @@
 # desktop-ljos
 
 An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
-[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `packages/qml/HalC2/Bricks`
 as they are and puts a Rust `HalC2.Shell` under them.
 
 - `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the

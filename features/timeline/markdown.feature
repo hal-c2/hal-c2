@@ -64,9 +64,9 @@
 #   apps/mobile/src/features/threads/markdownImageSize.ts, markdownCodeHighlightState.ts (image size limits, colouring only for a named language)
 #   apps/mobile/src/lib/markdownLinks.ts, nativeMarkdownText.ts (how a link, a file mention, a skill and a path in code are shown in a reply)
 #   apps/mobile/modules/hal-c2-markdown-text (chips in text, copy without inline icons, selection handle colour)
-#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
-#   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
+#   packages/qml/HalC2/Bricks/Markdown.qml
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
+#   packages/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
 #   apps/desktop-qt/src/native/CodeHighlighter.cpp, native/syntax (code colours: syntect with bat's syntaxes, the Pierre themes)
 #   apps/tui/src/host/codeColours.ts (code colours on the terminal: OpenTUI's tree-sitter and its grammars)
 #   apps/desktop-qt/tests/tst_Markdown.qml

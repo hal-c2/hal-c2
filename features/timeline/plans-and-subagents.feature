@@ -62,7 +62,7 @@
 #   packages/client-runtime/src/state/threadSubagents.ts (the status segment, the latest turn's roster)
 #   packages/client-runtime/src/state/subagentDisplay.ts (the group's counts, a subagent's displayed title)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup: the group's entry, avatars, span)
-#   apps/desktop-qt/qml/HalC2/Bricks/AgentsPanel.qml
+#   packages/qml/HalC2/Bricks/AgentsPanel.qml
 #   apps/desktop-qt/tests/native/features/AgentsSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/14999
 #   https://github.com/pingdotgg/t3code/pull/15189

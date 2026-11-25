@@ -34,9 +34,9 @@
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
 #   apps/web/src/components/usage/UsagePage.tsx
 #   packages/shared/src/usageFormat.ts (token, percentage and day labels)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
-#   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/UsageChart.qml (the chart)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
+#   apps/desktop-qt/src/native/UsageController.cpp, packages/qml/HalC2/Bricks/UsagePage.qml
+#   packages/qml/HalC2/Bricks/UsageChart.qml (the chart)
 #   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario; the chart's hover)
 #   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
 #   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, chart)

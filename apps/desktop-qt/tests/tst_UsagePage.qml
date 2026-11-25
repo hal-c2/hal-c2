@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks"
-import "../qml/HalC2/Bricks/js/usageChart.js" as UsageChartMath
+import "../../../packages/qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks/js/usageChart.js" as UsageChartMath
 import HalC2.Shell
 
 // features/settings/usage.feature: the usage page draws what UsageController publishes.

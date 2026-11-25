@@ -70,7 +70,7 @@ at-spi2-core and `cua-driver` on the `PATH`. Everything else is scratch: a headl
 bus and AT-SPI registry, and an MC and app home under `.hal-c2/cua` (or `HAL_C2_CUA_HOME`).
 `--seed <hal-c2.sqlite>` snapshots a database into that MC read-only, so a copy of the dev MC's
 works. `--url <pairing link>` attaches to another MC instead. Arguments it does not know go to
-`hal-c2-qt`, such as `--qml-dir apps/desktop-qt/qml`. Running it again relaunches the app.
+`hal-c2-qt`, such as `--qml-dir packages/qml`. Running it again relaunches the app.
 
 ```sh
 mise run desktop:cua --seed ~/.local/share/hal-c2-dev/elixir/hal-c2.sqlite

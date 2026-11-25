@@ -1,4 +1,4 @@
-//! The settings navigation as the desktop draws it (qml/HalC2/Bricks/
+//! The settings navigation as the desktop draws it (packages/qml/HalC2/Bricks/
 //! SettingsNav.qml; desktop-qt's SettingsNavSteps.cpp): its search, its
 //! results from the keyboard, and a query set from elsewhere
 //! (features/navigation/focus.feature). And the settings the command palette

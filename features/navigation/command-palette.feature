@@ -18,7 +18,7 @@
 #   apps/tui/src/commands.ts (filterCommands)
 #   apps/tui/src/keymap.ts (^K palette)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp
-#   apps/desktop-qt/qml/HalC2/Bricks/CommandPalette.qml
+#   packages/qml/HalC2/Bricks/CommandPalette.qml
 #   apps/desktop-qt/tests/tst_CommandPalette.qml
 #   Command palette entries: action:new-thread, action:new-thread-in, action:copy-thread-reference,
 #   action:link-pull-request, action:open-thread-pull-requests, action:open-file-picker,

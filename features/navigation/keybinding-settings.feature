@@ -9,7 +9,7 @@
 #   docs/user/keybindings.md (Settings → Keybindings)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
 #   apps/web/src/components/settings/KeybindingsSettings.logic.ts
-#   apps/desktop-qt/qml/HalC2/Bricks/KeybindingsSettings.qml (the desktop's native page)
+#   packages/qml/HalC2/Bricks/KeybindingsSettings.qml (the desktop's native page)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (its rows, recorder and saves)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the rows and saves against a fake MC)
 #   apps/desktop-qt/tests/tst_KeybindingsSettings.qml (runs what the page shows and how its fields take keys)

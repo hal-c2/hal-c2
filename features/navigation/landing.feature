@@ -9,7 +9,7 @@
 #   apps/desktop-qt/src/native/DraftController.cpp (land: the draft, `landing`, landing.retry)
 #   apps/desktop-qt/src/native/NavigationController.cpp (home, the open thread going away)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (mostRecentProject)
-#   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml (no projects, the failure and Try again)
+#   packages/qml/HalC2/Bricks/HomePage.qml (no projects, the failure and Try again)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   files/adding-projects.feature owns the add-project invitation itself. The phone opens on its
 #   thread list (mobile/home-and-thread-list.feature) and the terminal client asks the user to

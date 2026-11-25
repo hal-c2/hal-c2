@@ -39,13 +39,13 @@
 #   apps/web/src/components/chat/timelineMinimapItems.ts (the turn index and its preview)
 #   apps/tui/src/timelineLinks.ts (bare URLs become terminal hyperlinks)
 #   apps/tui/src/components/MessagesTimeline.tsx (windowing, earlier and newer entries, sticks to the bottom)
-#   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (bare web addresses become links outside code)
-#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
+#   packages/qml/HalC2/Bricks/js/markdown.js (bare web addresses become links outside code)
+#   packages/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
 #   apps/server-ex/lib/hal_c2/streams/view.ex (a window over a thread's newest runs, `more` and `page`)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (windowItems, hasEarlier, loadEarlier)
-#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
+#   packages/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
 #   https://github.com/pingdotgg/t3code/pull/15059
 #   https://github.com/pingdotgg/t3code/pull/25371

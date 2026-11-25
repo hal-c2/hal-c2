@@ -2,7 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/27430
 #   https://github.com/pingdotgg/t3code/pull/25188
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route, back stack and restore)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   https://github.com/pingdotgg/t3code/pull/13516 (launch-at-settings Back dropped; see the scenario below)
 #   Shared domain: settings/search-and-navigation.feature owns leaving settings and moving

@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Window
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The frameless window's own buttons (WindowControls), and the header strip
 // that doubles as its title bar (Workspace).

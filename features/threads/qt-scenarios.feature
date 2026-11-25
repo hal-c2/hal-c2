@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/tests/tst_Scenarios.qml (thread list scenarios)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml
+#   packages/qml/HalC2/Bricks/Sidebar.qml
+#   packages/qml/HalC2/Bricks/SidebarThreadRow.qml
 
 Feature: Desktop shell scenarios: thread list
   Executable scenarios for the native desktop thread list, driven through the shell's test

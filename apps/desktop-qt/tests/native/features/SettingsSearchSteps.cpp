@@ -1,5 +1,5 @@
 // Settings as the desktop draws them, navigation beside the page it opens
-// (qml/HalC2/Bricks/SettingsNav.qml, SettingsHost.qml): the search's ranking
+// (packages/qml/HalC2/Bricks/SettingsNav.qml, SettingsHost.qml): the search's ranking
 // and its slash key, a result opened twice or in a scope that cannot show it,
 // and restoring defaults (features/settings/search-and-navigation.feature).
 

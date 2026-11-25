@@ -11,7 +11,7 @@
 #   packages/shared/src/threadPullRequests.ts (threadPullRequestSearchTerms)
 #   apps/tui/src/components/Sidebar.logic.ts (filter)
 #   apps/tui/src/commands.ts (Filter threads)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
 #   packages/contracts/src/rpc.ts (searchThreads)
 #   apps/server-ex/lib/hal_c2/search.ex
 

@@ -24,7 +24,7 @@ set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 # edits hot-reload without a rebuild; release builds only use the compiled-in
 # copies. HAL_C2_QML_SOURCE_DIR="" disables disk loading for any build type.
 if(NOT DEFINED HAL_C2_QML_SOURCE_DIR)
-  set(HAL_C2_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
+  set(HAL_C2_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/../../packages/qml>")
 endif()
 
 # The Node desktop host entry. In-repo builds point at the TypeScript source.
@@ -126,7 +126,7 @@ qt_add_qml_module(hal_c2_shell_types
 target_link_libraries(hal_c2_shell_types PRIVATE hal_c2_native)
 set_target_properties(hal_c2_shell_types PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-add_subdirectory(qml/HalC2/Bricks)
+add_subdirectory(../../packages/qml/HalC2/Bricks qml/HalC2/Bricks)
 add_dependencies(hal_c2_bricks_qmllint hal_c2_shell_types)
 include(cmake/QmlGhostty.cmake)
 

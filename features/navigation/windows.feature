@@ -13,17 +13,17 @@
 #   apps/desktop/src/app/DesktopClerk.ts (single-instance lock, second launch reveals the window)
 #   apps/desktop/src/electron/ElectronShell.ts (parseSafeExternalUrl: which links may leave the app)
 #   apps/desktop/src/settings/DesktopAppSettings.ts (default and minimum window size)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands, title from `route`)
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (window commands, title from `route`)
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route's title)
-#   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
+#   packages/qml/HalC2/Bricks/TitleBar.qml
+#   packages/qml/HalC2/Bricks/WindowControls.qml
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
 #   apps/desktop-qt/src/ShellWindows.cpp (closing one window)
 #   apps/desktop/src/app/DesktopLifecycle.ts (quit on the last window, except macOS; activate reopens)
 #   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size, the zoomed body, a menu at the pointer)
 #   apps/desktop-qt/src/native/LayoutController.cpp (the app zoom)
 #   apps/desktop-qt/src/native/QuitController.cpp (the quit shortcut; Quit is the palette's app.quit)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
+#   packages/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
 #   apps/desktop-qt/tests/tst_WindowControls.qml (the header asks the system to move the window)
 #   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
 
@@ -416,7 +416,7 @@ Feature: Windows, zoom and quitting
       Then the first menu closes
       And only the second menu is shown
 
-    # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
+    # Likely already implemented: packages/qml/HalC2/Bricks/ContextMenuHost.qml
     @backlog @desktop @priority-high
     Scenario: A context menu opened near the edge stays inside the window
       Given the pointer is at the bottom right corner of the window
@@ -432,7 +432,7 @@ Feature: Windows, zoom and quitting
       Then the submenu opens beside it
       And where there is no room on that side it opens on the other
 
-    # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
+    # Likely already implemented: packages/qml/HalC2/Bricks/ContextMenuHost.qml
     @backlog @desktop @priority-high
     Scenario: Disabled entries cannot be chosen and destructive ones are marked
       Given a context menu with a disabled entry and a destructive entry

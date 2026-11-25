@@ -5,7 +5,7 @@
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
 #   root, worktree and scripts, from the MC's rows)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (qml-ghostty's Terminal per tab)
+#   packages/qml/HalC2/Bricks/TerminalDrawer.qml (qml-ghostty's Terminal per tab)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   apps/web/src/components/ThreadTerminals.tsx (the launch context and script runs this mirrors)
 #   packages/shared/src/terminalLabels.ts (terminal ids and tab labels)

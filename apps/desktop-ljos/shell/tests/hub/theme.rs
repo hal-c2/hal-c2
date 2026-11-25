@@ -132,10 +132,10 @@ fn bricks_paint_with_roles_every_theme_has() {
         "scrim",
     ];
     let (hub, _dir) = hub();
-    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop-qt");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut roles: Vec<(String, String)> = Vec::new();
-    for dir in ["qml", "../mobile-qt/qml"] {
-        let mut folders = vec![app.join(dir)];
+    for dir in ["packages/qml", "apps/mobile-qt/qml"] {
+        let mut folders = vec![repo.join(dir)];
         while let Some(folder) = folders.pop() {
             for entry in std::fs::read_dir(&folder).unwrap().flatten() {
                 let path = entry.path();

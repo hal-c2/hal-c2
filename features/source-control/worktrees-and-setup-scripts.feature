@@ -32,7 +32,7 @@
 #   apps/web/src/components/BranchToolbar.logic.ts (Previous worktree, worktree submodules)
 #   apps/web/src/components/WorktreeBaseBranchPicker.tsx
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (checkout mode)
+#   packages/qml/HalC2/Bricks/Composer.qml (checkout mode)
 #   packages/contracts/src/shell.ts (workspace.envMode.set)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (a new thread's checkout, the previous worktree)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (renameBranch, resolveAvailableBranchName)

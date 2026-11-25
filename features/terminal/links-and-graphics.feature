@@ -18,7 +18,7 @@
 #   apps/web/src/components/preview/openTerminalLinkInPreview.ts
 #   apps/web/src/components/preview/openTerminalLinkInPreview.test.ts
 #   apps/web/src/terminal/ghostty/surface.ts (libghostty-vt renderer, Kitty keyboard reporting)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
+#   packages/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
 #   apps/desktop-qt/src/native/TerminalController.cpp (followLink)
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and

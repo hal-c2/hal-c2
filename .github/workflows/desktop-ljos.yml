@@ -15,7 +15,7 @@ on:
       # the code colouring crate (native/syntax), and the two files the
       # features runner reads to learn desktop-qt's scenario list
       # (tst_Features.cpp, tst_Scenarios.qml).
-      - "apps/desktop-qt/qml/**"
+      - "packages/qml/**"
       - "apps/desktop-qt/src/native/**"
       - "apps/desktop-qt/tests/native/tst_Features.cpp"
       - "apps/desktop-qt/tests/tst_Scenarios.qml"
@@ -214,7 +214,7 @@ jobs:
             fi
           done
 
-      # Compiles desktop-qt's bricks and the shell's own QML against the
+      # Compiles the bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
       - run: cargo run --release -q -p hal_c2_shell -- --check
 

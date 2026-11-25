@@ -21,11 +21,11 @@
 #   apps/web/src/components/settings/KeybindingsSettings.tsx (navigation and scope only)
 #   apps/web/src/components/settings/ThemeSettings.tsx (navigation only)
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
-#   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
+#   packages/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
-#   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
-#   apps/desktop-qt/qml/HalC2/Bricks/LoadBalancingGroup.qml (the fold a result opens)
+#   packages/qml/HalC2/Bricks/js/settingsPages.js (the native search)
+#   packages/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
+#   packages/qml/HalC2/Bricks/LoadBalancingGroup.qml (the fold a result opens)
 #   apps/desktop-qt/tests/tst_SettingsPages.qml
 #   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
 #   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)

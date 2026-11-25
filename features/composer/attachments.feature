@@ -14,9 +14,9 @@
 #   https://github.com/pingdotgg/t3code/pull/21458
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (Paste in the draft's right-click menu)
-#   apps/desktop-qt/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
+#   packages/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (Paste in the draft's right-click menu)
+#   packages/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
 #   apps/web/src/chatAttachment.ts (message and attachment limits)

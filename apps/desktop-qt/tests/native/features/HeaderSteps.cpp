@@ -1,4 +1,4 @@
-// The header strip as the desktop draws it (qml/HalC2/Bricks/Workspace.qml)
+// The header strip as the desktop draws it (packages/qml/HalC2/Bricks/Workspace.qml)
 // over the scenario's shell (navigation/layout.feature's header): the brick is
 // loaded into an offscreen window, laid out at a width and read, then thrown
 // away, so nothing QML outlives a step.

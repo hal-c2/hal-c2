@@ -14,11 +14,11 @@
 #   apps/web/src/keybindings.ts (layout letters, AltGr, esc, last matching rule, shadowed labels, shortcut labels)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap and its native commands)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake MC)
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.split, terminal.splitVertical on the focused terminal)
 #   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
-#   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
+#   packages/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, tabs.next,
 #   tabs.previous (plugins/plugin-contributions.feature), terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,

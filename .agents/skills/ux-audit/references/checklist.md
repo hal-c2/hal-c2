@@ -1,7 +1,7 @@
 # Desktop audit checklist
 
 What exists in `apps/desktop-qt` and what "click everything" means. The
-bricks are in `apps/desktop-qt/qml/HalC2/Bricks/`. The ledger is the full
+bricks are in `packages/qml/HalC2/Bricks/`. The ledger is the full
 list: every `features/**/*.feature` scenario tagged `@desktop` or `@shared`
 is behaviour the desktop claims. `features/desktop/` and
 `features/navigation/` are desktop-heavy. Grep the ledger for an area before

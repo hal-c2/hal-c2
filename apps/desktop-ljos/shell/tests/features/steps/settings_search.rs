@@ -1,5 +1,5 @@
 //! Settings as the desktop draws them, navigation beside the page it opens
-//! (qml/HalC2/Bricks/SettingsNav.qml, SettingsHost.qml): the search's
+//! (packages/qml/HalC2/Bricks/SettingsNav.qml, SettingsHost.qml): the search's
 //! ranking and its slash key, a result opened twice, and restoring this
 //! device's defaults (features/settings/search-and-navigation.feature).
 //! desktop-qt's SettingsSearchSteps.cpp and SettingsShell.h.

@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // Settings → Keybindings as the user sees it (navigation/keybinding-settings.feature):
 // what the page shows and how its fields take keys, over the Keybindings test

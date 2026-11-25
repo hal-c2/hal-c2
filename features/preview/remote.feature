@@ -13,7 +13,7 @@
 #   apps/web/src/components/preview/usePreviewSession.ts, useDiscoveredLocalServers.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp, apps/desktop-qt/src/ShellBridge.cpp (tabs open in the system browser)
-#   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (web links in a reply)
+#   packages/qml/HalC2/Bricks/ThreadView.qml (web links in a reply)
 #   apps/web/src/browser/browserTargetResolver.ts (upstream rewrote localhost to the environment's host,
 #     on private networks only; a forward replaces that)
 #   Cross-domain: connections/ owns pairing and remote access; mc/ owns cluster membership.
