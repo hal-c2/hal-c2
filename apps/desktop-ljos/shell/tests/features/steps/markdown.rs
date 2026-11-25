@@ -989,6 +989,44 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Tables.
+    steps.step(
+        "the agent answers with a line of text and, on the next line with no blank line between, a table (.+)",
+        |world, c, _| {
+            // tst_Markdown.qml's lateTables shapes: the delimiter row makes
+            // the line above it a table's header, wherever it sits.
+            let table = "x | y\n--|--\n1 | 2";
+            let text = match c[0].as_str() {
+                "at the top level" => format!("Text before\n{table}"),
+                "inside a list item" => format!("- item\n{table}"),
+                "inside a quote" => format!("> quote\n{table}"),
+                other => fail!("unknown place for a table: {other}"),
+            };
+            answer(world, &text)
+        },
+    );
+    steps.step(
+        "the table is shown as a table and not as a run-on paragraph",
+        |world, _, _| {
+            let message = reply(world, 1)?;
+            world.wait_for_with(
+                |w| within(w, message, "tableCell").len() == 4,
+                |w| {
+                    format!(
+                        "the table's 4 cells, in a reply drawn as {}",
+                        kinds_of(w, message).join(", ")
+                    )
+                },
+            )?;
+            for prose in within(world, message, "markdownProse") {
+                let shown = plain(world, prose)?;
+                expect!(
+                    !shown.contains('|'),
+                    "the table runs on in the paragraph \"{shown}\""
+                );
+            }
+            Ok(())
+        },
+    );
     steps.step("the agent's reply has a table", |world, _, _| {
         answer(world, TABLE)
     });

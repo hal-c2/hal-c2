@@ -460,6 +460,30 @@ const Steps steps([] {
   });
 
   // Tables.
+  step(QStringLiteral("the agent answers with a line of text and, on the next line with no blank line between, a table (.+)"),
+       [](World& world, const Captures& c, const Table&) {
+         // tst_Markdown.qml's lateTables shapes: the delimiter row makes
+         // the line above it a table's header, wherever it sits.
+         const QString table = QStringLiteral("x | y\n--|--\n1 | 2");
+         if (c[0] == QLatin1String("at the top level")) {
+           answer(world, QStringLiteral("Text before\n") + table);
+         } else if (c[0] == QLatin1String("inside a list item")) {
+           answer(world, QStringLiteral("- item\n") + table);
+         } else if (c[0] == QLatin1String("inside a quote")) {
+           answer(world, QStringLiteral("> quote\n") + table);
+         } else {
+           fail(QStringLiteral("unknown place for a table: %1").arg(c[0]));
+         }
+       });
+  step(QStringLiteral("the table is shown as a table and not as a run-on paragraph"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world);
+    world.waitFor([&] { return within(message, QStringLiteral("tableCell")).size() == 4; },
+                  [&] { return QStringLiteral("the table's 4 cells, in a reply drawn as %1").arg(kindsOf(message).join(QStringLiteral(", "))); });
+    for (QQuickItem* prose : within(message, QStringLiteral("markdownProse"))) {
+      const QString shown = plain(prose);
+      expect(!shown.contains(QLatin1Char('|')), QStringLiteral("the table runs on in the paragraph \"%1\"").arg(shown));
+    }
+  });
   step(QStringLiteral("the agent's reply has a table"), [](World& world, const Captures&, const Table&) {
     answer(world, kTable);
   });
