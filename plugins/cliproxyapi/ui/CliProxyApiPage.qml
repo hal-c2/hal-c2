@@ -394,7 +394,7 @@ Item {
                     ShellButton {
                         objectName: "cliproxyapiOpenSignIn"
                         text: qsTr("Open")
-                        onClicked: Qt.openUrlExternally(page.signIn.url)
+                        onClicked: Shell.openWebLink(page.signIn.url)
                     }
                 }
 

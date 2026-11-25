@@ -11,10 +11,13 @@
 #     updateSettings writes the whole settings document back)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 5 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
+#   Counts: 5 client frames, 22 shape types (33 rows: the 11 routed shapes have an MC and an
 #   environment form), 40 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   does not carry providerInstall or desktopUpdateControl. relayClientInstall left with HAL-C2 Connect
 #   (connections/hal-c2-connect.feature).
+#   openShell (apps/server-ex/lib/hal_c2/open_shell/operations.ex) is the MC's own: the
+#   TypeScript server had no OpenShell, so the method it stands in for is HAL-C2's
+#   (server.subscribeOpenShellOperation).
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   mc/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
 
@@ -54,8 +57,8 @@ Feature: Protocol 3 wire parity
 
     # Routed by environment (HalC2.Web.Protocol.routed/0): stream, terminal, terminals, config,
     # vcs, gitAction, worktreeSetup, spacePresence, providerAuth and pullRequestRefreshes, which a client
-    # needs for a thread on any machine, and projectClones, for a clone it started on any
-    # machine; the environment form goes to this MC or the cluster member with that
+    # needs for a thread on any machine, projectClones, for a clone it started on any
+    # machine, and openShell, for an operation Settings ran on any machine; the environment form goes to this MC or the cluster member with that
     # environment (connections/cluster.feature). Every rpc is routed the same way,
     # but the paired-clients methods, which answer for the caller's own session. Not routed:
     # shell and authAccess are about the MC the client talks to; scheduledTasks,
@@ -65,7 +68,7 @@ Feature: Protocol 3 wire parity
     # app that started the MC, on the session its bootstrap token made.
     # previewAutomation: the MC's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 33 shape forms
+    Examples: 35 shape forms
       | shape                | fields                       | first frame                                                     | later frames                                                                                                           | replaces                                                          |
       | shell                | none                         | a shell frame with every MC and every row                       | shell.rows, shell.environment and shell.mc frames                                                                      | orchestration.subscribeShell                                      |
       | stream               | mc, stream                   | snapshot parts, the first with part 0                           | events frames after a live frame, or a resync                                                                          | orchestration.subscribeThread                                     |
@@ -88,6 +91,8 @@ Feature: Protocol 3 wire parity
       | authAccess           | none                         | an authAccess frame with links and paired clients               | authAccess frames                                                                                                      | subscribeAuthAccess                                               |
       | projectClones        | mc                           | a projectClones frame with every clone in progress              | projectClones frames with the whole list                                                                               | subscribeProjectClones                                            |
       | projectClones        | environment                  | the same frames as the MC form for the environment's MC         | the same frames as the MC form                                                                                         | subscribeProjectClones                                            |
+      | openShell            | mc                           | an openShell frame with the operation running or last run      | openShell frames with each step and the outcome                                                                        | server.subscribeOpenShellOperation                                |
+      | openShell            | environment                  | the same frames as the MC form for the environment's MC         | the same frames as the MC form                                                                                         | server.subscribeOpenShellOperation                                |
       | preview              | mc                           | nothing until a preview tab changes                             | preview frames                                                                                                         | subscribePreviewEvents                                            |
       | resourceTelemetry    | mc                           | a resourceTelemetry frame                                       | a resourceTelemetry frame every few seconds while subscribed                                                           | subscribeResourceTelemetry                                        |
       | localServers         | mc                           | a localServers frame with the current list                      | localServers frames whenever the list changes                                                                          | subscribeDiscoveredLocalServers                                   |
@@ -173,6 +178,7 @@ Feature: Protocol 3 wire parity
       | gitAction          | gitAction          | a git action progresses                         | id, event    |
       | serverUpdate       | serverUpdate       | a version move progresses                       | id, event    |
       | desktopUpdateControl | desktopUpdateControl | the MC asks the desktop app to update           | id, event    |
+      | openShell          | openShell          | an OpenShell operation runs from Settings       | id, operation |
 
   @mc
   Scenario Outline: The MC refuses <case> with "<reason>"

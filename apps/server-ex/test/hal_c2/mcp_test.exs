@@ -163,6 +163,234 @@ defmodule HalC2.McpTest do
     :sys.resume(shell)
   end
 
+  # A plugin's thread launched with `tools: :plugin` (an unsandboxed code review) gets
+  # a server of its plugin's agent tools alone, whatever the access settings say, and
+  # nothing of HAL-C2's orchestration: not listed, not callable, not described.
+  test "a thread kept to its plugin's tools reaches none of HAL-C2's", %{dir: dir} do
+    log = Path.join(dir, "codex.log")
+    System.put_env("FAKE_CODEX_LOG", log)
+    on_exit(fn -> System.delete_env("FAKE_CODEX_LOG") end)
+    start_supervised!(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          @project => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    mark = %{"id" => "code-review", "kind" => "review", "tools" => "plugin"}
+    thread_id = launch("hello", %{}, plugin: mark)
+    await_statuses(thread_id, ["completed"])
+
+    assert HalC2.Mcp.kept_to(thread_id) == "code-review"
+    assert HalC2.Mcp.agent_access(thread_id) == MapSet.new()
+    assert %{report: true, authorization: auth} = server = HalC2.Mcp.for_agent(thread_id, "codex")
+    refute HalC2.Mcp.workers_only?(server)
+    assert HalC2.Mcp.current(thread_id, "codex") == server
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    # Preparing again keeps the token.
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == server
+
+    # Codex got that server, and no word of orchestration with its turn.
+    requests = for line <- File.stream!(log), do: JSON.decode!(line)
+    assert Enum.any?(requests, &(JSON.encode!(&1) =~ auth))
+
+    assert [turn | _] = for(%{"method" => "turn/start", "params" => p} <- requests, do: p)
+    refute JSON.encode!(turn) =~ "hal_c2_orchestration_"
+
+    rpc = fn method, params ->
+      body = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
+      {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+      result
+    end
+
+    # No plugin runs here, so the list is empty rather than HAL-C2's.
+    assert %{"tools" => []} = rpc.("tools/list", %{})
+
+    for name <- ~w(hal_c2_thread_list delegate_task preview_snapshot) do
+      assert %{"isError" => true, "content" => [%{"text" => text}]} =
+               rpc.("tools/call", %{"name" => name, "arguments" => %{}})
+
+      assert text =~ "capability_denied"
+    end
+
+    assert %{"instructions" => instructions} =
+             rpc.("initialize", %{"protocolVersion" => "2025-06-18"})
+
+    assert instructions =~ "only the tools of the HAL-C2 plugin"
+    refute instructions =~ "delegate_task"
+  end
+
+  # Claude takes the kept server as the sandbox broker's: allowed without a prompt, and
+  # no orchestration instructions in its system prompt.
+  test "a Claude run on a server kept to its plugin's tools is told nothing of orchestration" do
+    server = %{url: "http://127.0.0.1:1/mcp", authorization: "Bearer t"}
+    kept = HalC2.Claude.Protocol.cli_args(mcp: Map.put(server, :report, true))
+    ordinary = HalC2.Claude.Protocol.cli_args(mcp: server)
+
+    assert ["--allowedTools", "mcp__hal-c2"] -- kept == []
+    assert Enum.any?(ordinary, &(&1 =~ "delegate_task"))
+    refute Enum.any?(kept, &(&1 =~ "delegate_task"))
+  end
+
+  # A code review launched before launches carried the `"tools"` mark is kept to its
+  # plugin's tools like one launched since: preparing gives it the kept server, and a
+  # broad credential an earlier MC gave its program is narrowed as it is restored, so
+  # the reattached agent keeps its report tool and reaches nothing of HAL-C2's.
+  test "a review launched before the tools mark is kept to its plugin's tools" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+
+    assert HalC2.Mcp.kept_to(thread_id) == "code-review"
+    assert %{report: true, authorization: auth} = HalC2.Mcp.for_agent(thread_id, "codex")
+    assert denied?(auth, "hal_c2_thread_list")
+
+    # An earlier MC's credential for it: every capability, and no plugin named.
+    [{_, caller, _}] = HalC2.Mcp.credentials(thread_id)
+    HalC2.Mcp.revoke(thread_id)
+
+    broad =
+      caller |> Map.delete(:plugin) |> Map.put(:capabilities, MapSet.new(~w(preview device)))
+
+    :ok = HalC2.Mcp.restore([{"old", broad, 0}])
+
+    assert denied?("Bearer old", "hal_c2_thread_list")
+    assert HalC2.Mcp.capabilities(thread_id, "codex") == MapSet.new()
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert %{report: true, authorization: "Bearer old"} = HalC2.Mcp.for_agent(thread_id, "codex")
+
+    # One still in the table over a release upgrade takes the same scope at its first call.
+    HalC2.Mcp.revoke(thread_id)
+    :ets.insert(HalC2.Mcp.Credentials, {"kept-over", broad, System.monotonic_time(:millisecond)})
+
+    assert denied?("Bearer kept-over", "hal_c2_thread_list")
+    assert [{"kept-over", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
+  # A restored credential whose thread cannot be read is neither honoured nor taken as
+  # unkept: it is refused, stays unscoped, and takes the thread's scope at the first
+  # request that can read it.
+  test "an earlier MC's credential is refused while its thread cannot be read" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    [{_, caller, _}] = HalC2.Mcp.credentials(thread_id)
+    HalC2.Mcp.revoke(thread_id)
+
+    broad =
+      caller |> Map.put(:plugin, nil) |> Map.put(:capabilities, MapSet.new(~w(preview device)))
+
+    stop_supervised!(HalC2.Streams)
+    :ok = HalC2.Mcp.restore([{"old", broad, 0}])
+
+    assert {503, _} = HalC2.Mcp.handle("Bearer old", JSON.encode!(project_list()))
+    assert [{"old", unscoped, _}] = HalC2.Mcp.credentials(thread_id)
+    refute Map.has_key?(unscoped, :plugin)
+
+    start_supervised!(HalC2.Streams)
+    assert denied?("Bearer old", "hal_c2_project_list")
+    assert [{"old", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
+  # Preparing a session while its thread cannot be read gives it no server and mints
+  # nothing; a credential asked for then names no plugin, so it is refused until the
+  # thread can be read and then takes its scope. A live session is kept meanwhile.
+  test "a session prepared while its thread cannot be read gets no server" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    assert %{report: true} = HalC2.Mcp.for_agent(thread_id, "codex")
+    HalC2.Mcp.revoke(thread_id)
+
+    stop_supervised!(HalC2.Streams)
+    assert HalC2.Mcp.for_agent(thread_id, "claudeAgent") == nil
+    assert HalC2.Mcp.credentials(thread_id) == []
+
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert {503, _} = HalC2.Mcp.handle(auth, JSON.encode!(project_list()))
+
+    start_supervised!(HalC2.Streams)
+    assert denied?(auth, "hal_c2_project_list")
+    assert [{_, %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
+  # Streams whose stream supervisor is gone have a registry but no stream that can
+  # start: the thread reads as unreadable, never as a crash in preparing a session.
+  test "a thread whose stream cannot start is read as unreadable" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    HalC2.Mcp.revoke(thread_id)
+
+    :ok = Supervisor.terminate_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == nil
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert {503, _} = HalC2.Mcp.handle(auth, JSON.encode!(project_list()))
+
+    {:ok, _} = Supervisor.restart_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    assert denied?(auth, "hal_c2_project_list")
+  end
+
+  # A review's session that got no server while its thread could not be read cannot
+  # report, so once the thread can be read it is not prepared and relaunches for its
+  # plugin's server. Any other session without a credential keeps running.
+  test "a review session that got no server relaunches for one once its thread can be read" do
+    start_supervised!(HalC2.Settings)
+    review = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(review, ["completed"])
+    other = launch("hello")
+    await_statuses(other, ["completed"])
+    HalC2.Mcp.revoke(review)
+    HalC2.Mcp.revoke(other)
+
+    stop_supervised!(HalC2.Streams)
+    assert HalC2.Mcp.for_agent(review, "codex") == nil
+    assert HalC2.Mcp.prepared?(review, "codex")
+
+    start_supervised!(HalC2.Streams)
+    refute HalC2.Mcp.prepared?(review, "codex")
+    assert %{report: true} = HalC2.Mcp.for_agent(review, "codex")
+    assert HalC2.Mcp.prepared?(review, "codex")
+    assert HalC2.Mcp.prepared?(other, "codex")
+  end
+
+  defp project_list,
+    do: %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => "hal_c2_project_list", "arguments" => %{}}
+    }
+
+  # An ordinary plugin thread is not kept: only a code review's old mark is read so.
+  test "another plugin's thread without the tools mark keeps HAL-C2's tools" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "issue-tracker", "kind" => "implement"})
+    await_statuses(thread_id, ["completed"])
+
+    assert HalC2.Mcp.kept_to(thread_id) == nil
+    assert %{authorization: auth} = server = HalC2.Mcp.for_agent(thread_id, "codex")
+    refute Map.has_key?(server, :report)
+    refute denied?(auth, "hal_c2_project_list")
+  end
+
+  defp denied?(auth, name) do
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => name, "arguments" => %{}}
+    }
+
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+    JSON.encode!(result) =~ "capability_denied"
+  end
+
   # New code loaded over a running server (a release upgrade) migrates it through
   # code_change, never init. A server started before MCP sessions were kept
   # has no sessions table; its initialize raised, the endpoint answered 500,
@@ -601,7 +829,7 @@ defmodule HalC2.McpTest do
     end
   end
 
-  defp launch(text, overrides \\ %{}) do
+  defp launch(text, overrides \\ %{}, opts \\ []) do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
@@ -624,7 +852,8 @@ defmodule HalC2.McpTest do
             }
           },
           overrides
-        )
+        ),
+        opts
       )
 
     thread_id

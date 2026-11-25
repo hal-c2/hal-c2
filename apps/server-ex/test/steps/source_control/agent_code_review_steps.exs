@@ -956,6 +956,34 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     save(context, %{"reviewTrustedOnThisMachine" => true})
   end
 
+  # --- what a review on this machine reaches (#1795) ---------------------------------------
+
+  step "the agent of \#{int} is offered {string} alone", %{args: [_number, name]} = context do
+    %{"tools" => tools} = review_mcp(context, "tools/list", %{})
+    assert Enum.map(tools, & &1["name"]) == [name]
+    context
+  end
+
+  step "the agent of \#{int} is refused HAL-C2's own tools", %{args: [_number]} = context do
+    for name <- ~w(hal_c2_thread_list hal_c2_thread_launch delegate_task preview_snapshot) do
+      result = review_mcp(context, "tools/call", %{"name" => name, "arguments" => %{}})
+      assert %{"isError" => true, "content" => [%{"text" => text}]} = result
+      assert text =~ "capability_denied", text
+    end
+
+    context
+  end
+
+  step "a member left the unresolved review comment {string} on \#{int}",
+       %{args: [body, number]} = context do
+    review_comment(context, number, "octocat", "MEMBER", body)
+  end
+
+  step "someone who is not a member or collaborator left the unresolved review comment {string} on \#{int}",
+       %{args: [body, number]} = context do
+    review_comment(context, number, "stranger", "NONE", body)
+  end
+
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
     save(context, %{"sandboxTokens" => tokens})
   end
@@ -3347,6 +3375,84 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> started(number)
     |> report(findings("approve", 1))
     |> await_review!(number, &(&1["status"] == "waiting"))
+  end
+
+  # The review thread's agent's answer from HAL-C2's MCP server to `method`.
+  defp review_mcp(context, method, params) do
+    %{authorization: auth} = HalC2.Mcp.server(context.thread, "codex")
+    body = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+    result
+  end
+
+  # GitHub's activity of pull request `number` with one more unresolved review thread,
+  # opened by `login` with standing `association` in the repository.
+  defp review_comment(context, number, login, association, body) do
+    threads = Map.get(context[:review_threads] || %{}, number, [])
+    n = length(threads) + 1
+
+    thread = %{
+      "id" => "T#{n}",
+      "path" => "src/limits.ts",
+      "line" => 1,
+      "diffSide" => "RIGHT",
+      "isResolved" => false,
+      "isOutdated" => false,
+      "comments" => %{
+        "totalCount" => 1,
+        "pageInfo" => %{"hasNextPage" => false},
+        "nodes" => [
+          %{
+            "id" => "RC#{n}",
+            "author" => %{"__typename" => "User", "login" => login, "avatarUrl" => nil},
+            "authorAssociation" => association,
+            "body" => body,
+            "createdAt" => "2026-09-03T12:00:00Z",
+            "url" => "https://github.com/acme/api/pull/#{number}#discussion_r#{n}",
+            "reactionGroups" => []
+          }
+        ]
+      }
+    }
+
+    threads = threads ++ [thread]
+
+    view = %{
+      "author" => %{"login" => "octocat"},
+      "comments" => [],
+      "reviews" => [],
+      "commits" => []
+    }
+
+    answer = %{
+      "data" => %{
+        "viewer" => %{"login" => "monalisa"},
+        "repository" => %{
+          "pullRequest" => %{
+            "reviewThreads" => %{"pageInfo" => %{"hasNextPage" => false}, "nodes" => threads},
+            "author" => %{"__typename" => "User", "login" => "octocat", "avatarUrl" => nil},
+            "reactionGroups" => [],
+            "comments" => %{"nodes" => []},
+            "reviews" => %{"nodes" => []},
+            "reviewRequests" => %{"nodes" => []},
+            "latestReviews" => %{"nodes" => []},
+            "reviewDismissals" => %{"nodes" => []},
+            "commits" => %{"nodes" => []}
+          }
+        }
+      }
+    }
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr view #{number}", "author,comments,reviews,commits"], "stdout" => view},
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["reviewThreads(first", "viewerDidAuthor", ~s("number":#{number},)],
+        "stdout" => answer
+      }
+    ])
+    |> Map.update(:review_threads, %{number => threads}, &Map.put(&1, number, threads))
   end
 
   # The agent of the review's thread calls the report tool with `arguments`.

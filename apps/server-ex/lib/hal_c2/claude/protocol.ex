@@ -79,8 +79,9 @@ defmodule HalC2.Claude.Protocol do
     end
   end
 
-  # A sandboxed review's broker (`HalC2.OpenShell.Broker`) has its one report tool,
-  # which is all the agent is allowed and nothing it is told about orchestration.
+  # A review's server, its sandbox's broker (`HalC2.OpenShell.Broker`) or HAL-C2's kept
+  # to its plugin's tools (`HalC2.Mcp.kept_to/1`), has its report tool, which is all
+  # the agent is allowed and nothing it is told about orchestration.
   defp mcp_args(%{url: _url, authorization: _authorization, report: true}, _workers_only, opts),
     do: ["--allowedTools", "mcp__hal-c2"] ++ mcp_args(nil, false, opts)
 

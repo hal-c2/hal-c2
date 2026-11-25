@@ -74,6 +74,7 @@ Rectangle {
             anchors.leftMargin: 12
             anchors.right: actions.left
             anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
             text: root.source && root.source.count > 0 ? [qsTr("%1 open · %2 linked").arg(root.source.openCount).arg(root.source.count), root.source.syncedLabel ?? ""].filter(part => part.length > 0).join(" · ") : qsTr("Pull requests")
             elide: Text.ElideRight
             color: root.muted
@@ -179,6 +180,7 @@ Rectangle {
             width: parent.width - 24
             visible: root.source !== null && root.source.linkOpen && text.length > 0 && (root.source.problem ?? "").length === 0
             elide: Text.ElideMiddle
+            textFormat: Text.PlainText
             text: root.source?.preview ?? ""
             color: root.muted
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
@@ -191,6 +193,7 @@ Rectangle {
             width: parent.width - 24
             visible: text.length > 0
             wrapMode: Text.Wrap
+            textFormat: Text.PlainText
             text: root.source?.notice ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
@@ -202,6 +205,7 @@ Rectangle {
             width: parent.width - 24
             visible: text.length > 0
             wrapMode: Text.Wrap
+            textFormat: Text.PlainText
             text: root.source ? root.source.problem : ""
             color: root.errorColor
             font.pixelSize: Theme.type.meta.size
@@ -288,6 +292,7 @@ Rectangle {
                         x: 8
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - x - relinkButton.width - 12
+                        textFormat: Text.PlainText
                         text: [qsTr("#%1").arg(dismissedRow.modelData.number), dismissedRow.modelData.title.length > 0 ? dismissedRow.modelData.title : dismissedRow.modelData.repository, dismissedRow.modelData.sourceLabel].join(" · ")
                         color: root.muted
                         font.pixelSize: Theme.type.caption.size
@@ -324,6 +329,7 @@ Rectangle {
                 x: 8
                 width: parent.width - 16
                 visible: text.length > 0
+                textFormat: Text.PlainText
                 text: root.source?.projectProblem ?? ""
                 color: root.errorColor
                 font.pixelSize: Theme.type.meta.size
@@ -361,6 +367,7 @@ Rectangle {
                             x: 30
                             y: 5
                             width: parent.width - x - openLinkButton.width - 12
+                            textFormat: Text.PlainText
                             text: projectRow.modelData.title
                             color: root.foreground
                             font.pixelSize: Theme.type.body.size
@@ -370,6 +377,7 @@ Rectangle {
                             x: 30
                             y: 24
                             width: parent.width - x - openLinkButton.width - 12
+                            textFormat: Text.PlainText
                             text: [qsTr("#%1").arg(projectRow.modelData.number), projectRow.modelData.author, projectRow.modelData.branches].filter(part => part.length > 0).join(" · ")
                             color: root.muted
                             font.pixelSize: Theme.type.caption.size
@@ -469,6 +477,7 @@ Rectangle {
                 anchors.right: menuButton.left
                 anchors.rightMargin: 4
                 y: 6
+                textFormat: Text.PlainText
                 text: row.title.length > 0 ? row.title : qsTr("%1 #%2").arg(row.repository).arg(row.number)
                 elide: Text.ElideRight
                 maximumLineCount: 1
@@ -493,6 +502,7 @@ Rectangle {
                     id: numberText
 
                     objectName: "pullRequestNumber"
+                    textFormat: Text.PlainText
                     text: qsTr("#%1").arg(row.number)
                     color: root.foreground
                     font.pixelSize: Theme.type.caption.size
@@ -533,6 +543,7 @@ Rectangle {
                         color: root.muted
                     }
                     Text {
+                        textFormat: Text.PlainText
                         text: row.stackSize
                         color: root.muted
                         font.pixelSize: Theme.type.caption.size
@@ -546,6 +557,7 @@ Rectangle {
                 Text {
                     objectName: "pullRequestRepository"
                     width: Math.min(implicitWidth, meta.width - numberText.width - (stackChip.visible ? stackChip.width + meta.spacing : 0) - meta.spacing)
+                    textFormat: Text.PlainText
                     text: [row.branches.length > 0 ? row.repository : row.host + "/" + row.repository, row.branches, row.model.stackLabel ?? ""].filter(part => part.length > 0).join(" · ")
                     elide: Text.ElideMiddle
                     maximumLineCount: 1
@@ -571,6 +583,7 @@ Rectangle {
 
                 Text {
                     objectName: "pullRequestState"
+                    textFormat: Text.PlainText
                     text: row.stateLabel
                     color: root.stateColor(row.model.state)
                     font.pixelSize: Theme.type.caption.size
@@ -578,6 +591,7 @@ Rectangle {
                 Text {
                     objectName: "pullRequestChecks"
                     visible: text.length > 0
+                    textFormat: Text.PlainText
                     text: row.checksLabel
                     color: root.checksColor(row.checks)
                     font.pixelSize: Theme.type.caption.size
@@ -585,6 +599,7 @@ Rectangle {
                 Text {
                     objectName: "pullRequestReview"
                     visible: text.length > 0
+                    textFormat: Text.PlainText
                     text: row.reviewLabel
                     color: root.reviewColor(row.review)
                     font.pixelSize: Theme.type.caption.size
@@ -596,6 +611,7 @@ Rectangle {
                     font.pixelSize: Theme.type.caption.size
                 }
                 Text {
+                    textFormat: Text.PlainText
                     text: row.sourceLabel
                     color: root.muted
                     font.pixelSize: Theme.type.caption.size

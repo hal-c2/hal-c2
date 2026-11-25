@@ -164,6 +164,7 @@ defmodule HalC2.Rpc do
   def handle("projectClone.cancel", input), do: HalC2.ProjectClones.cancel(input)
   def handle("server.getProcessDiagnostics", input), do: HalC2.Diagnostics.processes(input)
   def handle("server.getOpenShellStatus", _input), do: HalC2.OpenShell.Command.settings_status()
+  def handle("server.runOpenShellOperation", input), do: HalC2.OpenShell.Operations.run(input)
   def handle("server.signalProcess", input), do: HalC2.Diagnostics.signal(input)
   def handle("server.getTraceDiagnostics", input), do: HalC2.Diagnostics.traces(input)
   def handle("server.getHostResources", input), do: HalC2.Diagnostics.host(input)
@@ -400,6 +401,13 @@ defmodule HalC2.Rpc do
   def handle("hal-c2.registerPush", input, session), do: HalC2.Push.register(session, input)
   def handle("hal-c2.unregisterPush", _input, session), do: HalC2.Push.unregister(session)
 
+  # Settings → Review sandboxes: the status, and whether the caller may run the
+  # operations it offers (`HalC2.OpenShell.Operations.manage/1`).
+  def handle("server.getOpenShellStatus", input, scopes) do
+    with {:ok, status} <- handle("server.getOpenShellStatus", input),
+         do: {:ok, Map.merge(status, HalC2.OpenShell.Operations.manage(scopes))}
+  end
+
   # Settings → Connections: the twin of `/api/auth/pairing-token`, with the caller's
   # verified scopes. The MC asked may be another member, whose address the client has
   # no way to know. No link is made when that address cannot be had.
@@ -493,6 +501,10 @@ defmodule HalC2.Rpc do
   def required_scopes("server." <> method, _payload)
       when method in ~w(updateServer updateServerWithProgress),
       do: ["access:write", "terminal:operate"]
+
+  # Installs software and the user's services on the MC's machine.
+  def required_scopes("server.runOpenShellOperation", _payload),
+    do: HalC2.OpenShell.Operations.scopes()
 
   # Registering or moving a workspace root points file writes at a new part of
   # the host, as a shell could: `terminal:operate` on top of operate.

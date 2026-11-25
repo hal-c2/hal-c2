@@ -4981,7 +4981,8 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     %{
       interaction_mode: Map.get(turn, :interaction_mode) || "default",
-      has_mcp: server != nil,
+      # A server kept to its plugin's tools has nothing of orchestration to announce.
+      has_mcp: server != nil and not Map.has_key?(server, :report),
       capabilities:
         HalC2.Mcp.capabilities(state.thread_id, instance) ||
           HalC2.Mcp.agent_access(state.thread_id),

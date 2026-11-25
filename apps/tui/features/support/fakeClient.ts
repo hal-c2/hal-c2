@@ -187,6 +187,7 @@ const UNRECORDED = new Set([
   "subscribeUsageLimits",
   "subscribeServerSettings",
   "subscribeAuthAccess",
+  "subscribeOpenShellOperation",
   "subscribeMcStream",
   "subscribeSpacePresence",
   "readSettings",

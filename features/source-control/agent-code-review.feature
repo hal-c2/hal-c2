@@ -16,6 +16,8 @@
 #   https://github.com/hal-c2/hal-c2/issues/1781 (sandboxed reviews through the CLIProxyAPI plugin's providers)
 #   apps/server-ex/lib/hal_c2/open_shell/route.ex (where a sandboxed agent's model requests go)
 #   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1795 (a review on this machine gets its report tool alone, and trusted comments alone)
+#   apps/server-ex/lib/hal_c2/mcp.ex (a plugin's thread kept to that plugin's tools)
 
 @plugin-code-review
 Feature: Agent code review
@@ -523,8 +525,9 @@ Feature: Agent code review
     would run this machine's filters on whatever files the pull request's attributes
     send through them. A review that cannot have its sandbox fails, saying what to set
     up, and never runs on this machine instead. With "Review trusted pull requests on
-    this machine" on, a pull request HAL-C2 trusts is reviewed here as an ordinary agent;
-    one it does not trust, as the rule on who gets reviews says, is sandboxed whatever
+    this machine" on, a pull request HAL-C2 trusts is reviewed here by an agent that has
+    its report tool and none of HAL-C2's others, and whose prompt quotes only the review
+    comments of people HAL-C2 trusts, since anyone may comment; one it does not trust, as the rule on who gets reviews says, is sandboxed whatever
     the setting says, and its review still waits for the user's approval of its head.
     The setting replaces "Sandbox every review", whose stored value is not read: a
     saved form stored its old default of off.
@@ -597,6 +600,33 @@ Feature: Agent code review
       When #12 is reviewed
       Then its thread works in a checkout of the head of #12
       And no review sandbox was made
+
+    @mc
+    Scenario: A review on this machine has its report tool and none of HAL-C2's others
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then the agent of #12 is offered "code_review_report" alone
+      And the agent of #12 is refused HAL-C2's own tools
+
+    @mc
+    Scenario: A review on this machine quotes only the review comments of people HAL-C2 trusts
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt does not include "Rename the limit"
+
+    @mc
+    Scenario: A sandboxed review quotes every unresolved review comment
+      Given pull requests are not trusted and OpenShell is installed
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt includes "Rename the limit"
 
     @mc
     Scenario: With "Review trusted pull requests on this machine" on, an untrusted pull request is still reviewed in a sandbox
@@ -1199,6 +1229,19 @@ Feature: Agent code review
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
       And the user can dismiss comments, and publish it once shown how it is posted
+
+    # #1801, #1802: the agent read a pull request anyone can open, so what it wrote is
+    # untrusted. The page's QML tests cover this (tst_ReviewsPage); the runners' steps are #1808.
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui @priority-high
+    Scenario: A review's findings show their markup as written and open only web links
+      Given the review of #13 is waiting with a summary that links "the guide" to "https://example.com/guide" and shows an HTML image
+      And a comment of the review links "hosts" to "file:///etc/hosts"
+      When the user opens the review of #13 on the "Reviews" page
+      Then the summary shows the HTML image as written and loads nothing
+      When the user opens "the guide"
+      Then "https://example.com/guide" opens in the browser
+      When the user opens "hosts"
+      Then nothing opens
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a check the machine blocked as a problem of the machine

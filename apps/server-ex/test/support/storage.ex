@@ -417,6 +417,29 @@ defmodule HalC2.Test.Storage do
       is-enabled) [ -f "$state/enabled" ] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
       is-active) [ -f "$state/active" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
     esac
+    # The user's Podman: its unit is installed with `podman-unit`, runs while
+    # `podman-socket-active` and starts at login with `podman-socket-enabled`;
+    # starting its socket fails with `podman-socket-fails`, enabling it with
+    # `podman-enable-fails`.
+    case "$*" in
+      *podman.socket*)
+        if [ "$2" = show ]; then
+          [ -f "$state/podman-unit" ] && echo loaded || echo not-found
+          [ -f "$state/podman-socket-enabled" ] && echo enabled || echo disabled
+          exit 0
+        fi
+        echo "systemctl $*" >> "#{log}"
+        case "$2" in
+          start) [ -f "$state/podman-socket-fails" ] && { echo "Job for podman.socket failed."; exit 1; }
+                 touch "$state/podman-socket-active" ;;
+          stop) rm -f "$state/podman-socket-active" ;;
+          enable) [ -f "$state/podman-enable-fails" ] && { echo "Failed to enable unit."; exit 1; }
+                  touch "$state/podman-socket-enabled" ;;
+          disable) rm -f "$state/podman-socket-enabled"
+                   [ "$3" = --now ] && rm -f "$state/podman-socket-active" ;;
+        esac
+        exit 0 ;;
+    esac
     echo "systemctl $*" >> "#{log}"
     case "$*" in
       *-reap.*)

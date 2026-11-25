@@ -200,7 +200,7 @@
       "label": "Review trusted pull requests on this machine",
       "type": "boolean",
       "default": false,
-      "description": "Off, every review runs in an OpenShell sandbox, with Claude or Codex and an API key; Settings → Review sandboxes shows whether this MC can make one. On, reviews of pull requests HAL-C2 trusts run here as an ordinary agent: the pull request's code and text then reach this machine, its files and its credentials. A pull request opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork, is reviewed in a sandbox either way."
+      "description": "Off, every review runs in an OpenShell sandbox, with Claude or Codex and an API key; Settings → Review sandboxes shows whether this MC can make one. On, reviews of pull requests HAL-C2 trusts run here, with their tool to report and none of HAL-C2's others: the pull request's code and text then reach this machine, its files and its credentials. A pull request opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork, is reviewed in a sandbox either way."
     },
     {
       "key": "sandboxMinutes",

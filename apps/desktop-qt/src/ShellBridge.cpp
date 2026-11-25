@@ -72,6 +72,20 @@ bool ShellBridge::openExternal(const QUrl& url) {
   return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
 }
 
+bool ShellBridge::webLink(const QUrl& url) {
+  const QString scheme = url.scheme();
+  return url.isValid() && !url.host().isEmpty() && (scheme == QLatin1String("http") || scheme == QLatin1String("https"));
+}
+
+bool ShellBridge::openWebLink(const QUrl& url) {
+  if (!webLink(url)) {
+    qInfo().noquote() << "[shell] not opening a" << (url.scheme().isEmpty() ? QStringLiteral("scheme-less") : url.scheme())
+                      << "link from untrusted text";
+    return false;
+  }
+  return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
+}
+
 bool ShellBridge::openApp(const QUrl& url) {
   if (!url.isValid() || url.scheme().isEmpty() || PagePermissions::engineScheme(url.scheme())) return false;
   return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
