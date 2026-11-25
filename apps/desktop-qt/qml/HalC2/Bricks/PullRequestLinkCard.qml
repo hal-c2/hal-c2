@@ -58,6 +58,7 @@ ToolTip {
         Label {
             visible: card.status === "failed"
             Layout.maximumWidth: 296
+            textFormat: Text.PlainText
             text: card.address
             color: card.muted
             font.family: card.uiFamily
@@ -69,6 +70,7 @@ ToolTip {
             spacing: Theme.space.sm
             Label {
                 Layout.maximumWidth: 180
+                textFormat: Text.PlainText
                 text: card.preview.repository ?? ""
                 color: card.muted
                 elide: Text.ElideRight
@@ -76,6 +78,7 @@ ToolTip {
                 font.pixelSize: Theme.type.caption.size
             }
             Label {
+                textFormat: Text.PlainText
                 text: "#" + (card.preview.number ?? "")
                 color: card.muted
                 font.family: card.uiFamily
@@ -88,6 +91,7 @@ ToolTip {
                 Accessible.ignored: true
             }
             Label {
+                textFormat: Text.PlainText
                 text: card.preview.stateLabel ?? ""
                 color: card.stateColor(card.preview.state ?? "")
                 font.family: card.uiFamily
@@ -97,6 +101,7 @@ ToolTip {
         Label {
             visible: card.status === "ready"
             Layout.maximumWidth: 296
+            textFormat: Text.PlainText
             text: card.preview.title ?? ""
             color: card.foreground
             wrapMode: Text.Wrap
@@ -110,6 +115,7 @@ ToolTip {
             Layout.topMargin: 4
             Label {
                 Layout.maximumWidth: 180
+                textFormat: Text.PlainText
                 text: card.preview.author ?? ""
                 color: card.muted
                 elide: Text.ElideRight
@@ -123,6 +129,7 @@ ToolTip {
                 Accessible.ignored: true
             }
             Label {
+                textFormat: Text.PlainText
                 text: qsTr("opened %1").arg(card.preview.opened ?? "")
                 color: card.muted
                 font.family: card.uiFamily

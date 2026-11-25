@@ -307,6 +307,22 @@ describe("inlineMarkdown", () => {
     ]);
   });
 
+  it("links the web, mail and paths, but no other scheme and no network path", () => {
+    const linked = (url: string) => inlineMarkdown(`[x](${url})`, THEME).some((part) => part.link);
+    for (const url of ["https://a.dev", "mailto:dev@a.dev", "src/cart.ts", "/etc/hosts"])
+      expect(linked(url)).toBe(true);
+    for (const url of [
+      "javascript:alert(1)",
+      "file:///etc/hosts",
+      "smb://host/share",
+      "//host/share/notes.md",
+      String.raw`\\host\share\notes.md`,
+      String.raw`/\host\share`,
+      String.raw`\/host/share`,
+    ])
+      expect(linked(url)).toBe(false);
+  });
+
   it("opens only the author's URL over a label that is itself an address", () => {
     const linkOf = (text: string) =>
       inlineMarkdown(text, THEME)

@@ -86,6 +86,15 @@ Item {
             verify(md.implicitHeight > 0);
         }
 
+        // A fence's title and language are the text's own and shown as written:
+        // markup in them is never drawn, nor an image in them loaded.
+        function test_aFencesLabelIsPlainText() {
+            const titled = findChild(make("```text title='<img src=\"https://tracker.example/p.png\">'\nexample\n```"), "codeLabel");
+            compare(titled.textFormat, Text.PlainText);
+            compare(titled.text, "<img src=\"https://tracker.example/p.png\">");
+            compare(findChild(make("```<b>ts</b>\nconst a = 1;\n```"), "codeLabel").text, "<b>ts</b>");
+        }
+
         // A list drawn inside other lists (a Space page's nested item) takes
         // the marker of its depth, and the same text at another depth is not
         // served the kept one.

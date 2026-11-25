@@ -174,5 +174,43 @@ Item {
             compare(menu.payload.url, "https://example.com/docs");
             verify(!(findChild(md, "textMenu")?.visible ?? false));
         }
+
+        // In text someone else wrote, a link's menu opens it only through the
+        // brick's owner (which hands it to Shell.openWebLink), never the app's
+        // link menu, which would open a path in the files.
+        function test_anUntrustedLinksMenuOpensOnlyWebLinksThroughItsOwner() {
+            const md = createTemporaryObject(markdownComponent, root, {
+                webLinksOnly: true,
+                text: "See [readme](README.md) or [docs](https://example.com/docs)."
+            });
+            verify(md);
+            const spy = createTemporaryObject(spyComponent, root, { target: md });
+            const edit = findChild(md, "markdownProse");
+            const text = edit.getText(0, edit.length);
+            const linkMenuOn = word => {
+                const at = edit.positionToRectangle(text.indexOf(word) + 2);
+                rightClick(edit, at.x + 1, at.y + at.height / 2);
+                tryVerify(() => findChild(md, "webLinkMenu")?.visible ?? false);
+                return findChild(md, "webLinkMenu");
+            };
+
+            let menu = linkMenuOn("readme");
+            verify(!entry(menu, "openWebLink").enabled, "a path does not open");
+            choose(menu, "copyWebLink");
+            compare(Shell.clipboardText(), "README.md");
+
+            menu = linkMenuOn("docs");
+            choose(menu, "openWebLink");
+            compare(spy.count, 1);
+            compare(spy.signalArguments[0][0], "https://example.com/docs");
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+    }
+
+    Component {
+        id: spyComponent
+        SignalSpy {
+            signalName: "linkActivated"
+        }
     }
 }

@@ -145,6 +145,7 @@ Rectangle {
                 required property string modelData
 
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: modelData
                 color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Theme.type.meta.size
@@ -163,6 +164,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             visible: page.model !== null && page.model.notice !== null
+            textFormat: Text.PlainText
             text: page.model && page.model.notice ? page.model.notice.text : ""
             color: page.model && page.model.notice && page.model.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : page.muted
             font.pixelSize: Theme.type.meta.size
@@ -218,6 +220,7 @@ Rectangle {
                     visible: entry.modelData.header
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: Theme.space.sm
+                    textFormat: Text.PlainText
                     text: entry.modelData.header ? qsTr("%1  %2").arg(entry.modelData.label).arg(entry.modelData.count) : ""
                     color: page.muted
                     font.pixelSize: Theme.type.meta.size
@@ -253,6 +256,7 @@ Rectangle {
                             spacing: Theme.space.sm
 
                             Label {
+                                textFormat: Text.PlainText
                                 text: {
                                     const row = entry.modelData;
                                     if (row.header) return "";
@@ -265,6 +269,7 @@ Rectangle {
                             }
 
                             Label {
+                                textFormat: Text.PlainText
                                 text: entry.modelData.header ? "" : "#" + entry.modelData.number
                                 color: page.muted
                                 font.pixelSize: Theme.type.body.size
@@ -272,6 +277,7 @@ Rectangle {
 
                             Label {
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: entry.modelData.title ?? ""
                                 color: page.foreground
                                 font.pixelSize: Theme.type.body.size
@@ -287,6 +293,7 @@ Rectangle {
 
                             Label {
                                 visible: !entry.modelData.header && (entry.modelData.additions > 0 || entry.modelData.deletions > 0)
+                                textFormat: Text.PlainText
                                 text: visible ? "+%1 −%2".arg(entry.modelData.additions).arg(entry.modelData.deletions) : ""
                                 color: page.muted
                                 font.pixelSize: Theme.type.caption.size
@@ -302,6 +309,7 @@ Rectangle {
 
                         Label {
                             Layout.fillWidth: true
+                            textFormat: Text.PlainText
                             text: {
                                 const row = entry.modelData;
                                 if (row.header) return "";

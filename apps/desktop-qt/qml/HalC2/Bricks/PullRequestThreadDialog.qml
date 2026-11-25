@@ -102,6 +102,7 @@ Dialog {
                     Label {
                         objectName: "pullRequestThreadTitle"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: dialog.pullRequest?.title ?? ""
                         color: dialog.foreground
                         font.pixelSize: Theme.type.body.size
@@ -111,6 +112,7 @@ Dialog {
                     Label {
                         objectName: "pullRequestThreadBranches"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: dialog.pullRequest ? qsTr("#%1 · %2 to %3").arg(dialog.pullRequest.number).arg(dialog.pullRequest.headBranch).arg(dialog.pullRequest.baseBranch) : ""
                         color: dialog.muted
                         font.pixelSize: Theme.type.meta.size
@@ -120,6 +122,7 @@ Dialog {
                 Label {
                     Layout.alignment: Qt.AlignTop
                     readonly property string state: dialog.pullRequest?.state ?? ""
+                    textFormat: Text.PlainText
                     text: state.length > 0 ? state.charAt(0).toUpperCase() + state.slice(1) : ""
                     color: state === "merged" ? Theme.palette.color("merged", "#c4b5fd") : state === "open" ? Theme.palette.color("success", "#6ee7b7") : dialog.muted
                     font.pixelSize: Theme.type.meta.size
@@ -138,6 +141,7 @@ Dialog {
             objectName: "pullRequestThreadError"
             Layout.fillWidth: true
             visible: text.length > 0
+            textFormat: Text.PlainText
             text: dialog.flow?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Theme.type.meta.size

@@ -1730,7 +1730,7 @@ Item {
                         ShellButton {
                             subtle: true
                             text: qsTr("Open")
-                            onClicked: Qt.openUrlExternally(itemColumn.item.issue.url)
+                            onClicked: Shell.openWebLink(itemColumn.item.issue.url)
                         }
 
                         ShellButton {
@@ -1761,7 +1761,7 @@ Item {
                             ShellButton {
                                 subtle: true
                                 text: qsTr("Open")
-                                onClicked: Qt.openUrlExternally(pull.modelData.url)
+                                onClicked: Shell.openWebLink(pull.modelData.url)
                             }
 
                             ShellButton {
@@ -2064,18 +2064,16 @@ Item {
                             color: page.errorColor
                         }
 
-                        TextEdit {
+                        // An agent wrote this from issues anyone can file: untrusted Markdown, links open only on the web.
+                        Markdown {
                             objectName: "plannerRunSummary"
                             Layout.fillWidth: true
                             visible: (runsColumn.run?.summary ?? "").length > 0
-                            readOnly: true
-                            selectByMouse: true
-                            textFormat: TextEdit.MarkdownText
                             text: runsColumn.run?.summary ?? ""
-                            color: page.foreground
-                            wrapMode: TextEdit.Wrap
-                            font.pixelSize: Theme.type.body.size
-                            onLinkActivated: link => Qt.openUrlExternally(link)
+                            textColor: page.foreground
+                            fontSize: Theme.type.body.size
+                            webLinksOnly: true
+                            onLinkActivated: link => Shell.openWebLink(link)
                         }
 
                         Repeater {

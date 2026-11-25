@@ -3,6 +3,7 @@
 //     -input plugins/code-review/test
 import QtQuick
 import QtTest
+import HalC2.Shell
 
 Item {
     id: test
@@ -323,6 +324,80 @@ Item {
             tryVerify(() => asked("preview").length === 2);
             clickShown("codeReviewPublishConfirm");
             compare(asked("publish")[0].input.version, "v2");
+        }
+
+        // Ctrl-clicks `word` in the Markdown brick `markdown`, as the user opens a link.
+        function ctrlClickWord(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            verify(prose, "the text is drawn as Markdown");
+            tryVerify(() => prose.visible && prose.width > 0);
+            const at = prose.getText(0, prose.length).indexOf(word);
+            verify(at >= 0, "\"" + word + "\" is shown");
+            const box = prose.positionToRectangle(at + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.LeftButton, Qt.ControlModifier);
+        }
+
+        // Right-clicks `word` in a Markdown brick's prose: the menu for text someone
+        // else wrote opens, never the app's link menu (which opens a path in the files).
+        function verifyLinkMenuIsTheWebOne(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            const box = prose.positionToRectangle(prose.getText(0, prose.length).indexOf(word) + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.RightButton);
+            const menu = findChild(markdown, "webLinkMenu");
+            verify(menu, "the link's menu only opens or copies it");
+            tryCompare(menu, "visible", true);
+            menu.close();
+            tryVerify(() => findChild(markdown, "webLinkMenu") === null);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+
+        // What the review agent wrote about a pull request anyone can open shows its
+        // markup as text and loads nothing, and its links, like the pull request's
+        // own, go to Shell.openWebLink, which opens only web addresses.
+        function test_review_text_shows_its_markup_and_opens_links_only_on_the_web() {
+            Shell.reset();
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [{
+                        key: "acme/api#13",
+                        number: 13,
+                        title: "Limits",
+                        repository: "acme/api",
+                        author: "stranger",
+                        status: "waiting",
+                        headSha: first,
+                        verdict: "comment",
+                        version: "v1",
+                        url: "https://github.com/acme/api/pull/13",
+                        summary: "Read [the guide](https://example.com/guide) <img src=\"https://tracker.example/s.png\">",
+                        comments: [{
+                                id: "c1",
+                                path: "src/limits.ts",
+                                line: 12,
+                                body: "See [hosts](file:///etc/hosts) <img src=\"https://tracker.example/c.png\">"
+                            }]
+                    }]
+            });
+            const summary = find("codeReviewSummary");
+            tryVerify(() => summary?.visible === true);
+            const summaryProse = findChild(summary, "markdownProse");
+            verify(!/<img/i.test(summaryProse.text), "nothing in the summary loads: " + summaryProse.text);
+            verify(summaryProse.getText(0, summaryProse.length).includes("<img src=\"https://tracker.example/s.png\">"), "its markup shows as text");
+            ctrlClickWord(summary, "guide");
+            compare(Shell.webLinks, ["https://example.com/guide"]);
+
+            const body = find("codeReviewCommentBody");
+            verify(!/<img/i.test(findChild(body, "markdownProse").text), "nothing in a comment loads");
+            ctrlClickWord(body, "hosts");
+            compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts"]);
+            verifyLinkMenuIsTheWebOne(summary, "guide");
+            verifyLinkMenuIsTheWebOne(body, "hosts");
+
+            clickShown("codeReviewOpenOnGitHub");
+            compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts", "https://github.com/acme/api/pull/13"]);
+            compare(Shell.openedExternally, []);
         }
 
         // An approval kept of another commit than the head can still be taken back.

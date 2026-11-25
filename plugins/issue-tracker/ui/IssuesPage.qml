@@ -467,7 +467,7 @@ Item {
                         ShellButton {
                             subtle: true
                             text: qsTr("Open on GitHub")
-                            onClicked: Qt.openUrlExternally(about.issue.url)
+                            onClicked: Shell.openWebLink(about.issue.url)
                         }
                     }
 

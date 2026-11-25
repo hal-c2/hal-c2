@@ -350,6 +350,12 @@ Feature: Formatted messages
     When the agent answers with a link to "javascript:alert(1)"
     Then the link's text is shown and nothing can be opened
 
+  # A terminal opens a link with the system's opener, which reaches a network path's host.
+  @tui @priority-high
+  Scenario: A link to a network path is not a link in the terminal
+    When the agent answers with a link to "//attacker.test/share/notes.md"
+    Then the link's text is shown and nothing can be opened
+
   @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A reply being written keeps what is already shown
     Given the agent is writing a reply of several paragraphs

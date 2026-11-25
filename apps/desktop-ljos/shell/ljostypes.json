@@ -152,6 +152,16 @@
               "returnType": "void"
             },
             {
+              "name": "openWebLink",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
               "name": "openApp",
               "parameters": [
                 {
