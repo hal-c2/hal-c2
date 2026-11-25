@@ -20,7 +20,7 @@
 #   https://github.com/pingdotgg/t3code/pull/28240
 # Waiver: desktop-ljos has no native Snap Shot side on Windows (#1568) or macOS
 # (#1569) yet, so the scenarios tagged @backlog-desktop-ljos pass there only
-# against that shell's test doubles. Landing the native ports removes the tag.
+# against that shell's test doubles. Landing the native ports and proving them on Windows and macOS removes the tag.
 
 @desktop @priority-low
 Feature: Snap Shot captures another app's window into the draft
