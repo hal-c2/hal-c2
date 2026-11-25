@@ -31,7 +31,7 @@
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/mcs/<MC>/vendor/*, 401 and 403)
 #   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp, FFmpeg.cpp
 #   apps/desktop-qt/src/native/PanelStage.h (the stage's panes and layouts)
-#   apps/desktop-qt/qml/HalC2/Bricks/DevicePanel.qml
+#   packages/qml/HalC2/Bricks/DevicePanel.qml
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
 #   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.

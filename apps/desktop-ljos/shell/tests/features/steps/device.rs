@@ -6,7 +6,7 @@
 //! on one socket). The pictures are the committed fixture, a solid red 72x160
 //! H.264 clip, decoded by Ljós's decoder.
 //!
-//! The tab is the desktop's own DevicePanel (qml/HalC2/Bricks), loaded over
+//! The tab is the desktop's own DevicePanel (packages/qml/HalC2/Bricks), loaded over
 //! the right panel's ThreadDevices once the user looks at the thread: the
 //! user's clicks, drags and keys are events on the window, and a step reads
 //! the picture back from what the window painted for DeviceScreen.

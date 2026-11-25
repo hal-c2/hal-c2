@@ -5,7 +5,7 @@
 // input) and serve-emu (SEMU-framed Annex-B and JSON gestures on one socket).
 // The pictures are the committed fixture, a solid red 72x160 H.264 clip.
 //
-// The tab is the desktop's own DevicePanel (qml/HalC2/Bricks), loaded over
+// The tab is the desktop's own DevicePanel (packages/qml/HalC2/Bricks), loaded over
 // the scenario's ThreadDevices once the user looks at the thread: the user's
 // clicks, drags and keys are QTest events on its window, and a step reads the
 // picture back from the window as DeviceScreen drew it. Choosing which tab

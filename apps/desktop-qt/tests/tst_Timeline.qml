@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The Timeline brick over a ListModel with the TimelineModel's roles
 // (features/timeline/scrolling-and-links.feature, tool-calls.feature).

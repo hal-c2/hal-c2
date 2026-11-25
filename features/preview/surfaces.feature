@@ -43,9 +43,9 @@
 #   packages/shared/src/preview.ts (normalizePreviewUrl)
 #   apps/server-ex/lib/hal_c2/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
 #   apps/server-ex/test/hal_c2/preview_test.exs
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (the add menu's Browser tab)
+#   packages/qml/HalC2/Bricks/RightPanel.qml (the add menu's Browser tab)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp (the right panel's Previews tab)
-#   apps/desktop-qt/qml/HalC2/Bricks/PreviewsPanel.qml
+#   packages/qml/HalC2/Bricks/PreviewsPanel.qml
 #   apps/desktop-qt/tests/native/features/PreviewSteps.cpp
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   apps/tui/src/features.backlog.test.ts (preview-surface)

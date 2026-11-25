@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks/js/lucide.js" as Lucide
+import "../../../packages/qml/HalC2/Bricks/js/lucide.js" as Lucide
 
 TestCase {
     name: "ShellIconTests"

@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // Behaviour scenarios for the native bricks, one Given/When/Then per test,
 // driven through the Shell test double: the shell's state goes in as

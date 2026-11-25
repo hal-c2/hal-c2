@@ -135,7 +135,7 @@ struct Options {
     url: Option<String>,
     app_id: Option<String>,
     host: desktop_host::Options,
-    /// `--licenses`, which the manifest beside the host does not replace.
+    /// `--licenses`, which this app's own default manifest does not replace.
     licenses_given: bool,
     /// The folders the launch names, as absolute paths.
     folders: Vec<String>,
@@ -312,10 +312,10 @@ fn parse() -> Result<Options, String> {
         let from_env = std::env::var("HAL_C2_NODE_BIN").ok();
         desktop_host::default_node(&executable_dir, RELEASE, from_env.as_deref())
     });
-    // Staged beside the host (scripts/stage-runtime.mjs), or `vp run
-    // licenses`'s apps/desktop-qt/licenses/ in a checkout.
+    // This app's own manifest (desktop_host::default_licenses), staged by
+    // its own licenses script, not desktop-qt's beside the host.
     if !o.licenses_given {
-        o.launch.licenses_manifest = Some(desktop_host::licenses_beside(&o.host.entry));
+        o.launch.licenses_manifest = Some(desktop_host::default_licenses(&executable_dir, RELEASE));
     }
     // The folders are the shell's own; the rest is the host's (connect_to).
     let (folders, rest) = hal_c2_shell::launch_folders(&positional);
@@ -1318,7 +1318,7 @@ fn install_dev_desktop_entry() {
 mod tests {
     use super::{Allowed, offscreen};
 
-    const LAYOUT: &str = "file:///ci/apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
+    const LAYOUT: &str = "file:///ci/packages/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
 
     #[test]
     fn allow_reads_rule_and_path_skipping_comments() {
@@ -1374,7 +1374,7 @@ mod tests {
         let allowed = Allowed::parse("layout-occluded Bricks/ShellWindow.qml:115").unwrap();
         let by = |line: u32| {
             format!(
-                "the button is covered by the item (file:///ci/apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
+                "the button is covered by the item (file:///ci/packages/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
             )
         };
         assert_eq!(

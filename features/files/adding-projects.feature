@@ -23,9 +23,9 @@
 #   apps/web/src/components/ProjectCloneToastCoordinator.tsx
 #   apps/web/src/components/ChatView.tsx (projectCloneSendBlockReason: sending held while a project clones)
 #   apps/web/src/shell/useShellFolderDrop.ts
-#   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
-#   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml
+#   packages/qml/HalC2/Bricks/ProjectFolderDrop.qml
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Add project)
+#   packages/qml/HalC2/Bricks/HomePage.qml
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
 #   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
 #   apps/desktop-qt/src/native/ProjectCloneController.cpp (clone toasts: progress, cancel, retry, open, remove)

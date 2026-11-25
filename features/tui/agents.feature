@@ -1,5 +1,5 @@
 # Sources:
-#   apps/desktop-qt/qml/HalC2/Bricks/AgentsPanel.qml (the Agents tab: state, model, elapsed, activity)
+#   packages/qml/HalC2/Bricks/AgentsPanel.qml (the Agents tab: state, model, elapsed, activity)
 #   apps/desktop-qt/src/native/AgentsModel.cpp (ordering, status words, elapsed)
 #   apps/tui/src/host/agentsState.ts, apps/tui/src/host/agentsPanel.ts
 #   apps/tui/qml/HalC2/Tui/AgentsPanel.qml

@@ -16,7 +16,7 @@ on:
       # The shell, controllers and MC client the phone runs on, the bricks
       # and the phone's QML it compiles, and the scenarios its RATCHET holds.
       - "apps/desktop-ljos/**"
-      - "apps/desktop-qt/qml/**"
+      - "packages/qml/**"
       - "apps/mobile-qt/qml/**"
       - "features/mobile/**"
       # The default globs the features runner reads (kDefaultGlobs).

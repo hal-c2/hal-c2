@@ -19,7 +19,7 @@
 #   packages/contracts/src/filesystem.ts (ProjectListEntriesInput, ProjectEntry)
 #   packages/contracts/src/rpc.ts (projects.listEntries)
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp, FileTreeModel.cpp
-#   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
+#   packages/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/21920
 #   https://github.com/pingdotgg/t3code/pull/23398

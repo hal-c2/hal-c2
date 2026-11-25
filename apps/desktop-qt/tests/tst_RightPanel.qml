@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The right panel's bodies: each tab draws its brick and keeps it while
 // another tab shows. Its edge resizes it and its header button opens the

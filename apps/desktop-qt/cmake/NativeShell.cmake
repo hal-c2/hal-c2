@@ -46,10 +46,11 @@ function(hal_c2_add_native_library)
   # Qt6::Sql is the client cache (src/native/LocalCache.cpp), which needs the SQLite driver at run time.
   target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::WebSockets)
   # The built-in palettes (scripts/gen-themes.mjs), as :/hal-c2/themes.json.
-  qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
-                   FILES "${_hal_c2_src}/native/themes.json")
+  get_filename_component(_hal_c2_qml "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../packages/qml" ABSOLUTE)
+  qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_qml}"
+                   FILES "${_hal_c2_qml}/themes.json")
   # :/hal-c2/settings/settingsPages.js and what it imports.
-  set(_hal_c2_js "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../qml/HalC2/Bricks/js")
+  set(_hal_c2_js "${_hal_c2_qml}/HalC2/Bricks/js")
   qt_add_resources(hal_c2_native hal_c2_native_settings PREFIX "/hal-c2/settings" BASE "${_hal_c2_js}"
                    FILES "${_hal_c2_js}/settingsPages.js" "${_hal_c2_js}/settingsRows.js")
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.

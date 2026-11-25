@@ -1,5 +1,5 @@
 //! This device's theme library: the theme editor as the desktop draws it
-//! (qml/HalC2/Bricks/ThemeEditor.qml over the themes controller's draft),
+//! (packages/qml/HalC2/Bricks/ThemeEditor.qml over the themes controller's draft),
 //! importing, exporting and removing themes
 //! (features/navigation/theme-editor.feature, environment-themes.feature),
 //! and the appearance rows that are colours or keys

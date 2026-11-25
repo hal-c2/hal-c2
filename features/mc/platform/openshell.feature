@@ -23,7 +23,7 @@
 #   apps/server-ex/lib/hal_c2/open_shell/operations.ex (one operation at a time, its steps and outcome)
 #   packages/contracts/src/rpc.ts (server.getOpenShellStatus, server.runOpenShellOperation),
 #   packages/contracts/src/server.ts (ServerOpenShellStatus, OpenShellOperationState)
-#   apps/desktop-qt/src/native/SandboxSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/SandboxSettings.qml
+#   apps/desktop-qt/src/native/SandboxSettingsController.cpp, packages/qml/HalC2/Bricks/SandboxSettings.qml
 #   apps/tui/src/host/sections/sandboxes.ts
 #   docs/user/openshell.md
 #   docs/operations/openshell.md

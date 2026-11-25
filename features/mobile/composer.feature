@@ -60,7 +60,7 @@
 #   apps/mobile/modules/hal-c2-markdown-text (context clipboard config: a sent message's references copy back as references)
 #   apps/mobile/src/features/files/ (attachment screen, remove from draft)
 #   apps/mobile-qt/qml/HalC2/Mobile/ThreadScreen.qml (the shared Composer brick on a phone: stop, model and effort, drafts)
-#   apps/desktop-qt/qml/HalC2/Bricks/TurnRequests.qml (the queue the shared Composer stacks)
+#   packages/qml/HalC2/Bricks/TurnRequests.qml (the queue the shared Composer stacks)
 # Drafting, sending, queueing and steering are specified in features/composer/. This file
 # covers the phone twist: the on-screen keyboard, touch attachments and small-screen sheets.
 

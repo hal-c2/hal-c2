@@ -7,7 +7,7 @@
 #   plugins/office/src/OfficeArt.qml, plugins/office/src/Furniture.qml (people, pets, furniture and the room as drawn)
 #   plugins/office/ljos-play/qml/LjosPlay/World.qml, plugins/office/ljos-play/qml/LjosPlay/Actor.qml (the clock, camera, tiles and walking)
 #   plugins/office/bundle.mjs (writes plugins/office/ui/OfficePage.qml, the file clients fetch, from src/)
-#   apps/desktop-qt/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
+#   packages/qml/HalC2/Bricks/ProjectIcon.qml (the sidebar's project icon a desk mirrors)
 #   apps/desktop-qt/src/native/IdentityController.cpp (projectIcons: the icons the page reads)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (threads/1 and watch_threads/1 for plugins)
 #   docs/user/office.md

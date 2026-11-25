@@ -16,8 +16,8 @@
 #   apps/web/src/onboarding/targetEnvironment.logic.ts
 #   apps/server/src/project/AgentSessionScanner.ts
 #   apps/desktop-qt/src/native/OnboardingController.cpp (the desktop's gate and wizard)
-#   apps/desktop-qt/qml/HalC2/Bricks/WelcomeWizard.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (the buttons it draws over its cover)
+#   packages/qml/HalC2/Bricks/WelcomeWizard.qml
+#   packages/qml/HalC2/Bricks/WindowControls.qml (the buttons it draws over its cover)
 #   apps/desktop-qt/tests/native/features/OnboardingSteps.cpp (the @desktop steps)
 #   apps/server-ex/lib/hal_c2/terminal.ex (the setup terminal as the provider instance)
 #   https://github.com/pingdotgg/t3code/pull/24719

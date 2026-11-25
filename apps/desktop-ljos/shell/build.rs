@@ -20,7 +20,7 @@ fn main() {
         println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
     }
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets it"));
-    let dirs = [Path::new("../../desktop-qt/qml"), Path::new("../qml")];
+    let dirs = [Path::new("../../../packages/qml"), Path::new("../qml")];
     let files = ljos::build::Options::new()
         .with_sources()
         .compile_dirs_with_types_to_rust(&dirs, "ljostypes.json".as_ref(), &out.join("qml.pack"))

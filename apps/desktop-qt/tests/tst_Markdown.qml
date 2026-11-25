@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
-import "../qml/HalC2/Bricks/js/markdown.js" as Md
+import "../../../packages/qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks/js/markdown.js" as Md
 
 // The Markdown brick: chat markdown in native segments
 // (features/timeline/markdown.feature).

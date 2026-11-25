@@ -24,6 +24,7 @@ __screenshots__/
 .plans/
 /audits/
 apps/desktop-qt/licenses/
+apps/desktop-ljos/licenses/
 /.generated/
 .github/pr-assets/
 native/**/target/

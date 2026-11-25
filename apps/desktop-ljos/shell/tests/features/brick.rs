@@ -1,4 +1,4 @@
-//! A brick of qml/HalC2/Bricks shown over the scenario's shell, as
+//! A brick of packages/qml/HalC2/Bricks shown over the scenario's shell, as
 //! desktop-qt's Brick (features/Brick.h): its singletons (Shell, Theme,
 //! the controllers') are the world's, because it is made in the world's
 //! engine and shown in the world's window. Steps drive it as the user

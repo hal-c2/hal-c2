@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The window's shortcuts (ShellWindow) over a Space page
 // (features/space/prompt.feature: The palette's key opens the palette over a

@@ -1,7 +1,7 @@
 # desktop-ljos
 
 An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
-[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `packages/qml/HalC2/Bricks`
 as they are and puts a Rust `HalC2.Shell` under them.
 
 - `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
@@ -72,7 +72,8 @@ needs it: point `CEF_PATH` at a directory outside the repository and it is fetch
 binaries (`libcef.so` and its resources, found through an `$ORIGIN` rpath) on every build. `strip --strip-debug` on
 `libcef.so` there takes it to under 500 MB; CI keeps it that way by CEF's version. CEF starts its other processes
 from `ljos-webengine-helper`, built beside `hal-c2-ljos`. On macOS CEF loads from an application bundle that
-Ljós's `ljos-webengine-bundle` makes; until the build makes one, a browser tab says it cannot load.
+Ljós's `ljos-webengine-bundle` makes: the release makes one (`mise run release:desktop-ljos`, $CEF_PATH naming
+CEF's distribution), and until a dev run does the same a browser tab there says it cannot load.
 
 ## Inspect
 

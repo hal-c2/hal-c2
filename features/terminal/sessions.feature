@@ -14,8 +14,8 @@
 #   apps/server/src/terminal/Manager.ts (resolveShellCandidates, Windows shell order, stripAppImageRuntimeEnv,
 #     resolveProviderInstanceTerminalEnvironment, openWithWorkspaceLease)
 #   apps/server/src/terminal/Manager.test.ts (zsh prompt marker, provider environment change, worktree on reopen)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
+#   packages/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
+#   packages/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
 #   apps/desktop-qt/src/TerminalController.cpp (launch context, availability)
 #   apps/desktop-qt/tests/tst_Scenarios.qml (terminal toggle)
 #   features/terminal/drawer.feature (the desktop's launch-context scenarios, run natively)

@@ -1,8 +1,8 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks"
-import "../qml/HalC2/Bricks/js/settingsPages.js" as Pages
-import "../qml/HalC2/Bricks/js/settingsRows.js" as Rows
+import "../../../packages/qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks/js/settingsPages.js" as Pages
+import "../../../packages/qml/HalC2/Bricks/js/settingsRows.js" as Rows
 import HalC2.Shell
 
 Item {

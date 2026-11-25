@@ -22,7 +22,7 @@ macdeployqt="$(sed -n 's/^MACDEPLOYQT_EXECUTABLE:[A-Z]*=//p' "${build_dir}/CMake
   echo "${build_dir}/CMakeCache.txt names no macdeployqt; is it a configured build directory?" >&2
   exit 1
 }
-"${macdeployqt}" "${app}" -qmldir="$(cd "$(dirname "$0")/.." && pwd)/qml"
+"${macdeployqt}" "${app}" -qmldir="$(cd "$(dirname "$0")/../../.." && pwd)/packages/qml"
 
 # A Qt with every module installed (Homebrew's) has plugins for modules the app does
 # not link (PDF, 3D, the virtual keyboard). macdeployqt copies those plugins without

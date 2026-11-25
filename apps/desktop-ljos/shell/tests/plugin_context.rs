@@ -15,7 +15,7 @@ use serde_json::json;
 
 fn brick(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../desktop-qt/qml/HalC2/Bricks")
+        .join("../../../packages/qml/HalC2/Bricks")
         .join(format!("{name}.qml"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

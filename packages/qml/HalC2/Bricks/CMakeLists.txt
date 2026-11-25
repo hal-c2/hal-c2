@@ -208,7 +208,7 @@ set(hal_c2_bricks_resources
     models/tablet.glb
     models/tablet-keyboard.glb
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/QmldirCheck.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/QmldirCheck.cmake")
 hal_c2_check_qmldir(${hal_c2_bricks_qml_files} ${hal_c2_bricks_resources})
 qt_add_qml_module(hal_c2_bricks
   URI HalC2.Bricks

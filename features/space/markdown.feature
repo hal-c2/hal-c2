@@ -23,7 +23,7 @@
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
 #     SpaceCalloutAlert)
-#   apps/desktop-qt/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
+#   packages/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
 #   apps/mobile-qt/qml/HalC2/Mobile/SpaceBlockRow.qml (a page's diagram on the phone)
 
 Feature: GitHub Markdown in a page

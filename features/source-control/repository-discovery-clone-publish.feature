@@ -24,7 +24,7 @@
 #   packages/shared/src/sourceControl.ts (the host of a remote read from its address)
 #   apps/server-ex/lib/hal_c2/project_clones.ex
 #   apps/web/src/components/GitActionsControl.tsx (publish repository)
-#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Publish repository)
+#   packages/qml/HalC2/Bricks/GitActions.qml (Publish repository)
 #   apps/tui/src/features.backlog.test.ts (repository-setup-publishing)
 #   https://github.com/pingdotgg/t3code/pull/21325
 #   https://github.com/pingdotgg/t3code/pull/22246

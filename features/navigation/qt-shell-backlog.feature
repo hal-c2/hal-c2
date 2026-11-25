@@ -2,8 +2,8 @@
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview, right-panel-surfaces,
 #   app-updates, ssh-environments, network-access, open-workspace-activation)
 #   apps/desktop-qt/parity/web-parity.test.ts (thread jump, composer send chords, toolbar chords)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts)
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts)
+#   packages/qml/HalC2/Bricks/RightPanel.qml
 #   docs/user/updating.md
 #   docs/user/remote-access.md
 

@@ -1,10 +1,10 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/22777
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target, the folding toolbar, Send's accent)
+#   packages/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target, the folding toolbar, Send's accent)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (isSendBusy while a message is on its way)
-#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Sending…)
+#   packages/qml/HalC2/Bricks/Timeline.qml (Sending…)
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml
 #   apps/tui/src/components/ChatView.tsx (reply draft, send status, new thread composer)
 #   apps/web/src/composer-logic.ts (submission intents, send shortcut)
