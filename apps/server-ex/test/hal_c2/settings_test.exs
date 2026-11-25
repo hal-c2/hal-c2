@@ -31,7 +31,7 @@ defmodule HalC2.SettingsTest do
     assert {^doc, 0} = Settings.get()
   end
 
-  test "a write queued by the release before writers were named is a client's" do
+  test "a write queued by the release before writers were named is the plugin host's from its process, else a client's" do
     doc = %{"enableAssistantStreaming" => false}
     assert {:ok, 1} = GenServer.call(Settings, {:put, doc, 0})
     assert {:error, :stale} = GenServer.call(Settings, {:put, %{"other" => true}, 0})
@@ -42,6 +42,20 @@ defmodule HalC2.SettingsTest do
              GenServer.call(Settings, {:put, off, 1})
 
     assert {^doc, 1} = Settings.get()
+
+    test = self()
+
+    host =
+      spawn_link(fn ->
+        Process.register(self(), HalC2.Plugins)
+        send(test, :registered)
+        receive do: (:write -> send(test, GenServer.call(Settings, {:put, off, 1})))
+      end)
+
+    assert_receive :registered
+    send(host, :write)
+    assert_receive {:ok, 2}
+    assert {^off, 2} = Settings.get()
   end
 
   test "agents use the provider's own subagents until the setting says HAL-C2 workers" do

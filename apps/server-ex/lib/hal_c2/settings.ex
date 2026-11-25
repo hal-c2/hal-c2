@@ -787,9 +787,12 @@ defmodule HalC2.Settings do
     do: {:reply, {:error, :stale}, state}
 
   # A write the release before writers were named queued across an in-place upgrade.
-  # Only clients wrote through `put` then.
-  def handle_call({:put, settings, version}, from, state),
-    do: handle_call({:put, settings, version, :client}, from, state)
+  # The plugin host wrote from its own process then, so that is the host's; every other
+  # caller's is a client's.
+  def handle_call({:put, settings, version}, {caller, _} = from, state) do
+    writer = if caller == Process.whereis(HalC2.Plugins), do: :host, else: :client
+    handle_call({:put, settings, version, writer}, from, state)
+  end
 
   def handle_call({:edit_keybindings, fun}, _from, state) do
     case edit_keybindings_file(fun) do
