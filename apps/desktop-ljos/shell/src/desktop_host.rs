@@ -1,30 +1,28 @@
-//! The desktop host desktop-qt runs (`apps/desktop-qt/host/main.ts`), run
-//! the same way: desktop-qt's BackendProcess. The host finds or starts the
-//! MC on this machine (or pairs with the one `--attach` names), waits until
-//! it answers, and says so in one JSON line a message on its stdout:
+//! The desktop host, in process: what desktop-qt runs as a Node
+//! process (`apps/desktop-qt/host/main.ts`, its BackendProcess),
+//! desktop-ljos runs on a thread of its own through
+//! [`crate::mc_launcher`], so no Node process finds or starts the MC.
+//! The surface is the host's: [`DesktopHost::start`] looks for the MC
+//! (or pairs with the one `--attach` names), [`Event`] says where it
+//! answers or why there is none, and [`DesktopHost::stop`] stops the
+//! MC this shell started itself — a found one keeps running.
 //!
-//! - `{"type":"ready","mc":{"origin":…,"token":…}}`: the MC to connect to;
-//! - `{"type":"error","message":…}`: why it could not.
-//!
-//! Anything else it prints, and all of its stderr, is logged as `[host]`.
-//! Closing its stdin tells it its parent is going; it stops the MC it
-//! started itself (`stop`).
-//!
-//! What the host says arrives on its reader threads; `events` is meant to
-//! post it to the shell's inbox, not to touch the engine.
+//! What the launch learns arrives on its worker thread; `events` is
+//! meant to post it to the shell's inbox, not to touch the engine.
 
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// How the host is run: `node <entry> <arguments>`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+use crate::mc_launcher::{self, Live, StartedMc};
+
+/// How the host is run: the host arguments (`--attach`, `--dev`,
+/// `--base-dir`, as main.cpp hands them on) and what a launch is
+/// resolved against.
+#[derive(Clone, Default)]
 pub struct Options {
-    pub node: PathBuf,
-    pub entry: PathBuf,
     pub arguments: Vec<String>,
+    pub live: Option<Live>,
 }
 
 /// What the host told the shell.
@@ -36,95 +34,9 @@ pub enum Event {
     Failed(String),
 }
 
-/// One line of the host's stdout.
-#[derive(Debug, PartialEq, Eq)]
-enum Line {
-    Ready {
-        origin: String,
-        token: String,
-    },
-    Error(String),
-    /// JSON of another type, which the shell does not act on.
-    Other,
-    /// Not JSON: the host's own log.
-    Log,
-}
-
-fn read_line(line: &str) -> Line {
-    let Ok(serde_json::Value::Object(message)) = serde_json::from_str(line) else {
-        return Line::Log;
-    };
-    let text = |v: Option<&serde_json::Value>| {
-        v.and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    match message.get("type").and_then(serde_json::Value::as_str) {
-        Some("ready") => {
-            let mc = message.get("mc");
-            Line::Ready {
-                origin: text(mc.and_then(|m| m.get("origin"))),
-                token: text(mc.and_then(|m| m.get("token"))),
-            }
-        }
-        Some("error") => Line::Error(text(message.get("message"))),
-        _ => Line::Other,
-    }
-}
-
-/// What the host has said so far, as BackendProcess keeps it.
-#[derive(Default)]
-struct Said {
-    /// It announced an MC; a later `ready` is not another.
-    announced: bool,
-    /// It said why it failed; its exit says nothing more.
-    reported: bool,
-    /// The shell stopped it; its exit is no failure.
-    stopping: bool,
-}
-
-impl Said {
-    /// What `line` tells the shell, if anything.
-    fn hear(&mut self, line: Line) -> Option<Event> {
-        match line {
-            Line::Ready { origin, token } if !self.announced => {
-                self.announced = true;
-                if origin.is_empty() || token.is_empty() {
-                    self.reported = true;
-                    return Some(Event::Failed(
-                        "Desktop host announced no MC to connect to.".into(),
-                    ));
-                }
-                Some(Event::Ready { origin, token })
-            }
-            Line::Error(message) => {
-                self.reported = true;
-                Some(Event::Failed(message))
-            }
-            Line::Ready { .. } | Line::Other | Line::Log => None,
-        }
-    }
-
-    /// What the host's exit tells the shell: nothing when it was stopped or
-    /// said why already.
-    fn exited(&self, code: i32, crashed: bool) -> Option<Event> {
-        if self.stopping || self.reported {
-            return None;
-        }
-        let how = if crashed { "crashed" } else { "normal exit" };
-        // A host that dies after announcing took the MC it started with it;
-        // say so instead of letting the shell reconnect forever.
-        Some(Event::Failed(if self.announced {
-            format!("Desktop host exited (code {code}, {how}). Restart HAL-C2 to reconnect.")
-        } else {
-            format!("Desktop host exited before it was ready (code {code}, {how}).")
-        }))
-    }
-}
-
 type Events = Arc<dyn Fn(Event) + Send + Sync>;
 
-/// The host process, once [`DesktopHost::start`]ed.
+/// The host, once [`DesktopHost::start`]ed.
 pub struct DesktopHost {
     options: Options,
     events: Events,
@@ -133,10 +45,12 @@ pub struct DesktopHost {
 
 #[derive(Default)]
 struct State {
-    said: Said,
-    child: Option<Child>,
-    /// Which `start` the running host is; a stopped one's reader thread
-    /// hears nothing more of the next.
+    /// The MC this shell started, watched until it ends or is stopped.
+    mc: Option<StartedMc>,
+    /// The shell stopped it; its exit is no failure.
+    stopping: bool,
+    /// Which `start` is running; a stopped one's worker hears nothing
+    /// more of the next.
     run: u64,
 }
 
@@ -149,174 +63,164 @@ impl DesktopHost {
         }
     }
 
-    /// Runs the host. A host that cannot be run is a failure.
+    /// Finds or starts the MC. A launch that cannot give the shell
+    /// one is a failure.
     pub fn start(&self) {
-        let spawned = Command::new(&self.options.node)
-            .arg(&self.options.entry)
-            .args(&self.options.arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let mut child = match spawned {
-            Ok(child) => child,
-            Err(e) => {
-                (self.events)(Event::Failed(format!(
-                    "Could not start {} {}: {e}",
-                    self.options.node.display(),
-                    self.options.entry.display()
-                )));
-                return;
-            }
-        };
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
         let run = {
-            // A host started again (the updater's, after a failed install)
-            // is a new one: its `ready` attaches and its exit is reported.
+            // A host started again (the updater's, after a failed
+            // install) is a new one: its `ready` attaches and its
+            // MC's exit is reported.
             let mut state = self.state.lock().unwrap();
-            state.said = Said::default();
-            state.child = Some(child);
+            state.stopping = false;
             state.run += 1;
             state.run
         };
-        if let Some(stderr) = stderr {
-            std::thread::spawn(move || log_lines(stderr));
-        }
-        let Some(stdout) = stdout else { return };
+        let options = self.options.clone();
         let state = self.state.clone();
         let events = self.events.clone();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let read = read_line(line);
-                if read == Line::Log {
-                    eprintln!("[host] {line}");
-                }
-                let event = {
-                    let mut state = state.lock().unwrap();
-                    if state.run != run {
-                        return;
+            let result = launch(&options);
+            let mut watch = false;
+            let event = match result {
+                Ok((access, started)) => {
+                    watch = started.is_some();
+                    let replaced = {
+                        let mut state = state.lock().unwrap();
+                        if state.run != run || state.stopping {
+                            // Superseded or stopped while starting:
+                            // the MC just started is nobody's.
+                            drop(state);
+                            if let Some(mut started) = started {
+                                started.stop(Duration::from_millis(1_500));
+                            }
+                            return;
+                        }
+                        if let Some(started) = started {
+                            state.mc.replace(started)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(mut replaced) = replaced {
+                        replaced.stop(Duration::from_millis(1_500));
                     }
-                    state.said.hear(read)
-                };
-                if let Some(event) = event {
-                    events(event);
+                    Event::Ready {
+                        origin: access.origin,
+                        token: access.token,
+                    }
                 }
-            }
-            // Its stdout closed: it is going. One `stop` took is stop's.
-            let child = {
-                let mut state = state.lock().unwrap();
-                if state.run != run {
-                    return;
-                }
-                state.child.take()
+                Err(message) => Event::Failed(message),
             };
-            let Some(mut child) = child else { return };
-            let status = child.wait();
-            let event = match status {
-                Ok(status) => {
-                    let (code, crashed) = exit_of(status);
-                    state.lock().unwrap().said.exited(code, crashed)
-                }
-                Err(_) => state.lock().unwrap().said.exited(-1, true),
-            };
-            if let Some(event) = event {
+            if state.lock().unwrap().run == run {
                 events(event);
+                // Ready is said before the MC's end can be: the watch
+                // only ever follows it.
+                if watch {
+                    watch_mc(run, state.clone(), events.clone());
+                }
             }
         });
     }
 
-    /// Stops the host: closes its stdin, its sign to stop the MC it
-    /// started, and asks it to end; after two seconds it is killed.
+    /// Stops the MC this shell started: SIGTERM to its process
+    /// group, and a kill after the grace. A found MC is left alone.
     pub fn stop(&self) {
-        let child = {
+        let mc = {
             let mut state = self.state.lock().unwrap();
-            state.said.stopping = true;
-            state.child.take()
+            state.stopping = true;
+            state.mc.take()
         };
-        let Some(mut child) = child else { return };
-        drop(child.stdin.take());
-        terminate(&child);
-        if wait_for(&mut child, Duration::from_secs(2)).is_none() {
-            let _ = child.kill();
-            wait_for(&mut child, Duration::from_secs(1));
+        if let Some(mut mc) = mc {
+            mc.stop(Duration::from_secs(2));
         }
     }
 }
 
-/// The exit code, and whether a signal ended it (Qt's CrashExit, whose
-/// code is then the signal's).
-fn exit_of(status: ExitStatus) -> (i32, bool) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        if let Some(signal) = status.signal() {
-            return (signal, true);
-        }
+/// One launch: the arguments read, then found, started or attached.
+fn launch(options: &Options) -> Result<(mc_launcher::Access, Option<StartedMc>), String> {
+    let args = mc_launcher::parse_host_args(&options.arguments)?;
+    let live = options.live.clone().unwrap_or_else(|| {
+        Live::process(
+            bundled_mc(&executable_dir()),
+            source_mc(),
+            PathBuf::from("node"),
+        )
+    });
+    match &args.attach {
+        Some(url) => mc_launcher::attach(url, args.base_dir.as_deref(), &live).map(|a| (a, None)),
+        None => mc_launcher::standalone(&args, &live),
     }
-    (status.code().unwrap_or(-1), false)
 }
 
-/// QProcess::terminate: SIGTERM, or nothing on Windows (where Qt posts
-/// WM_CLOSE, which a console host ignores; the kill follows).
-fn terminate(child: &Child) {
-    #[cfg(unix)]
-    if let Ok(pid) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: kill with a child's own pid, which it is until it is
-        // waited for, and this one is not yet.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = child;
-}
-
-/// Waits up to `limit` for `child` to end.
-fn wait_for(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
-    let deadline = Instant::now() + limit;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
+/// Reports the started MC's end, unless the shell stopped it or
+/// another MC holds its files (then the shell's MC is that one, with
+/// the same files' token, and it carries on).
+fn watch_mc(run: u64, state: Arc<Mutex<State>>, events: Events) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(200));
+            let status = {
+                let mut state = state.lock().unwrap();
+                if state.run != run || state.stopping {
+                    return;
+                }
+                match state.mc.as_mut().and_then(StartedMc::try_wait) {
+                    Some(status) => {
+                        state.mc.take();
+                        status
+                    }
+                    None => continue,
+                }
+            };
+            let code = mc_launcher::exit_code(status);
+            if code == mc_launcher::HOME_IN_USE {
+                return;
             }
-            _ => return None,
+            events(Event::Failed(format!(
+                "The MC exited (code {code}, {}). Restart HAL-C2 to reconnect.",
+                if status.code().is_some() {
+                    "normal exit"
+                } else {
+                    "crashed"
+                }
+            )));
+            return;
         }
-    }
+    });
 }
 
-fn log_lines(stream: impl Read) {
-    for line in BufReader::new(stream).lines() {
-        let Ok(line) = line else { break };
-        if !line.trim().is_empty() {
-            eprintln!("[host] {}", line.trim());
-        }
-    }
+fn executable_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default()
 }
 
-/// Where desktop-qt's host is: HAL_C2_HOST_ENTRY's default, beside the
-/// executable in a release (`share/hal-c2/host`, or the bundle's
-/// `Resources/hal-c2/host` on macOS), else this checkout's.
-pub fn default_entry(executable_dir: &Path, release: bool) -> PathBuf {
-    if !release {
-        return Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop-qt/host/main.ts");
-    }
-    let installed = if cfg!(target_os = "macos") {
-        "../Resources/hal-c2/host/main.ts"
+/// The installed app's files beside the executable
+/// (`share/hal-c2`, or the bundle's `Resources/hal-c2` on macOS),
+/// where the release stages the MC, Node and the licenses
+/// (mise-tasks/release/desktop-ljos).
+fn share_dir(executable_dir: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        executable_dir.join("../Resources/hal-c2")
     } else {
-        "../share/hal-c2/host/main.ts"
-    };
-    executable_dir.join(installed)
+        executable_dir.join("../share/hal-c2")
+    }
 }
 
-/// The Node that runs it: HAL_C2_NODE_BIN, else the release's own beside
-/// the executable, else `node` from PATH.
+/// The MC release bundled with the installed app.
+pub fn bundled_mc(executable_dir: &Path) -> PathBuf {
+    share_dir(executable_dir).join("hal-c2-mc/bin/hal_c2")
+}
+
+/// This checkout's MC, for a shell run from source.
+pub fn source_mc() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../server-ex")
+}
+
+/// The Node the MC runs its JavaScript sidecars on: HAL_C2_NODE_BIN,
+/// else the release's own beside the executable, else `node` from
+/// PATH. The host itself needs no Node anymore.
 pub fn default_node(executable_dir: &Path, release: bool, from_env: Option<&str>) -> PathBuf {
     if let Some(node) = from_env.filter(|n| !n.is_empty()) {
         return node.into();
@@ -324,23 +228,22 @@ pub fn default_node(executable_dir: &Path, release: bool, from_env: Option<&str>
     if !release {
         return "node".into();
     }
-    let installed = if cfg!(target_os = "macos") {
-        "../Resources/hal-c2/bin/node"
-    } else if cfg!(windows) {
-        "../share/hal-c2/bin/node.exe"
+    share_dir(executable_dir).join(if cfg!(windows) {
+        "bin/node.exe"
     } else {
-        "../share/hal-c2/bin/node"
-    };
-    executable_dir.join(installed)
+        "bin/node"
+    })
 }
 
-/// The third-party license manifest staged beside the host
-/// (scripts/stage-runtime.mjs, or `vp run licenses` in a checkout).
-pub fn licenses_beside(entry: &Path) -> PathBuf {
-    entry
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("../licenses/third-party-licenses.json")
+/// The third-party license manifest: staged with the release
+/// (scripts/stage-runtime.mjs), or `vp run licenses`'s in a checkout.
+pub fn licenses_default(executable_dir: &Path, release: bool) -> PathBuf {
+    if release {
+        share_dir(executable_dir).join("licenses/third-party-licenses.json")
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../desktop-qt/licenses/third-party-licenses.json")
+    }
 }
 
 /// The `--url` link as main.cpp hands it on,
@@ -383,74 +286,7 @@ pub fn arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_ready_line_names_the_mc_once() {
-        let mut said = Said::default();
-        let ready = r#"{"type":"ready","mc":{"origin":"http://127.0.0.1:3790","token":"t"}}"#;
-        assert_eq!(
-            said.hear(read_line(ready)),
-            Some(Event::Ready {
-                origin: "http://127.0.0.1:3790".into(),
-                token: "t".into()
-            })
-        );
-        assert_eq!(said.hear(read_line(ready)), None);
-    }
-
-    #[test]
-    fn a_ready_line_without_an_mc_is_a_failure() {
-        let mut said = Said::default();
-        assert_eq!(
-            said.hear(read_line(r#"{"type":"ready","mc":{"origin":""}}"#)),
-            Some(Event::Failed(
-                "Desktop host announced no MC to connect to.".into()
-            ))
-        );
-        // It said why: its exit says nothing more.
-        assert_eq!(said.exited(1, false), None);
-    }
-
-    #[test]
-    fn an_error_line_is_the_failure_and_the_exit_adds_nothing() {
-        let mut said = Said::default();
-        assert_eq!(
-            said.hear(read_line(r#"{"type":"error","message":"no MC release"}"#)),
-            Some(Event::Failed("no MC release".into()))
-        );
-        assert_eq!(said.exited(1, false), None);
-    }
-
-    #[test]
-    fn other_lines_are_the_hosts_log() {
-        let mut said = Said::default();
-        assert_eq!(read_line("[mc] listening"), Line::Log);
-        assert_eq!(read_line(r#"{"type":"exit","code":0}"#), Line::Other);
-        assert_eq!(said.hear(read_line("[mc] listening")), None);
-    }
-
-    #[test]
-    fn an_exit_says_whether_the_mc_was_announced() {
-        let said = Said::default();
-        assert_eq!(
-            said.exited(1, false),
-            Some(Event::Failed(
-                "Desktop host exited before it was ready (code 1, normal exit).".into()
-            ))
-        );
-        let mut announced = Said::default();
-        announced.hear(read_line(
-            r#"{"type":"ready","mc":{"origin":"http://h","token":"t"}}"#,
-        ));
-        assert_eq!(
-            announced.exited(9, true),
-            Some(Event::Failed(
-                "Desktop host exited (code 9, crashed). Restart HAL-C2 to reconnect.".into()
-            ))
-        );
-        announced.stopping = true;
-        assert_eq!(announced.exited(0, false), None);
-    }
+    use std::sync::mpsc;
 
     #[test]
     fn the_arguments_are_main_cpps() {
@@ -500,118 +336,81 @@ mod tests {
         assert_eq!(default_node(dir, false, Some("")), Path::new("node"));
     }
 
-    #[test]
-    fn the_licenses_sit_beside_the_host() {
-        assert_eq!(
-            licenses_beside(Path::new("/opt/share/hal-c2/host/main.ts")),
-            Path::new("/opt/share/hal-c2/host/../licenses/third-party-licenses.json")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_host_that_says_ready_then_exits_is_heard() {
-        let (sent, heard) = std::sync::mpsc::channel();
+    fn host_with(arguments: Vec<String>, live: Live) -> (DesktopHost, mpsc::Receiver<Event>) {
+        let (sent, heard) = mpsc::channel();
         let host = DesktopHost::new(
             Options {
-                node: "sh".into(),
-                entry: "-c".into(),
-                arguments: vec![
-                    r#"echo hello; echo '{"type":"ready","mc":{"origin":"http://h","token":"t"}}'; exit 3"#
-                        .into(),
-                ],
+                arguments,
+                live: Some(live),
             },
             move |event| {
                 let _ = sent.send(event);
             },
         );
+        (host, heard)
+    }
+
+    fn live_in(temp: &tempfile::TempDir, vars: Vec<(String, String)>) -> Live {
+        Live {
+            env: Arc::new(move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())),
+            user_home: temp.path().to_path_buf(),
+            platform: crate::storage::Platform::Unix,
+            bundled: temp.path().join("bundled/bin/hal_c2"),
+            source: temp.path().join("server-ex"),
+            node: "node".into(),
+            timeout: Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn a_bad_host_argument_is_the_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let (host, heard) = host_with(vec!["--frobnicate".into()], live_in(&temp, vec![]));
         host.start();
-        let wait = Duration::from_secs(10);
         assert_eq!(
-            heard.recv_timeout(wait).unwrap(),
+            heard.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Event::Failed("Unknown desktop host argument: --frobnicate".into())
+        );
+    }
+
+    #[test]
+    fn an_mc_already_running_on_the_home_is_the_ready_one() {
+        // A runtime record for this (live) process, and its token, in
+        // the home the launch is given: found, nothing started.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let state = home.join("state/elixir");
+        let data = home.join("data/elixir");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(
+            state.join("server-runtime.json"),
+            format!(
+                r#"{{"origin":"http://127.0.0.1:3793","pid":{}}}"#,
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::write(data.join("access-token"), "found-token\n").unwrap();
+        // Where a source MC would run from, without one being started.
+        let source = temp.path().join("server-ex");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("mix.exs"), "").unwrap();
+        let (host, heard) = host_with(
+            vec![format!("--base-dir={}", home.display())],
+            live_in(&temp, vec![]),
+        );
+        host.start();
+        assert_eq!(
+            heard.recv_timeout(Duration::from_secs(10)).unwrap(),
             Event::Ready {
-                origin: "http://h".into(),
-                token: "t".into()
+                origin: "http://127.0.0.1:3793".into(),
+                token: "found-token".into()
             }
         );
-        assert_eq!(
-            heard.recv_timeout(wait).unwrap(),
-            Event::Failed(
-                "Desktop host exited (code 3, normal exit). Restart HAL-C2 to reconnect.".into()
-            )
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_stopped_host_ends_without_a_failure() {
-        let (sent, heard) = std::sync::mpsc::channel();
-        let host = DesktopHost::new(
-            Options {
-                node: "sh".into(),
-                entry: "-c".into(),
-                // Ends when its stdin closes, as the host does.
-                arguments: vec!["cat >/dev/null".into()],
-            },
-            move |event| {
-                let _ = sent.send(event);
-            },
-        );
-        host.start();
+        // Stopping leaves a found MC (this process) alone, and says
+        // nothing more.
         host.stop();
         assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
-    }
-
-    #[test]
-    fn a_host_started_again_is_heard_again() {
-        let (sent, heard) = std::sync::mpsc::channel();
-        let host = DesktopHost::new(
-            Options {
-                node: "sh".into(),
-                entry: "-c".into(),
-                arguments: vec![
-                    r#"echo '{"type":"ready","mc":{"origin":"http://h","token":"t"}}'; cat >/dev/null"#
-                        .into(),
-                ],
-            },
-            move |event| {
-                let _ = sent.send(event);
-            },
-        );
-        let ready = Event::Ready {
-            origin: "http://h".into(),
-            token: "t".into(),
-        };
-        host.start();
-        assert_eq!(
-            heard.recv_timeout(Duration::from_secs(5)),
-            Ok(ready.clone())
-        );
-        host.stop();
-        // The updater's restart after a failed install.
-        host.start();
-        assert_eq!(heard.recv_timeout(Duration::from_secs(5)), Ok(ready));
-        host.stop();
-        assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
-    }
-
-    #[test]
-    fn a_host_that_cannot_run_says_so() {
-        let (sent, heard) = std::sync::mpsc::channel();
-        let host = DesktopHost::new(
-            Options {
-                node: "/nonexistent/node".into(),
-                entry: "main.ts".into(),
-                arguments: Vec::new(),
-            },
-            move |event| {
-                let _ = sent.send(event);
-            },
-        );
-        host.start();
-        let Ok(Event::Failed(message)) = heard.try_recv() else {
-            panic!("no failure");
-        };
-        assert!(message.starts_with("Could not start /nonexistent/node main.ts: "));
     }
 }

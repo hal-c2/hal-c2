@@ -1,0 +1,1359 @@
+//! Finds or starts the desktop app's own Elixir MC, in process: what
+//! desktop-qt's Node host (`apps/desktop-qt/host/main.ts` with
+//! `elixirMc.ts`) does for the Qt shell, ported here so desktop-ljos
+//! needs no Node process. [`crate::desktop_host`] runs this behind its
+//! start/stop/event surface.
+//!
+//! The MC is a release `bin/hal_c2 start`, or `mix hal_c2.server` in a
+//! checkout, started with `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON
+//! bootstrap line on stdin (port, host, `halC2Home`; read by
+//! apps/server-ex/lib/hal_c2/desktop.ex). An MC already running on the
+//! files this launch would use (the background service) is found
+//! through its runtime record instead of starting a second one.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use hal_c2_mc::pairing;
+
+use crate::storage::{self, Platform, Profile};
+
+/// The MC's own default (apps/server-ex/config/config.exs); scanned
+/// upward when taken.
+const DEFAULT_MC_PORT: u16 = 3780;
+const PORT_SCAN: u16 = 100;
+const MC_HOST: &str = "127.0.0.1";
+/// A checkout's first start may compile the MC.
+pub const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// The exit status of an MC that found its files held by another MC
+/// (`HalC2.HomeLock`, apps/server-ex/lib/hal_c2/application.ex).
+pub const HOME_IN_USE: i32 = 73;
+
+/// The host arguments, as the Node host takes them: `--base-dir` (the
+/// MC's HAL-C2 home), `--attach` (a pairing link), `--dev`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostArgs {
+    pub base_dir: Option<PathBuf>,
+    pub attach: Option<String>,
+    pub dev: bool,
+}
+
+pub fn parse_host_args(args: &[String]) -> Result<HostArgs, String> {
+    let mut parsed = HostArgs::default();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        index += 1;
+        if arg == "--dev" {
+            parsed.dev = true;
+            continue;
+        }
+        let (name, inline) = match arg.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_owned())),
+            None => (arg.as_str(), None),
+        };
+        if !matches!(name, "--base-dir" | "--attach") {
+            return Err(format!("Unknown desktop host argument: {arg}"));
+        }
+        let value = match inline {
+            Some(value) => Some(value),
+            None => {
+                let value = args.get(index).cloned();
+                index += 1;
+                value
+            }
+        }
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{name} needs a value."))?;
+        match name {
+            "--base-dir" => {
+                let path = PathBuf::from(&value);
+                parsed.base_dir = Some(if path.is_absolute() {
+                    path
+                } else {
+                    std::env::current_dir().unwrap_or_default().join(path)
+                });
+            }
+            _ => parsed.attach = Some(value),
+        }
+    }
+    Ok(parsed)
+}
+
+/// Which MC to run, and how.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launch {
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    /// The checkout's apps/server-ex for an MC run from source.
+    pub cwd: Option<PathBuf>,
+}
+
+/// `HAL_C2_MC_RELEASE` (a release directory or its `bin/hal_c2`), else
+/// the release bundled beside the executable, else the checkout's
+/// apps/server-ex from source.
+pub fn resolve_launch(
+    env: &dyn Fn(&str) -> Option<String>,
+    bundled: &Path,
+    source: &Path,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Result<Launch, String> {
+    if let Some(configured) = env("HAL_C2_MC_RELEASE").filter(|v| !v.trim().is_empty()) {
+        let release = PathBuf::from(configured.trim());
+        let release = if release.is_absolute() {
+            release
+        } else {
+            std::env::current_dir().unwrap_or_default().join(release)
+        };
+        let bin = release.join("bin").join("hal_c2");
+        return Ok(Launch {
+            command: if exists(&bin) { bin } else { release },
+            args: vec!["start".into()],
+            cwd: None,
+        });
+    }
+    if exists(bundled) {
+        return Ok(Launch {
+            command: bundled.to_path_buf(),
+            args: vec!["start".into()],
+            cwd: None,
+        });
+    }
+    if exists(&source.join("mix.exs")) {
+        return Ok(Launch {
+            command: "mix".into(),
+            args: vec!["hal_c2.server".into()],
+            cwd: Some(source.to_path_buf()),
+        });
+    }
+    Err(
+        "No MC to start: set HAL_C2_MC_RELEASE to an MC release, or run from a checkout with apps/server-ex."
+            .into(),
+    )
+}
+
+/// The MC's data and state directories for a launch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McDirs {
+    pub data: PathBuf,
+    pub state: PathBuf,
+}
+
+/// Resolved the way `HalC2.Paths` resolves them for this launch: the
+/// desktop's HAL-C2 home, `HAL_C2_MC_HOME`, else HAL-C2's XDG
+/// directories, in the `hal-c2-dev` profile for an MC run from a
+/// checkout (config/config.exs), which does not read `HAL_C2_HOME`
+/// (config/runtime.exs). [`storage::resolve`] is that resolution.
+pub fn mc_dirs(
+    launch: &Launch,
+    home: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<String>,
+    user_home: &Path,
+    platform: Platform,
+) -> Result<McDirs, String> {
+    if let Some(home) = home {
+        // The MC ignores an old home as its home too
+        // (`HalC2.Desktop.apply_bootstrap/1`).
+        if storage::is_legacy_home(home, user_home, platform) {
+            return Err(format!(
+                "The HAL-C2 home ({}) must be a directory other than ~/.hal-c2 and ~/.t3.",
+                home.display()
+            ));
+        }
+        return Ok(McDirs {
+            data: home.join("data").join("elixir"),
+            state: home.join("state").join("elixir"),
+        });
+    }
+    // Blank counts as set, as it does for the MC (config/runtime.exs).
+    if let Some(mc_home) = env("HAL_C2_MC_HOME").filter(|v| !v.is_empty()) {
+        // The MC ignores such a root and opens the installed app's
+        // files instead (`HalC2.Paths.root?/4`), so the desktop app
+        // does not start it there.
+        let root = PathBuf::from(mc_home.trim());
+        let in_old_home = [".hal-c2", ".t3"]
+            .iter()
+            .any(|name| is_within(&root, &user_home.join(name)));
+        if !root.is_absolute() || in_old_home {
+            return Err(format!(
+                "HAL_C2_MC_HOME ({mc_home}) must be an absolute path outside ~/.hal-c2 and ~/.t3."
+            ));
+        }
+        return Ok(McDirs {
+            data: root.join("data"),
+            state: root.join("state"),
+        });
+    }
+    let profile = if launch.cwd.is_some() {
+        Profile::Development
+    } else {
+        Profile::Installed
+    };
+    let paths = storage::resolve(None, env, user_home, platform, profile);
+    Ok(McDirs {
+        data: paths.data.join("elixir"),
+        state: paths.state.join("elixir"),
+    })
+}
+
+/// Whether `path` is `base` or under it, `.` and `..` resolved first.
+fn is_within(path: &Path, base: &Path) -> bool {
+    let clean = |p: &Path| {
+        let mut out = PathBuf::new();
+        for part in p.components() {
+            match part {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    out.pop();
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    };
+    clean(path).starts_with(clean(base))
+}
+
+/// The MC's own access token (`HalC2.Web.token/0`, written at boot),
+/// which the shell's native client puts on its socket.
+pub fn read_access_token(data_dir: &Path) -> Option<String> {
+    let token = std::fs::read_to_string(data_dir.join("access-token")).ok()?;
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_owned())
+}
+
+/// A running MC's address, from its runtime record
+/// (`<state>/server-runtime.json`, HalC2.RuntimeRecord).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeRecord {
+    pub pid: i64,
+    pub origin: String,
+}
+
+pub fn read_runtime_record(state_dir: &Path) -> Option<RuntimeRecord> {
+    let text = std::fs::read_to_string(state_dir.join("server-runtime.json")).ok()?;
+    let record: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(RuntimeRecord {
+        pid: record.get("pid")?.as_i64()?,
+        origin: record.get("origin")?.as_str()?.to_owned(),
+    })
+}
+
+/// `kill(pid, 0)`: EPERM still means the process exists.
+pub fn process_is_alive(pid: i64) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 only checks whether the pid may be signalled.
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// Where the shell's own client connects, and its token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Access {
+    pub origin: String,
+    pub token: String,
+}
+
+/// The MC already running on `dirs`' files, such as the background
+/// service. Two MCs must not share those files, so the desktop uses
+/// this one instead of starting its own, and fails when it cannot
+/// read that MC's token. A record whose pid is gone is stale: no MC.
+pub fn find_running(
+    dirs: &McDirs,
+    is_alive: &dyn Fn(i64) -> bool,
+) -> Result<Option<Access>, String> {
+    let Some(record) = read_runtime_record(&dirs.state).filter(|r| is_alive(r.pid)) else {
+        return Ok(None);
+    };
+    let token = read_access_token(&dirs.data).ok_or_else(|| {
+        format!(
+            "An MC is already running on {} (pid {}), but its access token cannot be read.",
+            dirs.data.display(),
+            record.pid
+        )
+    })?;
+    Ok(Some(Access {
+        origin: record.origin,
+        token,
+    }))
+}
+
+/// `HAL_C2_MC_PORT` exactly, else the first free port from the MC's
+/// default.
+pub fn mc_port(
+    env: &dyn Fn(&str) -> Option<String>,
+    is_free: &dyn Fn(u16) -> bool,
+) -> Result<u16, String> {
+    if let Some(configured) = env("HAL_C2_MC_PORT").filter(|v| !v.trim().is_empty()) {
+        let configured = configured.trim();
+        let port: u16 = configured
+            .parse()
+            .ok()
+            .filter(|p| *p > 0)
+            .ok_or_else(|| format!("HAL_C2_MC_PORT is not a port: {configured}"))?;
+        if !is_free(port) {
+            return Err(format!(
+                "Port {port} for the MC is in use by another program. Set HAL_C2_MC_PORT to a free port."
+            ));
+        }
+        return Ok(port);
+    }
+    (DEFAULT_MC_PORT..DEFAULT_MC_PORT + PORT_SCAN)
+        .find(|port| is_free(*port))
+        .ok_or_else(|| {
+            format!(
+                "No free port for the MC in {}-{}. Set HAL_C2_MC_PORT.",
+                DEFAULT_MC_PORT,
+                DEFAULT_MC_PORT + PORT_SCAN - 1
+            )
+        })
+}
+
+/// Whether nothing listens on `port` on this machine's loopback.
+pub fn port_is_free(port: u16) -> bool {
+    TcpListener::bind((MC_HOST, port)).is_ok()
+}
+
+/// What a standalone launch does: use the MC already running on its
+/// files, or start its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Plan {
+    Found(Access),
+    Start {
+        launch: Launch,
+        port: u16,
+        dirs: McDirs,
+    },
+}
+
+pub struct Resolution<'a> {
+    pub bundled: &'a Path,
+    pub source: &'a Path,
+    pub exists: &'a dyn Fn(&Path) -> bool,
+    pub is_alive: &'a dyn Fn(i64) -> bool,
+    pub is_free: &'a dyn Fn(u16) -> bool,
+}
+
+/// Decides a standalone launch (no `--attach`), as the host's
+/// `standalone` does before it spawns anything.
+pub fn plan(
+    args: &HostArgs,
+    env: &dyn Fn(&str) -> Option<String>,
+    user_home: &Path,
+    platform: Platform,
+    resolution: &Resolution<'_>,
+) -> Result<Plan, String> {
+    let launch = resolve_launch(
+        env,
+        resolution.bundled,
+        resolution.source,
+        resolution.exists,
+    )?;
+    // Only an MC run from source has a development profile: a release
+    // would open the installed app's files, whatever HAL_C2_HOME or
+    // HAL_C2_MC_HOME say.
+    if args.dev && args.base_dir.is_none() && launch.cwd.is_none() {
+        return Err(
+            "A development shell (--dev) does not start an MC release on the installed app's files. Give it a home of its own with --home-dir <dir>."
+                .into(),
+        );
+    }
+    let dirs = mc_dirs(&launch, args.base_dir.as_deref(), env, user_home, platform)?;
+    if let Some(found) = find_running(&dirs, resolution.is_alive)? {
+        return Ok(Plan::Found(found));
+    }
+    Ok(Plan::Start {
+        port: mc_port(env, resolution.is_free)?,
+        launch,
+        dirs,
+    })
+}
+
+/// The MC origin and token of a pairing link such as `mix hal_c2.pair`
+/// prints, token in the fragment or the query. Nothing for anything
+/// that is not an http(s) URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PairingLink {
+    pub origin: String,
+    pub token: Option<String>,
+}
+
+pub fn read_pairing_link(link: &str) -> Option<PairingLink> {
+    let url = url::Url::parse(link).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let token = |part: Option<&str>| {
+        url::form_urlencoded::parse(part.unwrap_or_default().as_bytes())
+            .find(|(name, _)| name == "token")
+            .map(|(_, value)| value.trim().to_owned())
+            .filter(|t| !t.is_empty())
+    };
+    Some(PairingLink {
+        origin: url.origin().ascii_serialization(),
+        token: token(url.fragment()).or_else(|| token(url.query())),
+    })
+}
+
+/// The access token of the MC at `origin` when it runs on this
+/// machine: the first MC directory whose runtime record names that
+/// origin and a live pid. Looks where apps/tui/src/mcDiscovery.ts
+/// looks: `HAL_C2_MC_HOME`, the desktop's HAL-C2 home, then the
+/// `hal-c2-dev` and release XDG directories. Only reads.
+pub fn find_local_token(
+    origin: &str,
+    home: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<String>,
+    user_home: &Path,
+    platform: Platform,
+    is_alive: &dyn Fn(i64) -> bool,
+) -> Option<String> {
+    let mut candidates: Vec<McDirs> = Vec::new();
+    if let Some(mc_home) = env("HAL_C2_MC_HOME").filter(|v| !v.trim().is_empty()) {
+        let root = PathBuf::from(mc_home.trim());
+        candidates.push(McDirs {
+            data: root.join("data"),
+            state: root.join("state"),
+        });
+    }
+    if let Some(home) = home {
+        candidates.push(McDirs {
+            data: home.join("data").join("elixir"),
+            state: home.join("state").join("elixir"),
+        });
+    }
+    // HAL_C2_HOME is the desktop's own home, already a candidate above.
+    let without_home = |name: &str| {
+        if name == "HAL_C2_HOME" {
+            None
+        } else {
+            env(name)
+        }
+    };
+    for profile in [Profile::Development, Profile::Installed] {
+        let paths = storage::resolve(None, &without_home, user_home, platform, profile);
+        candidates.push(McDirs {
+            data: paths.data.join("elixir"),
+            state: paths.state.join("elixir"),
+        });
+    }
+    let wanted = url::Url::parse(origin).ok()?;
+    candidates.iter().find_map(|dirs| {
+        let record = read_runtime_record(&dirs.state)?;
+        let same = url::Url::parse(&record.origin).is_ok_and(|o| o.origin() == wanted.origin());
+        (same && is_alive(record.pid)).then(|| read_access_token(&dirs.data))?
+    })
+}
+
+/// A protocol-3 MC's descriptor at `origin`, nothing for anything
+/// else that answers; an error only when nothing answered at all.
+pub fn fetch_descriptor(origin: &str, timeout: Duration) -> Result<Option<()>, String> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let mut response = agent
+        .get(format!("{origin}/.well-known/hal-c2/environment"))
+        .call()
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    let _ = response.body_mut().as_reader().read_to_end(&mut body);
+    let descriptor: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+    let named = descriptor
+        .get("environmentId")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| !id.is_empty());
+    let protocol = descriptor
+        .get("orchestrationProtocolVersion")
+        .and_then(serde_json::Value::as_f64);
+    Ok((named && protocol.is_some_and(|p| p >= 3.0)).then_some(()))
+}
+
+/// An MC this process started: its child, in its own process group on
+/// Unix so stopping reaches the BEAM behind mix or the release script.
+pub struct StartedMc {
+    pub origin: String,
+    child: Child,
+    tail: Arc<Mutex<String>>,
+    stopped: bool,
+}
+
+impl StartedMc {
+    /// The last lines the MC wrote, for error messages.
+    pub fn output(&self) -> String {
+        self.tail.lock().unwrap().trim().to_owned()
+    }
+
+    pub fn try_wait(&mut self) -> Option<ExitStatus> {
+        self.child.try_wait().ok().flatten()
+    }
+
+    pub fn wait(&mut self) -> Option<ExitStatus> {
+        self.child.wait().ok()
+    }
+
+    /// SIGTERM to the MC's process group (mix, erl, and anything they
+    /// spawned); after `grace` it is killed.
+    pub fn stop(&mut self, grace: Duration) {
+        if self.stopped || self.try_wait().is_some() {
+            return;
+        }
+        self.stopped = true;
+        signal_group(&self.child, false);
+        let deadline = Instant::now() + grace;
+        while self.try_wait().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if self.try_wait().is_none() {
+            signal_group(&self.child, true);
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+fn signal_group(child: &Child, kill: bool) {
+    #[cfg(unix)]
+    if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: the child's own process group, taken before it is
+        // waited for.
+        unsafe {
+            libc::kill(-pid, if kill { libc::SIGKILL } else { libc::SIGTERM });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (child, kill);
+}
+
+/// Spawns the MC and hands it the bootstrap line; its output is
+/// logged as `[mc]` and kept as a tail. `node` is what the MC runs
+/// its JavaScript sidecars on (`HAL_C2_NODE_COMMAND`).
+pub fn start_mc(
+    launch: &Launch,
+    port: u16,
+    home: Option<&Path>,
+    node: &Path,
+) -> Result<StartedMc, String> {
+    let mut command = Command::new(&launch.command);
+    command
+        .args(&launch.args)
+        .env("HAL_C2_BOOTSTRAP_STDIN", "1")
+        .env("HAL_C2_DESKTOP_HOST", "1")
+        .env("HAL_C2_NODE_COMMAND", node)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &launch.cwd {
+        // An MC run from source is the development one, whatever
+        // MIX_ENV the desktop app inherited.
+        command.current_dir(cwd).env("MIX_ENV", "dev");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().map_err(|e| {
+        format!(
+            "Could not start {} {}: {e}",
+            launch.command.display(),
+            launch.args.join(" ")
+        )
+    })?;
+    let tail = Arc::new(Mutex::new(String::new()));
+    let streams: Vec<Box<dyn Read + Send>> = [
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for stream in streams {
+        let tail = tail.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                eprintln!("[mc] {line}");
+                let mut kept = tail.lock().unwrap();
+                kept.push_str(&line);
+                kept.push('\n');
+                if kept.len() > 4_000 {
+                    let cut = kept.len() - 4_000;
+                    let cut = (cut..=kept.len())
+                        .find(|i| kept.is_char_boundary(*i))
+                        .unwrap_or(kept.len());
+                    kept.drain(..cut);
+                }
+            }
+        });
+    }
+    let mut bootstrap = serde_json::json!({"port": port, "host": MC_HOST});
+    if let Some(home) = home {
+        bootstrap["halC2Home"] = home.to_string_lossy().into_owned().into();
+    }
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = writeln!(stdin, "{bootstrap}");
+    }
+    Ok(StartedMc {
+        origin: format!("http://{MC_HOST}:{port}"),
+        child,
+        tail,
+        stopped: false,
+    })
+}
+
+/// How an exit reads: its code, or its signal's number as Qt reports.
+pub fn exit_code(status: ExitStatus) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return signal;
+        }
+    }
+    status.code().unwrap_or(-1)
+}
+
+/// What answers an MC's descriptor, as [`fetch_descriptor`] does.
+type FetchDescriptor = dyn Fn(&str, Duration) -> Result<Option<()>, String>;
+
+/// Waits until the MC answers its descriptor. The exit status when it
+/// ends first (the caller treats [`HOME_IN_USE`]); an error when it
+/// does not answer in time.
+fn wait_for_mc(
+    mc: &mut StartedMc,
+    timeout: Duration,
+    fetch: &FetchDescriptor,
+) -> Result<Result<(), ExitStatus>, String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(status) = mc.try_wait() {
+            return Ok(Err(status));
+        }
+        if fetch(&mc.origin, Duration::from_secs(1)).is_ok_and(|d| d.is_some()) {
+            return Ok(Ok(()));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err(format!(
+        "The MC did not answer at {} within {} s.",
+        mc.origin,
+        timeout.as_secs()
+    ))
+}
+
+/// How a launch reads its environment, as [`storage::resolve`] takes it.
+pub type Env = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Everything a launch is decided and run against: the process's own
+/// environment by default ([`Live::process`]), a test's in tests.
+#[derive(Clone)]
+pub struct Live {
+    pub env: Env,
+    pub user_home: PathBuf,
+    pub platform: Platform,
+    pub bundled: PathBuf,
+    pub source: PathBuf,
+    pub node: PathBuf,
+    pub timeout: Duration,
+}
+
+impl Live {
+    /// This process: its environment, home and platform.
+    pub fn process(bundled: PathBuf, source: PathBuf, node: PathBuf) -> Live {
+        Live {
+            env: Arc::new(|name| std::env::var(name).ok()),
+            user_home: std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            platform: if cfg!(windows) {
+                Platform::Windows
+            } else {
+                Platform::Unix
+            },
+            bundled,
+            source,
+            node,
+            timeout: START_TIMEOUT,
+        }
+    }
+
+    fn resolution(&self) -> Resolution<'_> {
+        Resolution {
+            bundled: &self.bundled,
+            source: &self.source,
+            exists: &|p: &Path| p.exists(),
+            is_alive: &process_is_alive,
+            is_free: &port_is_free,
+        }
+    }
+}
+
+/// Finds or starts the MC of a standalone launch, as the host's
+/// `standalone` does. The started MC, when there is one, is the
+/// caller's to watch and stop; a found one is not its to stop.
+pub fn standalone(args: &HostArgs, live: &Live) -> Result<(Access, Option<StartedMc>), String> {
+    standalone_with_fetch(args, live, &fetch_descriptor)
+}
+
+fn standalone_with_fetch(
+    args: &HostArgs,
+    live: &Live,
+    fetch: &FetchDescriptor,
+) -> Result<(Access, Option<StartedMc>), String> {
+    let (launch, port, dirs) = match plan(
+        args,
+        live.env.as_ref(),
+        &live.user_home,
+        live.platform,
+        &live.resolution(),
+    )? {
+        Plan::Found(found) => return Ok((found, None)),
+        Plan::Start { launch, port, dirs } => (launch, port, dirs),
+    };
+    let mut started = start_mc(&launch, port, args.base_dir.as_deref(), &live.node)?;
+    match wait_for_mc(&mut started, live.timeout, fetch) {
+        Ok(Ok(())) => {}
+        Ok(Err(status)) if exit_code(status) == HOME_IN_USE => {
+            // Another MC took the files first, such as the background
+            // service starting at login beside the app: the desktop
+            // uses that one. It may still be booting, so wait for
+            // its record.
+            let deadline = Instant::now() + live.timeout;
+            loop {
+                if let Some(found) = find_running(&dirs, &process_is_alive)? {
+                    return Ok((found, None));
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "Another MC holds {}, but it did not start within {} s.",
+                        dirs.data.display(),
+                        live.timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+        Ok(Err(status)) => {
+            let output = started.output();
+            return Err(format!(
+                "The MC failed to start (exit code {}) before it answered.{}",
+                exit_code(status),
+                if output.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{output}")
+                }
+            ));
+        }
+        Err(e) => {
+            started.stop(Duration::from_millis(1_500));
+            return Err(e);
+        }
+    }
+    let token = read_access_token(&dirs.data).ok_or_else(|| {
+        "The MC started but wrote no access token for the desktop app.".to_owned()
+    })?;
+    Ok((
+        Access {
+            origin: started.origin.clone(),
+            token,
+        },
+        Some(started),
+    ))
+}
+
+fn not_an_mc(address: &str) -> String {
+    format!(
+        "{address} is not a HAL-C2 MC. Start the desktop app with an MC's pairing link to attach to it."
+    )
+}
+
+/// Pairs the shell with the MC a pairing link names (`--attach`), as
+/// the host's `attach` does: an MC on this machine lets the shell in
+/// with its own access token; any other spends the link's token,
+/// through the MC crate's pairing exchange.
+pub fn attach(url: &str, home: Option<&Path>, live: &Live) -> Result<Access, String> {
+    let link = read_pairing_link(url).ok_or_else(|| not_an_mc(url))?;
+    let descriptor = fetch_descriptor(&link.origin, Duration::from_secs(2))
+        .map_err(|e| format!("Cannot reach the MC at {}: {e}", link.origin))?;
+    if descriptor.is_none() {
+        return Err(not_an_mc(&link.origin));
+    }
+    if let Some(token) = find_local_token(
+        &link.origin,
+        home,
+        live.env.as_ref(),
+        &live.user_home,
+        live.platform,
+        &process_is_alive,
+    ) {
+        return Ok(Access {
+            origin: link.origin,
+            token,
+        });
+    }
+    let Some(token) = link.token else {
+        return Err(format!(
+            "The link to {} has no pairing token, and no MC on this machine records that origin.",
+            link.origin
+        ));
+    };
+    let result = pairing::exchange(
+        &pairing::Link {
+            origins: vec![link.origin.clone()],
+            token,
+        },
+        &pairing::Client {
+            label: "HAL-C2 desktop".into(),
+            device_type: "desktop".into(),
+            os: String::new(),
+        },
+    );
+    match result.outcome {
+        pairing::Outcome::Paired => Ok(Access {
+            origin: link.origin,
+            token: result.token,
+        }),
+        _ => Err(format!(
+            "The pairing link for {} is invalid or expired.",
+            link.origin
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_of(vars: Vec<(&str, &str)>) -> impl Fn(&str) -> Option<String> {
+        let vars: Vec<(String, String)> = vars
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_host_arguments_parse_as_the_node_host() {
+        let parsed = parse_host_args(&args(&[
+            "--attach=http://h/?token=t",
+            "--dev",
+            "--base-dir",
+            "/scratch/home",
+        ]))
+        .unwrap();
+        assert_eq!(parsed.attach.as_deref(), Some("http://h/?token=t"));
+        assert!(parsed.dev);
+        assert_eq!(parsed.base_dir, Some(PathBuf::from("/scratch/home")));
+        assert_eq!(
+            parse_host_args(&args(&["--frobnicate"])),
+            Err("Unknown desktop host argument: --frobnicate".into())
+        );
+        assert_eq!(
+            parse_host_args(&args(&["--attach"])),
+            Err("--attach needs a value.".into())
+        );
+    }
+
+    #[test]
+    fn a_configured_release_wins_then_the_bundled_one_then_source() {
+        let bundled = Path::new("/app/share/hal-c2/hal-c2-mc/bin/hal_c2");
+        let source = Path::new("/checkout/apps/server-ex");
+        let all = |_: &Path| true;
+        let env = env_of(vec![("HAL_C2_MC_RELEASE", "/opt/mc")]);
+        assert_eq!(
+            resolve_launch(&env, bundled, source, &all).unwrap(),
+            Launch {
+                command: PathBuf::from("/opt/mc/bin/hal_c2"),
+                args: vec!["start".into()],
+                cwd: None
+            }
+        );
+        // A configured path that is the binary itself is run as it is.
+        let env = env_of(vec![("HAL_C2_MC_RELEASE", "/opt/mc/bin/hal_c2")]);
+        let only_binary = |p: &Path| p == Path::new("/opt/mc/bin/hal_c2");
+        assert_eq!(
+            resolve_launch(&env, bundled, source, &only_binary)
+                .unwrap()
+                .command,
+            PathBuf::from("/opt/mc/bin/hal_c2")
+        );
+        let none_set = env_of(vec![]);
+        assert_eq!(
+            resolve_launch(&none_set, bundled, source, &all)
+                .unwrap()
+                .command,
+            bundled
+        );
+        let only_source = |p: &Path| p == Path::new("/checkout/apps/server-ex/mix.exs");
+        assert_eq!(
+            resolve_launch(&none_set, bundled, source, &only_source).unwrap(),
+            Launch {
+                command: "mix".into(),
+                args: vec!["hal_c2.server".into()],
+                cwd: Some(source.to_path_buf())
+            }
+        );
+        assert!(resolve_launch(&none_set, bundled, source, &|_| false).is_err());
+    }
+
+    fn release() -> Launch {
+        Launch {
+            command: "/mc/bin/hal_c2".into(),
+            args: vec!["start".into()],
+            cwd: None,
+        }
+    }
+
+    fn from_source() -> Launch {
+        Launch {
+            command: "mix".into(),
+            args: vec!["hal_c2.server".into()],
+            cwd: Some("/checkout/apps/server-ex".into()),
+        }
+    }
+
+    #[test]
+    fn an_mc_from_source_keeps_its_token_in_the_development_profile() {
+        let env = env_of(vec![
+            ("XDG_DATA_HOME", "/xdg/data"),
+            ("XDG_STATE_HOME", "/xdg/state"),
+        ]);
+        let user = Path::new("/home/me");
+        assert_eq!(
+            mc_dirs(&from_source(), None, &env, user, Platform::Unix).unwrap(),
+            McDirs {
+                data: PathBuf::from("/xdg/data/hal-c2-dev/elixir"),
+                state: PathBuf::from("/xdg/state/hal-c2-dev/elixir")
+            }
+        );
+        assert_eq!(
+            mc_dirs(&release(), None, &env, user, Platform::Unix)
+                .unwrap()
+                .data,
+            PathBuf::from("/xdg/data/hal-c2/elixir")
+        );
+        // A source MC does not read HAL_C2_HOME; a release does.
+        let ambient = env_of(vec![
+            ("XDG_DATA_HOME", "/xdg/data"),
+            ("HAL_C2_HOME", "/srv/hal-c2"),
+        ]);
+        assert_eq!(
+            mc_dirs(&from_source(), None, &ambient, user, Platform::Unix)
+                .unwrap()
+                .data,
+            PathBuf::from("/xdg/data/hal-c2-dev/elixir")
+        );
+        assert_eq!(
+            mc_dirs(&release(), None, &ambient, user, Platform::Unix)
+                .unwrap()
+                .data,
+            PathBuf::from("/srv/hal-c2/data/elixir")
+        );
+    }
+
+    #[test]
+    fn homes_the_mc_would_not_use_stop_the_start() {
+        let user = Path::new("/home/me");
+        for mc_home in [
+            "scratch/mc",
+            " ",
+            "/home/me/.t3/elixir",
+            "/home/me/.t3/..scratch",
+        ] {
+            let env = env_of(vec![("HAL_C2_MC_HOME", mc_home)]);
+            let error = mc_dirs(&release(), None, &env, user, Platform::Unix).unwrap_err();
+            assert!(error.contains("HAL_C2_MC_HOME"), "{mc_home:?}: {error}");
+        }
+        let env = env_of(vec![("HAL_C2_MC_HOME", "/srv/mc")]);
+        assert_eq!(
+            mc_dirs(&from_source(), None, &env, user, Platform::Unix).unwrap(),
+            McDirs {
+                data: PathBuf::from("/srv/mc/data"),
+                state: PathBuf::from("/srv/mc/state")
+            }
+        );
+        for name in [".t3", ".hal-c2"] {
+            let home = user.join(name);
+            let error = mc_dirs(
+                &release(),
+                Some(&home),
+                &env_of(vec![]),
+                user,
+                Platform::Unix,
+            )
+            .unwrap_err();
+            assert!(error.contains("HAL-C2 home"), "{error}");
+        }
+        assert_eq!(
+            mc_dirs(
+                &release(),
+                Some(Path::new("/tmp/sandbox")),
+                &env_of(vec![]),
+                user,
+                Platform::Unix
+            )
+            .unwrap()
+            .data,
+            PathBuf::from("/tmp/sandbox/data/elixir")
+        );
+    }
+
+    fn write_record(dirs: &McDirs, origin: &str, pid: i64) {
+        std::fs::create_dir_all(&dirs.state).unwrap();
+        std::fs::create_dir_all(&dirs.data).unwrap();
+        std::fs::write(
+            dirs.state.join("server-runtime.json"),
+            format!(r#"{{"origin":"{origin}","pid":{pid}}}"#),
+        )
+        .unwrap();
+    }
+
+    fn temp_dirs() -> (tempfile::TempDir, McDirs) {
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = McDirs {
+            data: temp.path().join("data"),
+            state: temp.path().join("state"),
+        };
+        (temp, dirs)
+    }
+
+    #[test]
+    fn a_running_mc_is_found_and_a_stale_record_is_not() {
+        let (_temp, dirs) = temp_dirs();
+        write_record(&dirs, "http://127.0.0.1:3790", 42);
+        std::fs::write(dirs.data.join("access-token"), "service-token\n").unwrap();
+        assert_eq!(
+            find_running(&dirs, &|pid| pid == 42).unwrap(),
+            Some(Access {
+                origin: "http://127.0.0.1:3790".into(),
+                token: "service-token".into()
+            })
+        );
+        // The pid is gone: the record is stale, so a start is planned.
+        assert_eq!(find_running(&dirs, &|_| false).unwrap(), None);
+    }
+
+    #[test]
+    fn a_running_mc_without_a_readable_token_stops_the_start() {
+        let (_temp, dirs) = temp_dirs();
+        write_record(&dirs, "http://127.0.0.1:3790", 42);
+        let error = find_running(&dirs, &|_| true).unwrap_err();
+        assert!(error.contains("its access token cannot be read"), "{error}");
+    }
+
+    #[test]
+    fn the_port_is_the_configured_one_or_the_next_free() {
+        assert_eq!(mc_port(&env_of(vec![]), &|p| p > 3780).unwrap(), 3781);
+        assert_eq!(
+            mc_port(&env_of(vec![("HAL_C2_MC_PORT", "4123")]), &|_| true).unwrap(),
+            4123
+        );
+        let taken = mc_port(&env_of(vec![("HAL_C2_MC_PORT", "4123")]), &|_| false).unwrap_err();
+        assert!(
+            taken.contains("Port 4123") && taken.contains("HAL_C2_MC_PORT"),
+            "{taken}"
+        );
+        assert!(
+            mc_port(&env_of(vec![("HAL_C2_MC_PORT", "soon")]), &|_| true)
+                .unwrap_err()
+                .contains("is not a port")
+        );
+        assert!(mc_port(&env_of(vec![]), &|_| false).is_err());
+    }
+
+    #[test]
+    fn a_development_shell_does_not_start_a_release_without_a_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let live = |env: Env| Live {
+            env,
+            user_home: temp.path().to_path_buf(),
+            platform: Platform::Unix,
+            bundled: temp.path().join("bundled"),
+            source: temp.path().join("server-ex"),
+            node: "node".into(),
+            timeout: Duration::from_secs(5),
+        };
+        let release_dir = temp.path().join("mc");
+        let env: Env = {
+            let vars = [(
+                "HAL_C2_MC_RELEASE".to_string(),
+                release_dir.to_string_lossy().into_owned(),
+            )];
+            Arc::new(move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
+        };
+        let live = live(env);
+        let resolution = live.resolution();
+        let dev = HostArgs {
+            dev: true,
+            ..HostArgs::default()
+        };
+        let error = plan(
+            &dev,
+            live.env.as_ref(),
+            &live.user_home,
+            live.platform,
+            &resolution,
+        )
+        .unwrap_err();
+        assert!(error.contains("--home-dir"), "{error}");
+        // With a home of its own the same launch starts.
+        let homed = HostArgs {
+            dev: true,
+            base_dir: Some(temp.path().join("home")),
+            ..HostArgs::default()
+        };
+        assert!(matches!(
+            plan(
+                &homed,
+                live.env.as_ref(),
+                &live.user_home,
+                live.platform,
+                &resolution
+            ),
+            Ok(Plan::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn find_beats_start_in_a_plan() {
+        // plan() over a home whose files a live MC already holds:
+        // found, with that MC's token, and nothing is started.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let dirs = McDirs {
+            data: home.join("data/elixir"),
+            state: home.join("state/elixir"),
+        };
+        write_record(&dirs, "http://127.0.0.1:3791", 7);
+        std::fs::write(dirs.data.join("access-token"), "found-token").unwrap();
+        let source = temp.path().join("server-ex");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("mix.exs"), "").unwrap();
+        let resolution = Resolution {
+            bundled: Path::new("/nonexistent/hal_c2"),
+            source: &source,
+            exists: &|p: &Path| p.exists(),
+            is_alive: &|pid| pid == 7,
+            is_free: &|_| true,
+        };
+        let planned = plan(
+            &HostArgs {
+                base_dir: Some(home),
+                ..HostArgs::default()
+            },
+            &env_of(vec![]),
+            temp.path(),
+            Platform::Unix,
+            &resolution,
+        )
+        .unwrap();
+        assert_eq!(
+            planned,
+            Plan::Found(Access {
+                origin: "http://127.0.0.1:3791".into(),
+                token: "found-token".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_pairing_link_names_its_origin_and_token() {
+        assert_eq!(
+            read_pairing_link("http://127.0.0.1:3780/?token=q"),
+            Some(PairingLink {
+                origin: "http://127.0.0.1:3780".into(),
+                token: Some("q".into())
+            })
+        );
+        // The fragment's token wins, and a link may carry none.
+        assert_eq!(
+            read_pairing_link("https://h/pair?token=q#token=f")
+                .unwrap()
+                .token
+                .as_deref(),
+            Some("f")
+        );
+        assert_eq!(read_pairing_link("https://h/page").unwrap().token, None);
+        assert_eq!(read_pairing_link("ftp://h/?token=t"), None);
+        assert_eq!(read_pairing_link("not a url"), None);
+    }
+
+    #[test]
+    fn a_local_mcs_own_token_is_found_by_origin() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let dirs = McDirs {
+            data: home.join("data/elixir"),
+            state: home.join("state/elixir"),
+        };
+        write_record(&dirs, "http://127.0.0.1:3792", 7);
+        std::fs::write(dirs.data.join("access-token"), "local-token\n").unwrap();
+        let alive = |pid: i64| pid == 7;
+        assert_eq!(
+            find_local_token(
+                "http://127.0.0.1:3792",
+                Some(&home),
+                &env_of(vec![]),
+                temp.path(),
+                Platform::Unix,
+                &alive
+            )
+            .as_deref(),
+            Some("local-token")
+        );
+        // Another origin, or a dead pid, is not this machine's MC.
+        assert_eq!(
+            find_local_token(
+                "http://127.0.0.1:4999",
+                Some(&home),
+                &env_of(vec![]),
+                temp.path(),
+                Platform::Unix,
+                &alive
+            ),
+            None
+        );
+        assert_eq!(
+            find_local_token(
+                "http://127.0.0.1:3792",
+                Some(&home),
+                &env_of(vec![]),
+                temp.path(),
+                Platform::Unix,
+                &|_| false
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_started_mcs_token_is_handed_to_the_shell() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        // A fake release: reads the bootstrap, writes its access
+        // token under the home it names, then runs until stopped.
+        let bin = temp.path().join("mc/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("hal_c2");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nread line\n\
+             home=$(printf %s \"$line\" | sed -n 's/.*\"halC2Home\": *\"\\([^\"]*\\)\".*/\\1/p')\n\
+             mkdir -p \"$home/data/elixir\"\n\
+             printf 'started-token\\n' > \"$home/data/elixir/access-token\"\n\
+             echo fake mc up\nsleep 60\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let port = TcpListener::bind((MC_HOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let home = temp.path().join("home");
+        let vars: Vec<(String, String)> = vec![
+            (
+                "HAL_C2_MC_RELEASE".into(),
+                temp.path().join("mc").to_string_lossy().into_owned(),
+            ),
+            ("HAL_C2_MC_PORT".into(), port.to_string()),
+        ];
+        let live = Live {
+            env: Arc::new(move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())),
+            user_home: temp.path().to_path_buf(),
+            platform: Platform::Unix,
+            bundled: temp.path().join("bundled"),
+            source: temp.path().join("server-ex"),
+            node: "node".into(),
+            timeout: Duration::from_secs(10),
+        };
+        // The fake serves no HTTP; its descriptor is said for it,
+        // once it has written its token, as a real MC answers only
+        // after it boots.
+        let token_file = home.join("data/elixir/access-token");
+        let (access, started) = standalone_with_fetch(
+            &HostArgs {
+                base_dir: Some(home),
+                ..HostArgs::default()
+            },
+            &live,
+            &move |_, _| Ok(token_file.exists().then_some(())),
+        )
+        .unwrap();
+        assert_eq!(access.origin, format!("http://127.0.0.1:{port}"));
+        assert_eq!(access.token, "started-token");
+        let mut started = started.expect("an MC was started");
+        started.stop(Duration::from_secs(2));
+        assert!(started.try_wait().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_started_mc_gets_the_bootstrap_line_and_the_development_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let record = temp.path().join("record");
+        let launch = Launch {
+            command: "sh".into(),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "cat > {}; printf 'MIX_ENV=%s NODE=%s BOOT=%s' \"$MIX_ENV\" \"$HAL_C2_NODE_COMMAND\" \"$HAL_C2_BOOTSTRAP_STDIN\"",
+                    record.display()
+                ),
+            ],
+            cwd: Some(temp.path().to_path_buf()),
+        };
+        let mut mc = start_mc(
+            &launch,
+            4123,
+            Some(Path::new("/scratch/home")),
+            Path::new("/usr/bin/node22"),
+        )
+        .unwrap();
+        assert!(mc.wait().is_some_and(|s| s.success()));
+        let bootstrap: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+        assert_eq!(bootstrap["port"], 4123);
+        assert_eq!(bootstrap["host"], "127.0.0.1");
+        assert_eq!(bootstrap["halC2Home"], "/scratch/home");
+        // Its output is kept until the reader threads land.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while mc.output().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(mc.output(), "MIX_ENV=dev NODE=/usr/bin/node22 BOOT=1");
+    }
+}

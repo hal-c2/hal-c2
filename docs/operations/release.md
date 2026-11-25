@@ -17,8 +17,8 @@ The macOS apps are signed ad hoc, not with a Developer ID: they run on the Mac t
 Gatekeeper refuses them on a Mac that downloaded them.
 
 The Ljós desktop's QML is compiled into `hal-c2-ljos`. It is built with `HAL_C2_RELEASE` set, which
-makes it read the desktop host and Node from `share/hal-c2` beside its `bin/` (`Resources/hal-c2` in
-the macOS bundle) instead of the checkout, and gives its window the app id `hal-c2-ljos`, so it does
+makes it read the bundled MC and Node (for the MC's sidecars) from `share/hal-c2` beside its `bin/`
+(`Resources/hal-c2` in the macOS bundle) instead of the checkout — its desktop host is in process — and gives its window the app id `hal-c2-ljos`, so it does
 not take desktop-qt's `hal-c2` entry. On Linux CEF's runtime sits beside the binary; the macOS bundle
 does not carry CEF yet, so its browser tabs show no pages ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
 which fails when a QML file of the checkout is missing from the binary.

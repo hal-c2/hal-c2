@@ -525,7 +525,7 @@ impl Connection {
     }
 
     /// Connects to the MC at `origin` (`http://127.0.0.1:3773`) with the
-    /// token host/main.ts would hand over.
+    /// token the desktop host would hand over.
     pub fn open(&self, origin: &str, token: &str) -> Result<(), String> {
         let origin = url::Url::parse(origin).map_err(|e| format!("{origin}: {e}"))?;
         self.client.open(origin, token);

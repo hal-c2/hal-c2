@@ -499,7 +499,7 @@ fn comparable(path: &Path, platform: Platform) -> String {
     }
 }
 
-fn is_legacy_home(dir: &Path, user_home: &Path, platform: Platform) -> bool {
+pub(crate) fn is_legacy_home(dir: &Path, user_home: &Path, platform: Platform) -> bool {
     let candidate = comparable(dir, platform);
     [".hal-c2", ".t3"]
         .iter()
