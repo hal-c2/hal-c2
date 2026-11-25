@@ -26,6 +26,7 @@ pub mod local_transcriber;
 #[cfg(target_os = "macos")]
 pub mod macos_window;
 pub mod mc;
+pub mod mc_launcher;
 pub mod project;
 pub mod provider;
 pub mod provider_updates;
@@ -194,8 +195,8 @@ pub(crate) const WINDOW_SINGLETONS: &[fn(&Engine, bridge::Bridge, ljos::prelude:
 ];
 
 /// What the shell is launched with: main.cpp's options, and the MC
-/// host/main.ts hands over (`{origin, token}`; the token stays with the
-/// connection).
+/// the desktop host hands over (`{origin, token}`; the token stays
+/// with the connection).
 #[derive(Clone, Debug, Default)]
 pub struct Launch {
     /// Where `theme.json` and the user's shell are; none reads nothing.

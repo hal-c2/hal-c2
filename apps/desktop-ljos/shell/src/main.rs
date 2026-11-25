@@ -2,7 +2,7 @@
 //!
 //!   hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]
 //!               [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]
-//!               [--qml-dir DIR] [--host-entry FILE] [--node PATH]
+//!               [--qml-dir DIR] [--node PATH]
 //!               [--allow-local-folder-import]
 //!               [--action NAME[=JSON]]... [--key CHORD]...
 //!               [--render PNG [--size WxH] [--settle MS]]
@@ -11,12 +11,13 @@
 //!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
 //!               [--json] [--allow FILE] [--render options]...
 //!
-//! As desktop-qt's main.cpp, the shell runs the desktop host
-//! (`apps/desktop-qt/host/main.ts`, `--host-entry`, under `--node`, else
-//! HAL_C2_NODE_BIN, else `node`), which finds or starts the MC on this
-//! machine and names it once it answers (src/desktop_host.rs). `--url`
-//! has the host pair with the MC a pairing link names instead. What the
-//! command line passes that is not a folder goes to the host.
+//! As desktop-qt's main.cpp, the shell runs the desktop host, which
+//! finds or starts the MC on this machine and names it once it answers
+//! (src/desktop_host.rs, in process: no Node host; `--node`, else
+//! HAL_C2_NODE_BIN, else `node`, is only what the MC runs its
+//! JavaScript sidecars on). `--url` has the host pair with the MC a
+//! pairing link names instead. What the command line passes that is
+//! not a folder goes to the host.
 //!
 //! `--mc-origin` and `--mc-token` (HAL_C2_MC_ORIGIN, HAL_C2_MC_TOKEN)
 //! connect to an MC without a host, and `--pair` spends a pairing link on
@@ -147,7 +148,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]\n\
          \x20                  [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]\n\
-         \x20                  [--qml-dir DIR] [--host-entry FILE] [--node PATH] [--licenses MANIFEST]\n\
+         \x20                  [--qml-dir DIR] [--node PATH] [--licenses MANIFEST]\n\
          \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
@@ -194,7 +195,6 @@ fn parse() -> Result<Options, String> {
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
         .unwrap_or_default();
-    let mut host_entry = None;
     let mut node = None;
     let mut positional = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -221,7 +221,6 @@ fn parse() -> Result<Options, String> {
         match name.as_str() {
             "--url" => o.url = Some(value()?),
             "--app-id" => o.app_id = Some(value()?).filter(|id| !id.trim().is_empty()),
-            "--host-entry" => host_entry = Some(PathBuf::from(value()?)),
             "--node" => node = Some(PathBuf::from(value()?)),
             "--mc-origin" => o.launch.mc_origin = Some(value()?),
             "--mc-token" => o.mc_token = value()?,
@@ -306,12 +305,15 @@ fn parse() -> Result<Options, String> {
             "--url has the host attach to an MC; --pair and --mc-origin name one without it".into(),
         );
     }
-    o.host.entry =
-        host_entry.unwrap_or_else(|| desktop_host::default_entry(&executable_dir, RELEASE));
-    o.host.node = node.unwrap_or_else(|| {
+    let node = node.unwrap_or_else(|| {
         let from_env = std::env::var("HAL_C2_NODE_BIN").ok();
         desktop_host::default_node(&executable_dir, RELEASE, from_env.as_deref())
     });
+    o.host.live = Some(hal_c2_shell::mc_launcher::Live::process(
+        desktop_host::bundled_mc(&executable_dir),
+        desktop_host::source_mc(),
+        node,
+    ));
     // This app's own manifest (desktop_host::default_licenses), staged by
     // its own licenses script, not desktop-qt's beside the host.
     if !o.licenses_given {

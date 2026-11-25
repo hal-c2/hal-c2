@@ -128,7 +128,18 @@ pub(crate) fn tls() -> Arc<rustls::ClientConfig> {
 }
 
 pub(crate) fn agent(timeout: Option<Duration>) -> Agent {
-    Agent::config_builder()
+    build_agent(timeout, false)
+}
+
+/// [`agent`] without the environment's proxy (ureq's default reads
+/// it): for requests that carry a secret to a machine of the
+/// user's own, which an inherited proxy must not see or route.
+pub(crate) fn direct_agent(timeout: Option<Duration>) -> Agent {
+    build_agent(timeout, true)
+}
+
+fn build_agent(timeout: Option<Duration>, direct: bool) -> Agent {
+    let mut builder = Agent::config_builder()
         .timeout_global(timeout)
         .http_status_as_error(false)
         .tls_config(
@@ -136,9 +147,11 @@ pub(crate) fn agent(timeout: Option<Duration>) -> Agent {
                 .provider(TlsProvider::Rustls)
                 .root_certs(RootCerts::PlatformVerifier)
                 .build(),
-        )
-        .build()
-        .into()
+        );
+    if direct {
+        builder = builder.proxy(None);
+    }
+    builder.build().into()
 }
 
 /// GETs `url` for what it serves, at most `limit` bytes of it (one more

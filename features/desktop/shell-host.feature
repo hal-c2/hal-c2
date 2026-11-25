@@ -18,6 +18,7 @@
 #   apps/desktop-qt/host/main.ts (desktop host: MC lifecycle, the ready line)
 #   apps/desktop-qt/host/elixirMc.ts (the MC's access token, found through its runtime record when attached)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake MC)
+#   apps/desktop-ljos/shell/src/mc_launcher.rs (the same host in process, its unit tests by scenario name)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
 #   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs on NativeShell::ready)
 #   apps/desktop-qt/tests/native/features/ConnectionSteps.cpp (the scripted screenshot)
