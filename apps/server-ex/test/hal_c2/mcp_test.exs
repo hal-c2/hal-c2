@@ -319,6 +319,46 @@ defmodule HalC2.McpTest do
     assert [{_, %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
   end
 
+  # Streams whose stream supervisor is gone have a registry but no stream that can
+  # start: the thread reads as unreadable, never as a crash in preparing a session.
+  test "a thread whose stream cannot start is read as unreadable" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    HalC2.Mcp.revoke(thread_id)
+
+    :ok = Supervisor.terminate_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == nil
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert {503, _} = HalC2.Mcp.handle(auth, JSON.encode!(project_list()))
+
+    {:ok, _} = Supervisor.restart_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    assert denied?(auth, "hal_c2_project_list")
+  end
+
+  # A review's session that got no server while its thread could not be read cannot
+  # report, so once the thread can be read it is not prepared and relaunches for its
+  # plugin's server. Any other session without a credential keeps running.
+  test "a review session that got no server relaunches for one once its thread can be read" do
+    start_supervised!(HalC2.Settings)
+    review = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(review, ["completed"])
+    other = launch("hello")
+    await_statuses(other, ["completed"])
+    HalC2.Mcp.revoke(review)
+    HalC2.Mcp.revoke(other)
+
+    stop_supervised!(HalC2.Streams)
+    assert HalC2.Mcp.for_agent(review, "codex") == nil
+    assert HalC2.Mcp.prepared?(review, "codex")
+
+    start_supervised!(HalC2.Streams)
+    refute HalC2.Mcp.prepared?(review, "codex")
+    assert %{report: true} = HalC2.Mcp.for_agent(review, "codex")
+    assert HalC2.Mcp.prepared?(review, "codex")
+    assert HalC2.Mcp.prepared?(other, "codex")
+  end
+
   defp project_list,
     do: %{
       "jsonrpc" => "2.0",

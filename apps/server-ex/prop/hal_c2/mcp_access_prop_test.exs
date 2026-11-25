@@ -146,16 +146,32 @@ defmodule HalC2.McpAccessPropTest do
     {unavailable, refused?(%{authorization: "Bearer " <> token})}
   end
 
-  # Preparing a session while the thread's stream cannot be read: whether it got a
-  # server, and whether a credential was minted for it.
-  def prepare_unread(thread, instance) do
-    HalC2.Prop.restart_service(HalC2.Streams, fn ->
+  # Preparing a session while the thread's stream cannot be read (the streams are down,
+  # or only their supervisor, so no stream can start): whether it got a server, whether
+  # a credential was minted for it, whether the session is kept meanwhile, and whether
+  # it still is once the thread can be read. The session's instance is its own, so no
+  # earlier command's credential answers for it.
+  def prepare_unread(thread, instance, outage) do
+    instance = "#{instance}-#{System.unique_integer([:positive])}"
+
+    outage(outage, fn ->
       before = HalC2.Mcp.credentials(thread)
       server = HalC2.Mcp.for_agent(thread, instance)
-      send(self(), {:while_down, {server, HalC2.Mcp.credentials(thread) == before}})
+      unminted = HalC2.Mcp.credentials(thread) == before
+      send(self(), {:while_down, {server, unminted, HalC2.Mcp.prepared?(thread, instance)}})
     end)
 
-    receive do: ({:while_down, result} -> result)
+    {server, unminted, kept} = receive do: ({:while_down, result} -> result)
+    {server, unminted, kept, HalC2.Mcp.prepared?(thread, instance)}
+  end
+
+  defp outage(:streams, between), do: HalC2.Prop.restart_service(HalC2.Streams, between)
+
+  defp outage(:stream_supervisor, between) do
+    :ok = Supervisor.terminate_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    between.()
+    {:ok, _} = Supervisor.restart_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    :ok
   end
 
   defp refused?(%{authorization: auth}) do
@@ -188,7 +204,9 @@ defmodule HalC2.McpAccessPropTest do
       {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}},
       {1, {:call, __MODULE__, :reattach, [thread()]}},
       {1, {:call, __MODULE__, :reattach_unread, [thread()]}},
-      {1, {:call, __MODULE__, :prepare_unread, [thread(), oneof(["codex", "claudeAgent"])]}}
+      {1,
+       {:call, __MODULE__, :prepare_unread,
+        [thread(), oneof(["codex", "claudeAgent"]), oneof([:streams, :stream_supervisor])]}}
     ])
   end
 
@@ -217,7 +235,10 @@ defmodule HalC2.McpAccessPropTest do
   def postcondition(state, {:call, _, :reattach_unread, [thread]}, result),
     do: result == {true, kept?(state, thread)}
 
-  def postcondition(_state, {:call, _, :prepare_unread, _}, result), do: result == {nil, true}
+  # A session kept to a plugin's tools needs its server, so once the thread can be read
+  # one that got none is not prepared and relaunches for it.
+  def postcondition(state, {:call, _, :prepare_unread, [thread, _, _]}, result),
+    do: result == {nil, true, true, not kept?(state, thread)}
 
   def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
     cond do

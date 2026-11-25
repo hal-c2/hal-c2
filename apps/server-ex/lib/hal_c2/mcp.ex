@@ -99,12 +99,15 @@ defmodule HalC2.Mcp do
   Whether the live credential of `thread_id` on `instance` still matches
   what the user lets its agent reach, so a runtime can keep its session.
   No credential is prepared: a session opened without a server (this
-  server was down, or access was withheld) has no token a flip could
-  strand, and it gains one at its next ordinary relaunch.
+  server was down, or the thread could not be read) has no token a flip
+  could strand, and it gains one at its next ordinary relaunch. A session
+  of a thread kept to a plugin's tools is the exception: it needs that
+  server to do its work (a review's report tool), so once the thread can
+  be read it relaunches to get it.
   """
   def prepared?(thread_id, instance) do
     case :ets.match_object(@table, {:_, %{thread_id: thread_id, instance: instance}, :_}) do
-      [] -> true
+      [] -> unserved?(thread_id)
       # A thread that cannot be read keeps its session: its credential was scoped when
       # the thread could be read, or is refused until it can (`scoped/2`).
       [{_, caller, _} | _] -> current?(caller, wanted(thread_id))
@@ -211,11 +214,17 @@ defmodule HalC2.Mcp do
   end
 
   # The thread as its stream holds it, nil when its stream holds no thread, or
-  # `:unreadable` without streams to ask.
+  # `:unreadable` when no stream can answer: no streams to ask, or a stream that
+  # fails to start (`HalC2.Streams.ensure/1` raises on a refused start), whose
+  # supervisor or registry is gone, or whose call exits.
   defp read_thread(thread_id) do
     if Process.whereis(HalC2.Streams.Registry),
       do: HalC2.Streams.get(thread_id, "thread", thread_id),
       else: :unreadable
+  rescue
+    _ in [CaseClauseError, ArgumentError] -> :unreadable
+  catch
+    :exit, _ -> :unreadable
   end
 
   @doc """
@@ -250,6 +259,15 @@ defmodule HalC2.Mcp do
           nil -> {:ok, Map.put_new(caller, :plugin, nil)}
           plugin -> {:ok, %{caller | capabilities: MapSet.new()} |> Map.put(:plugin, plugin)}
         end
+    end
+  end
+
+  # Whether a session with no credential may keep running without a server: all may
+  # but one kept to a plugin's tools whose thread can now be read.
+  defp unserved?(thread_id) do
+    case read_thread(thread_id) do
+      :unreadable -> true
+      thread -> plugin_kept(thread || %{}) == nil
     end
   end
 
