@@ -251,11 +251,31 @@ defmodule HalC2.Plugins do
           do: tool_answer(id, fn -> module.call_tool(name, arguments, settings) end)
       end)
 
-    pack ||
-      Enum.find_value(tool_extensions(thread_id), fn {id, module, context} ->
-        if Enum.any?(extension_tools(module, context), &(&1["name"] == name)),
-          do: tool_answer(id, fn -> module.call_agent_tool(name, arguments, context) end)
-      end)
+    pack || call_extension_tool(tool_extensions(thread_id), name, arguments)
+  end
+
+  @doc """
+  The agent tools of extension `id` alone, for an agent in `thread_id` kept to them
+  (`HalC2.Mcp.kept_to/1`): no tool pack's, and no other extension's.
+  """
+  def tools_of(id, thread_id) do
+    for {^id, module, context} <- tool_extensions(thread_id),
+        tool <- extension_tools(module, context),
+        do: tool
+  end
+
+  @doc "`call_tool/3` for an agent kept to the agent tools of extension `id` (`tools_of/2`)."
+  def call_tool_of(id, name, arguments, thread_id) do
+    tool_extensions(thread_id)
+    |> Enum.filter(&(elem(&1, 0) == id))
+    |> call_extension_tool(name, arguments)
+  end
+
+  defp call_extension_tool(extensions, name, arguments) do
+    Enum.find_value(extensions, fn {id, module, context} ->
+      if Enum.any?(extension_tools(module, context), &(&1["name"] == name)),
+        do: tool_answer(id, fn -> module.call_agent_tool(name, arguments, context) end)
+    end)
   end
 
   defp tool_answer(id, fun) do

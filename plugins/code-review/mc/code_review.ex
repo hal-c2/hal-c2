@@ -2208,7 +2208,7 @@ defmodule HalC2Plugins.CodeReview do
              if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok),
            :ok <- Checkout.release() do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
-        review = Map.merge(review, pull_request_context(review))
+        review = Map.merge(review, pull_request_context(settings, review, sandboxed))
         started = %{"root" => clone, "checkout" => checkout["path"]}
 
         # Stop reaches a run past its claim only through the server: one stopped
@@ -2273,7 +2273,9 @@ defmodule HalC2Plugins.CodeReview do
         }
       },
       listed: listed?(settings),
-      sandboxed: sandboxed
+      sandboxed: sandboxed,
+      # Sandboxed or not, the agent gets its report tool and none of HAL-C2's.
+      tools: :plugin
     )
   end
 
@@ -2506,7 +2508,7 @@ defmodule HalC2Plugins.CodeReview do
   # it does, the checks already failing, and the review comments already on it,
   # so the agent judges the change against its intent and does not raise what
   # someone else already has. Unread, the review goes ahead without it.
-  defp pull_request_context(review) do
+  defp pull_request_context(settings, review, sandboxed) do
     ref = Map.take(review, ~w(projectId repository number))
 
     body =
@@ -2517,7 +2519,9 @@ defmodule HalC2Plugins.CodeReview do
 
     existing =
       case Host.pull_requests(@id, "activity", ref) do
-        {:ok, activity} -> existing_comments(activity["reviewThreads"] || [])
+        {:ok, activity} ->
+          existing_comments(settings, review, sandboxed, activity["reviewThreads"] || [])
+
         _ -> []
       end
 
@@ -2528,11 +2532,19 @@ defmodule HalC2Plugins.CodeReview do
     }
   end
 
-  defp existing_comments(threads) do
+  @doc false
+  # The unresolved review comments the prompt quotes. A review that is not sandboxed
+  # runs on this machine, so it quotes only those of authors the watch trusts
+  # (`trusted?/3`, as `untrusted/2` judges the pull request's author): anyone can
+  # comment on a trusted pull request. A sandboxed one quotes them all.
+  def existing_comments(settings, review, sandboxed, threads) do
+    viewer = get_in(review, ["trust", "viewer"])
+
     for thread <- threads,
         not thread["isResolved"],
         first = List.first(thread["comments"] || []),
-        first != nil do
+        first != nil,
+        sandboxed or trusted?(settings, first["author"], viewer) do
       author = get_in(first, ["author", "login"]) || "someone"
 
       "#{author} on #{thread["path"]}:#{thread["line"]}: #{truncate(String.trim(first["body"] || ""), 300)}"

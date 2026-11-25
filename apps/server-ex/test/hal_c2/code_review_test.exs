@@ -824,6 +824,49 @@ defmodule HalC2.CodeReviewTest do
     refute sandboxed =~ "blocked there"
   end
 
+  # #1795: a review on this machine quotes only what those it trusts wrote; anyone may
+  # comment on a trusted pull request. A sandboxed one quotes everyone's.
+  test "a review on this machine quotes the unresolved comments of those it trusts alone" do
+    settings = %{"trustedLogins" => ["hubot"]}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+
+    thread = fn login, extra, body ->
+      %{
+        "isResolved" => false,
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "comments" => [%{"author" => Map.put(extra, "login", login), "body" => body}]
+      }
+    end
+
+    threads = [
+      thread.("octocat", %{"isUser" => true, "association" => "MEMBER"}, "a member's"),
+      thread.("monalisa", %{"isUser" => true}, "the viewer's"),
+      thread.("hubot", %{"isBot" => true}, "a listed bot's"),
+      thread.("stranger", %{"isUser" => true, "association" => "NONE"}, "a stranger's"),
+      thread.("monalisa", %{"isBot" => true}, "a bot named as the viewer's"),
+      %{"isResolved" => false, "comments" => [%{"author" => nil, "body" => "a ghost's"}]},
+      Map.put(
+        thread.("octocat", %{"isUser" => true, "association" => "OWNER"}, "resolved"),
+        "isResolved",
+        true
+      )
+    ]
+
+    quoted = &apply(@server, :existing_comments, [settings, review, &1, threads])
+
+    here = Enum.join(quoted.(false), "\n")
+    assert here =~ "a member's" and here =~ "the viewer's" and here =~ "a listed bot's"
+    refute here =~ "a stranger's"
+    refute here =~ "a bot named as the viewer's"
+    refute here =~ "a ghost's"
+    refute here =~ "resolved"
+
+    sandboxed = Enum.join(quoted.(true), "\n")
+    assert sandboxed =~ "a stranger's" and sandboxed =~ "a ghost's"
+    refute sandboxed =~ "resolved"
+  end
+
   test "a review asked for before its pull request is listed starts at the head of the pull request",
        context do
     rules!(context, head: 1, listed: false)
