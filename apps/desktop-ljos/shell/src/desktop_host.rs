@@ -41,6 +41,9 @@ pub struct DesktopHost {
     options: Options,
     events: Events,
     state: Arc<Mutex<State>>,
+    /// The process group of an MC a start of this host spawned and
+    /// has not handed over yet, so `stop` reaches it mid-start.
+    started_pgid: Arc<std::sync::atomic::AtomicI32>,
 }
 
 #[derive(Default)]
@@ -60,12 +63,17 @@ impl DesktopHost {
             options,
             events: Arc::new(events),
             state: Arc::default(),
+            started_pgid: Arc::default(),
         }
     }
 
     /// Finds or starts the MC. A launch that cannot give the shell
     /// one is a failure.
     pub fn start(&self) {
+        // Before anything is spawned: from here on a termination
+        // signal or a panic stops the MC this shell starts, as the
+        // Node host's signal handlers did.
+        mc_launcher::install_mc_lifeline();
         let run = {
             // A host started again (the updater's, after a failed
             // install) is a new one: its `ready` attaches and its
@@ -78,8 +86,9 @@ impl DesktopHost {
         let options = self.options.clone();
         let state = self.state.clone();
         let events = self.events.clone();
+        let started_pgid = self.started_pgid.clone();
         std::thread::spawn(move || {
-            let result = launch(&options);
+            let result = launch(&options, &started_pgid);
             let mut watch = false;
             let event = match result {
                 Ok((access, started)) => {
@@ -130,22 +139,32 @@ impl DesktopHost {
             state.stopping = true;
             state.mc.take()
         };
-        if let Some(mut mc) = mc {
-            mc.stop(Duration::from_secs(2));
+        match mc {
+            Some(mut mc) => mc.stop(Duration::from_secs(2)),
+            // None here may still be starting on the worker thread
+            // (a quit while its first compile runs): it has been
+            // tracked in this host's slot since its spawn, so stop
+            // it there. A found MC was never tracked and is left
+            // alone.
+            None => mc_launcher::stop_tracked_mc(&self.started_pgid),
         }
     }
 }
 
 /// One launch: the arguments read, then found, started or attached.
-fn launch(options: &Options) -> Result<(mc_launcher::Access, Option<StartedMc>), String> {
+fn launch(
+    options: &Options,
+    started_pgid: &Arc<std::sync::atomic::AtomicI32>,
+) -> Result<(mc_launcher::Access, Option<StartedMc>), String> {
     let args = mc_launcher::parse_host_args(&options.arguments)?;
-    let live = options.live.clone().unwrap_or_else(|| {
+    let mut live = options.live.clone().unwrap_or_else(|| {
         Live::process(
             bundled_mc(&executable_dir()),
             source_mc(),
             PathBuf::from("node"),
         )
     });
+    live.started_pgid = started_pgid.clone();
     match &args.attach {
         Some(url) => mc_launcher::attach(url, args.base_dir.as_deref(), &live).map(|a| (a, None)),
         None => mc_launcher::standalone(&args, &live),
@@ -359,6 +378,8 @@ mod tests {
             source: temp.path().join("server-ex"),
             node: "node".into(),
             timeout: Duration::from_secs(5),
+            is_alive: Arc::new(mc_launcher::process_is_alive),
+            started_pgid: Arc::new(std::sync::atomic::AtomicI32::new(0)),
         }
     }
 
@@ -412,5 +433,71 @@ mod tests {
         // nothing more.
         host.stop();
         assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_during_the_start_stops_the_mc_it_started() {
+        use std::os::unix::fs::PermissionsExt;
+        // A fake release that runs a sleep of its own and never
+        // answers: the start is still waiting (a first compile, in
+        // miniature) when the host is stopped.
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("sleep-pid");
+        let bin = temp.path().join("mc/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("hal_c2");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 60 & echo $! > {}; wait\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut live = live_in(
+            &temp,
+            vec![
+                (
+                    "HAL_C2_MC_RELEASE".into(),
+                    temp.path().join("mc").to_string_lossy().into_owned(),
+                ),
+                ("HAL_C2_MC_PORT".into(), port.to_string()),
+            ],
+        );
+        live.timeout = Duration::from_secs(60);
+        let (host, _heard) = host_with(
+            vec![format!("--base-dir={}", temp.path().join("home").display())],
+            live,
+        );
+        host.start();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let sleeper: i64 = loop {
+            if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse()
+            {
+                break pid;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the fake MC never ran"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        host.stop();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while mc_launcher::process_is_alive(sleeper) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !mc_launcher::process_is_alive(sleeper),
+            "the started MC outlived the stop"
+        );
     }
 }

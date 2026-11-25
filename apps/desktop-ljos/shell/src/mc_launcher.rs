@@ -15,7 +15,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
 use hal_c2_mc::pairing;
@@ -496,6 +497,11 @@ pub struct StartedMc {
     child: Child,
     tail: Arc<Mutex<String>>,
     stopped: bool,
+    /// A caller's own slot for this MC's process group (a
+    /// [`Live`]'s), beside the process-wide one the signal handler
+    /// reads: a host stopping a start still in flight stops its
+    /// own MC by this slot, never another host's.
+    tracked: Option<Arc<AtomicI32>>,
 }
 
 impl StartedMc {
@@ -504,12 +510,40 @@ impl StartedMc {
         self.tail.lock().unwrap().trim().to_owned()
     }
 
+    /// Records this MC's process group in `slot` until it exits or
+    /// is stopped, so its owner can stop it before it is handed
+    /// over (see [`stop_tracked_mc`]).
+    pub fn track_in(&mut self, slot: &Arc<AtomicI32>) {
+        slot.store(self.child.id() as i32, Ordering::SeqCst);
+        self.tracked = Some(slot.clone());
+    }
+
+    fn clear_started(&self) {
+        clear_started_group(self.child.id());
+        if let Some(slot) = &self.tracked {
+            let _ = slot.compare_exchange(
+                self.child.id() as i32,
+                0,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
+    }
+
     pub fn try_wait(&mut self) -> Option<ExitStatus> {
-        self.child.try_wait().ok().flatten()
+        let status = self.child.try_wait().ok().flatten();
+        if status.is_some() {
+            self.clear_started();
+        }
+        status
     }
 
     pub fn wait(&mut self) -> Option<ExitStatus> {
-        self.child.wait().ok()
+        let status = self.child.wait().ok();
+        if status.is_some() {
+            self.clear_started();
+        }
+        status
     }
 
     /// SIGTERM to the MC's process group (mix, erl, and anything they
@@ -529,20 +563,152 @@ impl StartedMc {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        self.clear_started();
+    }
+}
+
+/// A started MC nobody stops — a panic unwinding past it, a launch
+/// failing after the spawn, a host dropped on an early return — is
+/// stopped here rather than left running with no owner. One already
+/// exited or stopped makes this a no-op (see [`StartedMc::stop`]).
+impl Drop for StartedMc {
+    fn drop(&mut self) {
+        self.stop(Duration::from_millis(1_500));
     }
 }
 
 fn signal_group(child: &Child, kill: bool) {
     #[cfg(unix)]
     if let Ok(pid) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: the child's own process group, taken before it is
-        // waited for.
-        unsafe {
-            libc::kill(-pid, if kill { libc::SIGKILL } else { libc::SIGTERM });
-        }
+        signal_started_group(pid, kill);
     }
     #[cfg(not(unix))]
     let _ = (child, kill);
+}
+
+/// The process group of the MC this shell started (its pid, from
+/// `process_group(0)`), or 0 for none: a found MC is never
+/// registered, so the lifeline below never stops one. Registered at
+/// spawn, before any waiting, so a quit while the start still waits
+/// on a first compile reaches it too. The Node host's single `mc`
+/// global, as an atomic a signal handler may read.
+static STARTED_MC_PGID: AtomicI32 = AtomicI32::new(0);
+
+fn register_started_group(pid: u32) {
+    #[cfg(unix)]
+    if let Ok(pid) = libc::pid_t::try_from(pid) {
+        STARTED_MC_PGID.store(pid, Ordering::SeqCst);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+fn clear_started_group(pid: u32) {
+    #[cfg(unix)]
+    if let Ok(pid) = libc::pid_t::try_from(pid) {
+        let _ = STARTED_MC_PGID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+#[cfg(unix)]
+fn signal_started_group(pgid: libc::pid_t, kill: bool) {
+    if pgid > 0 {
+        // SAFETY: the started child's own process group.
+        unsafe {
+            libc::kill(-pgid, if kill { libc::SIGKILL } else { libc::SIGTERM });
+        }
+    }
+}
+
+/// Stops a started MC's whole process group: SIGTERM, the Node
+/// host's 1.5 s grace, then SIGKILL. Only `kill` and `nanosleep`, so
+/// a signal handler may run it; the direct child stays a zombie
+/// until its owner reaps it, which only spends the grace.
+#[cfg(unix)]
+fn stop_started_group(pgid: libc::pid_t) {
+    if pgid <= 0 {
+        return;
+    }
+    signal_started_group(pgid, false);
+    for _ in 0..150 {
+        // SAFETY: signal 0 only checks whether the group exists.
+        if unsafe { libc::kill(-pgid, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return;
+        }
+        let pause = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 10_000_000,
+        };
+        // SAFETY: a plain 10 ms pause; rem is not resumed on EINTR.
+        unsafe { libc::nanosleep(&pause, std::ptr::null_mut()) };
+    }
+    signal_started_group(pgid, true);
+}
+
+/// Stops the MC this shell started, if any — the signal handler's
+/// and the panic hook's work, against the process-wide slot. A
+/// found MC was never registered, so this leaves it alone.
+pub fn stop_started_mc() {
+    #[cfg(unix)]
+    stop_started_group(STARTED_MC_PGID.load(Ordering::SeqCst));
+}
+
+/// Stops the MC tracked in `slot` (see [`StartedMc::track_in`]), if
+/// any: a host whose start is still in flight stops its own MC
+/// this way on quit. An empty slot — a found MC, or one already
+/// exited — stops nothing.
+pub fn stop_tracked_mc(slot: &AtomicI32) {
+    #[cfg(unix)]
+    stop_started_group(slot.load(Ordering::SeqCst));
+    #[cfg(not(unix))]
+    let _ = slot;
+}
+
+#[cfg(unix)]
+extern "C" fn on_termination_signal(signal: libc::c_int) {
+    stop_started_group(STARTED_MC_PGID.load(Ordering::SeqCst));
+    // Die as the signal meant, now the MC has had its own: the
+    // raised signal stays pending until this handler returns, then
+    // its default action runs.
+    // SAFETY: restoring the default disposition for this signal.
+    unsafe {
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
+    }
+}
+
+/// The Node host's lifeline, in process: SIGINT, SIGTERM and SIGHUP
+/// stop the MC this shell started before the shell dies of the
+/// signal, and a panic on any thread stops it on the way down (its
+/// owner may be another thread that never unwinds). Installed once;
+/// SIGKILL has no in-process answer, as it had none for the host
+/// process itself. A no-op where there are no Unix signals.
+pub fn install_mc_lifeline() {
+    #[cfg(unix)]
+    {
+        static INSTALLED: Once = Once::new();
+        INSTALLED.call_once(|| {
+            for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+                // SAFETY: a zeroed sigaction whose handler is the
+                // async-signal-safe stop above.
+                unsafe {
+                    let mut action: libc::sigaction = std::mem::zeroed();
+                    action.sa_sigaction = on_termination_signal as *const () as usize;
+                    libc::sigemptyset(&mut action.sa_mask);
+                    libc::sigaction(signal, &action, std::ptr::null_mut());
+                }
+            }
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                stop_started_mc();
+                previous(info);
+            }));
+        });
+    }
 }
 
 /// Spawns the MC and hands it the bootstrap line; its output is
@@ -580,6 +746,10 @@ pub fn start_mc(
             launch.args.join(" ")
         )
     })?;
+    // The lifeline's charge from this moment, before the caller
+    // waits on it: the Node host likewise kept its `mc` from the
+    // spawn, not from the answer.
+    register_started_group(child.id());
     let tail = Arc::new(Mutex::new(String::new()));
     let streams: Vec<Box<dyn Read + Send>> = [
         child
@@ -625,6 +795,7 @@ pub fn start_mc(
         child,
         tail,
         stopped: false,
+        tracked: None,
     })
 }
 
@@ -682,6 +853,13 @@ pub struct Live {
     pub source: PathBuf,
     pub node: PathBuf,
     pub timeout: Duration,
+    /// Whether a runtime record's pid is a live process: the
+    /// [`Resolution::is_alive`] every lookup here is decided with.
+    pub is_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
+    /// The process group of an MC this launch started, from its
+    /// spawn until it exits or is handed over: how a quit during
+    /// the start stops it (see [`stop_tracked_mc`]).
+    pub started_pgid: Arc<AtomicI32>,
 }
 
 impl Live {
@@ -701,6 +879,8 @@ impl Live {
             source,
             node,
             timeout: START_TIMEOUT,
+            is_alive: Arc::new(process_is_alive),
+            started_pgid: Arc::new(AtomicI32::new(0)),
         }
     }
 
@@ -709,7 +889,7 @@ impl Live {
             bundled: &self.bundled,
             source: &self.source,
             exists: &|p: &Path| p.exists(),
-            is_alive: &process_is_alive,
+            is_alive: self.is_alive.as_ref(),
             is_free: &port_is_free,
         }
     }
@@ -720,6 +900,32 @@ impl Live {
 /// caller's to watch and stop; a found one is not its to stop.
 pub fn standalone(args: &HostArgs, live: &Live) -> Result<(Access, Option<StartedMc>), String> {
     standalone_with_fetch(args, live, &fetch_descriptor)
+}
+
+/// The MC that holds `dirs`' files, once its runtime record names
+/// it, as the host's `waitForRunningMc` waits: it may still be
+/// booting, such as the background service starting at login beside
+/// the app, when the MC this shell started gives up with
+/// [`HOME_IN_USE`].
+fn wait_for_running(
+    dirs: &McDirs,
+    timeout: Duration,
+    is_alive: &dyn Fn(i64) -> bool,
+) -> Result<Access, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(found) = find_running(dirs, is_alive)? {
+            return Ok(found);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Another MC holds {}, but it did not start within {} s.",
+                dirs.data.display(),
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 fn standalone_with_fetch(
@@ -738,27 +944,15 @@ fn standalone_with_fetch(
         Plan::Start { launch, port, dirs } => (launch, port, dirs),
     };
     let mut started = start_mc(&launch, port, args.base_dir.as_deref(), &live.node)?;
+    started.track_in(&live.started_pgid);
     match wait_for_mc(&mut started, live.timeout, fetch) {
         Ok(Ok(())) => {}
         Ok(Err(status)) if exit_code(status) == HOME_IN_USE => {
             // Another MC took the files first, such as the background
             // service starting at login beside the app: the desktop
-            // uses that one. It may still be booting, so wait for
-            // its record.
-            let deadline = Instant::now() + live.timeout;
-            loop {
-                if let Some(found) = find_running(&dirs, &process_is_alive)? {
-                    return Ok((found, None));
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "Another MC holds {}, but it did not start within {} s.",
-                        dirs.data.display(),
-                        live.timeout.as_secs()
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
+            // uses that one, as if it had found it above.
+            return wait_for_running(&dirs, live.timeout, live.resolution().is_alive)
+                .map(|found| (found, None));
         }
         Ok(Err(status)) => {
             let output = started.output();
@@ -812,7 +1006,7 @@ pub fn attach(url: &str, home: Option<&Path>, live: &Live) -> Result<Access, Str
         live.env.as_ref(),
         &live.user_home,
         live.platform,
-        &process_is_alive,
+        live.is_alive.as_ref(),
     ) {
         return Ok(Access {
             origin: link.origin,
@@ -1104,6 +1298,8 @@ mod tests {
             source: temp.path().join("server-ex"),
             node: "node".into(),
             timeout: Duration::from_secs(5),
+            is_alive: Arc::new(process_is_alive),
+            started_pgid: Arc::new(AtomicI32::new(0)),
         };
         let release_dir = temp.path().join("mc");
         let env: Env = {
@@ -1258,23 +1454,27 @@ mod tests {
         );
     }
 
+    /// A fake release (`mc/bin/hal_c2`) that reads the bootstrap
+    /// line, takes `$home` from it, then runs `body`; the `Live`
+    /// that starts it under `temp`, its home, and its port.
     #[cfg(unix)]
-    #[test]
-    fn a_started_mcs_token_is_handed_to_the_shell() {
+    fn fake_release_live(
+        temp: &tempfile::TempDir,
+        body: &str,
+        timeout: Duration,
+        is_alive: Arc<dyn Fn(i64) -> bool + Send + Sync>,
+    ) -> (Live, PathBuf, u16) {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
-        // A fake release: reads the bootstrap, writes its access
-        // token under the home it names, then runs until stopped.
         let bin = temp.path().join("mc/bin");
         std::fs::create_dir_all(&bin).unwrap();
         let script = bin.join("hal_c2");
         std::fs::write(
             &script,
-            "#!/bin/sh\nread line\n\
-             home=$(printf %s \"$line\" | sed -n 's/.*\"halC2Home\": *\"\\([^\"]*\\)\".*/\\1/p')\n\
-             mkdir -p \"$home/data/elixir\"\n\
-             printf 'started-token\\n' > \"$home/data/elixir/access-token\"\n\
-             echo fake mc up\nsleep 60\n",
+            format!(
+                "#!/bin/sh\nread line\n\
+                 home=$(printf %s \"$line\" | sed -n 's/.*\"halC2Home\": *\"\\([^\"]*\\)\".*/\\1/p')\n\
+                 {body}\n"
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1283,7 +1483,6 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let home = temp.path().join("home");
         let vars: Vec<(String, String)> = vec![
             (
                 "HAL_C2_MC_RELEASE".into(),
@@ -1298,8 +1497,27 @@ mod tests {
             bundled: temp.path().join("bundled"),
             source: temp.path().join("server-ex"),
             node: "node".into(),
-            timeout: Duration::from_secs(10),
+            timeout,
+            is_alive,
+            started_pgid: Arc::new(AtomicI32::new(0)),
         };
+        (live, temp.path().join("home"), port)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_started_mcs_token_is_handed_to_the_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        // Writes its access token under the home the bootstrap
+        // names, then runs until stopped.
+        let (live, home, port) = fake_release_live(
+            &temp,
+            "mkdir -p \"$home/data/elixir\"\n\
+             printf 'started-token\\n' > \"$home/data/elixir/access-token\"\n\
+             echo fake mc up\nsleep 60",
+            Duration::from_secs(10),
+            Arc::new(process_is_alive),
+        );
         // The fake serves no HTTP; its descriptor is said for it,
         // once it has written its token, as a real MC answers only
         // after it boots.
@@ -1318,6 +1536,133 @@ mod tests {
         let mut started = started.expect("an MC was started");
         started.stop(Duration::from_secs(2));
         assert!(started.try_wait().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_mc_refused_its_files_hands_over_to_the_holder() {
+        // main.test.ts's FAKE_MC_HELD_BY: another MC took the files
+        // while this one booted, so it writes the holder's record
+        // and token, then exits 73. The holder's pid is only alive
+        // through the injected `is_alive`, as `plan` is faked.
+        let temp = tempfile::tempdir().unwrap();
+        let (live, home, _port) = fake_release_live(
+            &temp,
+            "mkdir -p \"$home/data/elixir\" \"$home/state/elixir\"\n\
+             printf 'holder-token\\n' > \"$home/data/elixir/access-token\"\n\
+             printf '{\"origin\":\"http://127.0.0.1:3799\",\"pid\":4242}' \
+               > \"$home/state/elixir/server-runtime.json\"\n\
+             exit 73",
+            Duration::from_secs(10),
+            Arc::new(|pid| pid == 4242),
+        );
+        let (access, started) = standalone_with_fetch(
+            &HostArgs {
+                base_dir: Some(home),
+                ..HostArgs::default()
+            },
+            &live,
+            &|_, _| Ok(None),
+        )
+        .unwrap();
+        assert_eq!(
+            access,
+            Access {
+                origin: "http://127.0.0.1:3799".into(),
+                token: "holder-token".into()
+            }
+        );
+        // The holder is not this shell's to stop.
+        assert!(started.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_holder_that_never_records_itself_times_out() {
+        let temp = tempfile::tempdir().unwrap();
+        let (live, home, _port) =
+            fake_release_live(&temp, "exit 73", Duration::from_secs(1), Arc::new(|_| true));
+        let error = match standalone_with_fetch(
+            &HostArgs {
+                base_dir: Some(home.clone()),
+                ..HostArgs::default()
+            },
+            &live,
+            &|_, _| Ok(None),
+        ) {
+            Ok(_) => panic!("the holder never recorded itself, so no access"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("Another MC holds")
+                && error.contains(&home.join("data/elixir").display().to_string())
+                && error.contains("did not start within 1 s"),
+            "{error}"
+        );
+    }
+
+    /// A started fake MC as `sh` running a `sleep` of its own in
+    /// the same process group (mix and its BEAM, in miniature); the
+    /// sleep's pid, once the script has written it.
+    #[cfg(unix)]
+    fn sleeping_mc(temp: &tempfile::TempDir) -> (StartedMc, i64) {
+        let pid_file = temp.path().join("sleep-pid");
+        let launch = Launch {
+            command: "sh".into(),
+            args: vec![
+                "-c".into(),
+                format!("sleep 60 & echo $! > {}; wait", pid_file.display()),
+            ],
+            cwd: None,
+        };
+        let mc = start_mc(&launch, 4123, None, Path::new("node")).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let sleeper = loop {
+            if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "the fake MC never slept");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        (mc, sleeper)
+    }
+
+    /// Gone once reaped: an orphaned group member is init's to
+    /// reap, so allow it a moment.
+    #[cfg(unix)]
+    fn assert_gone(pid: i64) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process_is_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!process_is_alive(pid), "pid {pid} is still running");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_signal_lifelines_stop_takes_the_whole_group() {
+        // `stop_started_group` is what the SIGINT/SIGTERM/SIGHUP
+        // handler runs for the registered group; running it here
+        // for this fake's group is the handler's work without
+        // signalling the test process itself.
+        let temp = tempfile::tempdir().unwrap();
+        let (mut mc, sleeper) = sleeping_mc(&temp);
+        assert!(process_is_alive(sleeper));
+        stop_started_group(libc::pid_t::try_from(mc.child.id()).unwrap());
+        assert!(mc.wait().is_some());
+        assert_gone(sleeper);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_started_mc_stops_it() {
+        // The panic-unwind and early-return path: nobody calls stop.
+        let temp = tempfile::tempdir().unwrap();
+        let (mc, sleeper) = sleeping_mc(&temp);
+        drop(mc);
+        assert_gone(sleeper);
     }
 
     #[cfg(unix)]
