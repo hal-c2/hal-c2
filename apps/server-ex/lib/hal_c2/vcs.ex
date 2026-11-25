@@ -732,15 +732,15 @@ defmodule HalC2.Vcs do
              else: :ok
            ),
          :ok <-
-           run(
+           add_worktree(
              cwd,
              args,
-             "vcs.createWorktree",
-             "git worktree add failed",
              [timeout: worktree_timeout(), stop_children: path] ++
-               checkout_progress(opts[:on_progress])
-           )
-           |> tap(&if(fresh, do: clear_cut_short(&1, cwd, path, if(new_branch, do: branch)))) do
+               checkout_progress(opts[:on_progress]),
+             fn result ->
+               if fresh, do: clear_cut_short(result, cwd, path, if(new_branch, do: branch))
+             end
+           ) do
       if input["newRefName"], do: remember_base(cwd, input["newRefName"], ref)
 
       # `git worktree add` leaves submodules empty; filling them is best effort.
@@ -748,6 +748,27 @@ defmodule HalC2.Vcs do
       if input["submodules"] != false, do: init_submodules(cwd, path)
       changed(cwd)
       {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}}
+    end
+  end
+
+  # `git worktree add` makes its entry under `.git/worktrees` and locks it a moment later.
+  # A `git worktree prune` in between takes the entry away, and the add fails with
+  # "could not open '.git/worktrees/<id>/locked'". The auto maintenance git runs after a
+  # fetch prunes, so a dozen threads launched at once, each fetching while the others
+  # add, hit it. `cleanup` puts back what the failed add left before it is tried again.
+  @add_tries 3
+  defp add_worktree(cwd, args, opts, cleanup, tries \\ @add_tries) do
+    result = run(cwd, args, "vcs.createWorktree", "git worktree add failed", opts)
+    cleanup.(result)
+
+    case result do
+      {:error, %{"detail" => detail}} when tries > 1 ->
+        if detail =~ ~r{could not open '[^']*worktrees/[^']*/locked'},
+          do: add_worktree(cwd, args, opts, cleanup, tries - 1),
+          else: result
+
+      result ->
+        result
     end
   end
 

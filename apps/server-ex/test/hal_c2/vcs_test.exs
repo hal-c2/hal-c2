@@ -350,6 +350,45 @@ defmodule HalC2.VcsTest do
     assert git!(repo, ~w(branch --list kept)) =~ "kept"
   end
 
+  # Git's auto maintenance after another thread's fetch pruned the entry `git worktree add`
+  # had made and not yet locked; the add failed where a second one goes through.
+  test "a worktree whose entry a prune took away mid-add is added again", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
+    git = Path.join(dir, "git-pruned")
+
+    # The first add fails as git does then: its branch made, its entry gone.
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in *"worktree add"*)
+      if [ ! -e "$0.failed" ]; then
+        touch "$0.failed"
+        for arg; do shift; [ "$arg" = "-b" ] && break; done
+        git branch "$1" "$3"
+        echo "fatal: could not open '.git/worktrees/x/locked' for writing: No such file or directory" >&2
+        exit 128
+      fi;;
+    esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    Application.put_env(:hal_c2, :git_command, git)
+    on_exit(fn -> Application.delete_env(:hal_c2, :git_command) end)
+
+    assert {:ok, %{"worktree" => %{"path" => path, "refName" => "pruned"}}} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "main",
+               "newRefName" => "pruned",
+               "path" => Path.join(dir, "pruned")
+             })
+
+    assert File.exists?(git <> ".failed")
+    assert git!(path, ~w(branch --show-current)) == "pruned\n"
+  end
+
   test "refs answer for a primary remote that is not called origin", %{repo: repo} do
     git!(repo, ~w(remote rename origin github))
 
