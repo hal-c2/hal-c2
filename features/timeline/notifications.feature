@@ -5,7 +5,7 @@
 #   apps/web/src/components/ThreadNotificationCoordinator.tsx (titles, transitions only, archived threads skipped, toast only when focused elsewhere, Open thread, badge)
 #   apps/web/src/threadNotifications.ts (notification modes, sounds, badge)
 #   apps/web/src/shell/ShellToastBridge.tsx
-#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
+#   packages/qml/HalC2/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/tst_Scenarios.qml (notification scenarios)
 #   apps/tui/src/host/notificationsState.ts (alerts kept until opened or dismissed), apps/tui/qml/HalC2/Tui/Notifications.qml (newest rows, +N more)

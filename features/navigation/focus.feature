@@ -11,17 +11,17 @@
 #   https://github.com/pingdotgg/t3code/pull/25877
 #   https://github.com/pingdotgg/t3code/pull/26690
 #   docs/user/keyboard-focus.md
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
-#   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (tab activation from the keyboard)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (focusInput)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal, focus on open)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
+#   packages/qml/HalC2/Bricks/SettingsNav.qml
+#   packages/qml/HalC2/Bricks/RightPanel.qml (tab activation from the keyboard)
+#   packages/qml/HalC2/Bricks/Composer.qml (focusInput)
+#   packages/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal, focus on open)
 #   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (terminalDrawerTakesAndReturnsTheKeyboard,
 #     panelTabsSupportKeyboardActivationAndClose)
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
-#   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
-#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml, CommandPalette.qml (accessible names)
+#   packages/qml/HalC2/Bricks/WindowControls.qml (accessible names)
+#   packages/qml/HalC2/Bricks/Timeline.qml, CommandPalette.qml (accessible names)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
 #   apps/web/src/components/ChatView.tsx (typing and pasting with nothing focused, focus on returning
 #     to the window, page keys from the composer)

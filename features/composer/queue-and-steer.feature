@@ -14,10 +14,10 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
+#   packages/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (the queue in the turn, cancel, steer and edit)
-#   apps/desktop-qt/qml/HalC2/Bricks/TurnRequests.qml (the queue card, a queued message's attachments)
+#   packages/qml/HalC2/Bricks/TurnRequests.qml (the queue card, a queued message's attachments)
 #   apps/web/src/session-logic.ts (getUserQueuedThreadRuns: the agent's own queued runs are not the user's)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)

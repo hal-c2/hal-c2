@@ -1,6 +1,6 @@
 //! The HAL-C2 desktop shell on Ljós: desktop-qt's native `HalC2.Shell`
 //! module (`Shell`, `Theme`, `Runtime`) and the controllers behind it, for
-//! the bricks in apps/desktop-qt/qml.
+//! the bricks in packages/qml.
 
 pub mod assets;
 pub mod attachment_files;

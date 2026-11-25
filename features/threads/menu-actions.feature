@@ -2,7 +2,7 @@
 #   apps/desktop-qt/src/native/ThreadMenuController.cpp (the thread menu, its actions, Undo, moving)
 #   apps/desktop-qt/src/native/MenuController.cpp (the desktop's one menu and question)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (thread.pin, thread.settle, thread.copyReference, thread.undo)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (thread.menu), Workspace.qml (workspace.titleMenu)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (thread.menu), Workspace.qml (workspace.titleMenu)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   apps/web/src/components/threadActionMenu.logic.ts (the order this ports)
 #   apps/web/src/hooks/useThreadActions.ts (archive, delete, unpin and their confirmations)

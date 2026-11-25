@@ -1318,7 +1318,7 @@ fn install_dev_desktop_entry() {
 mod tests {
     use super::{Allowed, offscreen};
 
-    const LAYOUT: &str = "file:///ci/apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
+    const LAYOUT: &str = "file:///ci/packages/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
 
     #[test]
     fn allow_reads_rule_and_path_skipping_comments() {
@@ -1374,7 +1374,7 @@ mod tests {
         let allowed = Allowed::parse("layout-occluded Bricks/ShellWindow.qml:115").unwrap();
         let by = |line: u32| {
             format!(
-                "the button is covered by the item (file:///ci/apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
+                "the button is covered by the item (file:///ci/packages/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
             )
         };
         assert_eq!(

@@ -11,7 +11,7 @@
 #   apps/desktop-qt/src/native/ComposerController.cpp (place: a new thread's first send asks the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (launch: a draft tied to its machine)
 #   apps/desktop-qt/src/native/LoadBalancingController.cpp
-#   apps/desktop-qt/qml/HalC2/Bricks/LoadBalancingGroup.qml
+#   packages/qml/HalC2/Bricks/LoadBalancingGroup.qml
 #   apps/desktop-qt/tests/native/features/LoadBalancingSteps.cpp
 #   packages/contracts/src/rpc.ts (server.getHostResources)
 #   docs/user/remote-access.md (Balance new threads across machines: desktop and terminal client)

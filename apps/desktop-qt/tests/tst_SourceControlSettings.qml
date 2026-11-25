@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtTest
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 import HalC2.Shell
 
 // features/settings/source-control.feature and source-control-writing.feature:
@@ -35,7 +35,7 @@ Item {
 
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                source: "../qml/HalC2/Bricks/SourceControlSettings.qml"
+                source: "../../../packages/qml/HalC2/Bricks/SourceControlSettings.qml"
             }
         }
     }

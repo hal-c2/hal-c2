@@ -40,12 +40,12 @@
 #   apps/mobile-qt/android/AndroidManifest.xml (hal-c2://pair, the camera permission)
 #   apps/mobile-qt/qml/HalC2/Mobile/PairingScreen.qml
 #   apps/mobile-qt/qml/HalC2/Mobile/ScanScreen.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/PairingSettings.qml (the environment in Settings, pairing with another,
+#   packages/qml/HalC2/Bricks/PairingSettings.qml (the environment in Settings, pairing with another,
 #     forgetting it, asked first)
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (forgetting an environment that cannot be reached)
 #   apps/desktop-qt/src/native/PairingExchange.cpp (reading a link, a link nobody typed, spending its token)
 #   apps/desktop-qt/src/native/ConnectionHealthController.cpp (an MC of another protocol, trace id)
-#   apps/desktop-qt/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
+#   packages/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
 # Shared pairing behaviour lives in features/connections/. This file covers the
 # phone journey: first launch, scanning a code, a link that opens the app to pair, and managing
 # environments from a phone.

@@ -61,7 +61,7 @@
 #   apps/web/src/components/chat/ChatComposer.tsx (opening a draft attachment)
 #   packages/shared/src/filePreview.ts (preview kinds: image, pdf, markdown, html, text, media)
 #   packages/shared/src/delimitedPreview.ts (table preview limits, quoting, delimiter by type or name)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (draft attachments listed, not opened)
+#   packages/qml/HalC2/Bricks/Composer.qml (draft attachments listed, not opened)
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp, qml/HalC2/Bricks/FilesPanel.qml (media previewed from the address the thread's MC signs)
 #   apps/tui/src/components/FilesView.tsx
 #   apps/tui/src/features.backlog.test.ts (workspace-file-actions)
@@ -74,7 +74,7 @@
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp (openFile, truncatedNotice, revealLine, wrap)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp, FileActionsController.cpp, TerminalController.cpp (editor and reveal on the environment)
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: workspace-file, media-file)
-#   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
+#   packages/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/src/native/FileActionsController.cpp (files.copyContents, the palette's "Copy file contents")
 #   apps/tui/src/host/filesState.ts, apps/tui/src/keymap.ts (files.viewer.copy, "c" in the viewer)

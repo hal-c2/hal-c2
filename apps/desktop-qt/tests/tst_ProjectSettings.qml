@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 import HalC2.Shell
 
 // features/settings/projects.feature and project-defaults.feature: the Project

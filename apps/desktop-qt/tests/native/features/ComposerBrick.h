@@ -1,5 +1,5 @@
 #pragma once
-// The composer as the desktop draws it (qml/HalC2/Bricks/Composer.qml) over
+// The composer as the desktop draws it (packages/qml/HalC2/Bricks/Composer.qml) over
 // the scenario's shell, kept on screen for the scenario (World::brick) so the
 // steps type, press and click as the user does. ComposerBrickSteps.cpp owns it.
 

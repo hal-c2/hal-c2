@@ -25,9 +25,9 @@
 #   https://github.com/pingdotgg/t3code/pull/13553
 #   docs/user/composer.md (prompt recall, prompt stash)
 #   docs/internals/composer-editors.md
-#   apps/desktop-qt/qml/HalC2/Bricks/ComposerVimKeys.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion, paste keys)
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the draft's right-click menu)
+#   packages/qml/HalC2/Bricks/ComposerVimKeys.qml
+#   packages/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion, paste keys)
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (the draft's right-click menu)
 #   apps/desktop-qt/tests/tst_TextEditMenu.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (stash)
 #   apps/desktop-qt/tests/tst_ComposerExtensions.qml

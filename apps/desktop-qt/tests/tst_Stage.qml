@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The stage (features/desktop/stage.feature): right-panel tabs in the
 // thread's centre, in one to four panes. Its strip, pane headers and empty

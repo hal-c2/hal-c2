@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 TestCase {
     id: testCase

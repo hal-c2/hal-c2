@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The options are clicked, so they sit in a shown item: a TestCase is not.
 Item {

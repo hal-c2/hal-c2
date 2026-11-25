@@ -40,7 +40,7 @@
 #   apps/tui/src/components/DiffViewer.tsx
 #   apps/tui/src/diffSplit.ts
 #   apps/tui/src/features.backlog.test.ts (review-workspace)
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
+#   packages/qml/HalC2/Bricks/RightPanel.qml (Diff)
 #   https://github.com/pingdotgg/t3code/pull/15005
 #   https://github.com/pingdotgg/t3code/pull/21909
 #   https://github.com/pingdotgg/t3code/pull/28244

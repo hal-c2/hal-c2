@@ -83,7 +83,7 @@
 #   apps/server/src/persistence/PullRequestFilesViewed.ts
 #   apps/server/src/persistence/Migrations/053_PullRequestFilesViewed.ts
 #   apps/web/src/components/pullRequest/PullRequestMarkdown.tsx
-#   apps/desktop-qt/qml/HalC2/Bricks/PullRequestReviewPanel.qml, apps/desktop-qt/src/ShellBridge.cpp (Shell.openWebLink)
+#   packages/qml/HalC2/Bricks/PullRequestReviewPanel.qml, apps/desktop-qt/src/ShellBridge.cpp (Shell.openWebLink)
 #   apps/web/src/components/pullRequest/pullRequestMarkdown.logic.ts, PullRequestMarkdownEditor.tsx
 #   apps/web/src/components/pullRequest/pullRequestReactions.logic.ts, PullRequestGhosts.tsx
 #   apps/web/src/components/pullRequest/PullRequestSummaryTab.test.tsx, pullRequestSummaryScroll.logic.ts

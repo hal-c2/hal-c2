@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The centre for thread and draft routes over a ListModel with the
 // TimelineModel's roles (features/desktop/centre-view.feature, by scenario).

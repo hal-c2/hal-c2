@@ -14,9 +14,9 @@
 #   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13759
 #   docs/user/thread-sidebar.md
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
+#   packages/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (the two lines of a row)
+#   packages/qml/HalC2/Bricks/SidebarThreadRow.qml (the two lines of a row)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
 #   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list, the rows' density)
 #   apps/desktop-qt/tests/native/features/ThreadListSteps.cpp

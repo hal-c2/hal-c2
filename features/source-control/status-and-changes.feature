@@ -31,7 +31,7 @@
 #   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_NO_AUTO_ACTIONS)
 #   apps/web/src/components/GitActionsControl.tsx (Initialize Git)
-#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
+#   packages/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
 #   apps/tui/src/gitActions.logic.ts (mergeVcsStatus, resolveGitQuickAction)
 #   apps/tui/src/connection.ts (subscribeVcsStatus)
 #   https://github.com/pingdotgg/t3code/pull/28600

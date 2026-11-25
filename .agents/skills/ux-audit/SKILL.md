@@ -16,7 +16,7 @@ density). If the **qt-qml** skill is installed (bootstrap warns when it is
 not), read it before proposing QML fixes. Fixes go
 through the shared bricks (`ShellButton`, `ShellComboBox`,
 `ShellSplitButton`, `ShellTabs`, `ShellCard`, `Theme` roles) in
-`apps/desktop-qt/qml/HalC2/Bricks/`, never through one-off restyles.
+`packages/qml/HalC2/Bricks/`, never through one-off restyles.
 
 Reference for intended behaviour: the `features/` ledger says what the desktop
 claims to do (see `references/checklist.md`), and carries what the removed web
@@ -151,7 +151,7 @@ Append one JSON object per line to `$UX_AUDIT_DIR/findings.jsonl`:
      "desc":"...what happens, how verified, who is hurt...",
      "evidence":{"window":"960x1000","appearance":"dark","steps":"..."},
      "shots":["composer-960-dark.png"],
-     "where":["apps/desktop-qt/qml/HalC2/Bricks/Composer.qml:212"],
+     "where":["packages/qml/HalC2/Bricks/Composer.qml:212"],
      "ledger":["features/composer/model-picker.feature: Scenario name"],
      "solutions":["...","...","...","...","..."],
      "related":["F013"]}

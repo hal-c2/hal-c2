@@ -5,7 +5,7 @@
 #   apps/server-ex/lib/hal_c2/project_environment.ex (loaders, precedence, the notice)
 #   apps/server-ex/lib/hal_c2/settings.ex (projectEnvironment and projectEnvironmentFile are project-scoped)
 #   packages/contracts/src/settings.ts (projectEnvironment, projectEnvironmentFile)
-#   apps/desktop-qt/src/native/ProjectSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProjectSettings.qml
+#   apps/desktop-qt/src/native/ProjectSettingsController.cpp, packages/qml/HalC2/Bricks/ProjectSettings.qml
 #   apps/tui/src/host/sections/projects.ts
 #   Decisions:
 #   - Off by default: loading runs the checkout's own configuration, so it is trusted per project.

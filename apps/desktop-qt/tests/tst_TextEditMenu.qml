@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The right-click menus on text: the composer's Cut, Copy, Paste and Select
 // All, and Copy and Select All on a reply (TextEditMenu).

@@ -40,7 +40,7 @@ pub fn roots() -> Roots {
 /// [`roots`] under an `apps/` directory, for tests.
 pub fn roots_at(apps: &Path) -> Roots {
     Roots {
-        bricks: apps.join("desktop-qt/qml"),
+        bricks: apps.join("../packages/qml"),
         shell: apps.join("mobile-ljos/qml"),
         extra: vec![apps.join("mobile-qt/qml")],
         user: None,
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn the_roots_name_the_bricks_the_entry_and_the_phone_qml() {
         let roots = roots_at(Path::new("/apps"));
-        assert_eq!(roots.bricks, PathBuf::from("/apps/desktop-qt/qml"));
+        assert_eq!(roots.bricks, PathBuf::from("/apps/../packages/qml"));
         assert_eq!(roots.shell, PathBuf::from("/apps/mobile-ljos/qml"));
         assert_eq!(roots.extra, [PathBuf::from("/apps/mobile-qt/qml")]);
     }
