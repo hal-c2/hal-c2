@@ -725,11 +725,28 @@ defmodule HalC2.Settings do
     end
   end
 
+  # The part of the `plugins` key a client could mean to change: whether each plugin is
+  # on, what it was granted and its settings. The host's records of the instances it
+  # added and released (`HalC2.Plugins.Host.seal_records/3`) are left out: a client's
+  # write is sealed to the MC's records anyway, and its copy goes stale on its own
+  # writes, as one deleting a plugin's instance ends the plugin's hold on it.
+  @records ~w(providerInstances releasedInstances)
+
+  defp users_part(%{} = plugins) do
+    for {id, config} <- plugins,
+        part = if(is_map(config), do: Map.drop(config, @records), else: config),
+        part != %{},
+        into: %{},
+        do: {id, part}
+  end
+
+  defp users_part(plugins), do: plugins
+
   @impl true
   def handle_call({:put, settings, version, writer}, from, %{version: version} = state) do
     {:reply, reply, state} =
       if writer == :client and Map.has_key?(settings, "plugins") and
-           settings["plugins"] != state.settings["plugins"] do
+           users_part(settings["plugins"]) != users_part(state.settings["plugins"]) do
         {:reply,
          {:error,
           "Plugins change through plugins.enable, plugins.disable and plugins.saveSettings, " <>

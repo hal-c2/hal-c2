@@ -391,6 +391,48 @@ defmodule HalC2.PluginsTest do
     assert HalC2.Settings.settings()["plugins"]["notes"]["enabled"] == false
   end
 
+  # A client's copy of the host's records goes stale on its own write: deleting a
+  # plugin's instance ends the plugin's hold on it. Its next write from that copy, the
+  # user's instance in its place, is still the client's to make; a change to whether the
+  # plugin is on is still refused.
+  test "a client's write from a copy whose plugin records its own last write changed is taken" do
+    stop_supervised!(Plugins)
+    id = "plugin_alpha_claude"
+    users = %{"driver" => "claudeAgent", "displayName" => "Mine"}
+
+    {:ok, _} =
+      HalC2.Settings.update(fn _ ->
+        %{
+          "providerInstances" => %{id => %{"driver" => "claudeAgent"}},
+          "plugins" => %{"alpha" => %{"enabled" => true, "providerInstances" => [id]}}
+        }
+      end)
+
+    {read, version} = HalC2.Settings.get()
+
+    assert {:ok, version} =
+             HalC2.Settings.put(
+               Map.update!(read, "providerInstances", &Map.delete(&1, id)),
+               version
+             )
+
+    assert HalC2.Settings.settings()["plugins"]["alpha"]["providerInstances"] == []
+
+    assert {:error, %{"_tag" => "ServerSettingsError"}} =
+             HalC2.Settings.put(
+               read
+               |> put_in(["providerInstances", id], users)
+               |> put_in(["plugins", "alpha", "enabled"], false),
+               version
+             )
+
+    assert {:ok, _} = HalC2.Settings.put(put_in(read, ["providerInstances", id], users), version)
+
+    settings = HalC2.Settings.settings()
+    assert settings["providerInstances"][id] == users
+    assert settings["plugins"]["alpha"] == %{"enabled" => true, "providerInstances" => []}
+  end
+
   test "a plugin that takes settings live keeps its process, and work in it, through a save" do
     pid = enable_worker("live", :live)
 
