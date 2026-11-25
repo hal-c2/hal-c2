@@ -387,6 +387,22 @@ defmodule HalC2.VcsTest do
 
     assert File.exists?(git <> ".failed")
     assert git!(path, ~w(branch --show-current)) == "pruned\n"
+
+    # Into a folder that was there already, the branch the failed add made goes too.
+    File.rm!(git <> ".failed")
+    existing = Path.join(dir, "existing")
+    File.mkdir_p!(existing)
+
+    assert {:ok, %{"worktree" => %{"path" => ^existing}}} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "main",
+               "newRefName" => "pruned-again",
+               "path" => existing
+             })
+
+    assert File.exists?(git <> ".failed")
+    assert git!(existing, ~w(branch --show-current)) == "pruned-again\n"
   end
 
   test "refs answer for a primary remote that is not called origin", %{repo: repo} do
