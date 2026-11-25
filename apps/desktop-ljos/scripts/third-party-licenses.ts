@@ -105,14 +105,16 @@ function reachable(metadata: CargoMetadata): ReadonlyArray<CargoPackage> {
       }
     }
   }
-  return [...seen]
-    .filter((id) => !workspace.has(id))
-    .map((id) => byId.get(id))
-    .filter((p): p is CargoPackage => p !== undefined)
-    // A path crate of this repo (native/syntax) is first-party, as
-    // @hal-c2/ packages are to the JavaScript manifest.
-    .filter((p) => !(p.source === null && p.manifest_path.startsWith(repoRoot + NodePath.sep)))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
+  return (
+    [...seen]
+      .filter((id) => !workspace.has(id))
+      .map((id) => byId.get(id))
+      .filter((p): p is CargoPackage => p !== undefined)
+      // A path crate of this repo (native/syntax) is first-party, as
+      // @hal-c2/ packages are to the JavaScript manifest.
+      .filter((p) => !(p.source === null && p.manifest_path.startsWith(repoRoot + NodePath.sep)))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version))
+  );
 }
 
 async function noticeFilesIn(directory: string): Promise<ReadonlyArray<string>> {
@@ -213,20 +215,20 @@ export async function writeDesktopLjosLicenseManifest(
   output: string,
   offline: boolean,
 ): Promise<void> {
-  const [base, crates] = await Promise.all([
-    generateThirdPartyLicenseManifest({
-      configFile,
-      packageManifests: [
-        {
-          bundle: BUNDLE,
-          path: new URL("../../../packages/cursor-acp/package.json", import.meta.url),
-        },
-      ],
-      bundleName: BUNDLE,
-      allowMissingGeneratedNotices: offline,
-    }),
-    crateEntries(offline),
-  ]);
+  // One after the other: both fill the same SPDX text cache, and on a fresh
+  // checkout two passes at once would download and write the same files.
+  const base = await generateThirdPartyLicenseManifest({
+    configFile,
+    packageManifests: [
+      {
+        bundle: BUNDLE,
+        path: new URL("../../../packages/cursor-acp/package.json", import.meta.url),
+      },
+    ],
+    bundleName: BUNDLE,
+    allowMissingGeneratedNotices: offline,
+  });
+  const crates = await crateEntries(offline);
   const entries = [...base.entries, ...crates].sort(
     (a, b) =>
       a.name.localeCompare(b.name) ||

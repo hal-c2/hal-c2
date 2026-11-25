@@ -288,7 +288,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "mermaid-rs-renderer",
       "sourceUrl": "https://github.com/1jehuang/mermaid-rs-renderer",
@@ -303,7 +303,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "mmdflux",
       "sourceUrl": "https://github.com/kevinswiber/mmdflux",
