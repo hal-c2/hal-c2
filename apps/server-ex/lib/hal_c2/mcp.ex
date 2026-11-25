@@ -105,7 +105,9 @@ defmodule HalC2.Mcp do
   def prepared?(thread_id, instance) do
     case :ets.match_object(@table, {:_, %{thread_id: thread_id, instance: instance}, :_}) do
       [] -> true
-      [{_, caller, _} | _] -> carries(caller) == wanted(thread_id)
+      # A thread that cannot be read keeps its session: its credential was scoped when
+      # the thread could be read, or is refused until it can (`scoped/2`).
+      [{_, caller, _} | _] -> current?(caller, wanted(thread_id))
     end
   rescue
     ArgumentError -> true
@@ -197,7 +199,8 @@ defmodule HalC2.Mcp do
   # moment after the events (`@shell_debounce` in `HalC2.Streams.Server`), so a new
   # thread's first turn would read the environment's settings and its second turn
   # its project's, launching differently (#1452). Without streams (tools, some
-  # tests) there is no thread to read, so the environment's settings apply.
+  # tests) there is no thread to read, so the environment's settings apply; preparing
+  # a session then gives no server at all (`wanted/1`).
   defp project(thread_id), do: thread(thread_id)["projectId"]
 
   defp thread(thread_id) do
@@ -250,16 +253,26 @@ defmodule HalC2.Mcp do
     end
   end
 
+  defp current?(_caller, :unreadable), do: true
+  defp current?(caller, wanted), do: carries(caller) == wanted
+
   # What a credential carries, as `wanted/1` says it: one an earlier MC minted, before
   # credentials named a plugin, reaches no plugin's tools alone.
   defp carries(caller), do: {caller.capabilities, Map.get(caller, :plugin)}
 
   # What the credential of `thread_id` should carry: `{capabilities, plugin}`. One kept
-  # to a plugin's tools reaches nothing of HAL-C2's.
+  # to a plugin's tools reaches nothing of HAL-C2's. `:unreadable` when the thread
+  # cannot be read to tell whether it is kept: no credential is minted for it then.
   defp wanted(thread_id) do
-    case kept_to(thread_id) do
-      nil -> {agent_access(thread_id), nil}
-      plugin -> {MapSet.new(), plugin}
+    case read_thread(thread_id) do
+      :unreadable ->
+        :unreadable
+
+      thread ->
+        case plugin_kept(thread || %{}) do
+          nil -> {agent_access(thread_id), nil}
+          plugin -> {MapSet.new(), plugin}
+        end
     end
   end
 
@@ -267,17 +280,27 @@ defmodule HalC2.Mcp do
   The MCP server to give the agent of `thread_id`, or nil when the user keeps HAL-C2's
   tools from agents (`enableAgentBrowserAccess`, which gates the whole server). A
   thread kept to its plugin's tools (`kept_to/1`) gets a server of those alone, marked
-  `report: true`.
+  `report: true`. Nil too while the thread cannot be read to tell whether it is kept.
   """
   def for_agent(thread_id, instance) do
     # Preparing the session resolves (or rotates) its credential first, so a
     # flipped access setting takes effect with this run even when the server
     # itself ends up withheld. Call this only where a session is prepared;
     # a read mid-session goes through `current/2` and never rotates.
-    if Process.whereis(__MODULE__) do
-      {capabilities, plugin} = wanted(thread_id)
+    with pid when is_pid(pid) <- Process.whereis(__MODULE__),
+         {capabilities, plugin} <- wanted(thread_id) do
       token = GenServer.call(__MODULE__, {:prepare, thread_id, instance, capabilities, plugin})
       served(token, capabilities, plugin)
+    else
+      :unreadable ->
+        Logger.warning(
+          "withheld HAL-C2's MCP server from a session whose thread could not be read"
+        )
+
+        nil
+
+      nil ->
+        nil
     end
   end
 
@@ -703,17 +726,24 @@ defmodule HalC2.Mcp do
     end
   end
 
-  defp mint(thread_id, instance, {capabilities, plugin}) do
+  # While the thread cannot be read, a credential asked for outside preparation
+  # (`server/2`) names no plugin: its first request that can read the thread scopes
+  # it (`scoped/2`), and it is refused until then.
+  defp mint(thread_id, instance, :unreadable),
+    do: insert(thread_id, instance, %{capabilities: agent_access(thread_id)})
+
+  defp mint(thread_id, instance, {capabilities, plugin}),
+    # The plugin whose agent tools alone this credential reaches, or nil.
+    do: insert(thread_id, instance, %{capabilities: capabilities, plugin: plugin})
+
+  defp insert(thread_id, instance, scope) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
 
-    caller = %{
-      thread_id: thread_id,
-      instance: instance,
-      capabilities: capabilities,
-      # The plugin whose agent tools alone this credential reaches, or nil.
-      plugin: plugin,
-      environment_id: HalC2.Environment.id()
-    }
+    caller =
+      Map.merge(
+        %{thread_id: thread_id, instance: instance, environment_id: HalC2.Environment.id()},
+        scope
+      )
 
     :ets.insert(@table, {token, caller, System.monotonic_time(:millisecond)})
     token

@@ -296,6 +296,29 @@ defmodule HalC2.McpTest do
     assert [{"old", %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
   end
 
+  # Preparing a session while its thread cannot be read gives it no server and mints
+  # nothing; a credential asked for then names no plugin, so it is refused until the
+  # thread can be read and then takes its scope. A live session is kept meanwhile.
+  test "a session prepared while its thread cannot be read gets no server" do
+    start_supervised!(HalC2.Settings)
+    thread_id = launch("hello", %{}, plugin: %{"id" => "code-review", "kind" => "review"})
+    await_statuses(thread_id, ["completed"])
+    assert %{report: true} = HalC2.Mcp.for_agent(thread_id, "codex")
+    HalC2.Mcp.revoke(thread_id)
+
+    stop_supervised!(HalC2.Streams)
+    assert HalC2.Mcp.for_agent(thread_id, "claudeAgent") == nil
+    assert HalC2.Mcp.credentials(thread_id) == []
+
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert {503, _} = HalC2.Mcp.handle(auth, JSON.encode!(project_list()))
+
+    start_supervised!(HalC2.Streams)
+    assert denied?(auth, "hal_c2_project_list")
+    assert [{_, %{plugin: "code-review"}, _}] = HalC2.Mcp.credentials(thread_id)
+  end
+
   defp project_list,
     do: %{
       "jsonrpc" => "2.0",

@@ -381,7 +381,10 @@ defmodule HalC2.DevicesTest do
     assert {%{"echo" => %{"tap" => [10, 20]}}, _} = HalC2.Test.WsClient.recv(client, 5_000)
   end
 
-  test "an agent opens a device and sees its screen through the MCP server" do
+  test "an agent opens a device and sees its screen through the MCP server", %{tmp_dir: dir} do
+    # A credential is scoped by its thread, so the streams it is read from run.
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Mcp)
     %{authorization: auth} = HalC2.Mcp.server("thread-1", "codex")
 

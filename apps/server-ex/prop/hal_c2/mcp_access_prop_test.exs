@@ -146,6 +146,18 @@ defmodule HalC2.McpAccessPropTest do
     {unavailable, refused?(%{authorization: "Bearer " <> token})}
   end
 
+  # Preparing a session while the thread's stream cannot be read: whether it got a
+  # server, and whether a credential was minted for it.
+  def prepare_unread(thread, instance) do
+    HalC2.Prop.restart_service(HalC2.Streams, fn ->
+      before = HalC2.Mcp.credentials(thread)
+      server = HalC2.Mcp.for_agent(thread, instance)
+      send(self(), {:while_down, {server, HalC2.Mcp.credentials(thread) == before}})
+    end)
+
+    receive do: ({:while_down, result} -> result)
+  end
+
   defp refused?(%{authorization: auth}) do
     {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(call()))
     JSON.encode!(result) =~ "capability_denied"
@@ -175,7 +187,8 @@ defmodule HalC2.McpAccessPropTest do
       {3, {:call, __MODULE__, :access, [thread()]}},
       {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}},
       {1, {:call, __MODULE__, :reattach, [thread()]}},
-      {1, {:call, __MODULE__, :reattach_unread, [thread()]}}
+      {1, {:call, __MODULE__, :reattach_unread, [thread()]}},
+      {1, {:call, __MODULE__, :prepare_unread, [thread(), oneof(["codex", "claudeAgent"])]}}
     ])
   end
 
@@ -203,6 +216,8 @@ defmodule HalC2.McpAccessPropTest do
 
   def postcondition(state, {:call, _, :reattach_unread, [thread]}, result),
     do: result == {true, kept?(state, thread)}
+
+  def postcondition(_state, {:call, _, :prepare_unread, _}, result), do: result == {nil, true}
 
   def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
     cond do
