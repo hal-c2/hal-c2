@@ -99,7 +99,7 @@ def ratchet_ids(path: Path) -> set[str]:
     return {
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
+        if line.strip() and not line.strip().startswith("#")
     }
 
 
@@ -224,6 +224,22 @@ def claimed(row: Row, surface: str) -> bool:
     return "@backlog" not in tags and f"@backlog-{surface}" not in tags
 
 
+def ratchet_row_ids(all_rows: dict[str, list["Row"]], surface: str) -> dict[int, str]:
+    """Each row `surface` claims, by id(row), to its RATCHET id as the Ljós
+    runners write it: a second scenario of one name in a file is
+    `<file>: <name> #2`, a third `#3`."""
+    seen: dict[str, int] = {}
+    out: dict[int, str] = {}
+    for rel, rows in all_rows.items():
+        for row in rows:
+            if not claimed(row, surface):
+                continue
+            base = f"{rel}: {row.name}"
+            n = seen[base] = seen.get(base, 0) + 1
+            out[id(row)] = base if n == 1 else f"{base} #{n}"
+    return out
+
+
 def already_backlogged(row: Row, surface: str) -> bool:
     tags = set(row.tags)
     return "@backlog" in tags or f"@backlog-{surface}" in tags or "@dropped" in tags
@@ -272,10 +288,11 @@ def analyse():
                         selected.add(id(row))
         unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
         ratchet = ratchet_ids(RATCHETS[surface])
-        stale[surface] = sorted(ratchet - known_ids)
+        row_ids = ratchet_row_ids(all_rows, surface)
+        stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
         for rel, rows in all_rows.items():
             for row in rows:
-                if f"{rel}: {row.name}" in ratchet:
+                if row_ids.get(id(row)) in ratchet:
                     selected.add(id(row))
         runner = HEADER_RUNNERS.get(surface)
         if runner:
@@ -345,7 +362,7 @@ def describe(retag, ambiguous, unmatched, stale) -> list[str]:
         if stale.get(surface):
             out.append(
                 f"@{surface}: {len(stale[surface])} RATCHET id(s) name no scenario "
-                f"(a renamed or removed scenario; the Ljós run would not notice):"
+                f"(a renamed or removed scenario; the Ljós run fails it as regressed):"
             )
             for entry in stale[surface]:
                 out.append(f"  {entry}")
