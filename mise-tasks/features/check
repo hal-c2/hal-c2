@@ -15,6 +15,13 @@ the backlog tag: the ledger claims only what tst_Features runs (#213).
 The desktop-ljos shell's runner (apps/desktop-ljos/shell/tests/features)
 runs those globs too, and every file whose leading comment block names
 it: behaviour only that shell has, such as its bounded side streams.
+The Ljós shells also hold the ids that pass there in their RATCHETs
+(desktop-ljos's and mobile-ljos's tests/features/RATCHET); a scenario a
+RATCHET holds is proven on that surface as a glob-selected one is, and
+a RATCHET id that names no scenario fails here, where a rename is seen.
+During the transition the Qt globs and the RATCHETs both count (#1661
+step 4): a missing tst_Features.cpp leaves its surface to its RATCHET
+alone, and what only Qt still proves is then reported, not hidden.
 
 Exit 1 while such a scenario remains; --fix writes the missing
 '@backlog-<surface>' tags (at the widest true scope: the scenario, its
@@ -33,6 +40,14 @@ FEATURES = ROOT / "features"
 RUNNERS = {
     "desktop": ROOT / "apps/desktop-qt/tests/native/tst_Features.cpp",
     "mobile": ROOT / "apps/mobile-qt/tests/tst_Features.cpp",
+}
+# The Ljós shells' own proof: the scenario ids that pass there, held in
+# their RATCHETs. Counted as well as the Qt globs during the transition
+# (#1661 step 4); a missing tst_Features.cpp then leaves the surface to
+# its RATCHET alone instead of breaking this check.
+RATCHETS = {
+    "desktop": ROOT / "apps/desktop-ljos/shell/tests/features/RATCHET",
+    "mobile": ROOT / "apps/mobile-ljos/tests/features/RATCHET",
 }
 SURFACES = list(RUNNERS)
 # A feature file whose leading comment block names one of these is run, all
@@ -77,7 +92,20 @@ def qt_wildcard(glob: str) -> re.Pattern:
     return re.compile("".join(out))
 
 
+def ratchet_ids(path: Path) -> set[str]:
+    """The `<file>: <name>` ids a RATCHET holds, one per line."""
+    if not path.exists():
+        return set()
+    return {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
 def runner_globs(path: Path) -> list[str]:
+    if not path.exists():
+        return []
     text = path.read_text(encoding="utf-8")
     start = text.index("kDefaultGlobs{")
     block = text[start : text.index("};", start)]
@@ -225,6 +253,8 @@ def analyse():
     retag: dict[tuple[str, int], dict[str, list[Row]]] = {}
     ambiguous: list[tuple[str, Row]] = []
     unmatched: dict[str, list[str]] = {}
+    stale: dict[str, list[str]] = {}
+    known_ids = {f"{rel}: {row.name}" for rel, rows in all_rows.items() for row in rows}
 
     for surface in SURFACES:
         globs = runner_globs(RUNNERS[surface])
@@ -241,6 +271,12 @@ def analyse():
                         glob_hit[idx] = True
                         selected.add(id(row))
         unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
+        ratchet = ratchet_ids(RATCHETS[surface])
+        stale[surface] = sorted(ratchet - known_ids)
+        for rel, rows in all_rows.items():
+            for row in rows:
+                if f"{rel}: {row.name}" in ratchet:
+                    selected.add(id(row))
         runner = HEADER_RUNNERS.get(surface)
         if runner:
             for rel, rows in all_rows.items():
@@ -287,10 +323,10 @@ def analyse():
                     else:
                         for r in un:
                             tag_at(rel, ex_line, r)
-    return retag, ambiguous, unmatched
+    return retag, ambiguous, unmatched, stale
 
 
-def describe(retag, ambiguous, unmatched) -> list[str]:
+def describe(retag, ambiguous, unmatched, stale) -> list[str]:
     out = []
     for surface in SURFACES:
         rows = sorted(
@@ -299,13 +335,20 @@ def describe(retag, ambiguous, unmatched) -> list[str]:
         )
         amb = [r for s, r in ambiguous if s == surface]
         if rows or amb:
-            out.append(f"@{surface}: {len(rows)} scenario(s) claimed passing but no glob selects:")
+            out.append(f"@{surface}: {len(rows)} scenario(s) claimed passing but no glob selects and no RATCHET holds:")
             for r in rows:
                 out.append(f"  features/{r.rel}:{r.line} {r.name}")
         if amb:
             out.append(f"@{surface}: {len(amb)} ambiguous outline row(s) (a glob names sibling rows):")
             for r in amb:
                 out.append(f"  features/{r.rel}:{r.line} {r.name}")
+        if stale.get(surface):
+            out.append(
+                f"@{surface}: {len(stale[surface])} RATCHET id(s) name no scenario "
+                f"(a renamed or removed scenario; the Ljós run would not notice):"
+            )
+            for entry in stale[surface]:
+                out.append(f"  {entry}")
         if unmatched.get(surface):
             out.append(
                 f"@{surface}: {len(unmatched[surface])} glob(s) name no scenario "
@@ -337,19 +380,19 @@ def apply_fix(retag) -> None:
 
 def main() -> int:
     fix = "--fix" in sys.argv[1:]
-    retag, ambiguous, unmatched = analyse()
+    retag, ambiguous, unmatched, stale = analyse()
     if fix and retag:
         apply_fix(retag)
         n = sum(len({id(r) for per in [p] for r in per.get(s, [])}) for p in retag.values() for s in SURFACES)
         print(f"features:check: retagged {n} scenario(s) at {len(retag)} tag line(s)")
-        retag, ambiguous, unmatched = analyse()
-    lines = describe(retag, ambiguous, unmatched)
+        retag, ambiguous, unmatched, stale = analyse()
+    lines = describe(retag, ambiguous, unmatched, stale)
     if lines:
         print("\n".join(lines))
         if not fix and retag:
             print("Run `mise run features:check --fix` to add the missing @backlog-<surface> tags.")
         return 1
-    print("features:check: every desktop/mobile scenario the ledger claims is selected by its runner")
+    print("features:check: every desktop/mobile scenario the ledger claims is selected by a runner or held in a RATCHET, and every RATCHET id names a scenario")
     return 0
 
 
