@@ -396,6 +396,98 @@ private slots:
     shell.barrier(mc.mc);
     QCOMPARE(mc.reads, 2);
   }
+
+  // The question about stopping reviews was open when another device's
+  // operation started: a yes then sent the run anyway, the MC refused it as
+  // busy, and the question was gone. The yes waits, and the question stays.
+  void confirmingWhileAnotherRunsKeepsTheQuestion() {
+    QTemporaryDir home;
+    Mc mc;
+    Shell shell(home, mc.mc);
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), QStringLiteral("uninstall")}});
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
+
+    mc.operation = {{QStringLiteral("operation"), QStringLiteral("check")},
+                    {QStringLiteral("run"), 2},
+                    {QStringLiteral("running"), true},
+                    {QStringLiteral("steps"), QJsonArray()},
+                    {QStringLiteral("result"), QJsonValue()}};
+    mc.emitAll();
+    QTRY_VERIFY(shell.section().value(QStringLiteral("busy")).toBool());
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.confirm"), {});
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.runs, 1);
+    QVERIFY(!shell.section().value(QStringLiteral("confirm")).isNull());
+    QVERIFY(shell.section().value(QStringLiteral("refusal")).isNull());
+
+    mc.operation[QStringLiteral("running")] = false;
+    mc.operation[QStringLiteral("result")] = QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("message"), QStringLiteral("Done.")}};
+    mc.emitAll();
+    QTRY_VERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.confirm"), {});
+    QTRY_COMPARE(mc.runs, 2);
+  }
+
+  // The MC restarted with its clock gone back while nothing ran and no run
+  // had been seen going: its idle frame's number below the last frame's told
+  // the restart, but the status the old MC read stood until a refresh.
+  void aRestartWithTheClockBackWhileIdleReadsTheStatus() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.runs = 5;
+    mc.operation = {{QStringLiteral("operation"), QStringLiteral("install")},
+                    {QStringLiteral("run"), mc.runs},
+                    {QStringLiteral("running"), false},
+                    {QStringLiteral("steps"), QJsonArray()},
+                    {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("message"), QStringLiteral("Done.")}}}};
+    Shell shell(home, mc.mc);
+    shell.native.client()->setRetryDelays({20});
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.reads, 1);
+
+    mc.restart(true);
+    mc.mc.drop();
+    QTRY_COMPARE(mc.reads, 2);
+  }
+
+  // This page's run ended while the connection was down and another device's
+  // followed it: the first frame after reconnecting was the later run's, and
+  // the page said nothing of its own, whose outcome it never saw.
+  void aLaterRunReplacingTheRequestedOneSaysItsOutcomeIsUnknown() {
+    QTemporaryDir home;
+    Mc mc;
+    mc.finishAtOnce = false;
+    Shell shell(home, mc.mc);
+    shell.native.client()->setRetryDelays({20});
+    QTRY_VERIFY(shell.native.isActive() && shell.native.store()->synchronized());
+
+    shell.go(kSandboxes);
+    QTRY_COMPARE(shell.section().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+    mc.holdFrames();
+    shell.bridge.dispatch(QStringLiteral("sandboxSettings.run"), QVariantMap{{QStringLiteral("operation"), QStringLiteral("uninstall")}});
+    shell.barrier(mc.mc);
+    QCOMPARE(mc.runs, 1);
+    mc.dropFrames();
+    mc.mc.drop();
+    mc.operation = {{QStringLiteral("operation"), QStringLiteral("check")},
+                    {QStringLiteral("run"), 2},
+                    {QStringLiteral("running"), false},
+                    {QStringLiteral("steps"), QJsonArray()},
+                    {QStringLiteral("result"), QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("message"), QStringLiteral("Done.")}}}};
+
+    QTRY_COMPARE(shell.section().value(QStringLiteral("refusal")).toString(),
+                 QStringLiteral("The MC lost track of the run; check the status before trying again."));
+    QVERIFY(!shell.section().value(QStringLiteral("busy")).toBool());
+    QVERIFY(shell.section().value(QStringLiteral("confirm")).isNull());
+  }
 };
 
 int main(int argc, char** argv) {

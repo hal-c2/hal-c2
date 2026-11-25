@@ -630,7 +630,9 @@ struct Restarted : Command {
       model.askedFor.clear();
       model.refusal = kRestarted;
     }
-    if (ended) model.ask();
+    // With its clock back the restart is told by the number going below the
+    // last frame's, and the status is read again even with no run seen going.
+    if (ended || back) model.ask();
   }
   void run(const Model& model, Shell& shell) const override {
     Model next = model;
@@ -765,10 +767,11 @@ struct Finish : Command {
 };
 
 // The user agrees to stop the reviews: the operation runs again, draining the
-// reviews it asked about.
+// reviews it asked about. While another runs the yes is not taken, and the
+// question stays to confirm once it ends.
 struct Confirm : Command {
   void apply(Model& model) const override {
-    if (model.confirm.isEmpty()) return;
+    if (model.confirm.isEmpty() || model.shown.running) return;
     const QString operation = model.confirm;
     model.run(operation);
   }
@@ -779,7 +782,7 @@ struct Confirm : Command {
     const qsizetype before = shell.runs.size();
     shell.bridge.dispatch(QStringLiteral("sandboxSettings.confirm"), {});
     check(next, shell);
-    if (!model.confirm.isEmpty()) {
+    if (!model.confirm.isEmpty() && !model.shown.running) {
       RC_ASSERT(shell.runs.size() == before + 1);
       RC_ASSERT(shell.runs.last() == (QJsonObject{{QStringLiteral("operation"), model.confirm}, {QStringLiteral("drain"), model.drain}}));
     } else {
