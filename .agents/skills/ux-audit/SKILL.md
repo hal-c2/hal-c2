@@ -168,8 +168,8 @@ Rules that make the report worth reading:
   (brick, property, file). At least one is a test: a Qt native test, a
   RapidCheck property for stateful C++, or a `features/` scenario.
 - `where` points at the QML or C++ behind the finding. Find it before you
-  log it. `rg` the visible string in `apps/desktop-qt` (and in
-  `apps/server-ex` for MC-originated text).
+  log it. `rg` the visible string in `packages/qml` and `apps/desktop-qt`
+  (and in `apps/server-ex` for MC-originated text).
 - `ledger` names the scenario the finding contradicts or that is missing.
   An untagged `@desktop` scenario that does not hold is worth calling out:
   the ledger is wrong. A `@backlog-desktop` gap is known, so log it as
