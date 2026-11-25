@@ -39,7 +39,7 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
       }
     }
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
 
     thread = "th-#{System.unique_integer([:positive])}"
 
@@ -1276,7 +1276,7 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
       "token-economizer" => %{"enabled" => true, "granted" => granted, "settings" => %{}}
     }
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
   end
 
   defp ended(thread, run, ordinal, items, provider_thread \\ "pt") do
