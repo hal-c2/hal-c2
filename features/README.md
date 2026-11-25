@@ -66,8 +66,9 @@ MC, native QML, and the TUI.
   surface (desktop-qt, and on desktop-ljos against that runner's test doubles) but not yet in
   the shipped Ljós app on the platform it names — Snap Shot has no native side there on
   Windows ([#1568](https://github.com/hal-c2/hal-c2/issues/1568)) or macOS ([#1569](https://github.com/hal-c2/hal-c2/issues/1569)). No runner skips by it and the ledger still counts the
-  scenario claimed; it only records that retiring desktop-qt on those platforms waits on the
-  native ports, whose landing removes the tag.
+  scenario claimed; it only records that retiring desktop-qt on those platforms waits on
+  native ports and proof on those operating systems. Landing and proving those ports removes
+  the tag.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
 - `@blocked` goes beside a backlog tag on work that cannot start yet. A comment above it
