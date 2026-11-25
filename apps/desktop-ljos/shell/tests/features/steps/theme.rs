@@ -57,10 +57,9 @@ fn drawn_canvas(world: &World) -> Option<ljos::prelude::Color> {
 /// The standard theme's canvas as main defines it: the built-in
 /// themes.json (packages/qml), which the shell builds in too.
 fn standard_canvas(dark: bool) -> String {
-    let themes: Value = serde_json::from_str(include_str!(
-        "../../../../../../packages/qml/themes.json"
-    ))
-    .unwrap_or_default();
+    let themes: Value =
+        serde_json::from_str(include_str!("../../../../../../packages/qml/themes.json"))
+            .unwrap_or_default();
     let appearance = if dark { "dark" } else { "light" };
     text(&themes["standard"][appearance]["canvas"])
 }

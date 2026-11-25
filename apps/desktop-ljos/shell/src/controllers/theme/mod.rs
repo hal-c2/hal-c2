@@ -75,10 +75,9 @@ pub(crate) struct BuiltIns {
 pub(crate) fn built_ins() -> &'static BuiltIns {
     static DATA: OnceLock<BuiltIns> = OnceLock::new();
     DATA.get_or_init(|| {
-        let root: Json = serde_json::from_str(include_str!(
-            "../../../../../../packages/qml/themes.json"
-        ))
-        .unwrap_or_default();
+        let root: Json =
+            serde_json::from_str(include_str!("../../../../../../packages/qml/themes.json"))
+                .unwrap_or_default();
         let per_appearance = |key: &str| {
             let pair = &root[key];
             let mut both = Map::new();
