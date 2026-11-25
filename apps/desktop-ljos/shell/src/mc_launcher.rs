@@ -462,14 +462,48 @@ pub fn find_local_token(
     })
 }
 
+/// The descriptor probes' agent: the native MC client's own TLS
+/// policy (rustls with the platform verifier, as `hal_c2_mc`'s
+/// HTTP side builds it), so an HTTPS MC a private CA in the
+/// platform trust store serves passes this preflight exactly as it
+/// passes the pairing exchange behind it. `direct` drops the
+/// environment's proxy, which ureq otherwise reads by default.
+fn descriptor_agent(timeout: Duration, direct: bool) -> ureq::Agent {
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+    let mut builder = ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .tls_config(
+            TlsConfig::builder()
+                .provider(TlsProvider::Rustls)
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        );
+    if direct {
+        builder = builder.proxy(None);
+    }
+    builder.build().new_agent()
+}
+
 /// A protocol-3 MC's descriptor at `origin`, nothing for anything
 /// else that answers; an error only when nothing answered at all.
 pub fn fetch_descriptor(origin: &str, timeout: Duration) -> Result<Option<()>, String> {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .http_status_as_error(false)
-        .build()
-        .new_agent();
+    fetch_descriptor_with(origin, timeout, false)
+}
+
+/// [`fetch_descriptor`] for the MC this shell spawned on loopback:
+/// direct, so an inherited proxy that refuses loopback cannot make
+/// a healthy MC look dead until the start deadline stops it.
+fn fetch_spawned_descriptor(origin: &str, timeout: Duration) -> Result<Option<()>, String> {
+    fetch_descriptor_with(origin, timeout, true)
+}
+
+fn fetch_descriptor_with(
+    origin: &str,
+    timeout: Duration,
+    direct: bool,
+) -> Result<Option<()>, String> {
+    let agent = descriptor_agent(timeout, direct);
     let mut response = agent
         .get(format!("{origin}/.well-known/hal-c2/environment"))
         .call()
@@ -867,9 +901,7 @@ impl Live {
     pub fn process(bundled: PathBuf, source: PathBuf, node: PathBuf) -> Live {
         Live {
             env: Arc::new(|name| std::env::var(name).ok()),
-            user_home: std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-                .map(PathBuf::from)
-                .unwrap_or_default(),
+            user_home: storage::user_home(),
             platform: if cfg!(windows) {
                 Platform::Windows
             } else {
@@ -899,7 +931,7 @@ impl Live {
 /// `standalone` does. The started MC, when there is one, is the
 /// caller's to watch and stop; a found one is not its to stop.
 pub fn standalone(args: &HostArgs, live: &Live) -> Result<(Access, Option<StartedMc>), String> {
-    standalone_with_fetch(args, live, &fetch_descriptor)
+    standalone_with_fetch(args, live, &fetch_spawned_descriptor)
 }
 
 /// The MC that holds `dirs`' files, once its runtime record names
@@ -1519,16 +1551,17 @@ mod tests {
             Arc::new(process_is_alive),
         );
         // The fake serves no HTTP; its descriptor is said for it,
-        // once it has written its token, as a real MC answers only
-        // after it boots.
-        let token_file = home.join("data/elixir/access-token");
+        // once its complete token is published (the file existing
+        // is not enough: the shell creates it before printf fills
+        // it), as a real MC answers only after it boots.
+        let token_dir = home.join("data/elixir");
         let (access, started) = standalone_with_fetch(
             &HostArgs {
                 base_dir: Some(home),
                 ..HostArgs::default()
             },
             &live,
-            &move |_, _| Ok(token_file.exists().then_some(())),
+            &move |_, _| Ok(read_access_token(&token_dir).map(|_| ())),
         )
         .unwrap();
         assert_eq!(access.origin, format!("http://127.0.0.1:{port}"));
@@ -1574,6 +1607,64 @@ mod tests {
         );
         // The holder is not this shell's to stop.
         assert!(started.is_none());
+    }
+
+    #[test]
+    fn the_spawned_mcs_probe_bypasses_the_environments_proxy() {
+        // ureq's default agent reads the proxy environment; the
+        // loopback probe's must not. (The attach preflight keeps
+        // the default policy - only its config is not asserted
+        // here, since it follows the environment either way.)
+        assert!(
+            descriptor_agent(Duration::from_secs(1), true)
+                .config()
+                .proxy()
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_mc_that_writes_no_token_is_stopped() {
+        // The descriptor answers (said for the fake at once) but
+        // no access token ever appears: the start fails and the
+        // MC it spawned - here running its own sleep - is stopped
+        // with it, not left holding the home.
+        let temp = tempfile::tempdir().unwrap();
+        let (live, home, _port) = fake_release_live(
+            &temp,
+            "mkdir -p \"$home\"\n\
+             sleep 60 & echo $! > \"$home/sleep-pid\"\nwait",
+            Duration::from_secs(10),
+            Arc::new(process_is_alive),
+        );
+        // Said to answer once its sleep is running, so the pid
+        // below is the MC the failed start must have stopped.
+        let pid_file = home.join("sleep-pid");
+        let said = pid_file.clone();
+        let error = match standalone_with_fetch(
+            &HostArgs {
+                base_dir: Some(home.clone()),
+                ..HostArgs::default()
+            },
+            &live,
+            &move |_, _| Ok(said.exists().then_some(())),
+        ) {
+            Ok(_) => panic!("no token was written, so no access"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no access token"), "{error}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let sleeper: i64 = loop {
+            if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "the fake MC never slept");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_gone(sleeper);
     }
 
     #[cfg(unix)]

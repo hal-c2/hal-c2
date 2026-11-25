@@ -51,6 +51,58 @@ pub enum Profile {
     Development,
 }
 
+/// This process's home directory: `HOME` (`USERPROFILE` on
+/// Windows) when set, else the account's own from the OS — the
+/// passwd entry on Unix, as the Node host's `os.homedir()` and
+/// the MC's `System.user_home!()` fall back — so a shell started
+/// without `HOME` still resolves its files against the account's
+/// home rather than relative to its working directory.
+pub fn user_home() -> PathBuf {
+    home_from(std::env::var_os(if cfg!(windows) {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    }))
+}
+
+fn home_from(var: Option<std::ffi::OsString>) -> PathBuf {
+    var.filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(passwd_home)
+        .unwrap_or_default()
+}
+
+/// The account's home from its passwd entry, when the OS knows one.
+#[cfg(unix)]
+fn passwd_home() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: getpwuid_r writes only through the pointers given,
+    // into the entry and buffer owned here; pw_dir is read before
+    // either is dropped.
+    unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut found = std::ptr::null_mut();
+        let mut buf = vec![0u8; 4096];
+        let status = libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut found,
+        );
+        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr(entry.pw_dir).to_bytes();
+        (!dir.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(dir)))
+    }
+}
+
+#[cfg(not(unix))]
+fn passwd_home() -> Option<PathBuf> {
+    None
+}
+
 impl StoragePaths {
     /// The paths of this process: its environment, home and platform.
     pub fn resolve(home_dir: Option<&Path>, profile: Profile) -> StoragePaths {
@@ -59,11 +111,8 @@ impl StoragePaths {
         } else {
             Platform::Unix
         };
-        let user_home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-            .map(PathBuf::from)
-            .unwrap_or_default();
         let env = |name: &str| std::env::var(name).ok();
-        resolve(home_dir, &env, &user_home, platform, profile)
+        resolve(home_dir, &env, &user_home(), platform, profile)
     }
 }
 
@@ -509,6 +558,21 @@ pub(crate) fn is_legacy_home(dir: &Path, user_home: &Path, platform: Platform) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_home_variable_wins_and_its_absence_falls_back() {
+        assert_eq!(
+            home_from(Some("/home/from-env".into())),
+            PathBuf::from("/home/from-env")
+        );
+        // Unset and empty take the same account fallback (the
+        // passwd entry on Unix), never the empty path itself when
+        // the account has a home.
+        assert_eq!(home_from(Some("".into())), home_from(None));
+        if passwd_home().is_some() {
+            assert!(!home_from(None).as_os_str().is_empty());
+        }
+    }
 
     fn on_unix(vars: &[(&str, &str)], home_dir: Option<&str>) -> StoragePaths {
         on(

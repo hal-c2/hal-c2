@@ -203,7 +203,10 @@ pub struct Pairing {
 /// does not answer at all passes the question on to the next: an answer of
 /// any kind stands.
 pub fn exchange(link: &Link, client: &Client) -> Pairing {
-    let agent = crate::http::agent(Some(TIMEOUT));
+    // Direct, never through an inherited proxy: the spend below
+    // puts the single-use pairing token in a plain-HTTP body to a
+    // machine of the user's own, as the desktop-qt host sent it.
+    let agent = crate::http::direct_agent(Some(TIMEOUT));
     let first = link.origins.first().cloned().unwrap_or_default();
     let result = |outcome, origin: &str, descriptor| Pairing {
         outcome,

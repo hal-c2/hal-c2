@@ -55,6 +55,9 @@ struct State {
     /// Which `start` is running; a stopped one's worker hears nothing
     /// more of the next.
     run: u64,
+    /// The run whose MC the watch thread follows, so a run gets one
+    /// watch even when an adopted MC adds a second caller.
+    watching_run: Option<u64>,
 }
 
 impl DesktopHost {
@@ -93,11 +96,33 @@ impl DesktopHost {
             let event = match result {
                 Ok((access, started)) => {
                     watch = started.is_some();
+                    let host_state = state.clone();
                     let replaced = {
                         let mut state = state.lock().unwrap();
-                        if state.run != run || state.stopping {
-                            // Superseded or stopped while starting:
-                            // the MC just started is nobody's.
+                        if state.run != run && !state.stopping {
+                            // Superseded while starting. The current
+                            // run may have *found* this very MC and
+                            // said Ready for it, so it is not
+                            // nobody's to stop: it becomes the
+                            // current run's, watched as its own.
+                            if let Some(started) = started {
+                                match adopt_started(&mut state, started) {
+                                    Ok(current) => {
+                                        drop(state);
+                                        watch_mc(current, host_state.clone(), events.clone());
+                                    }
+                                    Err(mut started) => {
+                                        // The current run owns another.
+                                        drop(state);
+                                        started.stop(Duration::from_millis(1_500));
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        if state.stopping {
+                            // Stopped while starting: the MC just
+                            // started is nobody's.
                             drop(state);
                             if let Some(mut started) = started {
                                 started.stop(Duration::from_millis(1_500));
@@ -171,41 +196,68 @@ fn launch(
     }
 }
 
+/// Gives a superseded run's started MC to the current run, which
+/// may be running on it as a found one: Ok with the current run,
+/// whose watch then follows it. Err hands it back to be stopped
+/// when the current run already owns an MC of its own.
+fn adopt_started(state: &mut State, started: StartedMc) -> Result<u64, StartedMc> {
+    if state.mc.is_some() {
+        return Err(started);
+    }
+    state.mc = Some(started);
+    Ok(state.run)
+}
+
 /// Reports the started MC's end, unless the shell stopped it or
 /// another MC holds its files (then the shell's MC is that one, with
 /// the same files' token, and it carries on).
 fn watch_mc(run: u64, state: Arc<Mutex<State>>, events: Events) {
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(200));
-            let status = {
-                let mut state = state.lock().unwrap();
-                if state.run != run || state.stopping {
-                    return;
-                }
-                match state.mc.as_mut().and_then(StartedMc::try_wait) {
-                    Some(status) => {
-                        state.mc.take();
-                        status
-                    }
-                    None => continue,
-                }
-            };
-            let code = mc_launcher::exit_code(status);
-            if code == mc_launcher::HOME_IN_USE {
-                return;
-            }
-            events(Event::Failed(format!(
-                "The MC exited (code {code}, {}). Restart HAL-C2 to reconnect.",
-                if status.code().is_some() {
-                    "normal exit"
-                } else {
-                    "crashed"
-                }
-            )));
+    {
+        let mut state = state.lock().unwrap();
+        if state.watching_run == Some(run) {
             return;
         }
+        state.watching_run = Some(run);
+    }
+    std::thread::spawn(move || {
+        watch_loop(run, &state, &events);
+        let mut state = state.lock().unwrap();
+        if state.watching_run == Some(run) {
+            state.watching_run = None;
+        }
     });
+}
+
+fn watch_loop(run: u64, state: &Arc<Mutex<State>>, events: &Events) {
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        let status = {
+            let mut state = state.lock().unwrap();
+            if state.run != run || state.stopping {
+                return;
+            }
+            match state.mc.as_mut().and_then(StartedMc::try_wait) {
+                Some(status) => {
+                    state.mc.take();
+                    status
+                }
+                None => continue,
+            }
+        };
+        let code = mc_launcher::exit_code(status);
+        if code == mc_launcher::HOME_IN_USE {
+            return;
+        }
+        events(Event::Failed(format!(
+            "The MC exited (code {code}, {}). Restart HAL-C2 to reconnect.",
+            if status.code().is_some() {
+                "normal exit"
+            } else {
+                "crashed"
+            }
+        )));
+        return;
+    }
 }
 
 fn executable_dir() -> PathBuf {
@@ -499,5 +551,45 @@ mod tests {
             !mc_launcher::process_is_alive(sleeper),
             "the started MC outlived the stop"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_superseded_runs_mc_is_adopted_not_stopped() {
+        // The current run may have found this MC (through its
+        // runtime record) and said Ready for it: the superseded
+        // run hands it over instead of stopping it underneath.
+        let fake = || {
+            mc_launcher::start_mc(
+                &mc_launcher::Launch {
+                    command: "sh".into(),
+                    args: vec!["-c".into(), "sleep 60".into()],
+                    cwd: None,
+                },
+                4123,
+                None,
+                Path::new("node"),
+            )
+            .unwrap()
+        };
+        let mut state = State {
+            run: 2,
+            ..State::default()
+        };
+        let adopted = fake();
+        let adopted_origin = adopted.origin.clone();
+        assert!(matches!(adopt_started(&mut state, adopted), Ok(2)));
+        assert_eq!(
+            state.mc.as_ref().map(|mc| mc.origin.as_str()),
+            Some(adopted_origin.as_str())
+        );
+        // With an MC of its own in place, the next superseded one
+        // is handed back (the caller stops it; here its Drop does).
+        let spare = fake();
+        assert!(adopt_started(&mut state, spare).is_err());
+        // The adopted one is the host's to stop, as its own.
+        let mut mc = state.mc.take().unwrap();
+        mc.stop(Duration::from_secs(2));
+        assert!(mc.try_wait().is_some());
     }
 }
