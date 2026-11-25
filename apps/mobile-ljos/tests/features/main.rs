@@ -20,8 +20,8 @@
 //! RATCHET holds the ids (`<file>: <name>`) of the scenarios that pass:
 //! the run fails when one of them does not, and `--raise` adds the ones
 //! that newly pass (only while none of the held ones fails). The ledger
-//! does not count this runner yet (features:check is H3); the ratchet
-//! is this shell's own proof, as desktop-ljos's was first.
+//! counts this RATCHET as the mobile surface's proof beside mobile-qt's
+//! globs (mise-tasks/features/check), as it counts desktop-ljos's.
 //!
 //! The Gherkin reader is desktop-ljos's, included where it lives so
 //! both runs name and pick the same scenarios.
