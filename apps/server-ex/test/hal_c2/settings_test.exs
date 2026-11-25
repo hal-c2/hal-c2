@@ -31,6 +31,19 @@ defmodule HalC2.SettingsTest do
     assert {^doc, 0} = Settings.get()
   end
 
+  test "a write queued by the release before writers were named is a client's" do
+    doc = %{"enableAssistantStreaming" => false}
+    assert {:ok, 1} = GenServer.call(Settings, {:put, doc, 0})
+    assert {:error, :stale} = GenServer.call(Settings, {:put, %{"other" => true}, 0})
+
+    off = Map.put(doc, "plugins", %{"jira-tools" => %{"enabled" => false}})
+
+    assert {:error, %{"_tag" => "ServerSettingsError"}} =
+             GenServer.call(Settings, {:put, off, 1})
+
+    assert {^doc, 1} = Settings.get()
+  end
+
   test "agents use the provider's own subagents until the setting says HAL-C2 workers" do
     refute Settings.hal_c2_subagents?()
 

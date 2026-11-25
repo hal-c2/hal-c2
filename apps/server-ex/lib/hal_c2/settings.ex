@@ -786,6 +786,11 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version, _writer}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
+  # A write the release before writers were named queued across an in-place upgrade.
+  # Only clients wrote through `put` then.
+  def handle_call({:put, settings, version}, from, state),
+    do: handle_call({:put, settings, version, :client}, from, state)
+
   def handle_call({:edit_keybindings, fun}, _from, state) do
     case edit_keybindings_file(fun) do
       {:ok, rules} ->

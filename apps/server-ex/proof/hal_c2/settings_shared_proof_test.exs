@@ -30,6 +30,7 @@ defmodule HalC2.SettingsSharedProofTest do
       "HalC2.Settings.Shared.newest/1" => "stamp",
       "HalC2.Settings.Shared.apply/2" => "merge",
       "HalC2.Settings handle_call {:put, _, _, _}" => "put",
+      "HalC2.Settings handle_call {:put, _, _}" => "put",
       "HalC2.Settings handle_call {:update, _}" => "put",
       "HalC2.Settings handle_call {:edit_keybindings, _}" => "put",
       "HalC2.Settings handle_cast {:merge_shared, _}" => ~w(put merge),
