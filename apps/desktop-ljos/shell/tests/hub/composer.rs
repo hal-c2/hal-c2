@@ -129,6 +129,12 @@ fn an_access_pick_shows_while_its_answer_is_on_its_way() {
     let sent = commands(&hub);
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["type"], "thread.runtime-mode.set");
+    // Accepted at a version the shell has yet to reach: the pick still shows.
+    hub.mc.answer(
+        &hub.engine,
+        DISPATCH,
+        Ok(json!({"shell": {"mc": "a", "epoch": "e", "rev": 2}})),
+    );
     assert_eq!(
         hub.published("composer")["runtimeMode"],
         "approval-required"
