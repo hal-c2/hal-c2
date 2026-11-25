@@ -16,12 +16,13 @@ The desktop-ljos shell's runner (apps/desktop-ljos/shell/tests/features)
 runs those globs too, and every file whose leading comment block names
 it: behaviour only that shell has, such as its bounded side streams.
 The Ljós shells also hold the ids that pass there in their RATCHETs
-(desktop-ljos's and mobile-ljos's tests/features/RATCHET); a scenario a
-RATCHET holds is proven on that surface as a glob-selected one is, and
-a RATCHET id that names no scenario fails here, where a rename is seen.
-During the transition the Qt globs and the RATCHETs both count (#1661
-step 4): a missing tst_Features.cpp leaves its surface to its RATCHET
-alone, and what only Qt still proves is then reported, not hidden.
+(desktop-ljos's and mobile-ljos's tests/features/RATCHET); a RATCHET id
+that names no scenario fails here, where a rename is seen. While a
+surface's tst_Features.cpp is there, the Ljós run's default scope is its
+globs, so a held id outside them fails here too, as that run fails it
+(missing). A missing tst_Features.cpp leaves its surface to its RATCHET
+alone (#1661 step 4), and what only Qt still proves is then reported,
+not hidden.
 
 Exit 1 while such a scenario remains; --fix writes the missing
 '@backlog-<surface>' tags (at the widest true scope: the scenario, its
@@ -103,6 +104,30 @@ def ratchet_ids(path: Path) -> set[str]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
+
+
+def scenario_globs(surface: str) -> list[str]:
+    """What the desktop-ljos runner's default run adds to the globs, as
+    its default_globs does: tst_Scenarios.qml's `// Scenario: name
+    (features/file)` comments and the qt-scenarios.feature files whose
+    sources name it. tst_Scenarios.qml proves them on Qt as well."""
+    qml = ROOT / "apps/desktop-qt/tests/tst_Scenarios.qml"
+    if surface != "desktop" or not qml.exists():
+        return []
+    text = qml.read_text(encoding="utf-8")
+    globs = [
+        f"{m[1]}:{m[0]}"
+        for m in re.findall(r"//\s*Scenario:\s*(.+?)\s*\(features/([^)]+\.feature)\)", text)
+    ]
+    for path in sorted(FEATURES.glob("*/qt-scenarios.feature")):
+        head = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("#"):
+                break
+            head.append(line)
+        if any("tests/tst_Scenarios.qml" in line for line in head):
+            globs.append(path.relative_to(FEATURES).as_posix())
+    return globs
 
 
 def runner_globs(path: Path) -> list[str]:
@@ -272,10 +297,11 @@ def analyse():
     ambiguous: list[tuple[str, Row, str]] = []
     unmatched: dict[str, list[str]] = {}
     stale: dict[str, list[str]] = {}
+    unrun: dict[str, list[str]] = {}
     known_ids = {f"{rel}: {row.name}" for rel, rows in all_rows.items() for row in rows}
 
     for surface in SURFACES:
-        globs = runner_globs(RUNNERS[surface])
+        globs = runner_globs(RUNNERS[surface]) + scenario_globs(surface)
         wants = []  # (file regex, name regex or None for all, glob)
         for glob in globs:
             file_part, colon, name_part = glob.partition(":")
@@ -291,12 +317,23 @@ def analyse():
         unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
         ratchet = ratchet_ids(RATCHETS[surface])
         row_ids = ratchet_row_ids(all_rows, surface)
+        runner = HEADER_RUNNERS.get(surface)
+        if runner:
+            for rel, rows in all_rows.items():
+                if header_names(FEATURES / rel, runner):
+                    selected.update(id(row) for row in rows)
         stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
         held: set[int] = set()
         for rel, rows in all_rows.items():
             for row in rows:
                 if row_ids.get(id(row)) in ratchet:
                     held.add(id(row))
+        # While tst_Features.cpp is there, the Ljós run's default scope is
+        # its globs, and a held id outside them fails that run as missing:
+        # it is reported here, not counted.
+        if RUNNERS[surface].exists():
+            unrun[surface] = sorted(row_ids[i] for i in held - selected)
+            held &= selected
         selected |= held
         # Backlogging a scenario renumbers the later ones of its name in
         # its file (`#2` becomes the bare id), so a held one among them
@@ -311,11 +348,6 @@ def analyse():
             group = same_name.get(f"{row.rel}: {row.name}", [])
             at = next((i for i, r in enumerate(group) if r is row), len(group))
             return any(id(r) in held for r in group[at + 1 :])
-        runner = HEADER_RUNNERS.get(surface)
-        if runner:
-            for rel, rows in all_rows.items():
-                if header_names(FEATURES / rel, runner):
-                    selected.update(id(row) for row in rows)
 
         def tag_at(rel, line, row):
             retag.setdefault((rel, line), {}).setdefault(surface, []).append(row)
@@ -365,10 +397,10 @@ def analyse():
                     else:
                         for r in un:
                             tag_at(rel, ex_line, r)
-    return retag, ambiguous, unmatched, stale
+    return retag, ambiguous, unmatched, stale, unrun
 
 
-def describe(retag, ambiguous, unmatched, stale) -> list[str]:
+def describe(retag, ambiguous, unmatched, stale, unrun) -> list[str]:
     out = []
     for surface in SURFACES:
         rows = sorted(
@@ -398,6 +430,13 @@ def describe(retag, ambiguous, unmatched, stale) -> list[str]:
                 f"(a renamed or removed scenario; the Ljós run fails it as regressed):"
             )
             for entry in stale[surface]:
+                out.append(f"  {entry}")
+        if unrun.get(surface):
+            out.append(
+                f"@{surface}: {len(unrun[surface])} RATCHET id(s) name a scenario no default glob selects "
+                f"(the default Ljós run fails them as missing; add a glob or drop the id):"
+            )
+            for entry in unrun[surface]:
                 out.append(f"  {entry}")
         if unmatched.get(surface):
             out.append(
@@ -430,13 +469,13 @@ def apply_fix(retag) -> None:
 
 def main() -> int:
     fix = "--fix" in sys.argv[1:]
-    retag, ambiguous, unmatched, stale = analyse()
+    retag, ambiguous, unmatched, stale, unrun = analyse()
     if fix and retag:
         apply_fix(retag)
         n = sum(len({id(r) for per in [p] for r in per.get(s, [])}) for p in retag.values() for s in SURFACES)
         print(f"features:check: retagged {n} scenario(s) at {len(retag)} tag line(s)")
-        retag, ambiguous, unmatched, stale = analyse()
-    lines = describe(retag, ambiguous, unmatched, stale)
+        retag, ambiguous, unmatched, stale, unrun = analyse()
+    lines = describe(retag, ambiguous, unmatched, stale, unrun)
     if lines:
         print("\n".join(lines))
         if not fix and retag:
