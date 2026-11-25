@@ -28,7 +28,9 @@ Exit 1 while such a scenario remains; --fix writes the missing
 outline, or the Examples table that is unselected) and then re-checks.
 An outline some of whose rows a glob names and some not cannot be
 retagged without splitting its Examples table; those are reported as
-ambiguous and left for a person.
+ambiguous and left for a person, as is an unselected scenario sharing
+its name with a later held one in its file: backlogging it would
+renumber the held one's RATCHET id.
 """
 
 import re
@@ -260,14 +262,14 @@ def header_names(path: Path, runner: str) -> bool:
 def analyse():
     """Returns (retag, ambiguous, unmatched): retag maps
     (file, 1-based target line) -> {surface: [rows it covers]};
-    ambiguous carries (surface, row) a person must resolve."""
+    ambiguous carries (surface, row, why) a person must resolve."""
     all_rows: dict[str, list[Row]] = {}
     for path in sorted(FEATURES.rglob("*.feature")):
         rel = path.relative_to(FEATURES).as_posix()
         all_rows[rel] = parse_feature(path, rel)
 
     retag: dict[tuple[str, int], dict[str, list[Row]]] = {}
-    ambiguous: list[tuple[str, Row]] = []
+    ambiguous: list[tuple[str, Row, str]] = []
     unmatched: dict[str, list[str]] = {}
     stale: dict[str, list[str]] = {}
     known_ids = {f"{rel}: {row.name}" for rel, rows in all_rows.items() for row in rows}
@@ -290,10 +292,25 @@ def analyse():
         ratchet = ratchet_ids(RATCHETS[surface])
         row_ids = ratchet_row_ids(all_rows, surface)
         stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
+        held: set[int] = set()
         for rel, rows in all_rows.items():
             for row in rows:
                 if row_ids.get(id(row)) in ratchet:
-                    selected.add(id(row))
+                    held.add(id(row))
+        selected |= held
+        # Backlogging a scenario renumbers the later ones of its name in
+        # its file (`#2` becomes the bare id), so a held one among them
+        # would lose its RATCHET entry: those are left for a person.
+        same_name: dict[str, list[Row]] = {}
+        for rel, rows in all_rows.items():
+            for row in rows:
+                if claimed(row, surface):
+                    same_name.setdefault(f"{rel}: {row.name}", []).append(row)
+
+        def shifts_held(row):
+            group = same_name.get(f"{row.rel}: {row.name}", [])
+            at = next((i for i, r in enumerate(group) if r is row), len(group))
+            return any(id(r) in held for r in group[at + 1 :])
         runner = HEADER_RUNNERS.get(surface)
         if runner:
             for rel, rows in all_rows.items():
@@ -307,7 +324,10 @@ def analyse():
             plain = [r for r in rows if r.outline_line is None]
             for row in plain:
                 if claimed(row, surface) and id(row) not in selected:
-                    tag_at(rel, row.line, row)
+                    if shifts_held(row):
+                        ambiguous.append((surface, row, "renumber"))
+                    else:
+                        tag_at(rel, row.line, row)
             outlines: dict[int, list[Row]] = {}
             for row in rows:
                 if row.outline_line is not None:
@@ -327,8 +347,11 @@ def analyse():
                     and (already_backlogged(r, surface) or (claimed(r, surface) and id(r) not in selected))
                     for r in orows
                 ) and any(claimed(r, surface) and id(r) not in selected for r in orows):
-                    for r in orows:
-                        if claimed(r, surface) and id(r) not in selected:
+                    un = [r for r in orows if claimed(r, surface) and id(r) not in selected]
+                    if any(shifts_held(r) for r in un):
+                        ambiguous += [(surface, r, "renumber") for r in un]
+                    else:
+                        for r in un:
                             tag_at(rel, outline_line, r)
                     continue
                 for ex_line, brows in blocks.items():
@@ -336,7 +359,9 @@ def analyse():
                     if not un:
                         continue
                     if any(claimed(r, surface) and id(r) in selected for r in brows):
-                        ambiguous += [(surface, r) for r in un]
+                        ambiguous += [(surface, r, "outline") for r in un]
+                    elif any(shifts_held(r) for r in un):
+                        ambiguous += [(surface, r, "renumber") for r in un]
                     else:
                         for r in un:
                             tag_at(rel, ex_line, r)
@@ -350,7 +375,8 @@ def describe(retag, ambiguous, unmatched, stale) -> list[str]:
             {id(r): r for per in retag.values() for r in per.get(surface, [])}.values(),
             key=lambda r: (r.rel, r.line, r.name),
         )
-        amb = [r for s, r in ambiguous if s == surface]
+        amb = [r for s, r, why in ambiguous if s == surface and why == "outline"]
+        renumber = [r for s, r, why in ambiguous if s == surface and why == "renumber"]
         if rows or amb:
             out.append(f"@{surface}: {len(rows)} scenario(s) claimed passing but no glob selects and no RATCHET holds:")
             for r in rows:
@@ -358,6 +384,13 @@ def describe(retag, ambiguous, unmatched, stale) -> list[str]:
         if amb:
             out.append(f"@{surface}: {len(amb)} ambiguous outline row(s) (a glob names sibling rows):")
             for r in amb:
+                out.append(f"  features/{r.rel}:{r.line} {r.name}")
+        if renumber:
+            out.append(
+                f"@{surface}: {len(renumber)} unselected scenario(s) share a name with a later held one "
+                f"(backlogging it renumbers that one's RATCHET id; rename one, or move the id by hand):"
+            )
+            for r in renumber:
                 out.append(f"  features/{r.rel}:{r.line} {r.name}")
         if stale.get(surface):
             out.append(
