@@ -136,7 +136,7 @@ struct Options {
     url: Option<String>,
     app_id: Option<String>,
     host: desktop_host::Options,
-    /// `--licenses`, which the manifest beside the host does not replace.
+    /// `--licenses`, which this app's own default manifest does not replace.
     licenses_given: bool,
     /// The folders the launch names, as absolute paths.
     folders: Vec<String>,
@@ -314,10 +314,10 @@ fn parse() -> Result<Options, String> {
         desktop_host::source_mc(),
         node,
     ));
-    // Staged with the release (scripts/stage-runtime.mjs), or `vp run
-    // licenses`'s apps/desktop-qt/licenses/ in a checkout.
+    // This app's own manifest (desktop_host::default_licenses), staged by
+    // its own licenses script, not desktop-qt's beside the host.
     if !o.licenses_given {
-        o.launch.licenses_manifest = Some(desktop_host::licenses_default(&executable_dir, RELEASE));
+        o.launch.licenses_manifest = Some(desktop_host::default_licenses(&executable_dir, RELEASE));
     }
     // The folders are the shell's own; the rest is the host's (connect_to).
     let (folders, rest) = hal_c2_shell::launch_folders(&positional);

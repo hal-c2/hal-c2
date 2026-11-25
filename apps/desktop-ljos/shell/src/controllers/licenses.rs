@@ -1,7 +1,7 @@
 //! `licenses`, desktop-qt's LicensesController: Settings → Open source
 //! licenses, the third-party notices this app ships, read from the manifest
-//! staged beside it (scripts/third-party-licenses.ts writes it;
-//! [`set_manifest_path`] says where). No MC is asked, so it reads with none
+//! staged beside it (this app's scripts/third-party-licenses.ts writes it
+//! from its own Cargo.lock; [`set_manifest_path`] says where). No MC is asked, so it reads with none
 //! connected. The manifest is read when the page opens, and again on retry.
 //!
 //! Publishes `licenses`: {status: loading | ready | error, message, query,
@@ -40,6 +40,7 @@ fn bundle_label(bundle: &str) -> &str {
         "android" => "Android",
         "assets" => "Assets",
         "desktop" => "Desktop",
+        "desktop-ljos" => "Desktop",
         "desktop-qt" => "Qt desktop",
         "device-tools" => "Device tools",
         "ios" => "iOS",

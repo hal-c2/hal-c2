@@ -86,8 +86,11 @@ else
   cp -R "$target/locales" "$bin/"
 fi
 
-# The host, Node, the MC and the licenses, as desktop-qt's packages stage them.
+# The host, Node and the MC, as desktop-qt's packages stage them.
 node apps/desktop-qt/scripts/stage-runtime.mjs "$share"
+# stage-runtime writes desktop-qt's license manifest; this app ships its
+# own, from its Cargo.lock and CEF (apps/desktop-ljos/scripts).
+node apps/desktop-ljos/scripts/third-party-licenses.ts "$share/licenses/third-party-licenses.json"
 if [[ $os == Linux ]]; then
   # Snap Shot: GNOME's extension and the KDE Plasma and Hyprland capture helpers,
   # where src/snap_shot finds them beside bin/.
