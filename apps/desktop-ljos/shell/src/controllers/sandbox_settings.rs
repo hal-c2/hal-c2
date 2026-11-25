@@ -23,8 +23,9 @@
 //! says why). `confirm` asks before an operation this page asked for stops
 //! this MC's reviews (or runs without knowing whether it would); a yes names
 //! the reviews it asked about (`drain`), and the MC asks again when others
-//! run by then (`sandboxes-changed`). `refusal` also says when the MC
-//! restarted before the run this page asked for told how it went.
+//! run by then (`sandboxes-changed`). `refusal` also says when the MC lost
+//! track of the run this page asked for before it told how it went (it
+//! restarted, or a later run replaced it unseen).
 //!
 //! Actions: `sandboxSettings.refresh`, `sandboxSettings.run` {operation},
 //! `sandboxSettings.confirm`, `sandboxSettings.cancel`.
@@ -161,7 +162,10 @@ impl Controller for SandboxSettings {
                 }
             }
             "sandboxSettings.confirm" => {
-                if !self.confirm_operation.is_empty() {
+                // As a press of an action: not while one runs (another
+                // device may have started one since the page asked). The
+                // question stays, to confirm once that run ends.
+                if !self.confirm_operation.is_empty() && !self.busy() {
                     let operation = std::mem::take(&mut self.confirm_operation);
                     let flags = std::mem::replace(&mut self.confirm_flags, json!({}));
                     self.confirm_text.clear();
@@ -432,7 +436,9 @@ impl SandboxSettings {
     // read again for each run seen ended, once, whether or not this page saw
     // it run (it may have ended on another device while the connection was
     // down), and for a run this page saw going that went with a restart
-    // (`ended`).
+    // (`ended`), and when a frame's number went back across a restart
+    // (`back`, through `settle`): what that MC has installed may differ from
+    // what the one before it said, run or no run seen going.
     fn reread(&mut self, engine: &Engine, next: &Json, ended: bool) -> bool {
         let number = run_of(next);
         if !self.open
@@ -464,18 +470,22 @@ impl SandboxSettings {
             self.answer(&operation, &result);
         } else if !self.asked.is_empty()
             && self.awaited >= 0
-            && (back || (operation.is_empty() && run_of(next) > self.awaited))
+            && (back || run_of(next) > self.awaited)
         {
-            // A frame with no operation is from an MC that has run none since
-            // it started, and its number is when it started. Above the run's
-            // number, it started after the run did: it restarted, and the
-            // run's outcome went with the old one. Whether the run's work got
-            // done is unknown, so the words promise no retry.
+            // A frame numbered above the run's is not it: with no operation
+            // it is from an MC that has run none since it started, its
+            // number is when it started, and above the run's number it
+            // started after the run did — it restarted, and the run's
+            // outcome went with the old one; with an operation it is a later
+            // run (this page was away while its own ended and another
+            // device's followed), and its own run's outcome went unseen
+            // either way. Whether the run's work got done is unknown, so
+            // the words promise no retry.
             self.asked.clear();
             self.refusal =
                 "The MC lost track of the run; check the status before trying again.".into();
         }
-        if !self.reread(engine, next, ended) {
+        if !self.reread(engine, next, ended || back) {
             self.publish(engine);
         }
     }
