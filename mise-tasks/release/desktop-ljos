@@ -10,7 +10,14 @@ arch="${arch/x86_64/x64}"
 arch="${arch/aarch64/arm64}"
 case "$os" in
   Linux) platform="linux-$arch" ;;
-  Darwin) platform="darwin-$arch" ;;
+  Darwin)
+    platform="darwin-$arch"
+    # The bundle below takes CEF's framework from it; say so before the build.
+    if [[ -z ${CEF_PATH:-} ]]; then
+      echo "release:desktop-ljos on macOS needs CEF_PATH: the CEF distribution the cef crate builds against." >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "release:desktop-ljos builds on Linux and macOS only." >&2
     exit 1
