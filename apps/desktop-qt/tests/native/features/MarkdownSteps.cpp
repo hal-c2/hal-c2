@@ -50,6 +50,9 @@ struct Seen {
   // The code block's colours: its fence, and the colours it had before.
   QString fence;
   QList<QColor> colours;
+  // Where the table under a line of text was put: "at the top level",
+  // "inside a list item" or "inside a quote".
+  QString tablePlace;
   std::shared_ptr<QSignalSpy> readings;
   std::shared_ptr<QSignalSpy> colouring;
 };
@@ -468,6 +471,7 @@ const Steps steps([] {
          // unindented, the table's first line interrupts the item
          // (markdown.js's interrupts) and the table is top-level.
          const QString table = QStringLiteral("x | y\n--|--\n1 | 2");
+         world.mc.part<Seen>().tablePlace = c[0];
          if (c[0] == QLatin1String("at the top level")) {
            answer(world, QStringLiteral("Text before\n") + table);
          } else if (c[0] == QLatin1String("inside a list item")) {
@@ -482,20 +486,27 @@ const Steps steps([] {
     QQuickItem* message = reply(world);
     world.waitFor([&] { return within(message, QStringLiteral("tableCell")).size() == 4; },
                   [&] { return QStringLiteral("the table's 4 cells, in a reply drawn as %1").arg(kindsOf(message).join(QStringLiteral(", "))); });
-    bool inList = false;
     for (QQuickItem* prose : within(message, QStringLiteral("markdownProse"))) {
       const QString shown = plain(prose);
       expect(!shown.contains(QLatin1Char('|')), QStringLiteral("the table runs on in the paragraph \"%1\"").arg(shown));
-      inList |= shown.contains(QLatin1String("item"));
     }
     // Inside a list item the table is drawn at the item's indent, not at the
-    // margin as a top-level table is.
-    if (inList) {
+    // margin as a top-level table is. Which shape was sent comes from the
+    // When step, not from the drawn prose: if the item stopped being drawn
+    // as prose, guessing from its text would skip this check.
+    const QString place = world.mc.part<Seen>().tablePlace;
+    expect(!place.isEmpty(), QStringLiteral("the table's place was not recorded"));
+    if (place == QLatin1String("inside a list item")) {
+      QQuickItem* table = nullptr;
       for (QQuickItem* segment : within(message, QStringLiteral("markdownSegment"))) {
-        if (segment->property("kind").toString() != QLatin1String("table")) continue;
-        const qreal indent = segment->property("indent").toReal();
-        expect(indent > 0, QStringLiteral("the table is drawn at indent %1, outside the list item").arg(indent));
+        if (segment->property("kind").toString() == QLatin1String("table")) {
+          table = segment;
+          break;
+        }
       }
+      expect(table, QStringLiteral("no table segment in the reply"));
+      const qreal indent = table->property("indent").toReal();
+      expect(indent > 0, QStringLiteral("the table is drawn at indent %1, outside the list item").arg(indent));
     }
   });
   step(QStringLiteral("the agent's reply has a table"), [](World& world, const Captures&, const Table&) {

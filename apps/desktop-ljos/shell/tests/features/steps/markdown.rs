@@ -32,6 +32,9 @@ struct Seen {
     // The code block's colours: its fence, and the colours it had before.
     fence: String,
     colours: Vec<Option<ljos::prelude::Color>>,
+    // Where the table under a line of text was put: "at the top level",
+    // "inside a list item" or "inside a quote".
+    table_place: String,
 }
 
 fn name_of(engine: &Engine, item: ObjectId) -> String {
@@ -1004,6 +1007,7 @@ pub fn register(steps: &mut Steps) {
                 "inside a quote" => format!("> quote\n{table}"),
                 other => fail!("unknown place for a table: {other}"),
             };
+            world.part::<Seen>().table_place = c[0].clone();
             answer(world, &text)
         },
     );
@@ -1020,18 +1024,21 @@ pub fn register(steps: &mut Steps) {
                     )
                 },
             )?;
-            let mut in_list = false;
             for prose in within(world, message, "markdownProse") {
                 let shown = plain(world, prose)?;
                 expect!(
                     !shown.contains('|'),
                     "the table runs on in the paragraph \"{shown}\""
                 );
-                in_list |= shown.contains("item");
             }
             // Inside a list item the table is drawn at the item's indent,
-            // not at the margin as a top-level table is.
-            if in_list {
+            // not at the margin as a top-level table is. Which shape was
+            // sent comes from the When step, not from the drawn prose: if
+            // the item stopped being drawn as prose, guessing from its
+            // text would skip this check.
+            let place = world.part::<Seen>().table_place.clone();
+            expect!(!place.is_empty(), "the table's place was not recorded");
+            if place == "inside a list item" {
                 let Some(table) = within(world, message, "markdownSegment")
                     .into_iter()
                     .find(|&segment| str_of(world, segment, "kind") == "table")
