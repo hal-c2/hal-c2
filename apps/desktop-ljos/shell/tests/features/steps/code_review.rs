@@ -33,6 +33,8 @@ struct FakeCodeReview {
     activation: String,
     order: Vec<String>,
     reviews: std::collections::HashMap<String, Json>,
+    /// Until when reviews are paused, as ISO 8601, or empty.
+    paused_until: String,
 }
 
 impl Default for FakeCodeReview {
@@ -43,6 +45,7 @@ impl Default for FakeCodeReview {
             activation: "selective".into(),
             order: Vec::new(),
             reviews: Default::default(),
+            paused_until: String::new(),
         }
     }
 }
@@ -88,7 +91,19 @@ fn publish(mc: &mut FakeMc) -> Outcome {
         }
         reviews.push(review);
     }
-    let reviews = json!({"reviews": reviews, "problem": null, "unwatched": [],
+    let paused = !fake.paused_until.is_empty();
+    let reviews = json!({"reviews": reviews,
+                         "problem": if paused {
+                             json!("Reviews are paused: the agent hit its usage limit.")
+                         } else {
+                             Json::Null
+                         },
+                         "pausedUntil": if paused {
+                             json!(fake.paused_until)
+                         } else {
+                             Json::Null
+                         },
+                         "unwatched": [],
                          "watching": fake.watching, "activation": fake.activation,
                          "checkedAt": "2026-10-07T09:00:00Z"});
     let part = fake_plugin_part(mc, ID)?;
@@ -167,11 +182,25 @@ fn answer(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
         );
         return Ok(());
     }
+    if method == "resume" {
+        state(mc).paused_until.clear();
+        mc.reply(rpc, Json::Null);
+        return publish(mc);
+    }
     if method == "start" {
         let number = input["number"].as_i64().unwrap_or(0);
         add(mc, number, "running", "Add rate limits")["repository"] = input["repository"].clone();
         mc.reply(rpc, Json::Null);
         return publish(mc);
+    }
+    // A queued review asked for starts now, past a pause.
+    let now = method == "retry"
+        && state(mc)
+            .reviews
+            .get(&at)
+            .is_some_and(|r| r["status"] == json!("queued"));
+    if now {
+        state(mc).paused_until.clear();
     }
     let Some(review) = state(mc).reviews.get_mut(&at) else {
         mc.refuse(rpc, &format!("no review {at}"));
@@ -201,7 +230,7 @@ fn answer(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
         }
         review["comments"] = json!(comments);
     } else if method == "retry" {
-        review["status"] = json!("queued");
+        review["status"] = json!(if now { "running" } else { "queued" });
         review["elsewhere"] = Json::Null;
     } else if method == "approve" {
         review["approved"] = input["headSha"].clone();
@@ -950,6 +979,118 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+
+    steps.step(
+        &format!("reviews are paused until the usage limit resets at {Q}, with #(\\d+) queued"),
+        |world, c, _| {
+            state(&mut world.mc).paused_until = c[0].clone();
+            let number = c[1].parse::<i64>().unwrap_or(0);
+            add(&mut world.mc, number, "queued", "Add rate limits");
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(
+        "the page says when reviews start again, in the user's own time",
+        |world, _, _| {
+            let until = state(&mut world.mc).paused_until.clone();
+            let object_name = format!("codeReviewProblem:{}", world.mc.environment_id);
+            let brick = shell(world)?;
+            shown_named(world, &object_name)?;
+            world.wait_for_with(
+                |w| text_now(w, &object_name, brick).contains("They start again at"),
+                |w| {
+                    format!(
+                        "the page to say when reviews start again, not {}",
+                        text_now(w, &object_name, brick)
+                    )
+                },
+            )?;
+            // The time as the user reads it, not the MC's ISO 8601.
+            let shown = text_now(world, &object_name, brick);
+            expect!(
+                !shown.contains(&until[..16.min(until.len())]),
+                "the page shows the raw time: {shown}"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user resumes the reviews from the page",
+        |world, _, _| {
+            let resume = shown_named(
+                world,
+                &format!("codeReviewResume:{}", world.mc.environment_id),
+            )?;
+            click(world, resume)
+        },
+    );
+    steps.step(
+        "the MC is asked to resume them, and the page no longer says they are paused",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| asked(&w.mc, "resume").len() == 1,
+                |_| "the MC to be asked to resume".to_owned(),
+            )?;
+            let object_name = format!("codeReviewProblem:{}", world.mc.environment_id);
+            let brick = shell(world)?;
+            world.wait_for_with(
+                |w| {
+                    shown_named_now(w, brick, &object_name)
+                        .is_none_or(|line| !brick.flag(w, line, "visible"))
+                },
+                |_| "the pause to be gone from the page".to_owned(),
+            )
+        },
+    );
+
+    steps.step("the review of #(\\d+) is queued", |world, c, _| {
+        let number = c[0].parse::<i64>().unwrap_or(0);
+        add(&mut world.mc, number, "queued", "Add rate limits");
+        publish(&mut world.mc)
+    });
+    steps.step("the user asks to review it now", |world, _, _| {
+        let brick = shell(world)?;
+        let now = shown_named(world, "codeReviewRetry")?;
+        let said = brick.text_of(world, now, "text");
+        expect!(said == "Review now", "the button says {said}");
+        click(world, now)
+    });
+    steps.step(
+        "the MC is asked to review #(\\d+) now, and it is listed as running",
+        |world, c, _| {
+            let n = c[0].parse::<i64>().unwrap_or(0);
+            world.wait_for_with(
+                |w| asked(&w.mc, "retry") == [json!({"key": key(n)})],
+                |_| "the MC to be asked to review it now".to_owned(),
+            )?;
+            wait_text(world, "codeReviewStatus", "Reviewing")
+        },
+    );
+
+    steps.step(
+        &format!("the user searches the reviews for {Q}"),
+        |world, c, _| {
+            let brick = shell(world)?;
+            let search = shown_named(world, "codeReviewSearch")?;
+            brick.write(world, search, "text", Value::from(c[0].as_str()))
+        },
+    );
+    steps.step("only #(\\d+) is listed", |world, c, _| {
+        let wanted = key(c[0].parse::<i64>().unwrap_or(0));
+        let order = state(&mut world.mc).order.clone();
+        let brick = shell(world)?;
+        world.wait_for_with(
+            |w| {
+                order.iter().all(|each| {
+                    let name = format!("codeReview:{each}");
+                    let shown = matches!(brick.find(w, &name), Ok(Some(found))
+                        if brick.flag(w, found, "visible"));
+                    shown == (*each == wanted)
+                })
+            },
+            |_| format!("only #{} to be listed", c[0]),
+        )
+    });
 
     steps.step(
         "the user changed the review prompt and turned off REVIEW.md",
