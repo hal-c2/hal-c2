@@ -21,6 +21,11 @@ Item {
     // Files viewer makes of its checklists (`task:<n>` links) are kept, to be
     // ticked. A reply must never have them, or it could tick a box in a file.
     property bool trusted: false
+    // Someone else wrote the text (a pull request and its comments, a code
+    // review, a planner run's summary): its link menu offers only opening the
+    // link through linkActivated, whose owner hands it to Shell.openWebLink,
+    // and copying it. The app's own link menu would open a path in the files.
+    property bool webLinksOnly: false
     property color textColor: Theme.palette.color("inkSecondary", "#b8bdc7")
     // The prose's font: a page's heading is larger, a ticked item struck out.
     property int fontSize: Theme.type.prose.size
@@ -174,6 +179,33 @@ Item {
 
             objectName: "textMenu"
             onClosed: menu.destroy()
+        }
+    }
+
+    // A link's menu in text someone else wrote (`webLinksOnly`).
+    Component {
+        id: webLinkMenu
+
+        ShellMenu {
+            id: linkMenu
+
+            property string link: ""
+
+            objectName: "webLinkMenu"
+            onClosed: linkMenu.destroy()
+
+            ShellMenuItem {
+                objectName: "openWebLink"
+                text: qsTr("Open link")
+                // As ShellBridge::webLink, which still decides: an http or https address with a host.
+                enabled: /^https?:\/\/[^\/?#\s]+/i.test(linkMenu.link)
+                onTriggered: root.linkActivated(linkMenu.link, false)
+            }
+            ShellMenuItem {
+                objectName: "copyWebLink"
+                text: qsTr("Copy link")
+                onTriggered: Shell.setClipboardText(linkMenu.link)
+            }
         }
     }
 
@@ -405,7 +437,11 @@ Item {
         // Offers what can be done with the link under a point.
         function linkMenu(position, scenePosition) {
             const link = linkAt(position.x, position.y);
-            if (link.length > 0) {
+            if (link.length > 0 && root.webLinksOnly) {
+                webLinkMenu.createObject(root, {
+                    link: link
+                }).popup(richText, position.x, position.y);
+            } else if (link.length > 0) {
                 Shell.dispatch("link.menu", {
                     url: link,
                     x: scenePosition.x,
@@ -691,6 +727,8 @@ Item {
                             Text {
                                 id: codeLabel
                                 objectName: "codeLabel"
+                                // The fence's title and language are the text's own: never drawn as markup.
+                                textFormat: Text.PlainText
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - (seg.title.length > 0 ? 19.6 : 0)
                                 text: seg.title.length > 0 ? seg.title : seg.language.length > 0 ? seg.language : "text"
@@ -1092,6 +1130,7 @@ Item {
                                 // Before the text, which is parsed as it is set.
                                 brick.lineBreaks = Qt.binding(() => root.lineBreaks);
                                 brick.trusted = Qt.binding(() => root.trusted);
+                                brick.webLinksOnly = Qt.binding(() => root.webLinksOnly);
                                 brick.selectable = Qt.binding(() => root.selectable);
                                 brick.fontSize = Qt.binding(() => root.fontSize);
                                 brick.fontWeight = Qt.binding(() => root.fontWeight);

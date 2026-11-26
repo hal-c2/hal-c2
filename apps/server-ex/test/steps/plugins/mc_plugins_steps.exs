@@ -332,7 +332,7 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context = Fixtures.ensure(context)
     {settings, version} = HalC2.Settings.get()
     plugins = Map.put(settings["plugins"] || %{}, id, %{"enabled" => true})
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
     File.write!(Fixtures.path(context, id), Fixtures.source(id))
     Map.put(context, :plugin, id)
   end
@@ -487,6 +487,77 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   step "the previous settings are kept", context do
     before = context[:settings_before] || %{"baseUrl" => "https://git.example.com"}
     assert Fixtures.entry(context.plugin)["settings"] == before
+    context
+  end
+
+  # The real CLIProxyAPI package, whose manifest marks its binary path `exec`, and a
+  # client paired to operate but not to use the shell.
+  step "a session that may operate but not use the shell", context do
+    dir = Path.join([context.mc.home, "plugins", "cliproxyapi"])
+    File.mkdir_p!(Path.dirname(dir))
+    File.cp_r!(Path.expand("../../../../../plugins/cliproxyapi", __DIR__), dir)
+    context = context |> Fixtures.ensure() |> Fixtures.rescan()
+
+    access = Mc.pair(~w(orchestration:read orchestration:operate), "Operate only")
+
+    context
+    |> World.put_client("operator", Mc.connect_as(context.mc, access))
+    |> Map.put(:plugin, "cliproxyapi")
+    |> Map.put(:settings_before, Fixtures.entry("cliproxyapi")["settings"])
+  end
+
+  step "it saves a plugin setting that names the program the plugin runs", context do
+    {reply, context} =
+      World.call(
+        context,
+        "plugins.saveSettings",
+        %{"id" => context.plugin, "settings" => %{"binaryPath" => "/usr/bin/true"}},
+        "operator"
+      )
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the save is refused for want of the shell's scope", context do
+    assert {:error, message,
+            %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => "terminal:operate"}} =
+             context.reply
+
+    # In words the settings page can show as it is.
+    assert message =~ "cli-proxy-api binary"
+    assert message =~ "terminal:operate"
+    context
+  end
+
+  step "a client writes the settings document with {string} turned off and granted more",
+       %{args: [id]} = context do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    edited =
+      settings
+      |> put_in(["plugins", id, "enabled"], false)
+      |> update_in(["plugins", id, "granted"], &Enum.uniq((&1 || []) ++ ["slack:write"]))
+
+    {reply, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => edited, "version" => version})
+
+    context
+    |> Map.put(:reply, reply)
+    |> Map.put(:plugin, id)
+    |> Map.put(:granted_before, Fixtures.entry(id)["granted"])
+  end
+
+  step "the write is refused, naming the calls that change plugins", context do
+    assert {:error, message, %{"_tag" => "ServerSettingsError"}} = context.reply
+    assert message =~ "plugins.disable"
+    context
+  end
+
+  step "{string} still runs with what it was granted", %{args: [id]} = context do
+    assert %{"status" => "running", "enabled" => true} = entry = Fixtures.entry(id)
+    assert entry["granted"] == context.granted_before
+    refute "slack:write" in (HalC2.Settings.settings()["plugins"][id]["granted"] || [])
     context
   end
 

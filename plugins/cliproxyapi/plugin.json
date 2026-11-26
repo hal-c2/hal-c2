@@ -14,9 +14,11 @@
       "reason": "To add \"Claude via CLIProxyAPI\" and \"Codex via CLIProxyAPI\" to Settings → Providers and keep their address and key in step with the proxy. Rename, switch off or delete them like your own; one you delete stays deleted until you add it back from the plugin's page."
     }
   ],
+  "execCalls": ["signIn", "finishSignIn", "removeAccount", "toggleAccount", "addKey", "removeKey"],
   "settings": [
     {
       "key": "mode",
+      "exec": true,
       "label": "Proxy",
       "type": "choice",
       "options": [
@@ -28,6 +30,7 @@
     },
     {
       "key": "binaryPath",
+      "exec": true,
       "label": "cli-proxy-api binary",
       "type": "text",
       "default": "",
@@ -42,6 +45,7 @@
     },
     {
       "key": "url",
+      "exec": true,
       "label": "Address to connect to",
       "type": "text",
       "default": "",
@@ -49,6 +53,7 @@
     },
     {
       "key": "managementKey",
+      "exec": true,
       "label": "Management key",
       "type": "secret",
       "default": "",

@@ -44,7 +44,7 @@
 #   apps/web/src/routes/_chat.pull-requests.tsx (paging, search, carried rows, server scope, panel shortcuts, links)
 #   apps/web/src/components/pullRequest/pullRequestProjectAssignment.logic.ts, pullRequestProjectFilter.logic.test.ts
 #   apps/web/src/components/pullRequest/pullRequestPresentation.test.ts (state and conflict presentation)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Pull requests)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Pull requests)
 #   apps/desktop-qt/parity/features.backlog.test.ts (right panel pull request list)
 #   apps/desktop-qt/src/native/PullRequestListController.cpp
 #   apps/server/src/sourceControl/SourceControlRateLimit.ts (host pauses)

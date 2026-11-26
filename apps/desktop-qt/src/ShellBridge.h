@@ -47,6 +47,12 @@ public:
   Q_INVOKABLE void publish(const QString& key, const QVariant& value);
   // False when nothing could open it.
   Q_INVOKABLE bool openExternal(const QUrl& url);
+  // Opens a link from text someone else wrote (a pull request, its comments, a review) in the browser: an http or https
+  // address only, never one of the app's own links, a file or another app's. False when it is anything else, or nothing
+  // could open it.
+  Q_INVOKABLE bool openWebLink(const QUrl& url);
+  // Whether openWebLink would hand `url` to the browser.
+  static bool webLink(const QUrl& url);
   // Hands a link to another app (slack:, mailto:) to the system, the user having agreed; never a web, local or inline
   // address (PagePermissions::engineScheme). False when it is one, or nothing could open it.
   Q_INVOKABLE bool openApp(const QUrl& url);

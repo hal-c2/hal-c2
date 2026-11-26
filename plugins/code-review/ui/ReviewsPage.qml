@@ -234,6 +234,7 @@ Item {
                     Text {
                         objectName: "codeReviewWatching"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: {
                             const parts = [];
                             for (const environment of page.plugin.environments) {
@@ -367,6 +368,7 @@ Item {
                     objectName: "codeReviewRefusal"
                     Layout.fillWidth: true
                     visible: page.refusal.length > 0
+                    textFormat: Text.PlainText
                     text: page.refusal
                     color: page.errorColor
                     wrapMode: Text.Wrap
@@ -440,6 +442,7 @@ Item {
                             leftPadding: 16
                             topPadding: entry.index > 0 ? 14 : 10
                             bottomPadding: 4
+                            textFormat: Text.PlainText
                             text: page.statusText(entry.modelData.status)
                             color: page.muted
                             font.pixelSize: Theme.type.caption.size
@@ -489,6 +492,7 @@ Item {
 
                                     Text {
                                         visible: text.length > 0
+                                        textFormat: Text.PlainText
                                         text: page.verdictText(row.modelData.verdict)
                                         color: page.verdictColor(row.modelData.verdict)
                                         font.pixelSize: Theme.type.caption.size
@@ -529,6 +533,7 @@ Item {
                         anchors.centerIn: parent
                         width: parent.width - 48
                         visible: page.shown.length === 0
+                        textFormat: Text.PlainText
                         text: page.reviews.length === 0 ? qsTr("No reviews yet. Pick repositories to watch in the plugin's settings, or start a review above.") : qsTr("No pull request matches %1.").arg(page.query.trim())
                         color: page.muted
                         wrapMode: Text.Wrap
@@ -675,6 +680,7 @@ Item {
 
                         Text {
                             objectName: "codeReviewStatus"
+                            textFormat: Text.PlainText
                             text: {
                                 const review = findings.review;
                                 if (!review)
@@ -692,13 +698,14 @@ Item {
                         Text {
                             objectName: "codeReviewVerdict"
                             visible: text.length > 0
+                            textFormat: Text.PlainText
                             text: page.verdictText(findings.review?.verdict)
                             color: page.verdictColor(findings.review?.verdict)
                             font.pixelSize: Theme.type.meta.size
                             font.weight: Font.DemiBold
                         }
 
-                        // The agent of an untrusted pull request runs in an OpenShell sandbox.
+                        // A review whose agent ran in an OpenShell sandbox: every review, unless the user reviews trusted pull requests here.
                         Text {
                             objectName: "codeReviewSandboxed"
                             visible: findings.review?.sandboxed === true
@@ -827,10 +834,11 @@ Item {
                         }
 
                         ShellButton {
+                            objectName: "codeReviewOpenOnGitHub"
                             subtle: true
                             visible: (findings.review?.url ?? "").length > 0
                             text: qsTr("Open on GitHub")
-                            onClicked: Qt.openUrlExternally(findings.review.url)
+                            onClicked: Shell.openWebLink(findings.review.url)
                         }
 
                         ShellButton {
@@ -892,18 +900,17 @@ Item {
                         font.weight: Font.DemiBold
                     }
 
-                    TextEdit {
+                    // A review agent wrote this, from a pull request anyone can open: shown through the brick for untrusted
+                    // Markdown (no HTML, no images loaded), and its links open only on the web.
+                    Markdown {
                         objectName: "codeReviewSummary"
                         Layout.fillWidth: true
                         visible: (findings.review?.summary ?? "").length > 0
-                        readOnly: true
-                        selectByMouse: true
-                        textFormat: TextEdit.MarkdownText
                         text: findings.review?.summary ?? ""
-                        color: page.foreground
-                        wrapMode: TextEdit.Wrap
-                        font.pixelSize: Theme.type.body.size
-                        onLinkActivated: link => Qt.openUrlExternally(link)
+                        textColor: page.foreground
+                        fontSize: Theme.type.body.size
+                        webLinksOnly: true
+                        onLinkActivated: link => Shell.openWebLink(link)
                     }
 
                     Repeater {
@@ -922,6 +929,7 @@ Item {
                             spacing: 4
 
                             Text {
+                                textFormat: Text.PlainText
                                 text: section.modelData.title
                                 color: page.muted
                                 font.pixelSize: Theme.type.caption.size
@@ -943,6 +951,7 @@ Item {
 
                     Text {
                         visible: (findings.review?.comments ?? []).length > 0
+                        textFormat: Text.PlainText
                         text: findings.open ? qsTr("Comments, posted on their lines when you publish") : qsTr("Comments")
                         color: page.muted
                         font.pixelSize: Theme.type.caption.size
@@ -1000,16 +1009,14 @@ Item {
                                     }
                                 }
 
-                                TextEdit {
+                                Markdown {
+                                    objectName: "codeReviewCommentBody"
                                     Layout.fillWidth: true
-                                    readOnly: true
-                                    selectByMouse: true
-                                    textFormat: TextEdit.MarkdownText
                                     text: comment.modelData.body
-                                    color: page.foreground
-                                    wrapMode: TextEdit.Wrap
-                                    font.pixelSize: Theme.type.body.size
-                                    onLinkActivated: link => Qt.openUrlExternally(link)
+                                    textColor: page.foreground
+                                    fontSize: Theme.type.body.size
+                                    webLinksOnly: true
+                                    onLinkActivated: link => Shell.openWebLink(link)
                                 }
                             }
                         }

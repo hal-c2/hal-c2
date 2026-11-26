@@ -345,7 +345,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       }
     }
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
   end
 
   # --- the model --------------------------------------------------------------------------

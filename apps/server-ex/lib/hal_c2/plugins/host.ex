@@ -53,8 +53,8 @@ defmodule HalC2.Plugins.Host do
   so `name` is the one the user gave the instance), for a plugin that starts threads
   to pick from:
   `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
-  "availability", "auth" => %{"status"}, "models" => [%{"slug", "name",
-  "isDefault", "options"}]}`.
+  "availability", "auth" => %{"status"}, "sandboxable", "models" => [%{"slug",
+  "name", "isDefault", "options"}]}`.
 
   `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
   `"opencode"`, `"acpRegistry"` for an agent from the ACP registry, a provider
@@ -63,7 +63,9 @@ defmodule HalC2.Plugins.Host do
   (`ready`, `warning`, `error`, `disabled`), `availability` (`available`,
   `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
   are the instance's provider status, for a plugin that offers only the instances
-  that can run a thread now. An instance's settings and messages are left out.
+  that can run a thread now. `sandboxable` is whether its agent can run in an
+  OpenShell review sandbox (`HalC2.OpenShell.Review.supported?/1`). An instance's
+  settings and messages are left out.
 
   A model's `options` are its option descriptors (`%{"id", "label", "type",
   "options"}`) — reasoning effort among them — for a plugin that picks a model for
@@ -82,6 +84,7 @@ defmodule HalC2.Plugins.Host do
          # A snapshot without one is available (`ServerProvider.availability`).
          "availability" => provider["availability"] || "available",
          "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
+         "sandboxable" => HalC2.OpenShell.Review.supported?(provider["driver"]),
          "models" =>
            for model <- provider["models"] || [] do
              %{
@@ -225,15 +228,18 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
-  `settings` over `current`. A document a client wrote (`client?`) gets every plugin's
-  records (`added_instances/2`, `released_instances/2`) from `current`, so a copy the
-  client held from before cannot hand a plugin an id. Every saved document keeps only
-  the recorded ids whose instance it still holds, so the save that deletes a plugin's
-  instance ends the plugin's hold on that id before anything reconciles; and only the
-  released ids it holds no instance under, so one the user takes is not the plugin's.
+  `settings` over `current`. A document a client wrote (`client?`) gets the whole
+  `plugins` key from `current`: whether a plugin is on, what it was granted, its settings
+  and its records (`added_instances/2`, `released_instances/2`) change only through
+  `HalC2.Plugins` (`plugins.enable`, `plugins.disable`, `plugins.saveSettings`), which
+  check the scopes and consent each needs; a copy the client held, or edited, cannot move
+  them. Every saved document keeps only the recorded ids whose instance it still holds,
+  so the save that deletes a plugin's instance ends the plugin's hold on that id before
+  anything reconciles; and only the released ids it holds no instance under, so one the
+  user takes is not the plugin's.
   """
   def seal_records(settings, current, client?) do
-    settings = if client?, do: records_from(settings, current), else: settings
+    settings = if client?, do: plugins_from(settings, current), else: settings
 
     case settings do
       %{"plugins" => %{} = plugins} ->
@@ -266,40 +272,10 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
-  @records ["providerInstances", "releasedInstances"]
-
-  defp records_from(client, current) do
-    theirs = current["plugins"]
-
-    theirs =
-      for {id, %{} = config} <- if(is_map(theirs), do: theirs, else: %{}),
-          records = Map.filter(config, fn {key, ids} -> key in @records and is_list(ids) end),
-          records != %{},
-          into: %{},
-          do: {id, records}
-
-    case client["plugins"] || %{} do
-      %{} = plugins ->
-        plugins =
-          Map.new(plugins, fn
-            {id, %{} = config} -> {id, Map.drop(config, @records)}
-            other -> other
-          end)
-
-        plugins =
-          Enum.reduce(theirs, plugins, fn {id, records}, plugins ->
-            case plugins[id] || %{} do
-              %{} = config -> Map.put(plugins, id, Map.merge(config, records))
-              _ -> plugins
-            end
-          end)
-
-        if plugins == %{} and not Map.has_key?(client, "plugins"),
-          do: client,
-          else: Map.put(client, "plugins", plugins)
-
-      _ ->
-        client
+  defp plugins_from(client, current) do
+    case Map.fetch(current, "plugins") do
+      {:ok, plugins} -> Map.put(client, "plugins", plugins)
+      :error -> Map.delete(client, "plugins")
     end
   end
 
@@ -494,7 +470,9 @@ defmodule HalC2.Plugins.Host do
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
   thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`
   made for it, and never on this machine; the plugin must have opened that sandbox
-  itself. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  itself. `tools: :plugin` gives its agent only the tools the plugin offers agents
+  (`agentTools`), never the rest of HAL-C2's (`HalC2.Mcp.for_agent/2`). A plugin
+  whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
   which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
   credentials and checkout for them do not travel, so a moved thread would run without
   them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`), as
@@ -505,6 +483,7 @@ defmodule HalC2.Plugins.Host do
          :ok <- if(opts[:sandboxed], do: own_sandbox(id, input["threadId"]), else: :ok) do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
       mark = if opts[:sandboxed], do: Map.put(mark, "sandboxed", true), else: mark
+      mark = if opts[:tools] == :plugin, do: Map.put(mark, "tools", "plugin"), else: mark
       mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input

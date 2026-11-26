@@ -58,8 +58,9 @@ defmodule HalC2.OpenShell.Policy do
 
   @doc """
   The policy for a review: `model` is `%{host, port, requests, binaries, provider}`
-  (the API the agent calls, the `{method, path}` of each request it makes there, the
-  agent's executables, the OpenShell provider holding its key),
+  and optionally `ips` (the API the agent calls, the `{method, path}` of each request
+  it makes there, the agent's executables, the OpenShell provider holding its key,
+  the addresses a host alias of this machine resolves to),
   `broker` is `%{host, port, path, ips}` (where the report broker listens, as the
   sandbox reaches it) and `tool` the one tool the broker takes a call of.
   """
@@ -93,6 +94,8 @@ defmodule HalC2.OpenShell.Policy do
               # Only these: the key opens the rest of the user's account on the API too,
               # and every program the agent starts reaches this endpoint as it does.
               rules: model_rules(model.requests),
+              # A proxy on this machine's, which names the machine as the broker does.
+              allowed_ips: Map.get(model, :ips, []),
               credential_binding: %Sb.NetworkCredentialBinding{provider: model.provider}
             }
           ]

@@ -11,8 +11,8 @@
 #   apps/tui/src/timeline.ts (revertableCheckpoints)
 #   apps/tui/src/components/ChatView.tsx (Revert to checkpoint, Reverted to turn N)
 #   apps/desktop-qt/src/native/ThreadDiff.cpp (requestRevert, confirmRevert, cancelRevert)
-#   apps/desktop-qt/qml/HalC2/Bricks/RevertDialog.qml (revert dialog, shared with a reply's Revert)
-#   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (a reply's Revert)
+#   packages/qml/HalC2/Bricks/RevertDialog.qml (revert dialog, shared with a reply's Revert)
+#   packages/qml/HalC2/Bricks/ThreadView.qml (a reply's Revert)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp, CentreSteps.cpp
 
 Feature: Checkpoints and rewinding

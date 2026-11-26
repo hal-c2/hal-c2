@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 import HalC2.Shell
 
 // features/files/adding-projects.feature: home, with no thread chosen.

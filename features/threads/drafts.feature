@@ -6,8 +6,8 @@
 #   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts: start, open, delete, promote, keep)
 #   apps/desktop-qt/src/native/SidebarController.cpp (which drafts the sidebar lists)
 #   apps/desktop-qt/src/native/ComposerController.cpp (a draft's first send promotes it; draftPreview)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
-#   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (the draft's opening line picks its project)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
+#   packages/qml/HalC2/Bricks/ThreadView.qml (the draft's opening line picks its project)
 #   apps/web/src/components/chat/DraftHeroHeadline.tsx (the project picker in the headline)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   navigation/landing.feature owns the draft a window with no thread lands on, which is here

@@ -16,7 +16,7 @@
 #   apps/web/src/components/ChatView.tsx (answers wait for their uploads)
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (question navigation, plan follow-up)
 #   apps/web/src/pendingUserInput.ts, apps/web/src/questionAttachments.ts (what counts as an answer, files across a request's questions)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (Implement, approvals waiting)
+#   packages/qml/HalC2/Bricks/Composer.qml (Implement, approvals waiting)
 #   apps/mobile/src/features/threads/PendingUserInputCard.tsx (fold away, not resumable, submit lock)
 #   apps/mobile/src/features/threads/QuestionAttachments.tsx (capability, too many, resolved elsewhere)
 #   apps/mobile/src/features/threads/QuestionAnswerHistory.tsx (answered question with files)

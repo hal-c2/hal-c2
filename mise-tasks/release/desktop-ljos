@@ -10,7 +10,14 @@ arch="${arch/x86_64/x64}"
 arch="${arch/aarch64/arm64}"
 case "$os" in
   Linux) platform="linux-$arch" ;;
-  Darwin) platform="darwin-$arch" ;;
+  Darwin)
+    platform="darwin-$arch"
+    # The bundle below takes CEF's framework from it; say so before the build.
+    if [[ -z ${CEF_PATH:-} ]]; then
+      echo "release:desktop-ljos on macOS needs CEF_PATH: the CEF distribution the cef crate builds against." >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "release:desktop-ljos builds on Linux and macOS only." >&2
     exit 1
@@ -32,11 +39,26 @@ read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data
 out="release/hal-c2-ljos-$version-$platform"
 rm -rf "$out"
 if [[ $os == Darwin ]]; then
-  # Its own bundle beside desktop-qt's HAL-C2.app, as the Dock names an app by its bundle.
+  # On macOS CEF is a framework inside the app's bundle and starts its other
+  # processes from helper apps of their own: Ljós's ljos-webengine-bundle
+  # makes that bundle around the executable (plain files; the tool itself
+  # needs no CEF), with CEF's framework from $CEF_PATH, the same place the
+  # cef crate's build fetched it. Its own bundle beside desktop-qt's
+  # HAL-C2.app, as the Dock names an app by its bundle.
+  #
+  # Keep this in step with how `mise run desktop-ljos` runs on macOS
+  # (mise-tasks/desktop-ljos), which will need the same bundle before a dev
+  # shell's browser tabs can load there.
+  (cd apps/desktop-ljos && mise exec -- cargo build --locked --release -q -p ljos_webengine --bin ljos-webengine-bundle)
+  mkdir -p "$out"
+  "$target/ljos-webengine-bundle" --id io.github.halc2.desktop-ljos --out "$out" "$target/hal-c2-ljos" >/dev/null
+  mv "$out/hal-c2-ljos.app" "$out/HAL-C2 Ljós.app"
   app="$out/HAL-C2 Ljós.app/Contents"
   bin="$app/MacOS"
   share="$app/Resources/hal-c2"
-  mkdir -p "$bin" "$app/Resources"
+  mkdir -p "$app/Resources"
+  # The app's own name, identifier and icon over the bundle tool's plist;
+  # the helper apps keep theirs (<id>.helper…).
   cp apps/desktop-ljos/shell/macos/Info.plist "$app/Info.plist"
   plutil -replace CFBundleName -string "HAL-C2 Ljós" "$app/Info.plist"
   plutil -replace CFBundleDisplayName -string "HAL-C2 Ljós" "$app/Info.plist"
@@ -48,9 +70,6 @@ if [[ $os == Darwin ]]; then
   done
   iconutil -c icns "$set" -o "$app/Resources/AppIcon.icns"
   rm -r "$(dirname "$set")"
-  # CEF loads from a bundle Ljós's ljos-webengine-bundle makes, which this does not
-  # make yet, so browser tabs show no pages (apps/desktop-ljos/README.md).
-  cp "$target/hal-c2-ljos" "$bin/"
 else
   bin="$out/bin"
   share="$out/share/hal-c2"
@@ -67,8 +86,11 @@ else
   cp -R "$target/locales" "$bin/"
 fi
 
-# The host, Node, the MC and the licenses, as desktop-qt's packages stage them.
+# The host, Node and the MC, as desktop-qt's packages stage them.
 node apps/desktop-qt/scripts/stage-runtime.mjs "$share"
+# stage-runtime writes desktop-qt's license manifest; this app ships its
+# own, from its Cargo.lock and CEF (apps/desktop-ljos/scripts).
+node apps/desktop-ljos/scripts/third-party-licenses.ts "$share/licenses/third-party-licenses.json"
 if [[ $os == Linux ]]; then
   # Snap Shot: GNOME's extension and the KDE Plasma and Hyprland capture helpers,
   # where src/snap_shot finds them beside bin/.
@@ -80,8 +102,11 @@ if [[ $os == Linux ]]; then
     cp "${CARGO_TARGET_DIR:-native/$helper-snap-shot/target}/release/hal-c2-$helper-snap-shot" "$share/$helper-capture/"
   done
 else
-  # Apple silicon runs only signed code; the bundle changed after the linker signed the binary.
+  # Apple silicon runs only signed code; the bundle changed after the linker
+  # signed the binary, so sign the whole bundle as staged (the CEF framework
+  # and its helper apps with it) and check the seal holds.
   codesign --force --deep --sign - "$out/HAL-C2 Ljós.app"
+  codesign --verify --deep --strict "$out/HAL-C2 Ljós.app"
 fi
 
 # Fails when a QML file of the checkout is missing from the pack the binary carries.

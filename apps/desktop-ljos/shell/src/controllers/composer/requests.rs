@@ -198,8 +198,10 @@ impl Composer {
                 let picked = mode.clone();
                 kept::edit_draft(engine, &target, |kept| kept.runtime_mode = picked);
                 kept::save(engine);
-                self.publish(engine);
+                // Shown once it is on its way: an existing thread's pick
+                // counts only then (`picked_runtime_mode`).
                 self.set_thread_mode(engine, &target, ModeKind::Runtime, &mode);
+                self.publish(engine);
             }
             "composer.interactionMode.set" => {
                 if !target.is_empty() {

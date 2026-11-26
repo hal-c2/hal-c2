@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // A badge's text and fill are one of the theme's readable pairs, never its
 // tone drawn on a wash of itself.

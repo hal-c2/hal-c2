@@ -68,6 +68,8 @@ Item {
             objectName: "mermaidStatus"
             width: status.width - (retry.visible ? retry.width + status.spacing : 0)
             anchors.verticalCenter: parent.verticalCenter
+            // Why it could not be drawn can quote the source.
+            textFormat: Text.PlainText
             text: diagram.note
             wrapMode: Text.Wrap
             color: diagram.textColor

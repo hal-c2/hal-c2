@@ -1390,7 +1390,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn),
          {:ok, conn} <-
            Connection.start_link(
-             cmd: HalC2.OpenShell.Review.command("codex"),
+             cmd: HalC2.OpenShell.Review.command(turn, "codex"),
              sandbox: sandbox,
              handler: self(),
              log: ids.thread,
@@ -1949,7 +1949,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp context(state, turn) do
     instance = Entities.instance(turn.ids)
 
-    if HalC2.Mcp.current(state.thread_id, instance) do
+    server = HalC2.Mcp.current(state.thread_id, instance)
+
+    # Nor has one kept to its plugin's tools (`HalC2.Mcp.kept_to/1`).
+    if server && not Map.has_key?(server, :report) do
       HalC2.Mcp.Instructions.codex_context(
         # The sections follow what this thread's credential may reach, as an
         # ACP session's do, never tools it lacks.

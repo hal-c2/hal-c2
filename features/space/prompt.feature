@@ -6,7 +6,7 @@
 #     drafting-and-sending.feature and editors-and-keys.feature (what the timeline's prompt does)
 #   packages/contracts/src/space.ts (space.page.askAgent, space.page.agentTarget)
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
-#   apps/desktop-qt/qml/HalC2/Bricks/SpacePage.qml and Composer.qml (pageHost),
+#   packages/qml/HalC2/Bricks/SpacePage.qml and Composer.qml (pageHost),
 #     apps/desktop-qt/src/native/ComposerController.h (drafts, stash and their targets)
 #   apps/desktop-qt/examples/*/shell.qml (shells that show their Composer when it is ready)
 #   apps/mobile-qt/qml/HalC2/Mobile/SpacePageView.qml and SpaceScreen.qml (the phone's page and its menu)

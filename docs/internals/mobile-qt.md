@@ -20,7 +20,7 @@ the brick gets a property that defaults to what the desktop does (`ShellWindow.f
 The root, `MobileShell.qml`, shows the pairing screen until there is an environment (and again
 when a paired device asks to pair with another), and otherwise one of two layouts of the same
 bricks. Where the window has room it is the desktop's own,
-[`DefaultLayout`](../../apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml), the item
+[`DefaultLayout`](../../packages/qml/HalC2/Bricks/DefaultLayout.qml), the item
 `DefaultShell` fills its window with, so a tablet or a laptop gets the desktop client and not a
 stretched phone. Below that it is the phone layout: one screen at a time, a back bar, and menus as
 a sheet.

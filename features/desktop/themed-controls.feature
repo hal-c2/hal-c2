@@ -1,10 +1,10 @@
 # Sources:
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellSwitch.qml, ShellCheckBox.qml, ShellSpinBox.qml,
+#   packages/qml/HalC2/Bricks/ShellSwitch.qml, ShellCheckBox.qml, ShellSpinBox.qml,
 #     ShellTextField.qml, ShellComboBox.qml, ShellMenu.qml, ContextMenuHost.qml (the shared controls)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellPopoverSurface.qml (menus, the palette, pickers, dialogs)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellButton.qml, src/ThemeStore.cpp (the destructive fill)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellScrollEdge.qml (the edge of a list that goes on)
+#   packages/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
+#   packages/qml/HalC2/Bricks/ShellPopoverSurface.qml (menus, the palette, pickers, dialogs)
+#   packages/qml/HalC2/Bricks/ShellButton.qml, src/ThemeStore.cpp (the destructive fill)
+#   packages/qml/HalC2/Bricks/ShellScrollEdge.qml (the edge of a list that goes on)
 #   apps/web/src/components/ui/switch.tsx, checkbox.tsx, number-field.tsx, input.tsx, select.tsx
 #   Proved today by apps/desktop-qt/tests/tst_Shell*.qml and tests/native/tst_ShellRuntime.cpp;
 #   no Gherkin step runs QML yet.

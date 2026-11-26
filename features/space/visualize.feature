@@ -1,6 +1,6 @@
 # Sources:
 #   features/space/beyond-pages.feature (the entry these scenarios replace)
-#   spaces-feature-bdd-tests branch, apps/desktop-qt/qml/HalC2/Bricks/VisualizationCard.qml
+#   spaces-feature-bdd-tests branch, packages/qml/HalC2/Bricks/VisualizationCard.qml
 #     (a hard-coded demo; read for its looks only)
 #   packages/contracts/src/space.ts (SpaceChart, space.block.visualize)
 #   apps/server-ex/lib/hal_c2/space/chart.ex, apps/server-ex/lib/hal_c2/space/visualize.ex

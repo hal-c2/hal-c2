@@ -421,14 +421,15 @@ defmodule HalC2.AcpTest do
 
     on_exit(fn -> HalC2.Acp.forget("grok") end)
     :ok = HalC2.Settings.watch(self())
+    # Any provider's change sends the same message, so one may come before the read's.
+    HalC2.Settings.notify_providers()
 
     assert %{"models" => []} = HalC2.Acp.entry("grok")
-    assert_receive {:hal_c2_providers_changed, _}, 5_000
-    assert :persistent_term.get({HalC2.Acp, "grok", :loading}, false) == false
+    await_change(fn -> not :persistent_term.get({HalC2.Acp, "grok", :loading}, false) end)
     assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
 
     assert %{"models" => []} = HalC2.Acp.entry("grok")
-    assert_receive {:hal_c2_providers_changed, _}, 5_000
+    await_change(fn -> :persistent_term.get({HalC2.Acp, "grok", :models}, nil) != nil end)
     assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
   end
 
@@ -1180,5 +1181,11 @@ defmodule HalC2.AcpTest do
   defp read_done(probe) do
     assert_receive {:hal_c2_providers_changed, _}, 10_000
     if File.exists?(probe), do: read_done(probe)
+  end
+
+  # A change does not say which provider's it was, so each is checked for the awaited one.
+  defp await_change(done?) do
+    assert_receive {:hal_c2_providers_changed, _}, 5_000
+    if not done?.(), do: await_change(done?)
   end
 end

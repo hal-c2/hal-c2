@@ -13,7 +13,11 @@ defmodule HalC2.ProviderHandoffPropTest do
   stream the same as one on time, and the turns are listed in whatever order their ids
   give, not the order they started in. The conversation then holds what each of
   its runs sent and was answered, and `held` is never less than that. A run that ended
-  before its turn began sent nothing, and takes nothing from the room. When the newest
+  before its turn began sent nothing, and takes nothing from the room. A run the
+  provider never started a turn for (#1735) sent its prompt into the conversation
+  and was answered nothing, so it holds only what it sent and keeps no reserve; a run
+  that may have started keeps the reserve for an answer that may still be counted
+  by a report that never comes. When the newest
   run's last turn reported, `held` is exactly that report, so the check refuses no handoff
   that fits; and what the message takes is its text, a fixed share per image, and for a
   file a token per 4 bytes up to a cap (the cap when its size is not known). Only the
@@ -70,6 +74,54 @@ defmodule HalC2.ProviderHandoffPropTest do
           "held #{room.held} < occupancy #{occupancy}, or newest #{inspect(newest)}, " <>
             "or window not #{expected_window}; " <>
             "room #{inspect(room)}"
+        )
+      )
+    end
+  end
+
+  # The reserve is for an answer: after a report, a run known never to have started
+  # holds the conversation only by what it sent, and a run that may have started by
+  # that and a reserve more, however many of each follow (#1735).
+  property "a run the provider never started keeps no reserve for its answer",
+    numtests: HalC2.Prop.numtests(300) do
+    forall {window, used, sent} <-
+             {integer(8_000, 2_000_000), integer(0, 100_000),
+              non_empty(list({integer(0, 40_000), boolean()}))} do
+      provider_thread = %{"id" => @own}
+
+      later =
+        sent
+        |> Enum.with_index(2)
+        |> Enum.flat_map(fn {{tokens, never?}, ordinal} ->
+          [
+            if(never?,
+              do: never_started_run(ordinal, tokens),
+              else: run(ordinal, @own, tokens, "failed")
+            ),
+            turn(ordinal, @own, nil, nil)
+          ]
+        end)
+
+      state =
+        apply_all([
+          {"provider-thread", provider_thread},
+          run(1, @own, 0),
+          turn(1, @own, used, window) | later
+        ])
+
+      held = Handoff.room(state, provider_thread, @next).held
+
+      expected =
+        used +
+          Enum.sum_by(sent, fn {tokens, never?} ->
+            tokens + if(never?, do: 0, else: reserve(window))
+          end)
+
+      (held == expected)
+      |> when_fail(
+        IO.puts(
+          "held #{held} is not the report #{used} and what followed it (#{expected}); " <>
+            "window #{window}, sent #{inspect(sent)}"
         )
       )
     end
@@ -224,13 +276,15 @@ defmodule HalC2.ProviderHandoffPropTest do
   # A run of the new conversation's own provider thread with its turns (what each
   # answered as a share of the reserve, whether it reported and whether its report
   # named the window) and whether their ids sort against the order they started in, one
-  # of it that ended before its turn began (it sent nothing), or one of the other
+  # of it that ended before its turn began (it sent nothing), one the provider never
+  # started a turn for (it sent, and was answered nothing), or one of the other
   # provider thread.
   defp current_run do
     oneof([
       {:own, integer(0, 40_000), non_empty(list({integer(0, 100), boolean(), boolean()})),
        boolean()},
       {:unsent, integer(0, 40_000), oneof(["failed", "interrupted"])},
+      {:never_started, integer(0, 40_000)},
       {:other, integer(0, 40_000)}
     ])
   end
@@ -275,6 +329,13 @@ defmodule HalC2.ProviderHandoffPropTest do
         {:unsent, sent, status}, {entities, occupancy, newest, ordinal, named?} ->
           {entities ++ [run(ordinal, @own, sent, status, nil)], occupancy, newest, ordinal + 1,
            named?}
+
+        {:never_started, sent}, {entities, occupancy, _newest, ordinal, named?} ->
+          # The prompt is in the conversation, with no answer after it and no report
+          # to come: the newest report no longer says how full it is.
+          {entities ++
+             [never_started_run(ordinal, sent), turn(ordinal, @own, nil, nil)], occupancy + sent,
+           :unreported, ordinal + 1, named?}
 
         {:other, sent}, {entities, occupancy, newest, ordinal, named?} ->
           # The other provider thread's report is of its own conversation and model.
@@ -344,6 +405,13 @@ defmodule HalC2.ProviderHandoffPropTest do
        "status" => status,
        "startedAt" => started
      }}
+  end
+
+  # A run the provider took the prompt of and never started a turn for: it began in
+  # the MC (`startedAt`, its provider turn), failed, and is recorded as such.
+  defp never_started_run(ordinal, sent) do
+    {"run", run} = run(ordinal, @own, sent, "failed")
+    {"run", Map.put(run, "turnNeverStarted", true)}
   end
 
   # A provider turn, the `step`th of its run, that reported `used` tokens (nil when its

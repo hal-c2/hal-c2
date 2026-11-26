@@ -1,5 +1,5 @@
 // Run from a hal-c2 checkout, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+//   qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
 //     -input <this plugin>/test/tst_MaintenanceHeader.qml
 import QtQuick
 import QtTest

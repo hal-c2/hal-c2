@@ -53,9 +53,9 @@
 #   apps/web/src/pullRequestReference.ts (pasted references and checkout commands)
 #   apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx
 #   apps/web/src/components/pullRequest/PullRequestStackPopover.tsx
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (open pull request)
+#   packages/qml/HalC2/Bricks/Composer.qml (open pull request)
 #   apps/desktop-qt/src/native/ThreadPullRequests.cpp (the right panel's Pull requests tab)
-#   apps/desktop-qt/qml/HalC2/Bricks/PullRequestsPanel.qml
+#   packages/qml/HalC2/Bricks/PullRequestsPanel.qml
 #   apps/desktop-qt/tests/native/features/PullRequestSteps.cpp
 #   apps/web/src/components/pullRequest/ThreadPullRequestsPanel.tsx
 #   apps/tui/src/features.backlog.test.ts (pull request checkout)

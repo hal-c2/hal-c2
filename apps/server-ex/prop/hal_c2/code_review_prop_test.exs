@@ -8,7 +8,10 @@ defmodule HalC2.CodeReviewPropTest do
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
   commits to push between. The commands open and close them, push, break a head so its
   checkout fails, turn Codex off so a review's thread is refused once it is checked
-  out, hold checkouts at the fetch and posts at GitHub, refuse posts, look
+  out, keep every review in a sandbox or review trusted pull requests here (the
+  sandbox, which this MC with no OpenShell cannot open, fails the review once it is
+  checked out and never runs it here), hold checkouts at the fetch and posts at
+  GitHub, refuse posts, look
   for pull requests, start, retry, stop (once as a run reads the pull request), report,
   dismiss, discard and publish reviews, end turns (one of them stopped by the
   provider's usage limit, which parks its review in the queue and starts nothing else
@@ -124,7 +127,8 @@ defmodule HalC2.CodeReviewPropTest do
 
     vars =
       ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE
-         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
+         GIT_CONFIG_VALUE_1)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
     apps = ~w(gh_command codex_command settings_check_ms home)a
@@ -136,10 +140,17 @@ defmodule HalC2.CodeReviewPropTest do
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", Path.join(fx, "remotes"))
     # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    # Beside it, an include with an empty value, as the MC's GitHub config starts
+    # with `helper =` (#1774): the submodules `unchecked/0` looks for still arrive.
+    included = Path.join(fx, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
     System.put_env(%{
-      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_COUNT" => "2",
       "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
-      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+      "GIT_CONFIG_VALUE_0" => "https://github.com/",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
     })
 
     Application.put_env(:hal_c2, :gh_command, "gh")
@@ -422,7 +433,10 @@ defmodule HalC2.CodeReviewPropTest do
         per_repository: 2,
         # Whether hubot is a trusted login, and the trigger label.
         trusted_logins: false,
-        label: "agent-review"
+        label: "agent-review",
+        # Whether trusted pull requests are reviewed on this machine rather than in a
+        # sandbox, as `setup` saves it.
+        here: true
       },
       # `labeled`: whether it carries both labels, agent-review added by monalisa and
       # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
@@ -563,7 +577,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"activation", oneof(~w(automatic selective))},
             {"reviewNewPushes", boolean()},
             {"display", oneof(~w(page threads both))},
-            {"model", oneof(~w(fake/one fake/two))}
+            {"model", oneof(~w(fake/one fake/two))},
+            {"reviewTrustedOnThisMachine", boolean()}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -921,7 +936,8 @@ defmodule HalC2.CodeReviewPropTest do
         "reviewsPerAuthorPerDay" => :per_author,
         "reviewsPerRepositoryPerDay" => :per_repository,
         "trustedLogins" => :trusted_logins,
-        "label" => :label
+        "label" => :label,
+        "reviewTrustedOnThisMachine" => :here
       }[field]
 
     value = if field == "trustedLogins", do: value != [], else: value
@@ -1245,7 +1261,7 @@ defmodule HalC2.CodeReviewPropTest do
                now: nil,
                model: m.settings.model,
                run: length(runs),
-               launched: {r.trusted, r.approved},
+               launched: {r.trusted, r.approved, m.settings.here},
                started: m.tick,
                stopped: false
            }), held}
@@ -1323,17 +1339,18 @@ defmodule HalC2.CodeReviewPropTest do
   defp resolve(m, key, k) do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
-        {trusted, approved} = r.launched
+        {trusted, approved, here} = r.launched
 
         cond do
           # Nobody trusted, it is checked out only at the head the user approved.
           m.prs[key].broken or (not trusted and approved != m.prs[key].head) ->
             m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
 
-          # And runs in a sandbox (#1412), which this MC, with no OpenShell, cannot open:
-          # checked out, it fails before its thread starts.
-          # Codex turned off refuses its thread the same way, checked out.
-          not trusted or not m.codex ->
+          # And runs in a sandbox (#1412), as every review does unless the settings it
+          # started under review trusted ones here, which this MC, with no OpenShell,
+          # cannot open: checked out, it fails before its thread starts, and never runs
+          # here instead. Codex turned off refuses its thread the same way, checked out.
+          not (trusted and here) or not m.codex ->
             r = %{r | status: :failed, reviewed: m.prs[key].head}
             m |> put_review(key, r) |> fail() |> pump()
 
@@ -2522,7 +2539,8 @@ defmodule HalC2.CodeReviewPropTest do
           "display" => "threads",
           # As `initial_state/0` has them.
           "reviewsPerAuthorPerDay" => 3,
-          "reviewsPerRepositoryPerDay" => 2
+          "reviewsPerRepositoryPerDay" => 2,
+          "reviewTrustedOnThisMachine" => true
         }
       })
 

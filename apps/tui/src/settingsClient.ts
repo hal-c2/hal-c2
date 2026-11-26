@@ -9,6 +9,7 @@
 // as it was sent. The pages read plain objects; nothing here is decoded.
 import {
   type AuthAccessStreamEvent,
+  type OpenShellOperationState,
   type ResourceTelemetrySnapshot,
   type ScheduledTask,
   type ServerProvider,
@@ -72,6 +73,13 @@ export interface TuiSettingsClient {
   readonly subscribeAuthAccess: (
     onEvent: (event: AuthAccessStreamEvent) => void,
     onError?: (message: string) => void,
+  ) => () => void;
+  /**
+   * The OpenShell operation this machine's Settings runs (`server.runOpenShellOperation`),
+   * or ran last: at once, then on every step and its outcome, whichever device ran it.
+   */
+  readonly subscribeOpenShellOperation: (
+    onState: (state: OpenShellOperationState) => void,
   ) => () => void;
   /** This machine's resource monitor: a snapshot every few seconds while subscribed. */
   readonly subscribeResourceTelemetry: (
@@ -198,6 +206,12 @@ export function makeTuiSettingsClient(
           Stream.catchCause((cause) =>
             Stream.fromEffect(Effect.sync(() => onError?.(String(Cause.squash(cause))))),
           ),
+        ),
+      ),
+    subscribeOpenShellOperation: (onState) =>
+      drain(
+        subscribe(WS_METHODS.serverSubscribeOpenShellOperation, {}).pipe(
+          Stream.tap((state) => Effect.sync(() => onState(state))),
         ),
       ),
     subscribeResourceTelemetry: (onSnapshot) =>

@@ -1,7 +1,7 @@
 {
   "customNotices": [
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "CC0-1.0",
       "name": "Folder_Whoosh.wav by BaggoNotes",
       "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/",
@@ -15,7 +15,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "CC0-1.0",
       "name": "Contarex camera shutter.wav by Tonik1105",
       "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/",
@@ -30,7 +30,7 @@
     },
     {
       "bundles": ["device-tools"],
-      "includeInBundles": ["desktop-qt"],
+      "includeInBundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "agent-device",
       "sourceUrl": "https://github.com/callstack/agent-device",
@@ -44,7 +44,7 @@
     },
     {
       "bundles": ["device-tools"],
-      "includeInBundles": ["desktop-qt"],
+      "includeInBundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT AND Apache-2.0 AND BSD-3-Clause",
       "name": "expo-device-hub",
       "sourceUrl": "https://github.com/expo/expo-device-hub",
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "QR Code generator",
       "sourceUrl": "https://github.com/nayuki/QR-Code-generator",
@@ -110,7 +110,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "libghostty-vt",
       "noticeFile": "native/libghostty-vt/LICENSE",
@@ -221,7 +221,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "ISC AND MIT",
       "name": "Lucide",
       "sourceUrl": "https://github.com/lucide-icons/lucide",
@@ -258,7 +258,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "Apache-2.0",
       "name": "Erlang/OTP",
       "sourceUrl": "https://github.com/erlang/otp",
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "Apache-2.0",
       "name": "Elixir",
       "sourceUrl": "https://github.com/elixir-lang/elixir",
@@ -288,7 +288,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "mermaid-rs-renderer",
       "sourceUrl": "https://github.com/1jehuang/mermaid-rs-renderer",
@@ -303,7 +303,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "mmdflux",
       "sourceUrl": "https://github.com/kevinswiber/mmdflux",
@@ -318,7 +318,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "Node.js",
       "sourceUrl": "https://github.com/nodejs/node",
@@ -365,20 +365,20 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "Various (MIT, Apache-2.0, BSD)",
       "name": "bat syntaxes",
       "sourceUrl": "https://github.com/sharkdp/bat/tree/master/assets/syntaxes",
       "noticeFiles": ["native/syntax/SYNTAXES-NOTICE.md"]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "Pierre themes",
       "noticeFiles": ["native/syntax/themes/LICENSE-pierre"]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["desktop-qt", "desktop-ljos"],
       "license": "BSD-2-Clause",
       "name": "Oniguruma",
       "sourceUrl": "https://github.com/kkos/oniguruma",
@@ -402,6 +402,24 @@
           "licenseId": "MIT",
           "copyrights": ["Copyright 2015 The Fancy Regex Authors."],
           "preamble": ["The phone app reads code's syntax with fancy-regex."]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-ljos"],
+      "license": "BSD-3-Clause",
+      "name": "Chromium Embedded Framework",
+      "sourceUrl": "https://bitbucket.org/chromiumembedded/cef",
+      "generatedNotices": [
+        {
+          "licenseId": "BSD-3-Clause",
+          "copyrights": [
+            "Copyright (c) 2008-2026 Marshall A. Greenblatt. All rights reserved.",
+            "Portions Copyright (c) 2006-2009 Google Inc. All rights reserved."
+          ],
+          "preamble": [
+            "The desktop app's browser tabs are Chromium pages shown through the Chromium Embedded Framework (CEF), which the cef crate's build downloads and the release carries beside the app. Chromium's own third-party notices are the CREDITS.html shipped with it."
+          ]
         }
       ]
     }

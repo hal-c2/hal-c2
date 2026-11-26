@@ -1,9 +1,9 @@
-# Generates the 3D device bodies DeviceBody3D loads (qml/HalC2/Bricks/models):
+# Generates the 3D device bodies DeviceBody3D loads (packages/qml/HalC2/Bricks/models):
 # a generic phone, a generic tablet, and a keyboard cover for the tablet.
 # Every shape is drawn here from rounded slabs and cylinders, so the models
 # carry the repository's licence and no one else's assets.
 #
-#   blender -b --factory-startup --python scripts/gen-device-models.py -- qml/HalC2/Bricks/models
+#   blender -b --factory-startup --python scripts/gen-device-models.py -- ../../packages/qml/HalC2/Bricks/models
 #
 # The contract with DeviceBody3D, in glTF axes (Y up, the screen facing +Z):
 # the body is portrait, its screen centred on the origin and 2.2 units tall,

@@ -1,11 +1,11 @@
 # Sources:
 #   packages/contracts/src/plugin.ts (PluginContributions: pages, threadKinds, slots, settings)
 #   apps/desktop-qt/src/native/McPluginController.cpp (MC plugins per environment, UI parts cached and loaded)
-#   apps/desktop-qt/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginContext.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/PluginPart.qml, PluginThreadPart.qml (a UI part, a plugin thread's look)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellTabs.qml (the top-level tabs), PluginPages.qml, PluginPage.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml, ThreadView.qml, Sidebar.qml (marks, headers, sidebar sections)
-#   apps/desktop-qt/qml/HalC2/Bricks/PluginsSettings.qml, PluginSettings.qml (the list, its compile check)
+#   packages/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginContext.qml
+#   packages/qml/HalC2/Bricks/PluginPart.qml, PluginThreadPart.qml (a UI part, a plugin thread's look)
+#   packages/qml/HalC2/Bricks/ShellTabs.qml (the top-level tabs), PluginPages.qml, PluginPage.qml
+#   packages/qml/HalC2/Bricks/SidebarThreadRow.qml, ThreadView.qml, Sidebar.qml (marks, headers, sidebar sections)
+#   packages/qml/HalC2/Bricks/PluginsSettings.qml, PluginSettings.qml (the list, its compile check)
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route's tab), SidebarModel.cpp (unlisted plugin threads)
 #   docs/user/plugins.md
 

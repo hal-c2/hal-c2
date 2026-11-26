@@ -1,6 +1,6 @@
 # Sources:
-#   apps/desktop-qt/qml/HalC2/Bricks/FolderExplorer.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/FolderOperationDialog.qml
+#   packages/qml/HalC2/Bricks/FolderExplorer.qml
+#   packages/qml/HalC2/Bricks/FolderOperationDialog.qml
 #   apps/desktop-qt/src/LocalFolderModel.cpp
 #   apps/desktop-qt/src/ShellBridge.cpp (localFolderImportEnabled)
 #   apps/desktop-qt/examples/folders/shell.qml

@@ -25,7 +25,7 @@ fn main() {
     }
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets it"));
     let dirs = [
-        Path::new("../desktop-qt/qml"),
+        Path::new("../../packages/qml"),
         Path::new("qml"),
         Path::new("../mobile-qt/qml"),
     ];

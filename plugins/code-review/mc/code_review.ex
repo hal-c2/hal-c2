@@ -2187,7 +2187,11 @@ defmodule HalC2Plugins.CodeReview do
            :ok <- approved_head(settings, review, checkout, clone),
            # A sandbox gets the two refs alone, so only a checkout the agent works in
            # here gets its submodules.
-           checkout = if(sandboxed, do: checkout, else: submodules(clone, checkout, remote)),
+           checkout =
+             if(sandboxed,
+               do: unfetched(checkout),
+               else: submodules(clone, checkout, remote)
+             ),
            # The attempt's refs are done with once nothing is made from them: at once
            # for a worktree, after its sandbox for a sandboxed review.
            :ok <- if(sandboxed, do: :ok, else: Checkout.release()),
@@ -2204,7 +2208,7 @@ defmodule HalC2Plugins.CodeReview do
              if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok),
            :ok <- Checkout.release() do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
-        review = Map.merge(review, pull_request_context(review))
+        review = Map.merge(review, pull_request_context(settings, review, sandboxed))
         started = %{"root" => clone, "checkout" => checkout["path"]}
 
         # Stop reaches a run past its claim only through the server: one stopped
@@ -2269,7 +2273,9 @@ defmodule HalC2Plugins.CodeReview do
         }
       },
       listed: listed?(settings),
-      sandboxed: sandboxed
+      sandboxed: sandboxed,
+      # Sandboxed or not, the agent gets its report tool and none of HAL-C2's.
+      tools: :plugin
     )
   end
 
@@ -2280,6 +2286,17 @@ defmodule HalC2Plugins.CodeReview do
       :ok -> checkout
       {:error, reason} -> Map.put(checkout, "submodules", reason)
     end
+  end
+
+  # A sandboxed review's checkout has no submodules: fetched here, they would come with
+  # this machine's credentials from the addresses and at the commits a pull request
+  # names, maybe one the watch does not trust, into a sandbox whose report is posted.
+  # The agent is told so, rather than meeting git's errors in a sandbox that
+  # reaches only its model and the MC.
+  defp unfetched(checkout) do
+    if File.regular?(Path.join(checkout["path"], ".gitmodules")),
+      do: Map.put(checkout, "submodules", :sandboxed),
+      else: checkout
   end
 
   # A pull request the watch does not trust is reviewed only at the commit the user
@@ -2296,12 +2313,17 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   @doc """
-  Whether the review of pull request `review` runs in an OpenShell sandbox: when
-  the watch does not trust its pull request (`untrusted/2`), approved or not, or the
-  settings sandbox every review.
+  Whether the review of pull request `review` runs in an OpenShell sandbox: always,
+  unless the user chose to review trusted pull requests on this machine and the
+  watch trusts this one (`untrusted/2`). A sandbox that cannot open fails the review;
+  it never runs here instead.
+
+  The opt-out is a key of its own so that no stored value of the old
+  `sandboxEveryReview`, which a saved settings form wrote as `false` while that was
+  its default, can keep a review out of the sandbox.
   """
   def sandboxed?(settings, review),
-    do: settings["sandboxEveryReview"] == true or untrusted(settings, review) != nil
+    do: settings["reviewTrustedOnThisMachine"] != true or untrusted(settings, review) != nil
 
   # The review's sandbox, with its checkout made from the plugin's clone at the
   # commit checked out here.
@@ -2486,7 +2508,7 @@ defmodule HalC2Plugins.CodeReview do
   # it does, the checks already failing, and the review comments already on it,
   # so the agent judges the change against its intent and does not raise what
   # someone else already has. Unread, the review goes ahead without it.
-  defp pull_request_context(review) do
+  defp pull_request_context(settings, review, sandboxed) do
     ref = Map.take(review, ~w(projectId repository number))
 
     body =
@@ -2497,7 +2519,9 @@ defmodule HalC2Plugins.CodeReview do
 
     existing =
       case Host.pull_requests(@id, "activity", ref) do
-        {:ok, activity} -> existing_comments(activity["reviewThreads"] || [])
+        {:ok, activity} ->
+          existing_comments(settings, review, sandboxed, activity["reviewThreads"] || [])
+
         _ -> []
       end
 
@@ -2508,11 +2532,19 @@ defmodule HalC2Plugins.CodeReview do
     }
   end
 
-  defp existing_comments(threads) do
+  @doc false
+  # The unresolved review comments the prompt quotes. A review that is not sandboxed
+  # runs on this machine, so it quotes only those of authors the watch trusts
+  # (`trusted?/3`, as `untrusted/2` judges the pull request's author): anyone can
+  # comment on a trusted pull request. A sandboxed one quotes them all.
+  def existing_comments(settings, review, sandboxed, threads) do
+    viewer = get_in(review, ["trust", "viewer"])
+
     for thread <- threads,
         not thread["isResolved"],
         first = List.first(thread["comments"] || []),
-        first != nil do
+        first != nil,
+        sandboxed or trusted?(settings, first["author"], viewer) do
       author = get_in(first, ["author", "login"]) || "someone"
 
       "#{author} on #{thread["path"]}:#{thread["line"]}: #{truncate(String.trim(first["body"] || ""), 300)}"
@@ -2617,8 +2649,7 @@ defmodule HalC2Plugins.CodeReview do
       review_md && "The repository's REVIEW.md says:\n#{review_md}",
       body,
       review["checksLine"],
-      checkout["submodules"] &&
-        "The checkout's submodules could not all be fetched on the reviewing machine, so checks that need them are blocked there: #{checkout["submodules"]}",
+      submodules_line(checkout["submodules"]),
       existing,
       previous,
       @report
@@ -2626,6 +2657,16 @@ defmodule HalC2Plugins.CodeReview do
     |> Enum.reject(&is_nil/1)
     |> Enum.map_join("\n\n", &String.trim/1)
   end
+
+  defp submodules_line(nil), do: nil
+
+  defp submodules_line(:sandboxed),
+    do:
+      "This review runs in a sandbox, whose checkout has none of the submodules the head pins: they are never fetched into a sandbox, which reaches only its model and the MC and holds no credentials. Do not try to fetch them; list each check that needs them under notRun with that reason."
+
+  defp submodules_line(reason),
+    do:
+      "The checkout's submodules could not all be fetched on the reviewing machine, so checks that need them are blocked there: #{reason}"
 
   # The agent's report, its comments placed on the lines of the change; a comment on
   # a line the change does not show goes into the summary.

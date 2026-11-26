@@ -1,9 +1,9 @@
 // Run from a hal-c2 checkout:
-//   ljos test --import apps/desktop-qt/tests/imports --import apps/desktop-qt/qml \
+//   ljos test --import apps/desktop-qt/tests/imports --import packages/qml \
 //     plugins/office/test/tst_OfficePage.qml
 // and with Qt 6, with QT_QPA_PLATFORM=offscreen (a bare qmltestrunner may be Qt 5's,
 // which prints nothing and exits 1):
-//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/desktop-qt/tests/imports -import packages/qml \
 //     -input plugins/office/test/tst_OfficePage.qml
 import QtQuick
 import QtTest
@@ -82,6 +82,21 @@ Item {
         }
     }
 
+    // A window whose frames a test draws: a covered one draws none.
+    Component {
+        id: coveredWindow
+        QtObject {
+            signal frameSwapped
+            function update() {
+            }
+        }
+    }
+
+    SignalSpy {
+        id: resumes
+        signalName: "resumed"
+    }
+
     Loader {
         id: loader
 
@@ -106,7 +121,7 @@ Item {
             });
             tryVerify(() => loader.status === Loader.Ready && plugin.watchers["local/office"] !== undefined);
             // The office's own clock holds still; each test runs it with advance().
-            loader.item.applicationActive = false;
+            loader.item.inSight = false;
         }
 
         function init() {
@@ -121,6 +136,10 @@ Item {
 
         function cleanup() {
             loader.source = "";
+            // A test that minimized the window and failed mid-way leaves it
+            // minimized for every test after it.
+            if (test.Window.window && test.Window.window.visibility === Window.Minimized)
+                test.Window.window.showNormal();
             Shell.state = Object.assign({}, Shell.state, {
                 projectIcons: undefined
             });
@@ -2318,9 +2337,9 @@ Item {
             const people = many(3, "t", "working", "typing").concat(many(8, "n", "working", "typing"));
             plugin.publish(people, [message_to("meanwhile", "t2", "t1"), message_to("to new", "t1", "n0")]);
             verify(page.outside.length > 0 && page.moves > 0, "their coming in has piled up");
-            page.applicationActive = true;
+            page.inSight = true;
             tryVerify(() => Date.now() - page.game.tickedAt < 5000, 5000, "the clock runs again");
-            page.applicationActive = false;
+            page.inSight = false;
             compare(page.outside.length, 0, "nobody waits to walk in");
             compare(page.moves, 0, "nobody carries a desk");
             compare(page.deskCount, people.length, "the desks are those of the people here now");
@@ -2338,11 +2357,11 @@ Item {
             const people = many(3, "t", "working", "typing");
             plugin.publish(people);
             page.game.tickedAt = Date.now() - 600000;
-            page.applicationActive = true;
+            page.inSight = true;
             // Said before the clock's first tick.
             plugin.publish(people, [message_to("now", "t0", "t1")]);
             wait(300);
-            page.applicationActive = false;
+            page.inSight = false;
             const a = actor("t0");
             verify(a.talk || a.queue.length, "it is not taken for one from before");
             runUntil(() => a.talk?.phase === "say", 2000, "it is played");
@@ -2354,9 +2373,9 @@ Item {
             plugin.publish(many(5, "t", "working", "typing"), [message_to("now", "t0", "t1")]);
             page.game.advance(1);
             page.game.tickedAt = Date.now() - 1000;
-            page.applicationActive = true;
+            page.inSight = true;
             tryVerify(() => Date.now() - page.game.tickedAt < 500, 5000, "the clock runs again");
-            page.applicationActive = false;
+            page.inSight = false;
             compare(actor("t0").talk?.text, "now");
             verify(page.moves > 0, "the new desk is still carried in");
         }
@@ -3477,14 +3496,58 @@ Item {
 
         function test_the_office_holds_still_while_it_is_not_shown() {
             plugin.publish(many(2, "t", "working", "typing"));
-            page.applicationActive = true;
+            page.inSight = true;
             verify(page.game.running);
             page.visible = false;
             verify(!page.game.running);
             page.visible = true;
             verify(page.game.running);
-            page.applicationActive = false;
+            page.inSight = false;
             verify(!page.game.running);
+        }
+
+        function test_a_minimized_office_holds_still_until_it_is_back() {
+            // The page's own sense of sight, not the clock open() holds still.
+            // Focus is not part of it (a window without focus still shows the
+            // office), but a test cannot take focus away from its own window.
+            loader.source = "";
+            loader.setSource(Qt.resolvedUrl("../ui/OfficePage.qml"), {
+                plugin: plugin
+            });
+            tryVerify(() => loader.status === Loader.Ready && plugin.watchers["local/office"] !== undefined);
+            plugin.publish(many(2, "t", "working", "typing"));
+            verify(page.game.running);
+            const window = test.Window.window;
+            window.showMinimized();
+            tryVerify(() => !page.game.running, 5000, "a minimized office holds still");
+            window.showNormal();
+            tryVerify(() => page.game.running, 5000, "and goes on once it is back");
+        }
+
+        function test_a_covered_office_holds_still_until_it_is_drawn_again() {
+            // A compositor draws no frames of a window it does not show
+            // (covered, or on another workspace), though Qt still has it
+            // visible and active.
+            loader.source = "";
+            loader.setSource(Qt.resolvedUrl("../ui/OfficePage.qml"), {
+                plugin: plugin
+            });
+            tryVerify(() => loader.status === Loader.Ready && plugin.watchers["local/office"] !== undefined);
+            plugin.publish(many(2, "t", "working", "typing"));
+            verify(page.game.running);
+            const frames = createTemporaryObject(coveredWindow, test);
+            page.game.frames = frames;
+            tryVerify(() => !page.game.running, 5000, "a covered office holds still");
+            const now = page.game.now;
+            wait(450);
+            compare(page.game.now, now, "its clock with it");
+            resumes.target = page.game;
+            resumes.clear();
+            page.game.tickedAt = Date.now() - 600000;
+            frames.frameSwapped();
+            verify(page.game.running, "a frame drawn again and it goes on");
+            compare(resumes.count, 1, "catching up on the time away");
+            resumes.target = null;
         }
     }
 }

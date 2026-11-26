@@ -16,7 +16,7 @@
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/tui/src/clusterClient.ts (one list over the cluster's machines, a project keyed by its machine)
 #   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
-#   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
+#   apps/desktop-qt/src/ClusterController.cpp, packages/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
 #   apps/server-ex/lib/hal_c2/settings.ex, settings/shared.ex, keybindings.ex (settings that
 #     follow the person: which are shared, stamped records, gossip with the member table)

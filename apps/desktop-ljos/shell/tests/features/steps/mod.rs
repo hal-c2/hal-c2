@@ -12,6 +12,7 @@ pub mod archived_threads;
 pub mod attachment_viewer;
 pub mod centre;
 pub mod checkpoint_edit;
+pub mod cliproxyapi;
 pub mod clone;
 pub mod cluster;
 pub mod code_review;
@@ -191,6 +192,7 @@ pub fn register(steps: &mut Steps) {
     archived_threads::register(steps);
     centre::register(steps);
     checkpoint_edit::register(steps);
+    cliproxyapi::register(steps);
     clone::register(steps);
     cluster::register(steps);
     code_review::register(steps);

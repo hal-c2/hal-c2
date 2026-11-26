@@ -30,8 +30,8 @@
 #   apps/web/src/components/chat/ThreadAutomationsPanel.tsx (the tasks bound to a thread, in its details)
 #   apps/web/src/components/WorktreeBaseBranchPicker.tsx
 #   apps/desktop-qt/src/native/ScheduledTasksController.cpp
-#   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js
+#   packages/qml/HalC2/Bricks/ScheduledTaskEditor.qml
+#   packages/qml/HalC2/Bricks/js/scheduledTasks.js
 #   apps/tui/src/host/sections/scheduledTasks.ts (the terminal client's list and editor)
 #   https://github.com/pingdotgg/t3code/pull/28104
 #   https://github.com/pingdotgg/t3code/pull/26658

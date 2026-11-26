@@ -99,12 +99,20 @@ defmodule HalC2.Plugins do
   """
   def rescan, do: GenServer.call(__MODULE__, :rescan, @compiles)
 
-  @doc "Serves `plugins.<method>` (`HalC2.Rpc`)."
-  def handle("list", _input), do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
+  @doc """
+  Serves `plugins.<method>` (`HalC2.Rpc`) for a caller holding `scopes` (`:all` for the
+  MC itself). A setting or call the plugin's manifest marks `exec` (it changes what the
+  MC runs, or where a trust boundary lies) needs `terminal:operate` too; it is checked
+  here, on the plugin's MC, in the same step as the save or the call.
+  """
+  def handle(method, input, scopes \\ :all)
 
-  def handle("rescan", _input), do: {:ok, %{"plugins" => rescan()}}
+  def handle("list", _input, _scopes),
+    do: {:ok, %{"plugins" => GenServer.call(__MODULE__, :list)}}
 
-  def handle("enable", %{"id" => id} = input) do
+  def handle("rescan", _input, _scopes), do: {:ok, %{"plugins" => rescan()}}
+
+  def handle("enable", %{"id" => id} = input, _scopes) do
     case input["acceptPermissions"] || [] do
       accepted when is_list(accepted) ->
         if Enum.all?(accepted, &is_binary/1),
@@ -116,17 +124,18 @@ defmodule HalC2.Plugins do
     end
   end
 
-  def handle("disable", %{"id" => id}),
+  def handle("disable", %{"id" => id}, _scopes),
     do: GenServer.call(__MODULE__, {:set_enabled, id, false, []})
 
-  def handle("restart", %{"id" => id}), do: GenServer.call(__MODULE__, {:restart, id})
+  def handle("restart", %{"id" => id}, _scopes), do: GenServer.call(__MODULE__, {:restart, id})
 
-  def handle("saveSettings", %{"id" => id, "settings" => %{} = settings}),
-    do: GenServer.call(__MODULE__, {:save_settings, id, settings})
+  def handle("saveSettings", %{"id" => id, "settings" => %{} = settings}, scopes),
+    do: GenServer.call(__MODULE__, {:save_settings, id, settings, shell?(scopes)})
 
   # Plugin code runs in the caller, so a slow plugin holds up only its own request.
-  def handle("call", %{"id" => id, "method" => method} = input) do
-    with {:ok, module, context} <- GenServer.call(__MODULE__, {:context, id}) do
+  def handle("call", %{"id" => id, "method" => method} = input, scopes) do
+    with {:ok, module, context} <-
+           GenServer.call(__MODULE__, {:context, id, method, shell?(scopes)}) do
       case safely(fn ->
              with(
                {:ok, value} <- module.call(method, input["input"], context),
@@ -146,7 +155,7 @@ defmodule HalC2.Plugins do
     end
   end
 
-  def handle("file", %{"id" => id, "path" => path}) do
+  def handle("file", %{"id" => id, "path" => path}, _scopes) do
     with {:ok, dir, revision} <- GenServer.call(__MODULE__, {:file, id, path}) do
       case Package.file(dir, path, revision) do
         {:ok, file} -> {:ok, file}
@@ -157,7 +166,7 @@ defmodule HalC2.Plugins do
 
   # Compiles a package's code without enabling it (`HalC2.Plugins.CompileCheck`), in the
   # caller, so the host answers others meanwhile; the listing keeps the last result.
-  def handle("compile", %{"id" => id}) do
+  def handle("compile", %{"id" => id}, _scopes) do
     with {:ok, dir, hash} <- GenServer.call(__MODULE__, {:compile_target, id}),
          {:ok, result} <- CompileCheck.run(dir, Path.wildcard(Path.join(dir, "mc/*.ex"))) do
       check = %{
@@ -184,7 +193,23 @@ defmodule HalC2.Plugins do
     end
   end
 
-  def handle(method, _input), do: {:error, "plugins.#{method} is not served by this MC yet"}
+  def handle(method, _input, _scopes),
+    do: {:error, "plugins.#{method} is not served by this MC yet"}
+
+  defp shell?(:all), do: true
+  defp shell?(scopes), do: "terminal:operate" in scopes
+
+  # What a session without `terminal:operate` is told when it asks for an `exec` change.
+  defp shell_required(what),
+    do:
+      {:error,
+       %{
+         "_tag" => "EnvironmentScopeRequiredError",
+         "requiredScope" => "terminal:operate",
+         "message" =>
+           "#{what} changes what this MC runs, so it needs the terminal:operate scope, " <>
+             "which this device was paired without."
+       }}
 
   defp located(%{file: nil, message: message}), do: message
   defp located(%{line: nil} = d), do: "#{d.file}: #{d.message}"
@@ -251,11 +276,31 @@ defmodule HalC2.Plugins do
           do: tool_answer(id, fn -> module.call_tool(name, arguments, settings) end)
       end)
 
-    pack ||
-      Enum.find_value(tool_extensions(thread_id), fn {id, module, context} ->
-        if Enum.any?(extension_tools(module, context), &(&1["name"] == name)),
-          do: tool_answer(id, fn -> module.call_agent_tool(name, arguments, context) end)
-      end)
+    pack || call_extension_tool(tool_extensions(thread_id), name, arguments)
+  end
+
+  @doc """
+  The agent tools of extension `id` alone, for an agent in `thread_id` kept to them
+  (`HalC2.Mcp.kept_to/1`): no tool pack's, and no other extension's.
+  """
+  def tools_of(id, thread_id) do
+    for {^id, module, context} <- tool_extensions(thread_id),
+        tool <- extension_tools(module, context),
+        do: tool
+  end
+
+  @doc "`call_tool/3` for an agent kept to the agent tools of extension `id` (`tools_of/2`)."
+  def call_tool_of(id, name, arguments, thread_id) do
+    tool_extensions(thread_id)
+    |> Enum.filter(&(elem(&1, 0) == id))
+    |> call_extension_tool(name, arguments)
+  end
+
+  defp call_extension_tool(extensions, name, arguments) do
+    Enum.find_value(extensions, fn {id, module, context} ->
+      if Enum.any?(extension_tools(module, context), &(&1["name"] == name)),
+        do: tool_answer(id, fn -> module.call_agent_tool(name, arguments, context) end)
+    end)
   end
 
   defp tool_answer(id, fun) do
@@ -940,7 +985,13 @@ defmodule HalC2.Plugins do
     end
   end
 
-  def handle_call({:save_settings, id, input}, _from, state) do
+  # A save the code before this release queued (one a release upgrade's suspend held in
+  # the mailbox) did not say whether its session may use the shell, so it is taken as one
+  # that may not: what it changes outside `exec` settings is saved, the rest refused.
+  def handle_call({:save_settings, id, input}, from, state),
+    do: handle_call({:save_settings, id, input, false}, from, state)
+
+  def handle_call({:save_settings, id, input, shell?}, _from, state) do
     case state.plugins[id] do
       %{module: module, package: package} = plugin when module != nil or package != nil ->
         fields = fields(plugin)
@@ -956,7 +1007,8 @@ defmodule HalC2.Plugins do
         # A value saved as null goes back to the field's default.
         next = current |> Map.merge(input) |> Map.reject(fn {_key, value} -> value == nil end)
 
-        with :ok <- check_types(fields, input),
+        with :ok <- exec_allowed(plugin, fields, current, next, shell?),
+             :ok <- check_types(fields, input),
              :ok <- validate(module, Map.merge(defaults(fields), reveal(id, fields, next))),
              old = settings(plugin),
              {sealed, store_secrets} = seal(id, fields, next),
@@ -965,8 +1017,11 @@ defmodule HalC2.Plugins do
           state = state |> apply_settings(plugin, old) |> push()
           {:reply, {:ok, entry(state.plugins[id])}, state}
         else
-          {:error, message} ->
+          {:error, message} when is_binary(message) ->
             {:reply, {:error, %{"_tag" => "PluginSettingsInvalid", "message" => message}}, state}
+
+          {:error, %{}} = refused ->
+            {:reply, refused, state}
 
           # The settings document refused the save: nothing changed, the secrets neither.
           {:saved, error} ->
@@ -993,6 +1048,18 @@ defmodule HalC2.Plugins do
       end
 
     {:reply, {:ok, last}, state}
+  end
+
+  def handle_call({:context, id, method, shell?}, from, state) do
+    case state.plugins[id] do
+      %{manifest: %{exec_calls: calls}} = plugin when not shell? ->
+        if method in calls,
+          do: {:reply, shell_required("#{name(plugin)}'s #{method}"), state},
+          else: handle_call({:context, id}, from, state)
+
+      _ ->
+        handle_call({:context, id}, from, state)
+    end
   end
 
   # What a plugin's MC part is called with, while it runs.
@@ -1089,7 +1156,8 @@ defmodule HalC2.Plugins do
   end
 
   @impl true
-  # A client may turn plugins on or off by writing the settings document itself.
+  # The host's own writes and `plugins` records a client's save filtered
+  # (`HalC2.Plugins.Host.seal_records/3`) reach the plugins here.
   def handle_info({:hal_c2_settings, _mc, _settings}, state),
     do: {:noreply, state |> reconcile() |> push()}
 
@@ -1837,7 +1905,7 @@ defmodule HalC2.Plugins do
     plugins = settings["plugins"] || %{}
     next = Map.put(settings, "plugins", Map.put(plugins, id, fun.(plugins[id] || %{})))
 
-    case HalC2.Settings.put(next, version) do
+    case HalC2.Settings.put(next, version, :host) do
       {:ok, _} -> :ok
       {:error, :stale} -> update_config(id, fun)
       {:error, error} -> {:error, error}
@@ -1853,9 +1921,24 @@ defmodule HalC2.Plugins do
         "type" => field[:type] && to_string(field[:type]),
         "description" => field[:description],
         "default" => field[:default],
-        "options" => field[:options] && json(field[:options])
+        "options" => field[:options] && json(field[:options]),
+        "exec" => if(field[:exec] == true, do: true)
       }
       |> Map.reject(fn {_key, value} -> value == nil end)
+    end
+  end
+
+  # A save without the shell's scope may not change a field the manifest marks `exec`:
+  # what the plugin would use for it (a saved null being the default) stays the same.
+  defp exec_allowed(_plugin, _fields, _current, _next, true), do: :ok
+
+  defp exec_allowed(plugin, fields, current, next, false) do
+    used = &Map.merge(defaults(fields), reveal(plugin.id, fields, &1))
+    {before, after_save} = {used.(current), used.(next)}
+
+    case Enum.find(fields, &(&1["exec"] == true and before[&1["key"]] != after_save[&1["key"]])) do
+      nil -> :ok
+      field -> shell_required("#{name(plugin)}'s #{field["label"]} setting")
     end
   end
 

@@ -29,10 +29,26 @@ defmodule HalC2.Git do
     # A checkout's own `core.fsmonitor` names a program `git status` would run:
     # repository configuration never picks a program for the MC to execute.
     # `env -u` execs git in its place, so a pid or group taken for git stays git's.
-    unset = Enum.flat_map(opts[:unset] || [], &["-u", &1])
+    unset_names = opts[:unset] || []
+    unset = Enum.flat_map(unset_names, &["-u", &1])
+
+    # A port leaves out a variable whose value is empty, so `env` sets those: git
+    # refuses a `GIT_CONFIG_KEY_<n>` whose `GIT_CONFIG_VALUE_<n>` is missing, and an
+    # empty value (`credential.helper =`, which drops the helpers before it) is real.
+    # The last value of a name is the one it gets, and a name unset stays unset.
+    {empty, env} =
+      [{"GIT_OPTIONAL_LOCKS", "0"} | opts[:env] || []]
+      |> Enum.reverse()
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.reverse()
+      |> Enum.split_with(&match?({_, ""}, &1))
+
+    prefix =
+      unset ++
+        for {name, ""} <- empty, name not in unset_names, do: name <> "="
 
     argv =
-      if(unset == [], do: [], else: ["env" | unset]) ++
+      if(prefix == [], do: [], else: ["env" | prefix]) ++
         [
           Application.get_env(:hal_c2, :git_command, "git"),
           "-c",
@@ -41,13 +57,7 @@ defmodule HalC2.Git do
           "core.fsmonitor=false" | args
         ]
 
-    opts =
-      Keyword.update(
-        opts,
-        :env,
-        [{"GIT_OPTIONAL_LOCKS", "0"}],
-        &[{"GIT_OPTIONAL_LOCKS", "0"} | &1]
-      )
+    opts = Keyword.put(opts, :env, env)
 
     run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
 

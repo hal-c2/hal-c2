@@ -35,7 +35,7 @@
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config.providers)
 #   apps/tui/src/features.backlog.test.ts (editable-settings, provider maintenance)
 #   apps/web/src/components/settings/ProviderAuthenticationSection.tsx
-#   apps/desktop-qt/src/native/ProviderSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProvidersSettings.qml
+#   apps/desktop-qt/src/native/ProviderSettingsController.cpp, packages/qml/HalC2/Bricks/ProvidersSettings.qml
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the account email stays hidden until asked)
 #   https://github.com/pingdotgg/t3code/pull/14678
 #   https://github.com/pingdotgg/t3code/pull/25753

@@ -91,7 +91,7 @@ target_include_directories(tst_Features PRIVATE . ../src "${_harness}")
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../features"
-  HAL_C2_QML_DIR="${_desktop}/qml"
+  HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../packages/qml"
   HAL_C2_MOBILE_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../qml"
 )
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::QuickControls2 Qt6::Test)
@@ -121,7 +121,7 @@ if(NOT HAL_C2_QMLTESTRUNNER)
 endif()
 if(HAL_C2_QMLTESTRUNNER)
   add_test(NAME Qml COMMAND "${HAL_C2_QMLTESTRUNNER}" -input "${CMAKE_CURRENT_SOURCE_DIR}/qml"
-    -import "${_desktop}/tests/imports" -import "${_desktop}/qml" -import "${CMAKE_CURRENT_SOURCE_DIR}/../qml")
+    -import "${_desktop}/tests/imports" -import "${CMAKE_CURRENT_SOURCE_DIR}/../../../packages/qml" -import "${CMAKE_CURRENT_SOURCE_DIR}/../qml")
   set_tests_properties(Qml PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 endif()
 # Regressions the property tests (prop/) found, one tst_*Regression.cpp each,

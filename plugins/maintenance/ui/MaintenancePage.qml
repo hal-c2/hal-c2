@@ -293,7 +293,7 @@ Item {
                             subtle: true
                             visible: (run.modelData.prUrl ?? "").length > 0
                             text: qsTr("Open on GitHub")
-                            onClicked: Qt.openUrlExternally(run.modelData.prUrl)
+                            onClicked: Shell.openWebLink(run.modelData.prUrl)
                         }
 
                         ShellButton {

@@ -1003,7 +1003,16 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   end
 
   step "a developer asks the MC over HTTP whether {string} compiles", %{args: [id]} = context do
-    Map.put(context, :answer, World.http_post(context, "/api/plugins/#{id}/compile", %{}))
+    # Compiling runs the package's code, which takes the admin pair (as the MC's own
+    # token, which local tools use, holds).
+    {:ok, _} = Application.ensure_all_started(:inets)
+    access = Mc.pair(Mc.admin_scopes(), "Developer")
+
+    Map.put(
+      context,
+      :answer,
+      Mc.http(context.mc, :post, "/api/plugins/#{id}/compile", bearer: access, json: %{})
+    )
   end
 
   step "the MC answers 422 with the file, line and message of the error", context do

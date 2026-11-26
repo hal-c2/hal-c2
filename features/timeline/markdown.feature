@@ -64,9 +64,9 @@
 #   apps/mobile/src/features/threads/markdownImageSize.ts, markdownCodeHighlightState.ts (image size limits, colouring only for a named language)
 #   apps/mobile/src/lib/markdownLinks.ts, nativeMarkdownText.ts (how a link, a file mention, a skill and a path in code are shown in a reply)
 #   apps/mobile/modules/hal-c2-markdown-text (chips in text, copy without inline icons, selection handle colour)
-#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
-#   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
+#   packages/qml/HalC2/Bricks/Markdown.qml
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
+#   packages/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
 #   apps/desktop-qt/src/native/CodeHighlighter.cpp, native/syntax (code colours: syntect with bat's syntaxes, the Pierre themes)
 #   apps/tui/src/host/codeColours.ts (code colours on the terminal: OpenTUI's tree-sitter and its grammars)
 #   apps/desktop-qt/tests/tst_Markdown.qml
@@ -181,7 +181,7 @@ Feature: Formatted messages
     When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
     Then the table is shown as a table and not as a run-on paragraph
 
-    @backlog-desktop @backlog-mobile
+    @backlog-mobile
     Examples:
       | where              |
       | at the top level   |
@@ -348,6 +348,12 @@ Feature: Formatted messages
   @shared @backlog-mobile
   Scenario: A link to a script is not a link
     When the agent answers with a link to "javascript:alert(1)"
+    Then the link's text is shown and nothing can be opened
+
+  # A terminal opens a link with the system's opener, which reaches a network path's host.
+  @tui @priority-high
+  Scenario: A link to a network path is not a link in the terminal
+    When the agent answers with a link to "//attacker.test/share/notes.md"
     Then the link's text is shown and nothing can be opened
 
   @shared @backlog-mobile @backlog-tui @priority-high

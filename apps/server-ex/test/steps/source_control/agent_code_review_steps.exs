@@ -32,6 +32,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     "commented" => "comment"
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
+  # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
 
@@ -56,13 +57,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     assert %{"status" => "running"} = Fixtures.entry(@id)
 
+    # The fake agents run here: a trusted pull request is reviewed on this machine
+    # unless the scenario keeps the default of sandboxing every review.
     context
     |> Map.merge(%{prs: %{}, heads: %{}})
     |> save(%{
       "provider" => "codex",
       "model" => "fake/one",
       "prompt" => @prompt,
-      "pollMinutes" => 60
+      "pollMinutes" => 60,
+      "reviewTrustedOnThisMachine" => true
     })
     |> watch()
   end
@@ -939,8 +943,45 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     trust(context, false)
   end
 
-  step "{string} sandboxes every review", %{args: [@id]} = context do
-    save(context, %{"sandboxEveryReview" => true})
+  step "pull requests are trusted", context do
+    trust(context, true)
+  end
+
+  # Saved as null, the setting goes back to its default.
+  step "{string} keeps its default of sandboxing every review", %{args: [@id]} = context do
+    save(context, %{"reviewTrustedOnThisMachine" => nil})
+  end
+
+  step "{string} reviews trusted pull requests on this machine", %{args: [@id]} = context do
+    save(context, %{"reviewTrustedOnThisMachine" => true})
+  end
+
+  # --- what a review on this machine reaches (#1795) ---------------------------------------
+
+  step "the agent of \#{int} is offered {string} alone", %{args: [_number, name]} = context do
+    %{"tools" => tools} = review_mcp(context, "tools/list", %{})
+    assert Enum.map(tools, & &1["name"]) == [name]
+    context
+  end
+
+  step "the agent of \#{int} is refused HAL-C2's own tools", %{args: [_number]} = context do
+    for name <- ~w(hal_c2_thread_list hal_c2_thread_launch delegate_task preview_snapshot) do
+      result = review_mcp(context, "tools/call", %{"name" => name, "arguments" => %{}})
+      assert %{"isError" => true, "content" => [%{"text" => text}]} = result
+      assert text =~ "capability_denied", text
+    end
+
+    context
+  end
+
+  step "a member left the unresolved review comment {string} on \#{int}",
+       %{args: [body, number]} = context do
+    review_comment(context, number, "octocat", "MEMBER", body)
+  end
+
+  step "someone who is not a member or collaborator left the unresolved review comment {string} on \#{int}",
+       %{args: [body, number]} = context do
+    review_comment(context, number, "stranger", "NONE", body)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -1197,6 +1238,124 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # --- through CLIProxyAPI (#1781) ----------------------------------------------------------
+  # The plugin's instances as the CLIProxyAPI plugin puts them, running on its fake
+  # (`HalC2.Steps.Plugins.CliProxyApi`); the host takes them out of the settings when
+  # the plugin is not on.
+
+  step "{string} reviews with {string} from the CLIProxyAPI plugin",
+       %{args: [@id, label]} = context do
+    {id, key, model} =
+      case label do
+        "Codex via CLIProxyAPI" ->
+          {"plugin_cliproxyapi_codex", "CLIPROXYAPI_API_KEY", "gpt-5.5"}
+
+        "Claude via CLIProxyAPI" ->
+          {"plugin_cliproxyapi_claude", "ANTHROPIC_AUTH_TOKEN", "claude-haiku-4-5"}
+      end
+
+    assert %{"displayName" => ^label} = HalC2.Settings.settings()["providerInstances"][id]
+    assert client_key = HalC2.Settings.instance_env(id)[key]
+
+    context
+    |> save(%{"provider" => id, "model" => model})
+    |> Map.put(:proxy, %{port: context.fake.port, key: client_key})
+  end
+
+  step "{string} reviews with a Codex of its own whose base URL is {string}",
+       %{args: [@id, base]} = context do
+    instance = %{
+      "driver" => "codex",
+      "displayName" => "My proxy",
+      "enabled" => true,
+      "environment" => [proxy_key("MY_KEY")],
+      "config" => %{
+        "launchArgs" =>
+          "-c model_provider=mine -c model_providers.mine.base_url=#{base} " <>
+            "-c model_providers.mine.env_key=MY_KEY -c model_providers.mine.wire_api=responses"
+      }
+    }
+
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "my_proxy"], instance)
+      )
+
+    save(context, %{"provider" => "my_proxy"})
+  end
+
+  step "its agent runs {word} in a sandbox through the proxy, with no credential in its environment",
+       %{args: [agent]} = context do
+    env =
+      case agent do
+        "Codex" ->
+          assert_receive {:sandbox_exec, ["codex", "app-server" | config],
+                          %{workdir: "/review/src", environment: env}},
+                         15_000
+
+          # The broker's address in these scenarios stands for this machine's.
+          assert "model_providers.review.base_url=http://127.0.0.1:#{context.proxy.port}/v1" in config
+
+          assert "model_providers.review.env_key=OPENAI_API_KEY" in config
+          env
+
+        "Claude" ->
+          assert_receive {:sandbox_exec, ["claude" | _],
+                          %{workdir: "/review/src", environment: env}},
+                         15_000
+
+          assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:#{context.proxy.port}"
+          env
+      end
+
+    refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
+    refute Enum.any?(Map.values(env), &(&1 =~ context.proxy.key))
+    Map.put(context, :agent, agent)
+  end
+
+  # The driver's model requests (`HalC2.OpenShell.Review`'s), each method and path,
+  # with none added.
+  step "its sandbox lets the agent send its model's requests to the proxy's port and nothing else",
+       %{agent: agent} = context do
+    assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
+    assert [model] = spec.policy.network_policies["model"].endpoints
+
+    assert {model.host, model.port, model.allowed_ips} ==
+             {"127.0.0.1", context.proxy.port, ["127.0.0.1"]}
+
+    assert model.credential_binding.provider != ""
+
+    expected =
+      case agent do
+        "Codex" ->
+          [{"POST", "/v1/responses"}, {"POST", "/v1/responses/compact"}, {"GET", "/v1/models"}]
+
+        "Claude" ->
+          [{"POST", "/v1/messages"}, {"POST", "/v1/messages/count_tokens"}, {"GET", "/v1/models"}]
+      end
+
+    assert model.rules |> Enum.map(&{&1.allow.method, &1.allow.path}) |> Enum.sort() ==
+             Enum.sort(expected)
+
+    context
+  end
+
+  step "the sandbox's checkout has no {string}", %{args: [path]} = context do
+    checkout = Path.join(context.sandbox_root, "src")
+    assert File.read!(Path.join(checkout, ".gitmodules")) =~ path
+    refute File.exists?(Path.join([checkout, path, "README.md"]))
+    context
+  end
+
+  step "the agent of \#{int} is told its sandbox gets no submodules",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["threadId"])
+    prompt = prompt(review["threadId"])
+    assert prompt =~ "never fetched into a sandbox", prompt
+    refute prompt =~ "blocked there", prompt
+    context
+  end
+
   step "its sandbox lets the agent send its model's requests and nothing else on the model's API",
        context do
     assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
@@ -1251,6 +1410,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert review["error"] =~ "used up its token budget"
+    context
+  end
+
+  # Asked once the review's thread works in its checkout, which comes after its sandbox.
+  step "no review sandbox was made", context do
+    refute_received {:openshell_request, "CreateSandbox", _}
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    context
+  end
+
+  step "no agent ran on this machine for the review of \#{int}", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["sandboxed"] == true
+    assert HalC2.Streams.get(review["threadId"], "thread", review["threadId"]) == nil
     context
   end
 
@@ -2765,7 +2938,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     settings =
       Map.merge(
-        %{"provider" => "codex", "model" => "fake/one", "prompt" => @prompt, "pollMinutes" => 60},
+        %{
+          "provider" => "codex",
+          "model" => "fake/one",
+          "prompt" => @prompt,
+          "pollMinutes" => 60,
+          "reviewTrustedOnThisMachine" => true
+        },
         settings
       )
 
@@ -2818,6 +2997,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # its review starts on the user's approval of its head (`start/2`). No model's API
   # key is in the MC's environment, whatever the runner's holds, until `gateway/1`
   # puts one there.
+  # The proxy's client key, sensitive as the plugin puts it.
+  defp proxy_key(name), do: %{"name" => name, "value" => "sk-test-proxy", "sensitive" => true}
+
   defp trust(context, trusted) do
     World.put_os_env("OPENAI_API_KEY", nil)
     World.put_os_env("ANTHROPIC_API_KEY", nil)
@@ -3193,6 +3375,84 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> started(number)
     |> report(findings("approve", 1))
     |> await_review!(number, &(&1["status"] == "waiting"))
+  end
+
+  # The review thread's agent's answer from HAL-C2's MCP server to `method`.
+  defp review_mcp(context, method, params) do
+    %{authorization: auth} = HalC2.Mcp.server(context.thread, "codex")
+    body = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(body))
+    result
+  end
+
+  # GitHub's activity of pull request `number` with one more unresolved review thread,
+  # opened by `login` with standing `association` in the repository.
+  defp review_comment(context, number, login, association, body) do
+    threads = Map.get(context[:review_threads] || %{}, number, [])
+    n = length(threads) + 1
+
+    thread = %{
+      "id" => "T#{n}",
+      "path" => "src/limits.ts",
+      "line" => 1,
+      "diffSide" => "RIGHT",
+      "isResolved" => false,
+      "isOutdated" => false,
+      "comments" => %{
+        "totalCount" => 1,
+        "pageInfo" => %{"hasNextPage" => false},
+        "nodes" => [
+          %{
+            "id" => "RC#{n}",
+            "author" => %{"__typename" => "User", "login" => login, "avatarUrl" => nil},
+            "authorAssociation" => association,
+            "body" => body,
+            "createdAt" => "2026-09-03T12:00:00Z",
+            "url" => "https://github.com/acme/api/pull/#{number}#discussion_r#{n}",
+            "reactionGroups" => []
+          }
+        ]
+      }
+    }
+
+    threads = threads ++ [thread]
+
+    view = %{
+      "author" => %{"login" => "octocat"},
+      "comments" => [],
+      "reviews" => [],
+      "commits" => []
+    }
+
+    answer = %{
+      "data" => %{
+        "viewer" => %{"login" => "monalisa"},
+        "repository" => %{
+          "pullRequest" => %{
+            "reviewThreads" => %{"pageInfo" => %{"hasNextPage" => false}, "nodes" => threads},
+            "author" => %{"__typename" => "User", "login" => "octocat", "avatarUrl" => nil},
+            "reactionGroups" => [],
+            "comments" => %{"nodes" => []},
+            "reviews" => %{"nodes" => []},
+            "reviewRequests" => %{"nodes" => []},
+            "latestReviews" => %{"nodes" => []},
+            "reviewDismissals" => %{"nodes" => []},
+            "commits" => %{"nodes" => []}
+          }
+        }
+      }
+    }
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr view #{number}", "author,comments,reviews,commits"], "stdout" => view},
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["reviewThreads(first", "viewerDidAuthor", ~s("number":#{number},)],
+        "stdout" => answer
+      }
+    ])
+    |> Map.update(:review_threads, %{number => threads}, &Map.put(&1, number, threads))
   end
 
   # The agent of the review's thread calls the report tool with `arguments`.

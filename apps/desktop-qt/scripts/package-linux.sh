@@ -102,7 +102,7 @@ export QMAKE="${wrapper}"
 # and what it then copies of them (their build directories) is taken out again
 # before the image is made: a copy on disk could be loaded in place of the binary's.
 export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
-export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
+export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/../../.." && pwd)/packages/qml"
 # The plugin bundles only xcb by default, which leaves a Wayland session running
 # the app through XWayland. It takes the Wayland platform plugin when asked (one
 # libqwayland.so since Qt 6.10, an EGL and a generic one before), but not the

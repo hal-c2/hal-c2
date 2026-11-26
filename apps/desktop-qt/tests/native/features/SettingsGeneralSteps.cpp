@@ -1,4 +1,4 @@
-// Settings → General as the desktop draws it (qml/HalC2/Bricks/GeneralSettings.qml),
+// Settings → General as the desktop draws it (packages/qml/HalC2/Bricks/GeneralSettings.qml),
 // and what each of its rows changes elsewhere in the shell: the sidebar's
 // grouping and clock, how a diff opens, proactive panels, the composer's keys,
 // the questions asked before a thread goes, and the quit shortcut

@@ -7,8 +7,8 @@
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
 #   apps/web/src/composerDraftStore.ts (terminalContexts on drafts, legacy placeholder migration)
 #   apps/web/src/components/ChatView.tsx, ChatView.logic.ts (buildExpiredTerminalContextToastCopy: expired excerpts at send)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml (the terminal menu's Add to chat)
+#   packages/qml/HalC2/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
+#   packages/qml/HalC2/Bricks/TerminalSplits.qml (the terminal menu's Add to chat)
 #   apps/desktop-qt/src/native/ComposerController.cpp (addTerminalContext, withTerminalContexts)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions, composer context chips)
 #   Cross-domain: composer/context-references.feature owns how chips sit inside the prompt and

@@ -25,8 +25,8 @@
 #   https://github.com/pingdotgg/t3code/pull/30498
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
-#   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/QrCode.qml, apps/desktop-qt/src/native/QrCode.cpp (a pairing link as a QR code)
+#   apps/desktop-qt/src/native/ConnectionsController.cpp, packages/qml/HalC2/Bricks/ConnectionsSettings.qml
+#   packages/qml/HalC2/Bricks/QrCode.qml, apps/desktop-qt/src/native/QrCode.cpp (a pairing link as a QR code)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink: the address a link's machine is reached at)
 #   apps/web/src/components/settings/ConnectionsSettings.logic.ts
 #   apps/web/src/components/settings/ConnectionsSettings.logic.test.ts (WSL row visibility, WSL enable staging, share panel address)

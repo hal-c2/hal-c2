@@ -49,6 +49,7 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review.drivers/0" => @pure,
       "HalC2.OpenShell.Review.supported?/1" => @pure,
       "HalC2.OpenShell.Review.command/1" => @pure,
+      "HalC2.OpenShell.Review.command/2" => @turn,
       "HalC2.OpenShell.Review.binding/1" => @reads,
       "HalC2.OpenShell.Review.subprocess/2" => @turn,
       "HalC2.OpenShell.Review.in_sandbox/1" => @turn,

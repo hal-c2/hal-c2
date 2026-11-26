@@ -202,8 +202,37 @@ pub struct Pairing {
 /// speak to, so every other outcome leaves it unspent. Only an origin that
 /// does not answer at all passes the question on to the next: an answer of
 /// any kind stands.
+/// Whether a pairing exchange with `origin` goes direct, never
+/// through the environment's proxy: every plain-HTTP origin (the
+/// single-use token travels in its body, where a proxy could
+/// read it, as the desktop-qt host's direct fetch never let one)
+/// and every loopback origin. A remote HTTPS origin keeps the
+/// proxy: its body is inside TLS the platform verifier checks,
+/// and the proxy may be the only route to it.
+pub fn direct_route(origin: &str) -> bool {
+    let Ok(url) = Url::parse(origin) else {
+        return true;
+    };
+    if url.scheme() != "https" {
+        return true;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        None => true,
+    }
+}
+
 pub fn exchange(link: &Link, client: &Client) -> Pairing {
-    let agent = crate::http::agent(Some(TIMEOUT));
+    // One agent per route (see `direct_route`): a proxy setting
+    // belongs to a whole agent, so no single agent can both keep
+    // a plain-HTTP token away from an inherited proxy and reach
+    // a remote HTTPS MC through one.
+    let direct = crate::http::direct_agent(Some(TIMEOUT));
+    let proxied = crate::http::agent(Some(TIMEOUT));
     let first = link.origins.first().cloned().unwrap_or_default();
     let result = |outcome, origin: &str, descriptor| Pairing {
         outcome,
@@ -212,6 +241,11 @@ pub fn exchange(link: &Link, client: &Client) -> Pairing {
         descriptor,
     };
     for origin in &link.origins {
+        let agent = if direct_route(origin) {
+            &direct
+        } else {
+            &proxied
+        };
         let Some((status, body)) = answer(
             agent
                 .get(format!("{origin}/.well-known/hal-c2/environment"))
@@ -233,7 +267,7 @@ pub fn exchange(link: &Link, client: &Client) -> Pairing {
         if protocol != PROTOCOL as f64 {
             return result(Outcome::Incompatible, origin, descriptor);
         }
-        return spend(&agent, origin, link, client, descriptor);
+        return spend(agent, origin, link, client, descriptor);
     }
     result(Outcome::Unreachable, &first, Map::new())
 }
@@ -299,6 +333,32 @@ fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_remote_https_origin_keeps_the_environment_proxy() {
+        // Plain HTTP anywhere, and loopback on either scheme, is
+        // direct; a remote HTTPS MC may only be reachable through
+        // the proxy, and its token body is inside checked TLS.
+        for direct in [
+            "http://192.168.1.4:3773",
+            "http://mc.example",
+            "http://127.0.0.1:3773",
+            "https://127.0.0.1:8443",
+            "https://[::1]:8443",
+            "https://[::ffff:127.0.0.1]:8443",
+            "https://localhost:8443",
+            "not a url",
+        ] {
+            assert!(direct_route(direct), "{direct}");
+        }
+        for proxied in [
+            "https://mc.example",
+            "https://192.168.1.4:8443",
+            "https://[::ffff:192.168.1.4]:8443",
+        ] {
+            assert!(!direct_route(proxied), "{proxied}");
+        }
+    }
 
     #[test]
     fn a_link_names_its_origin_and_token() {

@@ -24,7 +24,7 @@
 #   https://github.com/pingdotgg/t3code/pull/27114
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
+#   packages/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
 #   apps/web/src/components/BranchToolbar.logic.ts (Run on: every connected machine's projects)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (machine choice, Auto balance, workspace label)
 #   apps/desktop-qt/tests/native/features/ComposerMachineSteps.cpp

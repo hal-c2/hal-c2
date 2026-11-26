@@ -1,4 +1,4 @@
-//! The shell's QML: desktop-qt's bricks (`apps/desktop-qt/qml`) and this
+//! The shell's QML: the bricks (`packages/qml`) and this
 //! app's own (`apps/desktop-ljos/qml`: the entry and the QML half of
 //! `HalC2.Shell`), as one import path. build.rs compiles them into the pack
 //! a release runs; a `dev-qml` build compiles them at start-up instead
@@ -40,7 +40,7 @@ impl Roots {
             .parent()
             .expect("shell/ is in the app");
         Roots {
-            bricks: app.join("../desktop-qt/qml"),
+            bricks: app.join("../../packages/qml"),
             shell: app.join("qml"),
             extra: Vec::new(),
             user: None,

@@ -4,10 +4,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   on the fake CLI in `test/support/fake_claude.py`: turns on one model or another,
   with fast mode on, off or unset, that say hello, leave a subagent and a command
   running in the background, put Claude's own session in plan mode (EnterPlanMode), or
-  ask which mode the session runs in, compact the conversation (`/compact`), or that
-  Claude acknowledges without ever starting a turn for; and the user stopping the
-  thread between turns. Every resumed process first runs a turn of its own, reporting a
-  background task the previous one left behind. Each process is handed HAL-C2's MCP
+  ask which mode the session runs in, compact the conversation (`/compact`), fail once
+  Claude has started them, or that Claude acknowledges without ever starting a turn
+  for; and the user stopping the thread between turns. Every resumed process first runs
+  a turn of its own, reporting a background task the previous one left behind. Each process is handed HAL-C2's MCP
   server over stdin when the thread's project lets agents reach the browser (a choice
   made per run, opposite to the environment's, so a turn that read the environment's
   would launch differently from the next), which Claude takes or refuses
@@ -24,9 +24,13 @@ defmodule HalC2.ClaudeSessionPropTest do
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
   other turn runs, on the same process when the selection is the same, so the work
-  survives it. Stopping between turns ends the background work with its process. Plan
+  survives it, unless Claude started the turn and it failed: that ends the work and
+  keeps the process. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
-  prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
+  prompt Claude acknowledges but never starts a turn for fails, keeps the process, and
+  keeps no room in the conversation for an answer that is not coming (#1735), unless
+  Claude answered a turn of its own in that run, or began to, or an MC from before
+  answers were recorded (v12) left that turn running for this one to adopt.
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
@@ -67,6 +71,8 @@ defmodule HalC2.ClaudeSessionPropTest do
     which_mode: "which mode",
     compact: "/compact",
     never_start: "never start a turn",
+    never_start_streaming: "never start a turn, mid-answer",
+    start_failing: "start a turn, then fail",
     which_tools: "which tools",
     halfway: "answer halfway"
   }
@@ -81,16 +87,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         trap_exit do
           start(relative?, access)
           {history, state, result} = run_commands(__MODULE__, cmds)
-          HalC2.Prop.stop_services()
-          Application.delete_env(:hal_c2, :claude_command)
-          System.delete_env("FAKE_CLAUDE_ORPHANED")
-          System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
-          System.delete_env("FAKE_CLAUDE_MCP_HOLD")
-          System.delete_env("CLAUDE_CONFIG_DIR")
-          System.delete_env("FAKE_CLAUDE_INPUT_LOG")
-          Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
-          Application.put_env(:hal_c2, :durable_programs, false)
-          Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
+          stop_case()
 
           (result == :ok)
           |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -98,6 +95,114 @@ defmodule HalC2.ClaudeSessionPropTest do
         end
       end
     end
+  end
+
+  # The counterexample of #1735, run whole every time rather than when PropEr draws
+  # it: with background work running, three prompts Claude never starts a turn for
+  # (the last handing over a refused turn, unconfirmed) must not use up the
+  # conversation's room, so the next turn runs with the history sent again. The
+  # commands are the issue's turns 2 to 8, renumbered from 1 (its 7 sent nothing).
+  test "prompts Claude never starts leave room for the history to go again" do
+    start(false, true)
+
+    try do
+      assert %{status: "completed", background: true} =
+               turn(1, "claude-opus-4-6", :unset, :background)
+
+      assert %{status: "failed", background: true} =
+               turn(2, "claude-opus-4-6", false, :never_start)
+
+      assert %{status: "failed", background: true} =
+               turn(3, "claude-opus-4-6", :unset, :never_start)
+
+      assert %{status: "failed", background: true, sent: []} =
+               turn(4, "claude-opus-4-5", true, :which_tools)
+
+      assert %{status: "failed", background: true, handed: true} =
+               turn(5, "claude-opus-4-6", false, :never_start)
+
+      seen = turn(6, "claude-opus-4-6", false, :which_mode)
+      assert seen.status == "completed"
+      assert seen.reply == "mode bypassPermissions"
+      assert seen.background
+      assert [sent] = seen.sent
+      assert sent =~ "which tools"
+      assert String.ends_with?(sent, "\n\n" <> @texts[:which_mode])
+
+      never_started =
+        @tid
+        |> current()
+        |> StreamState.list("run")
+        |> Enum.count(&(&1["turnNeverStarted"] == true))
+
+      assert never_started == 3
+    after
+      stop_case()
+    end
+  end
+
+  # The counterexample of #1736's review, checked by the model on every run: a turn
+  # Claude started that fails ends the background work, so the next turn can change
+  # the model.
+  test "a started turn that fails ends the background work" do
+    start(false, true)
+
+    try do
+      commands =
+        for {{model, text}, n} <-
+              Enum.with_index(
+                [
+                  {"claude-opus-4-6", :background},
+                  {"claude-opus-4-6", :start_failing},
+                  {"claude-opus-4-5", :hello}
+                ],
+                1
+              ),
+            do: {:set, {:var, n}, {:call, __MODULE__, :turn, [n, model, true, text]}}
+
+      {history, state, result} = run_commands(__MODULE__, commands)
+      assert result == :ok, HalC2.Prop.report(commands, history, state, result)
+    after
+      stop_case()
+    end
+  end
+
+  # The upgrade found on #1736, checked by the model on every run: a prompt an older
+  # MC left unstarted may have been answered, however often it is adopted since.
+  test "a prompt an older MC left keeps room for an answer" do
+    start(false, true)
+
+    try do
+      calls = [
+        {:held_turn, [1, "claude-opus-4-6", false, :never_start]},
+        {:adopt, [:older]},
+        {:adopt, [:current]},
+        {:release, [1]}
+      ]
+
+      commands =
+        for {{name, args}, n} <- Enum.with_index(calls, 1),
+            do: {:set, {:var, n}, {:call, __MODULE__, name, args}}
+
+      {history, state, result} = run_commands(__MODULE__, commands)
+      assert result == :ok, HalC2.Prop.report(commands, history, state, result)
+    after
+      stop_case()
+    end
+  end
+
+  # What a case leaves behind: its services and the fake's environment.
+  defp stop_case do
+    HalC2.Prop.stop_services()
+    Application.delete_env(:hal_c2, :claude_command)
+    System.delete_env("FAKE_CLAUDE_ORPHANED")
+    System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
+    System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+    System.delete_env("CLAUDE_CONFIG_DIR")
+    System.delete_env("FAKE_CLAUDE_INPUT_LOG")
+    Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
+    Application.put_env(:hal_c2, :durable_programs, false)
+    Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
   end
 
   # Claude's config dir is given absolute, or relative, as Claude takes it: from the
@@ -206,8 +311,11 @@ defmodule HalC2.ClaudeSessionPropTest do
     }
 
   @turn_texts Map.keys(@texts) -- [:halfway]
+  @unstarted [:never_start, :never_start_streaming]
+  # Texts whose turn fails. None is refused: the next message would quote it to the fake.
+  @failing [:start_failing | @unstarted]
   @full_access_modes %{allowed: "bypassPermissions", no_bypass: "auto", no_auto: "default"}
-  @held_texts [:hello, :which_tools, :halfway]
+  @held_texts [:hello, :which_tools, :halfway, :never_start]
 
   def command(%{held: nil, n: n}) do
     frequency([
@@ -229,14 +337,14 @@ defmodule HalC2.ClaudeSessionPropTest do
     do:
       frequency([
         {2, {:call, __MODULE__, :interrupt, []}},
-        {1, {:call, __MODULE__, :adopt, []}}
+        {1, {:call, __MODULE__, :adopt, [oneof([:current, :older])]}}
       ])
 
   def command(%{held: held}),
     do:
       frequency([
         {2, {:call, __MODULE__, :release, [held.n]}},
-        {1, {:call, __MODULE__, :adopt, []}}
+        {1, {:call, __MODULE__, :adopt, [oneof([:current, :older])]}}
       ])
 
   # A held turn starts a new process; one half-answered runs until it is stopped. The
@@ -252,7 +360,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   # How `/compact` meets a session that has to start over is not modelled.
   def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
     do:
-      not (refused?(state, model, fast) and text == :never_start) and
+      not (refused?(state, model, fast) and text in @failing) and
         not (text == :compact and (state.marked or state.lost))
 
   # The MC lets go of an idle runtime only; a transcript is lost with no process up.
@@ -291,8 +399,8 @@ defmodule HalC2.ClaudeSessionPropTest do
       | launch: {model, fast == true},
         session: true,
         # A refused turn's message reaches Claude as history, context and not a request,
-        # so only the turn's own text starts work.
-        background: state.background or text == :background,
+        # so only the turn's own text starts work. A started turn that fails ends it.
+        background: text != :start_failing and (state.background or text == :background),
         tools: if(reused?(state, model, fast), do: state.tools, else: takes_tools?(state)),
         missed: missed(state, text),
         lost: false,
@@ -301,7 +409,7 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   # A turn handed history that Claude never started leaves the handoff unconfirmed: the
   # next turn is handed it again, its own message too.
-  defp marks?(state, text), do: history?(state, text) and text == :never_start
+  defp marks?(state, text), do: history?(state, text) and text in @unstarted
 
   defp missed(state, text) do
     cond do
@@ -325,7 +433,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         launch: {model, fast == true},
         session: true,
         tools: takes_tools?(state),
-        held: %{n: n, text: text, interrupted: false}
+        held: %{n: n, text: text, interrupted: false, older: false}
     }
 
   def next_state(state, _result, {:call, _, :release, [_n]}), do: %{state | held: nil}
@@ -333,7 +441,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   def next_state(state, _result, {:call, _, :interrupt, []}),
     do: put_in(state.held.interrupted, true)
 
-  def next_state(state, _result, {:call, _, :adopt, []}), do: state
+  # What an older MC did not record stays unknown through a later adoption.
+  def next_state(state, _result, {:call, _, :adopt, [from]}),
+    do: put_in(state.held.older, state.held.older or from == :older)
 
   def next_state(%{background: true} = state, _result, {:call, _, :stop, []}),
     do: %{state | session: false, background: false}
@@ -376,9 +486,18 @@ defmodule HalC2.ClaudeSessionPropTest do
       empty_compact?(state, text) ->
         seen.status == "failed" and not seen.background and seen.compactions == 0
 
-      text == :never_start ->
+      text in @unstarted ->
         seen.status == "failed" and started?(state, model, fast, text, seen) and
+          seen.never_started == (text == :never_start and seen.reply == nil) and
           seen.background == state.background and
+          sent?(state, text, seen.sent)
+
+      # A turn Claude started is never recorded as one it did not, however it fails,
+      # and one that fails ends the background work.
+      text == :start_failing ->
+        seen.status == "failed" and not seen.never_started and
+          started?(state, model, fast, text, seen) and
+          not seen.background and
           sent?(state, text, seen.sent)
 
       # The fake answers what it finds first in a message, so one that carries refused
@@ -462,21 +581,27 @@ defmodule HalC2.ClaudeSessionPropTest do
     do: seen == %{status: "running", held: true}
 
   def postcondition(%{held: held} = state, {:call, _, :release, [_n]}, seen) do
-    if held.interrupted,
-      do: seen.status == "interrupted",
-      else:
+    cond do
+      held.interrupted ->
+        seen.status == "interrupted"
+
+      held.text == :never_start ->
+        seen.status == "failed" and seen.never_started == not held.older
+
+      true ->
         seen.status == "completed" and
           seen.reply ==
             if(held.text == :hello,
               do: "Hello from claude",
               else: if(state.tools, do: "tools: hal-c2", else: "tools: none")
             )
+    end
   end
 
   def postcondition(_state, {:call, _, :interrupt, []}, seen),
     do: seen == %{stopped: true, held: true}
 
-  def postcondition(_state, {:call, _, :adopt, []}, seen),
+  def postcondition(_state, {:call, _, :adopt, [_]}, seen),
     do: seen == %{adopted: :ok, held: true}
 
   # --- commands -------------------------------------------------------------------
@@ -503,6 +628,7 @@ defmodule HalC2.ClaudeSessionPropTest do
       reused: session != nil and session() == session,
       background: background?(),
       reply: reply(state, run),
+      never_started: run["turnNeverStarted"] == true,
       compactions: Enum.count(items(state, run), &(&1["type"] == "compaction")),
       sent: sent,
       starts: for(%{"argv" => argv} <- new, do: argv),
@@ -589,8 +715,9 @@ defmodule HalC2.ClaudeSessionPropTest do
     System.put_env("FAKE_CLAUDE_MCP_HOLD", release_file(n))
     # The turn the user stops starts on a process with nothing of its own to report:
     # the fake would run that report to its result before it read the stop, where
-    # Claude stops the turn it is running.
-    if text == :halfway, do: System.put_env("FAKE_CLAUDE_ORPHANED", "")
+    # Claude stops the turn it is running. Nor does one Claude never starts, so that
+    # whether it was answered is down to who left it running.
+    if text in [:halfway, :never_start], do: System.put_env("FAKE_CLAUDE_ORPHANED", "")
     runs = ended_runs()
     dispatch(n, model, fast, text)
     held = await_held(System.monotonic_time(:millisecond) + @wait_ms)
@@ -605,11 +732,17 @@ defmodule HalC2.ClaudeSessionPropTest do
     runs = ended_runs()
     File.write!(release_file(n), "")
     run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
-    %{status: run["status"], reply: reply(current(@tid), run)}
+
+    %{
+      status: run["status"],
+      reply: reply(current(@tid), run),
+      never_started: run["turnNeverStarted"] == true
+    }
   end
 
-  # The MC goes down with the message held, and the next one adopts the process.
-  def adopt do
+  # The MC goes down with the message held, and the next one adopts the process: one
+  # `:older` saved the turn as v12 did, without whether it was answered.
+  def adopt(from) do
     [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
     session = Process.monitor(:sys.get_state(runtime).session)
     Recovery.leaving(true)
@@ -622,9 +755,17 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
 
     Recovery.leaving(false)
-    survivor = Map.fetch!(Durable.survivors_peek(), @tid)
+    survivor = saved_by(from, Map.fetch!(Durable.survivors_peek(), @tid))
     %{adopted: ThreadRuntime.adopt(@tid, survivor), held: held?()}
   end
+
+  defp saved_by(:current, survivor), do: survivor
+
+  defp saved_by(:older, survivor),
+    do:
+      update_in(survivor.snapshot.state, fn state ->
+        %{state | v: 12, turn: Map.delete(state.turn, :answered)}
+      end)
 
   # The user stops the turn whose message is held.
   def interrupt do

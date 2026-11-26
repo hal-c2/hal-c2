@@ -9,7 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19630
 #   https://github.com/pingdotgg/t3code/pull/19617
 #   https://github.com/pingdotgg/t3code/pull/19355
-#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (status words, recede, relative age)
+#   packages/qml/HalC2/Bricks/SidebarThreadRow.qml (status words, recede, relative age)
 #   apps/desktop-qt/tests/tst_SidebarThreadRow.qml
 #   apps/desktop-qt/tests/tst_SidebarThreadRowHover.qml
 #   apps/tui/src/theme.ts (resolveThreadStatus)

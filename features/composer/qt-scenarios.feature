@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/tests/tst_Scenarios.qml (composer scenarios)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
+#   packages/qml/HalC2/Bricks/Composer.qml
 #   apps/web/src/components/chat/ModelPickerContent.tsx, apps/web/src/components/chat/ModelPickerSidebar.tsx (the picker the native one copies)
 
 Feature: Desktop shell scenarios: composer

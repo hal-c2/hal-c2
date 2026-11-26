@@ -342,6 +342,8 @@ export default async function halC2McpExtension(pi: ExtensionAPI) {
   // Deliver orchestration guidance through pi's real system-prompt channel.
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
+  // A thread kept to its plugin's tools (a code review) has no orchestration tools.
+  if (process.env.HAL_C2_MCP_PLUGIN_TOOLS === "1") return;
   pi.on("before_agent_start", (event) => ({
     systemPrompt: event.systemPrompt + "\n\n" + ORCHESTRATION_INSTRUCTIONS,
   }));

@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/src/native/ToastController.cpp (the shell's toasts)
-#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (draws them)
+#   packages/qml/HalC2/Bricks/Notifications.qml (draws them)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   Shared domain: navigation/toasts.feature owns how a toast behaves; this file owns where the

@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The right panel's bodies: each tab draws its brick and keeps it while
 // another tab shows. Its edge resizes it and its header button opens the
@@ -1308,6 +1308,81 @@ Item {
 
             mouseClick(findChild(panel, "reviewSection-code"));
             verify(findChild(panel, "reviewCode").visible);
+        }
+
+        // Ctrl-clicks `word` in a Markdown brick's prose.
+        function ctrlClickWord(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            verify(prose, "the text is drawn as Markdown");
+            tryVerify(() => prose.visible && prose.width > 0);
+            const at = prose.getText(0, prose.length).indexOf(word);
+            verify(at >= 0, "\"" + word + "\" is shown");
+            const box = prose.positionToRectangle(at + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.LeftButton, Qt.ControlModifier);
+        }
+
+        // Right-clicks `word` in a Markdown brick's prose: the menu for text someone
+        // else wrote opens, never the app's link menu (which opens a path in the files).
+        function verifyLinkMenuIsTheWebOne(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            const box = prose.positionToRectangle(prose.getText(0, prose.length).indexOf(word) + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.RightButton);
+            const menu = findChild(markdown, "webLinkMenu");
+            verify(menu, "the link's menu only opens or copies it");
+            tryCompare(menu, "visible", true);
+            menu.close();
+            tryVerify(() => findChild(markdown, "webLinkMenu") === null);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+
+        // Shown as written, with nothing in it loaded: no image, no markup.
+        function verifyShownAsText(markdown, written) {
+            const prose = findChild(markdown, "markdownProse");
+            verify(prose, "the text is drawn as Markdown");
+            verify(!/<img/i.test(prose.text), "nothing in it loads: " + prose.text);
+            verify(prose.getText(0, prose.length).includes(written), "it shows " + written);
+        }
+
+        // What a pull request's author, its reviewers and its commenters wrote is
+        // theirs: its markup shows as text, nothing in it loads, and its links go
+        // to Shell.openWebLink, which opens only web addresses.
+        function test_reviewTextShowsItsMarkupAndOpensItsLinksOnlyOnTheWeb() {
+            const source = createTemporaryObject(fakeReview, root, {
+                detail: { title: "Tax <img src=\"https://tracker.example/title.png\"> fix", body: "See [the docs](https://example.com/docs) ![pixel](https://tracker.example/d.png) <img src=\"https://tracker.example/raw.png\">", url: "https://github.com/acme/shop/pull/42", author: "octocat", state: "open", stateLabel: "Open", branches: "feature/tax → main", labels: [], reviewers: [], mergeability: "mergeable", behindBy: 0, checks: [] },
+                reviewThreads: [{ id: "t1", path: "src/tax.ts", line: 3, outdated: false, resolved: false, comments: [{ author: "<b>mallory</b>", body: "Fix [here](file:///etc/hosts) <img src=\"https://tracker.example/t.png\">" }] }],
+                conversation: [{ id: "c1", kind: "comment", author: "ada", body: "<img src=\"https://tracker.example/c.png\"> [the run](https://example.com/run)", createdAt: "", reviewState: "", path: "" }]
+            });
+            const panel = createTemporaryObject(reviewComponent, root, { source: source });
+
+            const title = findChild(panel, "reviewTitle");
+            compare(title.text, "Tax <img src=\"https://tracker.example/title.png\"> fix");
+            compare(title.textFormat, Text.PlainText, "a title is never markup");
+
+            const description = findChild(panel, "reviewDescription");
+            verifyShownAsText(description, "<img src=\"https://tracker.example/raw.png\">");
+            ctrlClickWord(description, "docs");
+            compare(Shell.webLinks, ["https://example.com/docs"]);
+            verifyLinkMenuIsTheWebOne(description, "docs");
+
+            mouseClick(findChild(panel, "reviewSection-conversation"));
+            const comment = findChild(panel, "reviewThreadComment");
+            tryVerify(() => comment && comment.visible);
+            const author = comment.children[0];
+            compare(author.text, "<b>mallory</b>");
+            compare(author.textFormat, Text.PlainText, "a name is never markup");
+            const threadBody = comment.children[1];
+            verifyShownAsText(threadBody, "<img src=\"https://tracker.example/t.png\">");
+            ctrlClickWord(threadBody, "here");
+            compare(Shell.webLinks, ["https://example.com/docs", "file:///etc/hosts"], "the helper is the one to refuse a file");
+            verifyLinkMenuIsTheWebOne(threadBody, "here");
+
+            const reply = findChild(panel, "reviewConversationBody");
+            tryVerify(() => reply && reply.visible);
+            verifyShownAsText(reply, "<img src=\"https://tracker.example/c.png\">");
+            ctrlClickWord(reply, "run");
+            compare(Shell.webLinks, ["https://example.com/docs", "file:///etc/hosts", "https://example.com/run"]);
+            verifyLinkMenuIsTheWebOne(reply, "run");
+            compare(Shell.openedExternally, [], "nothing goes through the app's own link handling");
         }
 
         function test_reviewOfAnUnreachableEnvironmentStaysButSendsNothing() {

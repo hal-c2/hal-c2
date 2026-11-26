@@ -7,8 +7,8 @@
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
 #   apps/desktop-qt/src/native/ProjectController.cpp (project.remove, the confirmation, projects.mutate)
-#   apps/desktop-qt/qml/HalC2/Bricks/ProjectRemovalDialog.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/FolderExplorer.qml (Remove from HAL-C2)
+#   packages/qml/HalC2/Bricks/ProjectRemovalDialog.qml
+#   packages/qml/HalC2/Bricks/FolderExplorer.qml (Remove from HAL-C2)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/project.ts (project.update, project.delete, autoPull)
 #   packages/contracts/src/rpc.ts (projects.mutate; projects.list and projects.remove are

@@ -43,6 +43,14 @@ backed up, and put back if the new gateway fails its check.
 
 ## Traps
 
+- Settings runs the same install, check, rotate and uninstall as the command line, from
+  a remote client, so `server.runOpenShellOperation` takes only the operation and the
+  `drain`/`force` flags: no archive, path, address or certificate. What gets installed
+  comes from the pinned manifest alone, and `reuse` stays on the command line. The MC
+  checks the session for `access:write` and `terminal:operate` itself
+  ([`HalC2.OpenShell.Operations`](../../apps/server-ex/lib/hal_c2/open_shell/operations.ex));
+  the clients' disabled buttons are only a courtesy.
+
 - The gateway accepts any client certificate its client CA signed, and in 0.1.7 any
   authenticated identity sees every workspace. The MC's client certificate comes from a CA
   of its own (`pki/client-ca.crt`, the gateway's `client_ca_path`), separate from the CA of the

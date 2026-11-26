@@ -1,7 +1,7 @@
 # desktop-ljos
 
 An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
-[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `packages/qml/HalC2/Bricks`
 as they are and puts a Rust `HalC2.Shell` under them.
 
 - `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
@@ -40,11 +40,12 @@ mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mo
 On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
 the Dock and the app switcher name an app by its bundle.
 
-As desktop-qt does, the window runs the desktop host (`../desktop-qt/host/main.ts` under `node`, or
-`--host-entry`/`--node`/`HAL_C2_NODE_BIN`), which finds or starts the MC on this machine; `--url LINK` (what
-`mise run desktop-ljos` passes, from `mise run mc:pair`; `--standalone` leaves it out) has it pair with that MC
-instead. `--mc-origin URL --mc-token TOKEN` (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect
-without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
+As desktop-qt does, the window runs the desktop host, which finds or starts the MC on this machine — here in
+process (`shell/src/mc_launcher.rs`, behind `shell/src/desktop_host.rs`), with no Node host; `--url LINK` has it
+pair with that MC instead. A bare `mise run desktop-ljos` therefore needs no MC running first: it uses the one
+already on the hal-c2-dev files (`mise run mc`'s) or starts the checkout's from source (`--node`/`HAL_C2_NODE_BIN`
+only name the Node the MC runs its JavaScript sidecars on). `--mc-origin URL --mc-token TOKEN` (also
+`HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
 one. `--home-dir DIR` keeps the client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
@@ -72,7 +73,8 @@ needs it: point `CEF_PATH` at a directory outside the repository and it is fetch
 binaries (`libcef.so` and its resources, found through an `$ORIGIN` rpath) on every build. `strip --strip-debug` on
 `libcef.so` there takes it to under 500 MB; CI keeps it that way by CEF's version. CEF starts its other processes
 from `ljos-webengine-helper`, built beside `hal-c2-ljos`. On macOS CEF loads from an application bundle that
-Ljós's `ljos-webengine-bundle` makes; until the build makes one, a browser tab says it cannot load.
+Ljós's `ljos-webengine-bundle` makes: the release makes one (`mise run release:desktop-ljos`, $CEF_PATH naming
+CEF's distribution), and until a dev run does the same a browser tab there says it cannot load.
 
 ## Inspect
 

@@ -1,5 +1,5 @@
 #pragma once
-// A native settings page's rows (qml/HalC2/Bricks/SettingsPage.qml), driven
+// A native settings page's rows (packages/qml/HalC2/Bricks/SettingsPage.qml), driven
 // through the controls the page draws (SettingsRowsSteps.cpp).
 
 #include <QString>

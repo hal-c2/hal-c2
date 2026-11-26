@@ -38,7 +38,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{AppliedModel, Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 12
+  @state_version 13
 
   # Claude 5's task tools (`task_tools/2`).
   @task_tools ["TaskCreate", "TaskUpdate", "TaskList"]
@@ -1220,7 +1220,13 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:sandbox_spent, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
+       |> upgrade_turn(Map.get(state, :v, 0))
        |> Map.put(:v, @state_version)}
+
+  # A turn from before v13 did not record whether Claude answered in it, so it may
+  # have: its run keeps room for an answer (`answerless?/1`).
+  defp upgrade_turn(%{turn: %{}} = state, v) when v < 13, do: answered(state)
+  defp upgrade_turn(state, _v), do: state
 
   # A session started before launches recorded their MCP server has the thread's own.
   # One from before they recorded their instance cannot be told from the latest
@@ -1984,7 +1990,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        Keyword.merge(opts,
          add_dirs: [],
          sandbox: sandbox,
-         command: HalC2.OpenShell.Review.command("claudeAgent")
+         command: HalC2.OpenShell.Review.command(turn, "claudeAgent")
        )}
     end
   end
@@ -2100,7 +2106,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     case state.turn do
       %{prompt: %{} = prompt} ->
-        if echoes_prompt?(result, prompt), do: message(result, state), else: state
+        if echoes_prompt?(result, prompt), do: message(result, state), else: answered(state)
 
       _ ->
         state
@@ -2115,7 +2121,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        when not state.interrupted do
     if other_turn?(result, prompt) do
       Logger.info("claude result for a turn of its own: #{inspect(result["origin"])}")
-      state
+      answered(state)
     else
       message(result, state)
     end
@@ -2282,8 +2288,11 @@ defmodule HalC2.Claude.ThreadRuntime do
           state,
           "failed",
           "Claude acknowledged the message but never started a turn for it.",
-          # The process and the work it runs in the background are untouched.
-          keep_background: true
+          # The process and the work it runs in the background are untouched. With
+          # nothing else in the run answered, no answer is coming, which the run
+          # records (`Handoff.room/3`).
+          keep_background: true,
+          never_started: answerless?(state)
         )
 
       _ ->
@@ -2408,8 +2417,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     %{state | session_id: session_id}
   end
 
+  # An answer is under way from its first partial message: should the prompt end
+  # unstarted first, its size is still never reported (`answerless?/1`).
   defp claude_message(%{"type" => "stream_event", "event" => event}, state),
-    do: stream_event(event, state)
+    do: stream_event(event, answered(state))
 
   defp claude_message(
          %{"type" => "assistant", "message" => %{"id" => id, "content" => content}} = message,
@@ -2417,6 +2428,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        ) do
     # The last assistant message is where a rollback to this turn resumes. Once Claude
     # writes, the turn no longer sits where it resumed the conversation (`kept_head/3`).
+    state = answered(state)
+
     state =
       if uuid = message["uuid"],
         do: update_in(state.turn, &(&1 |> Map.put(:head, uuid) |> Map.delete(:resumed_at))),
@@ -4183,6 +4196,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     end)
   end
 
+  # Whether nothing in the turn could have been answered, its prompt unstarted: Claude
+  # neither wrote nor began a message in it, ended no turn of its own, runs no wake,
+  # and was sent no steer. An answer's size is otherwise never reported, as only the
+  # result that ends the user's turn reports one (`record_usage/2`).
+  defp answerless?(%{turn: turn, wake: wake}) do
+    not Map.get(turn, :answered, false) and not match?(%{open: true}, wake) and
+      Map.get(turn.prompt, :steers, []) == []
+  end
+
+  defp answered(state), do: put_in(state.turn[:answered], true)
+
   defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)
 
@@ -4208,6 +4232,22 @@ defmodule HalC2.Claude.ThreadRuntime do
             &Map.put(&1, "nativeTurnRef", Entities.provider_ref(head, "claudeAgent"))
           ),
           kept_head(state.turn, status, stream)
+        ]
+      end)
+    end
+
+    # Claude's own word that it never started a turn for the prompt, recorded on the
+    # run before it ends: no answer or usage report follows, so the handoff's room
+    # keeps no reserve for one (`HalC2.Orchestration.Handoff.room/3`).
+    if opts[:never_started] do
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "run",
+            state.turn.ids.run,
+            &Map.put(&1, "turnNeverStarted", true)
+          )
         ]
       end)
     end

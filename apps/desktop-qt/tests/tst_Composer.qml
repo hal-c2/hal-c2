@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
-import "../qml/HalC2/Bricks"
-import "../qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
+import "../../../packages/qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
 import HalC2.Shell
 
 Item {

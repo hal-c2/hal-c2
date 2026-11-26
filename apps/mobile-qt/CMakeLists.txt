@@ -25,7 +25,7 @@ if(ANDROID OR IOS OR CMAKE_BUILD_TYPE STREQUAL "Release")
   set(_hal_c2_bricks_dir "")
   set(_hal_c2_mobile_dir "")
 else()
-  set(_hal_c2_bricks_dir "${HAL_C2_DESKTOP_DIR}/qml")
+  set(_hal_c2_bricks_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../packages/qml")
   set(_hal_c2_mobile_dir "${CMAKE_CURRENT_SOURCE_DIR}/qml")
 endif()
 
@@ -72,7 +72,7 @@ target_compile_definitions(hal-c2-mobile PRIVATE
   HAL_C2_APP_VERSION="${PROJECT_VERSION}"
 )
 
-add_subdirectory("${HAL_C2_DESKTOP_DIR}/qml/HalC2/Bricks" bricks)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../packages/qml/HalC2/Bricks" bricks)
 add_subdirectory(qml/HalC2/Mobile)
 
 target_link_libraries(hal-c2-mobile PRIVATE

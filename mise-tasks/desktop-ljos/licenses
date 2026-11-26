@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Write desktop-ljos's own third-party license manifest (apps/desktop-ljos/licenses/, gitignored) from its Cargo.lock, for a dev build's Open source licenses page"
+#MISE dir="{{config_root}}/apps/desktop-ljos"
+set -euo pipefail
+exec node scripts/third-party-licenses.ts licenses/third-party-licenses.json --offline
