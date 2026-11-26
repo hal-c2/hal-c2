@@ -19,9 +19,9 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   `mobile_terminal.rs` (MobileTerminal's key row, text size and line
   picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
   `resume.rs` (Resume's decision, unwired without an Android host), and
-  stand-ins that publish the C++ state shape until H1 ports them:
-  `scanner.rs` (Scanner/ScanCamera/QrReader), `notifications.rs`
-  (Notifications and the push inbox), `maintenance.rs` (Maintenance).
+  `maintenance.rs` (Maintenance, ported), and a stand-in that
+  publishes the C++ state shape until H1 ports it: `scanner.rs`
+  (Scanner/ScanCamera/QrReader).
 - `qml/` is the entry and the QML stubs in `HalC2.Shell` for the two C++
   types the phone's screens name, `TerminalEvents` and `TurnAgents`
   (#1624), each saying what it cannot do until the real type lands.
