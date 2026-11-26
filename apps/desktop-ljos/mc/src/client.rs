@@ -16,6 +16,7 @@ pub type ListenerId = u64;
 
 type StatusListener = Box<dyn FnMut(&Status)>;
 type CheckedListener = Box<dyn FnMut(bool)>;
+type RenewedListener = Box<dyn FnMut(DateTime<Utc>)>;
 type FrameHandler = Box<dyn FnMut(&Frame)>;
 type Resume = Box<dyn FnMut() -> Frame>;
 type Reply = Box<dyn FnOnce(Result<Value, CallError>)>;
@@ -83,6 +84,7 @@ struct State {
     next_listener: ListenerId,
     status_listeners: Vec<(ListenerId, Option<StatusListener>)>,
     checked_listeners: Vec<(ListenerId, Option<CheckedListener>)>,
+    renewed_listeners: Vec<(ListenerId, Option<RenewedListener>)>,
     /// When the credential runs out; None when it never does or is unknown.
     expires_at: Option<DateTime<Utc>>,
     /// None: [`DEFAULT_RENEW_WITHIN`].
@@ -373,6 +375,21 @@ impl McClient {
         id
     }
 
+    /// Runs `listener` with the new expiry when a renewal completes
+    /// (desktop-qt's McClient::credentialRenewed): whoever keeps the
+    /// credential saves by the new date, while the connection stays
+    /// ready and no status changes.
+    pub fn on_credential_renewed(
+        &self,
+        listener: impl FnMut(DateTime<Utc>) + 'static,
+    ) -> ListenerId {
+        let mut state = self.state();
+        state.next_listener += 1;
+        let id = state.next_listener;
+        state.renewed_listeners.push((id, Some(Box::new(listener))));
+        id
+    }
+
     pub fn remove_listener(&self, id: ListenerId) {
         let mut state = self.state();
         state
@@ -381,6 +398,38 @@ impl McClient {
         state
             .checked_listeners
             .retain(|(listener, _)| *listener != id);
+        state
+            .renewed_listeners
+            .retain(|(listener, _)| *listener != id);
+    }
+
+    fn notify_renewed(&self, at: DateTime<Utc>) {
+        let ids: Vec<_> = self
+            .state()
+            .renewed_listeners
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let listener = self
+                .state()
+                .renewed_listeners
+                .iter_mut()
+                .find(|(listener, _)| *listener == id)
+                .and_then(|(_, listener)| listener.take());
+            let Some(mut listener) = listener else {
+                continue;
+            };
+            listener(at);
+            if let Some((_, slot)) = self
+                .state()
+                .renewed_listeners
+                .iter_mut()
+                .find(|(l, _)| *l == id)
+            {
+                slot.get_or_insert(listener);
+            }
+        }
     }
 
     fn notify_status(&self, status: &Status) {
@@ -643,6 +692,11 @@ impl McClient {
                 let waiting = std::mem::take(&mut client.state().renewing);
                 for done in waiting {
                     done(renewed.clone());
+                }
+                if renewed.is_ok() {
+                    if let Some(at) = client.credential_expiry() {
+                        client.notify_renewed(at);
+                    }
                 }
             },
         )));

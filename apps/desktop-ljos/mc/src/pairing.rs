@@ -325,9 +325,8 @@ fn spend(
                     .as_ref()
                     .and_then(|v| v.get("expires_in"))
                     .and_then(Value::as_f64)
-                    .and_then(|secs| {
-                        Utc::now().checked_add_signed(chrono::Duration::seconds(secs as i64))
-                    });
+                    .and_then(|secs| chrono::Duration::try_seconds(secs as i64))
+                    .and_then(|within| Utc::now().checked_add_signed(within));
             }
         }
     }

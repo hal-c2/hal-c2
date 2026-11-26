@@ -117,6 +117,9 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 struct Options {
     launch: Launch,
     mc_token: String,
+    /// When a `--pair`ed credential runs out; none for one supplied
+    /// by hand, whose expiry is unknown.
+    mc_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Where a `dev-qml` build compiles the QML from.
     #[cfg(feature = "dev-qml")]
     roots: Roots,
@@ -172,6 +175,7 @@ fn parse() -> Result<Options, String> {
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
+        mc_expires_at: None,
         #[cfg(feature = "dev-qml")]
         roots: Roots::checkout(),
         steps: Vec::new(),
@@ -586,6 +590,7 @@ fn connect_to(options: &mut Options) -> Result<(), Vec<String>> {
 fn attach(options: &mut Options) -> Result<(), String> {
     if let Some(link) = &options.pair {
         let kept = pair(link)?;
+        options.mc_expires_at = kept.expiry();
         options.launch.mc_origin = Some(kept.origin);
         options.mc_token = kept.token;
     }
@@ -797,6 +802,7 @@ fn render_to(
     let connection = match (&launch.mc_origin, &capture.failure) {
         (Some(origin), None) => {
             let connection = Connection::spawn(&wired.mc);
+            connection.set_credential_expiry(options.mc_expires_at);
             match connection.open(origin, &options.mc_token) {
                 Ok(()) => Some(connection),
                 Err(e) if capture.play_after_snapshot => {
@@ -1113,6 +1119,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
         // (hal_c2_shell::open).
         let connection = Connection::spawn(&wired.mc);
         if let Some(origin) = &options.launch.mc_origin {
+            connection.set_credential_expiry(options.mc_expires_at);
             connection.open(origin, &options.mc_token)?;
         }
         let mc: Rc<dyn Mc> = connection.clone();

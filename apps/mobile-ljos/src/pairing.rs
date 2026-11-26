@@ -500,13 +500,21 @@ impl Controller for Pairing {
                 c.remember(engine, &session, at)
             });
         });
-        // The connected MC described itself, or its credential was
-        // renewed: as the saved environments read a link's, on a
-        // status.
+        // The connected MC described itself, on a status; its label
+        // follows the store (a snapshot that lands after Ready, a
+        // rename), and a renewal completes with no status at all.
         let me = init.me.clone();
         init.mc.on_status(Box::new(move |engine, _| {
             me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
         }));
+        let me = init.me.clone();
+        init.mc.on_credential_renewed(Box::new(move |engine, _| {
+            me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
+        }));
+        let me = init.me.clone();
+        hal_c2_shell::store::on_changed(init.engine, move |engine| {
+            me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
+        });
         Pairing {
             bridge: init.bridge,
             me: init.me,
@@ -722,6 +730,13 @@ impl Pairing {
             return;
         }
         let environment_id = self.mc.environment();
+        // A status queued before the last open can name the MC that
+        // open left: only the environment the client is open for is
+        // saved against this session's origin and token.
+        let expected = self.mc.open_for();
+        if !expected.is_empty() && environment_id != expected {
+            return;
+        }
         if environment_id.is_empty() {
             return;
         }
