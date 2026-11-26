@@ -160,4 +160,41 @@ defmodule HalC2.GitTest do
 
     assert HalC2.Git.base_branch(work, "feature/tax") == "upstream/develop"
   end
+
+  # Review of #1837: `color.ui=false` does not win over a checkout's
+  # per-command colour settings, so their output reached the MC coloured.
+  test "per-command colour settings never colour git's output", %{tmp_dir: dir} do
+    git = fn args ->
+      {out, 0} =
+        System.cmd("git", args,
+          cd: dir,
+          stderr_to_stdout: true,
+          env: [{"GIT_CONFIG_COUNT", nil}, {"GIT_CONFIG_GLOBAL", "/dev/null"}]
+        )
+
+      out
+    end
+
+    git.(~w(init -q -b main))
+    git.(~w(config user.name t))
+    git.(~w(config user.email t@t))
+
+    for key <- ~w(color.diff color.status color.branch color.grep),
+        do: git.(["config", key, "always"])
+
+    File.write!(Path.join(dir, "a.txt"), "one\n")
+    git.(~w(add a.txt))
+    git.(~w(commit -q -m init))
+    File.write!(Path.join(dir, "a.txt"), "two\n")
+
+    for args <- [
+          ["diff"],
+          ["status", "--short", "--branch"],
+          ["branch"],
+          ["grep", "-n", "one", "HEAD"]
+        ] do
+      assert {:ok, %{status: 0, out: out}} = HalC2.Git.run(dir, args)
+      refute out =~ "\e[", "git #{hd(args)} output holds colour codes: #{inspect(out)}"
+    end
+  end
 end

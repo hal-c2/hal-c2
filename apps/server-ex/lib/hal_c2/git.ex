@@ -56,9 +56,18 @@ defmodule HalC2.Git do
           "-c",
           "core.fsmonitor=false",
           # The MC reads git's output (and shows some of it to the writer model), so a
-          # checkout's colour setting must never colour it.
+          # checkout's colour setting must never colour it. `color.ui` alone does
+          # not win over the per-command settings, so those are switched off too.
           "-c",
-          "color.ui=false" | args
+          "color.ui=false",
+          "-c",
+          "color.diff=false",
+          "-c",
+          "color.status=false",
+          "-c",
+          "color.branch=false",
+          "-c",
+          "color.grep=false" | args
         ]
 
     opts = Keyword.put(opts, :env, env)

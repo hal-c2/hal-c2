@@ -183,6 +183,76 @@ defmodule HalC2.GitActionsTest do
     assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "fork\n"
   end
 
+  # Review of #1837: publishing a branch cut from a non-primary remote's
+  # branch replaces its tracking, so the remembered base keeps its remote —
+  # the bare name would resolve on the primary remote instead.
+  test "a branch cut from a non-primary remote keeps that remote as its base after publishing",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    upstream = Path.join(dir, "upstream.git")
+    git!(dir, ["clone", "-q", "--bare", origin, upstream])
+    git!(repo, ["remote", "add", "upstream", upstream])
+    git!(repo, ~w(push -q origin main:develop))
+    git!(repo, ~w(push -q upstream main:develop))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(fetch -q upstream))
+    git!(repo, ~w(checkout -q -b feature/tax upstream/develop))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, %{"push" => push}}, _} = run(%{"cwd" => repo, "action" => "push"})
+    assert push["upstreamBranch"] == "upstream/feature/tax"
+
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) ==
+             "upstream/develop\n"
+
+    assert HalC2.Git.base_branch(repo, "feature/tax") == "upstream/develop"
+  end
+
+  # Review of #1837: the writer's log and patch for a pull request based on
+  # a non-primary remote's branch are taken from that branch, not the
+  # primary remote's branch of the same name; only `--base` is the bare name.
+  test "pull request content is taken from the non-primary remote's base branch", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, "[]")
+    upstream = Path.join(dir, "upstream.git")
+    git!(dir, ["clone", "-q", "--bare", origin, upstream])
+    git!(repo, ["remote", "add", "upstream", upstream])
+    git!(repo, ~w(push -q origin main:develop))
+    git!(repo, ~w(checkout -q -b tmpdev))
+    File.write!(Path.join(repo, "up.txt"), "up\n")
+    git!(repo, ~w(add up.txt))
+    git!(repo, ~w(commit -q -m upstream-only))
+    git!(repo, ~w(push -q upstream tmpdev:develop))
+    git!(repo, ~w(checkout -q main))
+    git!(repo, ~w(branch -q -D tmpdev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(fetch -q upstream))
+    git!(repo, ~w(checkout -q -b feature/tax upstream/develop))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "created", "number" => 7, "baseBranch" => "develop"}} =
+             result
+
+    # Only the commits and diff since the base are claimed here; the prompt
+    # also lists recent subjects from the whole repository as style examples.
+    [_style, compared] =
+      dir |> Path.join("claude.log") |> File.read!() |> String.split("Commits:\n", parts: 2)
+
+    assert compared =~ "tax"
+    refute compared =~ "upstream-only"
+    refute compared =~ "up.txt"
+    assert File.read!(log) =~ "--base develop"
+  end
+
   # Review of #1837: an alias branch is published under its upstream's name, so
   # the pull request is looked up and created with that name as its head.
   test "a pull request for an alias branch uses the published name as its head", %{
@@ -314,6 +384,104 @@ defmodule HalC2.GitActionsTest do
 
     assert create =~ "--head forker:feature/tax"
     refute create =~ "--head feature/tax"
+  end
+
+  # The reuse side of the same finding: when the fork's own pull request is
+  # already open, it is the one opened — not the base repository's
+  # same-named one listed before it, and nothing new is created. The fork
+  # owner's login comes back in a different case, as `gh` may return it.
+  test "an open pull request from the fork is reused", %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+
+    both =
+      ~s([{"number":99,"title":"Base repo tax","url":"https://github.com/acme/shop/pull/99","baseRefName":"main","headRefName":"feature/tax","headRepositoryOwner":{"login":"acme"},"isCrossRepository":false},{"number":100,"title":"Fork tax","url":"https://github.com/acme/shop/pull/100","baseRefName":"main","headRefName":"feature/tax","headRepositoryOwner":{"login":"Forker"},"isCrossRepository":true}])
+
+    log = fake_gh!(dir, both)
+    fork = fork_remotes!(repo, origin)
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "fork/feature/tax"}} = result
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+
+    assert %{
+             "pr" => %{
+               "status" => "opened_existing",
+               "number" => 100,
+               "url" => "https://github.com/acme/shop/pull/100",
+               "headBranch" => "feature/tax"
+             }
+           } = result
+
+    refute File.read!(log) =~ "pr create"
+  end
+
+  # Review of #1837: a configured push remote is not a publication. A clean
+  # branch in sync with its origin upstream skips the push, so its pull
+  # request is still the origin one, however `pushRemote` is aimed.
+  test "a branch in sync with origin reuses its pull request despite a fork push remote", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = fork_remotes!(repo, origin)
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "opened_existing", "number" => 99}} = result
+    assert git!(fork, ~w(branch --list feature/tax)) == ""
+    refute File.read!(log) =~ "pr create"
+  end
+
+  # Review of #1837: the fork owner comes from the remote's push URL — a
+  # remote that fetches from the base repository but pushes to a fork
+  # (`pushurl`) publishes there.
+  test "a pull request for a branch pushed through a pushurl uses the fork owner's head", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://github.com/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://github.com/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://github.com/acme/shop.git"])
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://github.com/forker/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert git!(origin, ~w(branch --list feature/tax)) == ""
+
+    assert %{"pr" => %{"status" => "created", "number" => 7, "headBranch" => "feature/tax"}} =
+             result
+
+    create =
+      log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.find("", &String.starts_with?(&1, "pr create"))
+
+    assert create =~ "--head forker:feature/tax"
   end
 
   # What the fake `gh` answers `pr list` with in the fork tests: an open

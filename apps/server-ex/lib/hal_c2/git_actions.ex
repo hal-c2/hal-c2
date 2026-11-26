@@ -177,7 +177,7 @@ defmodule HalC2.GitActions do
     pr_step =
       if pr? do
         phase!(emit, "pr", "Preparing PR...")
-        pull_request(cwd, branch)
+        pull_request(cwd, branch, push_step["status"] == "pushed")
       else
         %{"status" => "skipped_not_requested"}
       end
@@ -535,16 +535,22 @@ defmodule HalC2.GitActions do
     do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{ref}"]))
 
   # The open pull request for this branch, or a new one: on Forgejo through its API,
-  # anywhere else through `gh`.
-  defp pull_request(cwd, branch) do
+  # anywhere else through `gh`. `pushed?` says this action's push step ran and
+  # pushed, which is what makes a configured push remote the published one.
+  defp pull_request(cwd, branch, pushed?) do
     remote = Git.primary_remote(cwd)
     url = remote && remote_url(cwd, remote)
     target = url && PullRequests.parse_remote(url)
 
     case target do
-      %{kind: "forgejo"} -> forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
-      %{kind: kind} when kind not in ["unknown"] -> github_pull_request(cwd, branch, kind, target)
-      _ -> github_pull_request(cwd, branch, "github", target)
+      %{kind: "forgejo"} ->
+        forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
+
+      %{kind: kind} when kind not in ["unknown"] ->
+        github_pull_request(cwd, branch, kind, target, pushed?)
+
+      _ ->
+        github_pull_request(cwd, branch, "github", target, pushed?)
     end
   end
 
@@ -553,15 +559,15 @@ defmodule HalC2.GitActions do
   # a host `gh` is not known to serve (self-hosted) is treated as GitHub. `target` is
   # the base repository as the primary remote names it (or nil), against which a
   # fork the branch was published to is told apart.
-  defp github_pull_request(cwd, branch, kind, target),
-    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch, kind, target) end)
+  defp github_pull_request(cwd, branch, kind, target, pushed?),
+    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch, kind, target, pushed?) end)
 
-  defp create_github_pull_request(cwd, branch, kind, target) do
+  defp create_github_pull_request(cwd, branch, kind, target, pushed?) do
     System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
       fail!("Creating a PR needs the GitHub CLI (gh).")
 
     {base, base_qualified} = pr_base(cwd, branch)
-    {head_branch, fork_owner} = github_head(cwd, branch, target)
+    {head_branch, fork_owner} = github_head(cwd, branch, target, pushed?)
     head = if fork_owner, do: "#{fork_owner}:#{head_branch}", else: head_branch
 
     case existing_github_pull_request(cwd, head_branch, fork_owner) do
@@ -626,32 +632,44 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # Whether a listed pull request is the fork's: one whose head owner `gh`
-  # names as another owner is not. A reply naming no owner is taken as before
-  # (`gh` names one when asked; a test fake may not model it).
+  # Whether a listed pull request is the fork's: only one whose head owner
+  # `gh` names as the fork's owner is (`gh` always returns the owner when
+  # asked, so a reply naming none matches nothing).
   defp own_pull_request?(_pr, nil), do: true
 
   defp own_pull_request?(pr, fork_owner) do
     case get_in(pr, ["headRepositoryOwner", "login"]) do
       login when is_binary(login) -> String.downcase(login) == String.downcase(fork_owner)
-      _ -> true
+      _ -> false
     end
   end
 
   # The branch the pull request is from, as its remote has it (`pr_head/2`),
   # and the owner of the fork it was published to — nil when that is the base
   # repository itself, as `forgejo_head/3` tells it.
-  defp github_head(cwd, branch, target),
-    do: {pr_head(cwd, branch), fork_owner(cwd, branch, target && target.repository)}
+  defp github_head(cwd, branch, target, pushed?),
+    do: {pr_head(cwd, branch), fork_owner(cwd, branch, target && target.repository, pushed?)}
 
-  defp fork_owner(cwd, branch, base_repository) do
-    with remote when is_binary(remote) <- published_remote(cwd, branch),
-         url when is_binary(url) <- remote_url(cwd, remote),
+  # The owner is read from the remote's push URL: git pushes to `pushurl`
+  # when one is set, whatever the fetch URL names.
+  defp fork_owner(cwd, branch, base_repository, pushed?) do
+    with remote when is_binary(remote) <- published_remote(cwd, branch, pushed?),
+         url when is_binary(url) <- push_url(cwd, remote),
          %{repository: repository} <- PullRequests.parse_remote(url),
          false <- same_repository?(repository, base_repository),
          [owner, _name | _] <- String.split(repository, "/"),
          do: owner,
          else: (_ -> nil)
+  end
+
+  # Read from config, as `remote_url/2` reads the fetch URL: `git remote
+  # get-url --push` would first expand the checkout's `insteadOf` rewrites,
+  # which name transport aliases (or local paths), not the repository.
+  defp push_url(cwd, remote) do
+    case Git.ok(cwd, ["config", "--get", "remote.#{remote}.pushurl"]) do
+      {:ok, url} -> String.trim(url)
+      _ -> remote_url(cwd, remote)
+    end
   end
 
   defp same_repository?(_repository, nil), do: false
@@ -662,20 +680,43 @@ defmodule HalC2.GitActions do
   # The remote the branch was published to, following `push/2`'s arms: an
   # alias is pushed to its upstream's remote by name, but every other push
   # honours the branch's push remote settings first — a same-named upstream
-  # included, since a plain `git push` sends it to `pushRemote` — and falls
-  # back to the upstream's remote only when no push remote is configured.
-  defp published_remote(cwd, branch) do
+  # included, since a plain `git push` sends it to `pushRemote`. A configured
+  # push remote is only the published one when the push ran (this action's,
+  # or an earlier one the remote-tracking ref still shows): when publication
+  # was skipped, the branch lives where its upstream says, however its push
+  # settings are aimed.
+  defp published_remote(cwd, branch, pushed?) do
     case Git.upstream(cwd, branch) do
       %{remote: remote} = upstream when is_binary(remote) ->
         name = upstream_branch_name(upstream)
 
-        if name != branch and Git.same_branch?(cwd, branch, name),
-          do: remote,
-          else: configured_push_remote(cwd, branch) || remote
+        cond do
+          name != branch and Git.same_branch?(cwd, branch, name) ->
+            remote
+
+          configured = configured_push_remote(cwd, branch) ->
+            if pushed? or remote_branch?(cwd, configured, branch),
+              do: configured,
+              else: remote
+
+          true ->
+            remote
+        end
 
       _ ->
         configured_push_remote(cwd, branch)
     end
+  end
+
+  # Whether `remote` is known to hold `branch` (under the name publishing
+  # gives it there), from its remote-tracking ref.
+  defp remote_branch?(cwd, remote, branch) do
+    name = String.replace_prefix(branch, "#{remote}/", "")
+
+    match?(
+      {:ok, _},
+      Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{remote}/#{name}"])
+    )
   end
 
   # As the Forgejo provider's `createChangeRequest`: in the repository the primary
