@@ -10,7 +10,7 @@
 //! [`notifications`], [`maintenance`], [`mobile_terminal`], [`layout`],
 //! [`resume`]), its QML entry (`qml/Main.qml`) and the QML stubs in
 //! `qml/HalC2/Shell` for the two C++ types the phone's screens name
-//! (`TerminalEvents`, `TurnAgents`, #1624).
+//! (`TurnAgents`, #1624).
 
 pub mod layout;
 pub mod maintenance;

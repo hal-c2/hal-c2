@@ -1,9 +1,8 @@
 //! `mobileTerminal`, mobile-qt's MobileTerminal: what the phone's
 //! terminal screen adds to the desktop's TerminalController (the
 //! shell's [`Terminals`]), which keeps the terminals: the key row's
-//! held modifier and paste, the text size, and picking visible lines
-//! for the draft. The terminal menu's rows are H1 (#1659):
-//! `mobileTerminal.menu` is answered here and opens nothing yet.
+//! held modifier and paste, the text size, the terminal menu's
+//! rows, and picking visible lines for the draft.
 //!
 //! Publishes `mobileTerminal`:
 //!   {terminal:  the label of the terminal shown,
@@ -20,21 +19,18 @@
 //! `mobileTerminal.context.open {lines}`, `.tap {index}`, `.attach` and
 //! `.cancel`.
 //!
-//! The shown terminal's label and state, the host system's modifier row
-//! and `mobileTerminal.clear`'s RPC need the Terminals controller's
-//! listing and place, which its Rust port does not offer a controller
-//! yet: until H1 the title says "Not started" whatever runs, the row is
-//! the non-Mac one, and clear only lets go of a held modifier. Typing
-//! goes to the active session as the C++ does.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 
 use hal_c2_shell::bridge::Bridge;
-use hal_c2_shell::controller::{self, Controller, Init};
-use hal_c2_shell::controllers::terminals::Terminals;
+use hal_c2_shell::controller::{self, Controller, Init, Me};
+use hal_c2_shell::controllers::menus::{Item, Menus};
+use hal_c2_shell::controllers::terminals::{ListedTerminal, Terminals};
 use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::json::Json;
+use hal_c2_shell::mc::Mc;
+use hal_c2_shell::store;
 use ljos::prelude::Engine;
 use serde_json::json;
 
@@ -47,6 +43,7 @@ pub const MAX_TEXT_SIZE: f64 = 14.0;
 /// packages/contracts, in UTF-16 units as the contract counts.
 pub const MAX_CONTEXT_ITEMS: usize = 200;
 pub const MAX_CONTEXT_CHARS: usize = 64_000;
+pub const TEXT_SIZE_STEP: f64 = 0.5;
 
 fn units(text: &str) -> usize {
     text.encode_utf16().count()
@@ -104,6 +101,14 @@ pub fn status_label(status: &str, busy: bool) -> &'static str {
         "error" => "Error",
         _ => "Not started",
     }
+}
+
+/// The last folder of a path.
+pub fn folder_name(path: &str) -> String {
+    std::path::Path::new(path.trim_end_matches('/'))
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// The draft's label for output attached from the terminal `name`. The
@@ -235,6 +240,8 @@ pub fn set_store_path(engine: &Engine, path: Option<PathBuf>) {
 
 pub struct MobileTerminal {
     bridge: Bridge,
+    me: Me<MobileTerminal>,
+    mc: std::rc::Rc<dyn Mc>,
     store_path: Option<PathBuf>,
     held: String,
     held_for: String,
@@ -255,8 +262,16 @@ impl Controller for MobileTerminal {
         {
             text_size = stored.clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
         }
+        hal_c2_shell::controllers::terminals::on_changed(init.engine, {
+            let me = init.me.clone();
+            move |engine| {
+                me.run(engine, |c: &mut MobileTerminal, engine| c.publish(engine));
+            }
+        });
         MobileTerminal {
             bridge: init.bridge,
+            me: init.me,
+            mc: init.mc,
             store_path,
             held: String::new(),
             held_for: String::new(),
@@ -286,15 +301,20 @@ impl Controller for MobileTerminal {
             "mobileTerminal.modifier" => {
                 let key = text("key");
                 self.held = if self.held == key { String::new() } else { key };
-                self.held_for = self.active_terminal_id(engine);
+                self.held_for = self.shown_id(engine);
                 self.publish(engine);
             }
             "mobileTerminal.paste" => self.paste(engine),
-            "mobileTerminal.clear" => {
-                self.held.clear();
-                self.publish(engine);
+            "mobileTerminal.clear" => self.clear(engine),
+            "mobileTerminal.covered" => {
+                let covered = payload
+                    .get("covered")
+                    .and_then(Json::as_bool)
+                    .unwrap_or(false);
+                controller::with::<Terminals, _>(engine, |terminals, engine| {
+                    terminals.set_covered(engine, covered);
+                });
             }
-            "mobileTerminal.covered" => {}
             "mobileTerminal.textSize" => {
                 let points = payload
                     .get("points")
@@ -302,8 +322,7 @@ impl Controller for MobileTerminal {
                     .unwrap_or(self.text_size);
                 self.set_text_size(engine, points);
             }
-            // The menu's rows are H1's; answered, so no brick waits.
-            "mobileTerminal.menu" => {}
+            "mobileTerminal.menu" => self.open_menu(engine, payload),
             "mobileTerminal.context.open" => {
                 let lines = payload
                     .get("lines")
@@ -336,11 +355,6 @@ impl Controller for MobileTerminal {
 }
 
 impl MobileTerminal {
-    fn active_terminal_id(&self, engine: &Engine) -> String {
-        controller::with::<Terminals, _>(engine, |terminals, _| terminals.active_terminal_id())
-            .unwrap_or_default()
-    }
-
     fn write(&self, engine: &Engine, data: &str) {
         let data = data.to_owned();
         controller::with::<Terminals, _>(engine, |terminals, engine| {
@@ -359,13 +373,265 @@ impl MobileTerminal {
         .unwrap_or(false)
     }
 
+    /// The terminal menu's rows, as the C++ builds them in openMenu.
+    pub fn menu_items(
+        listing: &[ListedTerminal],
+        active: &str,
+        open: bool,
+        root: &str,
+        scripts: &[Json],
+        text_size: f64,
+    ) -> Vec<Item> {
+        let mut items: Vec<Item> = Vec::new();
+        let mut terminals_group = Item::new("terminals", "Terminals");
+        for listed in listing {
+            let ended = matches!(listed.status.as_str(), "exited" | "error");
+            if ended && listed.terminal_id != active {
+                continue;
+            }
+            let mut row = Item::new(
+                format!("terminal:{}", listed.terminal_id),
+                listed.label.clone(),
+            );
+            row.icon = "terminal".into();
+            row.checked = listed.terminal_id == active && open;
+            row.subtitle = format!(
+                "{} · {}",
+                status_label(&listed.status, listed.busy),
+                if listed.cwd.is_empty() {
+                    root.to_owned()
+                } else {
+                    folder_name(&listed.cwd)
+                }
+            );
+            terminals_group.children.push(row);
+        }
+        if !terminals_group.children.is_empty() {
+            items.push(terminals_group);
+        }
+        let mut fresh = Item::new("new", "Open new terminal");
+        fresh.icon = "plus".into();
+        fresh.subtitle = format!(
+            "Start another shell in {}",
+            if root.is_empty() {
+                "this workspace"
+            } else {
+                &root
+            }
+        );
+        items.push(fresh);
+        let mut scripts_group = Item::new("scripts", "Scripts");
+        for script in scripts {
+            let name = script
+                .get("name")
+                .and_then(Json::as_str)
+                .unwrap_or_default();
+            let setup = script
+                .get("runOnWorktreeCreate")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            let mut row = Item::new(
+                format!(
+                    "script:{}",
+                    script.get("id").and_then(Json::as_str).unwrap_or_default()
+                ),
+                if setup {
+                    format!("{name} (setup)")
+                } else {
+                    name.to_owned()
+                },
+            );
+            row.icon = "play".into();
+            row.subtitle = script
+                .get("command")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            scripts_group.children.push(row);
+        }
+        if scripts_group.children.is_empty() {
+            let mut none = Item::new("no-scripts", "This project has no saved scripts yet");
+            none.enabled = false;
+            scripts_group.children.push(none);
+        }
+        items.push(scripts_group);
+        if open {
+            let mut context = Item::new("context", "Add visible lines to the message");
+            context.icon = "message-square-plus".into();
+            items.push(context);
+            let mut smaller = Item::new("smaller", format!("Smaller text ({:.1} pt)", text_size));
+            smaller.icon = "minus".into();
+            smaller.enabled = text_size > MIN_TEXT_SIZE;
+            items.push(smaller);
+            let mut larger = Item::new("larger", format!("Larger text ({:.1} pt)", text_size));
+            larger.icon = "plus".into();
+            larger.enabled = text_size < MAX_TEXT_SIZE;
+            items.push(larger);
+            let mut close = Item::new("close", "Close terminal");
+            close.icon = "x".into();
+            close.destructive = true;
+            items.push(close);
+        }
+        items
+    }
+
+    fn shown_id(&self, engine: &Engine) -> String {
+        controller::with::<Terminals, _>(engine, |terminals, _| {
+            let active = terminals.active_terminal_id();
+            if !active.is_empty() {
+                return active;
+            }
+            terminals
+                .listing()
+                .first()
+                .map(|listed| listed.terminal_id.clone())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+    }
+
+    fn shown(&self, engine: &Engine) -> Option<ListedTerminal> {
+        let id = self.shown_id(engine);
+        controller::with::<Terminals, _>(engine, |terminals, _| {
+            terminals
+                .listing()
+                .into_iter()
+                .find(|listed| listed.terminal_id == id)
+        })
+        .flatten()
+    }
+
+    /// "darwin", "linux", "windows" or "" for the thread's environment.
+    fn host_system(&self, engine: &Engine) -> String {
+        let place =
+            controller::with::<Terminals, _>(engine, |terminals, _| terminals.place().cloned())
+                .flatten();
+        let Some(place) = place else {
+            return String::new();
+        };
+        let os = store::with(engine, |store| {
+            store
+                .environment(&place.environment_id)
+                .get("platform")
+                .and_then(Json::as_object)
+                .and_then(|platform| platform.get("os"))
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        });
+        if !os.is_empty() {
+            return os;
+        }
+        self.mc
+            .status()
+            .descriptor
+            .get("platform")
+            .and_then(Json::as_object)
+            .and_then(|platform| platform.get("os"))
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn clear(&mut self, engine: &Engine) {
+        let place = controller::with::<Terminals, _>(engine, |terminals, _| {
+            let id = terminals.active_terminal_id();
+            let has = terminals.session(&id).is_some();
+            (has, terminals.place().cloned(), id)
+        });
+        let Some((true, Some(place), active)) = place else {
+            return;
+        };
+        self.held.clear();
+        self.publish(engine);
+        self.mc.call(
+            &place.environment_id,
+            "terminal.clear",
+            json!({"threadId": place.thread_id, "terminalId": active}),
+            Box::new(|_, _| {}),
+        );
+    }
+
+    fn open_menu(&mut self, engine: &Engine, payload: &Json) {
+        let (place, listing, active, open) =
+            match controller::with::<Terminals, _>(engine, |terminals, _| {
+                (
+                    terminals.place().cloned(),
+                    terminals.listing(),
+                    terminals.active_terminal_id(),
+                    terminals.is_open(),
+                )
+            }) {
+                Some(parts) => parts,
+                None => return,
+            };
+        let Some(place) = place else {
+            return;
+        };
+        let root = folder_name(&place.cwd);
+        let visible: Vec<String> = payload
+            .get("lines")
+            .and_then(Json::as_array)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.as_str().unwrap_or_default().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let items = Self::menu_items(
+            &listing,
+            &active,
+            open,
+            &root,
+            &place.scripts,
+            self.text_size,
+        );
+        let x = payload.get("x").and_then(Json::as_f64).unwrap_or_default();
+        let y = payload.get("y").and_then(Json::as_f64).unwrap_or_default();
+        let me = self.me.clone();
+        controller::with::<Menus, _>(engine, |menus, engine| {
+            menus.open(engine, x, y, items, move |engine, id| {
+                let (id, visible) = (id.to_owned(), visible.clone());
+                me.run(engine, move |c: &mut MobileTerminal, engine| {
+                    c.menu_chosen(engine, &id, visible);
+                });
+            });
+        });
+    }
+
+    fn menu_chosen(&mut self, engine: &Engine, id: &str, visible: Vec<String>) {
+        if let Some(terminal_id) = id.strip_prefix("terminal:") {
+            self.bridge.dispatch(
+                engine,
+                "terminal.select",
+                json!({"terminalId": terminal_id}),
+            );
+        } else if id == "new" {
+            self.bridge.dispatch(engine, "terminal.new", Json::Null);
+        } else if let Some(script_id) = id.strip_prefix("script:") {
+            let script_id = script_id.to_owned();
+            controller::with::<Terminals, _>(engine, |terminals, engine| {
+                terminals.run_script(engine, &script_id);
+            });
+        } else if id == "context" {
+            self.open_context(engine, visible);
+        } else if id == "smaller" {
+            self.set_text_size(engine, self.text_size - TEXT_SIZE_STEP);
+        } else if id == "larger" {
+            self.set_text_size(engine, self.text_size + TEXT_SIZE_STEP);
+        } else if id == "close" {
+            self.bridge.dispatch(engine, "terminal.close", Json::Null);
+        }
+    }
+
     fn input(&mut self, engine: &Engine, data: &str) {
         // An ended shell has no session: what is typed goes nowhere.
         if !self.has_session(engine) {
             return;
         }
         // A modifier held in another terminal is not this one's.
-        if !self.held.is_empty() && self.held_for != self.active_terminal_id(engine) {
+        if !self.held.is_empty() && self.held_for != self.shown_id(engine) {
             self.held.clear();
             self.publish(engine);
         }
@@ -375,7 +641,7 @@ impl MobileTerminal {
         }
         let held = std::mem::take(&mut self.held);
         self.publish(engine);
-        match apply_held(&held, data, false) {
+        match apply_held(&held, data, self.host_system(engine) == "darwin") {
             HeldInput::Write(keys) => self.write(engine, &keys),
             HeldInput::Paste => self.paste(engine),
         }
@@ -435,7 +701,10 @@ impl MobileTerminal {
             );
             return;
         }
-        self.context_terminal = (self.active_terminal_id(engine), String::new());
+        self.context_terminal = self
+            .shown(engine)
+            .map(|shown| (shown.terminal_id, shown.label))
+            .unwrap_or_default();
         self.choosing = Some(context);
         self.publish(engine);
     }
@@ -461,23 +730,32 @@ impl MobileTerminal {
             .dispatch(engine, "composer.terminalContext.add", payload);
         // Back at the thread, where the draft is. Dispatched from a
         // controller, it runs after this one returns.
-        self.bridge.dispatch(engine, "terminal.toggle", Json::Null);
+        let open = controller::with::<Terminals, _>(engine, |terminals, _| terminals.is_open())
+            .unwrap_or(false);
+        if open {
+            self.bridge.dispatch(engine, "terminal.toggle", Json::Null);
+        }
     }
 
     fn publish(&mut self, engine: &Engine) {
         // A modifier is held for the terminal it was pressed in.
-        if !self.held.is_empty() && self.held_for != self.active_terminal_id(engine) {
+        if !self.held.is_empty() && self.held_for != self.shown_id(engine) {
             self.held.clear();
         }
+        let shown = self.shown(engine);
+        let darwin = self.host_system(engine) == "darwin";
         self.bridge.publish(
             engine,
             KEY,
             json!({
-                "label": status_label("", false),
-                "modifiers": ["ctrl", "alt"],
+                "label": shown.as_ref().map_or_else(
+                    || status_label("", false),
+                    |shown| status_label(&shown.status, shown.busy),
+                ),
+                "modifiers": if darwin { vec!["cmd", "ctrl"] } else { vec!["ctrl", "alt"] },
                 "held": self.held,
                 "textSize": self.text_size,
-                "terminal": "",
+                "terminal": shown.map(|shown| shown.label).unwrap_or_default(),
                 "context": self.choosing.as_ref().map(Context::state),
             }),
         );
@@ -499,6 +777,49 @@ mod tests {
         assert_eq!(status_label("running", true), "Task running");
         assert_eq!(status_label("running", false), "Ready");
         assert_eq!(status_label("", false), "Not started");
+    }
+
+    #[test]
+    fn the_menu_lists_live_terminals_scripts_and_the_open_ones_actions() {
+        let listed = |id: &str, status: &str| ListedTerminal {
+            terminal_id: id.into(),
+            label: format!("Terminal {id}"),
+            status: status.into(),
+            busy: false,
+            cwd: "/home/user/shop".into(),
+        };
+        let listing = vec![listed("term-1", "running"), listed("term-2", "exited")];
+        let scripts = vec![
+            json!({"id": "test", "name": "Test", "command": "cargo test", "runOnWorktreeCreate": true}),
+        ];
+        let items = MobileTerminal::menu_items(&listing, "term-1", true, "shop", &scripts, 10.5);
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "terminals",
+                "new",
+                "scripts",
+                "context",
+                "smaller",
+                "larger",
+                "close"
+            ]
+        );
+        // The ended one is not the active one: it is not listed.
+        let children: Vec<&str> = items[0].children.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(children, ["terminal:term-1"]);
+        assert!(items[0].children[0].checked);
+        assert_eq!(items[2].children[0].label, "Test (setup)");
+        // Shut: no context or text-size rows.
+        let items = MobileTerminal::menu_items(&listing, "term-2", false, "shop", &[], 6.0);
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["terminals", "new", "scripts"]);
+        assert_eq!(items[0].children.len(), 2, "the ended active one is listed");
+        assert_eq!(items[2].children[0].id, "no-scripts");
+        assert!(!items[2].children[0].enabled);
+        assert_eq!(folder_name("/home/user/shop/"), "shop");
+        assert_eq!(folder_name(""), "");
     }
 
     #[test]

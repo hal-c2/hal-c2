@@ -16,15 +16,15 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
 - `src/` is what is the phone's alone, each naming the mobile-qt C++ it
   ports or stands in for: `pairing.rs` (Pairing, ported: the pairing
   screen's exchange, `pairing.json`, environments beside the first),
-  `mobile_terminal.rs` (MobileTerminal's key row, text size and line
-  picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
+  `mobile_terminal.rs` (MobileTerminal's key row, text size, menu
+  and line picking), `layout.rs` (MobileApp's `layout.desktop`),
   `resume.rs` (Resume's decision, unwired without an Android host), and
   stand-ins that publish the C++ state shape until H1 ports them:
   `scanner.rs` (Scanner/ScanCamera/QrReader), `notifications.rs`
   (Notifications and the push inbox), `maintenance.rs` (Maintenance).
-- `qml/` is the entry and the QML stubs in `HalC2.Shell` for the two C++
-  types the phone's screens name, `TerminalEvents` and `TurnAgents`
-  (#1624), each saying what it cannot do until the real type lands.
+- `qml/` is the entry and the QML stub in `HalC2.Shell` for the C++
+  type still to land, `TurnAgents` (#1624). `TerminalEvents` is the
+  shell's native type now (`apps/desktop-ljos/shell/src/terminal/events.rs`).
 
 The crate is its own cargo workspace beside desktop-ljos's (a member
 outside that root cannot inherit from it), so its Ljós pin is spelled out

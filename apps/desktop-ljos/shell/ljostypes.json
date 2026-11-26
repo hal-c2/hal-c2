@@ -2774,6 +2774,79 @@
           ]
         },
         {
+          "name": "TerminalEvents",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [],
+          "signals": [],
+          "methods": [
+            {
+              "name": "key",
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": "var"
+                },
+                {
+                  "name": "key",
+                  "type": "int"
+                },
+                {
+                  "name": "modifiers",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "wheel",
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": "var"
+                },
+                {
+                  "name": "pixels",
+                  "type": "real"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "mouse",
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": "var"
+                },
+                {
+                  "name": "what",
+                  "type": "string"
+                },
+                {
+                  "name": "x",
+                  "type": "real"
+                },
+                {
+                  "name": "y",
+                  "type": "real"
+                },
+                {
+                  "name": "modifiers",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
           "name": "Settings",
           "since": "1.0",
           "base": null,

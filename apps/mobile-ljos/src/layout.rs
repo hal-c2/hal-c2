@@ -14,6 +14,7 @@
 use hal_c2_shell::controller::{self, Controller, Init};
 use hal_c2_shell::controllers::drafts::DraftController;
 use hal_c2_shell::controllers::space::Space;
+use hal_c2_shell::controllers::terminals::Terminals;
 use hal_c2_shell::json::Json;
 use ljos::prelude::Engine;
 
@@ -58,5 +59,8 @@ fn apply(engine: &Engine, desktop: bool) {
     });
     controller::with::<Space, _>(engine, |spaces, engine| {
         spaces.set_page_shown_by_steps(engine, !desktop);
+    });
+    controller::with::<Terminals, _>(engine, |terminals, engine| {
+        terminals.set_single_screen(engine, !desktop);
     });
 }

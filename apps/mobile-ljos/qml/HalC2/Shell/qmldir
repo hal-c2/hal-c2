@@ -1,4 +1,3 @@
 module HalC2.Shell
-TerminalEvents 1.0 TerminalEvents.qml
 TurnAgents 1.0 TurnAgents.qml
 MultiPointTouchArea 1.0 MultiPointTouchArea.qml

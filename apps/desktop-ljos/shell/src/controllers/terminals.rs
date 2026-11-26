@@ -1255,6 +1255,25 @@ impl TerminalsObject {
 struct Summary {
     label: String,
     busy: bool,
+    status: String,
+    cwd: String,
+}
+
+impl Summary {
+    fn ended(&self) -> bool {
+        self.status == "exited" || self.status == "error"
+    }
+}
+
+/// One terminal of a single screen's listing (the phone menu's rows).
+#[derive(Clone, Debug)]
+pub struct ListedTerminal {
+    pub terminal_id: String,
+    pub label: String,
+    /// The MC summary's, or "starting" while it has none here.
+    pub status: String,
+    pub busy: bool,
+    pub cwd: String,
 }
 
 /// A split group, or a right panel tab's.
@@ -1341,6 +1360,14 @@ fn drawer_ids(ui: &ThreadUi, ids: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Of `ids`, the ones whose shells have not ended.
+fn live_of(known: Option<&BTreeMap<String, Summary>>, ids: &[String]) -> Vec<String> {
+    ids.iter()
+        .filter(|id| !known.and_then(|k| k.get(*id)).is_some_and(Summary::ended))
+        .cloned()
+        .collect()
+}
+
 /// The attached sessions of a thread the user left, and where they ran.
 struct Parked {
     cwd: String,
@@ -1390,6 +1417,13 @@ pub struct Terminals {
     /// Threads in the order their drawers were last used, oldest first.
     recent: Vec<String>,
     told: Facts,
+    /// One terminal at a time on a screen of its own (the phone's),
+    /// not the drawer's splits: its rules in sync_tabs and its
+    /// friends are mobile-qt's TerminalController::m_singleScreen.
+    single_screen: bool,
+    /// Another screen is over the thread's (the phone's): a single
+    /// screen does not settle its active terminal meanwhile.
+    covered: bool,
 }
 
 impl Drop for Terminals {
@@ -1442,6 +1476,8 @@ impl Controller for Terminals {
             saved: Vec::new(),
             recent: Vec::new(),
             told: Facts::default(),
+            single_screen: false,
+            covered: false,
         };
         terminals.told = terminals.facts();
         // Where the drawer's height and, per thread, whether it is open and
@@ -1495,7 +1531,13 @@ impl Controller for Terminals {
                 if self.place.is_none() {
                     return true;
                 }
-                if self.terminal_ids().len() >= MAX_TERMINALS {
+                // The ended ones a phone's MC keeps listing leave room.
+                let counted = if self.single_screen {
+                    self.live_of(&self.terminal_ids())
+                } else {
+                    self.terminal_ids()
+                };
+                if counted.len() >= MAX_TERMINALS {
                     toast(
                         engine,
                         &format!("At most {MAX_TERMINALS} terminals per thread."),
@@ -1592,6 +1634,113 @@ impl Terminals {
     /// The thread whose terminals these are ("<environment>:<thread id>").
     pub fn thread_key(&self) -> &str {
         &self.thread_key
+    }
+
+    /// Where the shown thread's terminals run, when it has a place.
+    pub fn place(&self) -> Option<&TerminalPlace> {
+        self.place.as_ref()
+    }
+
+    /// One terminal at a time on a screen of its own (the phone's
+    /// layout), not the drawer's splits.
+    pub fn set_single_screen(&mut self, engine: &Engine, single_screen: bool) {
+        if single_screen == self.single_screen {
+            return;
+        }
+        self.single_screen = single_screen;
+        self.refresh(engine);
+    }
+
+    pub fn single_screen(&self) -> bool {
+        self.single_screen
+    }
+
+    /// Another screen is over the thread's (the phone's): a single
+    /// screen does not settle its active terminal meanwhile.
+    pub fn set_covered(&mut self, engine: &Engine, covered: bool) {
+        if covered == self.covered {
+            return;
+        }
+        self.covered = covered;
+        self.refresh(engine);
+    }
+
+    /// The terminals a single screen lists (its menu's rows): none
+    /// in the drawer's layouts or without a place.
+    pub fn listing(&self) -> Vec<ListedTerminal> {
+        if !self.single_screen || self.place.is_none() {
+            return Vec::new();
+        }
+        let known = self.known.get(&self.thread_key);
+        self.terminal_ids()
+            .into_iter()
+            .map(|id| {
+                let summary = known.and_then(|k| k.get(&id)).cloned().unwrap_or_default();
+                ListedTerminal {
+                    label: terminal_label(&id, &summary.label),
+                    status: if summary.status.is_empty() {
+                        "starting".into()
+                    } else {
+                        summary.status
+                    },
+                    busy: summary.busy,
+                    cwd: summary.cwd,
+                    terminal_id: id,
+                }
+            })
+            .collect()
+    }
+
+    /// Of `ids`, the ones whose shells have not ended.
+    fn live_of(&self, ids: &[String]) -> Vec<String> {
+        live_of(self.known.get(&self.thread_key), ids)
+    }
+
+    /// Restarts an ended terminal's shell (a single screen opening
+    /// it again; `terminal.open` starts it anew).
+    fn restart_terminal(&mut self, engine: &Engine, terminal_id: &str) {
+        let Some(place) = self.place.clone() else {
+            return;
+        };
+        if let Some(summary) = self
+            .known
+            .entry(self.thread_key.clone())
+            .or_default()
+            .get_mut(terminal_id)
+        {
+            summary.status = "starting".into();
+        }
+        let mut input = place.launch_input(terminal_id);
+        if let Some((columns, rows)) = self.size {
+            input.insert("cols".into(), columns.into());
+            input.insert("rows".into(), rows.into());
+        }
+        let me = self.me.clone();
+        let thread_key = self.thread_key.clone();
+        let id = terminal_id.to_owned();
+        self.mc.call(
+            &place.environment_id.clone(),
+            "terminal.open",
+            Json::Object(input),
+            Box::new(move |engine, result| {
+                if let Err(error) = result {
+                    let message = error.message.clone();
+                    me.run(engine, move |t, engine| {
+                        if let Some(summary) =
+                            t.known.entry(thread_key.clone()).or_default().get_mut(&id)
+                        {
+                            summary.status = "exited".into();
+                        }
+                        if thread_key == t.thread_key {
+                            t.sync_tabs(engine);
+                            t.notify(engine);
+                        }
+                        toast(engine, "Unable to open terminal", &message);
+                    });
+                }
+            }),
+        );
+        let _ = engine;
     }
 
     pub fn active_terminal_id(&self) -> String {
@@ -1886,7 +2035,38 @@ impl Terminals {
             .get(&self.thread_key)
             .and_then(|k| k.get(&terminal_id))
             .is_some_and(|s| s.busy);
-        if busy {
+        if self.single_screen {
+            // On a single screen a script never lands in a shell the
+            // user is at: the first terminal when nothing runs, else
+            // a new one. A first terminal still closing is not taken:
+            // its `remove` would take the script's with it.
+            let live = self.live_of(&ids);
+            if live.len() >= MAX_TERMINALS {
+                toast(
+                    engine,
+                    &format!("At most {MAX_TERMINALS} terminals per thread."),
+                    "",
+                );
+                return true;
+            }
+            let first = "term-1".to_owned();
+            let next = self.next_terminal_id();
+            terminal_id = if live.is_empty() && (ids.contains(&first) || next == first) {
+                first
+            } else {
+                next
+            };
+            // The terminal.open below starts its shell.
+            if ids.contains(&terminal_id)
+                && let Some(summary) = self
+                    .known
+                    .entry(self.thread_key.clone())
+                    .or_default()
+                    .get_mut(&terminal_id)
+            {
+                summary.status = "starting".into();
+            }
+        } else if busy {
             if ids.len() >= MAX_TERMINALS {
                 toast(
                     engine,
@@ -2168,6 +2348,13 @@ impl Terminals {
         };
         let ids = self.terminal_ids();
         let attached = self.attached;
+        let single_screen = self.single_screen;
+        let covered = self.covered;
+        let known_map = self
+            .known
+            .get(&self.thread_key)
+            .cloned()
+            .unwrap_or_default();
         let ui = self.ui_mut();
         if ui.restored {
             return;
@@ -2187,7 +2374,10 @@ impl Terminals {
         if ui.open && drawer.is_empty() {
             ui.open = false;
         }
-        if !drawer.contains(&ui.active) {
+        if single_screen {
+            let live = live_of(Some(&known_map), &drawer);
+            Self::settle_single_screen(ui, &drawer, &live, covered);
+        } else if !drawer.contains(&ui.active) {
             ui.active = drawer.last().cloned().unwrap_or_default();
         }
         let panel = drawer.len() < ids.len();
@@ -2197,13 +2387,20 @@ impl Terminals {
         let ui = ui.clone();
         self.attached = true;
         let thread_key = self.thread_key.clone();
-        let known = self.known.get(&thread_key).cloned().unwrap_or_default();
+        let known = known_map;
+        // A single screen attaches no ended shell: its terminal is
+        // listed, and starts anew when opened.
+        let shown = if self.single_screen {
+            self.live_of(&ids)
+        } else {
+            ids.clone()
+        };
         for i in (0..self.tabs.len()).rev() {
-            if !ids.contains(&self.tabs.id_at(i)) {
+            if !shown.contains(&self.tabs.id_at(i)) {
                 self.tabs.remove(engine, i);
             }
         }
-        for (i, id) in ids.iter().enumerate() {
+        for (i, id) in shown.iter().enumerate() {
             let summary = known.get(id).cloned().unwrap_or_default();
             let mut tab = Tab {
                 terminal_id: id.clone(),
@@ -2249,6 +2446,43 @@ impl Terminals {
         }
         // What the visit left that the thread no longer has.
         self.drop_parked(engine, &thread_key);
+        if self.single_screen {
+            let group = self.active_group();
+            for row in self.tabs.rows() {
+                if let Some(session) = &row.session {
+                    session.set_parked(!ui.open || row.group != group);
+                }
+            }
+        }
+    }
+
+    /// A single screen's active terminal (settleSingleScreen): the
+    /// nearest running one below it, else the first above; none
+    /// shuts the screen. Not while another screen covers the
+    /// thread's.
+    fn settle_single_screen(ui: &mut ThreadUi, drawer: &[String], live: &[String], covered: bool) {
+        if covered {
+            return;
+        }
+        let live: Vec<String> = live.to_vec();
+        if ui.open && !live.contains(&ui.active) {
+            let mut next = live.first().cloned().unwrap_or_default();
+            for id in &live {
+                if terminal_order(id, &ui.active) == std::cmp::Ordering::Less {
+                    next = id.clone();
+                }
+            }
+            if next.is_empty() {
+                ui.open = false;
+            } else {
+                ui.active = next;
+            }
+        }
+        // An ended one stays active with the screen shut: its menu
+        // still says what became of it.
+        if !drawer.contains(&ui.active) {
+            ui.active = live.first().cloned().unwrap_or_default();
+        }
     }
 
     fn open_session(&self, engine: &Engine, place: &TerminalPlace, terminal_id: &str) -> Session {
@@ -2304,7 +2538,24 @@ impl Terminals {
             // A shell that ended on its own takes its terminal with it,
             // unasked.
             SessionEvent::Exited => {
-                if thread_key == self.thread_key && self.terminal_ids().iter().any(|t| t == id) {
+                if self.single_screen {
+                    // A single screen moves on and leaves the MC's
+                    // listing as it is.
+                    if let Some(summary) = self
+                        .known
+                        .entry(thread_key.to_owned())
+                        .or_default()
+                        .get_mut(id)
+                    {
+                        summary.status = "exited".into();
+                    }
+                    if thread_key == self.thread_key {
+                        self.sync_tabs(engine);
+                        self.notify(engine);
+                    }
+                } else if thread_key == self.thread_key
+                    && self.terminal_ids().iter().any(|t| t == id)
+                {
                     self.close_terminal(engine, id);
                 }
             }
@@ -2424,6 +2675,8 @@ impl Terminals {
                 Summary {
                     label: terminal["label"].as_str().unwrap_or_default().to_owned(),
                     busy: terminal["hasRunningSubprocess"].as_bool().unwrap_or(false),
+                    status: terminal["status"].as_str().unwrap_or_default().to_owned(),
+                    cwd: terminal["cwd"].as_str().unwrap_or_default().to_owned(),
                 },
             );
             t.ui.entry(key).or_default().local.remove(&id);
@@ -2464,12 +2717,35 @@ impl Terminals {
 
     /// Returns whether the drawer's open state changed.
     fn set_open(&mut self, engine: &Engine, open: bool) -> bool {
+        let single_screen = self.single_screen;
         let ui = self.ui_mut();
         if std::mem::replace(&mut ui.restored, false) {
             ui.open = false;
         }
         if ui.open == open {
             return false;
+        }
+        if open && single_screen {
+            let ids = self.terminal_ids();
+            let ui = self.ui_mut();
+            let drawer = drawer_ids(ui, &ids);
+            let live = live_of(self.known.get(&self.thread_key), &drawer);
+            let first = if let Some(first) = live.first() {
+                first.clone()
+            } else if let Some(first) = drawer.first() {
+                first.clone()
+            } else {
+                self.next_terminal_id()
+            };
+            let active = self.ui_mut().active.clone();
+            let chosen = if live.contains(&active) || (live.is_empty() && drawer.contains(&active))
+            {
+                active
+            } else {
+                first
+            };
+            self.open_terminal(engine, &chosen);
+            return true;
         }
         ui.open = open;
         // A drawer with no terminal yet gets its first one.
@@ -2493,6 +2769,16 @@ impl Terminals {
     /// instead.
     fn open_terminal(&mut self, engine: &Engine, terminal_id: &str) {
         let listed = self.terminal_ids().iter().any(|id| id == terminal_id);
+        let ended = self.single_screen
+            && listed
+            && self
+                .known
+                .get(&self.thread_key)
+                .and_then(|k| k.get(terminal_id))
+                .is_some_and(Summary::ended);
+        if ended {
+            self.restart_terminal(engine, terminal_id);
+        }
         let ui = self.ui_mut();
         ui.restored = false;
         if !listed {
