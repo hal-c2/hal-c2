@@ -275,12 +275,14 @@ defmodule HalC2.Vcs do
 
   # Asked once for every reader of the branch (`HalC2.PullRequests.Branches`).
   # Unauthenticated, offline or rate limited `gh` means no pull request, quietly.
-  # A look-up that read the host and found the pull request open revives its
-  # thread links' sync, which a long-closed snapshot has left (upstream #30071).
-  defp github_pull_request(cwd, url, branch, fresh?) do
+  # A look-up that read the host and found the pull request open revives a
+  # thread link to it that had left the sweep, which a long-closed snapshot
+  # has (upstream #30071). A link the sweep already reads is left to it:
+  # branch status is polled, and each request is another host read.
+  defp github_pull_request(cwd, _url, branch, fresh?) do
     case HalC2.PullRequests.Branches.lookup(cwd, branch, fresh: fresh?) do
       {{:ok, %{} = pr}, read?} ->
-        if read? and pr["state"] == "open", do: reread(url, pr)
+        if read? and pr["state"] == "open", do: reread(pr)
         Map.take(pr, ~w(number title url baseRef headRef headSha state isDraft updatedAt))
 
       _ ->
@@ -288,8 +290,11 @@ defmodule HalC2.Vcs do
     end
   end
 
-  defp reread(url, %{"number" => number}) when is_integer(number) do
-    with %{} = remote <- HalC2.PullRequests.parse_remote(url) do
+  # The pull request the host named, by its own URL: `gh` chooses the
+  # repository from the checkout's remotes, which need not be `origin`.
+  defp reread(%{"number" => number, "url" => url}) when is_integer(number) do
+    with %{} = remote <- HalC2.Projection.PullRequests.parse_change_request_url(url),
+         true <- left_sweep?(remote, number) do
       HalC2.PullRequests.Sync.request(%{
         "host" => remote.host,
         "repository" => remote.repository,
@@ -298,6 +303,36 @@ defmodule HalC2.Vcs do
     end
 
     :ok
+  end
+
+  defp reread(_pr), do: :ok
+
+  # A live thread links this pull request with a snapshot the sweep no longer
+  # reads: not open, or open on a settled thread. No snapshot yet is the
+  # sweep's next read, and an open one on an unsettled thread is read every
+  # sweep already.
+  defp left_sweep?(remote, number) do
+    repository = String.downcase(remote.repository)
+
+    Process.whereis(HalC2.Shell) != nil and
+      Enum.any?(HalC2.Shell.rows(), fn
+        {{mc, _id}, {"thread", row}} when mc == node() ->
+          row["archivedAt"] == nil and row["deletedAt"] == nil and
+            Enum.any?(
+              HalC2.Projection.PullRequests.visible(row["pullRequests"] || []),
+              fn link ->
+                normalized = HalC2.Projection.PullRequests.normalize(link)
+                snapshot = link["snapshot"]
+
+                normalized["repository"] == repository and normalized["number"] == number and
+                  is_map(snapshot) and
+                  (snapshot["state"] != "open" or row["settledOverride"] == "settled")
+              end
+            )
+
+        _other ->
+          false
+      end)
   end
 
   # A host that does not answer in ten seconds has no change request, as with `gh`.

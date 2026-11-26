@@ -53,6 +53,8 @@ defmodule HalC2.Paths do
   left wider is tightened: the MC's folders are its owner's alone (upstream
   #27904), their parents are not touched.
   """
+  # The directories are this MC's own, from its configured home.
+  # sobelow_skip ["Traversal.FileModule"]
   def ensure!(dirs \\ dirs()) do
     for dir <- Enum.map(@kinds, &Map.fetch!(dirs, &1)) ++ [Path.join(dirs.data, "secrets")] do
       mkdir_private!(dir)

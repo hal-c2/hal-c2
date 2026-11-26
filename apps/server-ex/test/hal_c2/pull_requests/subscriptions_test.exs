@@ -14,7 +14,8 @@ defmodule HalC2.PullRequests.SubscriptionsTest do
     "checksState" => "passing",
     "mergeability" => "mergeable",
     "checksFailed" => false,
-    "activityAt" => nil
+    "activityAt" => nil,
+    "commentEditAt" => nil
   }
 
   defp link(notify, snapshot) do

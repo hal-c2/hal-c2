@@ -44,6 +44,7 @@ defmodule HalC2.PathsTest do
 
   describe "ensure!/1" do
     test "a directory left readable by everyone is tightened to its owner", %{tmp_dir: dir} do
+      File.chmod!(dir, 0o755)
       dirs = Map.new(~w(config data state cache)a, &{&1, Path.join(dir, Atom.to_string(&1))})
 
       for path <- Map.values(dirs) do

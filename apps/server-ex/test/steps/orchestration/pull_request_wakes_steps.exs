@@ -345,7 +345,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
           update_in(pr_state, ["comments", "nodes"], fn nodes ->
             Enum.map(nodes, fn node ->
               if get_in(node, ["author", "login"]) == "owner-1",
-                do: Map.put(node, "updatedAt", at),
+                do: Map.put(node, "lastEditedAt", at),
                 else: node
             end)
           end)

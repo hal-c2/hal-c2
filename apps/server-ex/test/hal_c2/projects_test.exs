@@ -91,7 +91,14 @@ defmodule HalC2.ProjectsTest do
       "runOnWorktreeCreate" => false
     }
 
-    for id <- ["Build", "-build", "build_all", String.duplicate("a", 25)] do
+    for id <- [
+          "Build",
+          "-build",
+          "build_all",
+          String.duplicate("a", 25),
+          "build\n",
+          String.duplicate("a", 24) <> "\n"
+        ] do
       assert {:error, message} =
                Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", id)]))
 

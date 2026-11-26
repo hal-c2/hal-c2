@@ -94,7 +94,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     listing =
       case reply do
         {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
-        _ -> []
+        other -> flunk("the ACP Registry search did not succeed: #{inspect(other)}")
       end
 
     context |> Map.put(:reply, reply) |> Map.put(:listing, listing)

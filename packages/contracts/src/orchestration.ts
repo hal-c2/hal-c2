@@ -380,6 +380,7 @@ export const ThreadPullRequestLink = Schema.Struct({
       activityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
       reviewActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
       commentActivityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      commentEditAt: Schema.optional(Schema.NullOr(IsoDateTime)),
       mergeQueueRemovalAt: Schema.optional(Schema.NullOr(IsoDateTime)),
     }),
   ),

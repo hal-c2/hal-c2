@@ -99,8 +99,18 @@ defmodule HalC2.Projects do
         )
       )
 
-    current = Enum.find(stored(), &(&1["id"] == id))
-    existing = for script <- (current && current["scripts"]) || [], do: script["id"]
+    # Only a scripts update needs the saved ids, and only this project's.
+    existing =
+      if Map.has_key?(fields, "scripts") do
+        path = HalC2.Store.path()
+        project = StreamState.get(StreamState.load(path, id), "project")[id]
+
+        if project && project["deletedAt"] == nil,
+          do: for(script <- project["scripts"] || [], do: script["id"]),
+          else: []
+      else
+        []
+      end
 
     refused =
       case relative_root(fields) do
@@ -533,7 +543,7 @@ defmodule HalC2.Projects do
   defp script_refusal(scripts, existing) when is_list(scripts) do
     Enum.find_value(scripts, fn
       %{"id" => id} when is_binary(id) ->
-        if id not in existing and not Regex.match?(~r/^[a-z0-9][a-z0-9-]{0,23}$/, id) do
+        if id not in existing and not Regex.match?(~r/\A[a-z0-9][a-z0-9-]{0,23}\z/, id) do
           "Script ID '#{id}' must be 1-24 lowercase letters, digits or hyphens, " <>
             "starting with a letter or digit."
         end

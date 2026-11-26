@@ -321,6 +321,38 @@ defmodule HalC2.TerminalTest do
       assert Terminal.shell() == [Path.join(dir, "cmd")]
     end
 
+    # The stand-in named for each Windows shell prints how it was called, then
+    # hands over to this machine's shell: a startup command must reach a
+    # PowerShell as `-Command` and cmd as `/c`, never POSIX `-ic`.
+    for {shells, waiting} <- [
+          {~w(pwsh powershell cmd), "-Command echo ready"},
+          {~w(cmd), "/c echo ready"}
+        ] do
+      test "on Windows a startup command is given to #{hd(shells)} as #{waiting}",
+           %{input: input, tmp_dir: dir} do
+        Application.put_env(:hal_c2, :os_type, {:win32, :nt})
+        previous = System.get_env("PATH")
+        on_exit(fn -> Application.delete_env(:hal_c2, :os_type) end)
+        on_exit(fn -> System.put_env("PATH", previous) end)
+
+        bin = Path.join(dir, "bin")
+        File.mkdir_p!(bin)
+
+        for name <- unquote(shells) do
+          path = Path.join(bin, name)
+          File.write!(path, "#!/bin/sh\necho \"shell-args:$*\"\nexec /bin/sh\n")
+          File.chmod!(path, 0o755)
+        end
+
+        System.put_env("PATH", bin)
+
+        assert {:ok, %{"status" => "running"}} =
+                 Terminal.attach(Map.put(input, "command", "echo ready"), self())
+
+        await_output("shell-args:#{unquote(waiting)}")
+      end
+    end
+
     test "a missing cwd is a contract error", %{input: input} do
       assert {:error, %{"_tag" => "TerminalCwdNotFoundError"}} =
                Terminal.open(%{input | "cwd" => "/nope/not/here"})
