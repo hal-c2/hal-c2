@@ -286,6 +286,18 @@ defmodule HalC2.PullRequests.Wakes do
         |> Map.new(&{&1, held(heard, &1)})
 
       next = heard |> advance(snapshot, consumed) |> Map.merge(kept)
+
+      # Restoring a pending comment's marker on a link heard before comment
+      # edits were stamped must not stamp it from that edit: the marker goes
+      # with the baselined comment time, or the historical edit wakes later.
+      next =
+        if not Map.has_key?(heard, "commentEditAt") and
+             Map.has_key?(kept, "commentActivityAt") do
+          Map.delete(next, "commentEditAt")
+        else
+          next
+        end
+
       Map.put(link, "heard", next)
     else
       link

@@ -106,7 +106,7 @@ defmodule HalC2.Projects do
         project = StreamState.get(StreamState.load(path, id), "project")[id]
 
         if project && project["deletedAt"] == nil,
-          do: for(script <- project["scripts"] || [], do: script["id"]),
+          do: for(script <- List.wrap(project["scripts"]), is_map(script), do: script["id"]),
           else: []
       else
         []

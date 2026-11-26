@@ -939,7 +939,7 @@ defmodule HalC2.PullRequests.GitHub do
 
   # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
   # the last few of each, enough to find the newest from a trusted author (`activity/2`).
-  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt lastEditedAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10, orderBy: { field: UPDATED_AT, direction: ASC }) { nodes { createdAt lastEditedAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
   # Kept apart: an Enterprise host whose schema has no merge queue rejects the whole
   # document over these, so a chunk that fails for them is read again without them
   # (`summaries_chunk/2`).

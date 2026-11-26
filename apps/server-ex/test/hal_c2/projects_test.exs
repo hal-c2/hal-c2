@@ -111,6 +111,21 @@ defmodule HalC2.ProjectsTest do
              Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", "build-2")]))
   end
 
+  # Scripts saved before an update checked their shape are no shape at all;
+  # repairing such a project by clearing its scripts must not crash.
+  test "a project whose saved scripts are not maps can still be updated", %{tmp_dir: dir} do
+    assert {:ok, _} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => dir,
+               "scripts" => ["build"]
+             })
+
+    assert {:ok, _} =
+             Projects.mutate(%{"type" => "project.update", "projectId" => "p1", "scripts" => []})
+  end
+
   test "browse lists matching folders, hiding dot-folders unless asked", %{tmp_dir: dir} do
     for name <- ~w(alpha alps beta .hidden), do: File.mkdir_p!(Path.join(dir, name))
     File.write!(Path.join(dir, "alpine.txt"), "")
