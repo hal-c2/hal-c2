@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -194,6 +195,9 @@ pub struct Pairing {
     /// The MC's descriptor (environmentId, label,
     /// orchestrationProtocolVersion), once an MC answered.
     pub descriptor: Map<String, Value>,
+    /// When the token runs out, when the MC said (`expires_in` at
+    /// the exchange, counted from when it answered).
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Finds the MC among the link's origins by its descriptor
@@ -239,6 +243,7 @@ pub fn exchange(link: &Link, client: &Client) -> Pairing {
         origin: origin.to_owned(),
         token: String::new(),
         descriptor,
+        expires_at: None,
     };
     for origin in &link.origins {
         let agent = if direct_route(origin) {
@@ -303,17 +308,26 @@ fn spend(
         origin: origin.to_owned(),
         token: String::new(),
         descriptor,
+        expires_at: None,
     };
     match answer(sent) {
         None => pairing.outcome = Outcome::Unreachable,
         Some((status, body)) => {
-            let token = serde_json::from_slice::<Value>(&body)
-                .ok()
+            let answered: Option<Value> = serde_json::from_slice(&body).ok();
+            let token = answered
+                .as_ref()
                 .and_then(|v| v.get("access_token")?.as_str().map(str::to_owned))
                 .unwrap_or_default();
             if (200..300).contains(&status) && !token.is_empty() {
                 pairing.outcome = Outcome::Paired;
                 pairing.token = token;
+                pairing.expires_at = answered
+                    .as_ref()
+                    .and_then(|v| v.get("expires_in"))
+                    .and_then(Value::as_f64)
+                    .and_then(|secs| {
+                        Utc::now().checked_add_signed(chrono::Duration::seconds(secs as i64))
+                    });
             }
         }
     }

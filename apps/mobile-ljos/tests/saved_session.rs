@@ -58,6 +58,7 @@ fn a_saved_session_is_blocked_where_another_environment_answers() {
         token: "session".into(),
         label: "My MacBook".into(),
         environment_id: "env-1".into(),
+        expires_at: String::new(),
     };
     assert!(pairing::save(&path, &saved));
 

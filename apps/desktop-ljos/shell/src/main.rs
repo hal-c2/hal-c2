@@ -91,7 +91,7 @@ use hal_c2_shell::notifications::NativeNotifications;
 #[cfg(feature = "dev-qml")]
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
-use hal_c2_shell::session::Session;
+use hal_c2_shell::session::{Session, expires_text};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::streams::Pump;
 use hal_c2_shell::{Launch, desktop_host, single_instance, store};
@@ -646,6 +646,7 @@ fn pair(link: &str) -> Result<Session, String> {
         token: result.token.clone(),
         label: said("label"),
         environment_id: said("environmentId"),
+        expires_at: expires_text(result.expires_at),
     };
     eprintln!("hal-c2-ljos: paired with {} at {}", kept.label, kept.origin);
     Ok(kept)
@@ -1283,6 +1284,7 @@ fn hosted_said(engine: &Engine, event: desktop_host::Event) {
                 token,
                 label: String::new(),
                 environment_id: String::new(),
+                expires_at: String::new(),
             };
             hal_c2_shell::open(engine, &session).err()
         }
