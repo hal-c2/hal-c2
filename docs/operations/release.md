@@ -23,8 +23,8 @@ makes the MC's sidecars run on the bundled Node from `share/hal-c2` beside its `
 not the build flag's doing: the launcher (`resolve_launch` in
 `apps/desktop-ljos/shell/src/mc_launcher.rs`) picks, in every build, `HAL_C2_MC_RELEASE` when set,
 else the bundled MC under that same `share/hal-c2`, else the checkout's `apps/server-ex` run from
-source, so diagnose a missing bundle or an unexpected source launch against that order. On Linux CEF's runtime sits beside the binary; the macOS bundle
-does not carry CEF yet, so its browser tabs show no pages ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
+source, so diagnose a missing bundle or an unexpected source launch against that order. On Linux CEF's runtime sits beside the binary. The macOS
+bundle carries CEF's framework, taken from `CEF_PATH`, which the macOS build needs set, and is signed whole after staging ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
 which fails when a QML file of the checkout is missing from the binary.
 
 A local build is versioned `<package version>-local.<commit time>.g<commit>` unless
