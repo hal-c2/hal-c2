@@ -121,18 +121,34 @@ fn object_of(value: &Json) -> Map<String, Json> {
     value.as_object().cloned().unwrap_or_default()
 }
 
+/// The kept state: empty when there is no file yet, none when a
+/// file there is cannot be read or parsed. A change is never saved
+/// over a file that could not be read (it may hold the only copy of
+/// the subscription keys): mutating calls leave it intact, and
+/// `forget`, the user's own reset, is the one recovery that
+/// replaces it. (mobile-qt's load mapped both failures to empty and
+/// a later save overwrote the file; that is not carried over.)
+fn try_load(path: &Path) -> Option<Map<String, Json>> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<Json>(&bytes)
+            .ok()
+            .filter(Json::is_object)
+            .map(|value| object_of(&value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Map::new()),
+        Err(_) => None,
+    }
+}
+
+/// For reads alone, where the defaults the C++ read are the answer.
 fn load(path: &Path) -> Map<String, Json> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
-        .map(|value| object_of(&value))
-        .unwrap_or_default()
+    try_load(path).unwrap_or_default()
 }
 
 /// The keys are in here: the file is the user's alone from its first
 /// byte, and whole or the one it replaces (QSaveFile, as the
-/// pairing's save).
-fn save(path: &Path, state: &Map<String, Json>) {
+/// pairing's save). False when it could not be written: keys are
+/// handed out only once they are on disk.
+fn save(path: &Path, state: &Map<String, Json>) -> bool {
     let done = (|| -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -159,9 +175,10 @@ fn save(path: &Path, state: &Map<String, Json>) {
         }
         written
     })();
-    if let Err(error) = done {
+    if let Err(error) = &done {
         eprintln!("[push] not saved to {}: {error}", path.display());
     }
+    done.is_ok()
 }
 
 fn keys_of(state: &Map<String, Json>) -> Keys {
@@ -376,7 +393,9 @@ impl Inbox {
     /// This phone's push keys, made the first time they are asked for.
     pub fn keys(&self) -> Keys {
         let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-        let mut state = load(&self.path);
+        let Some(mut state) = try_load(&self.path) else {
+            return Keys::default();
+        };
         let keys = keys_of(&state);
         if keys.valid() {
             return keys;
@@ -393,8 +412,13 @@ impl Inbox {
                 "auth": base64_url(&keys.auth),
             }),
         );
-        save(&self.path, &state);
-        keys
+        // Only keys on disk are handed out: an unsaved pair would be
+        // registered and then replaced by the next generation.
+        if save(&self.path, &state) {
+            keys
+        } else {
+            Keys::default()
+        }
     }
 
     pub fn live_activity(&self) -> bool {
@@ -409,10 +433,11 @@ impl Inbox {
     /// lets the next one show even if the user had dismissed the last.
     pub fn set_live_activity(&self, on: bool) -> Json {
         let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-        let mut state = load(&self.path);
-        state.insert("liveActivity".into(), json!(on));
-        state.insert("dismissed".into(), json!(false));
-        save(&self.path, &state);
+        if let Some(mut state) = try_load(&self.path) {
+            state.insert("liveActivity".into(), json!(on));
+            state.insert("dismissed".into(), json!(false));
+            save(&self.path, &state);
+        }
         let mut effects = object_of(&channels());
         if !on {
             cancel_card(&mut effects);
@@ -420,19 +445,21 @@ impl Inbox {
         Json::Object(effects)
     }
 
-    /// An encrypted message from the distributor.
+    /// An encrypted message from the distributor. The keys it opens
+    /// with and the state it lands in are one transaction: a forget
+    /// between the two must not let an old subscription's alert
+    /// through, so the lock is held across the decrypt (the C++
+    /// dropped it there).
     pub fn receive(&self, body: &[u8], device: &Device) -> Json {
-        let keys = {
-            let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-            keys_of(&load(&self.path))
-        };
+        let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
+        let keys = keys_of(&load(&self.path));
         let Some(plain) = decrypt(body, &keys) else {
             return channels();
         };
         let message = serde_json::from_slice::<Json>(&plain)
             .map(|value| object_of(&value))
             .unwrap_or_default();
-        self.deliver(&message, device)
+        self.deliver_locked(&message, device)
     }
 
     /// A message in the clear: a decrypted one, or the activity the
@@ -440,17 +467,26 @@ impl Inbox {
     /// Each is ordered against the last from the same place, since
     /// the MC's clock is not the phone's.
     pub fn deliver(&self, message: &Map<String, Json>, device: &Device) -> Json {
+        let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
+        self.deliver_locked(message, device)
+    }
+
+    fn deliver_locked(&self, message: &Map<String, Json>, device: &Device) -> Json {
         let mut effects = object_of(&channels());
         let sent_at = at(message, "sentAt");
         // Nothing is recorded of a message that is not shown for these
         // reasons, so the same one delivered again once they pass is
         // shown then.
-        if sent_at <= 0 || (device.now - sent_at).abs() > FRESHNESS || !device.permitted {
+        if sent_at <= 0
+            || device.now.saturating_sub(sent_at).unsigned_abs() > FRESHNESS as u64
+            || !device.permitted
+        {
             return Json::Object(effects);
         }
 
-        let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-        let mut state = load(&self.path);
+        let Some(mut state) = try_load(&self.path) else {
+            return Json::Object(effects);
+        };
 
         let alert = message.get("alert").map(object_of).unwrap_or_default();
         let id = alert
@@ -503,11 +539,11 @@ impl Inbox {
                 let expires_at = if activity.contains_key("expiresAt") {
                     at(&activity, "expiresAt")
                 } else if active {
-                    sent_at + ACTIVE_LIFETIME
+                    sent_at.saturating_add(ACTIVE_LIFETIME)
                 } else {
                     sent_at
                 };
-                let remaining = (expires_at - device.now).min(LONGEST_CARD);
+                let remaining = expires_at.saturating_sub(device.now).min(LONGEST_CARD);
                 let live = state
                     .get("liveActivity")
                     .and_then(Json::as_bool)
@@ -539,9 +575,10 @@ impl Inbox {
     /// it stays away until a run starts again.
     pub fn dismiss(&self) -> Json {
         let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-        let mut state = load(&self.path);
-        state.insert("dismissed".into(), json!(true));
-        save(&self.path, &state);
+        if let Some(mut state) = try_load(&self.path) {
+            state.insert("dismissed".into(), json!(true));
+            save(&self.path, &state);
+        }
         let mut effects = object_of(&channels());
         cancel_card(&mut effects);
         Json::Object(effects)
@@ -583,7 +620,9 @@ impl Inbox {
 
     pub fn set_value(&self, key: &str, value: Json) {
         let _held = lock().lock().unwrap_or_else(|held| held.into_inner());
-        let mut state = load(&self.path);
+        let Some(mut state) = try_load(&self.path) else {
+            return;
+        };
         if state.get(key) == Some(&value) {
             return;
         }
@@ -769,32 +808,25 @@ pub fn card(activity: &Map<String, Json>, remaining_ms: i64, sdk: i32) -> Json {
 }
 
 /// The environment and thread of a thread link; empty when it is
-/// not one (QUrl StrictMode: hal-c2 scheme, threads host, no query
-/// or fragment, two decoded path parts).
+/// not one (hal-c2 scheme, threads host, no query or fragment, two
+/// decoded path parts).
 pub fn parse_thread_link(link: &str) -> (String, String) {
-    let Ok(url) = url::Url::parse(link) else {
-        return (String::new(), String::new());
-    };
-    if url.scheme() != "hal-c2"
-        || url.host_str() != Some("threads")
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return (String::new(), String::new());
-    }
-    fn decoded(part: &str) -> String {
-        // QUrl::FullyDecoded: %XX to its byte, the rest as it is.
+    // Read by hand, not as a URL: QUrl and the url crate both
+    // normalize the path (dot segments go, as a thread id of ".."
+    // would), and the C++ decoded before it split, so an id holding
+    // a "/" read as two parts there. Here the raw parts split first
+    // and decode after, which is thread_link's own encoding read
+    // back, and a malformed escape is no link (QUrl StrictMode
+    // refused it too).
+    fn decoded(part: &str) -> Option<String> {
         let bytes = part.as_bytes();
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
         let mut index = 0;
         while index < bytes.len() {
-            let hex = |byte: u8| (byte as char).to_digit(16).map(|digit| digit as u8);
-            if bytes[index] == b'%'
-                && let (Some(high), Some(low)) = (
-                    bytes.get(index + 1).copied().and_then(hex),
-                    bytes.get(index + 2).copied().and_then(hex),
-                )
-            {
+            if bytes[index] == b'%' {
+                let hex = |byte: u8| (byte as char).to_digit(16).map(|digit| digit as u8);
+                let high = bytes.get(index + 1).copied().and_then(hex)?;
+                let low = bytes.get(index + 2).copied().and_then(hex)?;
                 out.push(high * 16 + low);
                 index += 3;
             } else {
@@ -802,14 +834,25 @@ pub fn parse_thread_link(link: &str) -> (String, String) {
                 index += 1;
             }
         }
-        String::from_utf8_lossy(&out).into_owned()
+        Some(String::from_utf8_lossy(&out).into_owned())
     }
-    let parts: Vec<String> = match url.path_segments() {
-        Some(segments) => segments
-            .filter(|part| !part.is_empty())
-            .map(decoded)
-            .collect(),
-        None => return (String::new(), String::new()),
+    let Some(path) = link
+        .get(.."hal-c2://threads/".len())
+        .filter(|head| head.eq_ignore_ascii_case("hal-c2://threads/"))
+        .map(|head| &link[head.len()..])
+    else {
+        return (String::new(), String::new());
+    };
+    if path.contains(['?', '#']) {
+        return (String::new(), String::new());
+    }
+    let parts: Option<Vec<String>> = path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(decoded)
+        .collect();
+    let Some(parts) = parts else {
+        return (String::new(), String::new());
     };
     if parts.len() != 2 {
         return (String::new(), String::new());
@@ -975,5 +1018,46 @@ mod tests {
         );
         assert_eq!(parse_thread_link("https://threads/env-a/t-1").0, "");
         assert_eq!(parse_thread_link("hal-c2://threads/env-a/t-1?x=1").0, "");
+        // A malformed escape is no link, and dot segments are ids,
+        // not path navigation.
+        assert_eq!(parse_thread_link("hal-c2://threads/env-a/bad%ZZ").0, "");
+        assert_eq!(
+            parse_thread_link("hal-c2://threads/env-a/.."),
+            ("env-a".to_string(), "..".to_string())
+        );
+        // A malformed override falls back to the ids named.
+        let item = object_of(&json!({
+            "link": "hal-c2://threads/env-a/bad%ZZ",
+            "environmentId": "env-a",
+            "threadId": "thread-1",
+        }));
+        assert_eq!(thread_link(&item), "hal-c2://threads/env-a/thread-1");
+    }
+
+    #[test]
+    fn an_unreadable_file_is_left_intact_and_extreme_times_do_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("push.json");
+        std::fs::write(&path, "{broken").unwrap();
+        let inbox = Inbox::new(dir.path());
+        // No keys are made over it, and a change is not saved over it.
+        assert!(!inbox.keys().valid());
+        inbox.set_value("endpoint", json!("https://push.example/abc"));
+        let effects = inbox.deliver(&alert_message(NOW), &device(NOW));
+        assert!(effects.get("alert").is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{broken");
+        // Forget is the recovery: it replaces the file.
+        inbox.forget();
+        assert!(inbox.keys().valid());
+
+        // An expiry at the ends of the number range ends the card,
+        // it does not wrap into a day-long one.
+        let message = object_of(&json!({
+            "v": 1, "sentAt": NOW as f64,
+            "activity": {"active": true, "expiresAt": -1e30, "rows": []},
+        }));
+        let effects = inbox.deliver(&message, &device(NOW));
+        assert_eq!(effects["cancelCard"], json!(true));
+        assert!(effects.get("card").is_none());
     }
 }

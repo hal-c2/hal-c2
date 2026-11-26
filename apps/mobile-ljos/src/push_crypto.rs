@@ -173,14 +173,25 @@ pub fn decrypt(body: &[u8], keys: &Keys) -> Option<Vec<u8>> {
 /// secret, with a fresh sender key and salt; empty when it cannot be
 /// made.
 pub fn encrypt(plaintext: &[u8], receiver_public_key: &[u8], auth: &[u8]) -> Vec<u8> {
+    // One record holds at most rs - 17 plaintext octets: its tag and
+    // the delimiter (RFC 8188 section 2).
+    if plaintext.len() > RECORD_SIZE as usize - TAG_SIZE - 1 {
+        return Vec::new();
+    }
     let made = (|| {
+        // The derivation names the receiver's point uncompressed, as
+        // the receiver holds it, whatever encoding arrived here.
+        let receiver_public = PublicKey::from_sec1_bytes(receiver_public_key)
+            .ok()?
+            .to_sec1_bytes()
+            .to_vec();
         let (sender_private, sender_public) = key_pair()?;
-        let ecdh = shared_secret(&sender_private, receiver_public_key)?;
+        let ecdh = shared_secret(&sender_private, &receiver_public)?;
         let salt = random(SALT_SIZE)?;
         let mut padded = plaintext.to_vec();
         padded.push(2);
         let record = seal(
-            &derive(&ecdh, auth, receiver_public_key, &sender_public, &salt),
+            &derive(&ecdh, auth, &receiver_public, &sender_public, &salt),
             &padded,
         )?;
         let mut body = salt;
@@ -237,6 +248,27 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(decrypt(&first, &keys).as_deref(), Some(json.as_slice()));
         assert_eq!(decrypt(&second, &keys).as_deref(), Some(json.as_slice()));
+    }
+
+    #[test]
+    fn a_compressed_receiver_point_and_the_record_bound() {
+        let keys = generate_keys();
+        // The same point compressed (33 bytes) encrypts for the
+        // uncompressed one the receiver holds.
+        let public = PublicKey::from_sec1_bytes(&keys.public_key).unwrap();
+        let compressed = public
+            .as_affine()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec();
+        let body = encrypt(b"hello", &compressed, &keys.auth);
+        assert_eq!(decrypt(&body, &keys).as_deref(), Some(b"hello".as_slice()));
+        // rs - 17 fits one record; one more does not.
+        let longest = vec![b'x'; RECORD_SIZE as usize - TAG_SIZE - 1];
+        let body = encrypt(&longest, &keys.public_key, &keys.auth);
+        assert_eq!(decrypt(&body, &keys), Some(longest));
+        let too_long = vec![b'x'; RECORD_SIZE as usize - TAG_SIZE];
+        assert!(encrypt(&too_long, &keys.public_key, &keys.auth).is_empty());
     }
 
     #[test]
