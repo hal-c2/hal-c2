@@ -430,6 +430,17 @@ defmodule HalC2.Steps.Plugins.Fixtures do
         ]
       end
 
+      def call_tool("jira_search", %{"query" => "?"}, _settings),
+        do: {:error, %{code: "invalid_input", message: "Ask about something.", details: %{field: "query"}}}
+
+      def call_tool("jira_search", %{"query" => "everything"}, _settings),
+        do: {:error, ~s({"code":"rate_limited","message":"Jira asks to wait a minute.","details":{"retryAfter":60}})}
+
+      def call_tool("jira_search", %{"query" => "offline"}, _settings),
+        do: {:error, "Jira is unreachable."}
+
+      def call_tool("jira_search", %{"query" => "boom"}, _settings), do: raise("lost the connection")
+
       def call_tool("jira_search", _arguments, settings),
         do: {:ok, %{site: settings["siteUrl"], issues: [%{key: "SHOP-1", summary: "Checkout fails"}]}}
     """
