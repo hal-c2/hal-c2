@@ -201,9 +201,9 @@ defmodule HalC2.Mcp.Tools.Queue do
   # approval the user is shown).
   defp pending(thread_id, request_id) do
     state = stream(thread_id)
+    request = StreamState.get(state, "runtime-request")[request_id]
 
-    with %{"status" => "pending"} = request <-
-           StreamState.get(state, "runtime-request")[request_id],
+    with %{"status" => "pending"} = request <- request,
          %{} = item <-
            Enum.find(
              StreamState.list(state, "turn-item"),
@@ -212,9 +212,22 @@ defmodule HalC2.Mcp.Tools.Queue do
            ) do
       {:ok, request, item}
     else
-      _ -> {:error, "invalid_request", "The pending request was not found."}
+      _ -> {:error, "invalid_request", no_longer(request)}
     end
   end
+
+  # A question that is over says how it ended, not that it was never there
+  # (upstream #22850).
+  defp no_longer(%{"kind" => "user_input", "status" => status}) do
+    case status do
+      "resolved" -> "The user-input request was already answered."
+      "expired" -> "The user-input request is no longer pending (expired)."
+      "cancelled" -> "The user-input request is no longer pending (cancelled)."
+      _other -> "The pending request was not found."
+    end
+  end
+
+  defp no_longer(_request), do: "The pending request was not found."
 
   # A question takes answers; an approval a decision, from its approver only.
   defp answer(_me, _thread_id, %{"kind" => "user_input"}, _item, args) do
