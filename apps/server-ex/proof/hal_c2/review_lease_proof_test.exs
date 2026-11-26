@@ -62,6 +62,12 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review handle_call :settle" =>
         "answers once earlier messages are handled; the model handles each as it is sent",
       "HalC2.OpenShell.Review.opener/1" => @reads,
+      "HalC2.OpenShell.Review.ready?/0" =>
+        "asks whether a sandbox could open now; changes no lease, and the model's gateway is always reachable",
+      "HalC2.OpenShell.Review.readiness/0" =>
+        "this machine's ready?/0 for a peer; changes no lease",
+      "HalC2.OpenShell.Review.machines/3" =>
+        "asks the connected machines' readiness/0 for Settings; changes no lease",
       "HalC2.OpenShell.Review.ended_text/1" => @pure,
       "HalC2.OpenShell.Review.why/1" => "words for a failed step; the model's open-fails",
       "HalC2.OpenShell.Review.labels/2" => @pure,

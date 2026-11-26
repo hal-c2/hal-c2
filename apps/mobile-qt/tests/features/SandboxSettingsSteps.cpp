@@ -21,6 +21,7 @@ using S = QString;
 const S kPinned = S("0.1.7");
 const S kIntelMac = S("OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.");
 const S kNotInstalled = S("Press Install to install it.");
+const S kNoMachine = S("Code reviews that need a sandbox fail here until this machine or another of your cluster can run them.");
 const S kNoPodman = S(
     "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press Install: it starts Podman's "
     "socket for you.");
@@ -42,6 +43,7 @@ struct FakeOpenShell {
   bool managed = false;       // a gateway this MC installed and runs
   int reviews = 0;            // this MC's review sandboxes on it
   bool cannotManage = false;  // paired without access:write and terminal:operate
+  QStringList sandboxMachines;  // the cluster's machines that can run review sandboxes
   // The openShell shape's state: the operation running or last run.
   QJsonObject operation{{S("operation"), QJsonValue()}, {S("run"), 0}, {S("running"), false}, {S("steps"), QJsonArray()}, {S("result"), QJsonValue()}};
   // Each server.runOpenShellOperation's payload.
@@ -73,6 +75,7 @@ QJsonObject status(const FakeOpenShell& machine) {
           {S("problems"), machine.intelMac ? problem(S("intel-mac"), kIntelMac)
                           : ready          ? QJsonArray()
                                            : problem(S("not-installed"), kNotInstalled)}};
+  answer.insert(S("sandboxMachines"), QJsonArray::fromStringList(machine.sandboxMachines));
   // Like the MC: no Podman is a platform problem, and Install starts its socket once it is there.
   if (machine.noPodman) {
     answer.insert(S("supported"), false);
@@ -192,6 +195,11 @@ QQuickItem* actionButton(World& world, const S& label) {
 const Steps steps([] {
   step(S("a Linux machine with rootless Podman"), [](World&, const Captures&, const Table&) {});
   step(S("a machine that is an Intel Mac"), [](World& world, const Captures&, const Table&) { machine(world).intelMac = true; });
+  step(S("a machine that is an Intel Mac, in a cluster with \"([^\"]+)\", which can run review sandboxes"),
+       [](World& world, const Captures& c, const Table&) {
+         machine(world).intelMac = true;
+         machine(world).sandboxMachines = {c[0]};
+       });
   step(S("a machine that has no Podman"), [](World& world, const Captures&, const Table&) { machine(world).noPodman = true; });
   step(S("a gateway the user runs, with its CA and a client certificate"), [](World& world, const Captures&, const Table&) { machine(world).gateway = true; });
   step(S("the user points the MC at it"), [](World& world, const Captures&, const Table&) { machine(world).pointed = true; });
@@ -224,10 +232,15 @@ const Steps steps([] {
     reads(world, S("sandboxSummary"), S("Review sandboxes can't run on this machine."));
     reads(world, S("sandboxProblem:intel-mac"), kIntelMac);
   });
+  step(S("they read that code reviews that need a sandbox go to \"([^\"]+)\""), [](World& world, const Captures& c, const Table&) {
+    reads(world, S("sandboxDetail"), S("Code reviews that need a sandbox go to %1.").arg(c[0]));
+  });
+  step(S("they read that code reviews that need a sandbox fail until a machine of the cluster can run them"),
+       [](World& world, const Captures&, const Table&) { reads(world, S("sandboxDetail"), kNoMachine); });
   step(S("they read that OpenShell is not installed, and how to install it"), [](World& world, const Captures&, const Table&) {
     reads(world, S("sandboxSummary"), S("Review sandboxes can't run here yet."));
     reads(world, S("sandboxProblem:not-installed"), kNotInstalled);
-    reads(world, S("sandboxDetail"), S("OpenShell %1 is the version this MC pins.").arg(kPinned));
+    reads(world, S("sandboxDetail"), S("%1 OpenShell %2 is the version this MC pins.").arg(kNoMachine, kPinned));
   });
   step(S("they read that Podman must be installed first, and that Install starts its socket"), [](World& world, const Captures&, const Table&) {
     reads(world, S("sandboxProblem:podman-missing"), kNoPodman);

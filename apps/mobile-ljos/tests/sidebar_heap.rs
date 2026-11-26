@@ -4,9 +4,10 @@
 //! The size is what separates the sweeps: with 90 threads the phone keeps
 //! within the heap's cap on either, so desktop-ljos's bound would prove
 //! little here. At 1,000 threads the replaced generations pile up for
-//! dozens of frames before a sweep, so every few frames the heap is held to
-//! a quarter short of the engine's cap: a run that only just fits would
-//! give out on a slightly larger list.
+//! dozens of frames before a sweep, so every few frames the heap is held
+//! under a fixed 72 MiB. The bound is not a share of the engine's cap: the
+//! cap grows with the machine's memory (to 512 MiB), and a bound that grew
+//! with it would let replaced generations pile up unseen on a large one.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,6 +23,9 @@ use serde_json::json;
 
 const THREADS: usize = 1000;
 const FRAMES: usize = 60;
+/// What the script heap may hold after a collection: below the 76 MB the
+/// replaced generations reached by frame 40 on a rev without the bounded sweep.
+const HELD: usize = 72 * 1024 * 1024;
 
 /// An MC that answers nothing and sends the frames it is given. The
 /// desktop's own fake compiles QML, which the phone's tests don't build.
@@ -161,7 +165,6 @@ fn shows(engine: &Engine, item: ObjectId, name: &str) -> bool {
 }
 
 #[test]
-#[ignore = "needs a Ljós pin that sweeps replaced records at every collection (hal-c2/ljos-ui#734, #1728): on this one the heap holds 78 MB at frame 50 (hal-c2/hal-c2#1793)"]
 fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
     let home = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a home for the phone");
     let dir = |name: &str| Some(home.path().join(name));
@@ -212,9 +215,6 @@ fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
         "no thread row is shown"
     );
     assert_eq!(engine.faults_reported(), 0, "faults before any news");
-    let cap = engine
-        .script_memory_limit()
-        .expect("the phone's heap has a cap");
 
     for tick in 1..=FRAMES {
         let rows: Vec<serde_json::Value> = (0..6)
@@ -246,8 +246,8 @@ fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
         if tick % 5 == 0 {
             let held = heap(&engine);
             assert!(
-                held < cap / 4 * 3,
-                "script heap reached {held} bytes of a {cap} cap after {tick} rows frames: \
+                held < HELD,
+                "script heap reached {held} bytes after {tick} rows frames: \
                  replaced generations pile up between sweeps"
             );
         }

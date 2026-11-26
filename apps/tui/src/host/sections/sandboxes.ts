@@ -22,6 +22,21 @@ const RUNNING: Record<ServerOpenShellOperation, string> = {
 
 type Flags = { readonly drain?: ReadonlyArray<string>; readonly force?: boolean };
 
+/**
+ * Where this machine's code reviews that need a sandbox go while it can't run one:
+ * the status's `sandboxMachines`, the cluster's machines that can (absent from older
+ * MCs).
+ */
+const handoff = (status: ServerOpenShellStatus) => {
+  const machines = [...(status.sandboxMachines ?? [])];
+  const last = machines.pop();
+  if (last === undefined) {
+    return "Code reviews that need a sandbox fail here until this machine or another of your cluster can run them.";
+  }
+  const named = machines.length === 0 ? last : `${machines.join(", ")} and ${last}`;
+  return `Code reviews that need a sandbox go to ${named}.`;
+};
+
 const reviews = (count: number) => `${count} review${count === 1 ? "" : "s"}`;
 
 /**
@@ -225,13 +240,14 @@ export function sandboxesSection(host: SectionHost): SettingsSection {
     if (!status.supported) {
       return [
         { kind: "note", text: "Review sandboxes can't run on this machine.", tone: "warning" },
-        { kind: "note", text: "Code reviews run without a sandbox here.", tone: "dim" },
+        { kind: "note", text: handoff(status), tone: "dim" },
         ...problems,
       ];
     }
     if (!status.ready) {
       return [
         { kind: "note", text: "Review sandboxes can't run here yet.", tone: "warning" },
+        { kind: "note", text: handoff(status), tone: "dim" },
         {
           kind: "note",
           text: `OpenShell ${status.pinnedVersion} is the version this MC pins.`,

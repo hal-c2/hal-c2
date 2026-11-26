@@ -40,6 +40,8 @@ interface Machine {
   reviews: number;
   /** The device was paired without access:write and terminal:operate. */
   cannotManage: boolean;
+  /** The cluster's machines that can run review sandboxes. */
+  sandboxMachines: string[];
 }
 
 const machines = new WeakMap<World, Machine>();
@@ -59,6 +61,7 @@ function machine(ctx: World): Machine {
     managed: false,
     reviews: 0,
     cannotManage: false,
+    sandboxMachines: [],
   };
   const state = found;
   machines.set(ctx, state);
@@ -73,6 +76,7 @@ function machine(ctx: World): Machine {
       mode: state.managed ? "managed" : external ? "external" : null,
       version: ready ? PINNED : null,
       pinnedVersion: PINNED,
+      sandboxMachines: state.sandboxMachines,
       problems: state.intelMac
         ? [{ code: "intel-mac", message: INTEL_MAC }]
         : state.noPodman
@@ -190,6 +194,13 @@ step("a Linux machine with rootless Podman", (ctx: World) => {
 step("a machine that is an Intel Mac", (ctx: World) => {
   machine(ctx).intelMac = true;
 });
+step(
+  "a machine that is an Intel Mac, in a cluster with {string}, which can run review sandboxes",
+  (ctx: World, other: string) => {
+    machine(ctx).intelMac = true;
+    machine(ctx).sandboxMachines = [other];
+  },
+);
 step("a machine that has no Podman", (ctx: World) => {
   machine(ctx).noPodman = true;
 });
@@ -226,6 +237,22 @@ step(
 step("they read that OpenShell does not run on an Intel Mac", async (ctx: World) => {
   await reads(ctx, ["Review sandboxes can't run on this machine.", INTEL_MAC]);
 });
+
+step(
+  "they read that code reviews that need a sandbox go to {string}",
+  async (ctx: World, other: string) => {
+    await reads(ctx, [`Code reviews that need a sandbox go to ${other}.`]);
+  },
+);
+
+step(
+  "they read that code reviews that need a sandbox fail until a machine of the cluster can run them",
+  async (ctx: World) => {
+    await reads(ctx, [
+      "Code reviews that need a sandbox fail here until this machine or another of your cluster can run them.",
+    ]);
+  },
+);
 
 step("they read that OpenShell is not installed, and how to install it", async (ctx: World) => {
   await reads(ctx, [

@@ -4085,6 +4085,86 @@ defmodule HalC2.Steps.Providers.Claude do
     |> Map.put(:gateway_cooldown, cooldown)
   end
 
+  # The same gateway failure, reported as the 429 it is rather than wrapped in a 503.
+  # No `rate_limit_error` marker: a direct 429 must not need one.
+  defp gateway_429(context, message) do
+    context = running_turn(context)
+    text = "API Error: 429 " <> message
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{"id" => "m-429", "content" => [%{"type" => "text", "text" => text}]}
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => 429,
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    context
+  end
+
+  step ~r/^a Claude turn ends at 13:00 with a direct 429 API error saying "(?<text>[^"]+)"$/,
+       %{args: [text]} = context do
+    context |> at_13_00() |> gateway_429(text)
+  end
+
+  # A turn already refused by a weekly window, then ended by a gateway's direct 429:
+  # the cooldown joins the window instead of replacing it.
+  defp gateway_429_after_refusal(context, resets_at) do
+    context = running_turn(context)
+    refuse(context, "seven_day", resets_at)
+    text = "API Error: 429 (reset after 4m 6s)"
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{"id" => "m-429", "content" => [%{"type" => "text", "text" => text}]}
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => 429,
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    context
+  end
+
+  step "Claude ends a turn refused by a limit resetting in five hours and then by a gateway 429",
+       context do
+    resets_at = System.system_time(:second) + 5 * 3600
+
+    context
+    |> gateway_429_after_refusal(resets_at)
+    |> Map.put(:window_reset_s, resets_at)
+  end
+
+  step "Claude ends a turn refused by a limit with no reset time and then by a gateway 429",
+       context do
+    gateway_429_after_refusal(context, nil)
+  end
+
+  step "the thread's reset time is the later window's", context do
+    World.await_runs(context, @thread, ["failed"])
+
+    row =
+      World.await_row(
+        World.thread_id(context, @thread),
+        &(&1["lastErrorClass"] == "usage_limit" and is_binary(&1["usageLimitResetAt"]))
+      )
+
+    {:ok, reset_at, _} = DateTime.from_iso8601(row["usageLimitResetAt"])
+    assert DateTime.to_unix(reset_at) == context.window_reset_s
+    context
+  end
+
   step ~r/^the thread is marked as limited with a reset time of (?<reset>[\d:]+)$/,
        %{args: [reset]} = context do
     [hour, minute, second] = reset |> String.split(":") |> Enum.map(&String.to_integer/1)

@@ -189,7 +189,6 @@ Feature: Grok
     And Grok is listed with a warning, not as unavailable
 
   # Upstream #18075: health probes run Grok with its auto-updater turned off
-  @backlog
   Scenario Outline: Grok's health checks do not start Grok's own updater
     Given the MC's environment lets Grok update itself
     When the MC checks Grok's health by <probe>

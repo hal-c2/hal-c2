@@ -106,10 +106,22 @@ fi
 
 json_list() { jq -Rsc 'split("\n") | map(select(. != ""))' <<<"$1"; }
 
+# A proof whose checks outrun one job tags some of them `@tag shard: :name`; each shard
+# is a job of its own (`proof:name`), and `proof` runs the checks no shard has.
+with_shards() {
+  local proof
+  while read -r proof; do
+    [ -n "$proof" ] || continue
+    echo "$proof"
+    sed -nE 's/^ *@tag shard: :([a-z_]+)$/\1/p' "apps/server-ex/proof/hal_c2/${proof}_proof_test.exs" |
+      sort -u | sed "s/^/$proof:/"
+  done <<<"$1"
+}
+
 echo "mc=$mc"
 echo "unit=$unit"
 echo "props=$props"
 echo "tui=$tui"
 echo "scenarios=$(json_list "$scenarios")"
 echo "named=$named"
-echo "proofs=$(json_list "$selected")"
+echo "proofs=$(json_list "$(with_shards "$selected")")"

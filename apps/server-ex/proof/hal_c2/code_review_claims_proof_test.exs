@@ -8,13 +8,16 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   # agent hits its usage limit, which pauses its machine and keeps its queue from the
   # others, and the pull request gets a push. Apart, two or three machines count their
   # starts against the review limits under a lock of their own, with what the others
-  # started, and run them once those in reach heard.
+  # started, and run them once those in reach heard. A machine that cannot open review
+  # sandboxes offers its run to the connected machines, which may refuse it, go down or
+  # find they cannot either.
   # prop/hal_c2/code_review_claims_prop_test.exs runs the code one step at a time; this
   # explores every interleaving between machines up to the bounds.
   @reads "answers from the plugin's state; changes no claim"
   @user "the user's own ask, which means to review or forget again (and ends a pause); the model's reviews start on their own"
   @pause "the pause after three failed runs holds the queue back as the usage limit's does, which the model has"
   @shown "what the page and the threads show; no part of a claim"
+  @stop "the user's Stop, which reaches the machine that took the review as well; the model's reviews are never stopped"
   @look "the parts of a look the model leaves out: which pull requests, their sizes and comments; it has one pull request, automatically reviewed"
   @agent "the review thread and its agent; the model's runs end when they claim or step back"
   @host "a host function no claim or post goes through"
@@ -52,7 +55,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:started, _, _, _}" => "started",
       "HalC2Plugins.CodeReview handle_cast {:turn_finished, _, _, _}" => "turn-finished",
       "HalC2Plugins.CodeReview handle_cast {:elsewhere, _, _, _}" => ~w(elsewhere peer-claims),
-      "HalC2Plugins.CodeReview handle_cast {:start_failed, _, _, _}" => "start-failed",
+      "HalC2Plugins.CodeReview handle_call {:handed, _, _, _}" => ~w(offer elsewhere peer-claims),
+      "HalC2Plugins.CodeReview handle_cast {:start_failed, _, _, _}" =>
+        ~w(start-failed sandbox-failed),
+      "HalC2Plugins.CodeReview.take/1" => ~w(offer answers takes taken),
+      "HalC2Plugins.CodeReview handle_call {:take, _, _}" => ~w(offer takes failedAt taken),
       "HalC2Plugins.CodeReview handle_info :poll" => ~w(look peers),
       "HalC2Plugins.CodeReview handle_info {:polled, _}" => ~w(polled pump away orAway),
       "HalC2Plugins.CodeReview handle_info {:resume, _}" => ~w(resume pump),
@@ -80,12 +87,16 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf muted),
       "HalC2.Plugins.Host.peer/3" => ~w(hardBy softBy publishedBy),
       "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post),
-      "HalC2.Plugins.Host.cluster_machines/1" => ~w(members membersOf admit over)
+      "HalC2.Plugins.Host.cluster_machines/1" => ~w(members membersOf admit over),
+      "HalC2.Plugins.Host.sandboxes_ready?/1" => ~w(nosb unboxed handoff checkout takes),
+      "HalC2.Plugins.Host.peer_call/5" => ~w(offer answers),
+      "HalC2.Plugins.Host.open_sandbox/3" => "sandbox-failed"
     },
     abstracts: %{
       "HalC2Plugins.CodeReview.prompt/3" => @agent,
       "HalC2Plugins.CodeReview handle_call :snapshot" => @reads,
       "HalC2Plugins.CodeReview handle_call :reviews" => @reads,
+      "HalC2Plugins.CodeReview handle_call :settings" => @reads,
       "HalC2Plugins.CodeReview handle_call {:for_thread, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:review_thread?, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:start, _, _}" => @user,
@@ -151,11 +162,12 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.organize_thread/3" => @shown,
       "HalC2.Plugins.Host.granted?/2" => @host,
       "HalC2.Plugins.Host.slack/3" => @host,
-      "HalC2.Plugins.Host.open_sandbox/3" => @agent,
       "HalC2.Plugins.Host.close_sandbox/3" => @agent,
       "HalC2.Plugins.Host.sandbox_ended/2" => @agent,
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
       "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call {:untake, _}" => @stop,
+      "HalC2Plugins.CodeReview.untake/1" => @stop,
       "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
       "HalC2.Plugins.Host.pull_request_fetch/2" =>
         "where a Forgejo checkout fetches from and with what token; read before the checkout, it fails the run before any claim as a failed checkout does, which the model has",
@@ -183,7 +195,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "mute" =>
         "a connected machine does not answer the others' Host.peers/4 in time, too busy, say",
       "unmute" => "it answers again, telling no one",
-      "connect" => "Discovery connects two machines that are up"
+      "connect" => "Discovery connects two machines that are up",
+      "break" =>
+        "a machine that could open review sandboxes no longer can: its gateway or container runtime stopped, say"
     },
     scenarios: %{
       "source-control/agent-code-review.feature" => [
@@ -193,7 +207,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "The review moves to another machine when its machine's agent reaches its usage limit",
         "A commit two machines reviewed while apart is posted once",
         "A commit a machine posted just before it restarted is published without posting it again",
-        "Machines out of each other's reach each have only their share of the limits"
+        "Machines out of each other's reach each have only their share of the limits",
+        "A machine that cannot run review sandboxes leaves the review to one that can",
+        "A review that needs a sandbox fails when no machine of the cluster can run it"
       ]
     }
 
@@ -201,6 +217,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   # is not among them: the reviews get done without it.
   @fair ~w(look peers polled checkout claim lock started defer elsewhere nodedown
            peer-claims elsewhere-seen)
+
+  # The same with a machine that cannot open review sandboxes handing its runs over.
+  # Its checks are tagged as shards, which CI runs as jobs of their own: with the rest
+  # they outrun one job.
+  @handing ~w(handoff offer) ++ @fair
 
   # The plugin is loaded by the plugin host at run time; the facts need its compiled
   # module, docs included.
@@ -306,5 +327,59 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   test "a review queued behind another moves to another machine when its machine pauses",
        %{proof: proof} do
     assert_ltl(proof, "behind(0,0,1)", "<> [] reviewed", fair: ["turn-finished" | @fair])
+  end
+
+  # A machine that cannot open review sandboxes, and one that can: a periodic look, and
+  # apart from it pushes, crashes, partitions, plugin restarts, usage limits, the one
+  # that can finding it cannot after all, and a machine not answering the offer in
+  # time. A periodic look with any of the others runs past minutes.
+  @boxless ~w[boxless(1,0,0,0,0,0,0,0) boxless(0,1,0,0,0,0,0,0) boxless(0,0,1,0,0,0,0,0)
+              boxless(0,0,0,1,0,0,0,0) boxless(0,0,0,0,1,0,0,0) boxless(0,0,0,0,0,1,0,0)
+              boxless(0,0,0,0,0,0,1,0) boxless(0,0,0,0,0,0,0,1)]
+
+  for init <- @boxless do
+    @tag shard: :handoff
+    test "no machine claims, starts or posts a commit a connected machine it locked has, as one hands its run over, from #{init}",
+         %{proof: proof} do
+      refute_reachable(proof, unquote(init), "unsafe", [])
+    end
+  end
+
+  @tag shard: :handoff
+  test "a machine that cannot run review sandboxes leaves the review to one that can",
+       %{proof: proof} do
+    assert_ltl(proof, "handed(0,inf)", "<> [] boxed", fair: @handing)
+  end
+
+  # One test per start: each gets a Maude of its own, and a check in one that searched
+  # before pays for that search's memory.
+  # A shard of their own: gone(0,1,0) alone takes a quarter of the rest.
+  for init <- ~w[gone(1,0,0) gone(0,1,0)] do
+    @tag shard: :leaving
+    test "the review moves on when the machine that took it leaves before starting it, from #{init}",
+         %{proof: proof} do
+      assert_ltl(proof, unquote(init), "[] steady(a) -> <> [] boxed", fair: @handing)
+    end
+  end
+
+  # A machine that finds it cannot after all hands the run on if it finds out before
+  # its claim, and otherwise fails it there: either way the review settles on a machine,
+  # which says why it failed, and does not go back and forth. handed(1,1) looks once more
+  # after the first looks; with looks forever the search runs past half an hour on a
+  # runner, and with more of them, longer.
+  for init <- ~w[handed(1,1) gone(0,0,1) gone(0,0,2)] do
+    @tag shard: :handoff
+    test "a review settles when the machine that took it cannot open its sandbox after all, from #{init}",
+         %{proof: proof} do
+      assert_ltl(proof, unquote(init), "<> [] settled", fair: ["sandbox-failed" | @handing])
+    end
+  end
+
+  for init <- ~w[stranded(1,0) stranded(0,1)] do
+    @tag shard: :handoff
+    test "no machine claims a commit twice as the machines that took it go or cannot, from #{init}",
+         %{proof: proof} do
+      refute_reachable(proof, unquote(init), "unsafe", [])
+    end
   end
 end

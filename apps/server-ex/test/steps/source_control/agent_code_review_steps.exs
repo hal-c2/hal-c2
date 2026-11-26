@@ -2625,6 +2625,112 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     })
   end
 
+  # A peer has no OpenShell of its own; without the steps' default of reviewing trusted
+  # pull requests on the machine, every review it starts needs a sandbox.
+  step "the user's machine {string} in the cluster, which cannot run review sandboxes, watches {string} automatically too",
+       %{args: [label, repo]} = context do
+    join(context, label, %{
+      "repositories" => [repo],
+      "activation" => "automatic",
+      "reviewTrustedOnThisMachine" => nil
+    })
+  end
+
+  step "the user's machine {string} in the cluster, which cannot run review sandboxes, watches {string} too, reviewing what the user asks for",
+       %{args: [label, repo]} = context do
+    join(context, label, %{
+      "repositories" => [repo],
+      "activation" => "selective",
+      "reviewTrustedOnThisMachine" => nil
+    })
+  end
+
+  step "the user's machine {string} in the cluster watches {string} too, reviewing what the user asks for",
+       %{args: [label, repo]} = context do
+    join(context, label, %{"repositories" => [repo], "activation" => "selective"})
+  end
+
+  step "the pull request \#{int} is opened and {string} looks at {string} first",
+       %{args: [number, label, _repo]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+    context
+  end
+
+  step "the user asks {string} to review \#{int}", %{args: [label, number]} = context do
+    input = %{"repository" => context.repository, "number" => number}
+    assert {:ok, _} = on_plugin(context, label, "start", input)
+    context
+  end
+
+  step "\#{int} is reviewed in a sandbox on this machine", %{args: [number]} = context do
+    {review, context} =
+      await_review(context, number, &(&1["checkout"] && &1["status"] == "running"))
+
+    assert review["sandboxed"] == true and review["elsewhere"] == nil, inspect(review)
+    assert_receive {:sandbox_exec, ["codex", "app-server"], %{workdir: "/review/src"}}, 15_000
+    context
+  end
+
+  step "{string} shows \#{int} reviewing on this machine", %{args: [label, number]} = context do
+    reviewing =
+      &match?(
+        %{"elsewhere" => %{"machine" => "desk", "status" => "running", "claimed" => true}},
+        &1
+      )
+
+    {review, context} = await_peer(context, number, reviewing)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert context.peer == label
+    context
+  end
+
+  # This machine's read of the pull request, when another machine hands it the review
+  # (`take/1`), waits until the scenario lets it go: the review is being handed over.
+  step "this machine is slow to read \#{int} when it is handed the review",
+       %{args: [number]} = context do
+    dir = Mc.tmp_dir(context.mc, "handoff-hold")
+    [held, release] = for name <- ~w(held release), do: Path.join(dir, name)
+    for fifo <- [held, release], do: {_, 0} = System.cmd("mkfifo", [fifo])
+
+    # The first read on this machine only: the peer's own reads go by. Bounded, so a
+    # scenario that never lets it go fails rather than hangs.
+    hold =
+      ~s([ "$HAL_C2_LABEL" = desk ] && mkdir "#{dir}/taken" 2>/dev/null && ) <>
+        ~s(timeout 30 sh -c 'echo held > "$1"; cat "$2" > /dev/null' _ "#{held}" "#{release}"; true)
+
+    context
+    |> World.cli_rules([Map.put(detail_rule(context.prs[number]), "run", hold)])
+    |> Map.put(:handoff_hold, %{held: held, release: release})
+  end
+
+  step "the user stops the review of \#{int} on {string} while this machine takes it",
+       %{args: [number, label]} = context do
+    %{held: held, release: release} = context.handoff_hold
+    # Raw, past the file server: a fifo no one opens blocks only its own reader.
+    reading = Task.async(fn -> :file.read_file(held, [:raw]) end)
+    assert {:ok, "held" <> _} = Task.await(reading, 15_000)
+
+    key = "#{context.repository}##{number}"
+    assert {:ok, _} = on_plugin(context, label, "stop", %{"key" => key})
+    letting_go = Task.async(fn -> File.write(release, "go\n", [:raw]) end)
+    assert :ok = Task.await(letting_go, 15_000)
+    context
+  end
+
+  step "this machine stops its review of \#{int}", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["stopped"] == true))
+    assert review["status"] == "failed" and review["error"] == "Stopped.", inspect(review)
+    context
+  end
+
+  step "{string} shows \#{int} stopped", %{args: [label, number]} = context do
+    {review, context} = await_peer(context, number, &(&1["stopped"] == true))
+    assert review["status"] == "failed" and review["elsewhere"] == nil, inspect(review)
+    assert context.peer == label
+    context
+  end
+
   step "the pull request \#{int} is opened and both machines look at {string} at once",
        %{args: [number, _repo]} = context do
     context = open(context, number)

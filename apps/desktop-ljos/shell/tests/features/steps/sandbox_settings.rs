@@ -14,6 +14,7 @@ use crate::{expect, fail};
 
 const PINNED: &str = "0.1.7";
 const INTEL_MAC: &str = "OpenShell supports Apple Silicon Macs only. This MC runs as x86_64: an Intel Mac, or an MC running under Rosetta.";
+const NO_MACHINE: &str = "Code reviews that need a sandbox fail here until this machine or another of your cluster can run them.";
 const NOT_INSTALLED: &str = "Press Install to install it.";
 const NO_PODMAN: &str = "No rootless Podman socket. Install Podman 5 or later with your distribution's package manager, then press Install: it starts Podman's socket for you.";
 const FAILURE: &str = "OpenShell's status did not answer within 20 seconds. Refresh to try again.";
@@ -35,6 +36,8 @@ struct FakeOpenShell {
     /// and pointed the MC at it.
     pointed: bool,
     failing: bool,
+    /// The cluster's machines that can run review sandboxes.
+    sandbox_machines: Vec<String>,
     /// A gateway this MC installed and runs.
     managed: bool,
     /// This MC's review sandboxes on it.
@@ -55,6 +58,7 @@ impl Default for FakeOpenShell {
             gateway: false,
             pointed: false,
             failing: false,
+            sandbox_machines: Vec::new(),
             managed: false,
             reviews: 0,
             cannot_manage: false,
@@ -108,6 +112,7 @@ fn status(machine: &FakeOpenShell) -> Value {
         },
         "version": if ready { json!(PINNED) } else { Value::Null },
         "pinnedVersion": PINNED,
+        "sandboxMachines": machine.sandbox_machines,
         "problems": if machine.intel_mac {
             problem("intel-mac", INTEL_MAC)
         } else if ready {
@@ -345,6 +350,15 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step(
+        "a machine that is an Intel Mac, in a cluster with \"([^\"]+)\", which can run review sandboxes",
+        |world, c, _| {
+            let machine = world.mc.part::<FakeOpenShell>();
+            machine.intel_mac = true;
+            machine.sandbox_machines = vec![c[0].clone()];
+            Ok(())
+        },
+    );
+    steps.step(
         "a gateway the user runs, with its CA and a client certificate",
         |world, _, _| {
             world.mc.part::<FakeOpenShell>().gateway = true;
@@ -394,6 +408,26 @@ pub fn register(steps: &mut Steps) {
             expect_summary(world, "Review sandboxes can't run on this machine.")?;
             let why = text(world, "sandboxProblem:intel-mac")?;
             expect!(why == INTEL_MAC, "the page does not say why");
+            Ok(())
+        },
+    );
+    steps.step(
+        "they read that code reviews that need a sandbox go to \"([^\"]+)\"",
+        |world, c, _| {
+            let detail = text(world, "sandboxDetail")?;
+            let expected = format!("Code reviews that need a sandbox go to {}.", c[0]);
+            expect!(detail == expected, "the detail is \"{detail}\"");
+            Ok(())
+        },
+    );
+    steps.step(
+        "they read that code reviews that need a sandbox fail until a machine of the cluster can run them",
+        |world, _, _| {
+            let detail = text(world, "sandboxDetail")?;
+            expect!(
+                detail == NO_MACHINE,
+                "the detail is \"{detail}\""
+            );
             Ok(())
         },
     );

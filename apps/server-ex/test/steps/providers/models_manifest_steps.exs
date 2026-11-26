@@ -156,6 +156,44 @@ defmodule HalC2.Steps.Providers.ModelsManifest do
     context
   end
 
+  # Takes the newer manifest in, then downloads one dated later whose Claude
+  # catalog `edit` has spoiled, so only its shape can refuse it.
+  defp spoiled(context, edit) do
+    context = context |> World.fake_providers() |> publish(JSON.encode!(newer())) |> refresh()
+    assert ModelManifest.current() == newer()
+
+    bad = newer() |> Map.put("updatedAt", "2099-06-01T00:00:00Z") |> edit.()
+    context |> publish(JSON.encode!(bad)) |> refresh()
+  end
+
+  defp gate_first(manifest, gate) do
+    update_in(manifest, ["providers", "claudeAgent", "models"], fn [first | rest] ->
+      [Map.put(first, "adapter", %{"claudeCode" => gate}) | rest]
+    end)
+  end
+
+  step "the MC downloads a manifest whose Claude catalog has a model gated by a version that is not a semantic version",
+       context do
+    spoiled(context, &gate_first(&1, %{"minVersion" => "not-a-version"}))
+  end
+
+  step "the MC downloads a manifest whose Claude catalog has a model whose minimum version is not below its maximum",
+       context do
+    spoiled(context, &gate_first(&1, %{"minVersion" => "2.0.0", "maxVersion" => "2.0.0"}))
+  end
+
+  step "the MC downloads a manifest whose Claude catalog has a profile with a malformed effort or context window map",
+       context do
+    spoiled(context, fn manifest ->
+      profile =
+        get_in(manifest, ["providers", "claudeAgent", "models"]) |> hd() |> Map.fetch!("profile")
+
+      update_in(manifest, ["providers", "claudeAgent", "profiles", profile], fn p ->
+        Map.put(p, "adapter", %{"claudeCode" => %{"effortMap" => %{"high" => 42}}})
+      end)
+    end)
+  end
+
   # The cached copy is a manifest fetched before this release was cut, naming a model
   # the release no longer carries.
   step "the MC was updated with a manifest newer than its cached copy", context do

@@ -23,6 +23,8 @@
 #   apps/server-ex/lib/hal_c2/open_shell/operations.ex (one operation at a time, its steps and outcome)
 #   packages/contracts/src/rpc.ts (server.getOpenShellStatus, server.runOpenShellOperation),
 #   packages/contracts/src/server.ts (ServerOpenShellStatus, OpenShellOperationState)
+#   apps/server-ex/lib/hal_c2/open_shell/review.ex (ready?/0, machines/2: which machines of the cluster can open review sandboxes now)
+#   The user's Mac with no container runtime, whose Settings said its code reviews run without a sandbox while they went to its cluster's Linux MC
 #   apps/desktop-qt/src/native/SandboxSettingsController.cpp, packages/qml/HalC2/Bricks/SandboxSettings.qml
 #   apps/tui/src/host/sections/sandboxes.ts
 #   docs/user/openshell.md
@@ -404,6 +406,24 @@ Feature: The OpenShell gateway review sandboxes run in
     Given a machine that is an Intel Mac
     When the user opens the sandbox settings
     Then they read that OpenShell does not run on an Intel Mac
+    And they read that code reviews that need a sandbox fail until a machine of the cluster can run them
+
+  # A machine that cannot open review sandboxes hands the reviews that need one to a
+  # machine of its cluster that can (agent-code-review.feature): Settings names those
+  # connected now, asked when it opens.
+  @mc
+  Scenario: Settings names the machines of the cluster that take the reviews this machine cannot sandbox
+    Given review sandboxes can run on this machine, "desk"
+    And the user's machine "laptop" in the cluster is an Intel Mac
+    When the user opens the sandbox settings on "laptop"
+    Then they read that OpenShell does not run on an Intel Mac
+    And they read that code reviews that need a sandbox go to "desk"
+
+  @shared
+  Scenario: Settings says which machines take the reviews that need a sandbox
+    Given a machine that is an Intel Mac, in a cluster with "desk", which can run review sandboxes
+    When the user opens the sandbox settings
+    Then they read that code reviews that need a sandbox go to "desk"
 
   @mc @shared
   Scenario: Settings says how to install OpenShell where it can run

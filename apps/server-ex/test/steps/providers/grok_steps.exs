@@ -1127,6 +1127,13 @@ defmodule HalC2.Steps.Providers.Grok do
     Map.put(context, :probe_kind, :connection)
   end
 
+  # The MC has no separate Grok skills probe: what a project offers arrives on the
+  # same ACP agent start the probe makes, so this row drives that start.
+  step "the MC checks Grok's health by listing a project's skills", context do
+    FakeAcp.probe("grok")
+    Map.put(context, :probe_kind, :skills)
+  end
+
   step "Grok runs with its automatic updater turned off", context do
     starts = FakeAcp.starts(context)
     assert starts != []
