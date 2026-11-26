@@ -190,8 +190,8 @@ comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. HAL-C2 also puts the pull request's description and its
 unresolved review comments in the agent's prompt (on this machine, only the
-comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
-someone else already raised. Resolved comments are not included.
+comments of people HAL-C2 trusts), so it can judge the change against what it says it does and check whether
+each of them is fixed, still open, or wrong, rather than skip them. Resolved comments are not included.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
