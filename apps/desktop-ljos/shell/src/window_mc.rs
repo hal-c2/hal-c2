@@ -107,7 +107,8 @@ impl WindowMc {
         }
         let ready = std::mem::take(&mut *self.hooks.ready.borrow_mut());
         let status = std::mem::take(&mut *self.hooks.status.borrow_mut());
-        drop((ready, status));
+        let renewed = std::mem::take(&mut *self.hooks.renewed.borrow_mut());
+        drop((ready, status, renewed));
     }
 
     fn window(&self) -> Option<Bridge> {
@@ -318,6 +319,11 @@ impl Mc for WindowMc {
                 let mut running = std::mem::take(&mut *hooks.renewed.borrow_mut());
                 window.act(engine, || {
                     for f in &mut running {
+                        // A callback may close the window: nothing
+                        // reaches its controllers after that.
+                        if !hooks.open.get() || !window.is_open(engine) {
+                            break;
+                        }
                         f(engine, at);
                     }
                 });

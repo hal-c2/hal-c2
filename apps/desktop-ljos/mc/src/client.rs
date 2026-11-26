@@ -699,14 +699,25 @@ impl McClient {
                         detail: error.detail,
                     }),
                 };
+                // A reply for a session the client left renews
+                // nothing here: its waiters fail rather than run
+                // against the session now open.
+                let renewed = if still_open {
+                    renewed
+                } else {
+                    Err(CallError::new(
+                        "The environment credential could not be renewed (the session changed).",
+                    ))
+                };
                 let waiting = std::mem::take(&mut client.state().renewing);
                 for done in waiting {
                     done(renewed.clone());
                 }
-                if still_open && renewed.is_ok() {
-                    if let Some(at) = client.credential_expiry() {
-                        client.notify_renewed(at);
-                    }
+                if still_open
+                    && renewed.is_ok()
+                    && let Some(at) = client.credential_expiry()
+                {
+                    client.notify_renewed(at);
                 }
             },
         )));
