@@ -12,8 +12,8 @@ use ljos::prelude::Engine;
 use crate::bridge::{Acting, Bridge};
 use crate::json::Json;
 use crate::mc::{
-    BytesReply, Mc, OnCall, OnFrame, OnReady, OnStatus, OnStream, Reply, Resume, Route, Status,
-    StreamId, StreamMessage, SubId,
+    BytesReply, Mc, OnCall, OnFrame, OnReady, OnRenewed, OnStatus, OnStream, Reply, Resume, Route,
+    Status, StreamId, StreamMessage, SubId,
 };
 
 /// For whom the MC's answers run.
@@ -33,9 +33,11 @@ struct Hooks {
     open: Cell<bool>,
     ready: RefCell<Vec<OnReady>>,
     status: RefCell<Vec<OnStatus>>,
+    renewed: RefCell<Vec<OnRenewed>>,
     /// Whether the forwarder of each list is on the MC yet.
     following_ready: Cell<bool>,
     following_status: Cell<bool>,
+    following_renewed: Cell<bool>,
 }
 
 pub struct WindowMc {
@@ -287,6 +289,44 @@ impl Mc for WindowMc {
     /// The connection itself; a window that goes is [`WindowMc::close_window`].
     fn close(&self) {
         self.inner.close();
+    }
+
+    fn set_credential_expiry(&self, expires_at: Option<chrono::DateTime<chrono::Utc>>) {
+        self.inner.set_credential_expiry(expires_at);
+    }
+
+    fn credential_expiry(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.inner.credential_expiry()
+    }
+
+    fn on_credential_renewed(&self, f: OnRenewed) {
+        let Some(window) = self.window() else {
+            self.inner.on_credential_renewed(f);
+            return;
+        };
+        self.hooks.renewed.borrow_mut().push(f);
+        if self.hooks.following_renewed.replace(true) {
+            return;
+        }
+        let hooks = Rc::downgrade(&self.hooks);
+        self.inner
+            .on_credential_renewed(Box::new(move |engine, at| {
+                let Some(hooks) = hooks.upgrade() else { return };
+                if !hooks.open.get() || !window.is_open(engine) {
+                    return;
+                }
+                let mut running = std::mem::take(&mut *hooks.renewed.borrow_mut());
+                window.act(engine, || {
+                    for f in &mut running {
+                        f(engine, at);
+                    }
+                });
+                if hooks.open.get() {
+                    let mut kept = hooks.renewed.borrow_mut();
+                    running.append(&mut kept);
+                    *kept = running;
+                }
+            }));
     }
 
     // A saved environment's link is the app's, like its route: its owner

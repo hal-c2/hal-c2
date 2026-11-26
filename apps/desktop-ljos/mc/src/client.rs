@@ -656,18 +656,26 @@ impl McClient {
 
     // One renewal at a time; whoever asks meanwhile waits on it.
     fn renew(&self, done: Renewed) {
-        {
+        // The session this renewal is for: a reply that lands after
+        // the client opened (or closed) another writes no expiry
+        // over that session's.
+        let opened = {
             let mut state = self.state();
             state.renewing.push(done);
             if state.renewing.len() > 1 {
                 return;
             }
-        }
+            (state.origin.clone(), state.token.clone())
+        };
         let client = self.downgrade();
         let id = self.expect(Pending::Value(Box::new(
             move |result: Result<Value, CallError>| {
                 let Some(client) = client.upgrade() else {
                     return;
+                };
+                let still_open = {
+                    let state = client.state();
+                    state.origin == opened.0 && state.token == opened.1
                 };
                 let expires_at = result.as_ref().ok().and_then(|body| {
                     let at = body.get("expiresAt")?.as_str()?;
@@ -675,7 +683,9 @@ impl McClient {
                 });
                 let renewed = match (result, expires_at) {
                     (Ok(_), Some(at)) => {
-                        client.state().expires_at = Some(at.with_timezone(&Utc));
+                        if still_open {
+                            client.state().expires_at = Some(at.with_timezone(&Utc));
+                        }
                         Ok(())
                     }
                     (Ok(_), None) => Err(CallError::new(
@@ -693,7 +703,7 @@ impl McClient {
                 for done in waiting {
                     done(renewed.clone());
                 }
-                if renewed.is_ok() {
+                if still_open && renewed.is_ok() {
                     if let Some(at) = client.credential_expiry() {
                         client.notify_renewed(at);
                     }
