@@ -388,7 +388,8 @@ defmodule HalC2Plugins.CodeReview do
   @impl HalC2.Plugins.Extension
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
     with {:ok, review} <- server({:for_thread, thread_id}),
-         {:ok, findings} <- findings(arguments, review),
+         {:ok, settings} <- server(:settings),
+         {:ok, findings} <- findings(arguments, review, settings),
          # Each GitHub command of the post has a timeout of its own.
          {:ok, review} <- GenServer.call(__MODULE__, {:report, thread_id, findings}, :infinity) do
       on_lines = Enum.count(review["comments"])
@@ -2828,7 +2829,7 @@ defmodule HalC2Plugins.CodeReview do
   # a line the change does not show goes into the summary.
   # Its text is made safe to post once, here, so what the user sees is what is posted.
   # A report over a limit is refused, and the agent may report again within it.
-  defp findings(arguments, review) do
+  defp findings(arguments, review, settings) do
     verdict = arguments["verdict"]
     summary = if is_binary(arguments["summary"]), do: String.trim(arguments["summary"]), else: ""
     comments = arguments["comments"] || []
@@ -2931,7 +2932,7 @@ defmodule HalC2Plugins.CodeReview do
             {:error,
              "summary must say what the review found when no comment is on a line of the change."}
 
-          byte_size(review_body(Map.merge(review, posted), true)) > @max_body ->
+          byte_size(review_body(Map.merge(review, posted), true, settings)) > @max_body ->
             {:error,
              "the review would be over #{@max_body} bytes on the pull request; shorten the summary and the comments."}
 
@@ -3232,7 +3233,7 @@ defmodule HalC2Plugins.CodeReview do
       "repository" => review["repository"],
       "number" => review["number"],
       "verdict" => if(as_comment, do: "comment", else: review["verdict"]),
-      "body" => review_body(review, as_comment),
+      "body" => review_body(review, as_comment, settings),
       # The comments' lines are the reviewed commit's, whatever has been pushed since.
       "commitId" => review["reviewedSha"],
       "comments" =>
@@ -3343,9 +3344,12 @@ defmodule HalC2Plugins.CodeReview do
 
   # The review's body on the pull request, its verdict in words when it is posted as
   # a comment.
-  defp review_body(review, as_comment) do
+  defp review_body(review, as_comment, settings) do
+    heading = String.trim(settings["heading"] || "")
+
     body =
       [
+        heading != "" && "## #{heading}",
         as_comment && verdict_line(review["verdict"]),
         headline(review),
         review["summary"],

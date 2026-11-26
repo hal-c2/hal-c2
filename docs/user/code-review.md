@@ -202,6 +202,8 @@ repository:
 - **Post automatically** posts it as soon as the agent is done. A pull request
   from someone the repository does not trust waits for you to publish instead.
 
+**Review heading** sets the first line of every posted review, so readers can tell an agent wrote it; leave it empty to skip the heading.
+
 With **Post verdicts as comments**, a review is posted as a comment rather than
 an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses

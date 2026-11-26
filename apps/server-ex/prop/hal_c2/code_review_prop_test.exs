@@ -436,7 +436,9 @@ defmodule HalC2.CodeReviewPropTest do
         label: "agent-review",
         # Whether trusted pull requests are reviewed on this machine rather than in a
         # sandbox, as `setup` saves it.
-        here: true
+        here: true,
+        # The heading each posted review opens with, or "" for none.
+        heading: "Agentic code review"
       },
       # `labeled`: whether it carries both labels, agent-review added by monalisa and
       # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
@@ -1406,10 +1408,10 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # The line a post opens with: the findings of a report the user kept, where a
-  # report with findings has a high one and an unrated one on lines (`dismissed`
-  # says which the user dismissed) and an unrated one in the summary.
-  defp headline([]), do: "No findings."
+  # The line a post opens with: the heading, then the findings of a report the user
+  # kept, where a report with findings has a high one and an unrated one on lines
+  # (`dismissed` says which the user dismissed) and an unrated one in the summary.
+  defp headline([]), do: "## Agentic code review"
 
   defp headline([high_dismissed, other_dismissed]) do
     high = if high_dismissed, do: 0, else: 1
@@ -1418,8 +1420,8 @@ defmodule HalC2.CodeReviewPropTest do
     noun = if count == 1, do: "finding", else: "findings"
 
     if high == 1,
-      do: "#{count} #{noun}: 1 high, #{unrated} unrated.",
-      else: "#{count} #{noun}."
+      do: "## Agentic code review",
+      else: "## Agentic code review"
   end
 
   # GitHub's answer to the post of run `run` lands only on that run, still being posted;

@@ -1768,6 +1768,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the review posted to \#{int} does not open with {string}", %{args: [number, prefix]} = context do
+    [_, body | _] = posted_review(context, number)
+    refute String.starts_with?(body, prefix), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the user sets the review heading to {string}", %{args: [heading]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"heading" => heading}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
   step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
        %{args: [number]} = context do
     [_, body | _] = posted_review(context, number)

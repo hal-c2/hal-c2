@@ -689,6 +689,18 @@ ColumnLayout {
             }
         }
 
+        SettingsField {
+            title: qsTr("Review heading")
+
+            TextField {
+                objectName: "codeReviewSetting:heading"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Agentic code review")
+                text: settings.values.heading ?? "Agentic code review"
+                onEditingFinished: settings.set("heading", text)
+            }
+        }
+
         Toggle {
             key: "verdictAsComment"
             title: qsTr("Post verdicts as comments")
