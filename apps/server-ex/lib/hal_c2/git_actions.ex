@@ -480,6 +480,17 @@ defmodule HalC2.GitActions do
         Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
         result
 
+      # Cut from a local branch: that branch is its base, as above, but it
+      # names no remote to publish to, so the push remote fallback decides.
+      upstream && is_nil(upstream.remote) && !same? ->
+        remote =
+          push_remote(cwd, branch) ||
+            fail!("Cannot push because no git remote is configured for this repository.")
+
+        result = publish(cwd, branch, remote)
+        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", upstream_name])
+        result
+
       remote = push_remote(cwd, branch) ->
         publish(cwd, branch, remote)
 

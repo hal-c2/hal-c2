@@ -183,6 +183,30 @@ defmodule HalC2.GitActionsTest do
     assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "fork\n"
   end
 
+  # Follow-up to #1837 (#1851): a branch tracking a local branch was cut
+  # from it, so publishing records it as the base before `push -u`
+  # replaces the tracking that named it.
+  test "a branch tracking a local branch keeps it as its base when published", %{
+    repo: repo,
+    origin: origin
+  } do
+    git!(repo, ~w(branch develop))
+    git!(repo, ~w(checkout -q -b feature/tax))
+    git!(repo, ["config", "branch.feature/tax.remote", "."])
+    git!(repo, ["config", "branch.feature/tax.merge", "refs/heads/develop"])
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, %{"push" => push}}, _} = run(%{"cwd" => repo, "action" => "push"})
+    assert push["status"] == "pushed"
+    assert push["upstreamBranch"] == "origin/feature/tax"
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert HalC2.Git.base_branch(repo, "feature/tax") == "develop"
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "develop\n"
+    assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "origin\n"
+  end
+
   # Review of #1837: publishing a branch cut from a non-primary remote's
   # branch replaces its tracking, so the remembered base keeps its remote —
   # the bare name would resolve on the primary remote instead.
