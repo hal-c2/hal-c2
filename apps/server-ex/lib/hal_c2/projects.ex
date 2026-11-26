@@ -15,9 +15,12 @@ defmodule HalC2.Projects do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Orchestration.Entities
 
-  @spec mutate(map) :: {:ok, map} | {:error, String.t()}
-  def mutate(m) do
-    case apply_mutation(m) do
+  # `existing_script_ids` is an import's saved script ids, already saved under
+  # whatever rules then held: a create carrying them keeps them. It is an
+  # option, not a field of `m`, so no client can name its own ids existing.
+  @spec mutate(map, keyword) :: {:ok, map} | {:error, String.t()}
+  def mutate(m, opts \\ []) do
+    case apply_mutation(m, opts) do
       {:error, {:owned, message, _owner}} -> {:error, message}
       reply -> reply
     end
@@ -29,7 +32,7 @@ defmodule HalC2.Projects do
   """
   @spec mutate_for_client(map) :: {:ok, map} | {:error, String.t() | map}
   def mutate_for_client(m) do
-    case apply_mutation(m) do
+    case apply_mutation(m, []) do
       {:error, {:owned, message, owner}} ->
         {:error, %{"_tag" => "WorkspaceInUse", "message" => message, "projectId" => owner}}
 
@@ -38,7 +41,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m, opts) do
     root = workspace_root(m["workspaceRoot"] || "")
 
     cond do
@@ -51,7 +54,7 @@ defmodule HalC2.Projects do
       HalC2.Workspace.mc_own_dir?(root) ->
         {:error, "#{root} is inside the MC's own directories"}
 
-      refusal = shape_refusal(m, []) ->
+      refusal = shape_refusal(m, Keyword.get(opts, :existing_script_ids, [])) ->
         {:error, refusal}
 
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
@@ -86,7 +89,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m, _opts) do
     fields =
       m
       |> Map.take(
@@ -144,7 +147,7 @@ defmodule HalC2.Projects do
   end
 
   # A project with threads is deleted only with `force`, which deletes its threads first.
-  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m, _opts) do
     case {threads(id), m["force"] == true} do
       {[_ | _], false} ->
         {:error, "Project #{id} is not empty."}
@@ -163,7 +166,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => type}), do: {:error, "#{type} is not supported"}
+  defp apply_mutation(%{"type" => type}, _opts), do: {:error, "#{type} is not supported"}
 
   # A deleted project's settings go with it: a provider it turned on would otherwise
   # stay checked for a project nobody can open (upstream #17879).
