@@ -1484,6 +1484,93 @@ defmodule HalC2.CodeReviewTest do
     end
   end
 
+  describe "a review another machine hands over, checked against" do
+    @ask %{"repository" => "acme/api", "number" => 1, "trigger" => "watch"}
+
+    test "the host of its project, as one of that name on another forge is another" do
+      assert take(Map.put(@ask, "host", "gitlab.com")) ==
+               {:error, "No project on this MC has the repository acme/api on gitlab.com."}
+
+      assert take(Map.put(@ask, "host", "github.com")) == {:ok, nil}
+      settle()
+      assert %{"status" => "running"} = review()
+    end
+
+    test "a review of that commit kept in HAL-C2 here, which is not reviewed again" do
+      save_settings(%{"publishing" => "local"})
+      first = start_review()
+      arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+      {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+      settle()
+      assert %{"status" => "kept", "threadId" => thread_id} = review()
+
+      assert take(@ask) == {:ok, nil}
+      settle()
+      assert %{"status" => "kept", "threadId" => ^thread_id} = review()
+    end
+  end
+
+  # The machine handing a review over read the pull request after a push this machine
+  # has not seen yet: the user's approval there is of the head read with it.
+  # (Its name has no quote in it: the fake ssh runs in a directory named after it.)
+  test "a review handed over approved there starts at the head read with it",
+       context do
+    sandboxed!(context)
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    first = context.shas[1]
+    assert %{"status" => "ready", "headSha" => ^first} = review()
+
+    push!(context, 2)
+    rules!(context, head: 2, association: "NONE")
+    second = context.shas[2]
+    ask = %{"repository" => "acme/api", "number" => 1, "trigger" => "user"}
+    assert take(Map.put(ask, "approved", second)) == {:ok, nil}
+
+    assert_receive {:sandbox_reported, 200, _}, 15_000
+    assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+    settle()
+    assert %{"status" => "waiting", "headSha" => ^second, "approved" => ^second} = review()
+  end
+
+  # The machine that handed this one a review heard the user stopped it there only
+  # once this one had taken it (`untake/1`).
+  describe "a review handed over that the user stopped on the machine handing it" do
+    test "is stopped here while it runs, its checkout gone" do
+      %{"checkout" => checkout} = start_review()
+      assert untake() == {:ok, nil}
+      settle()
+      assert %{"status" => "failed", "stopped" => true, "error" => "Stopped."} = review()
+      refute File.dir?(checkout)
+    end
+
+    test "is stopped here before it starts" do
+      %{"threadId" => thread_id} = start_review()
+
+      event = %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "status" => "failed",
+        "errorClass" => "usage_limit",
+        "error" => "Subscription quota exhausted.",
+        "resetAt" => "2999-01-01T00:00:00Z"
+      }
+
+      :ok = apply(@server, :handle_event, [event, %{}])
+      settle()
+      assert %{"status" => "queued"} = review()
+
+      assert untake() == {:ok, nil}
+      settle()
+      assert %{"status" => "failed", "stopped" => true, "error" => "Stopped."} = review()
+    end
+
+    test "leaves a review that is over as it is" do
+      assert untake() == {:ok, nil}
+      refute review()
+    end
+  end
+
   # From the proof model of claims between machines: a machine handed a review that
   # another machine claimed at that head queued it, stepped back from that claim and
   # had no row left, so the machine handing it over, out of reach of the claim, read
@@ -1508,6 +1595,7 @@ defmodule HalC2.CodeReviewTest do
 
   # Compiled when the plugin starts, so unknown to the compiler here.
   defp take(ask), do: apply(@server, :take, [ask])
+  defp untake, do: apply(@server, :untake, [%{"repository" => "acme/api", "number" => 1}])
 
   defmodule Unreached do
     @moduledoc false

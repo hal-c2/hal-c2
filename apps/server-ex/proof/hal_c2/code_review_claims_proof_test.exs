@@ -17,6 +17,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   @user "the user's own ask, which means to review or forget again (and ends a pause); the model's reviews start on their own"
   @pause "the pause after three failed runs holds the queue back as the usage limit's does, which the model has"
   @shown "what the page and the threads show; no part of a claim"
+  @stop "the user's Stop, which reaches the machine that took the review as well; the model's reviews are never stopped"
   @look "the parts of a look the model leaves out: which pull requests, their sizes and comments; it has one pull request, automatically reviewed"
   @agent "the review thread and its agent; the model's runs end when they claim or step back"
   @host "a host function no claim or post goes through"
@@ -54,6 +55,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:started, _, _, _}" => "started",
       "HalC2Plugins.CodeReview handle_cast {:turn_finished, _, _, _}" => "turn-finished",
       "HalC2Plugins.CodeReview handle_cast {:elsewhere, _, _, _}" => ~w(elsewhere peer-claims),
+      "HalC2Plugins.CodeReview handle_call {:handed, _, _, _}" => ~w(offer elsewhere peer-claims),
       "HalC2Plugins.CodeReview handle_cast {:start_failed, _, _, _}" =>
         ~w(start-failed sandbox-failed),
       "HalC2Plugins.CodeReview.take/1" => ~w(offer answers takes taken),
@@ -164,6 +166,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.sandbox_ended/2" => @agent,
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
       "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call {:untake, _}" => @stop,
+      "HalC2Plugins.CodeReview.untake/1" => @stop,
       "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
       "HalC2.Plugins.Host.pull_request_fetch/2" =>
         "where a Forgejo checkout fetches from and with what token; read before the checkout, it fails the run before any claim as a failed checkout does, which the model has",
@@ -355,10 +359,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   # which says why it failed, and does not go back and forth.
   test "a review settles when the machine that took it cannot open its sandbox after all",
        %{proof: proof} do
-    assert_ltl(proof, "handed(1)", "<> [] reviewed", fair: @handing)
+    fair = ["sandbox-failed" | @handing]
+    assert_ltl(proof, "handed(1)", "<> [] settled", fair: fair)
 
     for init <- ~w[gone(0,0,1) gone(0,0,2)],
-        do: assert_ltl(proof, init, "<> [] reviewed", fair: @handing)
+        do: assert_ltl(proof, init, "<> [] settled", fair: fair)
   end
 
   test "no machine claims a commit twice as the machines that took it go or cannot",

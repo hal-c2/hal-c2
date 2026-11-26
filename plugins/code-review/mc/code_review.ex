@@ -642,39 +642,9 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # The user's ask, with who stands behind the pull request read afresh: what it says
-  # now is what the review may start on. One another machine handed over (`take/1`)
-  # brings the commit the user approved there, if any.
-  # A row of the same name kept from another host (or project) is another pull request:
-  # it takes none of this one's trust, and this one starts from what was read of it.
-  def handle_call({:start, pr, trigger}, _from, state) do
-    known = state.reviews[pr["key"]]
-    same? = known != nil and known["projectId"] == pr["projectId"]
-
-    review =
-      if same?,
-        do: Map.merge(known, Map.take(pr, ~w(trust seenAt approved))),
-        else: pr
-
-    cond do
-      known != nil and not same? and known["status"] in ~w(queued running publishing) ->
-        {:reply,
-         {:error,
-          "A review of #{pr["key"]} on another host is under way. Ask again once it ends."},
-         state}
-
-      review["status"] in ~w(queued running) ->
-        {:reply, {:ok, nil},
-         state |> unpause() |> ask_queued(review["key"], trigger) |> pump() |> changed()}
-        |> reply_snapshot()
-
-      why = gated(state.settings, review) ->
-        {:reply, {:error, why}, state |> put(Map.put_new(review, "status", "ready")) |> changed()}
-
-      true ->
-        {:reply, {:ok, nil}, state |> unpause() |> queue(review, trigger) |> pump() |> changed()}
-        |> reply_snapshot()
-    end
-  end
+  # now is what the review may start on.
+  def handle_call({:start, pr, trigger}, _from, state),
+    do: start(pr, trigger, ~w(trust seenAt), state)
 
   # Another machine hands over its review of `pr` (`take/1`), asked for by `trigger`:
   # it starts here as the user's ask does, under this machine's limits. A paused
@@ -686,7 +656,7 @@ defmodule HalC2Plugins.CodeReview do
   # Started, it would only find that claim and step back, and the machine handing it
   # over, out of that one's reach, would read that no one has it and hand it over
   # again for as long as it is. `{:ok, nil}`, `{:ok, elsewhere}` or `{:error, why}`.
-  def handle_call({:take, pr, trigger}, from, state) do
+  def handle_call({:take, pr, trigger}, _from, state) do
     known = state.reviews[pr["key"]]
 
     cond do
@@ -694,7 +664,7 @@ defmodule HalC2Plugins.CodeReview do
         {:reply, {:error, "Reviews are paused on this machine."}, state}
 
       known != nil and claimed?(known) and known["reviewedSha"] == pr["headSha"] and
-          known["status"] in ~w(waiting publishing published) ->
+          known["status"] in ~w(waiting publishing published kept) ->
         {:reply, {:ok, nil}, state}
 
       trigger not in ~w(user retry) and known != nil and known["status"] == "failed" and
@@ -703,12 +673,50 @@ defmodule HalC2Plugins.CodeReview do
 
       trigger not in ~w(user retry) and known != nil and
         match?(%{"claimed" => true}, known["elsewhere"]) and
-          known["headSha"] == pr["headSha"] and left?(known) ->
+        known["headSha"] == pr["headSha"] and left?(known) ->
         {:reply, {:ok, known["elsewhere"]}, state}
 
+      # It brings the commit the user approved there, if any, checked against the head
+      # read with it, which this machine's row may not have seen yet.
       true ->
-        {:reply, reply, state} = handle_call({:start, pr, trigger}, from, state)
+        {:reply, reply, state} = start(pr, trigger, ~w(trust seenAt approved headSha), state)
         {:reply, with({:ok, _} <- reply, do: {:ok, nil}), state}
+    end
+  end
+
+  # handoff/2 heard that another machine took run `thread_id` of the review, which then
+  # shows there, as {:elsewhere, ...} does. `:over` when the user stopped the run while
+  # it was offered: the machine that took it is told to stop it too (`untake/1`).
+  def handle_call({:handed, key, thread_id, other}, _from, state) do
+    case left_to(state, key, thread_id, other) do
+      nil -> {:reply, :over, state}
+      state -> {:reply, :ok, state}
+    end
+  end
+
+  # The machine that handed this one a review was stopped by the user before it heard
+  # this one took it (`untake/1`): queued here, it is stopped before it starts, and
+  # running, as Stop stops it. Its review of that pull request is this one's, so a
+  # review this one had already queued or started for itself is stopped too: the user
+  # stopped the review of that pull request.
+  def handle_call({:untake, key}, from, state) do
+    case state.reviews[key] do
+      %{"status" => "queued"} = review ->
+        review =
+          Map.merge(review, %{
+            "status" => "failed",
+            "error" => "Stopped.",
+            "stopped" => true,
+            "finishedAt" => now()
+          })
+
+        {:reply, {:ok, nil}, state |> put(review) |> changed()}
+
+      %{"status" => "running"} ->
+        handle_call({:stop, key}, from, state)
+
+      _ ->
+        {:reply, {:ok, nil}, state}
     end
   end
 
@@ -1195,27 +1203,8 @@ defmodule HalC2Plugins.CodeReview do
 
   # Another machine claimed the commit first: the review is back to not started,
   # and shows where it runs.
-  def handle_cast({:elsewhere, key, thread_id, other}, state) do
-    case state.reviews[key] do
-      %{"threadId" => ^thread_id, "status" => "running"} = review ->
-        review =
-          Map.merge(review, %{
-            "status" => "ready",
-            "threadId" => nil,
-            "startedAt" => nil,
-            "checkout" => nil,
-            "claimed" => false,
-            "elsewhere" => other
-          })
-
-        # The machine it stood down for may have said it let go before this landed.
-        send(self(), :peer_claims)
-        {:noreply, state |> put(review) |> pump() |> changed()}
-
-      _ ->
-        {:noreply, state}
-    end
-  end
+  def handle_cast({:elsewhere, key, thread_id, other}, state),
+    do: {:noreply, left_to(state, key, thread_id, other) || state}
 
   def handle_cast({:start_failed, key, thread_id, message}, state) do
     case state.reviews[key] do
@@ -1236,6 +1225,30 @@ defmodule HalC2Plugins.CodeReview do
 
       _ ->
         {:noreply, state}
+    end
+  end
+
+  # Run `thread_id` of the review at `key` is left to the machine `other` names: the
+  # review is back to not started, and shows where it runs. nil when that run is over.
+  defp left_to(state, key, thread_id, other) do
+    case state.reviews[key] do
+      %{"threadId" => ^thread_id, "status" => "running"} = review ->
+        review =
+          Map.merge(review, %{
+            "status" => "ready",
+            "threadId" => nil,
+            "startedAt" => nil,
+            "checkout" => nil,
+            "claimed" => false,
+            "elsewhere" => other
+          })
+
+        # The machine it stood down for may have said it let go before this landed.
+        send(self(), :peer_claims)
+        state |> put(review) |> pump() |> changed()
+
+      _ ->
+        nil
     end
   end
 
@@ -1710,14 +1723,18 @@ defmodule HalC2Plugins.CodeReview do
 
   # The user's own ask for pull request `number`, which need not be watched. It is read
   # on its own, as the app's pull request card reads it, not looked for in a listing.
-  defp find(settings, repository, number) do
+  # One another machine hands over (`take/1`) names its project's `host`, which this
+  # machine's project of that repository must be on too.
+  defp find(settings, repository, number, host \\ nil) do
     with {:ok, projects} <- Host.projects(@id),
          %{} = project <-
            Enum.find(
              projects,
-             &(&1["kind"] == settings["host"] and same?(&1["repository"], repository))
+             &(&1["kind"] == settings["host"] and same?(&1["repository"], repository) and
+                 (host == nil or same?(&1["host"], host)))
            ) ||
-             {:error, "No project on this MC has the repository #{repository}."},
+             {:error,
+              "No project on this MC has the repository #{repository}#{if host, do: " on #{host}"}."},
          {:ok, detail} <-
            Host.pull_requests(@id, "detail", %{
              "projectId" => project["id"],
@@ -1962,6 +1979,36 @@ defmodule HalC2Plugins.CodeReview do
   # its repository is not watched, and a new push counts as an ask again.
   @asks ~w(user retry command label following) ++ ["review requested"]
 
+  # Starts the review of `pr`, read afresh, as `trigger` asks: a known row takes the
+  # `fresh` fields of the read. A row of the same name kept from another host (or
+  # project) is another pull request: it takes none of this one's trust, and this one
+  # starts from what was read of it.
+  defp start(pr, trigger, fresh, state) do
+    known = state.reviews[pr["key"]]
+    same? = known != nil and known["projectId"] == pr["projectId"]
+    review = if same?, do: Map.merge(known, Map.take(pr, fresh)), else: pr
+
+    cond do
+      known != nil and not same? and known["status"] in ~w(queued running publishing) ->
+        {:reply,
+         {:error,
+          "A review of #{pr["key"]} on another host is under way. Ask again once it ends."},
+         state}
+
+      review["status"] in ~w(queued running) ->
+        {:reply, {:ok, nil},
+         state |> unpause() |> ask_queued(review["key"], trigger) |> pump() |> changed()}
+        |> reply_snapshot()
+
+      why = gated(state.settings, review) ->
+        {:reply, {:error, why}, state |> put(Map.put_new(review, "status", "ready")) |> changed()}
+
+      true ->
+        {:reply, {:ok, nil}, state |> unpause() |> queue(review, trigger) |> pump() |> changed()}
+        |> reply_snapshot()
+    end
+  end
+
   defp queue(state, review, trigger) do
     previous =
       if review["verdict"] do
@@ -2163,9 +2210,19 @@ defmodule HalC2Plugins.CodeReview do
   # this machine cannot open goes to a connected machine that can (`handoff/2`),
   # before it counts toward this machine's limits.
   defp run(review, settings) do
+    %{"key" => key, "threadId" => thread_id} = review
+
     case handoff(review, settings) do
-      {:elsewhere, other} ->
-        GenServer.cast(__MODULE__, {:elsewhere, review["key"], review["threadId"], other})
+      {:elsewhere, other, took} ->
+        # The run before this one is over, as launch/2 has it.
+        retire(review)
+
+        # Stopped while it was offered: the machine that took it stops it too.
+        if server({:handed, key, thread_id, other}) == :over and took,
+          do: Host.peer_call(@id, took, :untake, [Map.take(review, ~w(repository number))])
+
+      :over ->
+        :ok
 
       :here ->
         if budget(review) == :ok, do: launch(review, settings)
@@ -2179,16 +2236,22 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # A review that needs a sandbox, on a machine that cannot open one now, is offered to
-  # the connected machines in turn (`take/1`); the first that takes it has it, as
-  # though it had queued it, and this one shows it there, or on the machine that one
-  # says claimed it. With none that does, it runs
-  # here, where its sandbox fails and says what to set up. The machine that took it
-  # starts it as its own settings say.
+  # the connected machines in turn (`take/1`), with the host of its project, so a
+  # machine whose repository of that name is on another forge leaves it; the first
+  # that takes it has it, as though it had queued it, and this one shows it there
+  # (`{:elsewhere, there, node}`), or on the machine that one says claimed it
+  # (`{:elsewhere, there, nil}`). With none that does, it runs here (`:here`), where
+  # its sandbox fails and says what to set up. The machine that took it starts it as
+  # its own settings say. A run the user stopped is offered no further (`:over`).
   defp handoff(review, settings) do
     peers = Node.list()
 
-    if peers != [] and sandboxed?(settings, review) and not Host.sandboxes_ready?(@id) do
+    with true <-
+           peers != [] and sandboxed?(settings, review) and not Host.sandboxes_ready?(@id),
+         {:ok, projects} <- Host.projects(@id),
+         %{"host" => host} <- Enum.find(projects, &(&1["id"] == review["projectId"])) do
       ask = %{
+        "host" => host,
         "repository" => review["repository"],
         "number" => review["number"],
         "trigger" => review["trigger"],
@@ -2199,20 +2262,26 @@ defmodule HalC2Plugins.CodeReview do
       |> Enum.map(&to_string/1)
       |> Enum.sort()
       |> Enum.find_value(:here, fn node ->
-        case Host.peer_call(@id, node, :take, [ask], 60_000) do
-          %{"result" => {:ok, %{} = there}} ->
-            {:elsewhere, there}
+        with :running <- server({:run, review["key"], review["threadId"]}) do
+          case Host.peer_call(@id, node, :take, [ask], 60_000) do
+            %{"result" => {:ok, %{} = there}} ->
+              {:elsewhere, there, nil}
 
-          %{"result" => {:ok, nil}, "machine" => machine} ->
-            {:elsewhere,
-             %{"machine" => machine, "node" => node, "status" => "queued", "claimed" => false}}
+            %{"result" => {:ok, nil}, "machine" => machine} ->
+              {:elsewhere,
+               %{"machine" => machine, "node" => node, "status" => "queued", "claimed" => false},
+               node}
 
-          _ ->
-            nil
+            _ ->
+              nil
+          end
+        else
+          _ -> :over
         end
       end)
     else
-      :here
+      # Without its project here, launch/2 says so.
+      _ -> :here
     end
   end
 
@@ -3521,14 +3590,14 @@ defmodule HalC2Plugins.CodeReview do
   # request `number` of `repository` needs, hands it to this one (`handoff/2`), with
   # what asked for it and the commit the user approved there. This machine takes it
   # if it can run it as its own settings say, in a sandbox it can open or in none, and
-  # has the repository: the pull request is read afresh, as for the user's ask.
-  # `{:ok, nil}`, `{:ok, elsewhere}` where another machine claimed it, or
+  # has the repository on the same host: the pull request is read afresh, as for the
+  # user's ask. `{:ok, nil}`, `{:ok, elsewhere}` where another machine claimed it, or
   # `{:error, why}`.
   def take(%{"repository" => repository, "number" => number, "trigger" => trigger} = ask)
       when is_binary(repository) and is_integer(number) do
     settings = server(:settings)
 
-    with {:ok, pr} <- find(settings, repository, number),
+    with {:ok, pr} <- find(settings, repository, number, ask["host"]),
          pr =
            if(ask["approved"] == pr["headSha"],
              do: Map.put(pr, "approved", pr["headSha"]),
@@ -3540,6 +3609,17 @@ defmodule HalC2Plugins.CodeReview do
          {:ok, _} = taken <- server({:take, pr, trigger || "user"}) do
       taken
     end
+  catch
+    :exit, _ -> {:error, "Code review is not running on this machine."}
+  end
+
+  @doc false
+  # The machine that handed this one its review of pull request `number` of
+  # `repository` (`take/1`) heard the user stopped it there: this one stops it too.
+  def untake(%{"repository" => repository, "number" => number})
+      when is_binary(repository) and is_integer(number) do
+    with {:ok, %{} = review} <- server({:untake, key(repository, number)}), do: retire(review)
+    {:ok, nil}
   catch
     :exit, _ -> {:error, "Code review is not running on this machine."}
   end

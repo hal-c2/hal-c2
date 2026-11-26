@@ -1351,7 +1351,8 @@ Feature: Agent code review
     limits, for whatever asked: the watch, a comment, or the user's ask on the machine
     that handed it over, which shows it there. With no such machine connected, it runs
     where it was asked for and fails saying what to set up. A review that needs no
-    sandbox stays where it is.
+    sandbox stays where it is. One the user stops while it is being handed over is
+    stopped on the machine that took it too.
 
     @mc
     Scenario: Two machines watching the same repository review a pull request once
@@ -1407,6 +1408,19 @@ Feature: Agent code review
       When the user asks "laptop" to review #12
       Then #12 is reviewed in a sandbox on this machine
       And "laptop" shows #12 reviewing on this machine
+
+    @mc
+    Scenario: A review the user stops while it is handed over is stopped on the machine that took it
+      Given "code-review" watches "acme/api" selectively with the trigger "comment command"
+      And the user's machine "laptop" in the cluster, which cannot run review sandboxes, watches "acme/api" too, reviewing what the user asks for
+      And review sandboxes can run on this MC
+      And "code-review" keeps its default of sandboxing every review
+      And the pull request #12 is opened on "acme/api"
+      And this machine is slow to read #12 when it is handed the review
+      When the user asks "laptop" to review #12
+      And the user stops the review of #12 on "laptop" while this machine takes it
+      Then this machine stops its review of #12
+      And "laptop" shows #12 stopped
 
     @mc
     Scenario: A review that needs a sandbox fails when no machine of the cluster can run it

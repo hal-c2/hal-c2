@@ -67,6 +67,21 @@ defmodule HalC2.OpenShell.CommandTest do
       assert {:ok, %{"sandboxMachines" => []}} = Command.settings_status(status)
     end
 
+    # The contract's names are trimmed and non-empty: one blank name would fail the
+    # whole status on the clients.
+    test "leaves out a ready machine with a blank label, and one not ready" do
+      answers = [
+        {:ok, %{"machine" => "  ", "ready" => true}},
+        {:ok, %{"machine" => "", "ready" => true}},
+        {:ok, %{"machine" => " lab ", "ready" => true}},
+        {:ok, %{"machine" => "desk", "ready" => false}},
+        {:error, {:erpc, :noconnection}}
+      ]
+
+      assert HalC2.OpenShell.Review.machines([:a, :b, :c, :d, :e], 1_000, fn _, _ -> answers end) ==
+               ["lab"]
+    end
+
     test "a status that does not answer in time is the contract's error" do
       assert {:error, %{"_tag" => "ServerOpenShellStatusError", "message" => message}} =
                Command.settings_status(fn -> Process.sleep(:infinity) end, 0)

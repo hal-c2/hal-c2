@@ -278,7 +278,8 @@ mod CODE-REVIEW-CLAIMS is
   ceq taken(rv(St, Cl, Rd, Hd, E, Ho), S) = rv(St, Cl, Rd, Hd, E, Ho)
     if active(St) or (Cl and Rd == S and (St == waiting or St == publishing or St == published))
        or (claimedThere(rv(St, Cl, Rd, Hd, E, Ho), S)) .
-  eq taken(R, S) = queued(R) [owise] .
+  --- The head read with the ask is the row's from then on ({:take, ...} reads it afresh).
+  eq taken(rv(St, Cl, Rd, Hd, E, Ho), S) = queued(rv(St, Cl, Rd, S, E, Ho)) [owise] .
   --- The machine another one claimed the head on, which take/1 answers ({:ok, elsewhere}).
   op claimedThere : Review Sha -> Bool .
   eq claimedThere(rv(St, Cl, Rd, S, on(A), Ho), S) = left(rv(St, Cl, Rd, S, on(A), Ho)) .
@@ -1288,6 +1289,13 @@ mod CODE-REVIEW-CLAIMS-PROPS is
   op boxed : -> Prop [ctor] .
   ceq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= boxed = true if not unboxed(X, C) .
   eq { C } |= boxed = false [owise] .
+
+  --- Some machine claimed the head there is now and can open review sandboxes, or its
+  --- review of it failed, saying why: the review is not left running for good.
+  op settled : -> Prop [ctor] .
+  ceq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= settled = true
+    if not unboxed(X, C) or St == failed .
+  eq { C } |= settled = false [owise] .
 
   --- No fault hurt X.
   op steady : Id -> Prop [ctor] .

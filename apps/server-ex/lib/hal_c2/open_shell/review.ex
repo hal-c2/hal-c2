@@ -279,15 +279,23 @@ defmodule HalC2.OpenShell.Review do
 
   @doc """
   The names of the machines among `nodes` (the connected ones) that can open
-  review sandboxes now. A machine that does not answer in `timeout` ms, or runs an
-  MC from before `readiness/0`, is left out.
+  review sandboxes now, as `ask` (`readiness/0` on each, in `timeout` ms) answers. A
+  machine that does not answer in time, runs an MC from before `readiness/0`, or has a
+  blank label (`HAL_C2_LABEL=""`), which no client could show, is left out.
   """
-  def machines(nodes \\ Node.list(), timeout \\ 5_000) do
+  def machines(
+        nodes \\ Node.list(),
+        timeout \\ 5_000,
+        ask \\ &:erpc.multicall(&1, __MODULE__, :readiness, [], &2)
+      ) do
     nodes
-    |> :erpc.multicall(__MODULE__, :readiness, [], timeout)
+    |> ask.(timeout)
     |> Enum.flat_map(fn
-      {:ok, %{"machine" => machine, "ready" => true}} when is_binary(machine) -> [machine]
-      _ -> []
+      {:ok, %{"machine" => machine, "ready" => true}} when is_binary(machine) ->
+        if String.trim(machine) == "", do: [], else: [String.trim(machine)]
+
+      _ ->
+        []
     end)
     |> Enum.sort()
   end
