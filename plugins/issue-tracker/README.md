@@ -55,9 +55,9 @@ mise exec -- mix test test/hal_c2/issue_tracker_test.exs   # in apps/server-ex
 ```
 
 The page and the settings, against a fake MC part, from a hal-c2 checkout's
-`apps/desktop-qt`:
+root:
 
 ```bash
-QT_QPA_PLATFORM=offscreen qmltestrunner -import tests/imports -import qml \
+QT_QPA_PLATFORM=offscreen qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
   -input <this folder>/test
 ```

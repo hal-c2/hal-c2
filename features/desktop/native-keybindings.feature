@@ -2,7 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18983
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap and its native commands)
 #   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the MC's rules)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused terminal)
+#   packages/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused terminal)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   Shared domain: navigation/keybindings.feature and navigation/keybinding-customisation.feature
 #   own what each binding does, including the thread shortcuts and the MC's rules;

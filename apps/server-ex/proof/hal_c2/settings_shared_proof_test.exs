@@ -29,6 +29,7 @@ defmodule HalC2.SettingsSharedProofTest do
       "HalC2.Settings.Shared.stamp/2" => "stamp",
       "HalC2.Settings.Shared.newest/1" => "stamp",
       "HalC2.Settings.Shared.apply/2" => "merge",
+      "HalC2.Settings handle_call {:put, _, _, _}" => "put",
       "HalC2.Settings handle_call {:put, _, _}" => "put",
       "HalC2.Settings handle_call {:update, _}" => "put",
       "HalC2.Settings handle_call {:edit_keybindings, _}" => "put",
@@ -66,6 +67,8 @@ defmodule HalC2.SettingsSharedProofTest do
         "advances on every save, a merged one included; the stale check is settings_prop_test's",
       "HalC2.Settings state :stamp" =>
         "the file's hash, which the check compares; put stands for the check adopting an edit",
+      "HalC2.Settings state :document_at" =>
+        "the settings file's time when this MC started, at which start_shared stamps an offline edit; the model's edit carries its own time into restart",
       "HalC2.Cluster handle_call :status" => @reads,
       "HalC2.Cluster handle_call :fingerprint" => @reads,
       "HalC2.Cluster handle_call {:removed?, _}" => @reads,

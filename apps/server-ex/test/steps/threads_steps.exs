@@ -1055,6 +1055,20 @@ defmodule HalC2.Steps.Threads do
     World.title_generator(context, [answer])
   end
 
+  step "the title generator answers a title longer than 120 characters with an emoji where it is cut",
+       context do
+    long = String.duplicate("a", 117) <> "🚀" <> String.duplicate("b", 30)
+    World.title_generator(context, [long])
+  end
+
+  step "the thread's title is cut before the emoji and ends in {string}",
+       %{args: [suffix]} = context do
+    title = settled_title(context)["title"]
+    assert title == String.duplicate("a", 117) <> suffix
+    refute title =~ "🚀"
+    context
+  end
+
   step "the user sends the first message of a new thread", context do
     context = if context[:title_generator], do: context, else: World.title_generator(context)
 

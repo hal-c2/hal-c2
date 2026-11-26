@@ -30,7 +30,8 @@ defmodule HalC2.Plugins.Package do
       "Add context to agents starting a new conversation, and turn some of their tools off",
     "threads:steer" => "Send messages to agents while they work",
     "threads:notice" => "Show notices in threads, with a button to stop the agent",
-    "textGeneration" => "Ask your text generation model to write for it"
+    "textGeneration" => "Ask your text generation model to write for it",
+    "providers:configure" => "Add provider instances of its own and keep them set up"
   }
 
   @setting_types ~w(text longText secret boolean number choice list object)
@@ -62,7 +63,10 @@ defmodule HalC2.Plugins.Package do
             "screenshots" => {:list, {:map, %{"path" => :path}, %{"caption" => :string}}},
             "permissions" => {:list, {:map, %{"id" => :text, "reason" => :text}, %{}}},
             "settings" =>
-              {:list, {:map, %{"key" => :text}, %{"label" => :text, "description" => :string}}},
+              {:list,
+               {:map, %{"key" => :text},
+                %{"label" => :text, "description" => :string, "exec" => :bool}}},
+            "execCalls" => {:list, :text},
             "contributes" => @contributes,
             "threadsStay" => :bool
           }}
@@ -476,9 +480,12 @@ defmodule HalC2.Plugins.Package do
             secret: field["type"] == "secret",
             description: field["description"],
             default: field["default"],
-            options: field["options"]
+            options: field["options"],
+            exec: field["exec"] == true
           }
         end,
+      exec_calls:
+        if(is_list(json["execCalls"]), do: Enum.filter(json["execCalls"], &is_binary/1), else: []),
       permissions:
         for permission <- list(json["permissions"]) do
           %{

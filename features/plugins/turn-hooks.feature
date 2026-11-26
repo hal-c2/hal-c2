@@ -13,7 +13,7 @@
 #   apps/server-ex/lib/hal_c2/text_generation.ex (for_plugin/2: the text model, with what it used)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (--disallowedTools), apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (features off at thread/start)
 #   packages/contracts/src/orchestrationV2.ts (system_notice pluginId and actions, providerToolName)
-#   apps/desktop-qt/src/native/TimelineModel.cpp, apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (a notice's Stop, a folded group's StopRunRole)
+#   apps/desktop-qt/src/native/TimelineModel.cpp, packages/qml/HalC2/Bricks/Timeline.qml (a notice's Stop, a folded group's StopRunRole)
 #   apps/desktop-qt/src/native/ComposerController.cpp (interrupt: a Stop naming its run stops only that run)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port these hooks are for)
 

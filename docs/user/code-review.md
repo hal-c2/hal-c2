@@ -92,29 +92,52 @@ stays in its thread only; the new review covers the whole change again.
 
 If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
-the queue instead of failing one by one, and the Reviews page says so.
+the queue instead of failing one by one, and the Reviews page says so and when
+they start again. If you know the limit no longer holds, say after signing in
+to another account, click **Resume now**. **Look now**, and picking another
+agent or model for the reviews, end the pause too; a limit that a review still
+running on the old agent hits after the switch only puts that review back in
+the queue. **Review now** on a queued review starts it next, ahead of the rest
+of the queue, and ends a pause as well. Other queued reviews start oldest first.
+
+In a repository that publishes automatically, a review the host would not post
+because of its own rate limit is posted again at the first look for pull
+requests that the limit lets through. A review you publish yourself is not
+retried: publish it again once the limit resets.
 
 ## Reviews in a sandbox
 
-A review of a pull request HAL-C2 does not trust runs in a sandbox, and so does
-every review with **Sandbox every review** on. HAL-C2 trusts a pull request opened
-by a member or collaborator of the repository, or by one of your **Trusted logins**,
-unless its commits come from someone else's fork. With the switch off, reviews of the
-pull requests it trusts run on your machine. A sandbox needs
-[OpenShell on the MC](openshell.md), and its agent must be Claude or Codex with an API
-key; any other agent, or an MC without OpenShell, fails the review and says what to
-set up.
+Every review runs in a sandbox. A sandbox needs [OpenShell on the MC](openshell.md),
+which **Settings → Review sandboxes** installs, and its agent must be Claude or Codex
+with an API key, or **Claude via CLIProxyAPI** or **Codex via CLIProxyAPI** from the
+[CLIProxyAPI plugin](plugins.md#cliproxyapi). Any other agent, a provider that sends
+its agent to a base URL of its own, or an MC without OpenShell fails the review and
+says what to set up. A review never falls back to running on your machine.
+
+**Review trusted pull requests on this machine** opts out for the pull requests
+HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one
+of your **Trusted logins**, unless their commits come from someone else's fork. With
+it on, those reviews run here, so the pull request's code and text reach your
+machine, its files and its credentials. The agent still gets only its tool to report
+with, none of HAL-C2's others, and of the review comments already on the pull
+request, HAL-C2 puts only those left by people it trusts in the agent's prompt.
+The agent runs commands as you, though, so it could still fetch the others with
+your GitHub login. Every other pull request is
+reviewed in a sandbox either way. The old **Sandbox every review** switch is gone,
+and whatever it was set to, reviews start out sandboxed.
 
 The agent reviews a copy of the pull request's commits and has no access to your
-machine, your GitHub login or HAL-C2's tools. It reaches only its model's API and
-one tool to report with. The first report it sends is the review, and its sandbox
+machine, your GitHub login or HAL-C2's tools. It reaches only its model's requests,
+on the model's API or on the proxy, and one tool to report with; the key is added to
+those requests on their way out and is never in the sandbox. The first report it sends is the review, and its sandbox
 is deleted then. The Reviews page, the review's thread and its row in the thread
 list say a review runs in a sandbox.
 
 The sandbox brings its own copy of the agent, so the agent doesn't have to be
 installed or signed in on the MC, and the MC's version of it doesn't matter. None
 of the MC's agent settings, skills or task lists reach the sandbox, and what the
-review uses counts against its API key, not your account's usage limits. The
+review uses counts against its API key, or the accounts signed in to CLIProxyAPI,
+not the MC's own sign-in. The
 settings list an agent's models only when it is installed on the MC, so install
 it there to pick a model.
 
@@ -133,6 +156,14 @@ own copy of the repository and fetched over HTTPS with your `gh` or `fj` sign-in
 repository is not touched, but if it runs commands it runs the pull request's code. Choose its
 access with that in mind. Reviewing a pull request again removes the last
 review's checkout.
+
+The checkout carries the submodules the pull request's head pins, fetched over
+HTTP(S) or SSH, never over `git://` or from a path on your machine; the plugin's copy
+keeps their objects, so later reviews fetch only what is new. When a submodule cannot
+be fetched, the review still runs, and its agent reports the checks that needed it
+as blocked on the reviewing machine. A review in a sandbox gets no submodules: they would
+be fetched with this machine's credentials from wherever the pull request points them. Its
+agent reports the checks that need them as not run.
 
 The prompt is a template: `{{pr.title}}`, `{{pr.base}}`, `{{repository}}` and the
 others listed under it are filled in for each pull request. How the agent
@@ -157,9 +188,10 @@ shows it apart from the verdict, so you can fix it on the machine and review
 again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
-pull request. The agent also reads the pull request's description and the
-review comments already on it, so it can judge the change against what it says
-it does and leave out what someone else already raised.
+pull request. HAL-C2 also puts the pull request's description and its
+unresolved review comments in the agent's prompt (on this machine, only the
+comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
+someone else already raised. Resolved comments are not included.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
@@ -201,6 +233,11 @@ review it again, then publish.
 - **As threads** and **Both** list them, marked with the state of their review.
 
 Changing this moves the review threads there already are, not only new ones.
+
+The search field above the Reviews page's list finds a pull request by its
+title, repository, author or branch, or by its number: `#83` finds that pull
+request only, and `83` also finds a title or branch that names 83. Every word
+you type has to match.
 
 When a review is done — reported, published or failed — its thread is settled,
 so finished reviews leave your active list on their own. Unsettle one to bring

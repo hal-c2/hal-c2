@@ -1497,7 +1497,11 @@ defmodule HalC2.Acp.ThreadRuntime do
       with :ok <- authenticate(state, driver),
            {:ok, forked} <- fork_first(state, turn),
            {:ok, session_id, state} <- open_session(state, forked) do
-        if session_id != turn.native_thread_id, do: record_session(state, session_id)
+        # A session in place of a lost one is the thread's once it has been handed the
+        # thread (`handed_fresh/2`): until then a new runtime finds the lost one again.
+        if session_id != turn.native_thread_id and not Map.get(state, :fresh_start, false),
+          do: record_session(state, session_id)
+
         Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
 
         {:ok,
@@ -1801,6 +1805,15 @@ defmodule HalC2.Acp.ThreadRuntime do
   # leaves the new session as empty as it found it: the next turn hands it the thread.
   defp unsent_fresh(state, %{fresh_start: true}), do: Map.put(state, :fresh_start, true)
   defp unsent_fresh(state, _turn), do: state
+
+  # The new session holds the thread once this turn's prompt is sent (`prompt/2`), so it
+  # becomes the one the thread resumes.
+  defp handed_fresh(state, %{fresh_start: true}) do
+    record_session(state, state.session_id)
+    state
+  end
+
+  defp handed_fresh(state, _turn), do: state
 
   defp new_session(state, turn) do
     servers = mcp_servers(state, turn)
@@ -4945,7 +4958,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
 
         %{
-          state
+          handed_fresh(state, turn)
           | announce: false,
             announced: if(announce?, do: current, else: state.announced),
             prompt: true,
@@ -4953,9 +4966,9 @@ defmodule HalC2.Acp.ThreadRuntime do
         }
 
       # An attachment changed under the turn since it was checked; the typed
-      # text is not sent without it.
+      # text is not sent without it, nor is the thread a new session was to be handed.
       {:error, message} ->
-        end_turn(state, "failed", message)
+        end_turn(unsent_fresh(state, turn), "failed", message)
     end
   end
 
@@ -4968,7 +4981,8 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     %{
       interaction_mode: Map.get(turn, :interaction_mode) || "default",
-      has_mcp: server != nil,
+      # A server kept to its plugin's tools has nothing of orchestration to announce.
+      has_mcp: server != nil and not Map.has_key?(server, :report),
       capabilities:
         HalC2.Mcp.capabilities(state.thread_id, instance) ||
           HalC2.Mcp.agent_access(state.thread_id),

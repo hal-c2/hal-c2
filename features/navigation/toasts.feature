@@ -4,7 +4,7 @@
 #   https://github.com/pingdotgg/t3code/pull/27832
 #   https://github.com/pingdotgg/t3code/pull/28364
 #   apps/desktop-qt/src/native/ToastController.cpp (timing, dismiss, a failure without a reason)
-#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
+#   packages/qml/HalC2/Bricks/Notifications.qml
 #   apps/desktop-qt/tests/native/features/ToastSteps.cpp
 #   apps/web/src/components/ui/toast.tsx (the five second timeout, the stack, thread-scoped toasts,
 #     expanded on keyboard focus, timers held while HAL-C2 is not in front, long error clamp and copy)

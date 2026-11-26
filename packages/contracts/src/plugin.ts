@@ -55,6 +55,7 @@ export const PluginPermissionId = Schema.Literals([
   "threads:steer",
   "threads:notice",
   "textGeneration",
+  "providers:configure",
 ]);
 export type PluginPermissionId = typeof PluginPermissionId.Type;
 
@@ -68,6 +69,12 @@ const SettingBase = {
   key: NonEmpty,
   label: NonEmpty,
   description: Schema.optionalKey(Schema.String),
+  /**
+   * The setting changes what the MC runs or where a trust boundary lies (a program, an
+   * address credentials go to, who is trusted): a session without `terminal:operate`
+   * cannot change it.
+   */
+  exec: Schema.optionalKey(Schema.Boolean),
 } as const;
 
 const PluginSettingOption = Schema.Struct({
@@ -208,6 +215,11 @@ export const PluginManifest = Schema.Struct({
   screenshots: Schema.optionalKey(Schema.Array(PluginScreenshot)),
   permissions: Schema.optionalKey(Schema.Array(PluginPermissionRequest)),
   settings: Schema.optionalKey(Schema.Array(PluginSettingField)),
+  /**
+   * `plugins.call` methods that, like an `exec` setting, change what the MC runs or where
+   * a trust boundary lies: a session without `terminal:operate` cannot call them.
+   */
+  execCalls: Schema.optionalKey(Schema.Array(NonEmpty)),
   contributes: Schema.optionalKey(PluginContributions),
   /**
    * The plugin's threads never leave the machine they were started on: what it keeps

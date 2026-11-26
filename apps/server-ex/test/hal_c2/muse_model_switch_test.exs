@@ -90,6 +90,31 @@ defmodule HalC2.MuseModelSwitchTest do
     assert reply =~ "remember the walrus"
   end
 
+  # HalC2.AcpModelSwitchPropTest found it in ACP: "Stop session" took the runtime that
+  # still owed the new session the thread, and the next turn resumed that session.
+  test "a lost session is handed the thread after a failed switch and a stopped session",
+       %{fake: fake} do
+    assert {"completed", _} = turn("m1", "fake/one", "remember the walrus")
+
+    File.rm_rf!(Path.join(fake, "sessions"))
+    [{pid, _}] = Registry.lookup(HalC2.Muse.Registry, @tid)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+
+    assert {"failed", ""} = turn("m2", "fake/broken", "try the broken model")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "provider-session.detach",
+        "threadId" => @tid,
+        "providerSessionId" => HalC2.Orchestration.Entities.provider_session_id("muse", @tid)
+      })
+
+    assert {"completed", reply} = turn("m3", "fake/one", "what was it")
+    assert reply =~ "remember the walrus"
+  end
+
   defp turn(id, model, text) do
     {:ok, _} =
       Orchestration.dispatch(%{

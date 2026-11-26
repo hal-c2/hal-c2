@@ -1,14 +1,15 @@
 # Sandboxes for code reviews (OpenShell)
 
-HAL-C2 runs the agent of a code review of an untrusted pull request inside a
-sandbox, so that the code under review cannot reach your files, your credentials or
-the rest of your machine, and with **Sandbox every review** on runs every review in
-one. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+HAL-C2 runs the agent of every code review inside a sandbox, so that the code under
+review cannot reach your files, your credentials or the rest of your machine. Only
+with **Review trusted pull requests on this machine** on do reviews of the pull
+requests HAL-C2 trusts run outside one. The sandboxes come from
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 This page sets up its gateway: the MC installs it at a version HAL-C2 has checked,
 runs it as a service of your own user, and talks to it only over mutual TLS.
 
-> **A review needs the gateway.** On an MC without it, a review of an untrusted
-> pull request fails and says to install it; it never runs on your machine instead.
+> **A review needs the gateway.** On an MC without it, a review fails and says to
+> install it; it never runs on your machine instead.
 > [Code review](code-review.md#reviews-in-a-sandbox) covers what a sandboxed review
 > can reach and how it ends.
 
@@ -20,9 +21,14 @@ runs it as a service of your own user, and talks to it only over mutual TLS.
 | macOS on Apple Silicon                                                     | Docker Desktop 28 or later                    |
 
 Intel Macs are not supported, and neither is an MC running under Rosetta. On Linux,
-start Podman's socket with `systemctl --user enable --now podman.socket`. To use a
-Podman socket somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`;
-`DOCKER_HOST` is not read.
+installing OpenShell starts Podman's socket through your systemd user unit
+`podman.socket` when Podman is installed but its socket is not running, and says so.
+Once the install succeeds it sets the socket to start at login; an install that
+fails stops the socket it started. Uninstalling stops it and turns that off again,
+but only when the install was what turned it on. HAL-C2 never installs Podman or
+Docker itself: without them, the install says what to install. To use a Podman socket
+somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`, and start it yourself before
+installing: the install never starts a socket named there. `DOCKER_HOST` is not read.
 
 The runtime must be able to hold each sandbox to its CPU, memory and process limits:
 cgroup v2, with the `cpu`, `memory` and `pids` controllers delegated to your user. Most
@@ -36,7 +42,16 @@ as root in its VM.
 
 ## Set it up
 
-On the machine that runs the MC:
+**Settings → Review sandboxes**, on any client connected to the MC, installs the
+gateway with **Install**, shows each step as it runs, and then offers **Check**,
+**Rotate certificates** and **Uninstall**; with a gateway you run, **Stop using it**.
+An install on a machine that already has one is an update or a repair. Only a
+device paired with the rights to manage the MC's machine and use its terminal can
+run them; on any other the buttons are off and say what the device lacks. Every
+client connected to the MC sees an operation's progress and outcome, whichever
+started it.
+
+Or, on the machine that runs the MC:
 
 | Task                                  | Command                              |
 | ------------------------------------- | ------------------------------------ |
@@ -63,16 +78,19 @@ Mac, sandboxes reach the gateway through Docker Desktop's own network, so Deskto
 host networking setting does not need to be on.
 
 An update, a rotation or an uninstall waits while this MC has sandboxes running.
-Add `--drain` to delete them first. Only the sandboxes this MC created are touched.
+Add `--drain` to delete them first; Settings asks whether to stop those reviews and
+does the same on a yes. A yes stops only the reviews it asked about: if another
+started in the meantime, Settings asks again. Only the sandboxes this MC created are touched.
 If the gateway is running but cannot say which sandboxes it holds
-(`sandboxes-unknown`), they wait too; `--force` goes ahead anyway and ends any that
-run. If the gateway's service does not stop (`gateway-stop-failed`), or its files
+(`sandboxes-unknown`), they wait too; `--force`, or a yes in Settings, goes ahead
+anyway and ends any that run. If the gateway's service does not stop (`gateway-stop-failed`), or its files
 cannot be backed up first (`backup-failed`), nothing is changed and the service
 keeps running.
 
-One OpenShell command runs at a time on an MC. Another `install`, `rotate`,
-`reuse`, `uninstall` or `check` started meanwhile stops at once (`busy`) and
-changes nothing; run it again once the first finishes. `status` always answers.
+One OpenShell command runs at a time on an MC, from Settings or the command line.
+Another `install`, `rotate`, `reuse`, `uninstall` or `check` started meanwhile stops
+at once (`busy`) and changes nothing; run it again once the first finishes. `status`
+always answers.
 
 A gateway started with `mise run openshell` must be stopped before you update,
 rotate or uninstall it (`gateway-running`). After a rotation, start it again to use
@@ -138,8 +156,18 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 ## When status reports a problem
 
 `status` prints a code with each problem and what to do about it. **Settings →
-Review sandboxes**, on any client connected to the MC, shows the same answer, so you
-can see whether reviews can run in a sandbox there without a shell on its machine.
+Review sandboxes**, on any client connected to the MC, shows the same answer, with
+the Settings action that fixes it, so you can see whether reviews can run in a
+sandbox there, and set it up, without a shell on its machine. In Settings, press
+**Install** (or **Update**, or **Repair**, whichever it offers) wherever the table
+says to run `install`.
+
+Settings cannot set up the machine itself. A missing or wrong container runtime,
+an old system, or a cgroup setup is fixed on the MC's machine: install Podman 5 or
+later with its package manager (Docker Desktop 28 or later on a Mac), or update the
+system, then press **Install** in Settings. On Linux it starts Podman's socket for
+you through systemd's `podman.socket` unit. A socket you named in
+`HAL_C2_OPENSHELL_DOCKER_SOCKET` it leaves alone: start that one yourself.
 
 | Code                                                                                                                                          | What to do                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |

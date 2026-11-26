@@ -114,6 +114,8 @@ ColumnLayout {
         // narrow-window rail.
         density: "full"
         touchRows: true
+        // The hint below says where projects come from instead.
+        offersAddProject: false
 
         // Projects are added where their folders are.
         Label {

@@ -203,7 +203,7 @@ Feature: Organizing threads in the engine
     When a client settles "t1"
     Then thread "t1" is settled by override
 
-  @backlog @mc
+  @mc
   Scenario: Settling a settled thread again changes nothing
     Given thread "t1" is settled
     When a client settles "t1" again
@@ -226,14 +226,14 @@ Feature: Organizing threads in the engine
 
   # Upstream #14887: every snooze is stamped afresh, even to the same wake time; only a retried
   # command is applied once.
-  @backlog @mc
+  @mc
   Scenario: Snoozing again to the wake time a thread already has stamps the snooze afresh
     Given thread "t1" is snoozed until tomorrow 09:00
     When a client snoozes "t1" until tomorrow 09:00 again
     Then thread "t1" gets a new snoozed-at time
     And a retry of that same snooze command is applied once
 
-  @backlog @mc
+  @mc
   Scenario: Manual settling dismisses a question the provider is not waiting on
     Given thread "t1" waits only for an answer to a question the provider does not block on
     When a client settles "t1"

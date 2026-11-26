@@ -1,0 +1,3 @@
+[submodule "plugins/office/ljos-play"]
+	path = plugins/office/ljos-play
+	url = https://github.com/hal-c2/ljos-play.git

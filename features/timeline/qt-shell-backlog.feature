@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/parity/features.backlog.test.ts (thread-notifications)
-#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
+#   packages/qml/HalC2/Bricks/Notifications.qml
 #   docs/internals/desktop-qt.md (native notification presenter)
 #   apps/desktop/src/ipc/methods/notificationBadge.ts (badge cleared in front and at quit, Windows description)
 

@@ -5,8 +5,8 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header and context strip from the MC)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the thread and project rows it reads)
 #   apps/desktop-qt/src/native/DraftController.cpp (the draft a window with no thread lands on)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (the header: title, rename, editor, actions)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (the context strip: checkout, machine, branch)
+#   packages/qml/HalC2/Bricks/Workspace.qml (the header: title, rename, editor, actions)
+#   packages/qml/HalC2/Bricks/Composer.qml (the context strip: checkout, machine, branch)
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/web/src/components/BranchToolbar.logic.ts (mode, branch and machine rules)
 #   apps/desktop-qt/src/ShellBridge.cpp (openExternal: the system browser)

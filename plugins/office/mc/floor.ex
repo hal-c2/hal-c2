@@ -6,8 +6,8 @@ defmodule HalC2Plugins.Office.Floor do
   for those that changed since) and the turn events the plugin hears (`observe/3`), and
   `view/2` is the `office` topic:
 
-      %{"people" => [%{"id", "title", "projectId", "project", "parentId", "provider",
-                       "model", "state", "activity", "question", "since"}],
+      %{"people" => [%{"id", "title", "projectId", "project", "parentId", "kind",
+                       "provider", "model", "state", "activity", "question", "since"}],
         "talks" => [%{"id", "from", "to", "kind", "text", "at"}]}
 
   A thread is in the office while it works, waits or asks, or was idle less than
@@ -15,23 +15,31 @@ defmodule HalC2Plugins.Office.Floor do
   machine. A worker is in it only while the thread it was delegated from is, unless it
   works or waits itself: a parent's row that changes changes its workers too.
   A person's `state` comes from its row alone (`state_of/1`); its `activity` from the
-  last tool call heard in the turn under way, shown only while it is working. Talks are
-  kept newest last, the newest #{40}, each only while under ten minutes old: `view/2`
-  shows those, and `expire/2` and every talk added drop the rest.
+  last tool call heard in the turn under way, shown only while it is working. Its `kind`
+  is `"reviewer"` for a thread the code-review plugin started to review a pull request,
+  and for the workers it delegated to however deep, so they sit together; nil for
+  everyone else. Talks are
+  kept newest last, the newest #{40}, each only while current, thirty seconds: `view/2`
+  shows those, and `expire/2` and every talk added drop the rest. One whose text was
+  not heard shows as `…`.
   Times are milliseconds since the epoch; the topic carries them as ISO 8601.
   """
 
   @live ~w(queued preparing starting running)
   @live_activity ~w(preparing starting running)
   @kept_talks 40
-  @talk_ms 600_000
+  # How long a talk is what is happening now. A hand-off is one only while its worker is
+  # this new too, whether the call or the worker's row says it: a row first seen later is
+  # of a worker from another machine, say, and a call heard later waited for its worker.
+  @talk_ms 30_000
   # `idleHours` above this is refused: a year, whose milliseconds stay a small integer.
   @max_idle_hours 8_760
   @text_chars 120
-  # A worker whose row first shows up this long after it was created was not just
-  # delegated to: it came back from another machine, say.
-  @born_ms 120_000
+  # What a talk says when its text was not heard: never an empty speech bubble.
+  @unheard "…"
   @ranks %{"asking" => 0, "working" => 1, "waiting" => 2, "idle" => 3, "failed" => 3}
+  # The plugin marks (`HalC2.Plugins.Host.launch_thread/4`) of review threads.
+  @reviews [{"code-review", "review"}]
 
   defstruct rows: %{},
             states: %{},
@@ -117,17 +125,27 @@ defmodule HalC2Plugins.Office.Floor do
 
   defp put_row(floor, _row, _now, _changed?), do: floor
 
-  # Whether a delegate talk to `id` is already kept: a row changes many times. A row is
-  # new for two minutes (`born?/2`), well inside a talk's ten, so a talk dropped as too
-  # old is never said again.
+  # Whether a delegate talk to `id` is already kept. A worker is made before its
+  # hand-off is said, and is new (`born?/2`) no longer than a talk is kept: so a talk
+  # dropped as too old is never said again.
   defp seen?(floor, id), do: Enum.any?(floor.talks, &(&1["id"] == "delegate:" <> id))
 
   defp born?(row, now) do
     case ms(row["createdAt"]) do
       nil -> false
-      at -> now - at <= @born_ms
+      at -> now - at < @talk_ms
     end
   end
+
+  # Whether a talk heard is of something long done: a hand-off to a worker no longer new.
+  defp over?(floor, %{"kind" => "delegate", "to" => child}, now) do
+    case floor.rows[child] do
+      %{"createdAt" => created} = row when is_binary(created) -> not born?(row, now)
+      _ -> false
+    end
+  end
+
+  defp over?(_floor, _talk, _now), do: false
 
   defp forget(floor, id) do
     %{
@@ -199,6 +217,21 @@ defmodule HalC2Plugins.Office.Floor do
 
   defp parent_of(_row), do: nil
 
+  defp kind(floor, row), do: if(reviewer?(floor, row, []), do: "reviewer")
+
+  # A review thread, or a worker of one: its parents are walked through every row of
+  # this MC's, so a worker whose reviewer is not in the office still sits as one. A
+  # lineage that loops ends where it began.
+  defp reviewer?(floor, %{"id" => id} = row, seen) do
+    review?(row["plugin"]) or
+      (id not in seen and reviewer?(floor, floor.rows[parent_of(row)], [id | seen]))
+  end
+
+  defp reviewer?(_floor, _row, _seen), do: false
+
+  defp review?(%{"id" => plugin, "kind" => kind}), do: {plugin, kind} in @reviews
+  defp review?(_mark), do: false
+
   @doc "A turn event the plugin heard (`HalC2.Plugins.Extension`'s `observe/2`)."
   def observe(floor, %{"type" => "turn.started", "threadId" => id} = event, _now)
       when is_binary(id) do
@@ -225,7 +258,7 @@ defmodule HalC2Plugins.Office.Floor do
 
     case talk(event, now) do
       nil -> floor
-      talk -> add_talk(floor, now, talk)
+      talk -> if over?(floor, talk, now), do: floor, else: add_talk(floor, now, talk)
     end
   end
 
@@ -262,9 +295,14 @@ defmodule HalC2Plugins.Office.Floor do
   defp driver(floor, _id, _provider), do: floor
 
   # A talk an item is: a task delegated with `delegate_task`, a message sent with
-  # `hal_c2_thread_send`, once the call completed.
+  # `hal_c2_thread_send`, once the call completed. Only the last 4,000 characters of an
+  # input and of a result are heard (`HalC2.Orchestration.TurnWriter.observed_item/1`),
+  # and a longer one is no JSON. Whom and what a long input was about are then read from
+  # the result, when that was short enough to be heard whole; a hand-off with both long
+  # relies on the talk of its worker's row.
   defp talk(%{"status" => "completed", "threadId" => from} = event, now) do
     input = decoded(event["input"])
+    result = decoded(event["output"])
 
     case tool(event["tool"]) do
       "delegate_task" ->
@@ -274,13 +312,13 @@ defmodule HalC2Plugins.Office.Floor do
             "from" => from,
             "to" => child,
             "kind" => "delegate",
-            "text" => line(input["title"]) || line(input["task"]),
+            "text" => line(input["title"]) || line(result["title"]) || line(input["task"]),
             "at" => iso(now)
           }
         end
 
       "hal_c2_thread_send" ->
-        with to when is_binary(to) and to != "" <- input["threadId"] do
+        with to when is_binary(to) and to != "" <- input["threadId"] || result["threadId"] do
           %{
             "id" => "message:#{from}:#{event["itemId"] || event["ordinal"]}",
             "from" => from,
@@ -407,7 +445,7 @@ defmodule HalC2Plugins.Office.Floor do
     %{floor | talks: talks}
   end
 
-  @doc "The office without the talks ten minutes old at `now`: their text is not kept."
+  @doc "The office without the talks no longer current at `now`: their text is not kept."
   def expire(floor, now), do: %{floor | talks: Enum.filter(floor.talks, &recent?(&1, now))}
 
   defp recent?(talk, now), do: (ms(talk["at"]) || 0) > now - @talk_ms
@@ -425,7 +463,10 @@ defmodule HalC2Plugins.Office.Floor do
       |> Enum.take(floor.max_people)
       |> Enum.map(fn {row, state} -> person(floor, row, state) end)
 
-    talks = Enum.filter(floor.talks, &recent?(&1, now))
+    talks =
+      for talk <- floor.talks,
+          recent?(talk, now),
+          do: %{talk | "text" => talk["text"] || @unheard}
 
     %{"people" => people, "talks" => talks}
   end
@@ -481,6 +522,7 @@ defmodule HalC2Plugins.Office.Floor do
       "projectId" => row["projectId"],
       "project" => row["projectTitle"],
       "parentId" => parent_of(row),
+      "kind" => kind(floor, row),
       "provider" => floor.drivers[id] || row["providerInstanceId"],
       "model" => get_in(row, ["modelSelection", "model"]),
       "state" => state,

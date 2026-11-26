@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#MISE description="Build desktop-ljos (release:desktop-ljos) and install it for this user beside the Qt desktop: on Linux as `hal-c2-ljos` (~/.local/lib/hal-c2-ljos) with a launcher entry, on macOS as ~/Applications/HAL-C2 Ljós.app"
+#MISE dir="{{config_root}}"
+#MISE depends=["release:desktop-ljos"]
+set -euo pipefail
+# shellcheck source=scripts/lib/replace-install.sh
+source scripts/lib/replace-install.sh
+
+read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
+# release:desktop-ljos's output, named for this platform as it names it.
+arch="$(uname -m)"
+arch="${arch/x86_64/x64}"
+arch="${arch/aarch64/arm64}"
+os="$(uname -s)"
+out="release/hal-c2-ljos-$version-$(printf %s "$os" | tr "[:upper:]" "[:lower:]")-$arch" # macOS ships bash 3: no ${os,,}
+[[ -n $version && -d $out ]] || { echo "release:install:desktop-ljos: no $out to install" >&2; exit 1; }
+
+# As desktop-qt, it finds the service's MC (release:install:mc) by itself, and
+# starts the one it carries when there is none.
+if [[ $os == Darwin ]]; then
+  app="$HOME/Applications/HAL-C2 Ljós.app"
+  mkdir -p "$HOME/Applications"
+  # Copied beside its place and moved in, so the app is never half there.
+  staged_install "$app"
+  ditto "$out/HAL-C2 Ljós.app" "$staging/HAL-C2 Ljós.app"
+  swap_install "$staging/HAL-C2 Ljós.app"
+  echo "$app"
+  exit 0
+fi
+
+# A directory, not one file: the binary reads its host, Node and CEF from beside it.
+lib="$HOME/.local/lib/hal-c2-ljos"
+data="${XDG_DATA_HOME:-$HOME/.local/share}"
+bin="$HOME/.local/bin/hal-c2-ljos"
+icons="$data/icons/hicolor/1024x1024/apps"
+mkdir -p "$HOME/.local/lib" "$HOME/.local/bin" "$data/applications" "$icons"
+# Copied beside its place and moved in. A running window keeps the files it opened.
+staged_install "$lib"
+mkdir "$staging/new"
+cp -R "$out/." "$staging/new/"
+chmod 755 "$staging/new"
+swap_install "$staging/new"
+# A link, which the binary resolves to find what lies beside it.
+ln -sfn "$lib/bin/hal-c2-ljos" "$bin"
+cp assets/prod/black-universal-1024.png "$icons/hal-c2-ljos.png"
+# Named after the release's app id (hal-c2-ljos, src/main.rs's APP_ID), so the
+# compositor matches its windows to this entry and not desktop-qt's hal-c2.
+# Quoted and escaped as a desktop entry's Exec wants (a space in HOME splits it otherwise):
+# \ " ` $ take a backslash inside the quotes, the file doubles every backslash, % is %%.
+exec="\"$(printf '%s' "$bin" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g')\""
+cat >"$data/applications/hal-c2-ljos.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=HAL-C2 Ljós
+Exec=$exec
+Icon=hal-c2-ljos
+Categories=Development;
+StartupWMClass=hal-c2-ljos
+DESKTOP
+echo "$bin"

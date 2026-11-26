@@ -35,4 +35,55 @@ defmodule HalC2.GitTest do
     assert byte_size(err) <= max
     assert String.ends_with?(err, "without `workflow` scope\n")
   end
+
+  test "a variable named in unset is not in git's environment", %{tmp_dir: dir} do
+    vars = ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+    previous = Map.new(vars, &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      for {var, value} <- previous,
+          do: if(value, do: System.put_env(var, value), else: System.delete_env(var))
+    end)
+
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "hal.probe",
+      "GIT_CONFIG_VALUE_0" => "seen"
+    })
+
+    args = ["config", "--get", "hal.probe"]
+    assert {:ok, %{status: 0, out: "seen\n"}} = HalC2.Git.run(dir, args)
+    assert {:ok, %{status: 1}} = HalC2.Git.run(dir, args, unset: ["GIT_CONFIG_COUNT"])
+  end
+
+  # #1774: a port leaves out a variable set to "", and git refuses the key without it.
+  test "a variable set to an empty value reaches git, and the last value of a name wins",
+       %{tmp_dir: dir} do
+    env = [
+      {"GIT_CONFIG_COUNT", "2"},
+      {"GIT_CONFIG_KEY_0", "hal.probe"},
+      {"GIT_CONFIG_VALUE_0", ""},
+      {"GIT_CONFIG_KEY_1", "hal.probe"},
+      {"GIT_CONFIG_VALUE_1", ""},
+      {"GIT_CONFIG_VALUE_1", "seen"}
+    ]
+
+    assert {:ok, %{status: 0, out: "\nseen\n"}} =
+             HalC2.Git.run(dir, ["config", "--get-all", "hal.probe"], env: env)
+  end
+
+  test "a variable both unset and set to an empty value stays unset", %{tmp_dir: dir} do
+    env = [
+      {"GIT_CONFIG_COUNT", "1"},
+      {"GIT_CONFIG_KEY_0", "hal.probe"},
+      {"GIT_CONFIG_VALUE_0", ""}
+    ]
+
+    args = ["config", "--get", "hal.probe"]
+    assert {:ok, %{status: 0, out: "\n"}} = HalC2.Git.run(dir, args, env: env)
+
+    # Unset, the value is missing and git refuses the key.
+    assert {:ok, %{status: 128}} =
+             HalC2.Git.run(dir, args, env: env, unset: ["GIT_CONFIG_VALUE_0"])
+  end
 end

@@ -127,6 +127,10 @@ export const PullRequestActor = Schema.Struct({
   name: Schema.NullOr(Schema.String),
   /** Null where a host does not report one, which is what the initials fall back to. */
   avatarUrl: Schema.NullOr(Schema.String),
+  /** On a review comment: present when the host says the account is a person's. */
+  isUser: Schema.optional(Schema.Boolean),
+  /** On a review comment: its author's standing in the repository, such as MEMBER. */
+  association: Schema.optional(Schema.String),
 });
 export type PullRequestActor = typeof PullRequestActor.Type;
 

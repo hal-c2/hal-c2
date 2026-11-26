@@ -31,7 +31,7 @@ set(hal_c2_mobile_qml_files
     TerminalScreen.qml
     ThreadScreen.qml
 )
-include("${HAL_C2_DESKTOP_DIR}/cmake/QmldirCheck.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../packages/qml/cmake/QmldirCheck.cmake")
 hal_c2_check_qmldir(${hal_c2_mobile_qml_files} qmldir)
 qt_add_qml_module(hal_c2_mobile
   URI HalC2.Mobile

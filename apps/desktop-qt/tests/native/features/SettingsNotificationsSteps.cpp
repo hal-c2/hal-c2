@@ -152,6 +152,10 @@ const Steps steps([] {
     const AlertsSeen seen = alertsSeen(world);
     expect(seen.sounds == QStringList{QStringLiteral("completion")} && seen.shown.isEmpty(), describe(world));
   });
+  step(QStringLiteral("the input sound plays"), [](World& world, const Captures&, const Table&) {
+    const AlertsSeen seen = alertsSeen(world);
+    expect(!seen.sounds.isEmpty() && seen.sounds.last() == QLatin1String("input") && seen.shown.isEmpty(), describe(world));
+  });
   step(QStringLiteral("a system notification is shown and the sound plays"), [](World& world, const Captures&, const Table&) {
     const AlertsSeen seen = alertsSeen(world);
     expect(seen.shown.size() == 1 && seen.sounds == QStringList{QStringLiteral("completion")}, describe(world));

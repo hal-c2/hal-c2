@@ -1499,7 +1499,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   # A shell line that makes the fake report the latest version from now on.
   defp upgrades(dir),
     do:
-      ~s|python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; json.dump(c,open(p,"w"))' '#{Path.join(dir, "config.json")}'|
+      ~s|python3 -c 'import json,os,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; f=open(p+".new","w"); json.dump(c,f); f.close(); os.replace(p+".new",p)' '#{Path.join(dir, "config.json")}'|
 
   # OpenCode's own installer keeps it in `~/.opencode/bin`, and `opencode upgrade`
   # updates it in place.
@@ -3669,8 +3669,13 @@ defmodule HalC2.Steps.Providers.Opencode do
         })
       end)
 
-    # The interrupt is on its way; only now may the session finish opening,
-    # so the runtime meets the stop before it could send the prompt.
+    # Only once the stop is recorded may the session finish opening.
+    World.await_stream(World.thread_id(context, @thread), fn state ->
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "run_interrupt_request"))
+    end)
+
     File.write!(Path.join(FakeAcp.fake(context).dir, "open-session"), "")
     Task.await(context.send_task, 10_000)
     Task.await(stop, 10_000)

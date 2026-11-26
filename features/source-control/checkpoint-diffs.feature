@@ -16,7 +16,7 @@
 #   apps/tui/src/connection.ts (getTurnDiff, getFullThreadDiff)
 #   apps/desktop-qt/src/native/ThreadDiff.cpp (turn picker, loading, retry)
 #   apps/desktop-qt/src/native/DiffModel.cpp (collapsed large files, split view)
-#   apps/desktop-qt/qml/HalC2/Bricks/DiffPanel.qml
+#   packages/qml/HalC2/Bricks/DiffPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
 @priority-high

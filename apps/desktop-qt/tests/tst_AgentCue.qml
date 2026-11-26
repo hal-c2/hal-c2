@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // What the user sees of an agent in a browser tab (AgentCue.qml): a badge
 // while it acts, its pointer at the page point it acted on, and a click's

@@ -153,6 +153,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/pull-request-threads.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
     QStringLiteral("timeline/approvals-and-questions.feature"),
+    QStringLiteral("providers/claude.feature:A Claude monitor shows as background work, not as a command"),
+    QStringLiteral("providers/claude.feature:A Claude monitor stays listed while the next turn runs"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

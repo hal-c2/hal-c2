@@ -171,10 +171,14 @@ defmodule HalC2.Prop do
     receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
-  @doc "Stops the service `id` and starts it again, as a crash or an upgrade would."
-  def restart_service(id) do
+  @doc """
+  Stops the service `id` and starts it again, as a crash or an upgrade would, running
+  `between` while it is down.
+  """
+  def restart_service(id, between \\ fn -> :ok end) do
     sup = Process.get({__MODULE__, :services})
     :ok = Supervisor.terminate_child(sup, id)
+    between.()
     {:ok, _} = Supervisor.restart_child(sup, id)
     :ok
   end
@@ -207,8 +211,8 @@ defmodule HalC2.Prop do
     Commands:
     #{inspect(cmds, pretty: true, limit: :infinity)}
 
-    History (model state and result after each step):
-    #{inspect(Enum.zip(cmds, history), pretty: true, limit: :infinity)}
+    History (each command with the model state before it and its result):
+    #{inspect(Enum.zip(runnable(cmds), history), pretty: true, limit: :infinity)}
 
     Final model state:
     #{inspect(state, pretty: true, limit: :infinity)}
@@ -216,4 +220,10 @@ defmodule HalC2.Prop do
     Result: #{inspect(result, pretty: true)}
     """
   end
+
+  # The commands a history entry each stands for: `commands/2` puts an
+  # `{:init, state}` first, which `run_commands/2` consumes to seed the model
+  # rather than runs, so it has no entry; `commands/1` has none to drop.
+  defp runnable([{:init, _state} | cmds]), do: cmds
+  defp runnable(cmds), do: cmds
 end

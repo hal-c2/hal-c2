@@ -112,6 +112,35 @@ fn a_send_dispatches_its_message_and_empties_the_draft() {
     assert!(toasts(&hub).is_empty());
 }
 
+// An access pick shows at once, while the MC has yet to answer it: the
+// composer published before the pick was on its way and showed the old one.
+#[test]
+fn an_access_pick_shows_while_its_answer_is_on_its_way() {
+    let hub = on_threads(&["t1"]);
+    assert_eq!(hub.published("composer")["runtimeMode"], "full-access");
+    hub.dispatch(
+        "composer.runtimeMode.set",
+        json!({"mode": "approval-required"}),
+    );
+    assert_eq!(
+        hub.published("composer")["runtimeMode"],
+        "approval-required"
+    );
+    let sent = commands(&hub);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["type"], "thread.runtime-mode.set");
+    // Accepted at a version the shell has yet to reach: the pick still shows.
+    hub.mc.answer(
+        &hub.engine,
+        DISPATCH,
+        Ok(json!({"shell": {"mc": "a", "epoch": "e", "rev": 2}})),
+    );
+    assert_eq!(
+        hub.published("composer")["runtimeMode"],
+        "approval-required"
+    );
+}
+
 #[test]
 fn a_blank_prompt_sends_nothing() {
     let hub = on_threads(&["t1"]);

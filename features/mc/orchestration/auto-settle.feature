@@ -38,7 +38,7 @@ Feature: Threads settle on their own
     Then thread "t1" is not settled
 
   # Upstream #15783: an empty thread settles from its creation time
-  @backlog @mc
+  @mc
   Scenario: A thread nobody ever wrote in settles from when it was made
     Given thread "t1" was made 4 days ago and has no message or run
     When the MC sweeps for threads to settle
@@ -159,7 +159,7 @@ Feature: Threads settle on their own
     Then thread "t1" is settled
 
   # Upstream #17789: interrupted runs woke a snoozed thread for settling.
-  @backlog @mc
+  @mc
   Scenario: An interrupted run does not wake a snoozed thread for settling
     Given thread "t1" was snoozed and a run was interrupted after the snooze
     And its linked pull request merged after that

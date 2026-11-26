@@ -158,12 +158,14 @@ defmodule HalC2.Steps.Plugins.Office do
 
   step ~r/^the user (?<how>unarchives|unsettles) "(?<title>[^"]+)"$/,
        %{args: [how, title]} = context do
-    patch =
-      if how == "unarchives",
-        do: %{"archivedAt" => nil},
-        else: %{"settledOverride" => "active"}
-
-    World.patch_thread(context, title, patch)
+    if how == "unarchives" do
+      World.patch_thread(context, title, %{"archivedAt" => nil})
+    else
+      id = World.thread_id(context, title)
+      {{:ok, _}, _} = World.dispatch(context, %{"type" => "thread.unsettle", "threadId" => id})
+      World.await_row(id, &(&1["settledOverride"] == "active"))
+      context
+    end
   end
 
   step "a thread {string} moved to another machine", %{args: [title]} = context do
@@ -172,6 +174,16 @@ defmodule HalC2.Steps.Plugins.Office do
     |> World.patch_thread(title, %{
       "movedTo" => %{"mc" => "hal-c2@elsewhere", "label" => "Elsewhere", "at" => now()}
     })
+  end
+
+  # Marked as `HalC2.Plugins.Host.launch_thread/4` marks a thread a plugin started.
+  step "a review thread {string} the code-review plugin started", %{args: [title]} = context do
+    started(context, title, "code-review", "review")
+  end
+
+  step "a thread {string} the issue-tracker plugin started to implement an issue",
+       %{args: [title]} = context do
+    started(context, title, "issue-tracker", "implement")
   end
 
   step "a thread {string} with a worker {string}", %{args: [lead, worker]} = context do
@@ -322,6 +334,25 @@ defmodule HalC2.Steps.Plugins.Office do
     |> send_message(from, to, text)
   end
 
+  step ~r/^the agent of "([^"]+)" sends "([^"]+)" a message of 5,000 characters$/,
+       %{args: [from, to]} = context do
+    thread = World.thread_id(context, to)
+
+    # Plugins hear each one's last 4,000 characters, so all of a send's short result.
+    heard =
+      HalC2.Orchestration.TurnWriter.observed_item(%{
+        "input" => %{"threadId" => thread, "message" => String.duplicate("x", 5_000)},
+        "output" => %{"threadId" => thread, "status" => "sent"}
+      })
+
+    fields =
+      "mcp__hal-c2__hal_c2_thread_send"
+      |> call(%{})
+      |> Map.merge(Map.take(heard, ["input", "output"]))
+
+    context |> start_turn(from) |> item(from, fields)
+  end
+
   step "its agent sends the worker {int} messages", %{args: [n]} = context do
     context = start_turn(context, context.lead)
 
@@ -345,9 +376,9 @@ defmodule HalC2.Steps.Plugins.Office do
     })
   end
 
-  # Every talk said ten minutes earlier, and the timer the plugin set for the first
+  # Every talk said thirty seconds earlier, and the timer the plugin set for the first
   # to grow too old fired: nothing else happens to make it look again.
-  step "ten minutes pass with nothing else said or done", context do
+  step "thirty seconds pass with nothing else said or done", context do
     office = Process.whereis(HalC2Plugins.Office)
     test = self()
 
@@ -357,7 +388,7 @@ defmodule HalC2.Steps.Plugins.Office do
       %{state | floor: %{state.floor | talks: talks}}
     end)
 
-    assert_received {:expire_in, ms} when is_integer(ms) and ms <= 600_001
+    assert_received {:expire_in, ms} when is_integer(ms) and ms <= 30_001
     send(office, :expire)
     context
   end
@@ -400,6 +431,14 @@ defmodule HalC2.Steps.Plugins.Office do
        %{args: [worker, lead]} = context do
     parent = World.thread_id(context, lead)
     await_person(context, worker, &(&1["parentId"] == parent))
+  end
+
+  step "the office has {string} as a reviewer", %{args: [title]} = context do
+    await_person(context, title, &(&1["kind"] == "reviewer"))
+  end
+
+  step "the office has {string}, not as a reviewer", %{args: [title]} = context do
+    await_person(context, title, &(Map.fetch(&1, "kind") == {:ok, nil}))
   end
 
   step "the office has {string} and none of the others", %{args: [title]} = context do
@@ -460,6 +499,23 @@ defmodule HalC2.Steps.Plugins.Office do
   # Makes a thread and waits until it is in the office.
   defp thread(context, title, project \\ @project) do
     context = World.create_thread(context, title, project)
+    {_, context} = await_topic(context, &person(&1, title))
+    Map.put(context, :thread, title)
+  end
+
+  # A thread a plugin started. It takes its title with the mark, so the office that has
+  # it by that title has heard the mark too.
+  defp started(context, title, plugin, kind) do
+    context =
+      context
+      |> World.create_thread(title, @project, %{"title" => "Starting"})
+      |> World.patch_thread(title, %{
+        "title" => title,
+        "plugin" => %{"id" => plugin, "kind" => kind, "listed" => true},
+        "createdBy" => "system",
+        "creationSource" => "server"
+      })
+
     {_, context} = await_topic(context, &person(&1, title))
     Map.put(context, :thread, title)
   end
@@ -605,7 +661,7 @@ defmodule HalC2.Steps.Plugins.Office do
 
   defp earlier(iso) do
     {:ok, at, _} = DateTime.from_iso8601(iso)
-    at |> DateTime.add(-600_000, :millisecond) |> DateTime.to_iso8601()
+    at |> DateTime.add(-30_000, :millisecond) |> DateTime.to_iso8601()
   end
 
   defp save(context, patch) do

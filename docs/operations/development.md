@@ -34,7 +34,9 @@ mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle, stamped with apps/server-ex/VERSION (HAL_C2_MC_VERSION wins); tui depends on it
 mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
 mise run release:macos     # the MC and the zipped desktop app in release/
-mise run release:install   # build and install: the MC as this user's background service, the desktop as a launcher entry or in ~/Applications
+mise run release:desktop-ljos  # the MC and the Ljós desktop, laid out as installed, in release/
+mise run release:install   # build and install: the MC as this user's background service, both desktops as launcher entries or in ~/Applications
+mise run release:install:mc    # one of them: also release:install:desktop-qt, release:install:desktop-ljos
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
@@ -68,7 +70,7 @@ at-spi2-core and `cua-driver` on the `PATH`. Everything else is scratch: a headl
 bus and AT-SPI registry, and an MC and app home under `.hal-c2/cua` (or `HAL_C2_CUA_HOME`).
 `--seed <hal-c2.sqlite>` snapshots a database into that MC read-only, so a copy of the dev MC's
 works. `--url <pairing link>` attaches to another MC instead. Arguments it does not know go to
-`hal-c2-qt`, such as `--qml-dir apps/desktop-qt/qml`. Running it again relaunches the app.
+`hal-c2-qt`, such as `--qml-dir packages/qml`. Running it again relaunches the app.
 
 ```sh
 mise run desktop:cua --seed ~/.local/share/hal-c2-dev/elixir/hal-c2.sqlite
@@ -147,8 +149,9 @@ fixtures. Runtime-discovered entrypoints and dependency exceptions belong in
 
 ## Desktop artifacts
 
-`mise run release:linux` and `release:macos` build the desktop into `release/` beside the MC
+`mise run release:linux`, `release:macos` and `release:desktop-ljos` build the desktops into `release/` beside the MC
 ([release](./release.md#building-one-locally)). They are unsigned: the AppImage tooling
 (linuxdeploy and its Qt plugin) is downloaded on first use, and the macOS app is signed ad hoc.
 Qt, cmake and the other build dependencies are those of `mise run desktop`
-([desktop README](../../apps/desktop-qt/README.md)).
+([desktop README](../../apps/desktop-qt/README.md)), and the Ljós desktop's those of
+`mise run desktop-ljos` ([its README](../../apps/desktop-ljos/README.md)).

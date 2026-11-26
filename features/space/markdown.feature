@@ -23,7 +23,7 @@
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
 #     SpaceCalloutAlert)
-#   apps/desktop-qt/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
+#   packages/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
 #   apps/mobile-qt/qml/HalC2/Mobile/SpaceBlockRow.qml (a page's diagram on the phone)
 
 Feature: GitHub Markdown in a page
@@ -1346,7 +1346,7 @@ Feature: GitHub Markdown in a page
       Then the exported Markdown is "# Plan\n\n```latex\nx^2\n```\n"
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog @priority-low
+    @shared @backlog-desktop @backlog-mobile @priority-low
     Scenario Outline: Math is shown as math
       Given a page holding <math>
       When the user opens the page

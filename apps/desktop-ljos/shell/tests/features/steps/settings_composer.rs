@@ -1,5 +1,5 @@
 //! What General's composer rows change in the composer on screen
-//! (qml/HalC2/Bricks/Composer.qml, features/settings/general.feature): skills
+//! (packages/qml/HalC2/Bricks/Composer.qml, features/settings/general.feature): skills
 //! in the slash menu, Markdown drawn as it reads, and resting on scroll.
 //! desktop-qt's SettingsComposerSteps.cpp.
 

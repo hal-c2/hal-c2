@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Comments on a pull request why its merge queue run failed: the jobs that failed or timed
-# out, and from each job's log the failed tests (ExUnit's numbered failures), or else the
-# log's last lines before the step failed. The queue itself only says the PR left it.
+# out, or `CI result` when only it did, and from each job's log the failed tests (ExUnit's
+# numbered failures), or else the log's last lines before the step failed. The queue itself
+# only says the PR left it.
 #
 # Usage: merge-queue-report.sh <run id> <run attempt> <queue branch>
 #   (GH_TOKEN, GITHUB_REPOSITORY; DRY_RUN=1 prints the comment instead of posting it)
@@ -21,38 +22,56 @@ fi
 
 sha=$(gh api "repos/$repo/actions/runs/$run" --jq .head_sha)
 
-# A group rebuilt because a PR ahead left the queue: its old run may fail or be cancelled
-# while this PR waits on in a newer group, so the run is not this PR's to report.
-queued=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -f query='
-  query($owner: String!, $name: String!) {
+# A run that is not this PR's answer: its group was rebuilt because a PR ahead left the
+# queue, so the PR waits on in a newer one, or a later entry's run passed it first
+# (merge-queue-stamp.sh), so it is mergeable or merged.
+moot=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -F number="$number" -f query='
+  query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) { mergeCommit { oid } }
       mergeQueue(branch: "main") {
-        entries(first: 100) { nodes { headCommit { oid } pullRequest { number } } }
+        entries(first: 100) { nodes { state headCommit { oid } pullRequest { number } } }
       }
     }
-  }' --jq ".data.repository.mergeQueue.entries.nodes[]
-           | select(.pullRequest.number == $number and .headCommit.oid != \"$sha\") | .headCommit.oid")
-if [ -n "$queued" ]; then
-  echo "#$number is still queued as $queued; run $run belonged to an older group"
+  }' --jq ".data.repository
+           | if .pullRequest.mergeCommit.oid == \"$sha\" then \"merged as that commit\"
+             else .mergeQueue.entries.nodes[] | select(.pullRequest.number == $number)
+               | if .headCommit.oid != \"$sha\" then \"is still queued as \(.headCommit.oid)\"
+                 elif .state == \"MERGEABLE\" then \"passed with a later entry's run\"
+                 else empty end
+             end")
+if [ -n "$moot" ]; then
+  echo "#$number $moot; run $run is not its answer"
   exit 0
 fi
 
+listing=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
+
 # A run whose CI result never finished is a wedge, which the watchdog drops and explains.
-result=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=CI%20result" \
-  --jq '[.check_runs[].status] | if length == 0 then "missing" else (sort | last) end')
+# This run's own: a promoted run's commit may hold the parked run's too. The listing shows
+# a stamp in the run's suite (merge-queue-stamp.sh) as a job of that name too: the latest.
+own=$(jq -c '[.jobs[] | select(.name == "CI result")] | max_by(.id) // {}' <<<"$listing")
+result=$(jq -r '.status // "missing"' <<<"$own")
 if [ "$result" != completed ]; then
   echo "run $run's CI result is $result: a wedge, which the watchdog reports"
   exit 0
 fi
 
-jobs=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100" \
-  --jq "$(cat "$(dirname "$0")/failed-jobs.jq") | .[] | [.id, .name, .url, .timed_out] | @tsv")
-
-# A run cancelled before any job failed, most often because someone took the PR out of
-# the queue, has nothing to report.
-if [ -z "$jobs" ]; then
-  echo "run $run was cancelled before any job failed"
+# A run whose own CI result passed has nothing to report: a parked run, or one cancelled
+# after its entry left the queue (ci-result.sh).
+if [ "$(jq -r .conclusion <<<"$own")" = success ]; then
+  echo "run $run's CI result passed"
   exit 0
+fi
+
+jobs=$(jq -r "$(cat "$(dirname "$0")/failed-jobs.jq") | .[]
+  | [.id, .name, .url, if .timed_out then \"timed out\" else \"failed\" end] | @tsv" <<<"$listing")
+
+# With no job to blame, `CI result` is what failed the entry: its own error, or a cancel
+# while the PR was queued. A run cancelled after the PR left passed it, so exited above.
+if [ -z "$jobs" ]; then
+  jobs=$(jq -r '[.id, .name, .html_url, if .conclusion == "cancelled" then "was cancelled" else "failed" end]
+                | @tsv' <<<"$own")
 fi
 
 # A job's log, without timestamps or colour.
@@ -78,15 +97,12 @@ excerpt() {
   ' | head -80
 }
 
-body="The merge queue run for this PR failed, so it left the queue: [run $run]"
-body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt)."$'\n'
-while IFS=$'\t' read -r id name url timed_out; do
+body="The merge queue run for this PR failed, so the queue will not merge it: [run $run]"
+body+="(https://github.com/$repo/actions/runs/$run/attempts/$attempt). A queue run"
+body+=" also tests the PRs queued ahead, so if there were any, the cause may be one of theirs."$'\n'
+while IFS=$'\t' read -r id name url ended; do
   [ -n "$id" ] || continue
-  if [ "$timed_out" = true ]; then
-    body+=$'\n'"### [$name]($url) timed out"$'\n'
-  else
-    body+=$'\n'"### [$name]($url) failed"$'\n'
-  fi
+  body+=$'\n'"### [$name]($url) $ended"$'\n'
   text=$(log "$id" | excerpt || true)
   [ -n "$text" ] && body+=$'\n```\n'"$text"$'\n```\n'
 done <<<"$jobs"

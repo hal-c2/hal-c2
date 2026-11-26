@@ -29,7 +29,7 @@
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (copy, paste, clear shortcut, exit handling)
 #   apps/web/src/terminal/ghostty/surface.ts (copy and paste keys, wheel, scrollbar, prompt position)
 #   apps/web/src/terminal/ghostty/renderer.ts, runtime.ts, core.ts, keyCodes.ts (the web surface's drawing and key encoding)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalMenu.qml (menu, copy and paste keys)
+#   packages/qml/HalC2/Bricks/TerminalMenu.qml (menu, copy and paste keys)
 #   apps/web/src/components/useThreadTerminalActions.ts
 #   apps/web/src/lib/terminalCloseShortcut.ts
 #   apps/server/src/terminal/Manager.ts (kill escalation, process-table polling failures)
@@ -229,7 +229,7 @@ Feature: Terminal input and output
 
     # Upstream #23140: a command whose name has spaces was labelled by its first word, so Google
     # Chrome showed as "Google".
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A running command whose name has spaces is labelled by its whole name
       Given a running terminal labelled "Terminal 1"
       When the user starts "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in it

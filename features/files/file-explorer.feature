@@ -19,7 +19,7 @@
 #   packages/contracts/src/filesystem.ts (ProjectListEntriesInput, ProjectEntry)
 #   packages/contracts/src/rpc.ts (projects.listEntries)
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp, FileTreeModel.cpp
-#   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
+#   packages/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/21920
 #   https://github.com/pingdotgg/t3code/pull/23398
@@ -63,7 +63,7 @@ Feature: Exploring project files
     Then nothing under "dist" or "_build" is returned
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (excludes tracked paths that match ignore rules)
-  @mc @backlog
+  @mc
   Scenario: A tracked file that an ignore rule now covers is not listed
     Given "shop" is a git repository that tracks ".convex/local-storage/data.json" and "src/keep.ts"
     And ".gitignore" now ignores ".convex/"
@@ -72,7 +72,7 @@ Feature: Exploring project files
     And nothing under ".convex" is returned
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (excludes .convex in non-git workspaces)
-  @mc @backlog
+  @mc
   Scenario: A local Convex data folder is not listed even without a repository
     Given "shop" is not a git repository and holds ".convex/local-storage/data.json" and "src/keep.ts"
     When a client lists every entry of "shop"
@@ -87,7 +87,7 @@ Feature: Exploring project files
     And the result is marked as truncated
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: directory must be inside the workspace)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A folder that is really a link to somewhere outside the project is not listed
     Given "shop" holds a link "outside" to a folder elsewhere on the machine
     When a client lists the folder "outside" of "shop"
@@ -96,7 +96,7 @@ Feature: Exploring project files
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: only files and folders)
   # Upstream #21920: links inside the project are now listed as what they point to.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Special files are not listed as entries
     Given "shop" holds a named pipe next to "README.md"
     When a client lists the folder "" of "shop"
@@ -104,7 +104,7 @@ Feature: Exploring project files
     And the named pipe is not
 
   # Upstream #21920: the Files tree never showed links to files or folders in the project.
-  @mc @backlog
+  @mc
   Scenario: A link to a file or folder in the project is listed as what it points to
     Given "shop" holds "link.txt", a link to "real.txt", and "linkdir", a link to the folder "realdir"
     When a client lists the folder "" of "shop"
@@ -112,7 +112,7 @@ Feature: Exploring project files
     And "linkdir" is returned as a folder
 
   # Upstream #21920: links the MC would refuse to open, or that loop, stay out of the tree.
-  @mc @backlog
+  @mc
   Scenario Outline: A link that cannot be followed safely is not listed
     Given "shop" holds a link "<link>" that <points>
     When a client lists the folder "" of "shop"
@@ -134,7 +134,7 @@ Feature: Exploring project files
     Then every entry is returned and the 2,500 are marked as ignored
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: ignore classification is optional)
-  @mc @backlog
+  @mc
   Scenario: A folder is listed even when git cannot say what is ignored
     Given "shop" is not a git repository or git is not installed
     When a client lists the folder "" of "shop"
@@ -150,7 +150,7 @@ Feature: Exploring project files
     And a plain clone inside "shop" is still judged by the ignore rules of "shop"
 
   # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (withDirectoryAncestors)
-  @mc @backlog
+  @mc
   Scenario: A listing includes the folders that hold the files it returns
     Given "shop" holds "src/lib/deep/cart.ts"
     When a client lists every entry of "shop"

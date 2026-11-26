@@ -207,10 +207,11 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a git action progresses" => "gitAction",
     "a version move progresses" => "serverUpdate",
     "a managed runtime installation progresses" => "providerInstall",
+    "an OpenShell operation runs from Settings" => "openShell",
     "the MC asks the desktop app to update" => "desktopUpdateControl"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|who else is on an open page changes|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the MC asks the desktop app to update)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|who else is on an open page changes|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|an OpenShell operation runs from Settings|the MC asks the desktop app to update)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -274,6 +275,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "providerAuth" => ~w(id state),
     "spacePresence" => ~w(id viewers),
     "providerInstall" => ~w(id state),
+    "openShell" => ~w(id operation),
     "scheduledTasks" => ~w(id tasks),
     "projectClones" => ~w(id clones),
     "pullRequestRefreshes" => ~w(id revision),
@@ -548,7 +550,8 @@ defmodule HalC2.Steps.Parity.Shapes do
     "serverUpdate" => 19,
     "providerInstall" => 20,
     "spacePresence" => 21,
-    "desktopUpdateControl" => 22
+    "desktopUpdateControl" => 22,
+    "openShell" => 23
   }
 
   # The services an MC-wide shape reads, as `HalC2.Application` starts them.
@@ -561,7 +564,8 @@ defmodule HalC2.Steps.Parity.Shapes do
     "pullRequestRefreshes" => HalC2.PullRequests.Refreshes,
     "worktreeSetup" => HalC2.WorktreeSetup,
     "spacePresence" => HalC2.Space.Presence,
-    "previewAutomation" => HalC2.PreviewAutomation
+    "previewAutomation" => HalC2.PreviewAutomation,
+    "openShell" => HalC2.OpenShell.Operations
   }
 
   @gone :"gone@127.0.0.1"
@@ -710,6 +714,10 @@ defmodule HalC2.Steps.Parity.Shapes do
       {"projectClones", [frame]} ->
         assert %{"t" => "projectClones", "clones" => clones} = frame
         assert is_list(clones)
+
+      {"openShell", [frame]} ->
+        assert %{"t" => "openShell", "operation" => %{"running" => false, "steps" => []}} =
+                 frame
 
       {"preview", []} ->
         :ok
@@ -1024,6 +1032,18 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "gitAction" ->
         await(context, t, id, &(&1["event"]["kind"] == "phase_started"), 5_000)
+
+      "openShell" ->
+        # A check that only reports a step: nothing touches this machine's OpenShell.
+        World.put_app_env(:openshell_operation_runner, fn _, opts ->
+          opts[:progress].("Checking the gateway")
+          {:ok, "Checked."}
+        end)
+
+        {_, context} =
+          World.call(context, "server.runOpenShellOperation", %{"operation" => "check"}, "caller")
+
+        await(context, t, id, &(&1["operation"]["result"] != nil))
 
       "providerInstall" ->
         input = %{"instanceId" => "antigravity"}

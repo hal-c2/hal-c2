@@ -19,7 +19,7 @@
 #   apps/web/src/composerDraftStore.ts (what a draft keeps when its project, branch or machine changes)
 #   apps/web/src/components/sidebar/SidebarThreadHeader.tsx (the new thread button and its hint)
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
 #   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts)
 #   apps/desktop-qt/src/native/ComposerController.cpp, WorkspaceController.cpp (a draft's first send)
 #   apps/tui/src/newThread.logic.ts
@@ -265,7 +265,7 @@ Feature: Creating threads
     Then three threads are created, one per model
     And each thread works in its own new worktree
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A request to several models cut off by a quit comes back to its draft once
     Given "shop" is a Git project
     And the MC holds its answers

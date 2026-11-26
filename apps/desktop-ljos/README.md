@@ -1,7 +1,7 @@
 # desktop-ljos
 
 An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
-[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `apps/desktop-qt/qml/HalC2/Bricks`
+[Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `packages/qml/HalC2/Bricks`
 as they are and puts a Rust `HalC2.Shell` under them.
 
 - `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
@@ -10,9 +10,12 @@ as they are and puts a Rust `HalC2.Shell` under them.
 - `qml/` is the entry (`Main.qml`) and the QML half of `HalC2.Shell`: stubs for what is not ported yet, each
   naming the C++ class it stands in for, holding only what the bricks read.
 
-Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native types, as one import path
-whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
-fails only where it is made, as in Qt. It takes about a second in a debug build.
+`shell/build.rs` compiles both QML trees into the shell's pack, against `HalC2.Shell`'s native types, as one
+import path whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons), with their sources
+(`with_sources`) so the user's files can be compiled over them while the app runs. The app starts from the pack
+and compiles no QML. A build with the `dev-qml` feature (`cargo run -p hal_c2_shell --features dev-qml`) compiles
+the directories when it starts instead: `--qml-dir DIR` or `HAL_C2_QML_DIR` names them, `--check` checks them,
+and a file that does not compile fails only where it is made, as in Qt.
 
 The build also compiles them ahead of time: `shell/build.rs` lowers their bindings and handlers to Rust
 (`ljos::build::compile_dirs_with_types_to_rust`) against `shell/ljostypes.json`, the shell's native types as
@@ -37,17 +40,21 @@ mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mo
 On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
 the Dock and the app switcher name an app by its bundle.
 
-As desktop-qt does, the window runs the desktop host (`../desktop-qt/host/main.ts` under `node`, or
-`--host-entry`/`--node`/`HAL_C2_NODE_BIN`), which finds or starts the MC on this machine; `--url LINK` (what
-`mise run desktop-ljos` passes, from `mise run mc:pair`; `--standalone` leaves it out) has it pair with that MC
-instead. `--mc-origin URL --mc-token TOKEN` (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect
-without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
+As desktop-qt does, the window runs the desktop host, which finds or starts the MC on this machine — here in
+process (`shell/src/mc_launcher.rs`, behind `shell/src/desktop_host.rs`), with no Node host; `--url LINK` has it
+pair with that MC instead. A bare `mise run desktop-ljos` therefore needs no MC running first: it uses the one
+already on the hal-c2-dev files (`mise run mc`'s) or starts the checkout's from source (`--node`/`HAL_C2_NODE_BIN`
+only name the Node the MC runs its JavaScript sidecars on). `--mc-origin URL --mc-token TOKEN` (also
+`HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`) or `--pair LINK` connect without a host. `hal-c2-ljos FOLDER` opens the folder, in the window already running on this home when there is
 one. `--home-dir DIR` keeps the client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
-The window makes its shell again when a QML file changes: this checkout's (or `--qml-dir`'s, or
-`HAL_C2_QML_DIR`'s) and the config dir's. A `shell.qml` there replaces the built-in shell and `qml/` beside it is
-on the import path; one that does not load falls back to the built-in shell with the error in its overlay.
+`qml/Main.qml` is Ljós's `ShellLoader`: it shows the config dir's `shell.qml`, or the built-in
+`HalC2/Bricks/DefaultShell.qml` when there is none or it does not load, with the error in its overlay. The app
+lays the config dir's files over its pack (`App::user_qml`, `qml/` beside `shell.qml` on the import path) and
+applies each save as it runs, with the window's state kept: a save that does not load leaves the shell shown
+and says why, and removing `shell.qml` gives the window back to the built-in shell. A change to the checkout's
+QML needs a rebuild; a `dev-qml` build reads the user's files once, when it starts.
 
 A scripted run is `--action NAME[=JSON]` and `--key CHORD` steps, replayed in the order given 1.5 s apart once
 the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 when there is no picture) taken
@@ -66,7 +73,8 @@ needs it: point `CEF_PATH` at a directory outside the repository and it is fetch
 binaries (`libcef.so` and its resources, found through an `$ORIGIN` rpath) on every build. `strip --strip-debug` on
 `libcef.so` there takes it to under 500 MB; CI keeps it that way by CEF's version. CEF starts its other processes
 from `ljos-webengine-helper`, built beside `hal-c2-ljos`. On macOS CEF loads from an application bundle that
-Ljós's `ljos-webengine-bundle` makes; until the build makes one, a browser tab says it cannot load.
+Ljós's `ljos-webengine-bundle` makes: the release makes one (`mise run release:desktop-ljos`, $CEF_PATH naming
+CEF's distribution), and until a dev run does the same a browser tab there says it cannot load.
 
 ## Inspect
 

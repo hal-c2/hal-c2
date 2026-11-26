@@ -4990,7 +4990,7 @@ defmodule HalC2.Steps.Providers.Pi do
     File.write!(npm, """
     #!/bin/sh
     echo "$@" >> '#{Path.join(prefix, "npm.log")}'
-    python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@pi_latest}"; json.dump(c,open(p,"w"))' '#{config}'
+    python3 -c 'import json,os,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@pi_latest}"; f=open(p+".new","w"); json.dump(c,f); f.close(); os.replace(p+".new",p)' '#{config}'
     """)
 
     File.chmod!(npm, 0o755)

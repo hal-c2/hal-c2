@@ -311,7 +311,7 @@ const Steps steps([] {
   });
 
   // Waking early: what the MC's row says once the thread needs the user.
-  step(QStringLiteral("(the agent asks for an approval|the agent asks the user a question|the agent run fails|a run that started after the snooze finishes)"),
+  step(QStringLiteral("(the agent asks for an approval|the agent asks the user a question|the agent run fails|a run that started after the snooze fails|a run that started after the snooze finishes)"),
        [](World& world, const Captures& c, const Table&) {
          const QString id = world.mc.threads.firstKey();
          scene(world).subject = world.mc.environmentId + QLatin1Char(':') + id;
@@ -324,6 +324,10 @@ const Steps steps([] {
                         request(c[0].endsWith(QLatin1String("question")) ? QStringLiteral("user_input") : QStringLiteral("command_approval"), now));
            } else if (c[0] == QLatin1String("the agent run fails")) {
              setRun(row, QStringLiteral("failed"), now);
+           } else if (c[0] == QLatin1String("a run that started after the snooze fails")) {
+             // The snooze was set 60 s ago; this run began after it.
+             setRun(row, QStringLiteral("failed"), now);
+             row.insert(QStringLiteral("latestRunStartedAt"), iso(now.addSecs(-30)));
            } else {
              setRun(row, QStringLiteral("completed"), now);
              row.insert(QStringLiteral("latestRunCompletedAt"), iso(now));

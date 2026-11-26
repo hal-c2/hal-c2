@@ -12,6 +12,7 @@ folder to install it, or start your own from one of them.
 | [maintenance](maintenance/)           | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.                                           | pull requests, threads, agent tools                           |
 | [token-economizer](token-economizer/) | Spends fewer tokens on the same work: redirects an agent stuck in a loop, and turns tools a project never uses off at the next conversation. | turns, threads, runs, text generation                         |
 | [office](office/)                     | Your threads as people in a pixel-art office: who works, waits, talks to whom and asks you something.                                        | threads, turns                                                |
+| [cliproxyapi](cliproxyapi/)           | Runs CLIProxyAPI and routes Claude and Codex through it: several subscriptions taking turns, or your own API keys.                           | provider instances                                            |
 
 ## Writing one
 
@@ -24,8 +25,8 @@ the plugin host itself is in [features/plugins/](../features/plugins/).
 While you write one, install it in a scratch MC (`mise run plugins:install <id>`
 puts it there and has the MC look again) and check that the `mc/` code compiles
 without enabling it, which would grant everything it asks for: **Check that it
-compiles** in Settings → Plugins, or `POST /api/plugins/<id>/compile` with an
-operator's token, which answers 200, or 422 with each error's file, line and
+compiles** in Settings → Plugins, or `POST /api/plugins/<id>/compile` with a
+token holding `access:write` and `terminal:operate` (the MC's own token does), which answers 200, or 422 with each error's file, line and
 message. Compiling runs the module bodies, so the check
 runs in a VM of its own that grants and keeps nothing; what the code writes to
 disk as it compiles stays written.

@@ -40,12 +40,12 @@
 #   apps/mobile-qt/android/AndroidManifest.xml (hal-c2://pair, the camera permission)
 #   apps/mobile-qt/qml/HalC2/Mobile/PairingScreen.qml
 #   apps/mobile-qt/qml/HalC2/Mobile/ScanScreen.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/PairingSettings.qml (the environment in Settings, pairing with another,
+#   packages/qml/HalC2/Bricks/PairingSettings.qml (the environment in Settings, pairing with another,
 #     forgetting it, asked first)
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (forgetting an environment that cannot be reached)
 #   apps/desktop-qt/src/native/PairingExchange.cpp (reading a link, a link nobody typed, spending its token)
 #   apps/desktop-qt/src/native/ConnectionHealthController.cpp (an MC of another protocol, trace id)
-#   apps/desktop-qt/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
+#   packages/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
 # Shared pairing behaviour lives in features/connections/. This file covers the
 # phone journey: first launch, scanning a code, a link that opens the app to pair, and managing
 # environments from a phone.
@@ -420,6 +420,41 @@ Feature: Pairing a phone with environments
     When the user removes "My MacBook" and confirms
     Then "My MacBook" is no longer listed
     And "Office Mac" is still listed
+
+  # New behaviour, the next four (#1746): the phone can stop part-way through
+  # putting an environment first and keep it beside itself as well, on the
+  # same session, and a tablet's Settings can save a newer session beside it.
+  # Forgetting it signs the phone out anyway. A start keeps the same session
+  # once and never deletes another. Removing the copy in Settings leaves the
+  # phone's own as it was, threads and all.
+  @mobile
+  Scenario: Removing an environment that is also kept beside itself signs the phone out
+    Given the phone is paired with "My MacBook"
+    And the phone also keeps "My MacBook" beside itself
+    When the user removes "My MacBook" and confirms
+    Then "My MacBook" is no longer listed
+    And its cached threads are removed from the phone
+
+  @mobile
+  Scenario: An environment kept beside itself is kept once when the app starts
+    Given the phone is paired with "My MacBook"
+    And the phone also keeps "My MacBook" beside itself
+    When the app is closed and opened again
+    Then "My MacBook" is kept once, as the phone's own environment
+
+  @mobile
+  Scenario: A newer session saved beside an environment is kept when the app starts
+    Given the phone is paired with "My MacBook"
+    And the phone also keeps a newer session for "My MacBook" beside itself
+    When the app is closed and opened again
+    Then the newer session for "My MacBook" is still on the phone
+
+  @mobile
+  Scenario: Removing the copy kept beside itself in the connection settings keeps the environment
+    Given the phone is paired with "My MacBook"
+    And the phone also keeps "My MacBook" beside itself
+    When the user removes the saved copy of "My MacBook" in the connection settings
+    Then "My MacBook" is kept once, as the phone's own environment
 
   @mobile
   Scenario: Cancelling removal keeps the environment

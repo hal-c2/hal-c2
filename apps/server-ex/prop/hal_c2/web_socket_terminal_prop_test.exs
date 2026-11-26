@@ -11,7 +11,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   subscription to `resync`, and the next attach opens it again from its saved
   scrollback. One lost with its MC (`lose/0`, as the socket hears it) tells
   every subscription so in the terminal, and when the MC is back (`back/0`),
-  every subscription it then has is told to `resync`.
+  every subscription it then has is told to `resync`. So it is when the MC came back
+  while older code had the socket deaf and an install then ends (`reinstall/0`).
 
   The shell is `cat` on a PTY and output is handed to the terminal as erlexec
   sends it, flushed on the test's word, so attaches race the pending batch
@@ -37,7 +38,6 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   @ids [1, 2, 3]
   @key {"th-1", "term-1"}
-  @away :"hal-c2@away"
 
   setup do
     saved = for key <- [:port, :home], do: {key, Application.fetch_env(:hal_c2, key)}
@@ -57,6 +57,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   property "each terminal subscription on a socket follows the terminal until its own unsub",
     numtests: HalC2.Prop.numtests(40),
     max_size: 25 do
+    :persistent_term.put({__MODULE__, :away}, away_mc())
+
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         start()
@@ -153,7 +155,7 @@ defmodule HalC2.WebSocketTerminalPropTest do
         ) ++
         if(state.started, do: [{1, {:call, __MODULE__, :kill, []}}], else: []) ++
         if(state.started, do: [{1, {:call, __MODULE__, :lose, []}}], else: []) ++
-        [{1, {:call, __MODULE__, :back, []}}]
+        [{1, {:call, __MODULE__, :back, []}}, {1, {:call, __MODULE__, :reinstall, []}}]
     )
   end
 
@@ -167,7 +169,7 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   def precondition(state, {:call, _, :kill, []}), do: state.started
   def precondition(state, {:call, _, :lose, []}), do: state.started
-  def precondition(_state, {:call, _, :back, []}), do: true
+  def precondition(_state, {:call, _, op, []}) when op in [:back, :reinstall], do: true
 
   def precondition(state, {:call, _, :output, [token]}),
     do: state.started and token == "t#{state.n}"
@@ -206,10 +208,11 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def next_state(state, _result, {:call, _, :lose, []}),
     do: %{state | lost: state.lost or state.subs != []}
 
-  def next_state(%{lost: true} = state, _result, {:call, _, :back, []}),
-    do: %{state | subs: [], lost: false, windows: %{}}
+  def next_state(%{lost: true} = state, _result, {:call, _, op, []})
+      when op in [:back, :reinstall],
+      do: %{state | subs: [], lost: false, windows: %{}}
 
-  def next_state(state, _result, {:call, _, :back, []}), do: state
+  def next_state(state, _result, {:call, _, op, []}) when op in [:back, :reinstall], do: state
 
   def next_state(state, _result, {:call, _, :output, [token]}),
     do: printed(state, token <> "\r\n")
@@ -265,10 +268,12 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def postcondition(state, {:call, _, :lose, []}, frames),
     do: frames == Enum.sort(for id <- state.subs, do: {id, :lost})
 
-  def postcondition(%{lost: true} = state, {:call, _, :back, []}, frames),
-    do: frames == Enum.sort(for id <- state.subs, do: {id, :resync})
+  def postcondition(%{lost: true} = state, {:call, _, op, []}, frames)
+      when op in [:back, :reinstall],
+      do: frames == Enum.sort(for id <- state.subs, do: {id, :resync})
 
-  def postcondition(_state, {:call, _, :back, []}, frames), do: frames == []
+  def postcondition(_state, {:call, _, op, []}, frames) when op in [:back, :reinstall],
+    do: frames == []
 
   def postcondition(state, {:call, _, :output, [token]}, frames),
     do: frames == Enum.sort(told(state, token <> "\r\n"))
@@ -309,14 +314,63 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   # The socket hears the terminal went with an MC no longer in the cluster.
   def lose do
-    send(socket(), {:hal_c2_terminal_down, @away, @key, :noconnection})
+    send(socket(), {:hal_c2_terminal_down, away(), @key, :noconnection})
     terminal_frames()
   end
 
   # And that the MC is back.
   def back do
-    send(socket(), {:nodeup, @away, []})
+    send(socket(), {:nodeup, away(), []})
     terminal_frames()
+  end
+
+  # The MC is back while the socket is deaf, as older code leaves it, then an install ends.
+  def reinstall do
+    socket = socket()
+    away = away()
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    Node.set_cookie(away, Node.get_cookie())
+    # The first can only wait for an attempt still out with the wrong cookie.
+    true = Node.connect(away) or Node.connect(away)
+    :ok = HalC2.Web.Socket.code_installed()
+    # Answered after the install's message, so the ping comes after what that sent.
+    _ = :sys.get_state(socket)
+    frames = terminal_frames()
+    Node.set_cookie(away, :elsewhere)
+    _ = Node.disconnect(away)
+    frames
+  end
+
+  defp away, do: :persistent_term.get({__MODULE__, :away})
+
+  # A bare node to be the lost MC: no call reaches it until `reinstall/0` connects it.
+  defp away_mc do
+    unless Node.alive?() do
+      {_, 0} = System.cmd("epmd", ["-daemon"])
+      name = :"hal_c2_terminal_test#{System.unique_integer([:positive])}@127.0.0.1"
+      {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
+    end
+
+    {:ok, _peer, away} =
+      :peer.start_link(%{
+        name: :"hal_c2_away#{System.unique_integer([:positive])}",
+        host: ~c"127.0.0.1",
+        longnames: true,
+        connection: :standard_io,
+        wait_boot: 60_000,
+        # Quiet: it logs each call it refuses while away.
+        args:
+          [~c"-setcookie", ~c"#{Node.get_cookie()}"] ++
+            [~c"-kernel", ~c"logger_level", ~c"critical"]
+      })
+
+    Node.set_cookie(away, :elsewhere)
+    away
   end
 
   # The client's socket: the one connection to the endpoint.

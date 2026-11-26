@@ -16,7 +16,10 @@ defmodule HalC2.McpAccessPropTest do
 
   @moduletag timeout: :infinity
 
-  @projects %{"t-a" => "p-a", "t-b" => "p-b"}
+  @projects %{"t-a" => "p-a", "t-b" => "p-b", "t-r" => "p-a", "t-o" => "p-b"}
+  # Kept to the code-review plugin's tools: "t-r" by the `"tools"` mark, "t-o" by the
+  # mark of a review launched before launches carried it.
+  @kept ~w(t-r t-o)
   @keys %{"preview" => "enableAgentBrowserAccess", "device" => "enableAgentDeviceAccess"}
 
   property "a thread's agent reaches what its project allows",
@@ -46,10 +49,21 @@ defmodule HalC2.McpAccessPropTest do
   # --- the real thing --------------------------------------------------------------
 
   def launch(thread) do
-    {:ok, _} =
-      HalC2.Streams.commit(thread, :thread, [
-        {"thread", thread, %{"s" => %{"id" => thread, "projectId" => @projects[thread]}}}
-      ])
+    row = %{"id" => thread, "projectId" => @projects[thread]}
+
+    row =
+      case thread do
+        "t-r" ->
+          Map.put(row, "plugin", %{"id" => "code-review", "kind" => "review", "tools" => "plugin"})
+
+        "t-o" ->
+          Map.put(row, "plugin", %{"id" => "code-review", "kind" => "review"})
+
+        _ ->
+          row
+      end
+
+    {:ok, _} = HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => row}}])
 
     :ok
   end
@@ -87,7 +101,92 @@ defmodule HalC2.McpAccessPropTest do
 
   def access(thread), do: HalC2.Mcp.agent_access(thread)
 
-  def prepare(thread, instance), do: HalC2.Mcp.for_agent(thread, instance) != nil
+  # Which server the agent gets, and whether its credential is refused one of HAL-C2's
+  # own tools.
+  def prepare(thread, instance) do
+    case HalC2.Mcp.for_agent(thread, instance) do
+      nil -> :none
+      %{report: true} = server -> {:plugin, refused?(server)}
+      server -> {:hal_c2, refused?(server)}
+    end
+  end
+
+  # A program an earlier MC started reattaches here with the credential that MC gave it:
+  # every capability, and no plugin named. Whether it is refused one of HAL-C2's tools.
+  def reattach(thread) do
+    token = "old-#{System.unique_integer([:positive])}"
+
+    caller = %{
+      thread_id: thread,
+      instance: "reattached",
+      capabilities: MapSet.new(~w(preview device))
+    }
+
+    :ok = HalC2.Mcp.restore([{token, caller, 0}])
+    refused?(%{authorization: "Bearer " <> token})
+  end
+
+  # The same while the thread's stream cannot be read: whether the credential was
+  # refused outright then, and whether it is refused one of HAL-C2's tools once it can.
+  def reattach_unread(thread) do
+    token = "old-#{System.unique_integer([:positive])}"
+
+    caller = %{
+      thread_id: thread,
+      instance: "reattached",
+      capabilities: MapSet.new(~w(preview device))
+    }
+
+    HalC2.Prop.restart_service(HalC2.Streams, fn ->
+      :ok = HalC2.Mcp.restore([{token, caller, 0}])
+      send(self(), {:while_down, HalC2.Mcp.handle("Bearer " <> token, JSON.encode!(call()))})
+    end)
+
+    unavailable = receive do: ({:while_down, {status, _}} -> status == 503)
+    {unavailable, refused?(%{authorization: "Bearer " <> token})}
+  end
+
+  # Preparing a session while the thread's stream cannot be read (the streams are down,
+  # or only their supervisor, so no stream can start): whether it got a server, whether
+  # a credential was minted for it, whether the session is kept meanwhile, and whether
+  # it still is once the thread can be read. The session's instance is its own, so no
+  # earlier command's credential answers for it.
+  def prepare_unread(thread, instance, outage) do
+    instance = "#{instance}-#{System.unique_integer([:positive])}"
+
+    outage(outage, fn ->
+      before = HalC2.Mcp.credentials(thread)
+      server = HalC2.Mcp.for_agent(thread, instance)
+      unminted = HalC2.Mcp.credentials(thread) == before
+      send(self(), {:while_down, {server, unminted, HalC2.Mcp.prepared?(thread, instance)}})
+    end)
+
+    {server, unminted, kept} = receive do: ({:while_down, result} -> result)
+    {server, unminted, kept, HalC2.Mcp.prepared?(thread, instance)}
+  end
+
+  defp outage(:streams, between), do: HalC2.Prop.restart_service(HalC2.Streams, between)
+
+  defp outage(:stream_supervisor, between) do
+    :ok = Supervisor.terminate_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    between.()
+    {:ok, _} = Supervisor.restart_child(HalC2.Streams, HalC2.Streams.Supervisor)
+    :ok
+  end
+
+  defp refused?(%{authorization: auth}) do
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, JSON.encode!(call()))
+    JSON.encode!(result) =~ "capability_denied"
+  end
+
+  defp call do
+    %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => "hal_c2_project_list", "arguments" => %{}}
+    }
+  end
 
   # --- the model -------------------------------------------------------------------
 
@@ -102,7 +201,12 @@ defmodule HalC2.McpAccessPropTest do
       {2, {:call, __MODULE__, :launch, [thread()]}},
       {4, {:call, __MODULE__, :set, [scope(), oneof(Map.keys(@keys)), value()]}},
       {3, {:call, __MODULE__, :access, [thread()]}},
-      {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}}
+      {3, {:call, __MODULE__, :prepare, [thread(), oneof(["codex", "claudeAgent"])]}},
+      {1, {:call, __MODULE__, :reattach, [thread()]}},
+      {1, {:call, __MODULE__, :reattach_unread, [thread()]}},
+      {1,
+       {:call, __MODULE__, :prepare_unread,
+        [thread(), oneof(["codex", "claudeAgent"]), oneof([:streams, :stream_supervisor])]}}
     ])
   end
 
@@ -125,10 +229,28 @@ defmodule HalC2.McpAccessPropTest do
   def postcondition(state, {:call, _, :access, [thread]}, result),
     do: result == expected(state, thread)
 
-  def postcondition(state, {:call, _, :prepare, [thread, _]}, result),
-    do: result == MapSet.member?(expected(state, thread), "preview")
+  def postcondition(state, {:call, _, :reattach, [thread]}, result),
+    do: result == kept?(state, thread)
+
+  def postcondition(state, {:call, _, :reattach_unread, [thread]}, result),
+    do: result == {true, kept?(state, thread)}
+
+  # A session kept to a plugin's tools needs its server, so once the thread can be read
+  # one that got none is not prepared and relaunches for it.
+  def postcondition(state, {:call, _, :prepare_unread, [thread, _, _]}, result),
+    do: result == {nil, true, true, not kept?(state, thread)}
+
+  def postcondition(state, {:call, _, :prepare, [thread, _]}, result) do
+    cond do
+      kept?(state, thread) -> result == {:plugin, true}
+      MapSet.member?(expected(state, thread), "preview") -> result == {:hal_c2, false}
+      true -> result == :none
+    end
+  end
 
   def postcondition(_state, _call, result), do: result == :ok
+
+  defp kept?(state, thread), do: thread in @kept and MapSet.member?(state.launched, thread)
 
   defp expected(state, thread) do
     project = if MapSet.member?(state.launched, thread), do: @projects[thread]

@@ -1,8 +1,9 @@
 // Run from a hal-c2 checkout, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+//   qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
 //     -input plugins/code-review/test
 import QtQuick
 import QtTest
+import HalC2.Shell
 
 Item {
     id: test
@@ -104,6 +105,22 @@ Item {
         }
     }
 
+    // A review of `number` in `status` for the topic.
+    function review(number, status, title, branch) {
+        return {
+            key: "acme/api#" + number,
+            number: number,
+            title: title,
+            repository: "acme/api",
+            author: "octocat",
+            headBranch: branch,
+            baseBranch: "main",
+            status: status,
+            headSha: "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            comments: []
+        };
+    }
+
     Loader {
         id: loader
 
@@ -143,6 +160,81 @@ Item {
 
         function approvals() {
             return plugin.calls.filter(each => each.method === "approve");
+        }
+
+        // The list narrows to what matches every word, once typing pauses.
+        function test_search_narrows_the_list() {
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(12, "running", "Add rate limits", "feature/limits"), review(83, "queued", "Cache the session", "fix/cache"), review(830, "failed", "Bump the parser", "chore/parser")]
+            });
+            const list = find("codeReviewList");
+            tryCompare(list, "count", 3);
+            const search = find("codeReviewSearch");
+            search.text = "#83";
+            tryCompare(list, "count", 1);
+            compare(list.model[0].number, 83, "a number matches only that pull request");
+            search.text = "cache SESSION";
+            tryCompare(list, "count", 1);
+            compare(list.model[0].number, 83);
+            search.text = "feature/limits";
+            tryVerify(() => list.count === 1 && list.model[0].number === 12, 1000, "a branch matches");
+            search.text = "83";
+            tryVerify(() => list.count === 1 && list.model[0].number === 83, 1000, "a bare number is its pull request, not one whose number holds it");
+            // A bare number also finds a branch or title that names it.
+            search.text = "1683";
+            tryCompare(list, "count", 0);
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(12, "running", "Add rate limits", "feature/limits"), review(83, "queued", "Cache the session", "fix/cache"), review(830, "failed", "Bump the parser", "fix/1683-resume")]
+            });
+            tryVerify(() => list.count === 1 && list.model[0].number === 830, 1000, "a bare number finds a branch naming it");
+            search.text = "nothing like it";
+            tryCompare(list, "count", 0);
+            search.text = "";
+            tryCompare(list, "count", 3);
+        }
+
+        // A pause says when it ends in the user's time, and can be ended now.
+        function test_a_paused_queue_resumes_now() {
+            const until = "2026-11-22T19:00:00Z";
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                problem: "Reviews are paused: the agent hit its usage limit.",
+                pausedUntil: until,
+                reviews: [review(83, "queued", "Cache the session", "fix/cache")]
+            });
+            const line = find("codeReviewProblem:local");
+            tryVerify(() => line.visible && line.text.includes("They start again at"));
+            verify(!line.text.includes("2026-11-22T19"), line.text);
+            const resume = find("codeReviewResume:local");
+            tryVerify(() => resume.visible);
+            mouseClick(resume);
+            compare(plugin.calls.filter(each => each.method === "resume").length, 1);
+        }
+
+        // A queued review can be started now.
+        function test_a_queued_review_starts_now() {
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [review(83, "queued", "Cache the session", "fix/cache")]
+            });
+            const now = find("codeReviewRetry");
+            tryVerify(() => now.visible && now.text === "Review now");
+            // Once the layout has made room for it, as for Approve.
+            tryVerify(() => now.width > 0 && now.mapToItem(find("codeReviewDetail").contentItem, 0, now.height).y <= find("codeReviewDetail").contentHeight);
+            mouseClick(now);
+            const asked = plugin.calls.filter(each => each.method === "retry");
+            compare(asked.length, 1);
+            compare(asked[0].input.key, "acme/api#83");
         }
 
         function test_approves_the_commit_shown() {
@@ -232,6 +324,80 @@ Item {
             tryVerify(() => asked("preview").length === 2);
             clickShown("codeReviewPublishConfirm");
             compare(asked("publish")[0].input.version, "v2");
+        }
+
+        // Ctrl-clicks `word` in the Markdown brick `markdown`, as the user opens a link.
+        function ctrlClickWord(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            verify(prose, "the text is drawn as Markdown");
+            tryVerify(() => prose.visible && prose.width > 0);
+            const at = prose.getText(0, prose.length).indexOf(word);
+            verify(at >= 0, "\"" + word + "\" is shown");
+            const box = prose.positionToRectangle(at + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.LeftButton, Qt.ControlModifier);
+        }
+
+        // Right-clicks `word` in a Markdown brick's prose: the menu for text someone
+        // else wrote opens, never the app's link menu (which opens a path in the files).
+        function verifyLinkMenuIsTheWebOne(markdown, word) {
+            const prose = findChild(markdown, "markdownProse");
+            const box = prose.positionToRectangle(prose.getText(0, prose.length).indexOf(word) + 1);
+            mouseClick(prose, box.x + 1, box.y + box.height / 2, Qt.RightButton);
+            const menu = findChild(markdown, "webLinkMenu");
+            verify(menu, "the link's menu only opens or copies it");
+            tryCompare(menu, "visible", true);
+            menu.close();
+            tryVerify(() => findChild(markdown, "webLinkMenu") === null);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"), "the app's link menu never opens");
+        }
+
+        // What the review agent wrote about a pull request anyone can open shows its
+        // markup as text and loads nothing, and its links, like the pull request's
+        // own, go to Shell.openWebLink, which opens only web addresses.
+        function test_review_text_shows_its_markup_and_opens_links_only_on_the_web() {
+            Shell.reset();
+            plugin.listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [{
+                        key: "acme/api#13",
+                        number: 13,
+                        title: "Limits",
+                        repository: "acme/api",
+                        author: "stranger",
+                        status: "waiting",
+                        headSha: first,
+                        verdict: "comment",
+                        version: "v1",
+                        url: "https://github.com/acme/api/pull/13",
+                        summary: "Read [the guide](https://example.com/guide) <img src=\"https://tracker.example/s.png\">",
+                        comments: [{
+                                id: "c1",
+                                path: "src/limits.ts",
+                                line: 12,
+                                body: "See [hosts](file:///etc/hosts) <img src=\"https://tracker.example/c.png\">"
+                            }]
+                    }]
+            });
+            const summary = find("codeReviewSummary");
+            tryVerify(() => summary?.visible === true);
+            const summaryProse = findChild(summary, "markdownProse");
+            verify(!/<img/i.test(summaryProse.text), "nothing in the summary loads: " + summaryProse.text);
+            verify(summaryProse.getText(0, summaryProse.length).includes("<img src=\"https://tracker.example/s.png\">"), "its markup shows as text");
+            ctrlClickWord(summary, "guide");
+            compare(Shell.webLinks, ["https://example.com/guide"]);
+
+            const body = find("codeReviewCommentBody");
+            verify(!/<img/i.test(findChild(body, "markdownProse").text), "nothing in a comment loads");
+            ctrlClickWord(body, "hosts");
+            compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts"]);
+            verifyLinkMenuIsTheWebOne(summary, "guide");
+            verifyLinkMenuIsTheWebOne(body, "hosts");
+
+            clickShown("codeReviewOpenOnGitHub");
+            compare(Shell.webLinks, ["https://example.com/guide", "file:///etc/hosts", "https://github.com/acme/api/pull/13"]);
+            compare(Shell.openedExternally, []);
         }
 
         // An approval kept of another commit than the head can still be taken back.

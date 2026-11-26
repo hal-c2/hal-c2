@@ -25,10 +25,10 @@
 #   https://github.com/pingdotgg/t3code/pull/22922
 #   docs/internals/composer-context-references.md
 #   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping, quoted replies)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
+#   packages/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
 #   https://github.com/hal-c2/hal-c2/issues/1348 (the $ menu showed none of a folder's skills)
 #   apps/desktop-qt/src/native/ComposerController.cpp (terminal excerpts as context records on send, quoted replies)
-#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
+#   packages/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
 #   packages/shared/src/assistantCitations.ts (citation links, the provider's view)
 #   packages/shared/src/composerPullRequestMatches.ts (pull request suggestion order and scope)
 #   packages/shared/src/composerInlineTokens.ts (scoped package names stay text)
@@ -872,7 +872,7 @@ Feature: Referencing files, skills, commands and context
       | £1,000 a month   |
 
   # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
     Given the provider offers the skills "1password" and "2fa"
     When the user types "<typed>" into the composer

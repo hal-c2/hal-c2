@@ -15,7 +15,7 @@ on:
       # the code colouring crate (native/syntax), and the two files the
       # features runner reads to learn desktop-qt's scenario list
       # (tst_Features.cpp, tst_Scenarios.qml).
-      - "apps/desktop-qt/qml/**"
+      - "packages/qml/**"
       - "apps/desktop-qt/src/native/**"
       - "apps/desktop-qt/tests/native/tst_Features.cpp"
       - "apps/desktop-qt/tests/tst_Scenarios.qml"
@@ -214,7 +214,7 @@ jobs:
             fi
           done
 
-      # Compiles desktop-qt's bricks and the shell's own QML against the
+      # Compiles the bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
       - run: cargo run --release -q -p hal_c2_shell -- --check
 
@@ -265,14 +265,15 @@ jobs:
 
   features:
     name: Features (${{ matrix.shard.name }})
-    # Two shards at a time, after the bricks compile, and none left running
-    # once one fails: the shards are the workflow's longest jobs and would
-    # otherwise hold every runner the repository has.
+    # Two shards at a time, after the bricks compile: the shards are the
+    # workflow's longest jobs and would otherwise hold every runner the
+    # repository has. One shard failing does not cancel the rest, so a
+    # stalled apt mirror in one costs a rerun of that shard, not of all five.
     needs: [check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 2
       matrix:
         # desktop-qt's scenarios, by domain (features/), about 400 to 550

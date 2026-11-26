@@ -326,10 +326,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     World.create_thread(context, thread, project)
   end
 
+  # A name the scenario never made is passed on as the id it was given, as an agent
+  # naming a thread it only half remembers.
   step "the agent of {string} reads {string}", %{args: [caller, thread]} = context do
     result =
       World.mcp_tool(context, caller, "hal_c2_thread_read", %{
-        "threadId" => World.thread_id(context, thread)
+        "threadId" => Map.get(context[:threads] || %{}, thread, thread)
       })
 
     Map.put(context, :mcp_result, result)
@@ -1644,6 +1646,23 @@ defmodule HalC2.Steps.Orchestration.McpServer do
       end
 
     capabilities(context, caller, args)
+  end
+
+  # A provider with a short catalog is listed whole, none of it cut short.
+  step "{string} lists every current model it offers", %{args: [instance]} = context do
+    own =
+      HalC2.Environment.providers()
+      |> Enum.find(&(&1["instanceId"] == instance))
+      |> Map.fetch!("models")
+      |> Enum.map(& &1["slug"])
+
+    assert own != [], "the test MC offers no models on #{instance}"
+    provider = provider(context, instance)
+    assert provider, "#{instance} is not listed"
+    refute provider["modelsTruncated"]
+    assert provider["modelCount"] == length(own)
+    assert Enum.sort(Enum.map(provider["models"], & &1["id"])) == Enum.sort(own)
+    context
   end
 
   step "each provider lists at most 25 models, each with an id and a label", context do

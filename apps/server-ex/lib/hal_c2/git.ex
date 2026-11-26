@@ -12,7 +12,8 @@ defmodule HalC2.Git do
   @type result :: %{status: integer | term, out: binary, err: binary, truncated: boolean}
 
   @doc """
-  Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
+  Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:unset` (names of
+  variables of the MC's environment git does not see), `:input` (stdin),
   `:max_bytes` (default 50 MB), `:timeout` (ms; none by default), `:on_stderr` (called
   with each chunk of stderr as it arrives) and `:stop_children` (a key: a git that does not
   finish takes the programs it started with it before this returns; see
@@ -27,25 +28,40 @@ defmodule HalC2.Git do
     # meant is named: `GIT_DIR`). Reads never take the index lock a user's git needs.
     # A checkout's own `core.fsmonitor` names a program `git status` would run:
     # repository configuration never picks a program for the MC to execute.
-    argv = [
-      Application.get_env(:hal_c2, :git_command, "git"),
-      "-c",
-      "safe.bareRepository=explicit",
-      "-c",
-      "core.fsmonitor=false",
-      # The MC reads git's output (and shows some of it to the writer model), so a
-      # checkout's colour setting must never colour it.
-      "-c",
-      "color.ui=false" | args
-    ]
+    # `env -u` execs git in its place, so a pid or group taken for git stays git's.
+    unset_names = opts[:unset] || []
+    unset = Enum.flat_map(unset_names, &["-u", &1])
 
-    opts =
-      Keyword.update(
-        opts,
-        :env,
-        [{"GIT_OPTIONAL_LOCKS", "0"}],
-        &[{"GIT_OPTIONAL_LOCKS", "0"} | &1]
-      )
+    # A port leaves out a variable whose value is empty, so `env` sets those: git
+    # refuses a `GIT_CONFIG_KEY_<n>` whose `GIT_CONFIG_VALUE_<n>` is missing, and an
+    # empty value (`credential.helper =`, which drops the helpers before it) is real.
+    # The last value of a name is the one it gets, and a name unset stays unset.
+    {empty, env} =
+      [{"GIT_OPTIONAL_LOCKS", "0"} | opts[:env] || []]
+      |> Enum.reverse()
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.reverse()
+      |> Enum.split_with(&match?({_, ""}, &1))
+
+    prefix =
+      unset ++
+        for {name, ""} <- empty, name not in unset_names, do: name <> "="
+
+    argv =
+      if(prefix == [], do: [], else: ["env" | prefix]) ++
+        [
+          Application.get_env(:hal_c2, :git_command, "git"),
+          "-c",
+          "safe.bareRepository=explicit",
+          "-c",
+          "core.fsmonitor=false",
+          # The MC reads git's output (and shows some of it to the writer model), so a
+          # checkout's colour setting must never colour it.
+          "-c",
+          "color.ui=false" | args
+        ]
+
+    opts = Keyword.put(opts, :env, env)
 
     run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
 

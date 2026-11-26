@@ -6,6 +6,7 @@ defmodule HalC2.OpenShell.InstallTest do
   alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Install
   alias HalC2.OpenShell.Manifest
+  alias HalC2.OpenShell.Platform
   alias HalC2.OpenShell.Service
   alias HalC2.Test.FakeOpenShell
   alias HalC2.Test.Storage
@@ -65,6 +66,22 @@ defmodule HalC2.OpenShell.InstallTest do
   end
 
   defp mode(path), do: File.stat!(path).mode |> Bitwise.band(0o777)
+
+  # The user's Podman, installed with its socket stopped: the facts see it once
+  # the socket runs. Answers the file that says it runs.
+  defp stopped_podman(context) do
+    active = Path.join(context.bin, "podman-socket-active")
+    File.touch!(Path.join(context.bin, "podman-unit"))
+
+    Application.put_env(:hal_c2, :openshell_facts, fn ->
+      if File.exists?(active), do: @facts, else: %{@facts | runtime: nil}
+    end)
+
+    active
+  end
+
+  defp podman_calls(context),
+    do: Storage.service_calls(context.log) |> Enum.filter(&(&1 =~ "podman.socket"))
 
   defp owned, do: %{OpenShell.owner_label() => OpenShell.owner()}
 
@@ -199,6 +216,113 @@ defmodule HalC2.OpenShell.InstallTest do
       assert calls =~ "config preflight -- --config"
 
       assert File.ls!(Path.join(OpenShell.root(), "staging")) == []
+    end
+
+    test "Podman installed with its socket stopped: install starts the socket, and enables it once installed",
+         ctx do
+      active = stopped_podman(ctx)
+      test = self()
+      assert {:ok, state} = install(ctx, "0.1.7", progress: &send(test, {:step, &1}))
+
+      assert_received {:step, "Starting Podman's socket (podman.socket)"}
+      assert File.exists?(active)
+      assert File.exists?(Path.join(ctx.bin, "podman-socket-enabled"))
+
+      # Started for the checks, enabled only once the gateway runs, and recorded as
+      # this MC's to undo.
+      assert podman_calls(ctx) == [
+               "systemctl --user start podman.socket",
+               "systemctl --user enable podman.socket"
+             ]
+
+      assert state["podman_socket"] == "enabled"
+      assert OpenShell.state()["podman_socket"] == "enabled"
+
+      # Uninstall disables what installing enabled.
+      assert :ok = Install.uninstall()
+      assert List.last(podman_calls(ctx)) == "systemctl --user disable --now podman.socket"
+      refute File.exists?(active)
+      refute File.exists?(Path.join(ctx.bin, "podman-socket-enabled"))
+    end
+
+    test "a socket already enabled is only started, and uninstall leaves it be", ctx do
+      stopped_podman(ctx)
+      File.touch!(Path.join(ctx.bin, "podman-socket-enabled"))
+
+      assert {:ok, state} = install(ctx, "0.1.7")
+      assert podman_calls(ctx) == ["systemctl --user start podman.socket"]
+      refute Map.has_key?(state, "podman_socket")
+
+      assert :ok = Install.uninstall()
+      assert podman_calls(ctx) == ["systemctl --user start podman.socket"]
+      assert File.exists?(Path.join(ctx.bin, "podman-socket-enabled"))
+    end
+
+    test "an install that fails stops the socket it started, and enables nothing", ctx do
+      active = stopped_podman(ctx)
+      File.write!(Path.join(ctx.control, "preflight"), "1")
+
+      assert {:error, message} = install(ctx, "0.1.7")
+      assert message =~ "config preflight"
+      assert OpenShell.state() == nil
+
+      assert podman_calls(ctx) == [
+               "systemctl --user start podman.socket",
+               "systemctl --user stop podman.socket"
+             ]
+
+      refute File.exists?(active)
+      refute File.exists?(Path.join(ctx.bin, "podman-socket-enabled"))
+    end
+
+    test "a socket that cannot be enabled fails the install with its code, the gateway running",
+         ctx do
+      stopped_podman(ctx)
+      File.touch!(Path.join(ctx.bin, "podman-enable-fails"))
+
+      assert {:error, "[podman-socket-failed]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "installed and running"
+      assert message =~ "systemctl --user enable podman.socket"
+      assert %{"version" => "0.1.7"} = state = OpenShell.state()
+      refute Map.has_key?(state, "podman_socket")
+    end
+
+    test "Podman's socket file left behind, with nothing answering: install starts the socket",
+         ctx do
+      # What `Platform.facts/0` sees there: the file, and no runtime behind it.
+      path = Path.join(System.tmp_dir!(), "p#{System.unique_integer([:positive])}.sock")
+      {:ok, listen} = :gen_tcp.listen(0, ifaddr: {:local, path})
+      :ok = :gen_tcp.close(listen)
+      on_exit(fn -> File.rm(path) end)
+
+      assert %{kind: :podman, reachable: false} = stopped = Platform.probe_runtime(:podman, path)
+
+      active = Path.join(ctx.bin, "podman-socket-active")
+      File.touch!(Path.join(ctx.bin, "podman-unit"))
+
+      Application.put_env(:hal_c2, :openshell_facts, fn ->
+        if File.exists?(active), do: @facts, else: %{@facts | runtime: stopped}
+      end)
+
+      assert {:ok, _} = install(ctx, "0.1.7")
+      assert "systemctl --user start podman.socket" in Storage.service_calls(ctx.log)
+    end
+
+    test "Podman's socket that does not start, or no Podman at all, installs nothing", ctx do
+      Application.put_env(:hal_c2, :openshell_facts, %{@facts | runtime: nil})
+      File.touch!(Path.join(ctx.bin, "podman-unit"))
+      File.touch!(Path.join(ctx.bin, "podman-socket-fails"))
+
+      assert {:error, "[podman-socket-failed]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "exited 1"
+      assert OpenShell.state() == nil
+
+      # Without Podman's unit nothing is started: the user is told what to install.
+      File.rm!(Path.join(ctx.bin, "podman-unit"))
+      calls = Storage.service_calls(ctx.log)
+      assert {:error, "[podman-missing]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "package manager"
+      assert Storage.service_calls(ctx.log) == calls
     end
 
     test "a failed preflight or a wrong hash installs nothing", ctx do
@@ -881,7 +1005,8 @@ defmodule HalC2.OpenShell.InstallTest do
     end
 
     test "an update refuses while this MC's sandboxes run, and drain deletes only those", ctx do
-      assert {:error, "[sandboxes-running] 1 of this MC's" <> _} =
+      assert {:error,
+              "[sandboxes-running] 1 of this MC's sandboxes is on the gateway (review-1). Let its review finish, or pass --drain to delete it."} =
                install(ctx, "0.1.7", service: false)
 
       assert OpenShell.state()["version"] == "0.1.6"
@@ -891,8 +1016,50 @@ defmodule HalC2.OpenShell.InstallTest do
                "theirs"
              ]
 
-      assert {:ok, %{"version" => "0.1.7"}} = install(ctx, "0.1.7", service: false, drain: true)
+      test = self()
+
+      assert {:ok, %{"version" => "0.1.7"}} =
+               install(ctx, "0.1.7",
+                 service: false,
+                 drain: true,
+                 progress: &send(test, {:step, &1})
+               )
+
+      assert_received {:step, "Deleting 1 review sandbox"}
       assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) == ["theirs"]
+    end
+
+    test "two of this MC's sandboxes are counted in the plural", ctx do
+      FakeOpenShell.put_sandbox(ctx.gateway, "review-2", owned())
+
+      assert {:error,
+              "[sandboxes-running] 2 of this MC's sandboxes are on the gateway (review-1, review-2). Let their reviews finish, or pass --drain to delete them."} =
+               Install.uninstall()
+
+      test = self()
+      assert :ok = Install.uninstall(drain: true, progress: &send(test, {:step, &1}))
+      assert_received {:step, "Deleting 2 review sandboxes"}
+    end
+
+    # Settings sends the names it showed: a drain deletes only when every sandbox it
+    # finds was among them.
+    test "a drain of named sandboxes deletes them, and refuses when others run", ctx do
+      FakeOpenShell.put_sandbox(ctx.gateway, "review-2", owned())
+
+      assert {:error,
+              "[sandboxes-changed] The running reviews changed since they were confirmed: 2 of this MC's sandboxes are on the gateway (review-1, review-2). Check them again before deleting them."} =
+               Install.uninstall(drain: ["review-1"])
+
+      assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) |> Enum.sort() ==
+               ["review-1", "review-2", "theirs"]
+
+      assert File.exists?(OpenShell.root())
+
+      # One that ended since it was confirmed needs no new confirmation.
+      FakeOpenShell.delete_sandbox(ctx.gateway, "review-1")
+      assert :ok = Install.uninstall(drain: ["review-1", "review-2"])
+      assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) == ["theirs"]
+      refute File.exists?(OpenShell.root())
     end
 
     test "the isolation check's leftover sandboxes are deleted without a drain", ctx do

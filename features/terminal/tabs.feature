@@ -18,9 +18,9 @@
 #   apps/web/src/rightPanelStore.ts (terminal surfaces: a right panel tab per terminal group)
 #   apps/desktop-qt/src/native/TerminalController.cpp (split groups, panel groups)
 #   apps/desktop-qt/src/native/RightPanelController.cpp (terminal:<group> tabs)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
+#   packages/qml/HalC2/Bricks/TerminalSplits.qml
+#   packages/qml/HalC2/Bricks/TerminalDrawer.qml
+#   packages/qml/HalC2/Bricks/TerminalPanel.qml
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp
 #   Cross-domain: navigation/ and tui/keymap.feature own the terminal key chords.
 

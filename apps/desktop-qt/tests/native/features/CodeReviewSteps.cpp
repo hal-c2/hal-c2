@@ -28,6 +28,8 @@ struct FakeCodeReview {
   QString activation = QStringLiteral("selective");
   QStringList order;
   QHash<QString, QJsonObject> reviews;
+  // Until when reviews are paused, as ISO 8601, or empty.
+  QString pausedUntil;
 };
 
 FakeCodeReview& state(World& world) { return world.mc.part<FakeCodeReview>(); }
@@ -53,7 +55,8 @@ void publish(World& world) {
   }
   FakePluginPart& part = fakePluginPart(world, kId);
   part.topics.insert(QStringLiteral("reviews"), QJsonObject{{QStringLiteral("reviews"), reviews},
-                                                           {QStringLiteral("problem"), QJsonValue::Null},
+                                                           {QStringLiteral("problem"), fake.pausedUntil.isEmpty() ? QJsonValue() : QJsonValue(QStringLiteral("Reviews are paused: the agent hit its usage limit."))},
+                                                           {QStringLiteral("pausedUntil"), fake.pausedUntil.isEmpty() ? QJsonValue() : QJsonValue(fake.pausedUntil)},
                                                            {QStringLiteral("unwatched"), QJsonArray()},
                                                            {QStringLiteral("watching"), fake.watching},
                                                            {QStringLiteral("activation"), fake.activation},
@@ -151,6 +154,11 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
                                                                                                 {QStringLiteral("models"), QJsonArray()}}}},
                                            {QStringLiteral("repositories"), QJsonArray{kRepository}}});
   }
+  if (method == QLatin1String("resume")) {
+    fake.pausedUntil.clear();
+    world.mc.reply(rpc, QJsonValue::Null);
+    return publish(world);
+  }
   if (method == QLatin1String("start")) {
     QJsonObject& review = add(world, input.value(QLatin1String("number")).toInt(), QStringLiteral("running"));
     review.insert(QStringLiteral("repository"), input.value(QLatin1String("repository")));
@@ -183,7 +191,10 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
     }
     review.insert(QStringLiteral("comments"), comments);
   } else if (method == QLatin1String("retry")) {
-    review.insert(QStringLiteral("status"), QStringLiteral("queued"));
+    // A queued review asked for starts now, past a pause.
+    const bool now = review.value(QLatin1String("status")) == QLatin1String("queued");
+    if (now) fake.pausedUntil.clear();
+    review.insert(QStringLiteral("status"), now ? QStringLiteral("running") : QStringLiteral("queued"));
     review.insert(QStringLiteral("elsewhere"), QJsonValue::Null);
   } else if (method == QLatin1String("approve")) {
     review.insert(QStringLiteral("approved"), input.value(QLatin1String("headSha")));
@@ -525,6 +536,66 @@ const Steps steps([] {
                   [&] { return QStringLiteral("a review of #%1 to be started, not %2").arg(c[0], show(QJsonArray{asked(world, QStringLiteral("start")).value(0)})); });
     expect(drawsText(row(world, c[0].toInt())->parentItem(), QStringLiteral("Reviewing")), QStringLiteral("#%1 is not listed as running").arg(c[0]));
     waitText(world, QStringLiteral("codeReviewTitle"), QStringLiteral("#%1  Add rate limits").arg(c[0]));
+  });
+
+  step(QStringLiteral("reviews are paused until the usage limit resets at %1, with #(\\d+) queued").arg(q), [](World& world, const Captures& c, const Table&) {
+    state(world).pausedUntil = c[0];
+    add(world, c[1].toInt(), QStringLiteral("queued"));
+    publish(world);
+  });
+  step(QStringLiteral("the page says when reviews start again, in the user's own time"), [](World& world, const Captures&, const Table&) {
+    const QString until = state(world).pausedUntil;
+    // The time as the user reads it, not the MC's ISO 8601: the harness pins
+    // the zone to UTC, the locale to en-US and now to 2026-09-23 (World), so
+    // the fixture's own reading is the one expected — an invalid or wrongly
+    // zoned rendering does not produce it.
+    const QDateTime at = QDateTime::fromString(until, Qt::ISODate);
+    expect(at.isValid(), QStringLiteral("the pause's end is not a time: %1").arg(until));
+    const QString expected = QStringLiteral("They start again at %1.").arg(at.toLocalTime().toString(QStringLiteral("M/d h:mm AP")));
+    const QString objectName = QStringLiteral("codeReviewProblem:") + world.mc.environmentId;
+    world.waitFor([&] { return textOf(world, objectName).contains(expected); },
+                  [&] { return QStringLiteral("the page to say \"%1\", not %2").arg(expected, textOf(world, objectName)); });
+    expect(!textOf(world, objectName).contains(until.left(16)), QStringLiteral("the page shows the raw time: %1").arg(textOf(world, objectName)));
+  });
+  step(QStringLiteral("the user resumes the reviews from the page"), [](World& world, const Captures&, const Table&) {
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewResume:") + world.mc.environmentId));
+  });
+  step(QStringLiteral("the MC is asked to resume them, and the page no longer says they are paused"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return asked(world, QStringLiteral("resume")).size() == 1; }, QStringLiteral("the MC to be asked to resume"));
+    world.waitFor([&] {
+      QQuickItem* line = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewProblem:") + world.mc.environmentId);
+      return !line || !line->isVisible();
+    }, QStringLiteral("the pause to be gone from the page"));
+  });
+
+  step(QStringLiteral("the review of #(\\d+) is queued"), [](World& world, const Captures& c, const Table&) {
+    add(world, c[0].toInt(), QStringLiteral("queued"));
+    publish(world);
+  });
+  step(QStringLiteral("the user asks to review it now"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* now = waitShownNamed(world, QStringLiteral("codeReviewRetry"));
+    expect(now->property("text").toString() == QLatin1String("Review now"), QStringLiteral("the button says %1").arg(now->property("text").toString()));
+    click(world, now);
+  });
+  step(QStringLiteral("the MC is asked to review #(\\d+) now, and it is listed as running"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return asked(world, QStringLiteral("retry")) == QList<QJsonObject>{{{QStringLiteral("key"), key(c[0].toInt())}}}; },
+                  QStringLiteral("the MC to be asked to review it now"));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Reviewing"));
+  });
+
+  step(QStringLiteral("the user searches the reviews for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("codeReviewSearch"))->setProperty("text", c[0]);
+  });
+  step(QStringLiteral("only #(\\d+) is listed"), [](World& world, const Captures& c, const Table&) {
+    const FakeCodeReview& fake = state(world);
+    world.waitFor([&] {
+      for (const QString& each : fake.order) {
+        QQuickItem* listed = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReview:") + each);
+        const bool shown = listed && listed->isVisible();
+        if (shown != (each == key(c[0].toInt()))) return false;
+      }
+      return true;
+    }, QStringLiteral("only #%1 to be listed").arg(c[0]));
   });
 
   step(QStringLiteral("the user changed the review prompt and turned off REVIEW.md"), [](World& world, const Captures&, const Table&) {

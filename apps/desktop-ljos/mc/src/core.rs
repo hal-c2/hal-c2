@@ -255,6 +255,8 @@ pub(crate) struct Core {
     last_status: Status,
     effects: Vec<Effect>,
     now: Instant,
+    /// The owner's opens and closes taken so far.
+    switched: u64,
 }
 
 impl Core {
@@ -263,6 +265,7 @@ impl Core {
             origin: None,
             ws_url: None,
             token: String::new(),
+            switched: 0,
             closed: true,
             online: true,
             phase: Phase::Closed,
@@ -383,8 +386,14 @@ impl Core {
                 origin,
                 token,
                 environment,
-            } => self.open(origin, token, environment),
-            Command::Close => self.close(),
+            } => {
+                self.switched += 1;
+                self.open(origin, token, environment);
+            }
+            Command::Close => {
+                self.switched += 1;
+                self.close();
+            }
             Command::Reconnect => {
                 if let Some(origin) = self.origin.clone() {
                     let token = self.token.clone();
@@ -498,6 +507,13 @@ impl Core {
             .clear()
             .append_pair("token", &token)
             .append_pair("protocol", &PROTOCOL.to_string());
+        // Another MC: what the last one said it is is not this one's, though
+        // a reconnect to the same one keeps it (desktop-qt's McClient::open).
+        if self.origin.as_ref() != Some(&origin) {
+            self.descriptor = Arc::default();
+            self.mc.clear();
+            self.environment.clear();
+        }
         self.origin = Some(origin);
         self.ws_url = Some(url);
         self.token = token;
@@ -888,7 +904,11 @@ impl Core {
                 };
                 self.emit(McEvent::Reply { id, result });
             }
-            _ => self.emit(McEvent::Frame { id, frame }),
+            _ => self.emit(McEvent::Frame {
+                id,
+                frame,
+                switched: self.switched,
+            }),
         }
     }
 
@@ -1076,6 +1096,36 @@ mod tests {
         core.handle(Input::SocketText { attempt, text }, now);
         assert_eq!(core.status().phase, Phase::Ready);
         attempt
+    }
+
+    #[test]
+    fn opening_another_mc_forgets_what_the_last_one_said_it_is() {
+        let now = Instant::now();
+        let mut core = Core::new(now);
+        ready(&mut core, now);
+        assert!(!core.status().descriptor.is_empty());
+
+        // The same MC again keeps who it is until it says otherwise.
+        let open = |origin: &str| {
+            Input::Command(Command::Open {
+                origin: Url::parse(origin).unwrap(),
+                token: "token".into(),
+                environment: String::new(),
+            })
+        };
+        core.handle(open("https://mc.example"), now);
+        let status = core.status();
+        assert_eq!(
+            (status.mc.as_str(), status.environment.as_str()),
+            ("mc@host", "env")
+        );
+        assert!(!status.descriptor.is_empty());
+
+        // Another one has said nothing yet, and may never answer.
+        core.handle(open("https://other.example"), now);
+        let status = core.status();
+        assert_eq!((status.mc.as_str(), status.environment.as_str()), ("", ""));
+        assert!(status.descriptor.is_empty(), "kept {:?}", status.descriptor);
     }
 
     fn closed(effects: &[Effect]) -> bool {

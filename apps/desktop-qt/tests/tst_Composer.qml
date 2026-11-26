@@ -1,7 +1,8 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
-import "../qml/HalC2/Bricks"
-import "../qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
+import "../../../packages/qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
 import HalC2.Shell
 
 Item {
@@ -410,6 +411,131 @@ Item {
             verify(scroll.height > rest * 3, "a long prompt grows");
             const card = findChild(composer, "composerCard");
             verify(card.height <= Math.round(composer.Window.height * 0.4) + 1, "the card stays within 40% of the window");
+        }
+
+        // The attachment strip ends on a whole row: two image rows show
+        // whole, a third scrolls instead of showing half a row, and the
+        // overflow is signalled.
+        function test_theAttachmentStripEndsOnAWholeRow() {
+            const image = i => ({ id: "att-" + i, name: "a-very-long-screenshot-name-" + i + ".png", kind: "image", status: "ready", preview: "", source: null });
+            const withImages = n => ({ composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: Array.from({ length: n }, (_, i) => image(i))
+            }), workspace: null });
+            const row = Theme.control.lg * 2;
+            const twoRows = row * 2 + Theme.space.sm;
+            Shell.state = withImages(2);
+            let composer = createTemporaryObject(composerComponent, root, { width: 320 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            tryVerify(() => flow.implicitHeight === twoRows, 3000, "two images take two rows: " + flow.implicitHeight);
+            tryCompare(strip, "height", twoRows, 3000, "two image rows show whole");
+            compare(strip.overflowing, false, "two rows do not overflow");
+            const roomWhole = strip.availableWidth;
+            Shell.state = withImages(3);
+            tryVerify(() => flow.implicitHeight === row * 3 + Theme.space.sm * 2, 3000, "three images take three rows: " + flow.implicitHeight);
+            tryCompare(strip, "height", twoRows, 3000, "the strip still ends on the second whole row, not mid-row");
+            tryCompare(strip, "overflowing", true, 3000, "the third row overflows, so the scroll bar stays on");
+            let bar = null;
+            const walk = item => {
+                if (!item || bar !== null)
+                    return;
+                try {
+                    if (item.policy !== undefined && item.orientation === Qt.Vertical)
+                        bar = item;
+                } catch (e) {
+                }
+                const kids = item.children ?? [];
+                for (let i = 0; i < kids.length; ++i)
+                    walk(kids[i]);
+            };
+            walk(strip);
+            verify(bar !== null, "the strip has a vertical scroll bar");
+            verify(bar.visible, "the vertical scroll bar shows while the strip overflows");
+            compare(bar.policy, ScrollBar.AlwaysOn, "the bar stays on, not only while scrolling");
+            verify(strip.availableWidth <= strip.width - bar.width, "the bar sits beside the chips, not over them");
+            compare(strip.availableWidth, roomWhole, "whether the rows overflow does not change the width they wrap in");
+        }
+
+        // A row is as tall as its tallest child: a file chip sharing a row
+        // with an image does not let the strip stop partway down the image.
+        function test_theAttachmentStripEndsOnAWholeMixedRow() {
+            const item = (i, kind) => ({ id: "att-" + i, name: kind === "file" ? "f" + i + ".txt" : "i" + i + ".png", kind: kind, status: "ready", preview: kind === "file" ? undefined : "", source: null });
+            // Three chips, then an image beside a chip, then a chip beside
+            // an image whose bottom crosses the limit.
+            const kinds = ["file", "file", "file", "image", "file", "file", "image", "file"];
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: kinds.map((kind, i) => item(i, kind))
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 420 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            tryVerify(() => flow.implicitHeight > strip.rowLimit, 3000, "the draft overflows the strip: " + flow.implicitHeight);
+            tryVerify(() => strip.height > 0 && strip.height <= strip.rowLimit, 3000, "the strip is capped: " + strip.height);
+            // The Flow lays out after the first frame, so both wait for it.
+            const shown = () => Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
+            tryVerify(() => shown().some(image => image.y + image.height > strip.rowLimit && shown().some(chip => chip !== image && chip.y === image.y && chip.y + chip.height <= strip.rowLimit)), 3000, "a chip and an image share the row that crosses the limit");
+            tryVerify(() => shown().every(kid => kid.y >= strip.height || kid.y + kid.height <= strip.height), 3000, "no row is cut");
+        }
+
+        // A name longer than the strip is wide still has its row, and elides:
+        // the buttons after it stay inside the strip.
+        function test_aLongNameKeepsItsRowAndItsButtons() {
+            const long = "Screenshot from 2026-11-22 14-03-22 of a window with a long title.png";
+            const image = (i, status) => ({ id: "att-" + i, name: long, kind: "image", status: status, preview: "", source: null });
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: [{ id: "att-0", name: "a.txt", kind: "file", status: "ready", source: null }, image(1, "ready"), image(2, "failed")]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 360 });
+            const strip = findChild(composer, "attachmentsScroll");
+            const flow = findChild(composer, "attachmentsFlow");
+            verify(!!strip && !!flow, "the strip exists");
+            const shown = () => Array.from(flow.children).filter(kid => kid.visible && kid.height > 0);
+            const inside = () => shown().every(kid => kid.x + kid.width <= flow.width + 1);
+            tryCompare(strip, "height", Theme.control.sm + Theme.space.sm + Theme.control.lg * 2, 3000, "the chip and the first image show whole");
+            tryVerify(inside, 3000, "the images end inside the strip");
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                reviewComments: [{ id: "r", label: long, text: long }],
+                terminalContexts: [{ id: "t", label: long, lineStart: 1, lineEnd: 2 }],
+                threadContexts: [{ id: "c", label: long }]
+            }), workspace: null };
+            tryVerify(() => shown().length === 3 && inside(), 3000, "the context chips end inside the strip");
+        }
+
+        // Only the name elides: how the upload stands, and a selection's lines, stay whole.
+        function test_aLongNameKeepsItsStatus_data() {
+            return [
+                { tag: "failed", file: { status: "failed" }, end: "(upload failed)" },
+                { tag: "uploading", file: { status: "uploading", progress: 0.4 }, end: "(uploading 40%)" },
+                { tag: "lines", file: null, end: "lines 12-40" }
+            ];
+        }
+
+        function test_aLongNameKeepsItsStatus(row) {
+            const long = "Screenshot from 2026-11-22 14-03-22 of a window with a long title.png";
+            const draft = row.file ? { attachments: [Object.assign({ id: "a", name: long, kind: "image", preview: "", source: null }, row.file)] } : { terminalContexts: [{ id: "a", label: long, lineStart: 12, lineEnd: 40 }] };
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), draft), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 360 });
+            const button = () => findChild(composer, row.file ? "attachment:" + long : "terminalContext-a");
+            tryVerify(() => button() !== null && button().width > 0 && button().width < button().implicitWidth, 3000, "the name is too long for the strip");
+            tryVerify(() => {
+                const end = findChild(button(), "buttonKeptEnd");
+                return end !== null && end.visible && end.text === row.end && !end.truncated && end.mapToItem(button(), end.width, 0).x <= button().width + 1;
+            }, 3000, row.end + " shows whole");
+            verify(!Array.from(findChild(button(), "contents").children).some(kid => kid.objectName !== "buttonKeptEnd" && kid.visible && String(kid.text ?? "").includes(row.end)), row.end + " shows once");
+        }
+
+        // Where even the end has no room, it elides inside its button, off Open.
+        function test_aKeptEndStaysInsideANarrowButton() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                attachments: [{ id: "a", name: "a.png", kind: "image", status: "failed", preview: "", source: null }]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 280 });
+            const button = () => findChild(composer, "attachment:a.png");
+            const end = () => findChild(button(), "buttonKeptEnd");
+            tryVerify(() => button() !== null && button().width > 0 && button().width < button().implicitWidth && end().mapToItem(button(), 0, 0).x >= button().leftPadding + button().iconSize, 3000, "the narrow button is laid out");
+            tryVerify(() => end().mapToItem(button(), end().width, 0).x <= button().width + 1, 3000, "the end stays inside its button");
         }
 
         function test_fastModeSaysItIsOn() {

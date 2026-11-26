@@ -1,12 +1,16 @@
 name: Merge queue watchdog
 
-# GitHub sometimes wedges a merge queue run: the run ends while `CI result` never got a
-# runner, or the run never gets a job. The queue then holds the entry, and everything
-# behind it, for its 120-minute check timeout. This drops such an entry with a comment
-# saying why (.github/scripts/merge-queue-watchdog.sh), and its owner re-queues it.
+# Keeps the merge queue moving (.github/scripts/merge-queue-watchdog.sh). GitHub sometimes
+# wedges a queue run: the run ends while `CI result` never got a runner, or the run never
+# gets a job, and the queue holds the entry and everything behind it for its check timeout.
+# This drops such an entry with a comment saying why, and its owner re-queues it. Entries
+# ahead of the last one park (ci.yml's `park`): when the last one fails and leaves, this
+# starts the new last one's tests, and it cancels runs no entry reads any more.
 #
-# A CI run that ends is when the first wedge shows; the schedule catches a run that never
-# starts.
+# A queue run that ends is when a wedge or a departure shows. GitHub sends no workflow_run
+# for a run GITHUB_TOKEN started, so a promoted one dispatches this itself as it ends
+# (ci.yml's `follow`). The schedule catches a run that never starts, and whatever a missed
+# event left, but GitHub may go hours without running it.
 #
 # A queue run that fails also gets the PR a comment naming the jobs that failed or timed
 # out and their failed tests (.github/scripts/merge-queue-report.sh): the queue itself
@@ -17,14 +21,22 @@ on:
     workflows: [CI]
     types: [completed]
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      run:
+        description: A failed promoted run to report on its PR (ci.yml's `follow` sets these)
+      attempt:
+        description: That run's attempt
+      branch:
+        description: That run's queue branch
 
 permissions: {}
 
 jobs:
   watch:
     name: Drop wedged queue entries
+    # A merge group's run. By event: a fork can give its PR's branch any name.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group'
     # Job-level, so a pending watch replacing another never drops a report.
     concurrency:
@@ -32,8 +44,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      actions: read
-      checks: read
+      actions: write # starting a parked entry's tests, cancelling unread runs
+      checks: write # answering for the entries ahead of a passed one
       contents: write # dequeuePullRequest
       pull-requests: write # the comment
     steps:
@@ -48,13 +60,14 @@ jobs:
   report:
     name: Report a failed queue run on its PR
     if: >-
-      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group'
-      && github.event.workflow_run.conclusion != 'success'
+      (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'merge_group'
+      && github.event.workflow_run.conclusion != 'success')
+      || (github.event_name == 'workflow_dispatch' && inputs.run != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read
-      checks: read
       contents: read
       pull-requests: write # the comment
     steps:
@@ -65,6 +78,6 @@ jobs:
       - run: .github/scripts/merge-queue-report.sh "$RUN_ID" "$RUN_ATTEMPT" "$QUEUE_BRANCH"
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          QUEUE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.attempt }}
+          QUEUE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.branch }}

@@ -2,7 +2,7 @@
 //!
 //!   hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]
 //!               [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]
-//!               [--qml-dir DIR] [--host-entry FILE] [--node PATH]
+//!               [--qml-dir DIR] [--node PATH]
 //!               [--allow-local-folder-import]
 //!               [--action NAME[=JSON]]... [--key CHORD]...
 //!               [--render PNG [--size WxH] [--settle MS]]
@@ -11,12 +11,13 @@
 //!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
 //!               [--json] [--allow FILE] [--render options]...
 //!
-//! As desktop-qt's main.cpp, the shell runs the desktop host
-//! (`apps/desktop-qt/host/main.ts`, `--host-entry`, under `--node`, else
-//! HAL_C2_NODE_BIN, else `node`), which finds or starts the MC on this
-//! machine and names it once it answers (src/desktop_host.rs). `--url`
-//! has the host pair with the MC a pairing link names instead. What the
-//! command line passes that is not a folder goes to the host.
+//! As desktop-qt's main.cpp, the shell runs the desktop host, which
+//! finds or starts the MC on this machine and names it once it answers
+//! (src/desktop_host.rs, in process: no Node host; `--node`, else
+//! HAL_C2_NODE_BIN, else `node`, is only what the MC runs its
+//! JavaScript sidecars on). `--url` has the host pair with the MC a
+//! pairing link names instead. What the command line passes that is
+//! not a folder goes to the host.
 //!
 //! `--mc-origin` and `--mc-token` (HAL_C2_MC_ORIGIN, HAL_C2_MC_TOKEN)
 //! connect to an MC without a host, and `--pair` spends a pairing link on
@@ -45,24 +46,30 @@
 //!
 //! `--render` writes a picture the same way but dispatches its `--action`s
 //! before the snapshot wait, for a render of a given place, and settles for
-//! `--settle` ms. `--check` only compiles the QML, and fails when a file
-//! does not compile.
+//! `--settle` ms. `--check` only checks the QML, and fails when a file
+//! does not compile: the pack build.rs made, or with the `dev-qml` feature
+//! the directories.
 //!
 //! `--audit` runs Ljós's design audit (`ljos audit`, which cannot load the
 //! bricks: they need HalC2.Shell's native types) on what `--render` would
 //! draw, at the points of `--matrix` (`current` by default; `full`, or
 //! points as `ljos audit` takes them), and prints the report by rule, or
-//! with `--json` as JSON. A `<config>/shell.qml` (`--config-dir`) is audited
-//! instead of the shell, which is how a brick is audited on its own. It
+//! with `--json` as JSON. In a `dev-qml` build a `<config>/shell.qml`
+//! (`--config-dir`) is audited instead of the shell, which is how a brick
+//! is audited on its own (`mise run desktop-ljos:audit` builds so). It
 //! exits 1 when an error is found that `--allow` does not name: a file of
 //! lines `RULE PATH  # why`, PATH the end of the path of the QML file the
 //! finding is in, or of one it names (what covers a control, for
 //! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
 //! toggles, popups) from running the shell's handlers.
 //!
-//! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
-//! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
-//! The window makes its shell again as they change (src/runtime.rs).
+//! The shell runs the QML build.rs compiled into it (its pack), with the
+//! user's `<config>/qml` and `<config>/shell.qml` laid over it: Main.qml is a
+//! ShellLoader of `shell.qml`, the built-in DefaultShell when there is none,
+//! and each save is applied as the app runs (src/runtime.rs). A build with
+//! the `dev-qml` feature compiles the QML at start-up instead, from
+//! `--qml-dir`, else HAL_C2_QML_DIR, else this checkout, with the user's
+//! files as they are then; it does not follow saves.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -81,6 +88,7 @@ use hal_c2_shell::desktop_host::DesktopHost;
 use hal_c2_shell::mc::{Connection, Disconnected, Mc};
 #[cfg(all(unix, not(target_os = "macos")))]
 use hal_c2_shell::notifications::NativeNotifications;
+#[cfg(feature = "dev-qml")]
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
 use hal_c2_shell::session::Session;
@@ -91,10 +99,12 @@ use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
 
-const ROOT: &str = qml::DEFAULT_SHELL;
-/// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
-/// names it.
-const APP_ID: &str = "hal-c2";
+/// The entry: Main.qml, the ShellLoader (src/runtime.rs).
+const ROOT: &str = hal_c2_shell::runtime::MAIN;
+/// The desktop entry the release installs (hal-c2-ljos.desktop,
+/// mise-tasks/release/install/desktop-ljos): its own, beside desktop-qt's
+/// hal-c2.
+const APP_ID: &str = "hal-c2-ljos";
 /// A development shell's (main.cpp).
 const DEV_APP_ID: &str = "hal-c2-dev";
 /// A packaged build sets HAL_C2_RELEASE as it builds, as CMake's Release
@@ -107,6 +117,8 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 struct Options {
     launch: Launch,
     mc_token: String,
+    /// Where a `dev-qml` build compiles the QML from.
+    #[cfg(feature = "dev-qml")]
     roots: Roots,
     /// The `--action`s and `--key`s, in the order given.
     steps: Vec<Step>,
@@ -124,7 +136,7 @@ struct Options {
     url: Option<String>,
     app_id: Option<String>,
     host: desktop_host::Options,
-    /// `--licenses`, which the manifest beside the host does not replace.
+    /// `--licenses`, which this app's own default manifest does not replace.
     licenses_given: bool,
     /// The folders the launch names, as absolute paths.
     folders: Vec<String>,
@@ -136,7 +148,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: hal-c2-ljos [--url LINK | --mc-origin URL --mc-token TOKEN | --pair LINK]\n\
          \x20                  [--home-dir DIR] [--dev] [--app-id ID] [--config-dir DIR]\n\
-         \x20                  [--qml-dir DIR] [--host-entry FILE] [--node PATH] [--licenses MANIFEST]\n\
+         \x20                  [--qml-dir DIR] [--node PATH] [--licenses MANIFEST]\n\
          \x20                  [--allow-local-folder-import] [--action NAME[=JSON]]... [--key CHORD]...\n\
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
@@ -149,9 +161,9 @@ fn usage() -> ExitCode {
 
 fn parse() -> Result<Options, String> {
     // main.cpp: `--qml-dir`, else HAL_C2_QML_DIR, else the source tree.
-    let roots = std::env::var_os("HAL_C2_QML_DIR")
+    let mut qml_dir = std::env::var_os("HAL_C2_QML_DIR")
         .filter(|d| !d.is_empty())
-        .map_or_else(Roots::checkout, |dir| Roots::one(dir.into()));
+        .map(PathBuf::from);
     let mut o = Options {
         launch: Launch {
             mc_origin: std::env::var("HAL_C2_MC_ORIGIN")
@@ -160,7 +172,8 @@ fn parse() -> Result<Options, String> {
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
-        roots,
+        #[cfg(feature = "dev-qml")]
+        roots: Roots::checkout(),
         steps: Vec::new(),
         check: false,
         render: None,
@@ -182,7 +195,6 @@ fn parse() -> Result<Options, String> {
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
         .unwrap_or_default();
-    let mut host_entry = None;
     let mut node = None;
     let mut positional = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -209,7 +221,6 @@ fn parse() -> Result<Options, String> {
         match name.as_str() {
             "--url" => o.url = Some(value()?),
             "--app-id" => o.app_id = Some(value()?).filter(|id| !id.trim().is_empty()),
-            "--host-entry" => host_entry = Some(PathBuf::from(value()?)),
             "--node" => node = Some(PathBuf::from(value()?)),
             "--mc-origin" => o.launch.mc_origin = Some(value()?),
             "--mc-token" => o.mc_token = value()?,
@@ -217,7 +228,7 @@ fn parse() -> Result<Options, String> {
             "--home-dir" => o.home_dir = Some(value()?.into()),
             "--dev" => o.dev = true,
             "--config-dir" => o.launch.config_dir = Some(value()?.into()),
-            "--qml-dir" => o.roots = Roots::one(value()?.into()),
+            "--qml-dir" => qml_dir = Some(value()?.into()),
             "--licenses" => {
                 o.launch.licenses_manifest = Some(value()?.into());
                 o.licenses_given = true;
@@ -275,21 +286,38 @@ fn parse() -> Result<Options, String> {
             _ => return Err(format!("unknown option {arg}")),
         }
     }
+    #[cfg(feature = "dev-qml")]
+    if let Some(dir) = qml_dir {
+        o.roots = Roots::one(dir);
+    }
+    // A shell built without `dev-qml` has no compiler for directories: it
+    // runs its pack, which a user changes through `<config>`.
+    #[cfg(not(feature = "dev-qml"))]
+    if let Some(dir) = qml_dir {
+        eprintln!(
+            "hal-c2-ljos: not reading the QML in {}: this shell runs the QML it was built with \
+             (build with --features dev-qml to compile a directory)",
+            dir.display()
+        );
+    }
     if o.url.is_some() && (o.pair.is_some() || o.launch.mc_origin.is_some()) {
         return Err(
             "--url has the host attach to an MC; --pair and --mc-origin name one without it".into(),
         );
     }
-    o.host.entry =
-        host_entry.unwrap_or_else(|| desktop_host::default_entry(&executable_dir, RELEASE));
-    o.host.node = node.unwrap_or_else(|| {
+    let node = node.unwrap_or_else(|| {
         let from_env = std::env::var("HAL_C2_NODE_BIN").ok();
         desktop_host::default_node(&executable_dir, RELEASE, from_env.as_deref())
     });
-    // Staged beside the host (scripts/stage-runtime.mjs), or `vp run
-    // licenses`'s apps/desktop-qt/licenses/ in a checkout.
+    o.host.live = Some(hal_c2_shell::mc_launcher::Live::process(
+        desktop_host::bundled_mc(&executable_dir),
+        desktop_host::source_mc(),
+        node,
+    ));
+    // This app's own manifest (desktop_host::default_licenses), staged by
+    // its own licenses script, not desktop-qt's beside the host.
     if !o.licenses_given {
-        o.launch.licenses_manifest = Some(desktop_host::licenses_beside(&o.host.entry));
+        o.launch.licenses_manifest = Some(desktop_host::default_licenses(&executable_dir, RELEASE));
     }
     // The folders are the shell's own; the rest is the host's (connect_to).
     let (folders, rest) = hal_c2_shell::launch_folders(&positional);
@@ -321,7 +349,7 @@ fn main() -> ExitCode {
         }
     };
     if options.check {
-        return check(&options.roots);
+        return check(&options);
     }
     if let Err(stranded) = connect_to(&mut options) {
         for what in stranded {
@@ -364,19 +392,15 @@ fn main() -> ExitCode {
         None => hal_c2_shell::browser::set_supported(true),
         Some(why) => eprintln!("hal-c2-ljos: browser tabs open in the system browser: {why}"),
     }
-    // A brick with an error fails only what makes an object of it, as in Qt.
-    let app = match options.roots.dirs().and_then(|dirs| {
-        // The shell says when closing a window ends the app
-        // (controller::attach_root).
-        App::new("HAL-C2")
-            // The Wayland app id and X11 class by which docks find the
-            // entry's icon and compositor rules find the window.
-            .desktop_file_name(app_id(&options))
-            .quit_on_last_window_closed(false)
-            .register(hal_c2_shell::register)
-            .qml_dirs(dirs, ROOT)
-            .map_err(|e| e.to_string())
-    }) {
+    // The shell says when closing a window ends the app
+    // (controller::attach_root).
+    let app = App::new("HAL-C2")
+        // The Wayland app id and X11 class by which docks find the
+        // entry's icon and compositor rules find the window.
+        .desktop_file_name(app_id(&options))
+        .quit_on_last_window_closed(false)
+        .register(hal_c2_shell::register);
+    let app = match with_qml(app, &options) {
         Ok(app) => app,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
@@ -422,10 +446,68 @@ fn main() -> ExitCode {
     }
 }
 
+/// The QML the shell runs: the pack build.rs compiled, which the run lays
+/// the user's files over (run).
+#[cfg(not(feature = "dev-qml"))]
+fn with_qml(app: App, options: &Options) -> Result<App, String> {
+    // A picture is of the shell as built: only a run follows the user's
+    // files, and a picture taken here would pass as the user's shell.
+    let picture = options.screenshot.is_some() || options.render.is_some() || options.audit.on;
+    if let Some(config) = options.launch.config_dir.as_deref()
+        && picture
+        && config.join(hal_c2_shell::runtime::USER_SHELL).is_file()
+    {
+        if options.audit.on {
+            return Err(format!(
+                "auditing {} needs the QML compiled from files: build with --features dev-qml",
+                config.join(hal_c2_shell::runtime::USER_SHELL).display()
+            ));
+        }
+        eprintln!(
+            "hal-c2-ljos: the picture is of the built-in shell, not {}",
+            config.join(hal_c2_shell::runtime::USER_SHELL).display()
+        );
+    }
+    Ok(app.source(hal_c2_shell::pack()).root(ROOT))
+}
+
+/// The QML compiled from the directories now, with the user's files as they
+/// are: a `dev-qml` build's, which does not follow saves.
+#[cfg(feature = "dev-qml")]
+fn with_qml(app: App, options: &Options) -> Result<App, String> {
+    // A brick with an error fails only what makes an object of it, as in Qt.
+    let dirs = options.roots.dirs()?;
+    app.qml_dirs(dirs, ROOT).map_err(|e| e.to_string())
+}
+
+/// `--check` of a shell built without `dev-qml`: whether the pack build.rs
+/// made holds every QML file build.rs found.
+#[cfg(not(feature = "dev-qml"))]
+fn check(_: &Options) -> ExitCode {
+    let pack = hal_c2_shell::pack();
+    let failed = hal_c2_shell::unpacked(&pack);
+    for (key, why) in &failed {
+        eprintln!("hal-c2-ljos: {key}: {why}");
+    }
+    let files = hal_c2_shell::QML_FILES
+        .len()
+        .max(pack.keys().count() + failed.len());
+    eprintln!(
+        "hal-c2-ljos: {} of {files} QML files compiled",
+        files - failed.len()
+    );
+    if failed.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 /// `--check`: whether every QML file compiles, what the compiler said a
 /// line each, then how many of the files compiled.
-fn check(roots: &Roots) -> ExitCode {
-    let compiled = match qml::compile(roots) {
+#[cfg(feature = "dev-qml")]
+fn check(options: &Options) -> ExitCode {
+    let compiled = match qml::compile(&options.roots) {
         Ok(compiled) => compiled,
         Err(e) => {
             eprintln!("hal-c2-ljos: {e}");
@@ -475,9 +557,12 @@ fn connect_to(options: &mut Options) -> Result<(), Vec<String>> {
         .take()
         .unwrap_or_else(|| paths.shell.clone());
     let _ = std::fs::create_dir_all(&config_dir);
-    // Its `qml` and `shell.qml` join the QML the shell is made of.
-    options.roots = options.roots.clone().with_user(config_dir.clone());
-    options.launch.qml = Some(options.roots.clone());
+    // A `dev-qml` build compiles its `qml` and `shell.qml` with the rest;
+    // otherwise the run lays them over the pack (run).
+    #[cfg(feature = "dev-qml")]
+    {
+        options.roots = options.roots.clone().with_user(config_dir.clone());
+    }
     options.launch.config_dir = Some(config_dir);
     // main.cpp's host arguments: the link to attach to, the development
     // profile (the host starts no MC release for one without a root), the
@@ -690,6 +775,10 @@ fn render_to(
     // The bundled font: the same picture on every machine.
     ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
+    // As the window's shell does: the `Window` Main.qml's loader shows gets a
+    // window of its own, where its popups find their overlay. Before it is
+    // made: a `Window` made unhosted stays an item of the loader for good.
+    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
     let picture = Picture::new(options.size.0, options.size.1).settle(capture.settle_ms);
     picture.install(&engine);
     report_warnings(&engine);
@@ -733,7 +822,7 @@ fn render_to(
             hal_c2_shell::start(&engine, &launch, connection.clone());
             hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = hal_c2_shell::runtime::open(&engine, false)?;
+            let root = shown(&engine)?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
             // `--screenshot` plays its steps on the picture's clock instead.
             let mut played = capture.play_after_snapshot;
@@ -780,7 +869,7 @@ fn render_to(
                 Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
             }
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = hal_c2_shell::runtime::open(&engine, false)?;
+            let root = shown(&engine)?;
             // Once the bricks are there, as with an MC: what opens on a
             // signal (the palette's popup) misses one sent before.
             if !capture.play_after_snapshot {
@@ -821,6 +910,15 @@ fn render_to(
     std::fs::write(out, png).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("hal-c2-ljos: wrote {}", out.display());
     Ok(capture.failure.is_some())
+}
+
+/// The window a picture is of: what Main.qml's ShellLoader shows.
+fn shown(engine: &Engine) -> Result<ljos::ObjectId, String> {
+    hal_c2_shell::runtime::open(engine)?;
+    hal_c2_shell::runtime::window(engine).ok_or_else(|| {
+        let why = hal_c2_shell::runtime::user_shell_failed(engine).unwrap_or_default();
+        format!("no shell to draw: {why}")
+    })
 }
 
 /// `--audit`'s report of `root` as `picture` would draw it, on stdout; true
@@ -990,7 +1088,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
         .with_size(options.size.0 as f32, options.size.1 as f32)
         .with_color_space(ColorSpace::Untagged);
     let headless = offscreen(|name| std::env::var(name).ok());
-    let app = app
+    let app = with_user_files(app, &options)
         .shell_config(config)
         .on_message(|_: &Engine, _: Message| {});
     let setup = move |setup: &mut ljos::Setup<'_, Message>| {
@@ -1118,9 +1216,17 @@ fn run(app: App, options: Options) -> Result<(), String> {
         hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
         // The saved theme's interface font, for all the root makes.
         hal_c2_shell::theme::set_application_font(&engine);
-        // The user's shell or the built-in one, made again as their
-        // files change.
-        let root = hal_c2_shell::runtime::open(&engine, true);
+        // Each save of the user's files that was applied, or failed:
+        // Runtime's lastError and the windows' shells follow it.
+        let weak = engine.downgrade();
+        setup.on_user_report(move |_| {
+            if let Some(engine) = weak.upgrade() {
+                hal_c2_shell::runtime::reloaded(&engine);
+            }
+        });
+        hal_c2_shell::runtime::set_hot_reload_enabled(&engine, cfg!(not(feature = "dev-qml")));
+        // Main.qml's ShellLoader: the user's shell or the built-in one.
+        let root = hal_c2_shell::runtime::open(&engine);
         // The others saved open reopen once the first shows
         // (NativeShell::restoreWindows after windows.start()).
         if root.is_ok() {
@@ -1143,6 +1249,22 @@ fn run(app: App, options: Options) -> Result<(), String> {
         host.stop();
     }
     result
+}
+
+/// The user's `<config>` over the pack, followed as it is saved
+/// (`hal_c2_shell::user_qml`, which the features run as well).
+#[cfg(not(feature = "dev-qml"))]
+fn with_user_files(app: App, options: &Options) -> App {
+    match hal_c2_shell::user_qml(&options.launch) {
+        Some(user) => app.user_qml(user.on_fault(|fault| eprintln!("hal-c2-ljos: {fault}"))),
+        None => app,
+    }
+}
+
+/// A `dev-qml` build compiled the user's files with the rest (with_qml).
+#[cfg(feature = "dev-qml")]
+fn with_user_files(app: App, _: &Options) -> App {
+    app
 }
 
 /// Qt's `offscreen` platform asked for by name, the one way main.cpp runs
@@ -1198,7 +1320,7 @@ fn install_dev_desktop_entry() {
 mod tests {
     use super::{Allowed, offscreen};
 
-    const LAYOUT: &str = "file:///ci/apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
+    const LAYOUT: &str = "file:///ci/packages/qml/HalC2/Bricks/DefaultLayout.qml:144:21";
 
     #[test]
     fn allow_reads_rule_and_path_skipping_comments() {
@@ -1254,7 +1376,7 @@ mod tests {
         let allowed = Allowed::parse("layout-occluded Bricks/ShellWindow.qml:115").unwrap();
         let by = |line: u32| {
             format!(
-                "the button is covered by the item (file:///ci/apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
+                "the button is covered by the item (file:///ci/packages/qml/HalC2/Bricks/ShellWindow.qml:{line}:5)"
             )
         };
         assert_eq!(

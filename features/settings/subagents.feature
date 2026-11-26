@@ -2,7 +2,7 @@
 #   packages/contracts/src/settings.ts (NativeSubagents, nativeSubagents)
 #   apps/server-ex/lib/hal_c2/settings.ex (hal_c2_subagents?)
 #   apps/server-ex/lib/hal_c2/mcp.ex (instructions)
-#   apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js (the Subagents row)
+#   packages/qml/HalC2/Bricks/js/settingsRows.js (the Subagents row)
 #   apps/tui/src/host/sections/subagents.ts
 # New in HAL-C2. The provider adapters apply it: see the "subagent" scenarios in providers/claude.feature,
 # providers/codex.feature and the @backlog ones of the providers that have a knob not wired yet.

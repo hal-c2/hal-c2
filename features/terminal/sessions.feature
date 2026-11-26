@@ -14,8 +14,8 @@
 #   apps/server/src/terminal/Manager.ts (resolveShellCandidates, Windows shell order, stripAppImageRuntimeEnv,
 #     resolveProviderInstanceTerminalEnvironment, openWithWorkspaceLease)
 #   apps/server/src/terminal/Manager.test.ts (zsh prompt marker, provider environment change, worktree on reopen)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
+#   packages/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
+#   packages/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
 #   apps/desktop-qt/src/TerminalController.cpp (launch context, availability)
 #   apps/desktop-qt/tests/tst_Scenarios.qml (terminal toggle)
 #   features/terminal/drawer.feature (the desktop's launch-context scenarios, run natively)
@@ -131,7 +131,7 @@ Feature: Terminal sessions
         | any variable starting with ERL_     |
 
     # Upstream #13359: shells no longer inherit the terminal multiplexer session the server was started from.
-    @backlog @mc
+    @mc
     Scenario Outline: A shell does not join the multiplexer session the MC was started from
       Given the MC was started inside a terminal multiplexer that set <variable>
       When a terminal opens
@@ -148,7 +148,7 @@ Feature: Terminal sessions
         | ZELLIJ_PANE_ID      |
 
     # Upstream #13359: only per-session variables are dropped; the user's multiplexer settings pass.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A multiplexer's own settings still reach the shell
       Given the MC runs with ZELLIJ_CONFIG_DIR set
       When a terminal opens

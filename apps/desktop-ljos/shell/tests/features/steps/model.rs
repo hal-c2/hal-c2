@@ -739,7 +739,7 @@ pub fn register(steps: &mut Steps) {
     picker_steps(steps);
 }
 
-// The picker itself (qml/HalC2/Bricks/ModelPicker.qml) open over the thread:
+// The picker itself (packages/qml/HalC2/Bricks/ModelPicker.qml) open over the thread:
 // its numbered keys and the keymap's modelPickerOpen
 // (navigation/focus.feature, keybinding-customisation.feature).
 #[derive(Default)]

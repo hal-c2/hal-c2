@@ -8,11 +8,16 @@ defmodule HalC2.CodeReviewPropTest do
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
   commits to push between. The commands open and close them, push, break a head so its
   checkout fails, turn Codex off so a review's thread is refused once it is checked
-  out, hold checkouts at the fetch and posts at GitHub, refuse posts, look
+  out, keep every review in a sandbox or review trusted pull requests here (the
+  sandbox, which this MC with no OpenShell cannot open, fails the review once it is
+  checked out and never runs it here), hold checkouts at the fetch and posts at
+  GitHub, refuse posts, look
   for pull requests, start, retry, stop (once as a run reads the pull request), report,
   dismiss, discard and publish reviews, end turns (one of them stopped by the
   provider's usage limit, which parks its review in the queue and starts nothing else
-  until the limit resets, restarts included, unless the user asks for a review),
+  until the limit resets, restarts included, unless the user asks for a review, looks,
+  resumes the queue or picks another model; a limit a run of the old model hits after
+  that only queues it; a queued review the user asks to start now starts next),
   answer a superseded post late, comment the review command and label pull requests,
   change settings (also while a look reads GitHub), turn the plugin off and on, and
   crash it. After every step:
@@ -105,7 +110,8 @@ defmodule HalC2.CodeReviewPropTest do
     File.write!(ssh, """
     #!/bin/sh
     for last; do :; done
-    if [ -e '#{fx}/fetch.hold' ]; then
+    # The submodule acme/lib is not held: a hold is on the fetch of a pull request.
+    if [ -e '#{fx}/fetch.hold' ] && ! echo "$last" | grep -q 'acme/lib'; then
       marker='#{fx}/holds/'$$
       echo $PPID > "$marker.tmp" && mv "$marker.tmp" "$marker"
       while [ -e '#{fx}/fetch.hold' ] && [ ! -e '#{fx}/holds/go-'$PPID ] && [ -d '#{fx}' ]; do sleep 0.05; done
@@ -121,7 +127,8 @@ defmodule HalC2.CodeReviewPropTest do
 
     vars =
       ~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND HAL_C2_FAKE_REMOTES FAKE_CODEX_GATE
-         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
+         GIT_CONFIG_VALUE_1)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
     apps = ~w(gh_command codex_command settings_check_ms home)a
@@ -133,10 +140,17 @@ defmodule HalC2.CodeReviewPropTest do
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", Path.join(fx, "remotes"))
     # The plugin fetches GitHub over HTTPS, which the fake remote answers over SSH.
+    # Beside it, an include with an empty value, as the MC's GitHub config starts
+    # with `helper =` (#1774): the submodules `unchecked/0` looks for still arrive.
+    included = Path.join(fx, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
     System.put_env(%{
-      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_COUNT" => "2",
       "GIT_CONFIG_KEY_0" => "url.git@github.com:.insteadOf",
-      "GIT_CONFIG_VALUE_0" => "https://github.com/"
+      "GIT_CONFIG_VALUE_0" => "https://github.com/",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
     })
 
     Application.put_env(:hal_c2, :gh_command, "gh")
@@ -229,6 +243,19 @@ defmodule HalC2.CodeReviewPropTest do
       {:start, ["acme/web#1"]},
       {:report, [{"acme/web#1", 1}, :findings]},
       {:dismiss, ["acme/web#1", 2, false]}
+    ])
+  end
+
+  # From hal-c2/hal-c2#1713: two pull requests of one repository, let go of their
+  # fetches at once, make the clone's store of submodules and both check theirs out.
+  # Placing their worktrees spaces them out, so the race to make the store is
+  # `HalC2.CodeReviewTest`'s, which holds git midway.
+  test "two reviews of one repository let go at once both get its submodules" do
+    replay([
+      {:hold, [true]},
+      {:start, ["acme/api#1"]},
+      {:start, ["acme/api#2"]},
+      {:hold, [false]}
     ])
   end
 
@@ -400,11 +427,16 @@ defmodule HalC2.CodeReviewPropTest do
         activation: "selective",
         new_pushes: false,
         display: "threads",
+        # The reviews' model; another has a usage limit of its own.
+        model: "fake/one",
         per_author: 3,
         per_repository: 2,
         # Whether hubot is a trusted login, and the trigger label.
         trusted_logins: false,
-        label: "agent-review"
+        label: "agent-review",
+        # Whether trusted pull requests are reviewed on this machine rather than in a
+        # sandbox, as `setup` saves it.
+        here: true
       },
       # `labeled`: whether it carries both labels, agent-review added by monalisa and
       # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
@@ -491,6 +523,7 @@ defmodule HalC2.CodeReviewPropTest do
         {1, {:call, __MODULE__, :poll, []}},
         {5, {:call, __MODULE__, :start, [key]}},
         {2, {:call, __MODULE__, :retry, [key]}},
+        {if(m.paused, do: 3, else: 1), {:call, __MODULE__, :resume, []}},
         {2, {:call, __MODULE__, :approve, [key, frequency([{4, true}, {1, false}])]}},
         {1, {:call, __MODULE__, :unapprove, [key]}},
         {2, {:call, __MODULE__, :dismiss, [commented, oneof([1, 2]), boolean()]}},
@@ -543,7 +576,9 @@ defmodule HalC2.CodeReviewPropTest do
             {"concurrency", oneof([1, 2])},
             {"activation", oneof(~w(automatic selective))},
             {"reviewNewPushes", boolean()},
-            {"display", oneof(~w(page threads both))}
+            {"display", oneof(~w(page threads both))},
+            {"model", oneof(~w(fake/one fake/two))},
+            {"reviewTrustedOnThisMachine", boolean()}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -569,7 +604,7 @@ defmodule HalC2.CodeReviewPropTest do
         {"label", oneof(~w(agent-review ship-it))}
       ])
 
-  @plugin_commands ~w(refresh poll start start_stop retry approve unapprove dismiss discard stop relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
+  @plugin_commands ~w(refresh poll start start_stop retry resume approve unapprove dismiss discard stop relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
 
   def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
@@ -610,6 +645,8 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: [],
       checkouts: checkouts(m),
       orphans: [],
+      leaked: [],
+      unchecked: [],
       unstopped: [],
       posts: Enum.sort(m.posts),
       starts: if(m.enabled, do: m.starts, else: :off),
@@ -634,7 +671,8 @@ defmodule HalC2.CodeReviewPropTest do
 
   # `{model after call, the reply it expects}`; a reply is :ok, :error, :held (a post
   # GitHub holds) or nil (a step with no reply to check).
-  defp step(m, {:call, _, :refresh, []}), do: {look(m), :ok}
+  # Asking to look ends a pause, as a start does.
+  defp step(m, {:call, _, :refresh, []}), do: {m |> unpause() |> look(), :ok}
   defp step(m, {:call, _, :poll, []}), do: {look(m), nil}
 
   # An ask reads the pull request first, so one closed since the last look is refused.
@@ -657,7 +695,7 @@ defmodule HalC2.CodeReviewPropTest do
          |> pump(), :ok}
 
       m.reviews[key].status in [:queued, :running] ->
-        {m |> unpause() |> pump(), :ok}
+        {m |> unpause() |> ask_queued(key) |> pump(), :ok}
 
       gated?(asking(m, key), m.reviews[key].seen) ->
         {put_review(m, key, asking(m, key)), :error}
@@ -710,7 +748,7 @@ defmodule HalC2.CodeReviewPropTest do
         {m, :error}
 
       %{status: s} when s in [:queued, :running] ->
-        {m |> unpause() |> pump(), :ok}
+        {m |> unpause() |> ask_queued(key) |> pump(), :ok}
 
       r ->
         if gated?(r, r.seen),
@@ -837,22 +875,29 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # A turn the provider's usage limit stopped: the review waits in the queue
-  # and nothing else starts until the plugin does.
+  # and nothing else starts until the plugin does. A run of a model the user has
+  # since moved off only waits in the queue: the limit was the old model's.
   defp step(m, {:call, _, :limited, [{key, k}]}) do
     case m.reviews[key] do
+      %{run: ^k, status: :running, model: model} when model != m.settings.model ->
+        {m |> queue(key, m.reviews[key].asked) |> pump(), nil}
+
       %{run: ^k, status: :running} ->
         {%{
            queue(m, key, m.reviews[key].asked)
            | paused: true,
              failures: 0,
              pause_text:
-               "Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
+               "Reviews are paused: the agent hit its usage limit. Queued reviews wait instead of failing one by one."
          }, nil}
 
       _ ->
         {m, nil}
     end
   end
+
+  # The user ends a pause now, whatever set it.
+  defp step(m, {:call, _, :resume, []}), do: {%{unpause(m) | failures: 0} |> pump(), :ok}
 
   defp step(m, {:call, _, :late_published, _}), do: {m, :ok}
 
@@ -887,15 +932,22 @@ defmodule HalC2.CodeReviewPropTest do
         "activation" => :activation,
         "reviewNewPushes" => :new_pushes,
         "display" => :display,
+        "model" => :model,
         "reviewsPerAuthorPerDay" => :per_author,
         "reviewsPerRepositoryPerDay" => :per_repository,
         "trustedLogins" => :trusted_logins,
-        "label" => :label
+        "label" => :label,
+        "reviewTrustedOnThisMachine" => :here
       }[field]
 
     value = if field == "trustedLogins", do: value != [], else: value
 
-    # The running plugin takes it as it is: the next look reads the rest.
+    # The running plugin takes it as it is: the next look reads the rest. Another
+    # model ends a usage-limit pause, as it has a limit of its own; a plugin turned off
+    # is not running to hear it, and keeps its pause.
+    m =
+      if m.enabled and name == :model and value != m.settings.model, do: unpause(m), else: m
+
     m = %{m | settings: Map.put(m.settings, name, value)}
     if m.enabled, do: {pump(m), :ok}, else: {m, :ok}
   end
@@ -960,6 +1012,19 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp follow(m, key), do: put_review(m, key, %{m.reviews[key] | followed: true})
 
+  # A queued review the user asks for is theirs: followed, never held back, and
+  # started next (`now`, in the order asked), before every queued review not asked
+  # for since.
+  defp ask_queued(m, key) do
+    case m.reviews[key] do
+      %{status: :queued} = r ->
+        %{put_review(m, key, %{r | asked: true, followed: true, now: m.seq + 1}) | seq: m.seq + 1}
+
+      _ ->
+        m
+    end
+  end
+
   # The user's own ask ends a pause.
   defp unpause(m), do: %{m | paused: false, pause_text: nil}
 
@@ -970,8 +1035,7 @@ defmodule HalC2.CodeReviewPropTest do
         m
         | failures: 0,
           paused: true,
-          pause_text:
-            "Reviews are paused after repeated failures; they start again at the next look."
+          pause_text: "Reviews are paused after repeated failures."
       },
       else: %{m | failures: m.failures + 1}
   end
@@ -1008,6 +1072,10 @@ defmodule HalC2.CodeReviewPropTest do
       # (`over_budget/2`), or nil; the watch leaves one held back alone for the rest of
       # the day.
       asked: false,
+      # When, by `seq`, the user asked a queued review to start now, or nil.
+      now: nil,
+      # The model its last run started with.
+      model: nil,
       limited: nil,
       # Whether its findings were saved before reports were made safe.
       old: false
@@ -1062,6 +1130,7 @@ defmodule HalC2.CodeReviewPropTest do
       r
       | status: :queued,
         asked: asked,
+        now: nil,
         limited: nil,
         started: nil,
         past: if(r.run, do: [r.run | r.past], else: r.past),
@@ -1147,7 +1216,9 @@ defmodule HalC2.CodeReviewPropTest do
     pump(m)
   end
 
-  # Starts queued reviews, oldest first, while fewer than `concurrency` run; each
+  # Starts queued reviews (those asked to start now first, in the order asked, then
+  # the rest oldest first) while fewer than `concurrency` run, with the model saved
+  # now; each
   # start is a new run, held at the fetch while the hold is on. A paused queue
   # (a usage limit, or failed runs in a row) starts nothing.
   defp pump(%{paused: true} = m), do: m
@@ -1158,7 +1229,7 @@ defmodule HalC2.CodeReviewPropTest do
     taken =
       m.reviews
       |> Enum.filter(fn {_, r} -> r.status == :queued end)
-      |> Enum.sort_by(fn {_, r} -> r.seq end)
+      |> Enum.sort_by(fn {_, r} -> {r.now == nil, r.now, r.seq} end)
       |> Enum.take(max(m.settings.concurrency - running, 0))
       |> Enum.map(&elem(&1, 0))
 
@@ -1187,8 +1258,10 @@ defmodule HalC2.CodeReviewPropTest do
           {put_review(m, key, %{
              r
              | status: :running,
+               now: nil,
+               model: m.settings.model,
                run: length(runs),
-               launched: {r.trusted, r.approved},
+               launched: {r.trusted, r.approved, m.settings.here},
                started: m.tick,
                stopped: false
            }), held}
@@ -1266,17 +1339,18 @@ defmodule HalC2.CodeReviewPropTest do
   defp resolve(m, key, k) do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
-        {trusted, approved} = r.launched
+        {trusted, approved, here} = r.launched
 
         cond do
           # Nobody trusted, it is checked out only at the head the user approved.
           m.prs[key].broken or (not trusted and approved != m.prs[key].head) ->
             m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
 
-          # And runs in a sandbox (#1412), which this MC, with no OpenShell, cannot open:
-          # checked out, it fails before its thread starts.
-          # Codex turned off refuses its thread the same way, checked out.
-          not trusted or not m.codex ->
+          # And runs in a sandbox (#1412), as every review does unless the settings it
+          # started under review trusted ones here, which this MC, with no OpenShell,
+          # cannot open: checked out, it fails before its thread starts, and never runs
+          # here instead. Codex turned off refuses its thread the same way, checked out.
+          not (trusted and here) or not m.codex ->
             r = %{r | status: :failed, reviewed: m.prs[key].head}
             m |> put_review(key, r) |> fail() |> pump()
 
@@ -1461,6 +1535,7 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   def retry(key), do: observe(call("retry", %{"key" => key}))
+  def resume, do: observe(call("resume", %{}))
 
   # The head the Reviews page shows, or the other one.
   def approve(key, fresh) do
@@ -1982,6 +2057,8 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: Enum.filter(Process.get(:cr_discarded), &thread(&1)["plugin"]["listed"]),
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
+      leaked: leaked(),
+      unchecked: unchecked(),
       unstopped: unstopped(view),
       posts: posts(),
       starts: if(pid, do: starts(), else: :off),
@@ -2090,6 +2167,31 @@ defmodule HalC2.CodeReviewPropTest do
       end
 
     Enum.reject(checkout_dirs(), &(Path.expand(&1) in saved))
+  end
+
+  # The worktrees the clones still list for a checkout no longer on disk: what a
+  # checkout's removal left behind, its submodules' repositories among it.
+  defp leaked do
+    for admin <- Path.wildcard(Path.join([data_dir(), "repos", "**", "*.git", "worktrees", "*"])),
+        {:ok, gitdir} <- [File.read(Path.join(admin, "gitdir"))],
+        not File.exists?(gitdir |> String.trim() |> Path.dirname()),
+        do: admin
+  end
+
+  # Saved checkouts made here rather than in a sandbox, without their submodule `lib`
+  # checked out.
+  defp unchecked do
+    case File.read(Path.join(data_dir(), "reviews.json")) do
+      {:ok, text} ->
+        for {_key, r} <- JSON.decode!(text)["reviews"],
+            is_binary(r["checkout"]) and r["sandboxed"] != true,
+            File.dir?(r["checkout"]),
+            not File.regular?(Path.join(r["checkout"], "lib/README.md")),
+            do: r["checkout"]
+
+      _ ->
+        []
+    end
   end
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
@@ -2437,7 +2539,8 @@ defmodule HalC2.CodeReviewPropTest do
           "display" => "threads",
           # As `initial_state/0` has them.
           "reviewsPerAuthorPerDay" => 3,
-          "reviewsPerRepositoryPerDay" => 2
+          "reviewsPerRepositoryPerDay" => 2,
+          "reviewTrustedOnThisMachine" => true
         }
       })
 
@@ -2692,8 +2795,20 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # The fake remotes: `acme/api` and `acme/web`, each pull request with two head
-  # commits off `main` that change `src/limits.ts`. Returns `{key, i}` → sha.
+  # commits off `main` that change `src/limits.ts`. Both have `acme/lib` as their
+  # submodule `lib`, so the two of acme/api share a store of it. Returns `{key, i}` → sha.
   defp remotes(fx) do
+    lib_bare = Path.join([fx, "remotes", "acme", "lib.git"])
+    File.mkdir_p!(Path.dirname(lib_bare))
+    git!(fx, ["init", "-q", "--bare", "-b", "main", lib_bare])
+    lib = Path.join(fx, "seed-lib")
+    git!(fx, ["init", "-q", "-b", "main", lib])
+    File.write!(Path.join(lib, "README.md"), "# lib\n")
+    git!(lib, ["add", "README.md"])
+    git!(lib, ["commit", "-q", "-m", "Start"])
+    git!(lib, ["push", "-q", lib_bare, "main:main"])
+    lib_sha = git!(lib, ["rev-parse", "HEAD"])
+
     for repo <- ~w(api web), reduce: %{} do
       shas ->
         bare = Path.join([fx, "remotes", "acme", "#{repo}.git"])
@@ -2703,6 +2818,15 @@ defmodule HalC2.CodeReviewPropTest do
         git!(fx, ["init", "-q", "-b", "main", seed])
         File.write!(Path.join(seed, "README.md"), "# #{repo}\n")
         git!(seed, ["add", "README.md"])
+
+        File.write!(
+          Path.join(seed, ".gitmodules"),
+          "[submodule \"lib\"]\n\tpath = lib\n\turl = https://github.com/acme/lib.git\n"
+        )
+
+        git!(seed, ["add", ".gitmodules"])
+        git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{lib_sha},lib"])
+
         git!(seed, ["commit", "-q", "-m", "Start"])
         git!(seed, ["push", "-q", bare, "main:main"])
 

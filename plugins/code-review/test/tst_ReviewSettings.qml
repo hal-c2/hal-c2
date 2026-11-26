@@ -1,5 +1,5 @@
 // Run from a hal-c2 checkout, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import apps/desktop-qt/qml \
+//   qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
 //     -input plugins/code-review/test
 import QtQuick
 import QtTest
@@ -27,6 +27,12 @@ Item {
             prompt: "Review {{pr.number}}."
         })
 
+    // The agents the `settings` call lists: Codex reviews in a sandbox, OpenCode cannot.
+    readonly property var providers: [
+        { instanceId: "codex", name: "Codex", sandboxable: true, models: [] },
+        { instanceId: "opencode", name: "OpenCode", sandboxable: false, models: [] }
+    ]
+
     // The plugin object a settings page gets, with the MC part faked:
     // `settings` answers what is saved, and each save is recorded.
     QtObject {
@@ -38,7 +44,7 @@ Item {
         function call(method, input, callback, environment) {
             callback({
                 settings: test.saved,
-                providers: [],
+                providers: test.providers,
                 repositories: []
             }, null);
         }
@@ -104,6 +110,24 @@ Item {
             type(field, ", renovate[bot]");
             compare(field.text, "dependabot[bot], renovate[bot]");
             compare(loader.item.values.ignoredAuthors, ["dependabot[bot]", "renovate[bot]"]);
+        }
+
+        // Every review fails closed on an agent that cannot run in a sandbox, so the
+        // settings say so before the first review does.
+        function test_an_agent_that_cannot_run_in_a_sandbox_is_warned_of() {
+            const warning = find("codeReviewSandboxAgent");
+            verify(!warning.visible);
+            loader.item.set("provider", "opencode");
+            verify(warning.visible);
+            verify(warning.text.indexOf("its reviews fail") >= 0);
+
+            // Reviewing trusted pull requests here leaves only the untrusted ones failing.
+            loader.item.set("reviewTrustedOnThisMachine", true);
+            verify(warning.visible);
+            verify(warning.text.indexOf("does not trust fail") >= 0);
+
+            loader.item.set("provider", "codex");
+            verify(!warning.visible);
         }
 
         function test_discarding_shows_the_saved_logins_again() {

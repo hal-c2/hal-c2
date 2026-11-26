@@ -297,6 +297,9 @@ import {
   ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
   ServerProcessDiagnosticsResult,
+  ServerOpenShellOperationError,
+  ServerOpenShellOperationInput,
+  OpenShellOperationState,
   ServerOpenShellStatus,
   ServerOpenShellStatusError,
   ServerProcessResourceHistoryInput,
@@ -556,6 +559,8 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetOpenShellStatus: "server.getOpenShellStatus",
+  serverRunOpenShellOperation: "server.runOpenShellOperation",
+  serverSubscribeOpenShellOperation: "server.subscribeOpenShellOperation",
   serverGetHostResources: "server.getHostResources",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
@@ -962,6 +967,23 @@ const WsServerGetOpenShellStatusRpc = Rpc.make(WS_METHODS.serverGetOpenShellStat
   success: ServerOpenShellStatus,
   error: Schema.Union([ServerOpenShellStatusError, EnvironmentAuthorizationError]),
 });
+
+const WsServerRunOpenShellOperationRpc = Rpc.make(WS_METHODS.serverRunOpenShellOperation, {
+  payload: ServerOpenShellOperationInput,
+  success: OpenShellOperationState,
+  error: Schema.Union([ServerOpenShellOperationError, EnvironmentAuthorizationError]),
+});
+
+// The operation running or last run, at once and on every step: the openShell shape.
+const WsServerSubscribeOpenShellOperationRpc = Rpc.make(
+  WS_METHODS.serverSubscribeOpenShellOperation,
+  {
+    payload: Schema.Struct({}),
+    success: OpenShellOperationState,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
   payload: Schema.Struct({}),
@@ -2351,6 +2373,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetOpenShellStatusRpc,
+  WsServerRunOpenShellOperationRpc,
+  WsServerSubscribeOpenShellOperationRpc,
   WsServerGetHostResourcesRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,

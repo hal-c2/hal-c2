@@ -23,9 +23,9 @@
 #   apps/web/src/components/ProjectCloneToastCoordinator.tsx
 #   apps/web/src/components/ChatView.tsx (projectCloneSendBlockReason: sending held while a project clones)
 #   apps/web/src/shell/useShellFolderDrop.ts
-#   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
-#   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml
+#   packages/qml/HalC2/Bricks/ProjectFolderDrop.qml
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Add project)
+#   packages/qml/HalC2/Bricks/HomePage.qml
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
 #   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
 #   apps/desktop-qt/src/native/ProjectCloneController.cpp (clone toasts: progress, cancel, retry, open, remove)
@@ -939,7 +939,7 @@ Feature: Adding projects
       And the user reads "Repository name incomplete" and "Enter the full owner/repository name."
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (normalizePastedCloneUrl)
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile
     Scenario: A pasted owner and repository name is cloned from GitHub over HTTPS
       When the user pastes "acme/shop" as the Git URL to clone
       Then the repository is cloned from "https://github.com/acme/shop.git"
@@ -961,7 +961,7 @@ Feature: Adding projects
         | Azure DevOps    | SSH       |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-mobile
     Scenario Outline: A pasted clone address proposes the folder git would have chosen
       When the user pastes <address> as the Git URL to clone
       Then the proposed folder is named "<folder>"
@@ -977,7 +977,7 @@ Feature: Adding projects
         | https://host/acme/123                    | 123    |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui @priority-low
+    @desktop @mobile @tui @backlog-mobile @priority-low
     Scenario Outline: A pasted address that names no repository proposes no folder
       When the user pastes <address> as the Git URL to clone
       Then no folder name is proposed

@@ -1,25 +1,32 @@
-//! The shell's QML: desktop-qt's bricks (`apps/desktop-qt/qml`) and this
+//! The shell's QML: the bricks (`packages/qml`) and this
 //! app's own (`apps/desktop-ljos/qml`: the entry and the QML half of
-//! `HalC2.Shell`), with the user's (`<config>/qml` and `<config>/shell.qml`)
-//! when there is a config dir, compiled at start-up as one import path
-//! (`App::qml_dirs`) and again for each reload (src/runtime.rs).
+//! `HalC2.Shell`), as one import path. build.rs compiles them into the pack
+//! a release runs; a `dev-qml` build compiles them at start-up instead
+//! (`App::qml_dirs`), with the user's (`<config>/qml` and
+//! `<config>/shell.qml`) when there is a config dir, and so do the tests.
 
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "dev-qml")]
 use ljos::dev::Compiled;
 
-/// The key of the built-in shell, `qml/Main.qml`.
+/// The key of the entry, `qml/Main.qml`: the ShellLoader that shows the
+/// user's shell, else the built-in `HalC2/Bricks/DefaultShell.qml`.
 pub const DEFAULT_SHELL: &str = "Main";
 
-/// The key of `<config>/shell.qml` in what [`compile`] makes.
+/// The key of `<config>/shell.qml` among the directories' files.
 pub const USER_SHELL: &str = "shell";
 
-/// The import path: the user's modules, the bricks' root, this app's, then
-/// the user's shell.
+/// The import path: the user's modules, the bricks' root, this app's, any
+/// further roots an app over this shell brings (the phone's `HalC2.Mobile`),
+/// then the user's shell.
 #[derive(Clone, Debug)]
 pub struct Roots {
     pub bricks: PathBuf,
     pub shell: PathBuf,
+    /// Roots after this app's own, each once: another app's modules over
+    /// the same bricks and `HalC2.Shell` (apps/mobile-ljos's phone QML).
+    pub extra: Vec<PathBuf>,
     /// The config dir. Its `qml` comes first, so the user's modules and
     /// brick overrides win (desktop-qt prepends it to the import path), and
     /// its `shell.qml`, with the files beside it, is [`USER_SHELL`].
@@ -33,8 +40,9 @@ impl Roots {
             .parent()
             .expect("shell/ is in the app");
         Roots {
-            bricks: app.join("../desktop-qt/qml"),
+            bricks: app.join("../../packages/qml"),
             shell: app.join("qml"),
+            extra: Vec::new(),
             user: None,
         }
     }
@@ -45,6 +53,7 @@ impl Roots {
         Roots {
             bricks: dir.clone(),
             shell: dir,
+            extra: Vec::new(),
             user: None,
         }
     }
@@ -73,6 +82,9 @@ impl Roots {
         }
         dirs.push(canonical(&self.bricks)?);
         dirs.push(canonical(&self.shell)?);
+        for root in &self.extra {
+            dirs.push(canonical(root)?);
+        }
         if let Some(user) = user.filter(|u| u.join("shell.qml").is_file()) {
             dirs.push(canonical(user)?);
         }
@@ -84,26 +96,44 @@ impl Roots {
         }
         Ok(once)
     }
-
-    /// What a reload follows: all of the config dir (its `qml` and
-    /// `shell.qml` may be made later) and the two roots.
-    pub fn watched(&self) -> Vec<PathBuf> {
-        let mut dirs: Vec<PathBuf> = self.user.iter().cloned().collect();
-        dirs.push(self.bricks.clone());
-        if self.shell != self.bricks {
-            dirs.push(self.shell.clone());
-        }
-        dirs
-    }
 }
 
 /// Compiles the roots against the standard modules and `HalC2.Shell`, as
-/// `App::qml_dirs` does for the app, printing nothing: for `--check`, the
-/// runtime's reloads and the tests, which show what it found themselves.
+/// `App::qml_dirs` does for the app, printing nothing: for a `dev-qml`
+/// build's `--check`, which shows what it found itself.
+#[cfg(feature = "dev-qml")]
 pub fn compile(roots: &Roots) -> Result<Compiled, String> {
     let dirs = roots.dirs()?;
     let snapshot = ljos::engine();
     crate::register(&snapshot);
     let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
     ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn another_apps_roots_come_after_this_ones_and_before_the_users_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            path.canonicalize().unwrap()
+        };
+        let (bricks, shell, phone, user) =
+            (made("bricks"), made("shell"), made("phone"), made("user"));
+        std::fs::write(user.join("shell.qml"), "").unwrap();
+        let roots = Roots {
+            bricks: bricks.clone(),
+            shell: shell.clone(),
+            extra: vec![phone.clone(), bricks.clone()],
+            user: Some(user.clone()),
+        };
+        assert_eq!(
+            roots.dirs().unwrap(),
+            [bricks.clone(), shell.clone(), phone.clone(), user.clone()]
+        );
+    }
 }

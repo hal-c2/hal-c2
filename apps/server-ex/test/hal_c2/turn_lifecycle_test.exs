@@ -112,6 +112,73 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["interrupted"])
   end
 
+  # A run id the thread does not have was taken for the active run: the stop was
+  # refused, after it had held the queue and marked that run as being stopped (#461).
+  test "an interrupt naming a run the thread does not have changes nothing",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2")
+    before = await_statuses(thread_id, ["running", "queued"])
+
+    stop = %{"type" => "run.interrupt", "threadId" => thread_id, "runId" => "run:unknown"}
+    assert {:error, "no running turn"} = Orchestration.dispatch(stop)
+
+    assert await_statuses(thread_id, ["running", "queued"]) == before
+
+    refute Enum.any?(
+             StreamState.list(current(thread_id), "turn-item"),
+             &(&1["type"] == "run_interrupt_request")
+           )
+  end
+
+  # The interrupt's effect reads the run again, and ended the active one when nothing
+  # drove it (#461).
+  test "an interrupt effect naming an unknown run leaves an undriven turn alone",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    TurnWatch.release(running["id"])
+    refute TurnWatch.driven?(running["id"])
+
+    effect = %{
+      "type" => "provider-turn.interrupt",
+      "threadId" => thread_id,
+      "args" => %{"runId" => "run:unknown"}
+    }
+
+    assert {:error, "no running turn"} = Orchestration.execute_effect(effect, nil, false)
+    assert ["running"] = statuses(thread_id)
+  end
+
+  # The stop is refused at entry: past it, a child that had not started ended its task
+  # and the user's Stop ended the thread's tasks, before the caller heard the error (#461).
+  test "an interrupt naming an unknown run does not cancel an unstarted child's task",
+       %{thread_id: parent} do
+    child = delegate_unstarted(parent)
+
+    stop = %{"type" => "run.interrupt", "threadId" => child, "runId" => "run:unknown"}
+    assert {:error, "no running turn"} = Orchestration.dispatch(stop)
+
+    assert %{"status" => "running"} = StreamState.get(current(parent), "subagent")["task"]
+  end
+
+  test "a user's Stop naming an unknown run does not cancel the thread's delegated tasks",
+       %{thread_id: parent} do
+    delegate_unstarted(parent)
+
+    stop = %{
+      "type" => "run.interrupt",
+      "threadId" => parent,
+      "runId" => "run:unknown",
+      "stopDelegated" => true
+    }
+
+    assert {:error, "no running turn"} = dispatch_to_the_end(stop)
+
+    assert %{"status" => "running"} = StreamState.get(current(parent), "subagent")["task"]
+  end
+
   # A runtime stuck on its provider is killed at the MC's shutdown limit. Failing its run
   # then left a steer it held pending for good, since boot recovery skips an ended run.
   test "a runtime killed while the MC stops leaves its turn for boot recovery",
@@ -255,6 +322,38 @@ defmodule HalC2.TurnLifecycleTest do
     # The first turn's end, which Codex sends as it lets go of it, is not the second's.
     :ok = GenServer.call(runtime, :settle)
     assert ["failed", "running"] = statuses(thread_id)
+  end
+
+  # Codex took the prompt of a run that ended while it started the turn, so the agent
+  # read the message: it closes the questions it answers, as the boot repair would.
+  test "a message whose run ended as Codex took it closes the questions it answers",
+       %{thread_id: thread_id} do
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"runtime-request", "q1",
+         %{
+           "s" => %{
+             "id" => "q1",
+             "status" => "pending",
+             "kind" => "user-input",
+             "nodeId" => "node:q1",
+             "createdAt" => HalC2.Orchestration.Entities.now(),
+             "responseCapability" => %{"type" => "message"}
+           }
+         }}
+      ])
+
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, send_message(thread_id, "m1")}) end)
+    _runtime = await_claim(watch)
+    [run] = await_statuses(thread_id, ["starting"])
+    TurnWriter.abandon(thread_id, run["id"], "failed", TurnWriter.start_failure(nil, :closed))
+    :ok = :sys.resume(watch)
+    assert_receive {:sent, {:ok, _}}, 5_000
+
+    assert %{"status" => "cancelled", "closedBy" => "message"} = await_request(thread_id, "q1")
+    assert ["failed"] = statuses(thread_id)
   end
 
   # Before each instance had its own, a run on another instance of the driver named the
@@ -979,6 +1078,61 @@ defmodule HalC2.TurnLifecycleTest do
     runtime
   end
 
+  # A running task of `parent` whose child thread has started no run.
+  defp delegate_unstarted(parent) do
+    child = parent <> "-child"
+    lineage = %{"relationshipToParent" => "subagent", "parentThreadId" => parent}
+
+    task = %{
+      "id" => "task",
+      "origin" => "app_owned",
+      "childThreadId" => child,
+      "status" => "running"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"thread", child, %{"s" => %{"id" => child, "lineage" => lineage}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", "task", %{"s" => task}},
+        {"node", "task", %{"s" => %{"id" => "task", "status" => "running"}}}
+      ])
+
+    child
+  end
+
+  # Returns the reply once the processes the command spawned are gone too: a Stop
+  # cancels tasks in processes of its own.
+  defp dispatch_to_the_end(command) do
+    caller =
+      Task.async(fn ->
+        receive do: (:go -> Orchestration.dispatch(command))
+      end)
+
+    :erlang.trace(caller.pid, true, [:procs])
+    send(caller.pid, :go)
+    reply = Task.await(caller)
+
+    delivered = :erlang.trace_delivered(:all)
+    assert_receive {:trace_delivered, :all, ^delivered}, 5_000
+    await_spawned(caller.pid)
+    reply
+  end
+
+  defp await_spawned(caller) do
+    receive do
+      {:trace, ^caller, :spawn, pid, _} ->
+        gone = Process.monitor(pid)
+        assert_receive {:DOWN, ^gone, :process, _, _}, 5_000
+        await_spawned(caller)
+    after
+      0 -> :ok
+    end
+  end
+
   defp send_message(thread_id, message_id, text \\ nil) do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
@@ -1002,6 +1156,21 @@ defmodule HalC2.TurnLifecycleTest do
     |> StreamState.list("run")
     |> Enum.sort_by(& &1["ordinal"])
     |> Enum.map(& &1["status"])
+  end
+
+  # Waits until the thread's request `id` is no longer pending; returns it.
+  defp await_request(thread_id, id) do
+    case StreamState.get(current(thread_id), "runtime-request")[id] do
+      %{"status" => "pending"} ->
+        receive do
+          {:hal_c2_stream, ^thread_id, _} -> await_request(thread_id, id)
+        after
+          5_000 -> flunk("request #{id} stayed pending")
+        end
+
+      request ->
+        request
+    end
   end
 
   # Waits until the thread's runs, in order, have these statuses; returns the runs.

@@ -166,7 +166,7 @@ defmodule HalC2.PullRequests.GitHub do
             comments(first: 10) {
               totalCount
               pageInfo { hasNextPage endCursor }
-              nodes { id author { __typename login avatarUrl } body createdAt url #{@reaction_groups} }
+              nodes { id author { __typename login avatarUrl } authorAssociation body createdAt url #{@reaction_groups} }
             }
           }
         }
@@ -203,7 +203,7 @@ defmodule HalC2.PullRequests.GitHub do
         pullRequest { id }
         comments(first: #{@page}, after: $cursor) {
           pageInfo { hasNextPage endCursor }
-          nodes { id author { __typename login avatarUrl } body createdAt url #{@reaction_groups} }
+          nodes { id author { __typename login avatarUrl } authorAssociation body createdAt url #{@reaction_groups} }
         }
       }
     }
@@ -1870,10 +1870,19 @@ defmodule HalC2.PullRequests.GitHub do
 
   defp nodes(pr, path, key), do: for(n <- get_in(pr, path) || [], n, do: n[key])
 
+  # The author carries the facts the code review plugin trusts a comment by (`trust/2`'s
+  # `isUser` and `association`).
   defp thread_comment(c, viewer),
     do: %{
       "id" => c["id"],
-      "author" => actor(c["author"]),
+      "author" =>
+        with(
+          %{} = author <- actor(c["author"]),
+          do:
+            author
+            |> put_present("isUser", if(c["author"]["__typename"] == "User", do: true))
+            |> put_present("association", up(c["authorAssociation"]))
+        ),
       "body" => c["body"] || "",
       "createdAt" => c["createdAt"],
       "url" => trimmed(c["url"]),

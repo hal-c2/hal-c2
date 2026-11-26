@@ -11,7 +11,7 @@
 #   packages/shared/src/threadPullRequests.ts (threadPullRequestSearchTerms)
 #   apps/tui/src/components/Sidebar.logic.ts (filter)
 #   apps/tui/src/commands.ts (Filter threads)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
 #   packages/contracts/src/rpc.ts (searchThreads)
 #   apps/server-ex/lib/hal_c2/search.ex
 
@@ -205,7 +205,7 @@ Feature: Searching threads
     Then the find bar opens on the open thread with the cursor in its field
 
   # Upstream #22352: find works on the open thread only.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: The sidebar's thread menu does not offer find in thread
     When the user opens a thread's menu in the sidebar
     Then it does not offer "Find in thread"

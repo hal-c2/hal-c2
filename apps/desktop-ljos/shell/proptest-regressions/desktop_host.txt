@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a76dfc9bee4f7b46b219d80c8851e73ef5a5eb872b31c21b943909b5b10c050e # shrinks to actions = [Start, ReserveCurrent, Start, RegisterOldest]
+cc da1f15a33dd6aafd179c34ad8929d4cf8f39125519be4d1e8d4f3fd7815e2671 # shrinks to actions = [Start, StopBegin, StopFinish, HandOverStale(1000)]
+cc c0749d95d0958487791e2fa261a20cf8eb917717042e22d90b51892d1569d8df # shrinks to actions = [StopBegin, Start, PublishCurrent, StopFinish]
+cc e81e11ce3e701c9a7457e8cd6ee8f269331442b7a33f0c9de8f9eaa116ad5ba5 # shrinks to actions = [StopBegin, Start, Start, HandOverStale(1000), StopFinish]

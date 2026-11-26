@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/HalC2/Bricks/js/browser.js" as BrowserJs
+import "../../../packages/qml/HalC2/Bricks/js/browser.js" as BrowserJs
 
 // What the in-app browser decides without a page (js/browser.js): the address
 // typed, the zoom ladder, why a page failed and how a device size fits.

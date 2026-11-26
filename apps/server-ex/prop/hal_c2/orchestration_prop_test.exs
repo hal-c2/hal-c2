@@ -11,7 +11,9 @@ defmodule HalC2.OrchestrationPropTest do
   promoted one, also after the thread was archived while Codex was asked); send a
   queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474), or as an agent does, which records
-  the agent and its reason as who stopped the run;
+  the agent and its reason as who stopped the run; interrupt a run the thread does
+  not have, which is refused and changes nothing, also not the task of a child that
+  has not started (#461);
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
   for the next boot's recovery to settle; stop a run nothing drives any more, which
@@ -31,7 +33,10 @@ defmodule HalC2.OrchestrationPropTest do
   asked in ends however it ends, and expires at a restart, after which an answer hears
   the reason; one answered by message outlives both, and its answer reaches the agent
   as the user's message, steering the running turn or starting the next. A closed
-  question refuses an answer and a dismissal.
+  question refuses an answer and a dismissal. A message the user writes, an answer by
+  message too, closes the questions asked before it and still open for a message once
+  the agent gets it (its run starts, or the running turn takes it): the agent reads it
+  instead. A message still queued, the MC's own and a steer Codex refuses close none.
 
   A thread can hold a proposed plan, which a message to it or to the other thread
   implements (the composer's "Implement it" and "Implement in a new thread"): the plan
@@ -244,6 +249,7 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
       {2, {:call, __MODULE__, :interrupt_by_agent, [tid]}},
+      {1, {:call, __MODULE__, :interrupt_unknown, [tid]}},
       {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task, :with_held_up_task])]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}},
@@ -408,6 +414,7 @@ defmodule HalC2.OrchestrationPropTest do
           {4, {:call, __MODULE__, :end_stream, [oneof(running)]}},
           {4, {:call, __MODULE__, :end_stream_leaving, [oneof(running)]}},
           {4, {:call, __MODULE__, :stop_undriven, [oneof(running)]}},
+          {4, {:call, __MODULE__, :interrupt_unknown, [oneof(running)]}},
           {2, {:call, __MODULE__, :restart, []}},
           {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}},
           {1, {:call, __MODULE__, :restart_capturing, [oneof(running)]}},
@@ -585,7 +592,11 @@ defmodule HalC2.OrchestrationPropTest do
     run = running(state.threads[tid])
 
     %{state | next: state.next + 1}
-    |> update(tid, &put_in(&1.requests[rid], %{kind: kind, status: "pending", run: run.msg}))
+    |> update(tid, fn thread ->
+      # The messages written before it, which do not answer it (`close_written_over/2`).
+      seen = MapSet.new(Map.keys(thread.messages))
+      put_in(thread.requests[rid], %{kind: kind, status: "pending", run: run.msg, seen: seen})
+    end)
   end
 
   # An answer by message goes to the agent as the user's message: into the running
@@ -818,6 +829,8 @@ defmodule HalC2.OrchestrationPropTest do
         state
     end
   end
+
+  defp step(state, _result, {:call, _, :interrupt_unknown, _args}), do: state
 
   defp step(state, _result, {:call, _, :crash, [tid]}),
     do: update(state, tid, &(&1 |> end_running(:failed) |> start_next()))
@@ -1267,6 +1280,8 @@ defmodule HalC2.OrchestrationPropTest do
        else: {:error, "no running turn"}
   end
 
+  defp expected_reply(_state, :interrupt_unknown, _args), do: {:error, "no running turn"}
+
   defp expected_reply(state, :send_stopping, [tid, msg, how, instance]) do
     off = how != :promote && off_refusal(state.threads[tid], instance)
 
@@ -1404,6 +1419,30 @@ defmodule HalC2.OrchestrationPropTest do
     %{state | threads: threads}
   end
 
+  # The questions a message the user wrote closes as the agent gets it (its run starts,
+  # or the running turn takes it): those still open for a message and asked before it
+  # was written; the user did not see a later one. One the message answers is resolved
+  # already (`answered/4`). The MC's own message closes none.
+  defp close_written_over(thread, msg) do
+    if thread.messages[msg].notice, do: thread, else: close_asked_before(thread, msg)
+  end
+
+  # A steer is written and taken in one step, after every question asked.
+  defp close_written_over(thread), do: close_asked_before(thread, nil)
+
+  defp close_asked_before(thread, msg) do
+    requests =
+      Map.new(thread.requests, fn
+        {rid, %{kind: :message, status: "pending", seen: seen} = r} ->
+          if MapSet.member?(seen, msg), do: {rid, r}, else: {rid, %{r | status: "cancelled"}}
+
+        other ->
+          other
+      end)
+
+    %{thread | requests: requests}
+  end
+
   # A deleted thread's questions are all closed, those answered by message too.
   defp cancel_pending(requests),
     do:
@@ -1521,9 +1560,11 @@ defmodule HalC2.OrchestrationPropTest do
   # A run on an instance the project turned off fails as it starts, and the queue goes on.
   defp started(thread, msg) do
     thread = in_start_order(thread, msg)
+    off = off_refusal(thread, instance_of(thread, msg))
+    thread = if off, do: thread, else: close_written_over(thread, msg)
 
     cond do
-      off_refusal(thread, instance_of(thread, msg)) ->
+      off ->
         thread
         |> set_runs(
           &if(&1.msg == msg, do: Map.merge(&1, %{status: :failed, off: true}), else: &1)
@@ -1646,6 +1687,7 @@ defmodule HalC2.OrchestrationPropTest do
       mode == :auto and active.instance == instance ->
         # The fake ends a turn it is steered into.
         thread
+        |> close_written_over()
         |> put_in([:messages, msg], %{message | run: active.msg, shown: true})
         |> end_running(:completed)
         |> start_next()
@@ -1707,6 +1749,7 @@ defmodule HalC2.OrchestrationPropTest do
 
       active ->
         %{thread | queue: List.delete(thread.queue, msg)}
+        |> close_written_over(msg)
         |> set_runs(&if(&1.msg == msg, do: %{&1 | status: :cancelled}, else: &1))
         |> update_in([:messages, msg], &%{&1 | run: active.msg, shown: true})
         |> end_running(:completed)
@@ -2161,8 +2204,13 @@ defmodule HalC2.OrchestrationPropTest do
   # The limit recovery sweep a week on, when every reset the fake reports has passed.
   def sweep do
     for tid <- @threads, do: HalC2.Streams.flush_shell(tid)
-    HalC2.Orchestration.LimitRecovery.sweep(System.system_time(:millisecond) + 7 * 86_400_000)
-    reply({:ok, %{}}, [])
+
+    {_, ended} =
+      ended_during(fn ->
+        HalC2.Orchestration.LimitRecovery.sweep(System.system_time(:millisecond) + 7 * 86_400_000)
+      end)
+
+    reply({:ok, %{}}, ended)
   end
 
   def interrupt(tid) do
@@ -2381,6 +2429,59 @@ defmodule HalC2.OrchestrationPropTest do
       Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid, "runId" => run_id}),
       ending
     )
+  end
+
+  # The projection leaves out stop requests, so one the refused stop recorded is told
+  # by the reply: it would refuse every steer into the running turn.
+  def interrupt_unknown(tid) do
+    asked = stop_requests(tid)
+    stop = %{"type" => "run.interrupt", "threadId" => tid, "runId" => "run:unknown"}
+    result = Orchestration.dispatch(stop)
+
+    result =
+      cond do
+        stop_requests(tid) != asked -> {:error, :stop_recorded}
+        not unstarted_task_survives?(stop) -> {:error, :task_cancelled}
+        true -> result
+      end
+
+    reply(result, [])
+  end
+
+  # The same stop sent to the child of a task that has started no run, which any stop
+  # getting past the refusal cancels. Neither thread is the model's.
+  defp unstarted_task_survives?(stop) do
+    parent = "unknown-stop-#{System.unique_integer([:positive])}"
+    child = parent <> "-child"
+    lineage = %{"relationshipToParent" => "subagent", "parentThreadId" => parent}
+
+    task = %{
+      "id" => "task",
+      "origin" => "app_owned",
+      "childThreadId" => child,
+      "status" => "running"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"thread", child, %{"s" => %{"id" => child, "lineage" => lineage}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(parent, :thread, [
+        {"subagent", "task", %{"s" => task}},
+        {"node", "task", %{"s" => %{"id" => "task", "status" => "running"}}}
+      ])
+
+    Orchestration.dispatch(%{stop | "threadId" => child})
+    StreamState.get(current(parent), "subagent")["task"]["status"] == "running"
+  end
+
+  defp stop_requests(tid) do
+    for %{"type" => "run_interrupt_request", "id" => id} <-
+          StreamState.list(current(tid), "turn-item"),
+        into: MapSet.new(),
+        do: id
   end
 
   def start_queued(tid, msg),
@@ -2668,7 +2769,37 @@ defmodule HalC2.OrchestrationPropTest do
     reply({:ok, %{}}, [run_id])
   end
 
-  defp thread_command(command), do: reply(Orchestration.dispatch(command), [])
+  defp thread_command(command) do
+    {result, ended} = ended_during(fn -> Orchestration.dispatch(command) end)
+    reply(result, ended)
+  end
+
+  # `fun`'s result, and the runs that ended while it ran. A queued run the command
+  # starts on an instance the project turned off fails as it starts, inside the
+  # command, and its end starts the next queued one off the runtime's process: the
+  # command waits on that as on any run it ends (`settled/3`). A run cancelled from the
+  # queue starts nothing.
+  defp ended_during(fun) do
+    open =
+      for tid <- @threads,
+          run <- runs(current(tid)),
+          open?(run),
+          into: MapSet.new(),
+          do: run["id"]
+
+    result = fun.()
+
+    ended =
+      for tid <- @threads,
+          run <- runs(current(tid)),
+          run["id"] in open,
+          not open?(run) and run["status"] != "cancelled",
+          do: run["id"]
+
+    {result, ended}
+  end
+
+  defp open?(run), do: run["status"] in ["queued" | @active]
 
   # The archived threads as a client that asks right after the command's reply gets
   # them (`orchestration.getArchivedShellSnapshot`): no waiting on the sidebar rows.

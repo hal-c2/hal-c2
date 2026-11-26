@@ -16,7 +16,7 @@
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/tui/src/clusterClient.ts (one list over the cluster's machines, a project keyed by its machine)
 #   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
-#   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
+#   apps/desktop-qt/src/ClusterController.cpp, packages/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
 #   apps/server-ex/lib/hal_c2/settings.ex, settings/shared.ex, keybindings.ex (settings that
 #     follow the person: which are shared, stamped records, gossip with the member table)
@@ -41,18 +41,20 @@ Feature: Clustering one person's machines
     And its cluster has only itself
 
   @mc
-  Scenario: A machine joins another with a pairing link
+  Scenario: A machine joins another with a cluster invite
     Given two MCs that are not clustered
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
     And the command lists both machines as connected
 
+  # Naming the certificate is not enough: only a cluster invite can add a machine,
+  # whatever scopes an ordinary pairing link grants.
   @mc
-  Scenario: Joining needs a link that grants access
+  Scenario: A pairing link that names the certificate does not join a cluster
     Given two MCs that are not clustered
-    When the user joins the second with a standard pairing link from the first that names the first's certificate
-    Then the join is refused because the link does not grant access:write
+    When the user joins the second with an admin pairing link from the first that names the first's certificate
+    Then the join is refused because the link cannot add machines
     And neither lists the other
 
   @mc
@@ -197,7 +199,7 @@ Feature: Clustering one person's machines
   @mc
   Scenario: A machine on another HAL-C2 version can join
     Given two MCs that are not clustered, the second on another HAL-C2 version
-    When the user joins the second to the first with a pairing link from the first
+    When the user joins the second to the first with a cluster invite from the first
     Then each lists the other as a member
     And they are connected without restarting
 
@@ -307,6 +309,47 @@ Feature: Clustering one person's machines
     When the second member's relay to the client fails
     Then the client is told to resync the thread and follows it again
     And the thread streams over the client's one socket
+
+  # Parting drops every watch on the other member; without this, what a client showed
+  # of it (a plugin's topic, its settings) would stay as it was at the parting.
+  @mc
+  Scenario: A client watching another member watches it again once the members meet again
+    Given a client connected to the first of two members that can lose each other
+    And it watches the second member's settings
+    When the members lose each other, the second's settings change and they meet again
+    Then the client is told to resync what it watches of the second member
+    And watching it again shows the settings as they are now
+
+  # An upgrade in place keeps the socket, and with it watches a parting ended under the older code.
+  @mc
+  Scenario: A client whose watches a parting ended watches again as its MC is upgraded in place
+    Given a client connected to the first of two members that can lose each other
+    And it watches the second member's settings
+    And its socket is from before sockets heard members come back
+    When the members lose each other, the second's settings change and they meet again
+    And the client's MC is upgraded in place
+    Then the client is told to resync what it watches of the second member
+    And watching it again shows the settings as they are now
+
+  # Going back in place keeps the socket too, and older code stops it hearing members.
+  @mc
+  Scenario: A client watches again as its MC is upgraded in place again after going back
+    Given a client connected to the first of two members that can lose each other
+    And it watches the second member's settings
+    And older code stopped its socket hearing members come back
+    When the members lose each other, the second's settings change and they meet again
+    And the client's MC is upgraded in place
+    Then the client is told to resync what it watches of the second member
+    And watching it again shows the settings as they are now
+
+  @mc
+  Scenario: A client's lost terminal is attached again as its MC is upgraded in place
+    Given a client connected to the first of two members that can lose each other
+    And it follows a terminal on the second member
+    And older code stopped its socket hearing members come back
+    When the members lose each other, the terminal is lost and they meet again
+    And the client's MC is upgraded in place
+    Then the client is told to attach the second member's terminal again
 
   @mc
   Scenario: A client follows a thread on another member by its environment

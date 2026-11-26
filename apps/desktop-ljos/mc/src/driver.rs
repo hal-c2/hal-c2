@@ -75,6 +75,7 @@ pub fn spawn(mut sink: impl FnMut(McEvent) + Send + 'static) -> McHandle {
 pub struct McHandle {
     commands: UnboundedSender<Command>,
     ids: Arc<AtomicU64>,
+    switches: Arc<AtomicU64>,
 }
 
 impl McHandle {
@@ -82,7 +83,14 @@ impl McHandle {
         Self {
             commands,
             ids: Arc::new(AtomicU64::new(1)),
+            switches: Arc::default(),
         }
+    }
+
+    /// How many opens and closes were asked of the connection: a frame from
+    /// before the last ([`McEvent::Frame`]) is for what that left.
+    pub(crate) fn switches(&self) -> u64 {
+        self.switches.load(Ordering::Relaxed)
     }
 
     fn send(&self, command: Command) {
@@ -109,6 +117,7 @@ impl McHandle {
         token: impl Into<String>,
         environment: impl Into<String>,
     ) {
+        self.switches.fetch_add(1, Ordering::Relaxed);
         self.send(Command::Open {
             origin,
             token: token.into(),
@@ -117,6 +126,7 @@ impl McHandle {
     }
 
     pub fn close(&self) {
+        self.switches.fetch_add(1, Ordering::Relaxed);
         self.send(Command::Close);
     }
 

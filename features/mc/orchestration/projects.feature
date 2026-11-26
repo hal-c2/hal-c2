@@ -291,7 +291,7 @@ Feature: Projects on an MC
     Then its threads are deleted and then the project
 
   # Legacy: apps/server/src/project/ProjectService.ts (delete: stable command ids per thread)
-  @mc @backlog
+  @mc
   Scenario: A forced delete that was interrupted can be repeated and finishes
     Given a client deleted "p1" with force and the MC stopped after deleting some of its threads
     When a client deletes "p1" with force again
@@ -299,21 +299,21 @@ Feature: Projects on an MC
     And then the project is deleted
 
   # Legacy: apps/server/src/project/ProjectService.ts (assertWorkspaceAvailable ignores deleted projects)
-  @mc @backlog
+  @mc
   Scenario: A deleted project's folder can be added as a project again
     Given project "p1" had the folder "~/code/app" and was deleted
     When a client creates project "p2" for "~/code/app"
     Then project "p2" exists with that folder
 
   # Legacy: apps/server/src/project/ProjectService.ts (update keeps the project's own folder)
-  @mc @backlog
+  @mc
   Scenario: A project can be updated without its own folder counting as a conflict
     Given project "p1" has the folder "~/code/app"
     When a client updates the title of "p1" and names the same folder
     Then the update is accepted
 
   # Legacy: apps/server/src/project/ProjectService.ts (update of a deleted project)
-  @mc @backlog
+  @mc
   Scenario: A deleted project cannot be updated or deleted again
     Given project "p1" was deleted
     When a client updates or deletes "p1"

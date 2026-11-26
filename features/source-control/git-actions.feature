@@ -14,7 +14,7 @@
 #   apps/web/src/shell/ShellGitBridge.tsx
 #   apps/web/src/hooks/useGitActions.ts (the reasons an action is unavailable)
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
-#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
+#   packages/qml/HalC2/Bricks/GitActions.qml
 #   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu, results, init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (vcs.init)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (the error while a cluster member is offline)
@@ -47,7 +47,7 @@ Feature: Recommended git action and the git menu
       | is up to date with an open pull request                        | View PR           |
 
   # Upstream #24117: a dirty branch behind its upstream was offered a commit and push whose push could not fast-forward.
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario Outline: Uncommitted changes on a branch behind its upstream recommend only a commit
     Given the checkout has uncommitted changes on <branch> that is behind its upstream
     When the user looks at the thread's git actions
@@ -58,6 +58,14 @@ Feature: Recommended git action and the git menu
       | the default branch                     |
       | a branch with an open pull request     |
       | a feature branch with a remote         |
+
+  # The MC decides: a push from behind its upstream cannot fast-forward, so the commit's
+  # result carries no Push action for any client to show.
+  @mc
+  Scenario: A commit on a branch behind its upstream offers no Push
+    Given "feature/tax" has uncommitted changes and is behind its upstream
+    When the user commits the changes
+    Then the commit is made and the result offers no Push
 
   @desktop @tui
   Scenario Outline: The recommended action is withheld with a reason

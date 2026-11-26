@@ -415,6 +415,24 @@ export async function syncThirdPartyLicenseNotices(configFile: string | URL): Pr
   await syncConfiguredGeneratedNotices(config, directory);
 }
 
+/**
+ * The SPDX texts of `licenseIds` as one notice, for a package that ships no
+ * notice file of its own (desktop-ljos's Rust crates do this). Null while a
+ * text is missing and `allowMissing` allows that, as generated notices are.
+ */
+export async function spdxNoticeText(
+  configFile: string | URL,
+  licenseIds: ReadonlyArray<string>,
+  allowMissing: boolean,
+): Promise<string | null> {
+  const { directory } = await readConfig(configFile);
+  return generatedNoticeText(
+    licenseIds.map((licenseId) => ({ licenseId })),
+    directory,
+    allowMissing,
+  );
+}
+
 async function readPackageJson(packageJsonPath: string): Promise<PackageJson> {
   const source = await NodeFSP.readFile(packageJsonPath, "utf8");
   const value = JSON.parse(source) as unknown;

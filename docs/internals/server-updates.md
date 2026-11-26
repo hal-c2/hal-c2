@@ -28,6 +28,9 @@ hand. What that asks of the MC's code:
 - **State that changes shape needs `code_change/3`.** A changed module of a process behaviour is
   `{update, M, {advanced, []}}`: its processes are suspended, migrate their state, and resume. A
   GenServer that keeps a new shape without a clause for the old one crashes at the upgrade.
+- **A client socket gets no `code_change/3`.** It migrates on its next callback, and an MC taken
+  back in place hands it to the older code. So a key the version before can ignore does not bump
+  the socket's state version: that code would not know the number.
 - **The release handler finds processes through the supervision tree.** It suspends the processes
   whose child spec lists the module (`modules: [M]`, the default). A process started outside a
   supervisor, or one running a module its spec does not name, is not suspended and switches code
@@ -45,7 +48,10 @@ hand. What that asks of the MC's code:
   static supervisor of the MC was started from, and the relup's last step compares them with the
   new code's: new children start, removed ones stop, changed ones restart. The snapshot's
   `:persistent_term` key and shape pass from one version to the next, so they are a contract
-  between versions.
+  between versions. Another application's changed supervisor is only loaded: re-reading its
+  specs runs its `init/1` again, which need not survive a second run (Finch's makes a named ETS
+  table, and failing there is past the point of no return). A reload sees one whenever another
+  Erlang compiler built the checkout's dependencies, even from the same source.
 - **The configuration is the running one.** The release handler reads only `sys.config`, so for the
   install the new release's `sys.config` holds the running environment with the new configuration
   and its `runtime.exs` over it; what the MC set itself (its home) survives.

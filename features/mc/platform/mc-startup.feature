@@ -581,6 +581,12 @@ Feature: Starting the MC
     Then the MC listens on that host and port
     And the token never appears in the process arguments or environment
 
+  @mc
+  Scenario: A desktop-held standard input that closes stops its MC
+    Given the desktop app launches the MC in bootstrap mode
+    When it writes a bootstrap line asking for the standard-input lifeline, then standard input closes
+    Then the MC stops because the desktop app is gone
+
   @backlog @mc
   Scenario: A start with no bootstrap input starts the MC normally
     Given nothing writes a bootstrap line to the MC's standard input

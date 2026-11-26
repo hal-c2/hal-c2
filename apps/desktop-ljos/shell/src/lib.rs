@@ -1,7 +1,8 @@
 //! The HAL-C2 desktop shell on Ljós: desktop-qt's native `HalC2.Shell`
 //! module (`Shell`, `Theme`, `Runtime`) and the controllers behind it, for
-//! the bricks in apps/desktop-qt/qml.
+//! the bricks in packages/qml.
 
+pub mod assets;
 pub mod attachment_files;
 pub mod bridge;
 pub mod browser;
@@ -25,6 +26,7 @@ pub mod local_transcriber;
 #[cfg(target_os = "macos")]
 pub mod macos_window;
 pub mod mc;
+pub mod mc_launcher;
 pub mod project;
 pub mod provider;
 pub mod provider_updates;
@@ -66,6 +68,51 @@ use ljos::prelude::{Engine, Version};
 /// The module's import name.
 pub const MODULE: &str = "HalC2.Shell";
 
+/// The shell's QML as build.rs compiled it, with its sources: what the app
+/// runs (`App::source`), and what the user's files in the config dir are
+/// compiled against (`App::user_qml`).
+pub fn pack() -> ljos::MapSource {
+    ljos::include_qml!("qml.pack")
+}
+
+/// The user's `<config>` over the pack, as a release lays it (`App::user_qml`):
+/// its `qml` as modules on the import path, `shell.qml` what Main.qml's
+/// ShellLoader shows, and the MC's plugins in the cache loaded beside them.
+/// hal-c2 reads `theme.json` itself (src/theme.rs). None without a config
+/// dir.
+pub fn user_qml(launch: &Launch) -> Option<ljos::UserQml> {
+    let config = launch.config_dir.clone()?;
+    let mut user = ljos::UserQml::dir(config).modules("qml").theme(false);
+    if let Some(cache) = &launch.cache_dir {
+        user = user.loads_from(cache.join("mc-plugins"));
+    }
+    Some(user)
+}
+
+/// The key of every QML file build.rs found, compiled or not.
+pub const QML_FILES: &[&str] = include!(concat!(env!("OUT_DIR"), "/qml_files.rs"));
+
+/// The QML files `pack` does not run, each with why: a release's
+/// `--check`. A pack holds only the files that compiled and says nothing
+/// of the rest, so a file build.rs found and the pack lacks did not.
+pub fn unpacked(pack: &ljos::MapSource) -> Vec<(String, String)> {
+    let mut failed: Vec<(String, String)> = pack
+        .failures()
+        .map(|(key, why)| (key.to_owned(), why.to_owned()))
+        .collect();
+    let packed: std::collections::HashSet<&str> = pack.keys().collect();
+    for key in QML_FILES {
+        if !packed.contains(key) && !failed.iter().any(|(k, _)| k == key) {
+            failed.push((
+                (*key).to_owned(),
+                "not in the pack: it did not compile when the app was built".to_owned(),
+            ));
+        }
+    }
+    failed.sort();
+    failed
+}
+
 /// Registers the native half of `HalC2.Shell` and makes its singletons, so
 /// `Shell.state` holds its keys before any QML reads it. The rest of the
 /// module is QML (qml/HalC2/Shell); a qmldir naming those files beside
@@ -77,7 +124,7 @@ pub const MODULE: &str = "HalC2.Shell";
 ///
 /// Also gives the engine the checkout's bindings and handlers as build.rs
 /// compiled them: a file runs that code while it is as built, and
-/// dynamically once edited (a reload, `--qml-dir`).
+/// dynamically once a user's file replaces it (`--qml-dir` too).
 pub fn register(engine: &Engine) {
     if let Err(e) = engine.register_compiled(ljos::include_compiled!("qml.rs")) {
         engine.warn(e.to_string());
@@ -91,6 +138,9 @@ pub fn register(engine: &Engine) {
     highlighter::register(engine);
     code_highlighter::register(engine);
     browser::register(engine);
+    // Qt.labs.lottieqt, for a user shell's LottieAnimation (the dashboard
+    // example's cat); the bricks have none of their own.
+    ljos_lottie::register(engine);
     device::register(engine);
     device_screen::register(engine);
     local_transcriber::register(engine);
@@ -145,8 +195,8 @@ pub(crate) const WINDOW_SINGLETONS: &[fn(&Engine, bridge::Bridge, ljos::prelude:
 ];
 
 /// What the shell is launched with: main.cpp's options, and the MC
-/// host/main.ts hands over (`{origin, token}`; the token stays with the
-/// connection).
+/// the desktop host hands over (`{origin, token}`; the token stays
+/// with the connection).
 #[derive(Clone, Debug, Default)]
 pub struct Launch {
     /// Where `theme.json` and the user's shell are; none reads nothing.
@@ -162,9 +212,6 @@ pub struct Launch {
     pub allow_local_folder_import: bool,
     /// The third-party license manifest the Open source licenses page reads.
     pub licenses_manifest: Option<PathBuf>,
-    /// The QML the shell is made of, which `Runtime` compiles again for a
-    /// reload ([`qml::Roots::with_user`]); none: the host makes its own root.
-    pub qml: Option<qml::Roots>,
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
@@ -192,6 +239,22 @@ pub struct Launch {
 struct Kept {
     cache_dir: std::cell::RefCell<Option<PathBuf>>,
     allow_local_folder_import: std::cell::Cell<bool>,
+    opened: std::cell::RefCell<Vec<OpenedListener>>,
+}
+
+/// What [`on_opened`] keeps.
+type OpenedListener = Rc<dyn Fn(&Engine, &session::Session)>;
+
+/// Calls `f` with each session [`open`] connects with, once it has (as
+/// NativeShell::opened): a host that keeps the session for the next start
+/// (the phone) hears of one bought by pairing again (ConnectionHealth)
+/// as of its own.
+pub fn on_opened(engine: &Engine, f: impl Fn(&Engine, &session::Session) + 'static) {
+    engine
+        .extension::<Kept>()
+        .opened
+        .borrow_mut()
+        .push(Rc::new(f));
 }
 
 /// Connects to the MC `session` names, as NativeShell::open does: the MC
@@ -202,14 +265,22 @@ struct Kept {
 /// cache, as one started with an MC does; its controllers are active
 /// already and follow the MC's rows as they come. An error says why the
 /// connection could not be opened; nothing has changed then. Nothing is
-/// kept for the next start: the host names its MC again, and in-app
-/// pairings are kept by the saved environments.
+/// kept for the next start here: the host names its MC again, in-app
+/// pairings are kept by the saved environments, and a host that keeps
+/// its session itself hears of it ([`on_opened`]).
 ///
 /// A controller may call it from its own callback (an in-app pairing): the
 /// store's listeners hear of the change once no controller is running.
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
-    mc.open(&session.origin, &session.token)?;
+    // A session that names its environment opens at an MC that must serve
+    // it (mobile-qt's Pairing::start): whichever answers at the address now
+    // is not taken for the one paired with.
+    if session.environment_id.is_empty() {
+        mc.open(&session.origin, &session.token)?;
+    } else {
+        mc.open_expecting(&session.origin, &session.token, &session.environment_id)?;
+    }
     // NativeShell::opened: the MC on this machine needs no network, one on
     // another does. ConnectionHealth's own pairing, which is running
     // already, says so itself.
@@ -233,7 +304,28 @@ pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     }
     let origin = session.origin.clone();
     bridge.defer(engine, move |engine| store::open(engine, &origin));
+    let listeners = kept.opened.borrow().clone();
+    for listener in listeners {
+        listener(engine, session);
+    }
     Ok(())
+}
+
+/// Leaves the MC, as NativeShell::close does: the connection closes, and
+/// what was held and kept of it goes, its threads and the drafts. `done`
+/// hears false when the cache could not be emptied (see [`store::clear`]).
+pub fn close(engine: &Engine, done: impl FnOnce(&Engine, bool) + 'static) {
+    if let Some(mc) = controller::mc(engine) {
+        mc.close();
+    }
+    // Every draft is one of its machines', listed or not. They go after its
+    // rows, so a window that showed either lands on neither.
+    let drafts = controllers::drafts::all(engine);
+    store::clear(engine, done);
+    for draft in drafts {
+        controllers::drafts::remove(engine, &draft.id);
+    }
+    bridge::Bridge::of(engine).set_mc_origin(engine, "");
 }
 
 /// NativeShell::setStoreDirs: the environments paired beside the shell's MC
@@ -259,6 +351,18 @@ pub fn has_mc(engine: &Engine) -> bool {
 /// one, the shell store subscribes to it and they activate on its first
 /// snapshot, previewing what the cache kept until then.
 pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
+    start_with(engine, launch, mc, Vec::new());
+}
+
+/// [`start`] with controllers of the app's own beside the shell's (the
+/// phone's, in apps/mobile-ljos): built, activated and offered actions in
+/// name order with the rest, their state keys declared the same way.
+pub fn start_with(
+    engine: &Engine,
+    launch: &Launch,
+    mc: Rc<dyn mc::Mc>,
+    extra: Vec<controller::Registration>,
+) {
     let bridge = bridge::Bridge::of(engine);
     if let Some(origin) = &launch.mc_origin {
         bridge.set_mc_origin(engine, origin);
@@ -272,11 +376,12 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     *kept.cache_dir.borrow_mut() = launch.cache_dir.clone();
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);
+    assets::install(engine);
     platform_window::install(engine);
     #[cfg(target_os = "macos")]
     macos_window::install(engine);
     theme::install(engine, launch.config_dir.clone());
-    runtime::install(engine, launch.config_dir.as_deref(), launch.qml.clone());
+    runtime::install(engine, launch.config_dir.as_deref());
     if let Some(manifest) = &launch.licenses_manifest {
         controllers::licenses::set_manifest_path(engine, manifest);
     }
@@ -303,7 +408,9 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     // Each window keeps its panel and terminals under its own directory
     // of this one (ShellWindows::windowDir).
     controller::set_state_dir(engine, launch.state_dir.clone());
-    controller::start(engine, mc.clone(), controllers::registrations());
+    let mut registrations = controllers::registrations();
+    registrations.extend(extra);
+    controller::start(engine, mc.clone(), registrations);
     controllers::settings::Settings::of(engine).set_device_path(
         engine,
         launch
@@ -465,5 +572,28 @@ mod launch_tests {
             [here.join("src"), here.clone()].map(|p| p.to_string_lossy().into_owned())
         );
         assert_eq!(rest, ["--mc-port=1", "no-such-folder"]);
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::{QML_FILES, pack, unpacked};
+
+    #[test]
+    fn the_pack_holds_every_qml_file() {
+        assert!(QML_FILES.contains(&"Main"), "{QML_FILES:?}");
+        assert_eq!(unpacked(&pack()), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn a_file_the_pack_lacks_did_not_compile() {
+        let missing = unpacked(&ljos::MapSource::new());
+        assert_eq!(missing.len(), QML_FILES.len());
+        assert!(
+            missing
+                .iter()
+                .any(|(key, why)| key == "Main" && why.contains("did not compile")),
+            "{missing:?}"
+        );
     }
 }

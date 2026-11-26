@@ -5,9 +5,9 @@
 #   https://github.com/pingdotgg/t3code/pull/19065
 #   https://github.com/pingdotgg/t3code/pull/15686
 #   https://github.com/pingdotgg/t3code/pull/15207
-#   apps/desktop-qt/qml/HalC2/Bricks/js/centreViews.js (the routes the shell draws itself)
-#   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (loading, empty, draft and unreachable states, links, revert)
-#   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Revert to here, changed files, a tool call's file)
+#   packages/qml/HalC2/Bricks/js/centreViews.js (the routes the shell draws itself)
+#   packages/qml/HalC2/Bricks/ThreadView.qml (loading, empty, draft and unreachable states, links, revert)
+#   packages/qml/HalC2/Bricks/Timeline.qml (Revert to here, changed files, a tool call's file)
 #   apps/desktop-qt/tests/tst_ThreadView.qml (these scenarios, by name; not run by tst_Features)
 #   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (every example layout draws the thread and gives way to settings)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Send a message to start the conversation.)

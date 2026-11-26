@@ -85,8 +85,8 @@ format, and one bound to `Format.relative` moves on once a minute.
 
 Some plugins do work on a machine rather than in one app, such as
 [agent code review](code-review.md), the [planner](planner.md), the
-[issue tracker](issue-tracker.md), [maintenance](maintenance.md) and the
-[office](office.md). They are
+[issue tracker](issue-tracker.md), [maintenance](maintenance.md), the
+[office](office.md) and [CLIProxyAPI](#cliproxyapi). They are
 folders with a `plugin.json`, and each MC runs its own: put the folder in
 `plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
@@ -101,6 +101,13 @@ again. Plugins that run code on the MC say so: they can do anything the MC can.
 What a plugin asks for limits what it may do on the MC, not in the app: its
 pages and other parts run in the app with the app's access, like any UI plugin,
 so install only plugins you trust.
+
+Turning a plugin on or off, **Look for plugins** and **Check that it compiles**
+need a device that may manage access, as an administrator's may. Settings and
+actions that change what a plugin runs or what it lets reach this machine, such as
+CLIProxyAPI's proxy, its accounts and keys, or Code Review's repositories, agent,
+access and trusted logins, need a device that may use terminals, as an ordinary
+pairing may. A device paired without that is told why its change was refused.
 
 To see whether a plugin's code compiles without turning it on, use **Check that
 it compiles** on its entry; the entry then says where the code fails, until the
@@ -122,6 +129,12 @@ What a running plugin adds reaches every app connected to that machine:
   The threads it starts from then on cannot be moved or exported, even once the
   plugin is off or removed. The ones it started before stay too, but only while
   the plugin is installed.
+- **Provider instances** appear in **Settings → Providers** when it asks to
+  **add provider instances of its own and keep them set up**, to route agents
+  through a proxy it runs, say. Rename, switch off or delete them like your own; it
+  reaches only the ones it added, never yours, whatever they are called. Turn the
+  plugin off or remove it and they leave, your changes to them too; turn it on and
+  it adds them afresh.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
@@ -225,6 +238,48 @@ listed apart and holds nothing off. If tool uses saved earlier cannot be read,
 pruning is held for that agent until you apply or give back its tools, or
 change **Tool pruning** in **Settings → Plugins → TokenEconomizer**, where all
 of its settings are.
+
+### CLIProxyAPI
+
+CLIProxyAPI routes Claude and Codex through
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), a proxy that signs in
+to several Claude or Codex subscriptions and takes turns between them, or sends your
+own API keys upstream. Turned on, it runs the proxy on the machine, listening on
+127.0.0.1 only, and adds **Claude via CLIProxyAPI** and **Codex via CLIProxyAPI**
+to **Settings → Providers**. Agents you start with those use the proxy, and so can
+[reviews in a sandbox](code-review.md#reviews-in-a-sandbox); your own Claude and
+Codex instances and logins are left as they are. A review sandbox reaches only a
+proxy listening on this machine's 127.0.0.1 over http, and only with OpenShell on
+Podman: on Docker, or with a proxy you connect to elsewhere, sandboxed reviews need
+the API's own key.
+
+To start, turn the plugin on, open its **CLIProxyAPI** tab and click **Sign in to
+Claude** or **Sign in to Codex**. Open the address it shows in a browser on any
+device and sign in. The browser then ends on a localhost page that does not load:
+copy that page's whole address, paste it into the page and click **Finish**. Sign
+in again to add another account. The page also shows what each account and model
+used over the last 7 days, the upstream API keys (add or remove them there), and
+the proxy's log.
+
+- **Which proxy.** The plugin runs the `cli-proxy-api` you set in its settings,
+  or the one on PATH, or else downloads CLIProxyAPI 8.0.79, the version it was
+  tested with, and checks it against the release's checksums. A newer release is
+  shown on the page but never installed. To use a proxy you run yourself, set
+  **Proxy** to **Connect** and give its address and management key. The key goes
+  with every call, so a proxy on another machine needs an `https://` address with a
+  valid certificate; `http://` works only for one on this machine.
+- **The provider instances are yours to change.** Rename or switch them off and
+  the plugin keeps that. Delete one and it stays deleted until you click **Add
+  back** on the page. Turn the plugin off or remove it and both leave, your
+  changes to them too; turn it on and they come back as the plugin first adds
+  them. An instance of your own already under `plugin_cliproxyapi_claude` or
+  `plugin_cliproxyapi_codex` stays yours, and the page says it was not added. Each
+  machine runs its own proxy and instances: the plugin does not change instances on
+  other machines of a cluster.
+- **A refused management key** (with **Connect**) is not tried again by itself,
+  since the proxy locks out an address that keeps failing. Fix the key in the
+  plugin's settings, or click **Retry** on the page.
+- Errors from the proxy, such as a key it refuses, show its own message.
 
 ## Connect Slack for plugins
 

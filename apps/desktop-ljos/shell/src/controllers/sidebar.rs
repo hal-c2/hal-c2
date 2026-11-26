@@ -407,8 +407,13 @@ pub struct Sidebar {
     draft_labels: HashMap<String, String>,
     open_draft_id: String,
     open_draft_label: Option<String>,
-    /// The migrated threads were announced, or tried to be, this run.
-    migration_announced: bool,
+    /// The toast announcing the migrated threads, while it shows; its
+    /// count follows threads that arrive after it. With what it was last
+    /// counted on (snapshots landed, threads listed).
+    migration_toast: String,
+    migration_checked: (u64, usize),
+    /// The device could not keep the note this run: not tried again.
+    migration_write_failed: bool,
     /// The legacy tree, when legacySidebarEnabled; the projects listing
     /// all their threads last the session, as the web's did.
     tree: Option<Tree>,
@@ -460,7 +465,9 @@ impl Controller for Sidebar {
             draft_labels: HashMap::new(),
             open_draft_id: String::new(),
             open_draft_label: None,
-            migration_announced: false,
+            migration_toast: String::new(),
+            migration_checked: (0, 0),
+            migration_write_failed: false,
             tree: None,
             showing_all: HashSet::new(),
             working_shelf: true,
@@ -893,18 +900,25 @@ impl Sidebar {
 
     /// Threads the MC brought over from the first version (`historyOrigin`
     /// "v1_import") are announced once per device, the first time they are
-    /// listed. A device that cannot keep the note is told so once a run,
+    /// listed; the notice still showing counts the threads that arrive
+    /// after it. A device that cannot keep the note is told so once a run,
     /// not at every change of the store.
     fn announce_migrated_threads(&mut self, engine: &Engine) {
-        if self.migration_announced || !store::with(engine, |s| s.synchronized()) {
+        if self.migration_write_failed || !store::with(engine, |s| s.synchronized()) {
             return;
         }
         let settings = Settings::of(engine);
-        if settings.device_value(MIGRATED_ANNOUNCED) == Some(Json::Bool(true)) {
+        if self.migration_toast.is_empty()
+            && settings.device_value(MIGRATED_ANNOUNCED) == Some(Json::Bool(true))
+        {
             return;
         }
-        let migrated = store::with(engine, |s| {
-            s.threads()
+        // Counted when a snapshot lands or the list grows, not on every row
+        // change: migrated threads come with the MC's snapshot, or row by
+        // row when the import runs while the app is open.
+        let (checked, migrated) = store::with(engine, |s| {
+            let threads = s.threads();
+            let migrated = threads
                 .iter()
                 .filter(|t| {
                     s.thread_row(&t.key())
@@ -912,15 +926,14 @@ impl Sidebar {
                         .and_then(Json::as_str)
                         == Some("v1_import")
                 })
-                .count()
+                .count();
+            ((s.snapshots(), threads.len()), migrated)
         });
-        if migrated == 0 {
+        if checked == self.migration_checked {
             return;
         }
-        self.migration_announced = true;
-        if !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
-            return;
-        }
+        self.migration_checked = checked;
+        let title = "Your threads were brought over";
         let description = if migrated == 1 {
             "1 thread from the previous version is in the list, with its conversation.".to_owned()
         } else {
@@ -928,16 +941,34 @@ impl Sidebar {
                 "{migrated} threads from the previous version are in the list, with their conversations."
             )
         };
-        controller::with::<Toasts, _>(engine, |t, e| {
+        if !self.migration_toast.is_empty() {
+            // Dismissed: the count stops there.
+            let id = self.migration_toast.clone();
+            let shown =
+                controller::with::<Toasts, _>(engine, |t, e| t.update(e, &id, title, &description));
+            if shown != Some(true) {
+                self.migration_toast.clear();
+            }
+            return;
+        }
+        if migrated == 0 {
+            return;
+        }
+        if !settings.write_device(engine, MIGRATED_ANNOUNCED, Json::Bool(true)) {
+            self.migration_write_failed = true;
+            return;
+        }
+        self.migration_toast = controller::with::<Toasts, _>(engine, |t, e| {
             t.show(
                 e,
                 "info",
-                "Your threads were brought over",
+                title,
                 &description,
                 None,
                 crate::controllers::toasts::DEFAULT_TIMEOUT_MS,
-            );
-        });
+            )
+        })
+        .unwrap_or_default();
     }
 
     /// Reading a thread is a visit: while the window shows one, the MC is

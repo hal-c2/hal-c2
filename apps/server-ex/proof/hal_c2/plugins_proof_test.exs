@@ -30,6 +30,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.unsubscribe/2" => "unsubscribe",
       "HalC2.Plugins handle_call {:set_enabled, _, _, _}" => "set_enabled",
       "HalC2.Plugins handle_call {:restart, _}" => "restart",
+      "HalC2.Plugins handle_call {:save_settings, _, _, _}" => "save_settings",
+      # The shape a release upgrade can find queued, answered as a save without the shell.
       "HalC2.Plugins handle_call {:save_settings, _, _}" => "save_settings",
       "HalC2.Plugins handle_call :rescan" => "rescan",
       "HalC2.Plugins handle_call {:subscribe, _, _}" => "subscribe",
@@ -43,7 +45,7 @@ defmodule HalC2.PluginsProofTest do
     },
     abstracts: %{
       "HalC2.Plugins.start_link/1" => "starts the host; kill-host stands for its starting again",
-      "HalC2.Plugins.handle/2" => @dispatch,
+      "HalC2.Plugins.handle/3" => @dispatch,
       "HalC2.Plugins.adapters/0" => @reads,
       "HalC2.Plugins.api_version/0" => @reads,
       "HalC2.Plugins.declared/1" => @consent,
@@ -57,10 +59,13 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.sessions/1" => @reads,
       "HalC2.Plugins.text_backend?/1" => @reads,
       "HalC2.Plugins.tools/1" => @reads,
+      "HalC2.Plugins.tools_of/2" => @reads,
       "HalC2.Plugins.package_module/1" => "the one-plugin-module rule over the modules given",
       "HalC2.Plugins handle_call {:compile_target, _}" => @reads,
       "HalC2.Plugins handle_call {:checked, _, _, _}" => @checked,
       "HalC2.Plugins.call_tool/3" => "runs a plugin's tool in the caller's process",
+      "HalC2.Plugins.call_tool_of/4" =>
+        "runs one plugin's tool in the caller's process, refusing any other",
       "HalC2.Plugins.generate/3" => "runs a plugin's text generation in the caller's process",
       "HalC2.Plugins.pull_requests/2" => "asks a plugin's git host in the caller's process",
       "HalC2.Plugins.observing?/0" => @hooks,
@@ -78,6 +83,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_call {:running, _}" => @reads,
       "HalC2.Plugins handle_call {:running?, _}" => @reads,
       "HalC2.Plugins handle_call {:context, _}" => @reads,
+      "HalC2.Plugins handle_call {:context, _, _, _}" =>
+        "refuses a call the manifest marks exec without the shell's scope, else reads as {:context, _}",
       "HalC2.Plugins handle_call {:file, _, _}" => @reads,
       "HalC2.Plugins handle_call {:subscribe_topic, _, _, _, _}" => @topics,
       "HalC2.Plugins handle_cast {:unsubscribe_topic, _, _, _, _}" => @topics,
@@ -86,6 +93,10 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins handle_cast {:worker, _, _}" =>
         "a worker announced before an update in place, its supervisor unknown: ignored",
       "HalC2.Plugins handle_info _" => "ignores what it does not know",
+      "HalC2.Plugins handle_info :release_instances" =>
+        "saves a plugin's provider instances out of the settings again after a save that failed; starts and stops nothing",
+      "HalC2.Plugins state :release_retry" =>
+        "the timer of that next try, so one failed save sets one; starts and stops nothing",
       "HalC2.Plugins state :dir" =>
         "where plugins are scanned from; the model has two fixed plugins",
       "HalC2.Plugins state :supervisor" =>

@@ -64,9 +64,9 @@
 #   apps/mobile/src/features/threads/markdownImageSize.ts, markdownCodeHighlightState.ts (image size limits, colouring only for a named language)
 #   apps/mobile/src/lib/markdownLinks.ts, nativeMarkdownText.ts (how a link, a file mention, a skill and a path in code are shown in a reply)
 #   apps/mobile/modules/hal-c2-markdown-text (chips in text, copy without inline icons, selection handle colour)
-#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
-#   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
+#   packages/qml/HalC2/Bricks/Markdown.qml
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
+#   packages/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
 #   apps/desktop-qt/src/native/CodeHighlighter.cpp, native/syntax (code colours: syntect with bat's syntaxes, the Pierre themes)
 #   apps/tui/src/host/codeColours.ts (code colours on the terminal: OpenTUI's tree-sitter and its grammars)
 #   apps/desktop-qt/tests/tst_Markdown.qml
@@ -171,23 +171,28 @@ Feature: Formatted messages
     And the question card, its choices and their numbers sit on the right
     And the card does not flip side while the user steps through the questions
 
-  @shared @backlog @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ordered list past 99 keeps its whole numbers
     When the agent answers with an ordered list numbered 96 to 103
     Then every item shows its whole number, from "96." to "103."
 
-  @shared @backlog
+  @shared
   Scenario Outline: A table right under a line of text is shown as a table
     When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
     Then the table is shown as a table and not as a run-on paragraph
 
+    @backlog-mobile
     Examples:
-      | where                 |
-      | at the top level      |
-      | inside a quote        |
-      | inside a list item    |
+      | where              |
+      | at the top level   |
+      | inside a list item |
 
-  @shared @backlog
+    @backlog
+    Examples:
+      | where          |
+      | inside a quote |
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: Character references in a reply are shown as their characters
     When the agent answers with "Tom &amp; Jerry &copy; 2026"
     Then the reply reads "Tom & Jerry © 2026"
@@ -316,7 +321,7 @@ Feature: Formatted messages
   # Upstream #13807: a trailing "_" or "~" is part of a bare web address.
   # Upstream #27794: the same fix again, for bare and "www." addresses only; explicit links and
   # emphasis keep their own rules.
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: A bare web address in a reply keeps a trailing underscore or tilde
     When the reply contains the bare address "<address>"
     Then the link is "<address>" in full
@@ -328,7 +333,7 @@ Feature: Formatted messages
       | https://example.com/a_b_                |
 
   # Upstream #13807: sentence punctuation after a bare web address is left outside the link.
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: Punctuation after a bare web address stays outside the link
     When the reply contains the bare address "<address>" followed by "<punctuation>"
     Then the link is "<address>"
@@ -343,6 +348,12 @@ Feature: Formatted messages
   @shared @backlog-mobile
   Scenario: A link to a script is not a link
     When the agent answers with a link to "javascript:alert(1)"
+    Then the link's text is shown and nothing can be opened
+
+  # A terminal opens a link with the system's opener, which reaches a network path's host.
+  @tui @priority-high
+  Scenario: A link to a network path is not a link in the terminal
+    When the agent answers with a link to "//attacker.test/share/notes.md"
     Then the link's text is shown and nothing can be opened
 
   @shared @backlog-mobile @backlog-tui @priority-high
@@ -842,13 +853,13 @@ Feature: Formatted messages
 
   # Upstream #22787: an image alone on its line keeps that line instead of joining the label
   # above it; inline images in a sentence stay inline.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An image alone on its line is shown below its label
     When the agent's reply has a line "**Command palette**" with an image alone on the next line
     Then the image is shown below "Command palette", not beside it
 
   # Upstream #22787: an image inside a sentence stays inline.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An image inside a sentence stays in the sentence
     When the agent's reply has a sentence with a badge image in the middle of it
     Then the badge is shown inline within the sentence
@@ -1629,7 +1640,7 @@ Feature: Formatted messages
     Then the link opens "https://cdn.example.com/clip.mp4" and not a file on the phone
 
   # Upstream #13795: bare addresses with a port or a one-word host were not links.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario Outline: A bare address with a port or a one-word host in a reply is one link
     When the agent's reply contains "<address>"
     Then "<address>" is shown as one link
@@ -1770,7 +1781,7 @@ Feature: Formatted messages
   # Upstream #21069: a backslash inside a drive path is kept even before punctuation; escapes
   # outside paths still work, and collapsed thinking previews follow the same rule.
   # Upstream #21454: the phone's own renderer lost them as well.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: Windows paths in a message's text keep their backslashes
     When the agent's reply reads "<text>"
     Then the reply shows "<shown>"

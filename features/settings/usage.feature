@@ -34,9 +34,9 @@
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
 #   apps/web/src/components/usage/UsagePage.tsx
 #   packages/shared/src/usageFormat.ts (token, percentage and day labels)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
-#   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/UsageChart.qml (the chart)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
+#   apps/desktop-qt/src/native/UsageController.cpp, packages/qml/HalC2/Bricks/UsagePage.qml
+#   packages/qml/HalC2/Bricks/UsageChart.qml (the chart)
 #   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario; the chart's hover)
 #   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
 #   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, chart)
@@ -659,7 +659,7 @@ Feature: Usage and limits
       And the user refreshes usage
       Then the limits are checked again
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A provider whose limits could not be read is named
       Given Codex could not read its limits
       When the user views limits
@@ -689,7 +689,7 @@ Feature: Usage and limits
       When the user switches "server" back on
       Then limits show the Codex limits of both again
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Leaving usage stops following limits
       Given the user views limits
       When the user leaves usage
@@ -698,7 +698,7 @@ Feature: Usage and limits
     # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
     # providers/usage-limits.feature.
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A banked reset credit is spent once the user confirms
       Given Codex has a reset credit banked
       When the user views limits
@@ -710,13 +710,13 @@ Feature: Usage and limits
 
     # The confirmation is UsagePage.qml's own dialog (tst_UsagePage.qml); no feature runner
     # drives it yet.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: The user backs out of spending a reset credit
       Given Codex has a reset credit banked
       When the user starts to use the reset credit but cancels
       Then the credit is still banked
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario Outline: A reset credit that cannot be used says why
       Given Codex has a reset credit banked
       And <situation>
@@ -757,7 +757,7 @@ Feature: Usage and limits
       Then the limit shows the time it resets and how long that is from now
 
     # Upstream #17869. Under a minute is not yet reset, so it never reads "resets in 0m".
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @priority-low
     Scenario Outline: How long until a limit resets is worded for the time left
       Given a limit window that resets in <time left>
       When the user views limits
@@ -767,8 +767,8 @@ Feature: Usage and limits
         | time left     | wording            |
         | 2 hours       | resets in 2h 0m    |
         | 1 minute      | resets in 1m       |
-        | 45 seconds    | Resets momentarily |
-        | 1 second      | Resets momentarily |
+        | 45 seconds    | resets momentarily |
+        | 1 second      | resets momentarily |
         | 0 seconds     | resets now         |
 
     @backlog @desktop @priority-low

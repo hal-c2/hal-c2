@@ -1,4 +1,4 @@
-// Regenerates src/native/themes.json: the built-in palettes the shell resolves
+// Regenerates packages/qml/themes.json: the built-in palettes the shell resolves
 // its theme from (ThemeController), taken from packages/shared's
 // themePalettes.ts. Run
 // `node apps/desktop-qt/scripts/gen-themes.mjs` from the repo root after
@@ -13,7 +13,7 @@ const repoRoot = NodePath.join(here, "..", "..", "..");
 const palettes = await import(
   NodeURL.pathToFileURL(NodePath.join(repoRoot, "packages/shared/src/themePalettes.ts")).href
 );
-const output = NodePath.join(here, "..", "src/native/themes.json");
+const output = NodePath.join(repoRoot, "packages/qml/themes.json");
 
 // Roles outside the theme files that the bricks read: success is emerald-500
 // and info blue-500 in both appearances, and a merged pull request is

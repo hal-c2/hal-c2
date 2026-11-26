@@ -18,8 +18,8 @@
 #   apps/web/src/components/CustomSnoozeDialog.tsx
 #   apps/web/src/components/threadActionMenu.logic.ts (Snooze submenu, Wake thread)
 #   apps/web/src/components/ChatView.tsx (snoozed and woke notices in the open thread)
-#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Snoozed section)
-#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Snooze, Wake, Woke pill, wake label)
+#   packages/qml/HalC2/Bricks/Sidebar.qml (Snoozed section)
+#   packages/qml/HalC2/Bricks/SidebarThreadRow.qml (Snooze, Wake, Woke pill, wake label)
 #   packages/contracts/src/shell.ts (thread.snoozeMenu, thread.unsnooze, thread.wokeDismiss)
 #   packages/contracts/src/orchestrationV2.ts (thread.snooze, thread.unsnooze, thread.snoozed, thread.unsnoozed)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (snooze, unsnooze)
@@ -321,7 +321,7 @@ Feature: Snoozing threads
   # Upstream #22202: a completed run no longer ends a snooze, so a thread that wakes itself
   # for background work stays shelved until its wake time.
   # Replaces the scenario above once desktop and mobile carry it.
-  @backlog @mc @desktop @mobile @priority-high
+  @backlog-mc @backlog-mobile @mc @desktop @mobile @priority-high
   Scenario Outline: A snoozed thread wakes early only when it needs the user
     Given "Refactor cart" is snoozed until tomorrow
     When <event>

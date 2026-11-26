@@ -266,6 +266,105 @@ describe("inlineMarkdown", () => {
     ]);
   });
 
+  it("shows character references as their characters, but not in code", () => {
+    expect(spans("Tom &amp; Jerry &copy; 2026 &#8212; ok")).toEqual([
+      ["Tom & Jerry © 2026 — ok", 0, undefined],
+    ]);
+    expect(spans("`&amp;` &unknown;")).toEqual([
+      ["&amp;", 0, undefined],
+      [" &unknown;", 0, undefined],
+    ]);
+  });
+
+  it("reads a backslash as an escape outside Windows paths and as itself inside one", () => {
+    expect(
+      spans(String.raw`A \*literal\* star`)
+        .map(([text]) => text)
+        .join(""),
+    ).toBe("A *literal* star");
+    expect(
+      spans(String.raw`Open C:\a\_b and C:\Users\me`)
+        .map(([text]) => text)
+        .join(""),
+    ).toBe(String.raw`Open C:\a\_b and C:\Users\me`);
+  });
+
+  it("keeps a Windows path whose first separator precedes punctuation, and a UNC path", () => {
+    const plain = (text: string) =>
+      spans(text)
+        .map(([part]) => part)
+        .join("");
+    expect(plain(String.raw`Open C:\_b now`)).toBe(String.raw`Open C:\_b now`);
+    expect(plain(String.raw`Open \\server\share\_b now`)).toBe(
+      String.raw`Open \\server\share\_b now`,
+    );
+    expect(plain(String.raw`\*x\*`)).toBe("*x*");
+  });
+
+  it("leaves inherited property names as written instead of decoding them as entities", () => {
+    expect(spans("&constructor; &toString; &amp;")).toEqual([
+      ["&constructor; &toString; &", 0, undefined],
+    ]);
+  });
+
+  it("links the web, mail and paths, but no other scheme and no network path", () => {
+    const linked = (url: string) => inlineMarkdown(`[x](${url})`, THEME).some((part) => part.link);
+    for (const url of ["https://a.dev", "mailto:dev@a.dev", "src/cart.ts", "/etc/hosts"])
+      expect(linked(url)).toBe(true);
+    for (const url of [
+      "javascript:alert(1)",
+      "file:///etc/hosts",
+      "smb://host/share",
+      "//host/share/notes.md",
+      String.raw`\\host\share\notes.md`,
+      String.raw`/\host\share`,
+      String.raw`\/host/share`,
+    ])
+      expect(linked(url)).toBe(false);
+  });
+
+  it("opens only the author's URL over a label that is itself an address", () => {
+    const linkOf = (text: string) =>
+      inlineMarkdown(text, THEME)
+        .filter((part) => part.link)
+        .map((part) => [part.text, part.link!.url]);
+    expect(linkOf("[www.example.com/docs](https://docs.example.com/x)")).toEqual([
+      ["www.example.com/docs", "https://docs.example.com/x"],
+    ]);
+    const split = inlineMarkdown("[see <https://a.dev>](https://b.dev)", THEME);
+    expect(split.map((part) => part.text).join("")).toBe("see <https://a.dev>");
+    expect(split.every((part) => part.link?.url === "https://b.dev")).toBe(true);
+    const styled = inlineMarkdown(String.raw`[**a\_b** &amp; _c_](https://b.dev)`, THEME);
+    expect(styled.map((part) => part.text).join("")).toBe("a_b & c");
+    expect(styled.every((part) => part.link?.url === "https://b.dev")).toBe(true);
+    expect(styled.some((part) => ((part.attributes ?? 0) & TextAttributes.BOLD) !== 0)).toBe(true);
+  });
+
+  it("reads escapes and entities inside styled spans and link labels", () => {
+    const plain = (text: string) =>
+      spans(text)
+        .map(([part]) => part)
+        .join("");
+    expect(plain(String.raw`**snake\_case**`)).toBe("snake_case");
+    expect(
+      spans(String.raw`**snake\_case**`).every(
+        ([, attributes]) => attributes === TextAttributes.BOLD,
+      ),
+    ).toBe(true);
+    expect(plain("**Tom &amp; Jerry**")).toBe("Tom & Jerry");
+    expect(plain(String.raw`*a\_b* ~~c\_d~~ [e\_f](https://example.com)`)).toBe("a_b c_d e_f");
+    expect(
+      spans(String.raw`*a\_b*`).every(([, attributes]) => attributes === TextAttributes.ITALIC),
+    ).toBe(true);
+    expect(
+      spans(String.raw`~~c\_d~~`).every(
+        ([, attributes]) => attributes === TextAttributes.STRIKETHROUGH,
+      ),
+    ).toBe(true);
+    const label = spans(String.raw`[e\_f](https://example.com)`);
+    expect(label.every(([, , url]) => url === "https://example.com")).toBe(true);
+  });
+
   it("keeps a balanced paren in a www address and leaves an unbalanced one out", () => {
     expect(spans("see www.example.com/a_(b) ok (www.example.com/c).")).toEqual([
       ["see ", 0, undefined],

@@ -259,7 +259,7 @@ defmodule HalC2.PullRequests.ForgejoSyncTest do
       "writer" => %{"enabled" => true, "granted" => ["pullRequests:read", "pullRequests:write"]}
     }
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version, :host)
     ref = %{"projectId" => "p1", "repository" => "acme/shop", "number" => 7}
 
     assert {:error, refusal} = HalC2.Plugins.Host.pull_request_fetch("reader", ref)

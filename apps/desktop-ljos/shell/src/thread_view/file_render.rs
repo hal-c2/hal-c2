@@ -253,7 +253,13 @@ pub fn preview_delimiter(name: &str, mime_type: &str) -> Option<char> {
     if mime == "text/tab-separated-values" {
         return Some('\t');
     }
-    if !mime.is_empty() && mime != "text/plain" && mime != "application/octet-stream" {
+    // A generic type says nothing about the content, so the name decides.
+    let generic = mime.is_empty()
+        || mime == "text/plain"
+        || mime == "application/octet-stream"
+        || mime == "binary/octet-stream"
+        || mime == "application/unknown";
+    if !generic {
         return None;
     }
     match extension_of(name).as_str() {

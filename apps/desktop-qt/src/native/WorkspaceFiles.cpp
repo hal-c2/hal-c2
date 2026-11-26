@@ -692,7 +692,10 @@ QChar WorkspaceFiles::previewDelimiter(const QString& name, const QString& mimeT
   const QString mime = mimeType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
   if (mime == QLatin1String("text/csv")) return u',';
   if (mime == QLatin1String("text/tab-separated-values")) return u'\t';
-  if (!mime.isEmpty() && mime != QLatin1String("text/plain") && mime != QLatin1String("application/octet-stream")) return {};
+  // A generic type says nothing about the content, so the name decides.
+  const bool generic = mime.isEmpty() || mime == QLatin1String("text/plain") || mime == QLatin1String("application/octet-stream") ||
+                       mime == QLatin1String("binary/octet-stream") || mime == QLatin1String("application/unknown");
+  if (!generic) return {};
   const QString extension = extensionOf(name);
   if (extension == QLatin1String("csv")) return u',';
   if (extension == QLatin1String("tsv")) return u'\t';

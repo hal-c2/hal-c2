@@ -58,7 +58,7 @@ const REMOVE_FAILED: &str = "Couldn’t remove theme";
 
 // --- What a theme is --------------------------------------------------------
 
-/// themes.json (scripts/gen-themes.mjs) as desktop-qt builds it in, its
+/// themes.json (apps/desktop-qt/scripts/gen-themes.mjs), as the Qt shell builds it in, its
 /// colours made drawable once.
 pub(crate) struct BuiltIns {
     pub roles: Vec<String>,
@@ -75,10 +75,9 @@ pub(crate) struct BuiltIns {
 pub(crate) fn built_ins() -> &'static BuiltIns {
     static DATA: OnceLock<BuiltIns> = OnceLock::new();
     DATA.get_or_init(|| {
-        let root: Json = serde_json::from_str(include_str!(
-            "../../../../../desktop-qt/src/native/themes.json"
-        ))
-        .unwrap_or_default();
+        let root: Json =
+            serde_json::from_str(include_str!("../../../../../../packages/qml/themes.json"))
+                .unwrap_or_default();
         let per_appearance = |key: &str| {
             let pair = &root[key];
             let mut both = Map::new();

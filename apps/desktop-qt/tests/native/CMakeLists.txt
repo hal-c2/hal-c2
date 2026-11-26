@@ -25,6 +25,11 @@ target_compile_definitions(tst_FolderExplorer PRIVATE HAL_C2_TEST_SOURCE_DIR="${
 target_link_libraries(tst_FolderExplorer PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 add_test(NAME FolderExplorer COMMAND tst_FolderExplorer)
 set_tests_properties(FolderExplorer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_QUICK_BACKEND=software")
+# What links from untrusted text (pull requests, reviews) may open.
+add_executable(tst_WebLinks tst_WebLinks.cpp ../../src/ShellBridge.cpp)
+target_include_directories(tst_WebLinks PRIVATE ../../src)
+target_link_libraries(tst_WebLinks PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Test)
+add_test(NAME WebLinks COMMAND tst_WebLinks)
 add_executable(tst_LocalFolderModel tst_LocalFolderModel.cpp ../../src/LocalFolderModel.cpp)
 target_include_directories(tst_LocalFolderModel PRIVATE ../../src)
 target_link_libraries(tst_LocalFolderModel PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Test)
@@ -73,7 +78,7 @@ add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/Theme
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
-  HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../qml"
+  HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../packages/qml"
   HAL_C2_DEVICE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/features/fixtures/device-72x160.h264"
 )
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)

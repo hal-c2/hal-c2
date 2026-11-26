@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import QtQuick.Controls
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 import HalC2.Shell
 
 // The CommandPalette brick over the Palette mock: it follows `open`, takes the

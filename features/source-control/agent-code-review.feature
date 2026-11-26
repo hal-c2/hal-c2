@@ -12,6 +12,12 @@
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
 #   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
+#   https://github.com/hal-c2/hal-c2/issues/1710 (a review checkout carries the reviewed commit's submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1781 (sandboxed reviews through the CLIProxyAPI plugin's providers)
+#   apps/server-ex/lib/hal_c2/open_shell/route.ex (where a sandboxed agent's model requests go)
+#   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
+#   https://github.com/hal-c2/hal-c2/issues/1795 (a review on this machine gets its report tool alone, and trusted comments alone)
+#   apps/server-ex/lib/hal_c2/mcp.ex (a plugin's thread kept to that plugin's tools)
 
 @plugin-code-review
 Feature: Agent code review
@@ -20,6 +26,8 @@ Feature: Agent code review
   agent and the prompt it gets, and what happens with what it finds. Reviews show up as
   a page, as threads that look like reviews, or both.
 
+  # The MC's steps review trusted pull requests on this machine, where the fake agents
+  # run, unless a scenario keeps the default of sandboxing every review.
   Background:
     Given an MC running the plugin "code-review" with GitHub as its host
     And the project "api" whose remote is "acme/api" on GitHub
@@ -501,15 +509,28 @@ Feature: Agent code review
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
 
-  Rule: An untrusted pull request is reviewed in a sandbox
+    @mc
+    Scenario: A review checkout has the submodules the reviewed commit pins
+      Given the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its thread works in a checkout of the head of #12
+      And the checkout of #12 has "third_party/lib" at the commit its head pins
 
-    The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
-    sandbox: a checkout of the pull request made from a bundle, a home of its own, no
-    credential in its environment, and a network that reaches only its model's own
-    requests on the model's API and the one tool it reports with. Its turns take no
-    checkpoint: git here would run this machine's filters on whatever files the pull
-    request's attributes send through them. A pull request is untrusted as the rule on who gets
-    reviews says, and its review still waits for the user's approval of its head.
+  Rule: Every review runs in a sandbox, unless the user reviews trusted pull requests here
+
+    The agent reviewing a pull request runs in an OpenShell sandbox: a checkout of the
+    pull request made from a bundle, a home of its own, no credential in its
+    environment, and a network that reaches only its model's own requests on the
+    model's API, or on the CLIProxyAPI plugin's proxy, and the one tool it reports with. Its turns take no checkpoint: git here
+    would run this machine's filters on whatever files the pull request's attributes
+    send through them. A review that cannot have its sandbox fails, saying what to set
+    up, and never runs on this machine instead. With "Review trusted pull requests on
+    this machine" on, a pull request HAL-C2 trusts is reviewed here by an agent that has
+    its report tool and none of HAL-C2's others, and whose prompt quotes only the review
+    comments of people HAL-C2 trusts, since anyone may comment; one it does not trust, as the rule on who gets reviews says, is sandboxed whatever
+    the setting says, and its review still waits for the user's approval of its head.
+    The setting replaces "Sandbox every review", whose stored value is not read: a
+    saved form stored its old default of off.
 
     @mc
     Scenario: An untrusted pull request is reviewed in a sandbox, deleted once the agent reports
@@ -520,6 +541,17 @@ Feature: Agent code review
       And its sandbox and the sandbox's provider are deleted
       And git on this machine took no checkpoint of the review's checkout
 
+    # The submodules would come with this machine's credentials, from the addresses and
+    # at the commits the pull request names, into a sandbox whose report is posted.
+    @mc
+    Scenario: A sandboxed review gets no submodules, and its agent is told why
+      Given pull requests are not trusted and OpenShell is installed
+      And the head of #12 pins the submodule "third_party/lib" of "acme/lib" behind its newest commit
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the sandbox's checkout has no "third_party/lib"
+      And the agent of #12 is told its sandbox gets no submodules
+
     # The API key is the user's, and the rest of the API opens the rest of their
     # account with it, their uploaded files among them.
     @mc
@@ -528,12 +560,94 @@ Feature: Agent code review
       When #12 is reviewed
       Then its sandbox lets the agent send its model's requests and nothing else on the model's API
 
+    # The CLIProxyAPI plugin's Claude and Codex (#1781): the proxy on this machine is
+    # reached as the report broker is, at the proxy's port alone, and it answers more
+    # than the model's requests, its management API among them.
+    @mc @plugin-cliproxyapi
+    Scenario Outline: A sandboxed review through CLIProxyAPI reaches the proxy's model requests and nothing else
+      Given pull requests are not trusted and OpenShell is installed
+      And a fake CLIProxyAPI
+      And the CLIProxyAPI plugin runs the fake binary
+      And "code-review" reviews with "<agent> via CLIProxyAPI" from the CLIProxyAPI plugin
+      When #12 is reviewed
+      Then its agent runs <agent> in a sandbox through the proxy, with no credential in its environment
+      And its sandbox lets the agent send its model's requests to the proxy's port and nothing else
+      And the review of #12 is finished with the agent's verdict
+
+      Examples:
+        | agent  |
+        | Codex  |
+        | Claude |
+
     @mc
-    Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
+    Scenario: A sandboxed review on a provider with a base URL of its own is not run
+      Given pull requests are not trusted and OpenShell is installed
+      And "code-review" reviews with a Codex of its own whose base URL is "http://127.0.0.1:8317/v1"
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "on CLIProxyAPI through the CLIProxyAPI plugin's provider."
+
+    @mc
+    Scenario: By default a trusted pull request is reviewed in a sandbox too
       Given pull requests are trusted and OpenShell is installed
-      And "code-review" sandboxes every review
+      And "code-review" keeps its default of sandboxing every review
       When #12 is reviewed
       Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: With "Review trusted pull requests on this machine" on, a trusted pull request is reviewed here
+      Given pull requests are trusted and OpenShell is installed
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then its thread works in a checkout of the head of #12
+      And no review sandbox was made
+
+    @mc
+    Scenario: A review on this machine has its report tool and none of HAL-C2's others
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then the agent of #12 is offered "code_review_report" alone
+      And the agent of #12 is refused HAL-C2's own tools
+
+    @mc
+    Scenario: A review on this machine quotes only the review comments of people HAL-C2 trusts
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt does not include "Rename the limit"
+
+    @mc
+    Scenario: A sandboxed review quotes every unresolved review comment
+      Given pull requests are not trusted and OpenShell is installed
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt includes "Rename the limit"
+
+    @mc
+    Scenario: With "Review trusted pull requests on this machine" on, an untrusted pull request is still reviewed in a sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And "code-review" reviews trusted pull requests on this machine
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: By default a trusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
+      Given pull requests are trusted
+      And "code-review" keeps its default of sandboxing every review
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+      And no agent ran on this machine for the review of #12
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: The settings warn that an agent that cannot run in a sandbox fails its reviews
+      Given "code-review" reviews with an agent that cannot run in a sandbox
+      When the user opens the settings of "code-review"
+      Then they read that its reviews fail, and to pick Claude or Codex
 
     @mc
     Scenario: A sandboxed Claude review takes none of this machine's Claude settings
@@ -750,6 +864,50 @@ Feature: Agent code review
       Then the review of #12 waits in the queue
       And "code-review" says reviews are paused until the limit resets
 
+    # The user may know the limit no longer holds, as after signing in to another account.
+    @mc
+    Scenario: The user ends a usage-limit pause before the limit resets
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the user resumes the reviews
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    @mc
+    Scenario: Reviewing with another model ends a usage-limit pause
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the user picks another model for "code-review"
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    # Asking to look is the user's say-so, as a start is.
+    @mc
+    Scenario: Looking at the pull requests now ends a usage-limit pause
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      And the plugin looks at the pull requests again
+      Then "code-review" no longer says reviews are paused
+      And the review of #12 is running again
+
+    # The limit was the old model's: the new one has its own.
+    @mc
+    Scenario: A usage limit a run of the old model hits after a switch pauses nothing
+      Given reviews of #12 and #13 are running
+      When the user picks another model for "code-review"
+      And the agent's turn ends because its usage limit is reached
+      Then "code-review" no longer says reviews are paused
+      And the review of #13 is running again
+
+    @mc
+    Scenario: A queued review the user asks to start now starts next
+      Given "code-review" runs at most 1 reviews at once
+      And a review of #12 is running
+      And the user asked for reviews of #13 and #14, which wait in the queue
+      When the user retries the review of #14
+      And the agent's turn ends without a report
+      Then the review of #14 is running and #13 still waits in the queue
+
     @mc
     Scenario: A finding carries its severity and a suggested fix
       Given a review of #12 is running
@@ -961,6 +1119,16 @@ Feature: Agent code review
       And the review of #12 is still waiting with its comments
 
     @mc
+    Scenario: A post GitHub's rate limit turned away is posted again at the next look
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub turns reviews away for its rate limit
+      When the review of #12 finishes with two comments
+      Then the review of #12 waits, saying GitHub's rate limit turned it away
+      When GitHub takes reviews again
+      And the plugin looks at the pull requests again
+      Then the review of #12 is marked as published
+
+    @mc
     Scenario: A review being posted is not posted twice
       Given the publishing mode for "acme/api" is "automatic"
       And GitHub is slow to take reviews
@@ -1062,6 +1230,19 @@ Feature: Agent code review
       Then its verdict, summary and comments are shown
       And the user can dismiss comments, and publish it once shown how it is posted
 
+    # #1801, #1802: the agent read a pull request anyone can open, so what it wrote is
+    # untrusted. The page's QML tests cover this (tst_ReviewsPage); the runners' steps are #1808.
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui @priority-high
+    Scenario: A review's findings show their markup as written and open only web links
+      Given the review of #13 is waiting with a summary that links "the guide" to "https://example.com/guide" and shows an HTML image
+      And a comment of the review links "hosts" to "file:///etc/hosts"
+      When the user opens the review of #13 on the "Reviews" page
+      Then the summary shows the HTML image as written and loads nothing
+      When the user opens "the guide"
+      Then "https://example.com/guide" opens in the browser
+      When the user opens "hosts"
+      Then nothing opens
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a check the machine blocked as a problem of the machine
       Given the review of #13 is waiting with a check its machine blocked
@@ -1104,6 +1285,32 @@ Feature: Agent code review
       Given "code-review" watches "acme/api" selectively
       When the user starts a review of #12 from the "Reviews" tab
       Then the review of #12 is listed as running
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page says until when reviews are paused, and resumes them
+      Given reviews are paused until the usage limit resets at "2026-11-22T19:00:00Z", with #12 queued
+      When the user switches to the "Reviews" tab
+      Then the page says when reviews start again, in the user's own time
+      When the user resumes the reviews from the page
+      Then the MC is asked to resume them, and the page no longer says they are paused
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page starts a queued review now
+      Given the review of #13 is queued
+      When the user opens the review of #13 on the "Reviews" page
+      And the user asks to review it now
+      Then the MC is asked to review #13 now, and it is listed as running
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page finds a pull request by its number, title or branch
+      Given reviews of #12 running, #13 waiting to be published and #14 failed
+      When the user switches to the "Reviews" tab
+      And the user searches the reviews for "#14"
+      Then only #14 is listed
+      When the user searches the reviews for "cache session"
+      Then only #13 is listed
+      When the user searches the reviews for "feature/12"
+      Then only #12 is listed
 
   Rule: The host is the user's choice
 

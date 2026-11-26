@@ -209,6 +209,48 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  # #1781: the CLIProxyAPI plugin's Codex instance, as the plugin writes it.
+  test "Codex via CLIProxyAPI reaches the proxy's model requests alone, its key in the provider",
+       %{gateway: g, repo: repo} do
+    System.delete_env("OPENAI_API_KEY")
+    proxy_instance!("plugin_cliproxyapi_codex", plugin: true)
+
+    assert {:ok, %{sandbox: name}} =
+             Review.open(%{spec(repo) | instance: "plugin_cliproxyapi_codex"})
+
+    assert %{^name => %{credentials: %{"OPENAI_API_KEY" => "client-key"}}} =
+             FakeOpenShell.providers(g)
+
+    assert_received {:openshell_request, "CreateSandbox", %{spec: spec}}
+    refute Enum.any?(Map.values(spec.environment), &(&1 =~ "client-key"))
+
+    # This machine at the proxy's port, as the broker is reached, its paths the model's.
+    assert [model] = spec.policy.network_policies["model"].endpoints
+    assert {model.host, model.port, model.allowed_ips} == {"127.0.0.1", 8317, ["127.0.0.1"]}
+    assert model.credential_binding.provider == name
+    paths = Enum.map(model.rules, & &1.allow.path)
+    assert paths == ["/v1/responses", "/v1/responses/compact", "/v1/models"]
+    refute Enum.any?(paths, &String.starts_with?(&1, "/v0"))
+
+    turn = %{ids: %{thread: @thread}}
+    assert ["codex", "app-server" | config] = Review.command(turn, "codex")
+    assert "model_providers.review.base_url=http://127.0.0.1:8317/v1" in config
+    assert "model_providers.review.env_key=OPENAI_API_KEY" in config
+    assert {:ok, sandbox} = Review.for_turn(turn)
+    refute Enum.any?(Map.values(sandbox.environment), &(&1 =~ "client-key"))
+  end
+
+  test "a provider that sends Codex to a base URL of its own opens no sandbox", %{
+    gateway: g,
+    repo: repo
+  } do
+    proxy_instance!("my_proxy", plugin: false)
+    assert {:error, message} = Review.open(%{spec(repo) | instance: "my_proxy"})
+    assert message =~ "CLIProxyAPI plugin"
+    refute_received {:openshell_request, "CreateSandbox", _}
+    assert_gone(g)
+  end
+
   test "an agent that cannot run in a sandbox is refused, never run here" do
     assert Review.refusal(@thread, "cursor") =~ "cursor cannot run in yet"
     assert Review.refusal(@thread, "codex") =~ "Run the review again."
@@ -620,6 +662,30 @@ defmodule HalC2.OpenShell.ReviewTest do
 
   defp owned(labels), do: Map.put(labels, OpenShell.owner_label(), OpenShell.owner())
   defp other_home(labels), do: Map.put(labels, Review.home_label(), "0123456789ab")
+
+  # A Codex instance routed through a CLIProxyAPI on this machine, as the plugin puts
+  # one, recorded as the plugin's when `plugin: true`.
+  defp proxy_instance!(id, plugin: plugin?) do
+    instance = %{
+      "driver" => "codex",
+      "environment" => [%{"name" => "CLIPROXYAPI_API_KEY", "value" => "client-key"}],
+      "config" => %{
+        "launchArgs" =>
+          "-c model_provider=cliproxyapi -c model_providers.cliproxyapi.base_url=http://127.0.0.1:8317/v1 " <>
+            "-c model_providers.cliproxyapi.env_key=CLIPROXYAPI_API_KEY -c model_providers.cliproxyapi.wire_api=responses"
+      }
+    }
+
+    # The plugin host's record, which no client write sets.
+    HalC2.Settings.update(fn settings ->
+      settings
+      |> Map.put("providerInstances", %{id => instance})
+      |> Map.put(
+        "plugins",
+        if(plugin?, do: %{"cliproxyapi" => %{"providerInstances" => [id]}}, else: %{})
+      )
+    end)
+  end
 
   defp spec(repo) do
     %{

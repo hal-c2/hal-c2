@@ -1,4 +1,4 @@
-//! A native settings page's rows (qml/HalC2/Bricks/SettingsPage.qml),
+//! A native settings page's rows (packages/qml/HalC2/Bricks/SettingsPage.qml),
 //! driven through the controls the page draws: its switches by clicking
 //! them, its lists by picking an option (desktop-qt's SettingsRows.h and
 //! SettingsRowsSteps.cpp). Helpers only; the steps are other domains'.

@@ -74,7 +74,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
   end
 
-  step "the user joins the second to the first with a pairing link from the first", context do
+  step "the user joins the second to the first with a cluster invite from the first", context do
     %{a: a, b: b} = context.machines
     Map.put(context, :joined, command(b, ["join", invite(a)]))
   end
@@ -106,11 +106,13 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the user joins the second with a standard pairing link from the first that names the first's certificate",
+  step "the user joins the second with an admin pairing link from the first that names the first's certificate",
        context do
     %{a: a, b: b} = context.machines
-    store = :peer.call(a.peer, HalC2.Store, :home_path, [])
-    token = :peer.call(a.peer, HalC2.Auth, :create_pairing_token, [store])
+
+    {:ok, %{"credential" => token}} =
+      auth(a, :create_pairing_link, [%{"scopes" => ["access:write"], "label" => "Admin"}])
+
     link = "#{origin(a)}/?token=#{token}#fingerprint=#{fingerprint(a)}"
     Map.put(context, :joined, command(b, ["join", link]))
   end
@@ -236,7 +238,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the join is refused because the link does not grant access:write", context do
+  step "the join is refused because the link cannot add machines", context do
     assert {:error, message} = context.joined
     assert message =~ "cannot add machines to a cluster"
     context
@@ -992,6 +994,113 @@ defmodule HalC2.Steps.Connections.Cluster do
   step "it follows a thread that lives on the second member by that member's environment",
        context do
     follow_second(context, %{"environment" => context.second.environment})
+  end
+
+  step "a client connected to the first of two members that can lose each other", context do
+    # Held over stdio: one held over distribution halts as it parts.
+    context = second_member(context, nil, [], :standard_io)
+    World.put_client(context, Mc.connect(context.mc))
+  end
+
+  step "it watches the second member's settings", context do
+    {_, client} = watch_second_settings(context, World.client(context))
+    World.put_client(context, client)
+  end
+
+  step "the members lose each other, the second's settings change and they meet again",
+       context do
+    %{mc: second, peer: peer} = context.second
+    true = Node.monitor(second, true)
+    :ok = :peer.call(peer, HalC2.Test.Parting, :from_settings, [node()], 60_000)
+    assert_receive {:nodedown, ^second}, 30_000
+    code = ~S|HalC2.Settings.update(&Map.put(&1, "addProjectBaseDirectory", "/garden"))|
+    _ = :peer.call(context.second.peer, Code, :eval_string, [code], 15_000)
+    true = Node.connect(context.second.mc)
+    context
+  end
+
+  step "it follows a terminal on the second member", context do
+    input = %{"threadId" => "far-th", "terminalId" => "term-1", "cwd" => context.second.home}
+    shape = %{"type" => "terminal", "mc" => Atom.to_string(context.second.mc), "input" => input}
+    client = Mc.sub(World.client(context), 5, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "terminal" and &1["id"] == 5), 30_000)
+    World.put_client(context, client)
+  end
+
+  step "the members lose each other, the terminal is lost and they meet again", context do
+    second = context.second.mc
+    cookie = Node.get_cookie()
+    # Neither dials the other back until the client has heard of the loss.
+    Node.set_cookie(second, :elsewhere)
+    ExUnit.Callbacks.on_exit(fn -> Node.set_cookie(second, cookie) end)
+    _ = Node.disconnect(second)
+    lost? = &(&1["id"] == 5 and &1["event"]["type"] == "error")
+    {_, client} = Mc.await(World.client(context), lost?, 30_000)
+    Node.set_cookie(second, cookie)
+    true = Node.connect(second) or Node.connect(second)
+    World.put_client(context, client)
+  end
+
+  step "the client is told to attach the second member's terminal again", context do
+    resync? = &(&1 == %{"t" => "resync", "id" => 5})
+    {_, client} = Mc.await(World.client(context), resync?, 30_000)
+    World.put_client(context, client)
+  end
+
+  step "its socket is from before sockets heard members come back", context do
+    {:ok, supervisor} = ExUnit.fetch_test_supervisor()
+    [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn {io, %{connection: connection} = handler} ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      v12 = connection.websock_state |> Map.delete(:unreached) |> Map.put(:v, 12)
+      {io, %{handler | connection: %{connection | websock_state: v12}}}
+    end)
+
+    Map.put(context, :older_socket, socket)
+  end
+
+  step "older code stopped its socket hearing members come back", context do
+    {:ok, supervisor} = ExUnit.fetch_test_supervisor()
+    [web] = for {HalC2.Web, pid, _, _} <- Supervisor.which_children(supervisor), do: pid
+    {:ok, [socket]} = ThousandIsland.connection_pids(web)
+
+    :sys.replace_state(socket, fn state ->
+      :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+      state
+    end)
+
+    Map.put(context, :older_socket, socket)
+  end
+
+  step "the client's MC is upgraded in place", context do
+    # The install's last instruction; a socket it can't tell moves with its next message.
+    {:ok, _changes} = HalC2.Upgrade.Tree.sync()
+    send(context.older_socket, :after_upgrade)
+    context
+  end
+
+  step "the client is told to resync what it watches of the second member", context do
+    {resync, before, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "resync"), 30_000)
+
+    assert resync == %{"t" => "resync", "id" => 4}
+    # Its watch was dead when they changed: only watching again tells it of the change.
+    changed? = &(get_in(&1, ["settings", "addProjectBaseDirectory"]) == "/garden")
+    refute Enum.any?(before, changed?)
+    World.put_client(context, client)
+  end
+
+  step "watching it again shows the settings as they are now", context do
+    {config, client} = watch_second_settings(context, World.client(context))
+    assert config["config"]["settings"]["addProjectBaseDirectory"] == "/garden"
+    World.put_client(context, client)
+  end
+
+  defp watch_second_settings(context, client) do
+    shape = %{"type" => "config", "mc" => Atom.to_string(context.second.mc)}
+    Mc.await(Mc.sub(client, 4, shape), &(&1["t"] == "config" and &1["id"] == 4), 30_000)
   end
 
   defp follow_second(context, target) do
@@ -1867,28 +1976,32 @@ defmodule HalC2.Steps.Connections.Cluster do
     :ok
   end
 
-  defp second_member(context, home \\ nil, env \\ [])
+  defp second_member(context, home \\ nil, env \\ [], connection \\ nil)
 
-  defp second_member(%{second: _} = context, _home, _env), do: context
+  defp second_member(%{second: _} = context, _home, _env, _connection), do: context
 
-  defp second_member(context, home, env) do
+  defp second_member(context, home, env, connection) do
     distribute()
     context = %{context | mc: Mc.restart(context.mc)}
     name = :"hal_c2_member#{System.unique_integer([:positive])}"
-    start_second(context, name, home || Mc.tmp_dir(context.mc, "second"), env)
+    start_second(context, name, home || Mc.tmp_dir(context.mc, "second"), env, connection)
   end
 
   # The second machine: a peer running the whole MC, labelled "garden-box". Returns
   # once the connected MC knows its environment.
-  defp start_second(context, name, home, env \\ []) do
+  defp start_second(context, name, home, env \\ [], connection \\ nil) do
+    options = if connection, do: %{connection: connection}, else: %{}
+
     {:ok, peer, mc} =
-      :peer.start_link(%{
-        name: name,
-        host: ~c"127.0.0.1",
-        longnames: true,
-        args: code_path_args(),
-        env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
-      })
+      :peer.start_link(
+        Map.merge(options, %{
+          name: name,
+          host: ~c"127.0.0.1",
+          longnames: true,
+          args: code_path_args(),
+          env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
+        })
+      )
 
     for {key, value} <- [start_mc: true, home: home, port: 0],
         do: :ok = :erpc.call(mc, Application, :put_env, [:hal_c2, key, value])

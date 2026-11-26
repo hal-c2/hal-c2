@@ -175,7 +175,17 @@ const Steps steps([] {
 
   step(S("%1 is still shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
-    world.waitFor([&] { return oneAtATime(world, c[0]); }, [&] { return S("%1 alone in the narrow window; the screen says: %2").arg(c[0], screenTexts(world)); });
+    // Alone in the phone layout, or beside the list in the desktop layout
+    // the shell has room for: wait for `roomy` to follow `fits` (a beat
+    // after the window's new size) and for that layout to settle with the
+    // thread shown, not for either layout.
+    world.waitFor(
+        [&] {
+          const QQuickWindow& window = world.window();
+          if (window.property("roomy").toBool() != window.property("fits").toBool()) return false;
+          return window.property("roomy").toBool() ? sideBySide(world, c[0]) : oneAtATime(world, c[0]);
+        },
+        [&] { return S("%1 still shown; the screen says: %2").arg(c[0], screenTexts(world)); });
     const QVariantMap route = world.state(S("route")).toMap();
     expect(route.value(S("kind")) == QLatin1String("thread") && route.value(S("threadKey")).toString().endsWith(QLatin1Char(':') + world.thread),
            S("the route is %1").arg(show(route)));
@@ -188,6 +198,44 @@ const Steps steps([] {
   step(S("%1 is shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
     world.waitFor([&] { return shownThread(world) == c[0]; }, [&] { return S("%1; the screen shows %2 and says: %3").arg(c[0], shownThread(world), screenTexts(world)); });
+  });
+
+  // Choosing a row of the split layout's list, and what follows from it:
+  // the thread beside the list swaps, and Back does not walk a stack of
+  // threads (features/mobile/tablet-and-hardware-keyboard.feature).
+  step(S("the user chooses %1 in the thread list").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    haveThread(world, c[0]);
+    world.tap(threadRow(world, c[0]));
+    world.sync();
+  });
+
+  step(S("the user chooses to start a new task from the thread's header"), [](World& world, const Captures&, const Table&) {
+    world.tap(S("newThread"));
+    world.sync();
+  });
+
+  step(S("the new task opens"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.state(S("route")).toMap().value(S("kind")) == QLatin1String("draft"); },
+                  [&] { return S("a new task; the route is %1").arg(show(world.state(S("route")))); });
+  });
+
+  step(S("going back does not stay on %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.back();
+    world.waitFor([&] { return shownThread(world) != c[0]; },
+                  [&] { return S("back to leave %1; the screen shows %2 and says: %3").arg(c[0], shownThread(world), screenTexts(world)); });
+  });
+
+  step(S("%1 takes the place of %1 beside the list without sliding in").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return sideBySide(world, c[0]); }, [&] { return S("%1 beside the list in place of %2; the screen says: %3").arg(c[0], c[1], screenTexts(world)); });
+  });
+
+  step(S("the user goes back"), [](World& world, const Captures&, const Table&) {
+    world.back();
+    world.sync();
+  });
+
+  step(S("the user does not return to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(shownThread(world) != c[0], S("back returned to %1; the screen says: %2").arg(c[0], screenTexts(world)));
   });
 
   // Enough threads that the list does not fit the tablet's height.
@@ -260,9 +308,11 @@ const Steps steps([] {
 
   // In the field on screen and in what the app keeps of it.
   step(S("the composer still reads %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return world.item(S("input"))->property("text").toString() == c[0]; },
-                  [&] { return S("the composer to read %1; it reads %2").arg(c[0], world.item(S("input"))->property("text").toString()); });
-    expect(world.state(S("composer")).toMap().value(S("text")).toString() == c[0], S("the app keeps %1").arg(show(world.state(S("composer")).toMap().value(S("text")))));
+    // The app's draft follows what the composer shows a beat later (it is
+    // saved once typing pauses), so wait for both.
+    const auto saved = [&] { return world.state(S("composer")).toMap().value(S("text")).toString(); };
+    world.waitFor([&] { return world.item(S("input"))->property("text").toString() == c[0] && saved() == c[0]; },
+                  [&] { return S("the composer to read %1; it reads %2 and the app keeps %3").arg(c[0], world.item(S("input"))->property("text").toString(), saved()); });
   });
 
   step(S("a hardware keyboard is attached to a (tablet|phone)"), [](World& world, const Captures& c, const Table&) {
@@ -334,7 +384,8 @@ const Steps steps([] {
   step(S("the user pairs a (tablet|phone) with it"), [](World& world, const Captures& c, const Table&) {
     const QSize size = c[0] == QLatin1String("tablet") ? kTablet : kPhone;
     world.resize(size.width(), size.height());
-    pairWithEnvironment(world);
+    // A tablet's empty environment opens the wizard, not the thread list.
+    pairWithEnvironment(world, c[0] != QLatin1String("tablet"));
     world.sync();
   });
 
@@ -349,6 +400,9 @@ const Steps steps([] {
     expect(world.item(S("noProjectsHint"))->property("text").toString().contains(S("Add a project in HAL-C2 on the environment's machine")),
            S("the screen says: %1").arg(screenTexts(world)));
     expect(world.find(S("welcomeWizard")) == nullptr, S("the desktop's wizard covers the phone layout"));
+    // The desktop sidebar's Add project button once drew over the hint.
+    const QQuickItem* addProject = world.find(S("emptyAddProject"));
+    expect(addProject == nullptr || !addProject->isVisible(), S("Add project is drawn over the hint"));
   });
 
   step(S("the user presses Cmd-([A-Za-z0-9])"), [](World& world, const Captures& c, const Table&) { world.press(S("mod+") + c[0].toLower()); });

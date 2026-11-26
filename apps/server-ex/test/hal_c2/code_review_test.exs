@@ -16,7 +16,9 @@ defmodule HalC2.CodeReviewTest do
   @key "acme/api#1"
   @package Path.expand("../../../../plugins/code-review", __DIR__)
   @support Path.expand("../support", __DIR__)
-  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL)
+  @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
+                 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2 GIT_CONFIG_PARAMETERS
+                 GIT_CONFIG_GLOBAL)
 
   defmodule Dropped do
     # A test conn whose answer cannot be sent, as Bandit raises once its peer has gone.
@@ -155,7 +157,10 @@ defmodule HalC2.CodeReviewTest do
           "activation" => "selective",
           "publishing" => "draft",
           "reviewNewPushes" => false,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          # The fake agents run here: these tests review trusted pull requests on
+          # this machine unless they say otherwise.
+          "reviewTrustedOnThisMachine" => true
         }
       })
 
@@ -451,6 +456,415 @@ defmodule HalC2.CodeReviewTest do
     assert :ets.lookup(held, {clone, gone}) == []
     assert [{_, ^live}] = :ets.lookup(held, {clone, kept})
     :ok = apply(checkout, :release, [])
+  end
+
+  test "a review checkout has the submodules its head pins, nested ones too, which its removal takes",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    lib =
+      repo!(context.dir, "lib", "lib.txt", [{"deep", "https://github.com/acme/inner.git", inner}])
+
+    pinned = git!(lib.seed, ["rev-parse", "HEAD"])
+    # A commit past the pinned one, which the checkout does not get.
+    File.write!(Path.join(lib.seed, "lib.txt"), "later\n")
+    git!(lib.seed, ["commit", "-qam", "Later"])
+    git!(lib.seed, ["push", "-q", lib.bare, "HEAD:main"])
+    head = pull!(context, 3, [{"third_party/lib", "https://github.com/acme/lib.git", pinned}])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    prepare = fn path -> apply(checkout, :prepare, [clone, path, remote, 3, "main"]) end
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    assert {:ok, %{"headSha" => ^head}} = prepare.(first)
+    assert :ok = apply(checkout, :submodules, [clone, first, remote])
+    assert File.read!(Path.join(first, "third_party/lib/lib.txt")) == "lib\n"
+    assert File.read!(Path.join(first, "third_party/lib/deep/inner.txt")) == "inner\n"
+    assert git!(Path.join(first, "third_party/lib"), ["rev-parse", "HEAD"]) == pinned
+    # Every review of the repository shares the clone's config: nothing is registered there.
+    refute File.read!(Path.join(clone, "config")) =~ "submodule"
+
+    # The next checkout borrows what the first fetched: its submodules download nothing.
+    assert {:ok, _} = prepare.(second)
+    assert :ok = apply(checkout, :submodules, [clone, second, remote])
+    assert File.read!(Path.join(second, "third_party/lib/deep/inner.txt")) == "inner\n"
+
+    for sub <- ~w(third_party/lib third_party/lib/deep) do
+      counts = git!(Path.join(second, sub), ["count-objects", "-v"])
+      assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    end
+
+    :ok = apply(checkout, :release, [])
+    :ok = apply(checkout, :remove, [clone, first])
+    :ok = apply(checkout, :remove, [clone, second])
+    refute File.exists?(first) or File.exists?(second)
+    assert Path.wildcard(Path.join(clone, "worktrees/*")) == []
+  end
+
+  test "submodules whose paths have spaces reach the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    lib = repo!(context.dir, "lib", "inner.txt")
+    tail = repo!(context.dir, "tail", "inner.txt")
+
+    # The first path git lists starts with a space, the last ends with one.
+    pull!(context, 3, [
+      {" leading lib", "https://github.com/acme/lib.git", lib},
+      {"my dir", "https://github.com/acme/inner.git", inner},
+      {"trailing lib ", "https://github.com/acme/tail.git", tail}
+    ])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    for path <- [first, second] do
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert :ok = apply(checkout, :submodules, [clone, path, remote])
+      assert File.read!(Path.join(path, " leading lib/inner.txt")) == "lib\n"
+      assert File.read!(Path.join(path, "my dir/inner.txt")) == "inner\n"
+      assert File.read!(Path.join(path, "trailing lib /inner.txt")) == "tail\n"
+    end
+
+    for sub <- [" leading lib", "my dir", "trailing lib "] do
+      counts = git!(Path.join(second, sub), ["count-objects", "-v"])
+      assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    end
+
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "submodules are fetched with the certificate checked, whatever the environment says",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    lib =
+      repo!(context.dir, "lib", "lib.txt", [{"deep", "https://github.com/acme/inner.git", inner}])
+
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/unchecked")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    # Each submodule fetch says whether git would check the certificate of its server.
+    log = Path.join(context.dir, "ssl.log")
+    ssh = Path.join(context.dir, "logging-ssh")
+
+    File.write!(ssh, """
+    #!/bin/sh
+    for url in https://github.com/acme/lib.git https://github.com/acme/inner.git; do
+      echo "$url $(git config --get-urlmatch http.sslVerify "$url")" >> '#{log}'
+    done
+    exec '#{System.get_env("GIT_SSH_COMMAND")}' "$@"
+    """)
+
+    File.chmod!(ssh, 0o755)
+    System.put_env("GIT_SSH_COMMAND", ssh)
+    included = Path.join(context.dir, "unchecked.gitconfig")
+    File.write!(included, "[http \"https://github.com/acme/\"]\n\tsslVerify = false\n")
+
+    # Beside the rewrite the fake remote needs: the check turned off for the submodules'
+    # URLs, for their server through an included file, and for every server.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "3",
+      "GIT_CONFIG_KEY_1" => "http.https://github.com/acme/inner.git.sslVerify",
+      "GIT_CONFIG_VALUE_1" => "false",
+      "GIT_CONFIG_KEY_2" => "include.path",
+      "GIT_CONFIG_VALUE_2" => included,
+      "GIT_CONFIG_PARAMETERS" => "'http.sslverify'='false'"
+    })
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/deep/inner.txt")) == "inner\n"
+
+    assert File.read!(log) |> String.split("\n", trim: true) |> Enum.uniq() == [
+             "https://github.com/acme/lib.git ",
+             "https://github.com/acme/inner.git "
+           ]
+
+    :ok = apply(checkout, :release, [])
+  end
+
+  # #1774: the MC's GitHub config starts with `helper =`, which drops the helpers
+  # before it; re-exported empty, its GIT_CONFIG_VALUE_<n> must still reach git.
+  test "submodules are fetched when the environment of the MC configures an empty value",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    lib = repo!(context.dir, "lib", "lib.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/empty-value")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    included = Path.join(context.dir, "github.gitconfig")
+    File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
+
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "2",
+      "GIT_CONFIG_KEY_1" => "include.path",
+      "GIT_CONFIG_VALUE_1" => included
+    })
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/lib.txt")) == "lib\n"
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule its .gitmodules says not to update still gets its pinned commit", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner, "\tupdate = none\n"}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/none")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule its .gitmodules says to clone shallow reaches the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    lib = repo!(context.dir, "lib", "lib.txt")
+    # A parent behind the pinned commit, which a depth-1 clone would leave out.
+    File.write!(Path.join(lib.seed, "lib.txt"), "pinned\n")
+    git!(lib.seed, ["commit", "-qam", "Pinned"])
+    git!(lib.seed, ["push", "-q", lib.bare, "HEAD:main"])
+    pull!(context, 3, [{"lib", "https://github.com/acme/lib.git", lib, "\tshallow = true\n"}])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    for path <- [first, second] do
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert :ok = apply(checkout, :submodules, [clone, path, remote])
+      assert File.read!(Path.join(path, "lib/lib.txt")) == "pinned\n"
+    end
+
+    counts = git!(Path.join(second, "lib"), ["count-objects", "-v"])
+    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule over git:// is not fetched, as nothing times it out", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    pull!(context, 3, [{"lib", "git://example.invalid/lib.git", context.shas[1]}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/plain-git")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
+    assert reason =~ "transport 'git' not allowed"
+    assert File.regular?(Path.join(path, "README.md"))
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "submodules fetched before another fails reach the store the next checkout borrows from",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+
+    pull!(context, 3, [
+      {"a-lib", "https://github.com/acme/inner.git", inner},
+      {"z-lib", "git://example.invalid/lib.git", context.shas[1]}
+    ])
+
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    first = Path.join(context.dir, "subs/first")
+    second = Path.join(context.dir, "subs/second")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, first, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, first, remote])
+    assert reason =~ "transport 'git' not allowed"
+    :ok = apply(checkout, :remove, [clone, first])
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, second, remote, 3, "main"])
+    assert {:error, _} = apply(checkout, :submodules, [clone, second, remote])
+    # The failed clone stops the update before any checkout, but the one cloned again
+    # borrowed everything from the store.
+    counts = git!(Path.join(second, "a-lib"), ["count-objects", "-v"])
+    assert counts =~ ~r/^count: 0$/m and counts =~ ~r/^in-pack: 0$/m
+    :ok = apply(checkout, :release, [])
+  end
+
+  # From hal-c2/hal-c2#1713: two first reviews made the store at once and git failed one.
+  test "the store of submodules is made with the clone locked", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/locked")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    :ok = apply(checkout, :release, [])
+
+    # A git that says when it is making the store, and waits there until let go.
+    hold = Path.join(context.dir, "init.hold")
+    held = Path.join(context.dir, "init.held")
+    real = System.find_executable("git")
+    fake = Path.join(context.dir, "bin/git")
+
+    File.write!(fake, """
+    #!/bin/sh
+    case "$*" in
+      "init -q --bare "*/hal-c2-submodules)
+        touch '#{held}'
+        while [ -e '#{hold}' ]; do sleep 0.05; done ;;
+    esac
+    exec '#{real}' "$@"
+    """)
+
+    File.write!(hold, "")
+    File.chmod!(fake, 0o755)
+    on_exit(fn -> File.rm(hold) end)
+
+    making = Task.async(fn -> apply(checkout, :submodules, [clone, path, remote]) end)
+    await_file(held)
+    refute :global.set_lock({{checkout, clone}, self()}, [node()], 0)
+    File.rm!(hold)
+
+    assert :ok = Task.await(making, :infinity)
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
+  end
+
+  test "submodules are fetched through the SSH program GIT_SSH names", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/wrapped")
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+
+    # A wrapper named by `GIT_SSH` alone, which says it ran.
+    log = Path.join(context.dir, "wrapper.log")
+    wrapper = Path.join(context.dir, "wrapper-ssh")
+
+    File.write!(wrapper, """
+    #!/bin/sh
+    echo ran >> '#{log}'
+    exec '#{System.get_env("GIT_SSH_COMMAND")}' "$@"
+    """)
+
+    File.chmod!(wrapper, 0o755)
+    restore = env(~w(GIT_SSH))
+    on_exit(restore)
+    System.delete_env("GIT_SSH_COMMAND")
+    System.put_env("GIT_SSH", wrapper)
+
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
+    assert File.read!(log) =~ "ran"
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a submodule at a local path is not fetched, and its checkout is still made", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    local = repo!(context.dir, "local", "secret.txt")
+    pull!(context, 3, [{"lib", local.bare, git!(local.seed, ["rev-parse", "HEAD"])}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/local")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
+    assert reason =~ "transport 'file' not allowed"
+    refute File.exists?(Path.join(path, "lib/secret.txt"))
+    assert File.regular?(Path.join(path, "README.md"))
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "a checkout whose head has no submodules is left as it is", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/plain")
+
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 1, "main"])
+    assert :ok = apply(checkout, :submodules, [clone, path, remote])
+    refute File.exists?(Path.join(clone, "hal-c2-submodules"))
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "an agent is told which submodules its checkout lacks" do
+    settings = %{"prompt" => "Review", "readReviewMd" => false}
+    review = %{"number" => 1, "repository" => "acme/api"}
+    checkout = %{"path" => "/nowhere", "headSha" => "abc"}
+
+    refute apply(@server, :prompt, [settings, review, checkout]) =~ "submodules"
+
+    assert apply(@server, :prompt, [
+             settings,
+             review,
+             Map.put(checkout, "submodules", "git submodule failed: no route")
+           ]) =~
+             "submodules could not all be fetched on the reviewing machine, so checks " <>
+               "that need them are blocked there: git submodule failed: no route"
+
+    # #1774: a sandbox never gets them, which is no setup problem on the machine.
+    sandboxed =
+      apply(@server, :prompt, [settings, review, Map.put(checkout, "submodules", :sandboxed)])
+
+    assert sandboxed =~ "never fetched into a sandbox"
+    assert sandboxed =~ "under notRun"
+    refute sandboxed =~ "blocked there"
+  end
+
+  # #1795: a review on this machine quotes only what those it trusts wrote; anyone may
+  # comment on a trusted pull request. A sandboxed one quotes everyone's.
+  test "a review on this machine quotes the unresolved comments of those it trusts alone" do
+    settings = %{"trustedLogins" => ["hubot"]}
+    review = %{"trust" => %{"viewer" => "monalisa"}}
+
+    thread = fn login, extra, body ->
+      %{
+        "isResolved" => false,
+        "path" => "src/limits.ts",
+        "line" => 3,
+        "comments" => [%{"author" => Map.put(extra, "login", login), "body" => body}]
+      }
+    end
+
+    threads = [
+      thread.("octocat", %{"isUser" => true, "association" => "MEMBER"}, "a member's"),
+      thread.("monalisa", %{"isUser" => true}, "the viewer's"),
+      thread.("hubot", %{"isBot" => true}, "a listed bot's"),
+      thread.("stranger", %{"isUser" => true, "association" => "NONE"}, "a stranger's"),
+      thread.("monalisa", %{"isBot" => true}, "a bot named as the viewer's"),
+      %{"isResolved" => false, "comments" => [%{"author" => nil, "body" => "a ghost's"}]},
+      Map.put(
+        thread.("octocat", %{"isUser" => true, "association" => "OWNER"}, "resolved"),
+        "isResolved",
+        true
+      )
+    ]
+
+    quoted = &apply(@server, :existing_comments, [settings, review, &1, threads])
+
+    here = Enum.join(quoted.(false), "\n")
+    assert here =~ "a member's" and here =~ "the viewer's" and here =~ "a listed bot's"
+    refute here =~ "a stranger's"
+    refute here =~ "a bot named as the viewer's"
+    refute here =~ "a ghost's"
+    refute here =~ "resolved"
+
+    sandboxed = Enum.join(quoted.(true), "\n")
+    assert sandboxed =~ "a stranger's" and sandboxed =~ "a ghost's"
+    refute sandboxed =~ "resolved"
   end
 
   test "a review asked for before its pull request is listed starts at the head of the pull request",
@@ -1064,6 +1478,53 @@ defmodule HalC2.CodeReviewTest do
                    1_000
   end
 
+  # A review run again keeps the run before it for its own prompt; clients never read
+  # it, so what they are sent leaves it out.
+  test "a review run again on a new head sends clients none of the run before it",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    reviewed = first["reviewedSha"]
+
+    assert %{
+             "previous" => %{
+               "verdict" => "approve",
+               "summary" => "Looks right.",
+               "reviewedSha" => ^reviewed
+             }
+           } = :sys.get_state(@server).reviews[@key]
+
+    assert %{"status" => "running"} = shown = review()
+    refute Map.has_key?(shown, "previous")
+  end
+
+  # Clients make a script value of every `reviews` they are sent, findings and all, so
+  # a change that leaves what they show as it was sends nothing.
+  test "the reviews clients follow are sent again only when they changed" do
+    first = start_review()
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+
+    # Asking again for the running review changes nothing the clients show.
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    # The first `reviews` sent is the report's, not the same value again.
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => sent}},
+                   1_000
+
+    assert %{"status" => status} = Enum.find(sent, &(&1["key"] == @key))
+    assert status != "running"
+  end
+
   # A run reads where other machines have its head when it steps back, so a run the
   # limit held back, back at a head it never reviewed, showed it was limited while the
   # laptop had that head published.
@@ -1601,13 +2062,16 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "queued"} = review()
 
-    # Neither a save, which starts queued reviews when it makes room, nor a restart
-    # starts the queue into the limit.
+    # Neither a save, which starts queued reviews when it makes room, nor a restart,
+    # nor the timed look after it starts the queue into the limit. "Look now" is the
+    # user's ask and ends the pause, so the look here is the timer's.
     save_settings(%{"concurrency" => 2})
     assert %{"status" => "queued"} = review()
     {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
     settle()
-    refresh()
+    send(@server, :poll)
+    await_look()
+    settle()
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
     _ = context
@@ -2516,19 +2980,25 @@ defmodule HalC2.CodeReviewTest do
     assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
   end
 
-  test "a trusted pull request is reviewed on this machine unless every review is sandboxed",
+  test "a trusted pull request is reviewed in a sandbox unless the user reviews trusted ones here",
        context do
     sandboxed? = &apply(@server, :sandboxed?, [&1, &2])
+    here = %{"reviewTrustedOnThisMachine" => true}
     review = start_review()
     assert %{"author" => %{"login" => "octocat"}} = review["trust"]
-    assert sandboxed?.(%{}, review) == false
-    assert sandboxed?.(%{"sandboxEveryReview" => true}, review) == true
+    assert sandboxed?.(%{}, review) == true
+    assert sandboxed?.(%{"reviewTrustedOnThisMachine" => false}, review) == true
+    assert sandboxed?.(here, review) == false
 
-    # Nor is one whose author was not read yet, or is no member or collaborator.
-    assert sandboxed?.(%{}, Map.delete(review, "trust")) == true
+    # The old setting, stored as false while that was its default, sandboxes nothing less.
+    assert sandboxed?.(%{"sandboxEveryReview" => false}, review) == true
+
+    # One whose author was not read yet, or is no member or collaborator, is sandboxed
+    # whatever the setting says.
+    assert sandboxed?.(here, Map.delete(review, "trust")) == true
     rules!(context, head: 1, association: "NONE")
     refresh()
-    assert sandboxed?.(%{}, review()) == true
+    assert sandboxed?.(here, review()) == true
   end
 
   # A comment dismissed while its review was being posted changed what the page showed
@@ -3277,6 +3747,57 @@ defmodule HalC2.CodeReviewTest do
 
     {:ok, _, binary} = :compile.forms(forms)
     binary
+  end
+
+  # A bare `remotes/acme/<name>.git` with one commit of `file`, its text `<name>\n`,
+  # and `subs` as its submodules: `{path, url, sha}`, or `{path, url, sha, lines}` with
+  # more lines of its `.gitmodules` entry.
+  defp repo!(dir, name, file, subs \\ []) do
+    bare = Path.join(dir, "remotes/acme/#{name}.git")
+    git!(dir, ["init", "-q", "--bare", "-b", "main", bare])
+    seed = Path.join(dir, "seed-#{name}")
+    git!(dir, ["init", "-q", "-b", "main", seed])
+    File.write!(Path.join(seed, file), "#{name}\n")
+    git!(seed, ["add", file])
+    submodules!(seed, subs)
+    git!(seed, ["commit", "-q", "-m", "Start"])
+    git!(seed, ["push", "-q", bare, "main:main"])
+    %{bare: bare, seed: seed}
+  end
+
+  # Pull request `number` of acme/api: a commit on `main` with `subs` as its
+  # submodules. Answers its sha.
+  defp pull!(context, number, subs) do
+    seed = Path.join(context.dir, "seed")
+    git!(seed, ["checkout", "-q", "--detach", "main"])
+    submodules!(seed, subs)
+    git!(seed, ["commit", "-q", "-m", "Submodules"])
+    sha = git!(seed, ["rev-parse", "HEAD"])
+    bare = Path.join(context.dir, "remotes/acme/api.git")
+    git!(seed, ["push", "-q", bare, "#{sha}:refs/pull/#{number}/head"])
+    sha
+  end
+
+  defp submodules!(_seed, []), do: :ok
+
+  defp submodules!(seed, subs) do
+    File.write!(
+      Path.join(seed, ".gitmodules"),
+      Enum.map_join(subs, fn sub ->
+        {path, url} = {elem(sub, 0), elem(sub, 1)}
+        lines = if tuple_size(sub) == 4, do: elem(sub, 3), else: ""
+        "[submodule \"#{path}\"]\n\tpath = \"#{path}\"\n\turl = #{url}\n" <> lines
+      end)
+    )
+
+    git!(seed, ["add", ".gitmodules"])
+
+    for sub <- subs, {path, sha} = {elem(sub, 0), elem(sub, 2)} do
+      sha = if is_map(sha), do: git!(sha.seed, ["rev-parse", "HEAD"]), else: sha
+      git!(seed, ["update-index", "--add", "--cacheinfo", "160000,#{sha},#{path}"])
+    end
+
+    :ok
   end
 
   defp push!(context, i) do

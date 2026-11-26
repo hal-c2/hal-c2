@@ -56,6 +56,7 @@ defmodule HalC2.Test.Features do
       scenarios
       |> Enum.filter(&mc?(&1, inherited))
       |> Enum.flat_map(&without_backlog(&1, inherited, backlog?))
+      |> Enum.map(&name_examples/1)
     end
 
     rules =
@@ -85,6 +86,42 @@ defmodule HalC2.Test.Features do
   end
 
   defp backlog?(tags), do: "backlog" in tags or "backlog-mc" in tags
+
+  # Test names carry the Examples name, so two kept tables of one outline that
+  # share a name (usually both unnamed) would define the same test twice and
+  # ExUnit would refuse the whole file. Name the unnamed tables by position,
+  # but only then: a single kept table keeps today's test names. A position's name
+  # that a kept table already has moves on to the next free one.
+  defp name_examples(scenario) do
+    case Map.get(scenario, :examples) do
+      examples when is_list(examples) and length(examples) > 1 ->
+        if examples |> Enum.map(& &1.name) |> Enum.uniq() |> length() == length(examples) do
+          scenario
+        else
+          {named, _taken} =
+            examples
+            |> Enum.with_index(1)
+            |> Enum.map_reduce(MapSet.new(examples, & &1.name), fn
+              {%{name: name} = table, _position}, taken when is_binary(name) and name != "" ->
+                {table, taken}
+
+              {table, position}, taken ->
+                name = free_name(position, taken)
+                {%{table | name: name}, MapSet.put(taken, name)}
+            end)
+
+          %{scenario | examples: named}
+        end
+
+      _ ->
+        scenario
+    end
+  end
+
+  defp free_name(position, taken) do
+    name = "table #{position}"
+    if MapSet.member?(taken, name), do: free_name(position + 1, taken), else: name
+  end
 
   # These mount another machine's folder with FUSE and the machine-files helper
   # (`HalC2.MachineFiles.Helper`); a machine without them skips them, saying why.

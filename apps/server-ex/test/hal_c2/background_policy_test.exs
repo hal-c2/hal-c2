@@ -5,7 +5,12 @@ defmodule HalC2.BackgroundPolicyTest do
 
   @scope %{"type" => "vcs-status", "cwd" => "/repo"}
 
-  setup do
+  @moduletag :tmp_dir
+
+  # Settings read and write under the home, which the module before may have left
+  # holding a settings.json that cannot be read.
+  setup %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :home, dir)
     start_supervised!(HalC2.Settings)
     start_supervised!(BackgroundPolicy)
     :ok

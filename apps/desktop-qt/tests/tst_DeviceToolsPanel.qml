@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // hal-c2#923: the tools drawer must stay usable as a narrow side panel or a
 // 2x2 stage pane shrinks it, down to ~320px wide.

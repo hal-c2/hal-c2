@@ -14,9 +14,9 @@
 #   https://github.com/pingdotgg/t3code/pull/21458
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
-#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (Paste in the draft's right-click menu)
-#   apps/desktop-qt/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
+#   packages/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
+#   packages/qml/HalC2/Bricks/TextEditMenu.qml (Paste in the draft's right-click menu)
+#   packages/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
 #   apps/web/src/chatAttachment.ts (message and attachment limits)
@@ -287,10 +287,9 @@ Feature: Attaching images and files to a message
       | with accessibility elements that have no names | that the elements have no readable names or values |
       | without accessibility data                     | that the app did not provide accessibility data    |
 
-  @backlog @desktop
   # Upstream #21356: a message whose context ran past 120,000 characters lost the paths of its
   # attachments, so the agent never learned about the files.
-  @backlog @mc @priority-high
+  @desktop @mc @priority-high @backlog-desktop
   Scenario: A very long message still tells the agent where each attachment was saved
     Given the draft holds 119,000 characters of text and four attached files
     When the user sends it

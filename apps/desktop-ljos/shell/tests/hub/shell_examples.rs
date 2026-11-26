@@ -10,7 +10,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::Disconnected;
-use hal_c2_shell::qml::{self, Roots};
+use hal_c2_shell::qml::Roots;
 use hal_c2_shell::runtime::{self, ShellRuntime};
 use ljos::App;
 use ljos::dev::Severity;
@@ -18,7 +18,7 @@ use ljos::prelude::{Engine, ObjectId, Value};
 use ljos::testing::TestWindow;
 use tempfile::TempDir;
 
-use crate::common::{number, text};
+use crate::common::{compile_roots, number, text};
 
 /// 2026-10-25T12:00:00Z, the dashboard's today.
 const NOW_MS: f64 = 1_792_929_600_000.0;
@@ -50,14 +50,11 @@ impl Example {
         )
         .unwrap();
         let roots = Roots::checkout().with_user(config.clone());
-        let compiled = qml::compile(&roots).unwrap();
+        let compiled = compile_roots(&roots);
         let errors: Vec<String> = compiled
             .diagnostics
             .iter()
             .filter(|d| d.severity == Severity::Error)
-            // TODO(ljos-lottie): the cat compiles once Ljós has
-            // Qt.labs.lottieqt; until then the dashboard shows its fallback.
-            .filter(|d| !d.to_string().contains("CatPlaying"))
             .map(ToString::to_string)
             .collect();
         assert!(errors.is_empty(), "{name} compiles:\n{}", errors.join("\n"));
@@ -65,6 +62,9 @@ impl Example {
         let engine = App::new("test")
             .register(hal_c2_shell::register)
             .build_engine();
+        // As the app's shell: the shell's `Window` gets a window of its own,
+        // where its popups find their overlay.
+        ljos_controls::WindowSystem::of(&engine).set_host(|| {});
         engine.set_wall_clock_origin(Some(NOW_MS));
         // Before the shell starts, for its timers to start on the window's clock.
         let mut window = TestWindow::new(&engine, width, HEIGHT);
@@ -73,14 +73,16 @@ impl Example {
             &engine,
             &Launch {
                 config_dir: Some(config),
-                qml: Some(roots),
                 ..Launch::default()
             },
             mc.clone(),
         );
         engine.set_component_source(compiled.source);
         hal_c2_shell::theme::set_application_font(&engine);
-        let root = runtime::open(&engine, false).unwrap();
+        runtime::open(&engine).unwrap();
+        // The shell's `Window`, which the loader at the root shows as the
+        // window.
+        let root = runtime::window(&engine).unwrap();
         mc.deliver(&engine);
         window.show(root).unwrap();
         window.settle().unwrap();
@@ -345,14 +347,28 @@ fn the_dashboard_drawer_opens_on_its_cards_and_clock() {
         example.advance(60_000);
         assert_ne!(time(&example.texts(clock)), before, "the clock moves on");
 
-        // TODO(ljos-lottie): with Qt.labs.lottieqt in Ljós the cat loads
-        // (`mascotCat`'s status Ready) and the initial hides. Until then
-        // the agent's initial stands in for it.
+        // The cat at play: Qt.labs.lottieqt loads CatPlaying.qml, its
+        // LottieAnimation is Ready, and the agent's initial hides.
         let cat = example.item("mascotCat");
-        assert_eq!(number(&engine, cat, "status"), 3.0, "the cat is an error");
+        assert_eq!(
+            number(&engine, cat, "status"),
+            1.0,
+            "the cat's loader is Ready"
+        );
+        let Value::Object(playing) = engine.read_by_name(cat, "item") else {
+            panic!("the cat's loader has an item");
+        };
+        assert_eq!(
+            number(&engine, playing, "status"),
+            2.0,
+            "the LottieAnimation is Ready"
+        );
+        assert!(example.shown(playing), "the cat shows at {width}");
         let initial = example.item("mascotInitial");
-        assert!(example.shown(initial));
-        assert_eq!(example.texts(initial), ["H"]);
+        assert!(
+            !example.visible(initial),
+            "the initial hides behind the cat"
+        );
     }
 }
 
@@ -369,21 +385,23 @@ fn the_macos_glass_example_falls_back_to_the_built_in_shell_elsewhere() {
         std::fs::copy(&path, config.join(path.file_name().unwrap())).unwrap();
     }
     let roots = Roots::checkout().with_user(config.clone());
-    let compiled = qml::compile(&roots).unwrap();
+    let compiled = compile_roots(&roots);
     let engine = App::new("test")
         .register(hal_c2_shell::register)
         .build_engine();
+    // As the app's shell: the shell's `Window` gets a window of its own,
+    // where its popups find their overlay.
+    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
     hal_c2_shell::start(
         &engine,
         &Launch {
             config_dir: Some(config),
-            qml: Some(roots),
             ..Launch::default()
         },
         Rc::new(Disconnected::default()),
     );
     engine.set_component_source(compiled.source);
-    runtime::open(&engine, false).unwrap();
+    runtime::open(&engine).unwrap();
     let runtime = engine.singleton::<ShellRuntime>().unwrap();
     let read = |name| {
         engine
@@ -392,4 +410,35 @@ fn the_macos_glass_example_falls_back_to_the_built_in_shell_elsewhere() {
     };
     assert_eq!(read("usingUserShell"), "false");
     assert_ne!(read("lastError"), "");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "needs a Ljós pin with QtQuick.Controls.macOS (hal-c2/ljos-ui#732)"]
+fn the_macos_glass_example_loads_on_macos() {
+    // Its toolbar is QtQuick.Controls.macOS's (hal-c2/ljos-ui#730): this
+    // passes once the Ljós pin brings that module in, and then holds the
+    // example to what it is for at every width: the glass sidebar beside
+    // an opaque centre, under one title band. Example::install asserts
+    // usingUserShell and an empty lastError.
+    for width in [1400.0, 1000.0, 640.0] {
+        let example = Example::install("glass-macos", width);
+        fits(&example, width);
+        let centre = example.centre();
+        assert!(example.shown(centre), "at {width} shows its centre");
+        let navigation = example.item("macNavigation");
+        let content = example.item("macContent");
+        assert!(example.shown(content), "at {width}");
+        if width >= 768.0 {
+            assert!(example.shown(navigation), "at {width}");
+            assert!(
+                example.at(centre).0 >= example.at(navigation).0 + example.width(navigation),
+                "the centre sits beside the sidebar at {width}"
+            );
+            assert!(
+                example.shown(example.item("macSidebarToggle")),
+                "the toolbar shows at {width}"
+            );
+        }
+    }
 }

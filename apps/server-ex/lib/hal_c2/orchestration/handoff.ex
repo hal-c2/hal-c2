@@ -259,8 +259,14 @@ defmodule HalC2.Orchestration.Handoff do
   report covers it: a report can arrive late or never, and taking an older one as
   current would overfill the conversation. A run can take several provider turns (a
   Codex goal goes on by itself), and each answers: the newest report is the latest
-  turn's of the latest run that reported, and each later turn keeps a reserve. Text
-  counts four characters to a token.
+  turn's of the latest run that reported, and each later turn keeps a reserve. A run
+  the provider is recorded never to have started a turn for (`turnNeverStarted`,
+  which a runtime sets only on the provider's own word that the prompt ended
+  unstarted, and only where nothing else in the run could have been answered: a
+  steer, or a turn of the provider's own) has no answer in it, so it keeps no
+  reserve; what it sent still counts,
+  as the prompt reached the conversation. Any other unreported run may have started,
+  and keeps its reserve. Text counts four characters to a token.
   """
   def room(state, provider_thread, message) do
     turns = own_turns(state, provider_thread)
@@ -277,7 +283,7 @@ defmodule HalC2.Orchestration.Handoff do
           run["startedAt"] != nil or run["status"] not in @finished,
           (ordinal = run["ordinal"] || 0) > from,
           reduce: 0,
-          do: (sum -> sum + run["sentTokens"] + reserve * max(1, length(turns[ordinal] || [])))
+          do: (sum -> sum + run["sentTokens"] + reserve * unanswered(run, turns[ordinal]))
 
     %{
       window: window,
@@ -288,6 +294,12 @@ defmodule HalC2.Orchestration.Handoff do
       reported: reported != nil
     }
   end
+
+  # How many of an unreported run's provider turns an answer is still kept room for:
+  # none of a run known never to have started one, and at least one of any other, as
+  # a turn may have started before the MC recorded it, or the run goes on.
+  defp unanswered(%{"turnNeverStarted" => true}, _turns), do: 0
+  defp unanswered(_run, turns), do: max(1, length(turns || []))
 
   # The provider thread's provider turns by run ordinal, each run's in the order they
   # started (`startedAt`, which `HalC2.Orchestration.Entities.now/0` writes for every

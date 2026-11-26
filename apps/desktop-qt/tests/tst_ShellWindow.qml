@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Window
 import QtTest
 import HalC2.Shell
-import "../qml/HalC2/Bricks"
+import "../../../packages/qml/HalC2/Bricks"
 
 // The window every layout starts from (ShellWindow), as each window opens it:
 // a new window (window.new) shows no thread yet.

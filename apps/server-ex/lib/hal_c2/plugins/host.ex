@@ -53,8 +53,8 @@ defmodule HalC2.Plugins.Host do
   so `name` is the one the user gave the instance), for a plugin that starts threads
   to pick from:
   `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
-  "availability", "auth" => %{"status"}, "models" => [%{"slug", "name",
-  "isDefault", "options"}]}`.
+  "availability", "auth" => %{"status"}, "sandboxable", "models" => [%{"slug",
+  "name", "isDefault", "options"}]}`.
 
   `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
   `"opencode"`, `"acpRegistry"` for an agent from the ACP registry, a provider
@@ -63,7 +63,9 @@ defmodule HalC2.Plugins.Host do
   (`ready`, `warning`, `error`, `disabled`), `availability` (`available`,
   `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
   are the instance's provider status, for a plugin that offers only the instances
-  that can run a thread now. An instance's settings and messages are left out.
+  that can run a thread now. `sandboxable` is whether its agent can run in an
+  OpenShell review sandbox (`HalC2.OpenShell.Review.supported?/1`). An instance's
+  settings and messages are left out.
 
   A model's `options` are its option descriptors (`%{"id", "label", "type",
   "options"}`) — reasoning effort among them — for a plugin that picks a model for
@@ -82,6 +84,7 @@ defmodule HalC2.Plugins.Host do
          # A snapshot without one is available (`ServerProvider.availability`).
          "availability" => provider["availability"] || "available",
          "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
+         "sandboxable" => HalC2.OpenShell.Review.supported?(provider["driver"]),
          "models" =>
            for model <- provider["models"] || [] do
              %{
@@ -109,6 +112,245 @@ defmodule HalC2.Plugins.Host do
        }
      end}
   end
+
+  @doc """
+  The provider instances plugin `id` added, each an ordinary `providerInstances` entry
+  of the settings document (`ProviderInstanceConfig`) under the instance id
+  `plugin_<id>_<name>`. The host records the ids it added for the plugin in the
+  plugin's own config (`plugins.<id>.providerInstances`), in the same save as the
+  instance, and that record, not the id's shape, is what the plugin reaches: an
+  instance of the user's is never listed, replaced or removed, whatever its id. Needs
+  `providers:configure`.
+
+    * `"list"` → `%{"instances" => [%{"name", "instanceId", "instance"}]}`, sorted by
+      name, each entry as the document holds it (a sensitive variable's value is
+      sealed: `""` with `"valueRedacted": true`, which kept as it is in a `"put"`
+      keeps the stored value).
+    * `"put"` `%{"name", "instance"}` → `%{"instanceId"}`: adds the instance or
+      replaces it whole, and refuses when the user has an instance of that id. A
+      plugin that keeps what the user changed reads it first.
+    * `"remove"` `%{"name"}` → `%{"removed" => boolean}`, whether an instance was
+      removed. A name `list` gives as released is no longer, either way.
+
+  A `name` is lowercase letters, digits and dashes. The instances last only while the
+  plugin is installed, on and granted `providers:configure`: the plugin host takes
+  them out of the document when it is turned off, removed, or updated to stop asking
+  (`HalC2.Plugins`), and the plugin adds them again once it is back on. `list` names
+  those the host took out (`"released"`) until the plugin puts or removes them, or the
+  user adds an instance of their own under that id, so a plugin starting up can tell
+  them from ones the user deleted while it was down.
+  """
+  def provider_instances(id, "list", _input) do
+    with :ok <- permit(id, "providers:configure") do
+      settings = HalC2.Settings.settings()
+      all = settings["providerInstances"] || %{}
+
+      instances =
+        for instance_id <- Enum.sort(added_instances(settings, id)),
+            %{} = instance <- [all[instance_id]],
+            do: %{
+              "name" => String.replace_prefix(instance_id, "plugin_#{id}_", ""),
+              "instanceId" => instance_id,
+              "instance" => instance
+            }
+
+      released =
+        for instance_id <- Enum.sort(released_instances(settings, id)),
+            do: String.replace_prefix(instance_id, "plugin_#{id}_", "")
+
+      {:ok, %{"instances" => instances, "released" => released}}
+    end
+  end
+
+  def provider_instances(id, "put", %{"name" => name, "instance" => %{} = instance}) do
+    with :ok <- permit(id, "providers:configure"),
+         {:ok, instance_id} <- instance_id(id, name),
+         :ok <- driver(instance),
+         :ok <- not_users(HalC2.Settings.settings(), id, instance_id),
+         put = &put_instance(&1, id, instance_id, instance),
+         :ok <- valid(HalC2.Settings.validate(put.(HalC2.Settings.settings()))),
+         :ok <- saved(HalC2.Settings.update(put)),
+         # An instance of the user's that came in before the save is kept by it.
+         :ok <- not_users(HalC2.Settings.settings(), id, instance_id),
+         do: {:ok, %{"instanceId" => instance_id}}
+  end
+
+  def provider_instances(id, "remove", %{"name" => name}) do
+    with :ok <- permit(id, "providers:configure"),
+         {:ok, instance_id} <- instance_id(id, name) do
+      settings = HalC2.Settings.settings()
+      added? = instance_id in added_instances(settings, id)
+
+      if added? or instance_id in released_instances(settings, id) do
+        drop = fn settings ->
+          settings = unrelease(settings, id, instance_id)
+
+          if instance_id in added_instances(settings, id) do
+            settings
+            |> Map.update("providerInstances", %{}, &Map.delete(&1, instance_id))
+            |> record(id, &List.delete(&1, instance_id))
+          else
+            settings
+          end
+        end
+
+        with :ok <- saved(HalC2.Settings.update(drop)), do: {:ok, %{"removed" => added?}}
+      else
+        {:ok, %{"removed" => false}}
+      end
+    end
+  end
+
+  def provider_instances(_id, method, _input),
+    do: {:error, "providerInstances has no method #{inspect(method)} taking that input."}
+
+  @doc """
+  The ids of the provider instances the host recorded adding for plugin `id` in
+  `settings` (`provider_instances/3`). The save that deletes one of them drops its id
+  from the record (`seal_records/3`), so one the user adds later under that id is theirs.
+  """
+  def added_instances(settings, id), do: ids(settings, id, "providerInstances")
+
+  @doc """
+  The ids of the provider instances of plugin `id` the host took out of `settings` as
+  the plugin stopped being installed, on and granted (`HalC2.Plugins`), and the plugin
+  has not put or removed since. The save that gives the user an instance under one of
+  them drops it (`seal_records/3`): that id is the user's now, not the plugin's to put.
+  """
+  def released_instances(settings, id), do: ids(settings, id, "releasedInstances")
+
+  defp ids(settings, id, key) do
+    case get_in(settings, ["plugins", id, key]) do
+      ids when is_list(ids) -> Enum.filter(ids, &is_binary/1)
+      _ -> []
+    end
+  end
+
+  @doc """
+  Keeps the records of `added_instances/2` the host's as `HalC2.Settings` saves
+  `settings` over `current`. A document a client wrote (`client?`) gets the whole
+  `plugins` key from `current`: whether a plugin is on, what it was granted, its settings
+  and its records (`added_instances/2`, `released_instances/2`) change only through
+  `HalC2.Plugins` (`plugins.enable`, `plugins.disable`, `plugins.saveSettings`), which
+  check the scopes and consent each needs; a copy the client held, or edited, cannot move
+  them. Every saved document keeps only the recorded ids whose instance it still holds,
+  so the save that deletes a plugin's instance ends the plugin's hold on that id before
+  anything reconciles; and only the released ids it holds no instance under, so one the
+  user takes is not the plugin's.
+  """
+  def seal_records(settings, current, client?) do
+    settings = if client?, do: plugins_from(settings, current), else: settings
+
+    case settings do
+      %{"plugins" => %{} = plugins} ->
+        held = settings["providerInstances"]
+        held = if is_map(held), do: held, else: %{}
+
+        plugins =
+          Map.new(plugins, fn
+            {id, %{} = config} ->
+              {id,
+               config
+               |> filter_record("providerInstances", &Map.has_key?(held, &1))
+               |> filter_record("releasedInstances", &(not Map.has_key?(held, &1)))}
+
+            other ->
+              other
+          end)
+
+        %{settings | "plugins" => plugins}
+
+      _ ->
+        settings
+    end
+  end
+
+  defp filter_record(config, key, keep?) do
+    case config do
+      %{^key => ids} when is_list(ids) -> %{config | key => Enum.filter(ids, keep?)}
+      _ -> config
+    end
+  end
+
+  defp plugins_from(client, current) do
+    case Map.fetch(current, "plugins") do
+      {:ok, plugins} -> Map.put(client, "plugins", plugins)
+      :error -> Map.delete(client, "plugins")
+    end
+  end
+
+  defp record(settings, id, fun) do
+    plugins = settings["plugins"] || %{}
+    config = plugins[id] || %{}
+    ids = fun.(added_instances(settings, id))
+    Map.put(settings, "plugins", Map.put(plugins, id, Map.put(config, "providerInstances", ids)))
+  end
+
+  defp put_instance(settings, id, instance_id, instance) do
+    if users?(settings, id, instance_id) do
+      settings
+    else
+      settings
+      |> Map.put(
+        "providerInstances",
+        Map.put(settings["providerInstances"] || %{}, instance_id, instance)
+      )
+      |> record(id, &Enum.uniq(&1 ++ [instance_id]))
+      |> unrelease(id, instance_id)
+    end
+  end
+
+  defp unrelease(settings, id, instance_id) do
+    case released_instances(settings, id) do
+      [] -> settings
+      ids -> put_in(settings, ["plugins", id, "releasedInstances"], List.delete(ids, instance_id))
+    end
+  end
+
+  # Whether `settings` holds an instance under that id the plugin did not add.
+  defp users?(settings, id, instance_id),
+    do:
+      Map.has_key?(settings["providerInstances"] || %{}, instance_id) and
+        instance_id not in added_instances(settings, id)
+
+  defp not_users(settings, id, instance_id) do
+    if users?(settings, id, instance_id),
+      do:
+        {:error,
+         "#{instance_id} is a provider instance of the user's: a plugin reaches only the ones it added."},
+      else: :ok
+  end
+
+  # Instance ids are slugs of at most 64 characters (`ProviderInstanceId`); the
+  # plugin's id is part of it, so an id a slug cannot hold is refused too.
+  defp instance_id(id, name) when is_binary(name) do
+    instance_id = "plugin_#{id}_#{name}"
+
+    if name =~ ~r/^[a-z0-9][a-z0-9-]*$/ and instance_id =~ ~r/^[a-zA-Z][a-zA-Z0-9_-]*$/ and
+         String.length(instance_id) <= 64,
+       do: {:ok, instance_id},
+       else:
+         {:error,
+          "#{inspect(name)} cannot name a provider instance: use lowercase letters, digits and dashes, and keep plugin_#{id}_<name> to 64 letters, digits, dashes and underscores."}
+  end
+
+  defp instance_id(_id, name), do: {:error, "#{inspect(name)} cannot name a provider instance."}
+
+  defp driver(%{"driver" => driver}) when is_binary(driver) do
+    if driver =~ ~r/^[a-zA-Z][a-zA-Z0-9_-]*$/,
+      do: :ok,
+      else: {:error, "#{inspect(driver)} is not a provider driver."}
+  end
+
+  defp driver(_instance), do: {:error, "A provider instance names its driver (\"driver\")."}
+
+  defp valid(:ok), do: :ok
+  defp valid({:error, %{"message" => message}}), do: {:error, message}
+
+  # Without a running settings server `HalC2.Settings.update/1` edits the file and says `:ok`.
+  defp saved({:ok, _version}), do: :ok
+  defp saved(:ok), do: :ok
+  defp saved({:error, message}), do: {:error, message}
 
   @doc """
   `pullRequests.<method>` as a client calls it (`HalC2.PullRequests.handle/2`), and on
@@ -228,7 +470,9 @@ defmodule HalC2.Plugins.Host do
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
   thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`
   made for it, and never on this machine; the plugin must have opened that sandbox
-  itself. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  itself. `tools: :plugin` gives its agent only the tools the plugin offers agents
+  (`agentTools`), never the rest of HAL-C2's (`HalC2.Mcp.for_agent/2`). A plugin
+  whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
   which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
   credentials and checkout for them do not travel, so a moved thread would run without
   them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`), as
@@ -239,6 +483,7 @@ defmodule HalC2.Plugins.Host do
          :ok <- if(opts[:sandboxed], do: own_sandbox(id, input["threadId"]), else: :ok) do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
       mark = if opts[:sandboxed], do: Map.put(mark, "sandboxed", true), else: mark
+      mark = if opts[:tools] == :plugin, do: Map.put(mark, "tools", "plugin"), else: mark
       mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input

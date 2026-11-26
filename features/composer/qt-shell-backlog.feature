@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/parity/features.backlog.test.ts (screen-snap-shot)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
+#   packages/qml/HalC2/Bricks/Composer.qml
 #   docs/user/keybindings.md (send shortcut, follow-up behaviour)
 #   docs/user/snap-shot.md
 #   apps/web/src/components/settings/SnapShotSettings.tsx

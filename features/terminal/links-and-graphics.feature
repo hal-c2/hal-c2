@@ -18,7 +18,7 @@
 #   apps/web/src/components/preview/openTerminalLinkInPreview.ts
 #   apps/web/src/components/preview/openTerminalLinkInPreview.test.ts
 #   apps/web/src/terminal/ghostty/surface.ts (libghostty-vt renderer, Kitty keyboard reporting)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
+#   packages/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
 #   apps/desktop-qt/src/native/TerminalController.cpp (followLink)
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
@@ -231,7 +231,7 @@ Feature: Links and rendering inside terminals
       Then nothing is opened
 
     # Upstream #15838: a logged request route with a query was opened in the editor as a file.
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario Outline: A request route in a log line is not a file path
       Given the shell prints "<line>"
       When the user follows "<route>" in the terminal
@@ -244,7 +244,7 @@ Feature: Links and rendering inside terminals
 
     # Upstream #28189: the Windows drive rule matched the last letter of a URL scheme, so
     # "redis://..." became a link to a file that does not exist.
-    @backlog @desktop
+    @desktop
     Scenario Outline: An address with a scheme other than http is not a file path
       Given the shell prints "<line>"
       When the user follows "<text>" in the terminal
@@ -258,7 +258,7 @@ Feature: Links and rendering inside terminals
         | at main (file:///Users/me/app/src/index.mjs:3:7)   | e:///Users/me/app/src/index.mjs:3:7   |
 
     # Upstream #28189
-    @backlog @desktop
+    @desktop
     Scenario: A file path beside a non-web address is still a link
       Given the shell prints "src/config.ts:12 uses redis://127.0.0.1:6379/0"
       When the user follows "src/config.ts:12" in the terminal
