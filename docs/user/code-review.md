@@ -177,8 +177,9 @@ merging it or otherwise: what is only on the pull request's head is left out.
 
 The agent reports a verdict, a summary, comments on lines, and what it checked.
 A comment on a line the pull request does not change goes into the summary
-instead, and so does every comment on files whose change is too large to read
-whole. A posted review opens with the count of its findings, such as "No
+instead. Every comment goes into the summary when the change to the files they
+are on is too large to read whole (more than 8 MiB of diff together, or more than
+a minute to read), or when git cannot read it. A posted review opens with the count of its findings, such as "No
 findings." or "2 findings: 1 high, 1 medium". It counts the comments you kept
 and those moved into the summary, which cannot be dismissed. What the agent
 checked follows the summary: what it left out and why, and what this machine

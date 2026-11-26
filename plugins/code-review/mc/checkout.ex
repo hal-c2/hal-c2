@@ -566,17 +566,25 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   defp mark(files, file, key, kind),
     do: Map.update(files, file, %{key => kind}, &Map.put(&1, key, kind))
 
-  # Each review gets a worktree of its own, so whatever is left at `path` goes.
+  # Each review gets a worktree of its own, so whatever is left at `path` goes, and so
+  # does what an add that failed or ran out of time wrote: the next attempt is at a
+  # path of its own and would never clear it.
   defp place(root, path, sha) do
     File.rm_rf(path)
     git(root, ["worktree", "prune"])
     File.mkdir_p!(Path.dirname(path))
 
-    with {:ok, _} <-
-           git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha], [],
-             timeout: @checkout_ms
-           ),
-         do: :ok
+    case git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha], [],
+           timeout: @checkout_ms
+         ) do
+      {:ok, _} ->
+        :ok
+
+      error ->
+        File.rm_rf(path)
+        git(root, ["worktree", "prune"])
+        error
+    end
   end
 
   # Reviews of one repository share its clone and the store of submodules in it; one

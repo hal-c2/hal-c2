@@ -744,6 +744,34 @@ defmodule HalC2.CodeReviewTest do
     assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
   end
 
+  test "a checkout git could not add leaves nothing behind", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    inner = repo!(context.dir, "inner", "inner.txt")
+    pull!(context, 3, [{"lib", "https://github.com/acme/inner.git", inner}])
+    remote = %{"url" => "https://github.com/acme/api.git"}
+    clone = Path.join(context.dir, "subs/api.git")
+    path = Path.join(context.dir, "subs/cut-short")
+
+    # A git whose worktree add writes the checkout and then fails, as one cut off would.
+    real = System.find_executable("git")
+    fake = Path.join(context.dir, "bin/git")
+
+    File.write!(fake, """
+    #!/bin/sh
+    case "$*" in
+      *"worktree add "*) '#{real}' "$@"; exit 1 ;;
+    esac
+    exec '#{real}' "$@"
+    """)
+
+    File.chmod!(fake, 0o755)
+
+    assert {:error, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
+    :ok = apply(checkout, :release, [])
+    refute File.exists?(path)
+    refute git!(context.dir, ["--git-dir", clone, "worktree", "list"]) =~ path
+  end
+
   test "submodules are fetched through the SSH program GIT_SSH names", context do
     checkout = HalC2Plugins.CodeReview.Checkout
     inner = repo!(context.dir, "inner", "inner.txt")
