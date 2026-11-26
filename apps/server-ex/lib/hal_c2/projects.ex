@@ -542,9 +542,12 @@ defmodule HalC2.Projects do
 
   defp script_refusal(scripts, existing) when is_list(scripts) do
     Enum.find_value(scripts, fn
-      %{"id" => id} when is_binary(id) ->
-        if id not in existing and not Regex.match?(~r/\A[a-z0-9][a-z0-9-]{0,23}\z/, id) do
-          "Script ID '#{id}' must be 1-24 lowercase letters, digits or hyphens, " <>
+      %{"id" => id} ->
+        if id not in existing and
+             not (is_binary(id) and Regex.match?(~r/\A[a-z0-9][a-z0-9-]{0,23}\z/, id)) do
+          shown = if is_binary(id), do: id, else: inspect(id)
+
+          "Script ID '#{shown}' must be 1-24 lowercase letters, digits or hyphens, " <>
             "starting with a letter or digit."
         end
 

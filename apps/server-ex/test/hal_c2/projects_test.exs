@@ -109,6 +109,14 @@ defmodule HalC2.ProjectsTest do
 
     assert {:ok, _} =
              Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", "build-2")]))
+
+    # An id that is not a string at all is not one either.
+    assert {:error, message} =
+             Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", 42)]))
+
+    assert message ==
+             "Script ID '42' must be 1-24 lowercase letters, digits or hyphens, " <>
+               "starting with a letter or digit."
   end
 
   # Scripts saved before an update checked their shape are no shape at all;
