@@ -94,6 +94,64 @@ defmodule HalC2.Shell do
     if :ets.whereis(@table) == :undefined, do: [], else: :ets.tab2list(@table)
   end
 
+  @doc """
+  Rows matching `opts`, filtered in ETS so only matches are copied onto the
+  caller's heap. Same shape as `rows/0`; prefer this over filtering `rows/0`
+  (the whole cluster sidebar) in any process that lives between sweeps.
+
+  Options:
+
+    * `mc` — a node, or `:local` for this MC; omitted means every MC.
+    * `id` — one stream id (on every MC unless `mc` says otherwise).
+    * `kind` — `"thread"` or `"project"`.
+    * `where` — `%{field => value}`: the row holds `field` with exactly that
+      value (a field the row lacks never matches, `nil` included).
+    * `present` — a field, or fields, the row holds with a value other than
+      `nil`.
+    * `limit` — at most this many rows.
+  """
+  @spec query(keyword) :: [{{node, String.t()}, {String.t(), map}}]
+  def query(opts \\ []) do
+    if :ets.whereis(@table) == :undefined do
+      []
+    else
+      spec = [match_spec(opts)]
+
+      case Keyword.get(opts, :limit) do
+        nil ->
+          :ets.select(@table, spec)
+
+        limit ->
+          case :ets.select(@table, spec, limit) do
+            :"$end_of_table" -> []
+            {rows, _continuation} -> rows
+          end
+      end
+    end
+  end
+
+  defp match_spec(opts) do
+    mc =
+      case Keyword.get(opts, :mc) do
+        nil -> :_
+        :local -> node()
+        mc -> mc
+      end
+
+    kind = Keyword.get(opts, :kind, :_)
+    where = Keyword.get(opts, :where, %{})
+    present = opts |> Keyword.get(:present, []) |> List.wrap()
+
+    {fields, guards} =
+      Enum.reduce(Enum.with_index(present, 10), {where, []}, fn {field, n}, {fields, guards} ->
+        var = :"$#{n}"
+        {Map.put(fields, field, var), [{:"/=", var, nil} | guards]}
+      end)
+
+    row = if fields == %{}, do: :_, else: fields
+    {{{mc, Keyword.get(opts, :id, :_)}, {kind, row}}, guards, [:"$_"]}
+  end
+
   @doc "One row as `{kind, row}`, or `nil`."
   def row(mc, id) do
     # Without the shell (tools, some tests) there are no rows, as in `rows/0`.
@@ -236,7 +294,10 @@ defmodule HalC2.Shell do
   @spec family(String.t()) :: [{node, String.t(), String.t(), map}]
   def family(thread_id) do
     by_id =
-      Map.new(for {{mc, id}, {"thread", row}} <- rows(), do: {id, {mc, id, "thread", row}})
+      Map.new(
+        for {{mc, id}, {"thread", row}} <- query(kind: "thread"),
+            do: {id, {mc, id, "thread", row}}
+      )
 
     case by_id[thread_id] do
       nil ->

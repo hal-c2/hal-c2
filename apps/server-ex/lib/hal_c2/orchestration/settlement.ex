@@ -58,22 +58,22 @@ defmodule HalC2.Orchestration.Settlement do
   end
 
   @impl true
-  def handle_call(:sweep, _from, state), do: {:reply, :ok, sweep(state, nil)}
+  def handle_call(:sweep, _from, state), do: {:reply, :ok, sweep(state, nil), :hibernate}
 
   @impl true
   def handle_info(:tick, state) do
     state = sweep(state, nil)
     Process.send_after(self(), :tick, state.interval)
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   def handle_info(:run, state),
-    do: {:noreply, sweep(%{state | pending: MapSet.new()}, state.pending)}
+    do: {:noreply, sweep(%{state | pending: MapSet.new()}, state.pending), :hibernate}
 
   def handle_info({:hal_c2_settings, _mc, settings}, state) do
     case settings_key(settings) do
       same when same == state.settings -> {:noreply, state}
-      key -> {:noreply, sweep(%{state | settings: key}, nil)}
+      key -> {:noreply, sweep(%{state | settings: key}, nil), :hibernate}
     end
   end
 
@@ -86,7 +86,9 @@ defmodule HalC2.Orchestration.Settlement do
       end
 
     if changed != [] and MapSet.size(state.pending) == 0, do: send(self(), :run)
-    {:noreply, %{state | seen: seen, pending: MapSet.union(state.pending, MapSet.new(changed))}}
+
+    {:noreply, %{state | seen: seen, pending: MapSet.union(state.pending, MapSet.new(changed))},
+     :hibernate}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -103,8 +105,8 @@ defmodule HalC2.Orchestration.Settlement do
        )}
 
   defp threads do
-    for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil,
+    for {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+        row["deletedAt"] == nil,
         do: row
   end
 

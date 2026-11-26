@@ -33,7 +33,9 @@ defmodule HalC2.ShellPropTest do
       member the shell knows and that is not connected;
     * subscribers stay subscribed across a restart of the shell;
     * a reader of the table, during a restart or a member's reset, never finds a
-      row missing that is there before and after.
+      row missing that is there before and after;
+    * `Shell.query/1` agrees with filtering `Shell.rows/0` by the same MC, id,
+      kind, equal fields and present fields, on every state the model reaches.
   """
 
   use ExUnit.Case, async: false
@@ -450,6 +452,7 @@ defmodule HalC2.ShellPropTest do
     expected = %{
       version: local.v,
       rows: rows,
+      query_errors: [],
       mcs: Enum.sort(Map.keys(view)),
       clients: clients,
       plain: %{
@@ -823,6 +826,7 @@ defmodule HalC2.ShellPropTest do
     %{
       version: translate_version(Shell.version()),
       rows: rows,
+      query_errors: query_errors(),
       mcs: Shell.environments() |> Enum.map(&mc_key(elem(&1, 0))) |> Enum.sort(),
       clients: clients,
       plain: %{
@@ -832,6 +836,56 @@ defmodule HalC2.ShellPropTest do
       },
       peers_hold: peers_hold
     }
+  end
+
+  # `query/1` against filtering `rows/0` by hand, for a fixed spread of options;
+  # the option lists on which they disagree (none, when the shell keeps its word).
+  defp query_errors do
+    all = Shell.rows()
+
+    combos = [
+      [],
+      [mc: :local],
+      [mc: hd(@peers)],
+      [kind: "thread"],
+      [kind: "project"],
+      [mc: :local, kind: "thread"],
+      [id: "s1"],
+      [id: "r2", kind: "thread"],
+      [present: "activeRunId"],
+      [present: ["pinnedAt", "settledAt"]],
+      [where: %{"title" => "a"}],
+      [where: %{"projectId" => "p1"}],
+      [kind: "thread", where: %{"projectId" => "p2"}, present: "activeRunId"]
+    ]
+
+    unequal =
+      Enum.reject(combos, fn opts ->
+        Enum.sort(Shell.query(opts)) == all |> Enum.filter(&query_match?(&1, opts)) |> Enum.sort()
+      end)
+
+    limited = Shell.query(kind: "thread", limit: 1)
+    threads = Enum.filter(all, &match?({_, {"thread", _}}, &1))
+
+    if length(limited) == min(1, length(threads)) and Enum.all?(limited, &(&1 in threads)),
+      do: unequal,
+      else: [:limit | unequal]
+  end
+
+  defp query_match?({{mc, id}, {kind, row}}, opts) do
+    wanted_mc =
+      case Keyword.get(opts, :mc) do
+        nil -> mc
+        :local -> node()
+        wanted -> wanted
+      end
+
+    mc == wanted_mc and id == Keyword.get(opts, :id, id) and
+      kind == Keyword.get(opts, :kind, kind) and
+      Enum.all?(Keyword.get(opts, :where, %{}), fn {field, value} ->
+        Map.fetch(row, field) == {:ok, value}
+      end) and
+      Enum.all?(List.wrap(Keyword.get(opts, :present, [])), &(row[&1] != nil))
   end
 
   # --- simulated members ----------------------------------------------------------

@@ -175,8 +175,8 @@ defmodule HalC2.Mcp.Tools.Projects do
   end
 
   defp projects do
-    for {{mc, _}, {"project", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil,
+    for {{_mc, _}, {"project", row}} <- HalC2.Shell.query(mc: :local, kind: "project"),
+        row["deletedAt"] == nil,
         do: row
   end
 

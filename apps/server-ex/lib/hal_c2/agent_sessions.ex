@@ -380,8 +380,9 @@ defmodule HalC2.AgentSessions do
 
   # Active projects on this MC by root.
   defp projects_by_root do
-    for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
-        mc == node() and project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
+    for {{_mc, id}, {"project", project}} <-
+          HalC2.Shell.query(mc: :local, kind: "project", present: "workspaceRoot"),
+        project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
         into: %{},
         do: {real_path(project["workspaceRoot"]), {project["id"] || id, project["workspaceRoot"]}}
   end
@@ -515,8 +516,9 @@ defmodule HalC2.AgentSessions do
   # The sessions that other threads of the project run, archived and deleted ones
   # included, as "source:id". Only those threads' streams are read, once per import.
   defp owned_sessions(project_id) do
-    for {{mc, id}, {"thread", %{"projectId" => ^project_id}}} <- HalC2.Shell.rows(),
-        mc == node() and not String.starts_with?(id, "import:"),
+    for {{_mc, id}, {"thread", %{"projectId" => ^project_id}}} <-
+          HalC2.Shell.query(mc: :local, kind: "thread", where: %{"projectId" => project_id}),
+        not String.starts_with?(id, "import:"),
         pt <- HalC2.Streams.read(id, &StreamState.list(&1, "provider-thread")),
         %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
         is_binary(native),
@@ -541,9 +543,8 @@ defmodule HalC2.AgentSessions do
   # The sessions of threads that moved from this MC to another (`HalC2.ThreadMove`),
   # as "source:id": they belong to those threads, not to an import.
   defp moved_sessions do
-    for {{mc, _id}, {"thread", %{"movedTo" => %{"sessions" => sessions}}}} <-
-          HalC2.Shell.rows(),
-        mc == node(),
+    for {{_mc, _id}, {"thread", %{"movedTo" => %{"sessions" => sessions}}}} <-
+          HalC2.Shell.query(mc: :local, kind: "thread", present: "movedTo"),
         session <- sessions,
         into: MapSet.new(),
         do: session

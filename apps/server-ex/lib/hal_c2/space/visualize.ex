@@ -168,8 +168,8 @@ defmodule HalC2.Space.Visualize do
   end
 
   defp threads do
-    for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil and row["movedTo"] == nil,
+    for {{_mc, id}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+        row["deletedAt"] == nil and row["movedTo"] == nil,
         get_in(row, ["lineage", "relationshipToParent"]) != "subagent",
         into: %{},
         do: {id, row}
@@ -216,8 +216,7 @@ defmodule HalC2.Space.Visualize do
 
   defp by_project(rows, threads) do
     projects =
-      for {{mc, id}, {"project", row}} <- HalC2.Shell.rows(),
-          mc == node(),
+      for {{_mc, id}, {"project", row}} <- HalC2.Shell.query(mc: :local, kind: "project"),
           into: %{},
           do: {id, row["title"]}
 

@@ -441,8 +441,8 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, "threads:read") do
       {:ok,
        for(
-         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-         mc == node() and row["deletedAt"] == nil,
+         {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+         row["deletedAt"] == nil,
          do: row
        )
        |> ThreadRelay.with_project_titles()}
@@ -886,8 +886,9 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, "turns:observe") do
       {:ok,
        for(
-         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-         mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+         {{_mc, _}, {"thread", row}} <-
+           HalC2.Shell.query(mc: :local, kind: "thread", where: %{"projectId" => project_id}),
+         row["deletedAt"] == nil,
          do:
            Map.take(
              row,
