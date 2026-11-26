@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/native/ThemeController.cpp (the theme resolved from the choice, the built-ins and published themes)
 #   apps/desktop-qt/src/ThemeStore.cpp (the palette the shell draws)
-#   apps/desktop-qt/scripts/gen-themes.mjs (the built-in palettes, from packages/shared/src/themePalettes.ts)
+#   packages/qml/scripts/gen-themes.mjs (the built-in palettes, from packages/shared/src/themePalettes.ts)
 #   apps/web/src/components/settings/themePalette.ts (getThemeDefinition, resolveThemeAppearance: what the shell mirrors)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   settings/saving-settings.feature has the desktop's settings document and device preferences.

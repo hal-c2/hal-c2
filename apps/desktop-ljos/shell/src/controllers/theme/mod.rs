@@ -58,7 +58,7 @@ const REMOVE_FAILED: &str = "Couldn’t remove theme";
 
 // --- What a theme is --------------------------------------------------------
 
-/// themes.json (apps/desktop-qt/scripts/gen-themes.mjs), as the Qt shell builds it in, its
+/// themes.json (packages/qml/scripts/gen-themes.mjs), as the Qt shell builds it in, its
 /// colours made drawable once.
 pub(crate) struct BuiltIns {
     pub roles: Vec<String>,

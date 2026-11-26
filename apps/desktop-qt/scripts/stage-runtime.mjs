@@ -15,7 +15,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { writeDesktopLicenseManifest } from "./third-party-licenses.ts";
+import { writeDesktopLicenseManifest } from "../../mobile-qt/scripts/third-party-licenses.ts";
 
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");

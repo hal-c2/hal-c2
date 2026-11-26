@@ -3,26 +3,22 @@
 #USAGE flag "--fix" help="Add the missing @backlog-<surface> tags instead of only reporting"
 """The ledger claims a scenario passes on a surface when it carries that
 surface's tag ('@desktop', '@mobile', or '@shared' for both plus '@tui')
-and no '@backlog' / '@backlog-<surface>'. The desktop and phone native
-runners, though, only run the scenarios their kDefaultGlobs name
-(apps/desktop-qt/tests/native/tst_Features.cpp,
-apps/mobile-qt/tests/tst_Features.cpp). This check mirrors
+and no '@backlog' / '@backlog-<surface>'. A runner, though, only runs
+the scenarios its globs name. This check mirrors
 runner::collectScenarios / parseFeature
 (apps/desktop-qt/tests/native/features/Runner.cpp) and fails on every
-scenario the ledger claims but no glob selects, so the claim and the
+scenario the ledger claims but no proof selects, so the claim and the
 proof cannot drift apart. Scenarios a QML test proves instead still get
-the backlog tag: the ledger claims only what tst_Features runs (#213).
-The desktop-ljos shell's runner (apps/desktop-ljos/shell/tests/features)
-runs those globs too, and every file whose leading comment block names
-it: behaviour only that shell has, such as its bounded side streams.
-The Ljós shells also hold the ids that pass there in their RATCHETs
-(desktop-ljos's and mobile-ljos's tests/features/RATCHET); a RATCHET id
-that names no scenario fails here, where a rename is seen. While a
-surface's tst_Features.cpp is there, the Ljós run's default scope is its
-globs, so a held id outside them fails here too, as that run fails it
-(missing). A missing tst_Features.cpp leaves its surface to its RATCHET
-alone (#1661 step 4), and what only Qt still proves is then reported,
-not hidden.
+the backlog tag: the ledger claims only what a counted runner runs
+(#213). The desktop's proof is the desktop-ljos RATCHET alone (#1661):
+its runner's default scope is its own default-globs.txt, and every file
+whose leading comment block names that runner counts too, as behaviour
+only that shell has, such as its bounded side streams. The phone still
+counts mobile-qt's tst_Features.cpp globs
+(apps/mobile-qt/tests/tst_Features.cpp) next to mobile-ljos's RATCHET.
+A RATCHET id that names no scenario fails here, where a rename is seen,
+and a held id outside its Ljós run's default scope fails here too, as
+that run fails it (missing).
 
 Exit 1 while such a scenario remains; --fix writes the missing
 '@backlog-<surface>' tags (at the widest true scope: the scenario, its
@@ -40,19 +36,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FEATURES = ROOT / "features"
+# Qt runners whose globs still count as proof. The desktop's Qt runner
+# no longer counts (#1661): its proof is the Ljós RATCHET below alone.
 RUNNERS = {
-    "desktop": ROOT / "apps/desktop-qt/tests/native/tst_Features.cpp",
     "mobile": ROOT / "apps/mobile-qt/tests/tst_Features.cpp",
 }
+# A Ljós runner's own default scope, one glob per line: not proof (the
+# RATCHET is), but a held id outside it fails that runner's default run
+# as missing, so it fails here too.
+DEFAULT_SCOPES = {
+    "desktop": ROOT / "apps/desktop-ljos/shell/tests/features/default-globs.txt",
+}
 # The Ljós shells' own proof: the scenario ids that pass there, held in
-# their RATCHETs. Counted as well as the Qt globs during the transition
-# (#1661 step 4); a missing tst_Features.cpp then leaves the surface to
-# its RATCHET alone instead of breaking this check.
+# their RATCHETs.
 RATCHETS = {
     "desktop": ROOT / "apps/desktop-ljos/shell/tests/features/RATCHET",
     "mobile": ROOT / "apps/mobile-ljos/tests/features/RATCHET",
 }
-SURFACES = list(RUNNERS)
+SURFACES = list(RATCHETS)
 # A feature file whose leading comment block names one of these is run, all
 # of it, by that surface's other runner as well as by the globs above.
 HEADER_RUNNERS = {
@@ -106,28 +107,16 @@ def ratchet_ids(path: Path) -> set[str]:
     }
 
 
-def scenario_globs(surface: str) -> list[str]:
-    """What the desktop-ljos runner's default run adds to the globs, as
-    its default_globs does: tst_Scenarios.qml's `// Scenario: name
-    (features/file)` comments and the qt-scenarios.feature files whose
-    sources name it. tst_Scenarios.qml proves them on Qt as well."""
-    if surface != "desktop":
+def scope_globs(path: Path) -> list[str]:
+    """A Ljós runner's default-globs file: one glob per line, `#` lines
+    are comments, as its default_globs reads them."""
+    if not path.is_file():
         return []
-    qml = ROOT / "apps/desktop-qt/tests/tst_Scenarios.qml"
-    text = qml.read_text(encoding="utf-8") if qml.exists() else ""
-    globs = [
-        f"{m[1]}:{m[0]}"
-        for m in re.findall(r"//\s*Scenario:\s*(.+?)\s*\(features/([^)]+\.feature)\)", text)
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
     ]
-    for path in sorted(FEATURES.glob("*/qt-scenarios.feature")):
-        head = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.startswith("#"):
-                break
-            head.append(line)
-        if any("tests/tst_Scenarios.qml" in line for line in head):
-            globs.append(path.relative_to(FEATURES).as_posix())
-    return globs
 
 
 def runner_globs(path: Path) -> list[str]:
@@ -302,28 +291,40 @@ def analyse():
     unclaimed: dict[str, list[str]] = {}
     known_ids = {f"{rel}: {row.name}" for rel, rows in all_rows.items() for row in rows}
 
-    for surface in SURFACES:
-        globs = runner_globs(RUNNERS[surface]) + scenario_globs(surface)
+    def select(globs):
+        """(rows `globs` select, globs naming no row), as a runner reads them."""
         wants = []  # (file regex, name regex or None for all, glob)
         for glob in globs:
             file_part, colon, name_part = glob.partition(":")
             wants.append((qt_wildcard(file_part), qt_wildcard(name_part) if colon else None, glob))
-        selected: set[int] = set()
+        picked: set[int] = set()
         glob_hit = [False] * len(wants)
         for rel, rows in all_rows.items():
             for row in rows:
                 for idx, (fre, nre, _g) in enumerate(wants):
                     if fre.fullmatch(rel) and (nre is None or nre.fullmatch(row.name)):
                         glob_hit[idx] = True
-                        selected.add(id(row))
-        unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
+                        picked.add(id(row))
+        return picked, [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
+
+    for surface in SURFACES:
+        # Proof globs: a Qt runner's, where that surface still counts one.
+        # Scope globs: the Ljós runner's default run; they select what it
+        # runs, not what passes, so they never prove a claim.
+        selected, unmatched[surface] = select(
+            runner_globs(RUNNERS[surface]) if surface in RUNNERS else []
+        )
+        in_scope, scope_unmatched = select(scope_globs(DEFAULT_SCOPES.get(surface, Path())))
+        unmatched[surface] += scope_unmatched
         ratchet = ratchet_ids(RATCHETS[surface])
         row_ids = ratchet_row_ids(all_rows, surface)
         runner = HEADER_RUNNERS.get(surface)
         if runner:
             for rel, rows in all_rows.items():
                 if header_names(FEATURES / rel, runner):
-                    selected.update(id(row) for row in rows)
+                    ids = {id(row) for row in rows}
+                    selected.update(ids)
+                    in_scope.update(ids)
         stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
         # A held scenario since backlogged, dropped or blocked here: the Ljós
         # runner leaves it out, so its run fails the id as missing.
@@ -333,10 +334,13 @@ def analyse():
             for row in rows:
                 if row_ids.get(id(row)) in ratchet:
                     held.add(id(row))
-        # While tst_Features.cpp is there, the Ljós run's default scope is
-        # its globs, and a held id outside them fails that run as missing:
-        # it is reported here, not counted.
-        if RUNNERS[surface].exists():
+        # A held id outside the Ljós run's default scope fails that run as
+        # missing: reported here. Where the scope is a Qt runner's globs
+        # (the phone), such an id is not counted as proof either; where
+        # the RATCHET is the proof (the desktop), it still counts.
+        if surface in DEFAULT_SCOPES:
+            unrun[surface] = sorted(row_ids[i] for i in held - in_scope)
+        elif surface in RUNNERS and RUNNERS[surface].exists():
             unrun[surface] = sorted(row_ids[i] for i in held - selected)
             held &= selected
         selected |= held

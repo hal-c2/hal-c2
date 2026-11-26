@@ -1,6 +1,6 @@
 //! The stage in a whole window (features/desktop/stage.feature): the
-//! default shell or one of desktop-qt's example shells
-//! (`apps/desktop-qt/examples`) drawing the thread's centre, whose
+//! default shell or one of the example shells
+//! (`apps/desktop-ljos/examples`) drawing the thread's centre, whose
 //! CentreHost draws the stage: desktop-qt's SpaceSteps.cpp `shellWindow`
 //! and "the window shows the … tab in the centre".
 
@@ -17,7 +17,7 @@ use crate::{expect, fail};
 const SIZE: (f64, f64) = (1200.0, 800.0);
 
 fn examples() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../desktop-qt/examples")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples")
 }
 
 /// `shell` ("default", or an example's name) as the window: the example's

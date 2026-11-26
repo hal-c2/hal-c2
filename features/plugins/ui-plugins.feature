@@ -2,7 +2,7 @@
 #   /home/olafura/dev/opentui-qml src/plugins (Plugin, Contribution, Slot, registerPlugin, unregisterPlugin, listPlugins, loadQmlPlugin, loadPluginsFromDir)
 #   /home/olafura/dev/opentui-qml src/cli.ts (--plugins, --plugin, --context, exit codes)
 #   /home/olafura/dev/opentui-qml test/plugins.test.ts
-#   apps/desktop-qt/examples/dashboard/shell.qml (plugin slots example)
+#   apps/desktop-ljos/examples/dashboard/shell.qml (plugin slots example)
 #   packages/qml/HalC2/Bricks/Composer.qml, SidebarThreadRow.qml (plugin mentions)
 #   apps/tui/src/commands.ts (command palette entries)
 #   docs/user/plugins.md

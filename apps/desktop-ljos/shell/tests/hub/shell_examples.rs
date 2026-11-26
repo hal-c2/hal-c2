@@ -1,4 +1,4 @@
-//! desktop-qt's example shells (`apps/desktop-qt/examples`) installed as a
+//! The example shells (`apps/desktop-ljos/examples`) installed as a
 //! user installs one, their files copied into the config dir, and made on
 //! the checkout's bricks, as desktop-qt's tst_ShellExamples makes them: each
 //! compiles, loads in place of the built-in shell, and shows what it is for.
@@ -199,7 +199,7 @@ impl Example {
 }
 
 fn examples() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop-qt/examples")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples")
 }
 
 fn parent(engine: &Engine, item: ObjectId) -> Option<ObjectId> {

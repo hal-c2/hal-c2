@@ -9,8 +9,8 @@ path at it and the module URIs are the directories under it.
   same directory works compiled in and as a disk import path.
 - `themes.json` — the built-in theme palettes the shells resolve a theme
   from. Regenerated from `packages/shared` by
-  `node apps/desktop-qt/scripts/gen-themes.mjs`; the icon paths in
-  `HalC2/Bricks/js/lucide.js` by `apps/desktop-qt/scripts/gen-icons.mjs`.
+  `node packages/qml/scripts/gen-themes.mjs`; the icon paths in
+  `HalC2/Bricks/js/lucide.js` by `packages/qml/scripts/gen-icons.mjs`.
 - `cmake/QmldirCheck.cmake` — the qmldir/module cross-check the Qt builds
   include.
 

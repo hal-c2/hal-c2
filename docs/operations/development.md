@@ -32,11 +32,11 @@ mise run mobile            # build the phone client for this machine and run it,
 mise run mobile:android    # the phone client's APK; with one device or emulator attached, install and start it
 mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle, stamped with apps/server-ex/VERSION (HAL_C2_MC_VERSION wins); tui depends on it
-mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
-mise run release:macos     # the MC and the zipped desktop app in release/
+mise run release:linux     # the MC and the Ljós desktop in release/ (release:mc for the MC alone)
+mise run release:macos     # the MC and the Ljós desktop app in release/
 mise run release:desktop-ljos  # the MC and the Ljós desktop, laid out as installed, in release/
 mise run release:install   # build and install: the MC as this user's background service, both desktops as launcher entries or in ~/Applications
-mise run release:install:mc    # one of them: also release:install:desktop-qt, release:install:desktop-ljos
+mise run release:install:mc    # one of them: also release:install:desktop-ljos
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own

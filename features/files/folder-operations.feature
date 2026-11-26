@@ -3,7 +3,7 @@
 #   packages/qml/HalC2/Bricks/FolderOperationDialog.qml
 #   apps/desktop-qt/src/LocalFolderModel.cpp
 #   apps/desktop-qt/src/ShellBridge.cpp (localFolderImportEnabled)
-#   apps/desktop-qt/examples/folders/shell.qml
+#   apps/desktop-ljos/examples/folders/shell.qml
 #   apps/desktop-qt/tests/native/tst_FolderExplorer.cpp
 #   apps/desktop-qt/tests/native/tst_LocalFolderModel.cpp
 #

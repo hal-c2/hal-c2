@@ -18,7 +18,7 @@ const BUILT_IN: &str = "import QtQuick\nimport HalC2.Bricks\n\
      ShellWindow { id: root; width: 1200; height: 800; \
      DefaultLayout { anchors.fill: parent; window: root } }\n";
 
-// A custom shell as apps/desktop-qt/examples/terminal/shell.qml lays one
+// A custom shell as apps/desktop-ljos/examples/terminal/shell.qml lays one
 // out: a sidebar's room on the left, the thread over the drawer beside it.
 const OWN_COLUMN: &str = "import QtQuick\nimport QtQuick.Layouts\nimport HalC2.Bricks\n\
      ShellWindow { id: root; width: 1200; height: 800\n\

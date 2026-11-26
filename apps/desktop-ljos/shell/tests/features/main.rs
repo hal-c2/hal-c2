@@ -1,9 +1,9 @@
-//! desktop-qt's Gherkin scenarios (features/) against this shell: the
-//! scenarios desktop-qt's runners run (apps/desktop-qt/tests/native/
-//! tst_Features.cpp's kDefaultGlobs, and the ones tst_Scenarios.qml mirrors),
-//! their steps ported from desktop-qt's (tests/native/features/*Steps.cpp)
-//! to `steps/`, each scenario on a shell of its own (`world.rs`) against a
-//! fake MC on loopback (`fake_mc.rs`).
+//! The Gherkin scenarios (features/) against this shell: the scenarios
+//! `default-globs.txt` beside this file names (desktop-qt's runners'
+//! kDefaultGlobs and tst_Scenarios.qml scopes, taken over when this runner
+//! stopped reading them, #1661), their steps ported from desktop-qt's
+//! (tests/native/features/*Steps.cpp) to `steps/`, each scenario on a shell
+//! of its own (`world.rs`) against a fake MC on loopback (`fake_mc.rs`).
 //!
 //! ```text
 //! cargo test -p hal_c2_shell --test features -- [globs] [--backlog] [--raise] [--list]
@@ -46,7 +46,7 @@ use harness::{Failure, Steps};
 use world::World;
 
 const RATCHET_HEADER: &str = "\
-# The desktop-qt scenarios that pass on desktop-ljos, one id per line.
+# The desktop scenarios that pass on desktop-ljos, one id per line.
 # `cargo test -p hal_c2_shell --test features` fails when one of them stops
 # passing; `-- --raise` adds the ones that newly pass. Never remove a line to
 # make a run pass: fix the regression.
@@ -105,52 +105,22 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-/// What desktop-qt runs: tst_Features.cpp's kDefaultGlobs, the
-/// `qt-scenarios.feature` files whose sources name tst_Scenarios.qml, and
-/// the scenarios tst_Scenarios.qml names in a `// Scenario:` comment; and
-/// what only this shell does: every file whose sources name this runner
+/// This runner's own default scope: `default-globs.txt` beside this file
+/// (one glob per line; `#` lines are comments), and what only this shell
+/// does: every file whose sources name this runner
 /// (mise-tasks/features/check counts them as the desktop's too).
 fn default_globs(repo: &Path) -> Vec<String> {
-    let mut globs = Vec::new();
-    let native = repo.join("apps/desktop-qt/tests/native/tst_Features.cpp");
-    let source = std::fs::read_to_string(&native)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", native.display()));
-    let start = source
-        .find("kDefaultGlobs{")
-        .expect("tst_Features.cpp names kDefaultGlobs");
-    let block = &source[start..start + source[start..].find("};").expect("its end")];
-    let literal =
-        fancy_regex::Regex::new(r#"QStringLiteral\("((?:[^"\\]|\\.)*)"\)"#).expect("a pattern");
-    for captures in literal.captures_iter(block).flatten() {
-        globs.push(captures[1].replace("\\\"", "\""));
-    }
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/features/default-globs.txt");
+    let source = std::fs::read_to_string(&file)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+    let mut globs: Vec<String> = source
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
     let features = repo.join("features");
-    for directory in std::fs::read_dir(&features).into_iter().flatten().flatten() {
-        let file = directory.path().join("qt-scenarios.feature");
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            continue;
-        };
-        let sources = text
-            .lines()
-            .take_while(|l| l.starts_with('#'))
-            .any(|l| l.contains("tests/tst_Scenarios.qml"));
-        if sources {
-            globs.push(format!(
-                "{}/qt-scenarios.feature",
-                directory.file_name().to_string_lossy()
-            ));
-        }
-    }
     own_files(&features, &features, &mut globs);
-    let qml = repo.join("apps/desktop-qt/tests/tst_Scenarios.qml");
-    let comment =
-        fancy_regex::Regex::new(r"//\s*Scenario:\s*(.+?)\s*\(features/([^)]+\.feature)\)")
-            .expect("a pattern");
-    for line in std::fs::read_to_string(&qml).unwrap_or_default().lines() {
-        if let Ok(Some(captures)) = comment.captures(line) {
-            globs.push(format!("{}:{}", &captures[2], &captures[1]));
-        }
-    }
     globs
 }
 
@@ -438,7 +408,7 @@ fn main() -> ExitCode {
     }
 
     println!(
-        "\ncoverage of the scenarios desktop-qt runs, by domain (passing / failing / undefined / total):"
+        "\ncoverage of the scenarios this runner runs, by domain (passing / failing / undefined / total):"
     );
     for (domain, [p, f, u]) in &domains {
         println!("  {domain:<16} {p:>5} {f:>5} {u:>5} {:>6}", p + f + u);

@@ -8,9 +8,9 @@ HAL-C2 ships the MC, the Qt desktop, the desktop on Ljós (`apps/desktop-ljos`) 
 
 ```sh
 mise run release:mc            # release/hal-c2-mc-<version>-<platform>: the single-file MC, and its .tar.gz upgrade bundle
-mise run release:linux         # the same, plus release/hal-c2-qt-<version>-linux-x64.AppImage
-mise run release:macos         # the same, plus release/hal-c2-qt-<version>-darwin-<arch>.zip, holding HAL-C2.app
-mise run release:desktop-ljos  # the same, plus release/hal-c2-ljos-<version>-<platform>/, laid out as it is installed
+mise run release:linux         # the same, plus release/hal-c2-ljos-<version>-linux-<arch>/, laid out as it is installed
+mise run release:macos         # the same, plus release/hal-c2-ljos-<version>-darwin-<arch>/, holding HAL-C2 Ljós.app
+mise run release:desktop-ljos  # the same task the two above run, for either platform
 ```
 
 The macOS apps are signed ad hoc, not with a Developer ID: they run on the Mac that built them, and
@@ -38,7 +38,6 @@ installed before. Machines cluster whatever versions they run.
 ```sh
 mise run release:install               # all of the below this machine builds, the MC release built once
 mise run release:install:mc            # the MC, as the background service
-mise run release:install:desktop-qt    # ~/.local/bin/hal-c2 with hal-c2.desktop (x86_64 Linux), ~/Applications/HAL-C2.app (macOS)
 mise run release:install:desktop-ljos  # ~/.local/bin/hal-c2-ljos with hal-c2-ljos.desktop (Linux), ~/Applications/HAL-C2 Ljós.app (macOS)
 ```
 

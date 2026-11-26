@@ -128,7 +128,7 @@ QJsonObject canonicalColors(const QJsonObject& colors) {
   return result;
 }
 
-// themes.json (scripts/gen-themes.mjs), its colours made drawable once.
+// themes.json (packages/qml/scripts/gen-themes.mjs), its colours made drawable once.
 struct BuiltIns {
   QJsonArray roles;
   QJsonObject standard;

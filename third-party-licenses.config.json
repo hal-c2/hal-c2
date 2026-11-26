@@ -232,7 +232,7 @@
             "Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026."
           ],
           "preamble": [
-            "The Qt clients draw their icons from path data taken from Lucide (apps/desktop-qt/scripts/gen-icons.mjs)."
+            "The Qt clients draw their icons from path data taken from Lucide (packages/qml/scripts/gen-icons.mjs)."
           ]
         },
         {
