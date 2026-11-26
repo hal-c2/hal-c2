@@ -1,7 +1,7 @@
 {
   "customNotices": [
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "CC0-1.0",
       "name": "Folder_Whoosh.wav by BaggoNotes",
       "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/",
@@ -15,7 +15,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "CC0-1.0",
       "name": "Contarex camera shutter.wav by Tonik1105",
       "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/",
@@ -30,7 +30,7 @@
     },
     {
       "bundles": ["device-tools"],
-      "includeInBundles": ["desktop-qt", "desktop-ljos"],
+      "includeInBundles": ["desktop-ljos"],
       "license": "MIT",
       "name": "agent-device",
       "sourceUrl": "https://github.com/callstack/agent-device",
@@ -44,7 +44,7 @@
     },
     {
       "bundles": ["device-tools"],
-      "includeInBundles": ["desktop-qt", "desktop-ljos"],
+      "includeInBundles": ["desktop-ljos"],
       "license": "MIT AND Apache-2.0 AND BSD-3-Clause",
       "name": "expo-device-hub",
       "sourceUrl": "https://github.com/expo/expo-device-hub",
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "QR Code generator",
       "sourceUrl": "https://github.com/nayuki/QR-Code-generator",
@@ -110,25 +110,11 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "libghostty-vt",
       "noticeFile": "native/libghostty-vt/LICENSE",
       "sourceUrl": "https://github.com/ghostty-org/ghostty"
-    },
-    {
-      "bundles": ["desktop-qt"],
-      "license": "LGPL-3.0-only",
-      "name": "Qt",
-      "sourceUrl": "https://www.qt.io/download-open-source",
-      "generatedNotices": [
-        {
-          "licenseId": "LGPL-3.0-only",
-          "preamble": [
-            "The desktop app links dynamically against Qt 6 (Qt Core, Gui, Network, Quick, QML, WebSockets and, on Linux, D-Bus), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/ and can be replaced with a compatible build."
-          ]
-        }
-      ]
     },
     {
       "bundles": ["mobile-qt"],
@@ -221,7 +207,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "ISC AND MIT",
       "name": "Lucide",
       "sourceUrl": "https://github.com/lucide-icons/lucide",
@@ -243,7 +229,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt"],
+      "bundles": ["mobile-qt"],
       "license": "MIT",
       "name": "qt-liquid-glass",
       "sourceUrl": "https://github.com/fsalinas26/qt-liquid-glass",
@@ -252,13 +238,13 @@
           "licenseId": "MIT",
           "copyrights": ["Copyright (c) Francisco Salinas (fsalinas26)"],
           "preamble": [
-            "The desktop app on macOS draws its window's glass with qt-liquid-glass, compiled into it. Its README gives the license as MIT."
+            "The app on macOS draws its window's glass with qt-liquid-glass, compiled into it. Its README gives the license as MIT."
           ]
         }
       ]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "Apache-2.0",
       "name": "Erlang/OTP",
       "sourceUrl": "https://github.com/erlang/otp",
@@ -273,7 +259,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "Apache-2.0",
       "name": "Elixir",
       "sourceUrl": "https://github.com/elixir-lang/elixir",
@@ -288,7 +274,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "MIT",
       "name": "mermaid-rs-renderer",
       "sourceUrl": "https://github.com/1jehuang/mermaid-rs-renderer",
@@ -303,7 +289,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "MIT",
       "name": "mmdflux",
       "sourceUrl": "https://github.com/kevinswiber/mmdflux",
@@ -318,7 +304,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "MIT",
       "name": "Node.js",
       "sourceUrl": "https://github.com/nodejs/node",
@@ -333,7 +319,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["mobile-qt"],
       "license": "MIT",
       "name": "syntect",
       "sourceUrl": "https://github.com/trishume/syntect",
@@ -348,7 +334,7 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt"],
+      "bundles": ["mobile-qt"],
       "license": "MIT",
       "name": "two-face",
       "sourceUrl": "https://codeberg.org/CosmicHarper/two-face",
@@ -365,20 +351,20 @@
       ]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "Various (MIT, Apache-2.0, BSD)",
       "name": "bat syntaxes",
       "sourceUrl": "https://github.com/sharkdp/bat/tree/master/assets/syntaxes",
       "noticeFiles": ["native/syntax/SYNTAXES-NOTICE.md"]
     },
     {
-      "bundles": ["desktop-qt", "mobile-qt", "desktop-ljos"],
+      "bundles": ["mobile-qt", "desktop-ljos"],
       "license": "MIT",
       "name": "Pierre themes",
       "noticeFiles": ["native/syntax/themes/LICENSE-pierre"]
     },
     {
-      "bundles": ["desktop-qt", "desktop-ljos"],
+      "bundles": ["desktop-ljos"],
       "license": "BSD-2-Clause",
       "name": "Oniguruma",
       "sourceUrl": "https://github.com/kkos/oniguruma",

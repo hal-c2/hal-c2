@@ -7,7 +7,8 @@ Those surfaces are no longer in the tree:
 | Removed                                   | Replaced by                            |
 | ----------------------------------------- | -------------------------------------- |
 | the Node server (`apps/server`)           | the MC (`apps/server-ex`)              |
-| the Electron desktop app (`apps/desktop`) | the Qt/QML desktop (`apps/desktop-qt`) |
+| the Electron desktop app (`apps/desktop`) | the Ljós desktop (`apps/desktop-ljos`) |
+| the Qt/QML desktop (`apps/desktop-qt`)    | the Ljós desktop (`apps/desktop-ljos`) |
 | the React Native app (`apps/mobile`)      | the QML mobile client                  |
 | the web app (`apps/web`)                  | nothing; there is no web client        |
 |                                           | the QML TUI (`apps/tui`)               |
@@ -63,12 +64,11 @@ MC, native QML, and the TUI.
   @backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
   `@backlog`.
 - `@backlog-desktop-ljos` is a waiver, not a backlog tag: the scenario passes on the desktop
-  surface (desktop-qt, and on desktop-ljos against that runner's test doubles) but not yet in
-  the shipped Ljós app on the platform it names — Snap Shot has no native side there on
-  Windows ([#1568](https://github.com/hal-c2/hal-c2/issues/1568)) or macOS ([#1569](https://github.com/hal-c2/hal-c2/issues/1569)). No runner skips by it and the ledger still counts the
-  scenario claimed; it only records that retiring desktop-qt on those platforms waits on
-  native ports and proof on those operating systems. Landing and proving those ports removes
-  the tag.
+  surface (on desktop-ljos against the runner's test doubles) but not yet in the shipped Ljós
+  app on the platform it names — Snap Shot has no native side there on Windows
+  ([#1568](https://github.com/hal-c2/hal-c2/issues/1568)) or macOS ([#1569](https://github.com/hal-c2/hal-c2/issues/1569)). No runner skips by it and the ledger still counts the
+  scenario claimed; it only records that the shipped app waits on native ports and proof on
+  those operating systems. Landing and proving those ports removes the tag.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
 - `@blocked` goes beside a backlog tag on work that cannot start yet. A comment above it
@@ -169,23 +169,23 @@ The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs
 `@backlog-tui` respectively, run only with `--backlog` or `INCLUDE_BACKLOG=1`, and are expected
 to fail there.
 
-| Surface    | Task                                                      | Raw command                                                                                  |
-| ---------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| MC         | `mise run features:mc <globs>`, `features:mc:all`         | `mix features [--backlog] <globs>` in `apps/server-ex`                                       |
-| TUI        | `mise run features:tui <globs>`, `features:tui:all`       | `TUI_FEATURES="<globs>" [TUI_INCLUDE_BACKLOG=1] bun test ./features/runner.ts` in `apps/tui` |
-| Qt desktop | `mise run features:desktop` (`:qml` and `:native` halves) | `vp run --filter @hal-c2/desktop-qt test:qml`, ctest per `apps/desktop-qt/README.md`         |
-| QML phone  | `mise run features:mobile [--backlog] [globs]`            | `[HAL_C2_FEATURES="<globs>"] [HAL_C2_BACKLOG=1]` ctest per `apps/mobile-qt/README.md`        |
+| Surface   | Task                                                | Raw command                                                                                   |
+| --------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| MC        | `mise run features:mc <globs>`, `features:mc:all`   | `mix features [--backlog] <globs>` in `apps/server-ex`                                        |
+| TUI       | `mise run features:tui <globs>`, `features:tui:all` | `TUI_FEATURES="<globs>" [TUI_INCLUDE_BACKLOG=1] bun test ./features/runner.ts` in `apps/tui`  |
+| Desktop   | `mise run features:desktop [globs]`                 | `HAL_C2_FEATURES="<globs>" cargo test -p hal_c2_shell --test features` in `apps/desktop-ljos` |
+| QML phone | `mise run features:mobile [--backlog] [globs]`      | `[HAL_C2_FEATURES="<globs>"] [HAL_C2_BACKLOG=1]` ctest per `apps/mobile-qt/README.md`         |
 
 MC globs are required; `features:mc:all` runs the suite one top-level directory at a time,
 because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
-`@shared` scenario. On the desktop, the native tests' `tst_Features` runs the `@desktop` scenarios
-of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake MC (`HAL_C2_FEATURES="<globs>"` picks other files);
-`apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. On the phone, the tests' `tst_Features`
+`@shared` scenario. On the desktop, desktop-ljos's runner runs its default scope
+(`apps/desktop-ljos/shell/tests/features/default-globs.txt`) against a fake MC and holds what
+passes in its `RATCHET` (`HAL_C2_FEATURES="<globs>"` picks other files). On the phone, the tests' `tst_Features`
 runs the `@mobile` and `@shared` scenarios of the `mobile/` files it lists against the same fake MC, tapping and typing into the phone's real
 root; like the desktop's it leaves out `@backlog` and its own surface's `@backlog-mobile`, and `--backlog` runs only those instead.
 `mise run features` runs all four and reports each. Step definitions live in `apps/server-ex/test/steps/`, `apps/tui/features/`,
-`apps/desktop-qt/tests/native/features/` and `apps/mobile-qt/tests/features/`.
+`apps/desktop-ljos/shell/tests/features/steps/` and `apps/mobile-qt/tests/features/` (its harness in `apps/mobile-qt/tests/native/features/`).
 
-The desktop and phone runners select by their own glob lists, not by tag alone, so a scenario can
+The runners select by their own glob lists and RATCHETs, not by tag alone, so a scenario can
 look passing here while no runner runs it. `mise run features:check` fails on those (CI's Ledger
 check runs it); `--fix` adds the missing `@backlog-desktop` / `@backlog-mobile` tags.

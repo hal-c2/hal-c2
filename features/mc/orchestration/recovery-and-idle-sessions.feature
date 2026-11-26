@@ -770,7 +770,7 @@ Feature: Recovering from restarts and releasing idle sessions
     When 14:00 passes
     Then the engine continues "t1" once, without a new message from the user
 
-  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  # A scratch MC on a copy of real data, started on copied data, names real checkouts.
   @mc
   Scenario: An MC without automatic actions resumes nothing at the reset time
     Given the MC runs without automatic actions

@@ -1,2 +1,2 @@
 ../src/Pairing.cpp
-../../desktop-qt/tests/native/features/FakeMc.cpp
+native/features/FakeMc.cpp

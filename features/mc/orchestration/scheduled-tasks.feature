@@ -255,7 +255,7 @@ Feature: Scheduled tasks
     When the clocks go back an hour between two runs
     Then the next run is two hours after the last one
 
-  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  # A scratch MC on a copy of real data, started on copied data, names real checkouts.
   @mc
   Scenario: An MC without automatic actions skips a due run
     Given the MC runs without automatic actions

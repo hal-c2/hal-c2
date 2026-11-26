@@ -16,7 +16,7 @@ writes before completing their lifecycle boundary.
 MC history is capped at 5,000 lines and 8 MiB of UTF-8 text per terminal, so a long unterminated
 line cannot bypass retention. Eviction removes the oldest output; live output is not truncated.
 Client buffers have a separate 512 KiB cap
-([`TerminalController`](../../apps/desktop-qt/src/native/TerminalController.cpp)). Measure
+([`TerminalController`](../../apps/mobile-qt/src/native/TerminalController.cpp)). Measure
 throughput with full scrollback when changing this path.
 
 A client that falls behind is held back per subscription at the socket, not at the PTY: a
@@ -38,7 +38,7 @@ and catches up from a snapshot when it is shown again
 The phone and the Qt desktop use the same `libghostty-vt` C ABI for terminal behavior. Platform
 adapters own drawing and input integration. The Qt desktop draws with
 [qml-ghostty](https://github.com/hal-c2/qml-ghostty), whose own Ghostty pin
-[`cmake/QmlGhostty.cmake`](../../apps/desktop-qt/cmake/QmlGhostty.cmake) checks
+[`cmake/QmlGhostty.cmake`](../../apps/mobile-qt/cmake/QmlGhostty.cmake) checks
 against ours at configure time. The canonical upstream pin is
 [`native/libghostty-vt/VERSION`](../../native/libghostty-vt/VERSION); rebuild the native
 artifacts when it changes.

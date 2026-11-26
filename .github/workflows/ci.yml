@@ -1,7 +1,7 @@
 name: CI
 
-# The MC (apps/server-ex) and the TUI (apps/tui). The Qt desktop builds and
-# tests in desktop-qt.yml.
+# The MC (apps/server-ex) and the TUI (apps/tui). The desktops build and
+# test in their own workflows.
 #
 # Cheapest first: `changes` picks the jobs a commit needs, and nothing of the MC's starts
 # until mc_check has passed, so a formatting slip costs a minute, not every runner the
@@ -497,10 +497,10 @@ jobs:
           bun-version: "1.4.2"
 
       - name: Check formatting (TUI, Qt host, Cursor sidecar)
-        run: vp fmt --check apps/tui apps/desktop-qt packages/cursor-acp
+        run: vp fmt --check apps/tui packages/cursor-acp
 
       - name: Lint (TUI, Qt host, Cursor sidecar)
-        run: vp lint apps/tui apps/desktop-qt packages/cursor-acp
+        run: vp lint apps/tui packages/cursor-acp
 
       - name: Typecheck
         run: vp run --filter @hal-c2/tui typecheck

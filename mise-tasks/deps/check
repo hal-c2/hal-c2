@@ -31,7 +31,7 @@ version() {
   { "$@" 2>/dev/null || true; } | sed -n "${LINE:-1}p"
 }
 
-# Where qmltestrunner lives, searched the way apps/desktop-qt/scripts/test-qml.mjs does.
+# Where qmltestrunner lives.
 qt_bin_dirs() {
   local prefixes=() prefix
   IFS=: read -ra prefixes <<<"${QT_ROOT_DIR:-}:${QT_PREFIX:-}:${CMAKE_PREFIX_PATH:-}"
@@ -66,7 +66,7 @@ if ((${#missing[@]})); then
 The Qt desktop tests ($require) need: ${missing[*]}.
 Install Qt 6.9+ (Quick, QuickTest, WebEngine, WebChannel, WebSockets, DBus) and cmake from your
 system package manager, or point QT_ROOT_DIR or CMAKE_PREFIX_PATH at a Qt install.
-See apps/desktop-qt/README.md.
+See apps/mobile-qt/README.md.
 MSG
   exit 1
 fi

@@ -15,7 +15,7 @@ This page records why the rules are what they are.
 [`xdgDirs.ts`](../../packages/shared/src/xdgDirs.ts) is the only resolver for TypeScript: the TUI
 and the desktop's Node host call it, and it is pure so each can. The MC mirrors the same rules in
 Elixir ([`paths.ex`](../../apps/server-ex/lib/hal_c2/paths.ex)) and the Qt shell in C++
-([`StoragePaths.h`](../../apps/desktop-qt/src/StoragePaths.h)). A rule change touches all three;
+([`StoragePaths.h`](../../apps/mobile-qt/src/StoragePaths.h)). A rule change touches all three;
 the feature files are what keeps them in agreement.
 
 ## XDG on macOS, not `~/Library`

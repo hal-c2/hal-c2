@@ -112,10 +112,9 @@ unreadable one takes nothing from the members until it is mended.
 
 Everything above is opt-in per subscription, so the protocol stays version 3.
 
-The Qt client (desktop, and the QML mobile client built from the same `src/native`) keeps the
-sidebar and the threads the user opened in a local SQLite cache, paints from it before the socket
-is up, and subscribes with what it holds. Its rules are in
-[desktop-qt.md](./desktop-qt.md#client-cache).
+The Qt client (`apps/mobile-qt`, on the shared `src/native`; desktop-ljos's Rust cache follows
+the same rules) keeps the sidebar and the threads the user opened in a local SQLite cache,
+paints from it before the socket is up, and subscribes with what it holds.
 
 The TUI (`packages/client-runtime/src/v3`) sends no handle, window, kinds or sidebar version. It is sent whole threads, in
 parts, and the whole sidebar as before, and resumes a dropped socket from an in-memory offset. It does benefit from the

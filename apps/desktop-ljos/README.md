@@ -1,8 +1,9 @@
 # desktop-ljos
 
-An experiment: the desktop shell of `apps/desktop-qt` (DefaultShell → ShellWindow → DefaultLayout) on
+The desktop client: the desktop shell (DefaultShell → ShellWindow → DefaultLayout) on
 [Ljós](https://github.com/hal-c2/ljos-ui), a Rust QML runtime. It reuses `packages/qml/HalC2/Bricks`
-as they are and puts a Rust `HalC2.Shell` under them.
+as they are and puts a Rust `HalC2.Shell` under them. It is the port of the retired Qt desktop
+(`apps/desktop-qt`), whose C++ now lives with the phone in `apps/mobile-qt/src/native`.
 
 - `shell/` is the app (`hal-c2-ljos`): the native `Shell`, `Theme` and `Runtime` singletons, the
   controllers behind `Shell.state` (desktop-qt's NativeController and NativeShell), and the seam to the MC.
@@ -40,7 +41,7 @@ mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mo
 On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
 the Dock and the app switcher name an app by its bundle.
 
-As desktop-qt does, the window runs the desktop host, which finds or starts the MC on this machine — here in
+As the Qt desktop did, the window runs the desktop host, which finds or starts the MC on this machine — here in
 process (`shell/src/mc_launcher.rs`, behind `shell/src/desktop_host.rs`), with no Node host; `--url LINK` has it
 pair with that MC instead. A bare `mise run desktop-ljos` therefore needs no MC running first: it uses the one
 already on the hal-c2-dev files (`mise run mc`'s) or starts the checkout's from source (`--node`/`HAL_C2_NODE_BIN`

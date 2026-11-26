@@ -7,7 +7,7 @@ HAL-C2 is a minimal GUI for coding agents. It is a fork of [T3 Code](https://git
 HAL-C2 is:
 
 - **The MC** (`hal-c2-mc`, mission control): an Elixir/OTP server in `apps/server-ex`. Each machine runs one MC; MCs cluster and share one sidebar. Clients pair with it like any other environment.
-- **Qt/QML desktop** in `apps/desktop-qt`.
+- **Ljós desktop** in `apps/desktop-ljos`: a Rust shell on Ljós running the QML bricks in `packages/qml`.
 - **QML mobile** in `apps/mobile-qt`, the phone and tablet client, built from the same QML as the desktop. Android first.
 - **QML TUI** in `apps/tui`, rendered by opentui-qml.
 - **No web client.** There is no hosted web app and no locally served one.
@@ -21,7 +21,7 @@ The values are upstream's, and we owe T3 Code and its maintainers the product th
 - **Open.** The code and the reasoning are public.
 - **Performance.** Audit for regressions: too much data over websockets, CSS animations spiking the GPU, lists that are hard to render. Every change considers its performance cost.
 - **Remote ready.** The websocket layer (the MC) is what makes LAN and Tailscale work. New features must work over all of them.
-- **Multi-surface.** Desktop (Qt), mobile (QML), and the TUI, all against the MC. Features reach every surface where reasonable.
+- **Multi-surface.** Desktop (Ljós), mobile (QML), and the TUI, all against the MC. Features reach every surface where reasonable.
 - **Small systems.** Do not preserve complexity because it exists, and do not add machinery because it looks impressive. Understand the real constraint, then build the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and yagni. Honor the developer's intent minimally and realistically.
 
 The rest of this document is good defaults, not hard rules. The developer's preferences override anything here.
@@ -53,7 +53,7 @@ HAL-C2 is often developed from inside HAL-C2 (or upstream T3 Code), controlled r
 The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling frontend work done, walk this list and say which entries applied:
 
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
-- **Clients.** Qt desktop, QML mobile, and the TUI. QML shared between them is `@shared` in `features/`.
+- **Clients.** Ljós desktop, QML mobile, and the TUI. QML shared between them is `@shared` in `features/`.
 - **Servers.** New behaviour lives in the MC. Behaviour it does not have yet needs a scenario under `features/` tagged `@backlog` so the ledger knows what the MC must gain.
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`; the MC and the QML clients follow the same RPC names (see `features/parity/`).
@@ -65,7 +65,7 @@ The most common defect in this repo is a change that works on the path you teste
 
 - `mise run install` installs the JS workspace and the MC's Elixir deps. Worktrees get the JS half (`vp i`) from the `hal-c2.json` setup script (a legacy `t3.json` is still read); if module resolution looks broken, it probably did not run.
 - The MC runs with `mise run mc` (from `apps/server-ex`, `mise exec -- mix hal_c2.server`). From any checkout or worktree it keeps dev state in the `elixir` level of the XDG `hal-c2-dev` directories, which are the developer's (rule 2). To run your own MC, point `HAL_C2_MC_HOME` at a scratch directory and `HAL_C2_MC_PORT` at a free port (`mise run mc --home <dir> --port <port>` does both).
-- The desktop runs with `mise run desktop`, paired with the running MC (`apps/desktop-qt/README.md`). The terminal client runs with `mise run tui`.
+- The desktop runs with `mise run desktop` (or `mise run desktop-ljos`), paired with the running MC (`apps/desktop-ljos/README.md`). The terminal client runs with `mise run tui`.
 - The phone client runs on this machine with `mise run mobile` and on Android with `mise run mobile:android` (`apps/mobile-qt/README.md`). It pairs with an MC by a pairing link (`mise run mc:pair`); its files go to the worktree's gitignored `.hal-c2/mobile`.
 - Stop what you started, by the PID you tracked. See rule 1.
 
@@ -95,7 +95,7 @@ An empty database is a bad test. Seed a scratch MC home with a copy of real data
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
 - MC changes to a stateful service (a GenServer, supervisor, the event log, stream subscriptions, orchestration commands, auth, settings, scheduling, thread moves, the plugin host, and the MC part of a plugin under `plugins/`) or to a pure algebra such as `HalC2.Patch` ship with a property test in `apps/server-ex/prop`: extend the service's state machine model, or add one if it has none. A bug a property finds also gets a plain regression test in `test/`. The property tests are GPL-3.0 (PropCheck) and run apart from `mix test`, with `mise exec -- mix prop <files>`; read `apps/server-ex/prop/README.md` first, and never import them or PropCheck from `lib/` or `test/`.
-- The Qt clients follow the same rule: a change to a C++ class whose behaviour depends on the order of calls and MC messages (the MC client, caches and stores, list models, controllers) ships with a RapidCheck state machine property in `apps/desktop-qt/tests/prop` (the phone's in `apps/mobile-qt/tests/prop`), and a bug one finds also gets a `tst_<Name>Regression.cpp` in the native tests. Run them with `mise prop:desktop <names>` or `mise prop:mobile <names>`; read `apps/desktop-qt/tests/prop/README.md` first.
+- The Qt client follows the same rule: a change to a C++ class whose behaviour depends on the order of calls and MC messages (the MC client, caches and stores, list models, controllers) ships with a RapidCheck state machine property in `apps/mobile-qt/tests/prop`, and a bug one finds also gets a `tst_<Name>Regression.cpp` in the native tests. Run them with `mise prop:mobile <names>`; read `apps/mobile-qt/tests/prop/README.md` first. The desktop's Rust shell has its own properties beside its hub tests, under `apps/desktop-ljos/shell/tests`.
 - A protocol between MCs or processes (thread moves, the cluster, leases) also has a Maude model in `apps/server-ex/proof`, checked over every interleaving, crash and partition up to a bound with `mise exec -- mix proof <files>`. Change the model with the code: the proof fails when they stop matching. Read `apps/server-ex/proof/README.md` first; Maude and ex_maude never reach `lib/`.
 - The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
 - Upon request, user-visible frontend changes should get one integrated pass in a real client (`mise run desktop`, `mise run mobile`, `mise run tui`). The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use.
@@ -137,12 +137,12 @@ Full glossary with file links: `docs/internals/glossary.md`
 ## Where code lives
 
 - `apps/server-ex` - the MC (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
-- `apps/desktop-qt` - the Qt/QML desktop. `apps/mobile-qt` - the QML mobile client, the desktop's C++ and bricks with a phone layout; read `docs/internals/mobile-qt.md` first. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
+- `apps/desktop-ljos` - the desktop: a Ljós Rust shell with its QML bricks in `packages/qml`. `apps/mobile-qt` - the QML mobile client, the shared native C++ (formerly desktop-qt's) and bricks with a phone layout; read `docs/internals/mobile-qt.md` first. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
 - `apps/marketing` is the site. `plugins/` holds the plugins. `native/` holds native helpers such as the SnapShot capture helpers and libghostty-vt.
 - `features/` - the Gherkin behaviour ledger; see `features/README.md`.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
-- `packages/client-runtime` - client protocol and state code the TUI uses; the Qt clients' C++ mirrors parts of it.
+- `packages/client-runtime` - client protocol and state code the TUI uses; the Qt client's C++ mirrors parts of it.
 
 ## Taste
 

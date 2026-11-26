@@ -1,6 +1,5 @@
-# The terminal: qml-ghostty's `Ghostty` module, which the desktop's terminal
-# bricks import, built as the desktop builds it
-# (apps/desktop-qt/cmake/QmlGhostty.cmake, which cross-builds its library for
+# The terminal: qml-ghostty's `Ghostty` module, which the terminal bricks
+# import (cmake/QmlGhostty.cmake, which cross-builds its library for
 # Android). A target that has it is compiled with HAL_C2_HAS_TERMINAL, and
 # only such a target may load a brick that imports Ghostty.
 #
@@ -19,7 +18,7 @@ endif()
 option(HAL_C2_TERMINAL "Build the terminal (qml-ghostty; its libghostty-vt needs Zig 0.15.2)" ${_hal_c2_terminal_default})
 
 if(HAL_C2_TERMINAL)
-  include("${CMAKE_CURRENT_LIST_DIR}/../../desktop-qt/cmake/QmlGhostty.cmake")
+  include("${CMAKE_CURRENT_LIST_DIR}/QmlGhostty.cmake")
 endif()
 
 function(hal_c2_target_terminal target)

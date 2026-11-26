@@ -1,7 +1,7 @@
 # Linux window capture
 
-Wayland only. The Qt desktop captures through the Screenshot portal
-(`apps/desktop-qt/src/native/PortalSnapShot`), or on Niri outside a sandbox over its socket
+Wayland only. The shells capture through the Screenshot portal
+(desktop-ljos's `snap_shot/portal.rs`; the Qt shell's `apps/mobile-qt/src/native/PortalSnapShot`), or on Niri outside a sandbox over its socket
 (`NiriSnapShot`), GNOME adding its extension for the active window when the portal cannot take it,
 and never falls back to another backend on failure, cancellation, or denial. Session detection comes
 from `XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME extension must not select
@@ -14,7 +14,7 @@ backends the desktop does not call yet (`@backlog-desktop`). The traps below bin
 
 KWin authorizes `org.kde.KWin.ScreenShot2` by resolving the calling PID's executable against its
 application registry, so the helper is installed at a stable path under the XDG data home with a
-hidden desktop entry, not run from the AppImage mount. Two traps:
+hidden desktop entry, not run from a mounted image. Two traps:
 
 - `X-KDE-DBUS-Restricted-Interfaces` uses KConfig's comma-separated list syntax. A trailing
   semicolon becomes part of the interface name and KWin rejects it.
@@ -61,9 +61,9 @@ inside the extension with coordinates relative to HAL-C2's content area.
 GNOME 50 removed `Meta.is_wayland_compositor`. Shell internals change across majors; verify each
 version before adding it to `metadata.json`.
 
-## Qt desktop
+## Qt shell
 
-`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on any Wayland desktop
+The Qt shell (mobile-qt's shared `src/native`) captures through the portal (`PortalSnapShot`, over QtDBus) on any Wayland desktop
 without a backend of its own, with the window picker unless the portal offers the active-window target.
 Outside a sandbox, Niri captures through its socket, and KDE and Hyprland through their helpers
 (`HelperSnapShot`, `CaptureHelper`) with the shortcut still in the portal. The helpers' capture effects

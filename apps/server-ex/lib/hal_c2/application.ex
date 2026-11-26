@@ -159,7 +159,7 @@ defmodule HalC2.Application do
   end
 
   # The exit status of an MC that found its HAL-C2 home in use. The desktop app's host
-  # (apps/desktop-qt/host/elixirMc.ts) then uses the MC already running there.
+  # (the desktop's launcher, apps/desktop-ljos's mc_launcher) then uses the MC already running there.
   @home_in_use 73
 
   # One MC per home (`HalC2.HomeLock`). A background service waits its turn, since

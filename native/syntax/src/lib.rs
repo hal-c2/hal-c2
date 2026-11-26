@@ -8,7 +8,7 @@
 //! and switches between them without reading the code again. A run that keeps
 //! the theme's own text colour is left out, so it takes the client's.
 //!
-//! desktop-qt and the phone call it through the C functions in [`ffi`]; a Rust
+//! the phone calls it through the C functions in [`ffi`]; a Rust
 //! client uses the crate as it is.
 
 use std::str::FromStr;

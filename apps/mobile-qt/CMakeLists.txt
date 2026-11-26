@@ -14,10 +14,9 @@ find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick Quick
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
 
-# The phone client is the desktop's shell with another root: the same MC
-# client and controllers (hal_c2_native) and the same bricks, laid out for a
-# phone by HalC2.Mobile.
-set(HAL_C2_DESKTOP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../desktop-qt")
+# The phone client is the shared native shell (hal_c2_native: the MC client
+# and controllers in src/native, which desktop-qt used to own) with a phone
+# root: the same bricks, laid out for a phone by HalC2.Mobile.
 
 # Where the QML lives on disk. A build for this machine loads it from there so
 # edits hot-reload, as the desktop does; a device only has the compiled-in copies.
@@ -43,21 +42,21 @@ qt_add_executable(hal-c2-mobile
   src/Resume.h
   src/TurnAgents.cpp
   src/TurnAgents.h
-  "${HAL_C2_DESKTOP_DIR}/src/LocalFolderModel.cpp"
-  "${HAL_C2_DESKTOP_DIR}/src/LocalFolderModel.h"
-  "${HAL_C2_DESKTOP_DIR}/src/ScriptedRun.cpp"
-  "${HAL_C2_DESKTOP_DIR}/src/ScriptedRun.h"
-  "${HAL_C2_DESKTOP_DIR}/src/ShellRuntime.cpp"
-  "${HAL_C2_DESKTOP_DIR}/src/ShellRuntime.h"
-  "${HAL_C2_DESKTOP_DIR}/src/StoragePaths.cpp"
-  "${HAL_C2_DESKTOP_DIR}/src/StoragePaths.h"
-  "${HAL_C2_DESKTOP_DIR}/src/ThemeStore.cpp"
-  "${HAL_C2_DESKTOP_DIR}/src/ThemeStore.h"
+  src/LocalFolderModel.cpp
+  src/LocalFolderModel.h
+  src/ScriptedRun.cpp
+  src/ScriptedRun.h
+  src/ShellRuntime.cpp
+  src/ShellRuntime.h
+  src/StoragePaths.cpp
+  src/StoragePaths.h
+  src/ThemeStore.cpp
+  src/ThemeStore.h
 )
 
-include("${HAL_C2_DESKTOP_DIR}/cmake/NativeShell.cmake")
+include(cmake/NativeShell.cmake)
 hal_c2_add_native_library()
-include("${HAL_C2_DESKTOP_DIR}/cmake/PlatformWindow.cmake")
+include(cmake/PlatformWindow.cmake)
 hal_c2_target_platform_window(hal-c2-mobile)
 include(cmake/Terminal.cmake)
 hal_c2_target_terminal(hal-c2-mobile)

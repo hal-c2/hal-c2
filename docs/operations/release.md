@@ -93,10 +93,7 @@ a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that releas
 `HAL_C2_UPGRADE_URL` names another host, and pass bundles on to their cluster peers. See the
 [MC README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
 
-## Qt desktop
+## Desktop
 
-`.github/workflows/desktop-qt.yml` builds and tests it on every change to `main` and every pull
-request that touches it. Its own packaging scripts (`apps/desktop-qt/scripts/package-linux.sh`,
-`package-macos.sh`) still build its AppImage and app bundle by hand, but `release:linux` and
-`release:macos` no longer use them: they package the Ljós desktop through
-`release:desktop-ljos`. Nothing publishes either yet.
+`.github/workflows/desktop-ljos.yml` builds and tests the Ljós desktop on every change to
+`main` and every pull request that touches it. Nothing publishes a desktop build yet.
