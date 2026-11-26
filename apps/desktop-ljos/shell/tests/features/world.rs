@@ -736,6 +736,7 @@ impl World {
             token: token.to_owned(),
             label: String::new(),
             environment_id: String::new(),
+            expires_at: String::new(),
         };
         hal_c2_shell::open(self.engine(), &session).map_err(Failure)?;
         self.wait_for("the shell to subscribe", |w| w.shell_subscriptions() >= 1)
