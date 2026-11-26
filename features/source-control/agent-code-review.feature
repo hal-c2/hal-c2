@@ -1140,6 +1140,14 @@ Feature: Agent code review
       And the review of #12 is still waiting with its comments
 
     @mc
+    Scenario: A publish refused for a draft review left on GitHub says to finish that draft
+      Given the review of #12 is waiting to be published
+      And the user has an unsubmitted draft review on #12 on GitHub
+      When the user publishes the review of #12
+      Then the user is told to submit or discard their draft review on GitHub, then publish again
+      And the review of #12 is still waiting, its draft on GitHub left alone
+
+    @mc
     Scenario: A post GitHub's rate limit turned away is posted again at the next look
       Given the publishing mode for "acme/api" is "automatic"
       And GitHub turns reviews away for its rate limit

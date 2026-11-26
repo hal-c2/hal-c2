@@ -479,6 +479,80 @@ defmodule HalC2.PullRequestsTest do
     assert calls(dir, "") == []
   end
 
+  # gh prints only "gh: Unprocessable Entity (HTTP 422)" when GitHub's answer has both a
+  # message and an `errors` list; the reason is in the body, on stdout.
+  defp refused_review(errors, message \\ "Unprocessable Entity"),
+    do: [
+      permissions_rule("WRITE"),
+      %{
+        "args" => ["--method POST", "pulls/5/reviews"],
+        "head" => %{"status" => "HTTP/2.0 422 Unprocessable Entity"}
+      },
+      %{
+        "args" => ["--method POST", "pulls/5/reviews"],
+        "exit" => 1,
+        "stderr" => "gh: Unprocessable Entity (HTTP 422)\n",
+        "stdout" => %{
+          "message" => message,
+          "errors" => errors,
+          "documentation_url" => "https://docs.github.com/rest/pulls/reviews",
+          "status" => "422"
+        }
+      }
+    ]
+
+  test "a call GitHub refuses says GitHub's reason, not only its status", %{dir: dir} do
+    rules!(dir, refused_review(["Can not approve your own pull request"]))
+
+    assert {:error,
+            %{
+              "message" =>
+                "Pull request operation submitReview failed: Unprocessable Entity: " <>
+                  "Can not approve your own pull request (HTTP 422)"
+            }} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "approve", "body" => "x"}))
+
+    rules!(
+      dir,
+      refused_review([%{"resource" => "PullRequestReview", "message" => "Line is gone"}])
+    )
+
+    assert {:error, %{"detail" => "Unprocessable Entity: Line is gone (HTTP 422)"}} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    rules!(
+      dir,
+      refused_review([%{"resource" => "Label", "field" => "name", "code" => "invalid"}])
+    )
+
+    assert {:error, %{"detail" => "Unprocessable Entity: Label name invalid (HTTP 422)"}} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    # A long message and a long reason are each cut to 200 characters.
+    rules!(dir, refused_review([String.duplicate("r", 500)], String.duplicate("m", 500)))
+    clipped = fn char -> String.duplicate(char, 199) <> "…" end
+
+    assert {:error, %{"detail" => detail}} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    assert detail == "#{clipped.("m")}: #{clipped.("r")} (HTTP 422)"
+  end
+
+  test "a review GitHub refuses for a draft left on GitHub says to finish that draft",
+       %{dir: dir} do
+    rules!(dir, refused_review(["User can only have one pending review per pull request"]))
+
+    assert {:error, %{"detail" => detail}} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    assert detail ==
+             "This account has an unsubmitted draft review on this pull request on GitHub. " <>
+               "Submit or discard it there, then publish again."
+
+    # The draft is the user's: nothing else is sent to GitHub to clear it.
+    assert [_] = calls(dir, "reviews")
+  end
+
   test "expanding reads only the two sides of one changed file", %{dir: dir} do
     base = String.duplicate("a", 40)
     head = String.duplicate("b", 40)

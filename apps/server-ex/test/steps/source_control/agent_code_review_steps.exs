@@ -2315,14 +2315,51 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "waiting"))
   end
 
+  # gh's stderr has only GitHub's message when its answer also lists `errors`; the
+  # reason is in the body.
   step "GitHub refuses the review", context do
+    refuse_reviews(context, "Can not approve your own pull request")
+  end
+
+  step "the user has an unsubmitted draft review on \#{int} on GitHub", context do
+    refuse_reviews(context, "User can only have one pending review per pull request")
+  end
+
+  step "the user is told to submit or discard their draft review on GitHub, then publish again",
+       context do
+    assert {:error, _, _} = context.reply
+
+    assert inspect(context.reply) =~
+             "This account has an unsubmitted draft review on this pull request on GitHub. " <>
+               "Submit or discard it there, then publish again."
+
+    context
+  end
+
+  step "the review of \#{int} is still waiting, its draft on GitHub left alone",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["publishError"])
+    assert %{"status" => "waiting", "comments" => [_, _]} = review
+    assert review["publishError"] =~ "Submit or discard it there"
+    # One post, and no call that would submit or discard the user's draft.
+    writes =
+      for c <- World.cli_calls(context, "pulls/#{number}/reviews"), "--method" in c["args"], do: c
+
+    assert [%{"args" => args}] = writes
+    assert "POST" in args
+    context
+  end
+
+  defp refuse_reviews(context, reason) do
     World.cli_rules(context, [
       %{
         "args" => ["--method POST", "pulls/12/reviews"],
-        "stderr" =>
-          "gh: Unprocessable Entity\nCan not approve your own pull request (HTTP 422)\n",
-        "stdout" =>
-          ~s({"message":"Unprocessable Entity","errors":["Can not approve your own pull request"]}),
+        "head" => %{"status" => "HTTP/2.0 422 Unprocessable Entity"}
+      },
+      %{
+        "args" => ["--method POST", "pulls/12/reviews"],
+        "stderr" => "gh: Unprocessable Entity (HTTP 422)\n",
+        "stdout" => JSON.encode!(%{"message" => "Unprocessable Entity", "errors" => [reason]}),
         "exit" => 1
       }
     ])
