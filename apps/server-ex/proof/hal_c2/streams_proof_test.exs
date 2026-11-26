@@ -13,6 +13,7 @@ defmodule HalC2.StreamsProofTest do
   @migration "the migration of an older MC's snapshot; while it runs the stream never idles out, fewer stops than the model's timeout rule allows"
   @pins "readers of a migrating state, sent their pin once it is done; changes no subscriber"
   @demote "when memory moves older runs to the cold table with a snapshot; changes no event or subscriber"
+  @release "the heap the state itself needed at the last garbage release; the release collects only garbage, answers and sends nothing, and arms the same idle timeout behind it"
   use HalC2.Proof,
     model: "streams.maude",
     module: "STREAMS",
@@ -68,6 +69,7 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server state :cold_waiters" => @await,
       "HalC2.Streams.Server state :pins" => @pins,
       "HalC2.Streams.Server state :demote_at" => @demote,
+      "HalC2.Streams.Server state :gc_floor" => @release,
       "HalC2.Streams.Server state :v" => "the version of the state, which no step changes",
       "HalC2.Streams.Server state :id" => "names the stream; the model has one",
       "HalC2.Streams.Server state :path" => "where the stream is stored; the model has the log",

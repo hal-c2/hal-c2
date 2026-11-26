@@ -94,6 +94,24 @@ defmodule HalC2.StreamsServerTest do
     HalC2.Web.Wire.entity("turn-item", HalC2.StreamState.get(state, "turn-item")[id])
   end
 
+  # Deciding a command can churn far more than the state it leaves behind. The
+  # garbage goes once the work is done, not after 15 quiet seconds no sweep
+  # allows: a following call is answered only after the release.
+  test "a stream releases the garbage a burst of work left behind" do
+    pid = Streams.ensure("th-1")
+
+    :ok =
+      Streams.transact("th-1", :thread, fn _ ->
+        garbage = for i <- 1..200_000, do: {i, "item-#{i}", [i, i, i]}
+        _ = length(garbage)
+        {[], :ok}
+      end)
+
+    _ = HalC2.Streams.Server.sequence(pid)
+    assert {:memory, memory} = Process.info(pid, :memory)
+    assert memory < 4_000_000, "stream still holds #{memory} bytes after its burst"
+  end
+
   test "a transaction that raises fails its caller and leaves the stream serving" do
     :ok = Streams.subscribe("th-1", self(), nil)
     pid = Streams.ensure("th-1")
