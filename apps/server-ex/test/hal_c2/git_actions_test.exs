@@ -331,6 +331,51 @@ defmodule HalC2.GitActionsTest do
     refute calls =~ "--head upstream/effect-atom"
   end
 
+  # Review finding r4714064268 on #1886: a branch cut from `origin/dev` and level
+  # with it has no commits to push, but `dev` is its base, not where it is
+  # published, so creating its pull request publishes it first. The fake `gh`
+  # refuses a head the repository does not have, as GitHub does.
+  test "creating a pull request publishes a branch cut from another that is level with it", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = Path.join(dir, "gh.log")
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/bin/sh
+    echo "$@" >> "#{log}"
+    if [ "$1 $2" = "pr list" ]; then echo '[]'; exit 0; fi
+    if [ "$1 $2" = "pr create" ]; then
+      while [ $# -gt 0 ]; do
+        if [ "$1" = "--head" ]; then head="$2"; fi
+        shift
+      done
+      git --git-dir="#{origin}" rev-parse -q --verify "refs/heads/$head" > /dev/null ||
+        { echo "pull request create failed: Head sha can't be blank" >&2; exit 1; }
+      echo 'https://github.com/acme/shop/pull/7'; exit 0
+    fi
+    echo '{}'
+    """)
+
+    File.chmod!(gh, 0o755)
+    fake_claude!(dir)
+    previous_gh = Application.get_env(:hal_c2, :gh_command)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "origin/feature/tax"}} = result
+    assert %{"pr" => %{"status" => "created", "headBranch" => "feature/tax"}} = result
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "dev\n"
+  end
+
   # Review finding r4705513530 on #1837: a branch published to a fork push
   # remote opens its pull request from the fork owner's head, and the
   # existing-PR lookup does not take a same-named branch on the base
@@ -626,8 +671,10 @@ defmodule HalC2.GitActionsTest do
   # A branch cut from another (`feature/tax` from `origin/dev`) keeps its
   # own name as the pull request's head, though `branch.feature/tax.merge`
   # names `dev`, the branch it was cut from. The commit has since landed
-  # on `dev`, so the action skips the push — its remembered base is main,
-  # which its commits are read against.
+  # on `dev`, so the branch is level with it, but `dev` is not where it is
+  # published: the action publishes it before posting it as the head
+  # (r4714064268 on #1886). Its remembered base, main, is kept, and its
+  # commits are read against it.
   test "a Forgejo pull request for a branch cut from another uses the branch's own name as its head",
        %{repo: repo, origin: origin} do
     dir = Path.dirname(repo)
@@ -644,6 +691,10 @@ defmodule HalC2.GitActionsTest do
     git!(repo, ~w(config branch.feature/tax.gh-merge-base main))
 
     assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "origin/feature/tax"}} = result
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "main\n"
 
     assert %{"pr" => %{"status" => "created", "number" => 43, "headBranch" => "feature/tax"}} =
              result

@@ -118,9 +118,14 @@ defmodule HalC2.GitActions do
     commit? = action in @commit_actions
     feature? = input["featureBranch"] == true
 
+    # A pull request needs its head published: a branch with no upstream, commits
+    # its upstream lacks, or an upstream that is its base rather than itself (cut
+    # from another branch, even one it is level with) is pushed first.
     push? =
       action in ~w(push commit_push commit_push_pr) or
-        (action == "create_pr" and (not status["hasUpstream"] or status["aheadCount"] > 0))
+        (action == "create_pr" and
+           (not status["hasUpstream"] or status["aheadCount"] > 0 or
+              not tracks_itself?(cwd, branch)))
 
     pr? = action in ~w(create_pr commit_push_pr)
 
@@ -477,7 +482,7 @@ defmodule HalC2.GitActions do
             do: upstream_name,
             else: upstream.ref
 
-        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+        remember_base(cwd, branch, base)
         result
 
       # Cut from a local branch: that branch is its base, as above, but it
@@ -488,7 +493,7 @@ defmodule HalC2.GitActions do
             fail!("Cannot push because no git remote is configured for this repository.")
 
         result = publish(cwd, branch, remote)
-        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", upstream_name])
+        remember_base(cwd, branch, upstream_name)
         result
 
       remote = push_remote(cwd, branch) ->
@@ -497,6 +502,29 @@ defmodule HalC2.GitActions do
       true ->
         fail!("Cannot push because no git remote is configured for this repository.")
     end
+  end
+
+  # Whether `branch`'s upstream is the branch itself on a remote, as opposed to
+  # a branch it was cut from.
+  defp tracks_itself?(_cwd, nil), do: false
+
+  defp tracks_itself?(cwd, branch) do
+    case Git.upstream(cwd, branch) do
+      %{remote: remote} = upstream when is_binary(remote) ->
+        Git.same_branch?(cwd, branch, upstream_branch_name(upstream))
+
+      _ ->
+        false
+    end
+  end
+
+  # Remembers the base a branch was cut from, unless one is remembered already
+  # (set by the user or `gh`), which still names the base it means.
+  defp remember_base(cwd, branch, base) do
+    key = "branch.#{branch}.gh-merge-base"
+
+    with {:error, _} <- Git.ok(cwd, ["config", "--get", key]),
+         do: Git.ok(cwd, ["config", key, base])
   end
 
   defp upstream_branch_name(%{remote: nil, ref: name}), do: name
