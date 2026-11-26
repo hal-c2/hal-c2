@@ -39,16 +39,23 @@ defmodule HalC2.PreviewAutomation do
   The limits are `config :hal_c2, :preview_tab_limits` (`session`, `mc`,
   `idle_ms`).
 
-  A request unanswered within its timeout drops that host's connection, whose
-  stream then ends so the desktop registers again; actions are never replayed.
-  A host that registers again under the same client id replaces its old
-  connection, which just stops getting requests.
+  A request unanswered within its timeout fails on its own and is never
+  replayed: the host may have applied it. One busy page must not cost every tab
+  its host, so the host is then sent a `status` probe, which desktops answer at
+  once without touching a page. Anything the connection says within the probe's
+  five seconds shows the host alive, and the timeout error says so
+  (`hostResponding: true`); a silent probe drops the connection, whose stream
+  then ends so the desktop registers again (`hostResponding: false`). A host
+  that registers again under the same client id replaces its old connection,
+  which just stops getting requests.
   """
 
   use GenServer
 
   @v1_operations ~w(status open navigate snapshot click type press scroll evaluate waitFor recordingStart recordingStop)
   @default_timeout 15_000
+  # How long a host that let a request time out has to answer a status probe.
+  @probe_ms 5_000
   @tab_limits %{session: 8, mc: 32, idle_ms: 30 * 60_000}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -99,7 +106,12 @@ defmodule HalC2.PreviewAutomation do
   """
   def invoke(scope, operation, input, opts \\ []) do
     timeout = opts[:timeout_ms] || @default_timeout
-    GenServer.call(__MODULE__, {:invoke, scope, operation, input, opts}, timeout + 5_000)
+    # A timed-out request waits for its host's probe before it answers.
+    GenServer.call(
+      __MODULE__,
+      {:invoke, scope, operation, input, opts},
+      timeout + @probe_ms + 5_000
+    )
   catch
     :exit, {:noproc, _} -> {:error, no_host(scope, operation)}
   end
@@ -144,7 +156,8 @@ defmodule HalC2.PreviewAutomation do
           else: "No active preview tab was found for #{op}."
 
       "PreviewAutomationTimeoutError" ->
-        "Preview automation #{op} timed out after #{error["timeoutMs"]}ms."
+        "Preview automation #{op} timed out after #{error["timeoutMs"]}ms." <>
+          timeout_cause(error)
 
       "PreviewAutomationNavigationTimeoutError" ->
         "Preview automation navigation timed out after #{error["timeoutMs"]}ms."
@@ -166,6 +179,17 @@ defmodule HalC2.PreviewAutomation do
     end
   end
 
+  @doc "Why a timeout happened, from its `hostResponding`, as sentences to append."
+  def timeout_cause(%{"hostResponding" => true}),
+    do:
+      " The desktop is still answering, so the page is busy: its main thread is blocked or the action is still running. Check the page before repeating an action, and give the tool a longer timeoutMs (up to 60000) where it takes one."
+
+  def timeout_cause(%{"hostResponding" => false}),
+    do:
+      " The desktop did not answer a status check either, so its connection was dropped; it registers again once it responds. Check the page before repeating an action, or ask the user whether HAL-C2's desktop app is running."
+
+  def timeout_cause(_), do: ""
+
   # --- server --------------------------------------------------------------------
 
   @impl true
@@ -177,6 +201,7 @@ defmodule HalC2.PreviewAutomation do
        owners: %{},
        used: %{},
        pending: %{},
+       probes: %{},
        seq: 0,
        focus_seq: 0
      }}
@@ -193,7 +218,8 @@ defmodule HalC2.PreviewAutomation do
     {:ok,
      %{state | assignments: assignments}
      |> Map.update(:owners, owners, &Map.merge(owners, &1))
-     |> Map.put_new(:used, %{})}
+     |> Map.put_new(:used, %{})
+     |> Map.put_new(:probes, %{})}
   end
 
   @impl true
@@ -408,6 +434,7 @@ defmodule HalC2.PreviewAutomation do
   def handle_cast({:focus, %{"connectionId" => connection_id} = host}, state) do
     case state.clients[host["clientId"]] do
       %{connection_id: ^connection_id} = client ->
+        state = settle_probe(state, connection_id, true)
         focused = host["focused"] == true
         focus_seq = if focused, do: state.focus_seq + 1, else: state.focus_seq
 
@@ -444,6 +471,13 @@ defmodule HalC2.PreviewAutomation do
   def handle_cast({:respond, response}, state) do
     %{"clientId" => client_id, "connectionId" => connection_id} = response
 
+    # Any answer, even a late one or the probe's own, shows the host alive.
+    state =
+      case state.clients[client_id] do
+        %{connection_id: ^connection_id} -> settle_probe(state, connection_id, true)
+        _ -> state
+      end
+
     case Map.pop(state.pending, response["requestId"]) do
       {%{client_id: ^client_id, connection_id: ^connection_id} = pending, rest} ->
         Process.cancel_timer(pending.timer)
@@ -477,14 +511,20 @@ defmodule HalC2.PreviewAutomation do
         {:noreply, state}
 
       pending ->
-        GenServer.reply(
-          pending.from,
-          {:error, tagged("PreviewAutomationTimeoutError", pending.context)}
-        )
-
+        # The host may have applied the action before going quiet, so it is not
+        # retried; whether the host itself is gone is the probe's to say.
         state = %{state | pending: Map.delete(state.pending, request_id)}
-        # The host may have applied the action before going quiet, so it is not retried.
-        {:noreply, drop_connection(state, pending.client_id, :evicted)}
+        {:noreply, probe(state, pending)}
+    end
+  end
+
+  def handle_info({:probe_timeout, connection_id, request_id}, state) do
+    case probes(state)[connection_id] do
+      %{request_id: ^request_id, client_id: client_id} ->
+        {:noreply, drop_connection(state, client_id, :evicted)}
+
+      _ ->
+        {:noreply, state}
     end
   end
 
@@ -531,9 +571,84 @@ defmodule HalC2.PreviewAutomation do
             a.connection_id == client.connection_id
           end)
 
+        # A host registering again is alive; one evicted or closed is not.
         %{state | clients: clients, pending: Map.new(pending), assignments: assignments}
+        |> settle_probe(client.connection_id, how == :replaced)
     end
   end
+
+  # Holds a timed-out request's error until its host answers a status probe or
+  # the probe runs out. One probe per connection: later timeouts wait on it.
+  defp probe(state, pending) do
+    waiter = %{from: pending.from, context: pending.context}
+    probes = probes(state)
+
+    case probes[pending.connection_id] do
+      %{waiting: waiting} = probe ->
+        probe = %{probe | waiting: [waiter | waiting]}
+        Map.put(state, :probes, Map.put(probes, pending.connection_id, probe))
+
+      nil ->
+        case state.clients[pending.client_id] do
+          %{connection_id: connection_id, pid: pid} when connection_id == pending.connection_id ->
+            request_id = "preview-#{state.seq}"
+
+            request = %{
+              "requestId" => request_id,
+              "threadId" => pending.context["threadId"],
+              "tabIdExplicit" => false,
+              "operation" => "status",
+              "input" => %{},
+              "timeoutMs" => @probe_ms
+            }
+
+            send(
+              pid,
+              {:hal_c2_preview_automation, node(), pending.client_id,
+               %{"type" => "request", "connectionId" => connection_id, "request" => request}}
+            )
+
+            probe = %{
+              request_id: request_id,
+              client_id: pending.client_id,
+              waiting: [waiter],
+              timer:
+                Process.send_after(
+                  self(),
+                  {:probe_timeout, connection_id, request_id},
+                  @probe_ms
+                )
+            }
+
+            %{Map.put(state, :probes, Map.put(probes, connection_id, probe)) | seq: state.seq + 1}
+
+          # The connection is already gone; its replacement or absence answers.
+          _ ->
+            answer_timeout(waiter, false)
+            state
+        end
+    end
+  end
+
+  # Ends `connection_id`'s probe, answering everything that waited on it.
+  defp settle_probe(state, connection_id, responding) do
+    case Map.pop(probes(state), connection_id) do
+      {nil, _} ->
+        state
+
+      {probe, probes} ->
+        Process.cancel_timer(probe.timer)
+        probe.waiting |> Enum.reverse() |> Enum.each(&answer_timeout(&1, responding))
+        Map.put(state, :probes, probes)
+    end
+  end
+
+  defp answer_timeout(%{from: from, context: context}, responding) do
+    error = context |> Map.put("hostResponding", responding)
+    GenServer.reply(from, {:error, tagged("PreviewAutomationTimeoutError", error)})
+  end
+
+  defp probes(state), do: Map.get(state, :probes, %{})
 
   defp live_assignment(state, key) do
     with %{client_id: client_id, connection_id: connection_id} = assignment <-
@@ -938,6 +1053,13 @@ defmodule HalC2.PreviewAutomation do
     |> Map.merge(%{"remoteTag" => error["_tag"], "remoteMessage" => error["message"]})
     |> put_present("maximumBytes", get_in(error, ["detail", "maximumBytes"]))
     |> put_present("targetMatched", get_in(error, ["detail", "matched"]))
+    # A desktop reporting its own timeout is plainly still answering.
+    |> then(
+      &if(tag == "PreviewAutomationTimeoutError",
+        do: Map.put(&1, "hostResponding", true),
+        else: &1
+      )
+    )
     |> then(&tagged(tag, &1))
   end
 

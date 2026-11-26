@@ -25,16 +25,24 @@ defmodule HalC2.Mcp.Preview do
     "preview_wait_for" => "waitFor",
     "preview_recording_start" => "recordingStart"
   }
-  # Only these take the tool's own timeoutMs; others use the broker's default.
-  @timed ~w(preview_navigate preview_resize preview_click preview_type preview_wait_for)
+  # Only these take the tool's own timeoutMs (the schema caps it at 60000); others
+  # use the broker's default and refuse one, so a wait is never silently shorter.
+  @timed ~w(preview_navigate preview_resize preview_click preview_type preview_wait_for
+            preview_evaluate preview_snapshot)
   @recording_stop_timeout 120_000
 
   def names, do: @tools
 
-  def call("preview_snapshot", args, caller) do
-    {_, input} = Map.split(args, ~w(includeImage save tabId))
+  def call(name, %{"timeoutMs" => timeout}, _caller)
+      when name not in @timed and timeout != nil do
+    {:error, "PreviewAutomationInvalidInputError",
+     "#{name} does not take timeoutMs; only #{Enum.join(@timed, ", ")} do. Call it without timeoutMs."}
+  end
 
-    case invoke(caller, "snapshot", input, tab: args["tabId"]) do
+  def call("preview_snapshot", args, caller) do
+    {_, input} = Map.split(args, ~w(includeImage save tabId timeoutMs))
+
+    case invoke(caller, "snapshot", input, tab: args["tabId"], timeout: args["timeoutMs"]) do
       {:ok, snapshot} ->
         snapshot_content(snapshot, args)
 
@@ -50,8 +58,10 @@ defmodule HalC2.Mcp.Preview do
 
   def call("preview_evaluate", args, caller) do
     {tab, input} = Map.pop(args, "tabId")
+    {timeout, input} = Map.pop(input, "timeoutMs")
 
-    with {:ok, value, icon} <- invoke_with_icon(caller, "evaluate", input, tab: tab),
+    with {:ok, value, icon} <-
+           invoke_with_icon(caller, "evaluate", input, tab: tab, timeout: timeout),
          do: {:ok, with_icon(%{"value" => value}, icon)}
   end
 
@@ -264,7 +274,8 @@ defmodule HalC2.Mcp.Preview do
         else: "matches no element on the page"
 
     "Preview automation click timed out after #{error["timeoutMs"]}ms. " <>
-      "The click's target, #{target}, #{presence}. The click may still have happened."
+      "The click's target, #{target}, #{presence}. The click may still have happened." <>
+      HalC2.PreviewAutomation.timeout_cause(error)
   end
 
   # A rejected target says what the tool accepts instead, in the terms of the

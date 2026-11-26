@@ -1001,10 +1001,20 @@ defmodule HalC2.Steps.Parity.Shapes do
         {frame, context}
 
       "end" ->
-        # A host that never answers is evicted, which ends its stream.
-        task = invoke(f, 50)
+        # A host that answers neither a request nor the status check after it is
+        # dropped, which ends its stream. Both of the broker's timers fire now.
+        task = invoke(f, 15_000)
+        request? = &(&1["event"]["type"] == "request")
+        {frame, context} = await(context, "previewAutomation", id, request?)
+        send(HalC2.PreviewAutomation, {:timeout, frame["event"]["request"]["requestId"]})
+        {probe, context} = await(context, "previewAutomation", id, request?)
+        %{"connectionId" => connection, "request" => %{"requestId" => checked}} = probe["event"]
+        send(HalC2.PreviewAutomation, {:probe_timeout, connection, checked})
         result = await(context, t, id, & &1, 5_000)
-        assert {:error, %{"_tag" => "PreviewAutomationTimeoutError"}} = Task.await(task)
+
+        assert {:error, %{"_tag" => "PreviewAutomationTimeoutError", "hostResponding" => false}} =
+                 Task.await(task)
+
         result
 
       "resourceTelemetry" ->

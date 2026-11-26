@@ -124,11 +124,21 @@ Feature: Agents drive the preview browser
       Then the tool fails saying no host is available for that action
       And the agent's later actions still go to the same browser
 
+    # HAL-C2 #1856: one busy page dropped its desktop, so every tab on it lost its host. Only a
+    # desktop that also leaves a status check unanswered is dropped.
+    @mc
+    Scenario: A busy page fails only the action that timed out
+      Given an agent is working in a desktop browser
+      When the desktop does not answer an action within its time limit but answers a status check
+      Then the tool fails saying the click timed out while the desktop is still answering
+      And the action is not tried a second time
+      And the same desktop takes the agent's next action
+
     @mc
     Scenario: A browser that does not answer in time is dropped
       Given an agent is working in a desktop browser
-      When the desktop does not answer an action within its time limit
-      Then the tool fails with "Preview automation click timed out after 15000ms."
+      When the desktop answers neither an action nor a status check within their time limits
+      Then the tool fails saying the click timed out and the desktop was dropped
       And the MC drops that desktop so it has to register again
       And the action is not tried a second time
 
@@ -374,7 +384,7 @@ Feature: Agents drive the preview browser
     @mc
     Scenario: An agent still owns its tab after its browser is dropped and registers again
       Given the thread has a browser tab the agent opened
-      And the desktop does not answer an action within its time limit
+      And the desktop answers neither an action nor a status check within their time limits
       And the MC drops that desktop so it has to register again
       When the desktop registers again after being dropped
       And the agent closes that tab
@@ -856,12 +866,22 @@ Feature: Agents drive the preview browser
       Then the MC waits up to 30 seconds for the desktop browser to answer
 
       Examples:
-        | action                  |
-        | navigate                |
-        | resize the page         |
-        | click a button          |
-        | type text into a field  |
-        | wait for text to appear |
+        | action                        |
+        | navigate                      |
+        | resize the page               |
+        | click a button                |
+        | type text into a field        |
+        | wait for text to appear       |
+        | evaluate a script in the page |
+        | take a snapshot               |
+
+    # HAL-C2 #1856: a time limit a tool ignored let an agent believe it had waited longer.
+    @mc
+    Scenario: An action with no time limit of its own refuses one
+      Given an agent is working in a desktop browser
+      When the agent presses a key allowing 30 seconds
+      Then the tool fails saying preview_press does not take a time limit
+      And no key press reaches the desktop browser
 
     @mc
     Scenario: An agent pages through the thread's preview tabs
