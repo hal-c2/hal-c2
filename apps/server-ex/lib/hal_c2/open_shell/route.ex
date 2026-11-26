@@ -33,7 +33,9 @@ defmodule HalC2.OpenShell.Route do
   CLIProxyAPI plugin put. `upstream_key` names the variable the upstream API's key is
   in, read from `env` and then `system` (the MC's environment). `proxied`, when given,
   is the name of the CLIProxyAPI plugin's instance of the same driver, which the
-  refusal for a missing key names as the way to review without one.
+  refusal for a missing key names as the way to review without one. `runtime`, when
+  given, is OpenShell's container runtime: on `"docker"` the refusal offers no
+  CLIProxyAPI, which `reachable/2` would refuse there.
 
   `{:ok, %{key: key, proxy: nil}}` for the API's own host, `{:ok, %{key: key, proxy:
   %{scheme, port, prefix}}}` for a proxy on this machine, else `{:error, message}`.
@@ -49,7 +51,7 @@ defmodule HalC2.OpenShell.Route do
         base == nil ->
           key(present(env[upstream_key]) || present(system[upstream_key]), nil, fn ->
             "A review sandbox needs #{upstream_key} for #{name(driver)}: a sign-in on this machine does not reach the sandbox. " <>
-              keyless(driver, upstream_key, Map.get(instance, :proxied))
+              keyless(driver, upstream_key, instance)
           end)
 
         not plugin? ->
@@ -215,12 +217,17 @@ defmodule HalC2.OpenShell.Route do
   end
 
   # The ways to a review without the upstream key: the CLIProxyAPI plugin's instance,
-  # when there is one, or the key itself.
-  defp keyless(_driver, upstream_key, proxied) when is_binary(proxied),
+  # when there is one, or the key itself. On Docker the sandbox reaches no CLIProxyAPI
+  # here (`reachable/2`), so only the key is.
+  defp keyless(_driver, upstream_key, %{runtime: "docker"}),
+    do:
+      "Set #{upstream_key} in this provider's environment in Settings → Providers. A review through CLIProxyAPI needs OpenShell on Podman."
+
+  defp keyless(_driver, upstream_key, %{proxied: proxied}) when is_binary(proxied),
     do:
       "Pick #{proxied} as the review agent in Settings → Code review, or set #{upstream_key} in this provider's environment in Settings → Providers."
 
-  defp keyless(driver, upstream_key, _proxied),
+  defp keyless(driver, upstream_key, _instance),
     do:
       "Set #{upstream_key} in this provider's environment in Settings → Providers, or review on #{name(driver)} via CLIProxyAPI, which the CLIProxyAPI plugin adds."
 

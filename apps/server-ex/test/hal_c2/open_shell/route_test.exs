@@ -57,6 +57,18 @@ defmodule HalC2.OpenShell.RouteTest do
         assert {:error, plain} = Route.pick(driver, bare, key)
         assert plain =~ "Set #{key} in this provider's environment"
         assert plain =~ "via CLIProxyAPI, which the CLIProxyAPI plugin adds"
+
+        # A sandbox on Docker reaches no CLIProxyAPI here, so neither is offered.
+        for instance <- [bare, Map.put(bare, :proxied, proxied)] do
+          assert {:error, docker} = Route.pick(driver, Map.put(instance, :runtime, "docker"), key)
+          assert docker =~ "Set #{key} in this provider's environment"
+          assert docker =~ "needs OpenShell on Podman"
+          refute docker =~ "Pick "
+          refute docker =~ "which the CLIProxyAPI plugin adds"
+        end
+
+        assert {:error, ^named} =
+                 Route.pick(driver, Map.merge(bare, %{proxied: proxied, runtime: "podman"}), key)
       end
     end
 

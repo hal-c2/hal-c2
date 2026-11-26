@@ -667,6 +667,7 @@ defmodule HalC2.OpenShell.Review do
   defp model(driver, instance) do
     settings = HalC2.Settings.settings()
     plugin = Host.added_instances(settings, "cliproxyapi")
+    runtime = HalC2.OpenShell.state()["driver"]
 
     with {:ok, model} <- driver_model(driver),
          {:ok, args} <- launch_args(driver, instance),
@@ -677,12 +678,13 @@ defmodule HalC2.OpenShell.Review do
                env: HalC2.Settings.instance_env(instance),
                args: args,
                plugin?: instance in plugin,
-               proxied: proxied(settings, plugin, driver)
+               proxied: proxied(settings, plugin, driver),
+               runtime: runtime
              },
              model.key,
              %{model.key => System.get_env(model.key)}
            ),
-         {:ok, route} <- Route.reachable(route, HalC2.OpenShell.state()["driver"]) do
+         {:ok, route} <- Route.reachable(route, runtime) do
       {:ok, Map.merge(model, %{credentials: %{model.key => route.key}, proxy: route.proxy})}
     end
   end
