@@ -4085,6 +4085,33 @@ defmodule HalC2.Steps.Providers.Claude do
     |> Map.put(:gateway_cooldown, cooldown)
   end
 
+  # The same gateway failure, reported as the 429 it is rather than wrapped in a 503.
+  defp gateway_429(context, message) do
+    context = running_turn(context)
+    text = "API Error: 429 " <> Jason.encode!(rate_limit_body(message))
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{"id" => "m-429", "content" => [%{"type" => "text", "text" => text}]}
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => 429,
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    context
+  end
+
+  step ~r/^a Claude turn ends at 13:00 with a direct 429 API error saying "(?<text>[^"]+)"$/,
+       %{args: [text]} = context do
+    context |> at_13_00() |> gateway_429(text)
+  end
+
   step ~r/^the thread is marked as limited with a reset time of (?<reset>[\d:]+)$/,
        %{args: [reset]} = context do
     [hour, minute, second] = reset |> String.split(":") |> Enum.map(&String.to_integer/1)

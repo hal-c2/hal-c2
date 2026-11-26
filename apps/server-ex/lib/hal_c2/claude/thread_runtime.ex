@@ -3432,16 +3432,17 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # A gateway (9router and the like) wraps Claude's 429 as a 503 `rate_limit_error` that
-  # names its cooldown, "(reset after 1h 2m 3s)". The reset is that long from now; a cooldown of zero or one that cannot be
-  # read is no usage limit.
-  defp gateway_reset(result, 503) do
+  # names its cooldown, "(reset after 1h 2m 3s)", or reports the 429 directly with the
+  # same words. The reset is that long from now; a cooldown of zero or one that cannot be
+  # read is no usage limit. A 503 must name the rate limit, or it is a provider error.
+  defp gateway_reset(result, status) when status in [429, 503] do
     text =
       Enum.join(
         [result["result"] | List.wrap(result["errors"])] |> Enum.filter(&is_binary/1),
         " "
       )
 
-    with true <- text =~ "rate_limit_error",
+    with true <- status == 429 or text =~ "rate_limit_error",
          [_, cooldown] <- Regex.run(~r/\(reset after ((?:\d+[hms] ?)+)\)/, text),
          seconds when seconds > 0 <- cooldown_seconds(cooldown) do
       reset_at(System.system_time(:second) + seconds)

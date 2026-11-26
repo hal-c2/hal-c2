@@ -1415,7 +1415,7 @@ Feature: Claude
 
   # Upstream #25438: a gateway's 429 that Claude reports directly, not wrapped in a 503, lost
   # the "(reset after …)" it carried, so the banner said "Reset time unavailable".
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A gateway's direct 429 is a usage limit that resets when it says
     When a Claude turn ends at 13:00 with a direct 429 API error saying "<text>"
     Then the thread is marked as limited <reset>
