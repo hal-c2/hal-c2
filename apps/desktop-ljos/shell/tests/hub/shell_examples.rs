@@ -373,54 +373,12 @@ fn the_dashboard_drawer_opens_on_its_cards_and_clock() {
 }
 
 #[test]
-#[cfg(not(target_os = "macos"))]
-fn the_macos_glass_example_falls_back_to_the_built_in_shell_elsewhere() {
-    // Its toolbar is QtQuick.Controls.macOS's, which only macOS has: the
-    // built-in shell shows instead, saying why, as desktop-qt does there.
-    let home = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let config = home.path().join("config");
-    std::fs::create_dir(&config).unwrap();
-    for entry in std::fs::read_dir(examples().join("glass-macos")).unwrap() {
-        let path = entry.unwrap().path();
-        std::fs::copy(&path, config.join(path.file_name().unwrap())).unwrap();
-    }
-    let roots = Roots::checkout().with_user(config.clone());
-    let compiled = compile_roots(&roots);
-    let engine = App::new("test")
-        .register(hal_c2_shell::register)
-        .build_engine();
-    // As the app's shell: the shell's `Window` gets a window of its own,
-    // where its popups find their overlay.
-    ljos_controls::WindowSystem::of(&engine).set_host(|| {});
-    hal_c2_shell::start(
-        &engine,
-        &Launch {
-            config_dir: Some(config),
-            ..Launch::default()
-        },
-        Rc::new(Disconnected::default()),
-    );
-    engine.set_component_source(compiled.source);
-    runtime::open(&engine).unwrap();
-    let runtime = engine.singleton::<ShellRuntime>().unwrap();
-    let read = |name| {
-        engine
-            .to_js_string(&engine.read_by_name(runtime, name))
-            .to_string()
-    };
-    assert_eq!(read("usingUserShell"), "false");
-    assert_ne!(read("lastError"), "");
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-#[ignore = "needs a Ljós pin with QtQuick.Controls.macOS (hal-c2/ljos-ui#732)"]
-fn the_macos_glass_example_loads_on_macos() {
-    // Its toolbar is QtQuick.Controls.macOS's (hal-c2/ljos-ui#730): this
-    // passes once the Ljós pin brings that module in, and then holds the
-    // example to what it is for at every width: the glass sidebar beside
-    // an opaque centre, under one title band. Example::install asserts
-    // usingUserShell and an empty lastError.
+fn the_macos_glass_example_loads() {
+    // Its toolbar is QtQuick.Controls.macOS's, which Ljós has on every
+    // platform (hal-c2/ljos-ui#732), where Qt has it only on macOS: the
+    // example loads everywhere, and at every width holds the glass sidebar
+    // beside an opaque centre, under one title band. Example::install
+    // asserts usingUserShell and an empty lastError.
     for width in [1400.0, 1000.0, 640.0] {
         let example = Example::install("glass-macos", width);
         fits(&example, width);
