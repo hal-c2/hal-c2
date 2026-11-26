@@ -115,7 +115,6 @@ Feature: Models
 
   # ClaudeModelManifest.ts hasValidClaudeManifestAdapters: the rest of the manifest being
   # sound does not save a Claude catalog whose version range or profile is malformed.
-  @backlog
   Scenario Outline: A manifest with a malformed Claude catalog is refused as a whole
     When the MC downloads a manifest whose Claude catalog has <problem>
     Then the last usable manifest is kept
