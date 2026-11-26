@@ -89,6 +89,11 @@ proptest! {
         let mut app = 1u32;
         let mut versions = [0u32, 0];
         let behind = [true, true];
+        // The model's own record, kept beside the core's: who waits
+        // to come back, who was given up on, and how updates ended.
+        let mut waiting: std::collections::HashMap<String, u32> = Default::default();
+        let mut gave_up: std::collections::HashMap<String, u32> = Default::default();
+        let mut outcomes: std::collections::HashMap<String, bool> = Default::default();
         for action in actions {
             match action {
                 Action::Session(word) => {
@@ -109,11 +114,15 @@ proptest! {
                 }
                 Action::Answer(id, ok) => {
                     // An update starts and the MC answers it.
-                    let left = format!("0.{}.0", versions[usize::from(id != "env-a")]);
+                    let index = usize::from(id != "env-a");
+                    let left = format!("0.{}.0", versions[index]);
                     if ok {
-                        core.reconnecting.insert(id, left);
+                        core.reconnecting.insert(id.clone(), left);
+                        waiting.insert(id.clone(), versions[index]);
+                        gave_up.remove(&id);
                     } else {
                         core.outcomes.insert(id.clone(), Outcome { ok: false, text: "failed".into() });
+                        outcomes.insert(id, false);
                     }
                 }
                 Action::ComeBack(id) => {
@@ -123,7 +132,11 @@ proptest! {
                 Action::GiveUp(id) => {
                     if let Some(left) = core.reconnecting.remove(&id) {
                         core.outcomes.insert(id.clone(), Outcome { ok: false, text: "gave up".into() });
-                        core.gave_up_on.insert(id, left);
+                        core.gave_up_on.insert(id.clone(), left);
+                    }
+                    if let Some(left) = waiting.remove(&id) {
+                        outcomes.insert(id.clone(), false);
+                        gave_up.insert(id, left);
                     }
                 }
                 Action::ProviderEnd(id, ok) => {
@@ -140,6 +153,18 @@ proptest! {
                 machine("env-a", &format!("0.{}.0", versions[0]), caps("hot-upgrade", false)),
                 machine("env-b", &format!("0.{}.0", versions[1]), caps("desktop-managed", true)),
             ];
+            // The model's settle, in its own words: a machine back
+            // on another version settles the wait for it.
+            for id in ["env-a", "env-b"] {
+                let version = versions[usize::from(id != "env-a")];
+                if waiting.get(id).is_some_and(|left| *left != version) {
+                    waiting.remove(id);
+                    outcomes.insert(id.into(), true);
+                } else if gave_up.get(id).is_some_and(|left| *left != version) {
+                    gave_up.remove(id);
+                    outcomes.insert(id.into(), true);
+                }
+            }
             let settled = core.settle(&machines);
             for id in settled {
                 core.reconnecting.remove(&id);
@@ -147,11 +172,43 @@ proptest! {
             let local = vec![provider("codex", behind[0], "")];
             core.providers.insert("env-b".into(), vec![provider("codex", behind[1], "")]);
             let state = core.state(&machines, &app_version, ready, &local);
-            // The updatable count is the machines updateAll reaches.
-            prop_assert_eq!(
-                state["updatable"].as_u64(),
-                Some(core.updatable(&machines, &app_version, ready).len() as u64)
-            );
+            // The updatable count is the machines updateAll reaches,
+            // counted from the model: may operate, online, a target
+            // (a newer cached release, else a newer app), and no
+            // update already running or waiting to come back.
+            let may = ready && core.session == Session::May;
+            let expected_updatable = machines.iter().filter(|machine| {
+                let index = usize::from(machine.environment_id != "env-a");
+                let released = core.releases.get(&machine.environment_id).is_some_and(|r| {
+                    r.available
+                        .strip_prefix("0.")
+                        .and_then(|rest| rest.strip_suffix(".0"))
+                        .and_then(|n| n.parse::<u32>().ok())
+                        .is_some_and(|n| n > versions[index])
+                });
+                may && (released || app > versions[index])
+                    && !waiting.contains_key(&machine.environment_id)
+            }).count();
+            prop_assert_eq!(state["updatable"].as_u64(), Some(expected_updatable as u64));
+            // Outcomes are the model's, machine by machine.
+            for shown in state["machines"].as_array().unwrap() {
+                let id = shown["environmentId"].as_str().unwrap();
+                prop_assert_eq!(
+                    shown["outcome"].get("ok").and_then(|v| v.as_bool()),
+                    outcomes.get(id).copied(),
+                    "outcome for {}", id
+                );
+            }
+            // Codex is behind on both machines: one group of two
+            // exactly when updates may start at all.
+            let groups = state["groups"].as_array().unwrap();
+            if may {
+                prop_assert_eq!(groups.len(), 1);
+                prop_assert_eq!(groups[0]["driver"].as_str(), Some("codex"));
+                prop_assert_eq!(groups[0]["count"].as_u64(), Some(2));
+            } else {
+                prop_assert!(groups.is_empty());
+            }
             for (index, shown) in state["machines"].as_array().unwrap().iter().enumerate() {
                 let machine = &machines[index];
                 // Nothing starts where it is blocked, and a target

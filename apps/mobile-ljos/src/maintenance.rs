@@ -149,14 +149,20 @@ pub fn newest_on(releases: &[Json], channel: &str) -> Option<String> {
 }
 
 fn text_at(object: &Map<String, Json>, path: &str) -> String {
-    let mut value = Json::Object(object.clone());
-    for part in path.split('.') {
-        value = value
-            .as_object()
-            .and_then(|map| map.get(part).cloned())
-            .unwrap_or(Json::Null);
+    let mut value = object as &Map<String, Json>;
+    let mut parts = path.split('.');
+    let last = parts.next_back().unwrap_or_default();
+    for part in parts {
+        let Some(next) = value.get(part).and_then(Json::as_object) else {
+            return String::new();
+        };
+        value = next;
     }
-    value.as_str().unwrap_or_default().to_owned()
+    value
+        .get(last)
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn provider_updating(provider: &Map<String, Json>) -> bool {
@@ -351,8 +357,11 @@ impl Core {
     }
 
     pub fn target(&self, machine: &Machine, app_version: &str) -> String {
+        // A cached release counts only while it is still newer:
+        // another client may have moved the machine past it.
         if let Some(release) = self.releases.get(&machine.environment_id)
             && !release.available.is_empty()
+            && server_behind(&release.available, &machine.version)
         {
             return release.available.clone();
         }
@@ -989,6 +998,9 @@ impl Maintenance {
                         }
                         _ => Session::Failed,
                     };
+                    if c.open && c.core.session == Session::May {
+                        c.read_providers(engine);
+                    }
                     c.publish(engine);
                 });
             }),
@@ -996,7 +1008,9 @@ impl Maintenance {
     }
 
     fn read_providers(&mut self, engine: &Engine) {
-        if !self.mc.is_ready() {
+        // The MC needs orchestration:operate for the refresh: a
+        // denied automatic call is no provider error to record.
+        if !self.mc.is_ready() || self.core.session != Session::May {
             return;
         }
         for machine in self.machines(engine) {
@@ -1095,10 +1109,20 @@ impl Maintenance {
                             release.text = format!("Could not check releases ({why}). Try again.");
                         }
                         Ok(body) => {
-                            let releases: Vec<Json> = serde_json::from_slice(&body)
-                                .ok()
-                                .and_then(|value: Json| value.as_array().cloned())
-                                .unwrap_or_default();
+                            let parsed: Option<Vec<Json>> =
+                                serde_json::from_slice::<Json>(&body)
+                                    .ok()
+                                    .and_then(|value| value.as_array().cloned());
+                            let Some(releases) = parsed else {
+                                release.text =
+                                    "Could not check releases (the release index answered something unreadable). Try again."
+                                        .into();
+                                c.core
+                                    .releases
+                                    .insert(machine.environment_id.clone(), release);
+                                c.publish(engine);
+                                return;
+                            };
                             if let Some(newest) = newest_on(&releases, &channel) {
                                 // Never back: an environment ahead of
                                 // the newest release stays where it is.
@@ -1132,6 +1156,7 @@ impl Maintenance {
                     available: String::new(),
                 },
             );
+            self.publish(engine);
         }
     }
 
@@ -1165,7 +1190,9 @@ impl Maintenance {
         self.core
             .updating
             .insert(machine.environment_id.clone(), machine.version.clone());
-        self.core.gave_up_on.remove(&machine.environment_id);
+        // The late-reconnect record stays until the retry is
+        // accepted: a rejected retry must not lose the first
+        // update's coming back (the C++ dropped it here).
         self.core.outcomes.remove(&machine.environment_id);
         let me = self.me.clone();
         let machine = machine.clone();
@@ -1193,6 +1220,7 @@ impl Maintenance {
                             c.core.message = Some(outcome);
                         }
                         Ok(result) => {
+                            c.core.gave_up_on.remove(&machine.environment_id);
                             let token = result
                                 .get("desktopUpdateToken")
                                 .and_then(Json::as_str)
