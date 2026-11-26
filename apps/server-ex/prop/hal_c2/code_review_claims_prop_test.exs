@@ -1494,7 +1494,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # Runs held at the fetch: the git pid of each fetch the hold keeps waiting; and the
-  # run whose take the laptop holds.
+  # run whose take the laptop holds. A take released is not held, though its name
+  # stays until it has written the row: drain/2 waits for that.
   defp parked do
     fetches =
       if File.exists?(fx_path("fetch.hold")) do
@@ -1505,7 +1506,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       end
 
     taking = :peer.call(laptop().pid, :erlang, :whereis, [:cr_peer_take])
-    fetches + if(is_pid(taking), do: 1, else: 0)
+    holding = :peer.call(laptop().pid, :persistent_term, :get, [:cr_peer_take_hold, false])
+    fetches + if(is_pid(taking) and holding, do: 1, else: 0)
   end
 
   # Back once the process replacing `old` publishes, as it does on starting. The

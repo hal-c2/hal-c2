@@ -695,7 +695,8 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # The machine that handed this one a review was stopped by the user before it heard
-  # this one took it (`untake/1`): queued here, it is stopped before it starts, and
+  # this one took it (`untake/1`): queued here, it is stopped before it starts, the
+  # checkout of a run before it (one that ran into a usage limit, say) going, and
   # running, as Stop stops it. Its review of that pull request is this one's, so a
   # review this one had already queued or started for itself is stopped too: the user
   # stopped the review of that pull request.
@@ -710,7 +711,7 @@ defmodule HalC2Plugins.CodeReview do
             "finishedAt" => now()
           })
 
-        {:reply, {:ok, nil}, state |> put(review) |> changed()}
+        {:reply, {:ok, review}, state |> put(review) |> changed()}
 
       %{"status" => "running"} ->
         handle_call({:stop, key}, from, state)
@@ -3598,11 +3599,10 @@ defmodule HalC2Plugins.CodeReview do
     settings = server(:settings)
 
     with {:ok, pr} <- find(settings, repository, number, ask["host"]),
-         pr =
-           if(ask["approved"] == pr["headSha"],
-             do: Map.put(pr, "approved", pr["headSha"]),
-             else: pr
-           ),
+         # The approval is the giver's, which saw every push: one this machine kept
+         # from before a push the giver saw, the head since pushed back, is no longer
+         # the user's.
+         pr = Map.put(pr, "approved", if(ask["approved"] == pr["headSha"], do: pr["headSha"])),
          true <-
            (not sandboxed?(settings, pr) or Host.sandboxes_ready?(@id)) ||
              {:error, "Review sandboxes can't run on this machine either."},

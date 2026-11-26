@@ -1533,6 +1533,28 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "waiting", "headSha" => ^second, "approved" => ^second} = review()
   end
 
+  # This machine kept the user's approval of the head, and its run of it failed. The
+  # machine handing it over saw a push since, the head pushed back after it: its ask
+  # brings no approval, and the one kept here is no longer the user's.
+  test "a review handed over unapproved there waits for the user, whatever was approved here",
+       context do
+    %{gateway: gateway} = sandboxed!(context)
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    first = context.shas[1]
+    FakeOpenShell.failing(gateway, ["CreateSandbox"])
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => first})
+    await_review(&(&1["status"] == "failed"))
+    assert %{"approved" => ^first, "headSha" => ^first} = review()
+    FakeOpenShell.failing(gateway, [])
+
+    ask = %{"repository" => "acme/api", "number" => 1, "trigger" => "user"}
+    assert {:error, message} = take(ask)
+    assert message =~ "Approve it on the Reviews page"
+    settle()
+    assert %{"status" => "failed", "approved" => nil} = review()
+  end
+
   # The machine that handed this one a review heard the user stopped it there only
   # once this one had taken it (`untake/1`).
   describe "a review handed over that the user stopped on the machine handing it" do
@@ -1558,11 +1580,14 @@ defmodule HalC2.CodeReviewTest do
 
       :ok = apply(@server, :handle_event, [event, %{}])
       settle()
-      assert %{"status" => "queued"} = review()
+      # The checkout of the run the limit stopped goes with it.
+      assert %{"status" => "queued", "checkout" => checkout} = review()
+      assert File.dir?(checkout)
 
       assert untake() == {:ok, nil}
       settle()
       assert %{"status" => "failed", "stopped" => true, "error" => "Stopped."} = review()
+      refute File.dir?(checkout)
     end
 
     test "leaves a review that is over as it is" do
