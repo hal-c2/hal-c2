@@ -240,10 +240,13 @@ defmodule HalC2.SourceControl do
     end
   end
 
-  # A pasted GitHub address names its repository: the scheme, host, query and
-  # one trailing ".git" are not part of the name ("acme/web.git/" and
+  # A pasted GitHub address names its repository: the scheme, query and one
+  # trailing ".git" are not part of the name ("acme/web.git/" and
   # "https://github.com/acme/web.git?tab=readme" are both "acme/web", while
-  # "acme/web.git.git" is the repository "web.git").
+  # "acme/web.git.git" is the repository "web.git"). A host other than
+  # github.com is kept ("github.example.com/acme/web"): `gh` reads
+  # HOST/OWNER/REPO as that host's repository, where OWNER/REPO alone would
+  # name one on its default host.
   defp github_repository_name(repository) when is_binary(repository) do
     path =
       repository
@@ -253,18 +256,20 @@ defmodule HalC2.SourceControl do
       |> String.trim_trailing("/")
       |> String.replace(~r{^[a-z][a-z0-9+.-]*://}, "")
 
-    segments = String.split(path, "/", trim: true)
+    case String.split(path, "/", trim: true) do
+      [host, owner, repo | _] when is_binary(host) ->
+        if String.contains?(host, ".") do
+          repo = String.replace_suffix(repo, ".git", "")
+          if host == "github.com", do: "#{owner}/#{repo}", else: "#{host}/#{owner}/#{repo}"
+        else
+          "#{host}/#{String.replace_suffix(owner, ".git", "")}"
+        end
 
-    segments =
-      if(
-        match?([host | _] when is_binary(host), segments) and String.contains?(hd(segments), "."),
-        do: tl(segments),
-        else: segments
-      )
+      [owner, repo | _] ->
+        "#{owner}/#{String.replace_suffix(repo, ".git", "")}"
 
-    case segments do
-      [owner, repo | _] -> "#{owner}/#{String.replace_suffix(repo, ".git", "")}"
-      _ -> repository
+      _ ->
+        repository
     end
   end
 

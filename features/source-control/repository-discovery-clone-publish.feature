@@ -471,6 +471,8 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | acme/web.git/                              | acme/web         |
       | github.com/acme/web.git                    | acme/web         |
       | acme/web.git.git                           | acme/web.git     |
+      | https://github.example.com/acme/web.git/   | github.example.com/acme/web |
+      | github.example.com/acme/web                | github.example.com/acme/web |
 
   @mc
   Scenario Outline: Looking up, cloning and publishing on other hosts
