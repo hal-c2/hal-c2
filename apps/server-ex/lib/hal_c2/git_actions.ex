@@ -463,9 +463,10 @@ defmodule HalC2.GitActions do
         %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream.ref}
 
       # Cut from another branch: the upstream is its base, not its publish
-      # target. Publish under its own name and remember the base.
+      # target. Publish under its own name — to the configured push remote when
+      # one is set, as git would, else to the base's remote — and remember the base.
       upstream && upstream.remote ->
-        result = publish(cwd, branch, upstream.remote)
+        result = publish(cwd, branch, configured_push_remote(cwd, branch) || upstream.remote)
         Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", upstream_name])
         result
 
@@ -498,7 +499,12 @@ defmodule HalC2.GitActions do
 
   # The remote a first push goes to: the branch's pushRemote, the repository's
   # pushDefault, then the primary remote — as git's own settings name them.
-  defp push_remote(cwd, branch) do
+  defp push_remote(cwd, branch),
+    do: configured_push_remote(cwd, branch) || Git.primary_remote(cwd)
+
+  # The push remote git's own settings name for `branch` (`branch.<name>.pushRemote`,
+  # then `remote.pushDefault`), or nil when neither names a remote that exists.
+  defp configured_push_remote(cwd, branch) do
     remotes = Git.remotes(cwd)
 
     configured =
@@ -509,7 +515,7 @@ defmodule HalC2.GitActions do
         end
       end)
 
-    if(configured in remotes, do: configured, else: Git.primary_remote(cwd))
+    if configured in remotes, do: configured
   end
 
   defp upstream_ref_exists?(cwd, %{remote: nil, ref: ref}),
@@ -542,11 +548,12 @@ defmodule HalC2.GitActions do
       fail!("Creating a PR needs the GitHub CLI (gh).")
 
     base = pr_base(cwd, branch)
+    head = pr_head(cwd, branch)
 
     case gh_json(
            cwd,
            ~w(pr list --state open --limit 1 --json number,title,url,baseRefName,headRefName --head) ++
-             [branch]
+             [head]
          ) do
       [%{"url" => url} = pr | _] ->
         %{
@@ -562,7 +569,7 @@ defmodule HalC2.GitActions do
         %{"title" => title, "body" => body} = pr_content(cwd, base, branch, kind)
 
         args =
-          ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
+          ["pr", "create", "--base", base, "--head", head, "--title", title] ++
             ["--body-file", "-"]
 
         case GitHub.gh(cwd, args, input: body, timeout: 120_000) do
@@ -574,7 +581,7 @@ defmodule HalC2.GitActions do
                   "url" => url,
                   "number" => String.to_integer(number),
                   "baseBranch" => base,
-                  "headBranch" => branch,
+                  "headBranch" => head,
                   "title" => title
                 }
 
@@ -679,10 +686,35 @@ defmodule HalC2.GitActions do
     end
   end
 
+  # The branch name the pull request is from, as the remote has it: a local
+  # alias of its upstream ("upstream/effect-atom" tracking "origin/effect-atom")
+  # is published under the upstream's name, so that is its head. A branch cut
+  # from another keeps its own name (its upstream is its base, not itself).
+  defp pr_head(cwd, branch) do
+    case Git.upstream(cwd, branch) do
+      %{remote: remote} = upstream when is_binary(remote) ->
+        name = upstream_branch_name(upstream)
+        if Git.same_branch?(cwd, branch, name), do: name, else: branch
+
+      _ ->
+        branch
+    end
+  end
+
   defp pr_base(cwd, branch) do
-    (Git.base_branch(cwd, branch) || "main")
-    |> String.replace_prefix("#{Git.primary_remote(cwd)}/", "")
-    |> then(&if(&1 == branch, do: "main", else: &1))
+    base = Git.base_branch(cwd, branch) || "main"
+
+    # The base as the host names it: its branch name, without the local remote
+    # it was read from (which need not be the primary one).
+    name =
+      Enum.find_value(Git.remotes(cwd), base, fn remote ->
+        case String.replace_prefix(base, "#{remote}/", "") do
+          ^base -> nil
+          stripped -> stripped
+        end
+      end)
+
+    if name == branch, do: "main", else: name
   end
 
   # The title and body the text generator writes for the branch's commits since `base`.

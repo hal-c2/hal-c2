@@ -269,14 +269,21 @@ defmodule HalC2.Git do
 
     # A branch tracking another branch was cut from it, so that branch is its
     # base; tracking its own name (or itself under a remote's prefix) says nothing.
+    # The tracked ref keeps its remote ("upstream/develop"), so the candidate loop
+    # cannot substitute the primary remote's branch of the same name.
     tracked =
       case upstream(root, branch) do
-        %{remote: nil, ref: name} -> name
-        %{remote: remote, ref: ref} -> String.replace_prefix(ref, "#{remote}/", "")
-        _ -> nil
-      end
+        %{remote: nil, ref: name} ->
+          if same_branch?(root, branch, name), do: nil, else: name
 
-    tracked = if tracked && same_branch?(root, branch, tracked), do: nil, else: tracked
+        %{remote: remote, ref: ref} ->
+          if same_branch?(root, branch, String.replace_prefix(ref, "#{remote}/", "")),
+            do: nil,
+            else: ref
+
+        _ ->
+          nil
+      end
 
     [configured, tracked, default, "main", "master"]
     |> Enum.reject(&(&1 in [nil, ""]))
@@ -293,6 +300,8 @@ defmodule HalC2.Git do
     |> Enum.reject(&(&1 == "" or &1 == branch))
     |> Enum.find_value(fn candidate ->
       cond do
+        # A candidate that already names its remote ("upstream/develop") is that ref.
+        ref?(root, "refs/remotes/#{candidate}") -> candidate
         remote && ref?(root, "refs/remotes/#{remote}/#{candidate}") -> "#{remote}/#{candidate}"
         ref?(root, "refs/heads/#{candidate}") -> candidate
         true -> nil

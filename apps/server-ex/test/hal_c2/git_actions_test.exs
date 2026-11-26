@@ -154,6 +154,89 @@ defmodule HalC2.GitActionsTest do
     refute message =~ "not a git repository"
   end
 
+  # Review of #1837: a branch cut from another branch is published where its
+  # pushRemote says, not necessarily to the remote it was cut from; the branch
+  # it was cut from stays its recorded base.
+  test "a branch cut from another is published to its push remote", %{
+    repo: repo,
+    origin: origin
+  } do
+    fork = Path.join(Path.dirname(repo), "fork.git")
+    git!(Path.dirname(repo), ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["remote", "add", "fork", fork])
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    dev_before = git!(origin, ~w(rev-parse dev))
+
+    assert {{:ok, %{"push" => push}}, _} = run(%{"cwd" => repo, "action" => "push"})
+    assert push["status"] == "pushed"
+    assert push["upstreamBranch"] == "fork/feature/tax"
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert git!(origin, ~w(rev-parse dev)) == dev_before
+    assert git!(origin, ~w(branch --list feature/tax)) == ""
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "dev\n"
+    assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "fork\n"
+  end
+
+  # Review of #1837: an alias branch is published under its upstream's name, so
+  # the pull request is looked up and created with that name as its head.
+  test "a pull request for an alias branch uses the published name as its head", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = Path.join(dir, "gh.log")
+
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/bin/sh
+    echo "$@" >> #{log}
+    if [ "$1 $2" = "pr list" ]; then echo '[]'; exit 0; fi
+    if [ "$1 $2" = "pr create" ]; then echo 'https://github.com/acme/shop/pull/7'; exit 0; fi
+    echo '{}'
+    """)
+
+    File.chmod!(gh, 0o755)
+
+    claude = Path.join(dir, "claude")
+
+    File.write!(claude, """
+    #!/bin/sh
+    cat > /dev/null
+    printf '{"type":"result","structured_output":{"subject":"Add greeting file.","title":"Add greeting","body":"- says hello","branch":"add greeting"}}\\n'
+    """)
+
+    File.chmod!(claude, 0o755)
+
+    previous_gh = Application.get_env(:hal_c2, :gh_command)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    Application.put_env(:hal_c2, :text_claude_command, claude)
+    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+
+    git!(repo, ["remote", "add", "upstream", origin])
+    git!(repo, ~w(push -q origin main:effect-atom))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b upstream/effect-atom origin/effect-atom))
+    File.write!(Path.join(repo, "e.txt"), "e\n")
+    git!(repo, ~w(add e.txt))
+    git!(repo, ~w(commit -q -m effect))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "branch" => "upstream/effect-atom"}} = result
+    assert %{"pr" => %{"status" => "created", "headBranch" => "effect-atom"}} = result
+
+    calls = File.read!(log)
+    assert calls =~ "--head effect-atom"
+    refute calls =~ "--head upstream/effect-atom"
+  end
+
   test "feature branch names" do
     assert GitActions.feature_branch_name("Add Login Form!") == "feature/add-login-form"
     assert GitActions.feature_branch_name("feature/x y") == "feature/x-y"

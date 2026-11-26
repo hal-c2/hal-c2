@@ -123,4 +123,41 @@ defmodule HalC2.GitTest do
     git.(work, ~w(checkout -q -b fix/effect-atom origin/effect-atom))
     assert HalC2.Git.base_branch(work, "fix/effect-atom") == "origin/effect-atom"
   end
+
+  # Review of #1837: a branch cut from a non-primary remote's branch keeps that
+  # remote as its base, even when the primary remote has a branch of the same name.
+  test "a branch cut from a non-primary remote keeps that remote as its base", %{tmp_dir: dir} do
+    git = fn cwd, args ->
+      {out, 0} =
+        System.cmd("git", ["-c", "user.name=t", "-c", "user.email=t@t" | args],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: [{"GIT_CONFIG_COUNT", nil}, {"GIT_CONFIG_GLOBAL", "/dev/null"}]
+        )
+
+      out
+    end
+
+    origin = Path.join(dir, "origin.git")
+    upstream = Path.join(dir, "upstream.git")
+    work = Path.join(dir, "work")
+    File.mkdir_p!(origin)
+    File.mkdir_p!(upstream)
+    File.mkdir_p!(work)
+    git.(origin, ~w(init -q --bare -b main))
+    git.(upstream, ~w(init -q --bare -b main))
+    git.(work, ~w(init -q -b main))
+    git.(work, ~w(commit -q --allow-empty -m init))
+    git.(work, ["remote", "add", "origin", origin])
+    git.(work, ["remote", "add", "upstream", upstream])
+    git.(work, ~w(push -q -u origin main))
+    # Both remotes have a "develop"; the branch tracks upstream's.
+    git.(work, ~w(push -q origin main:develop))
+    git.(work, ~w(push -q upstream main:develop))
+    git.(work, ~w(fetch -q --all))
+    git.(work, ~w(remote set-head origin main))
+    git.(work, ~w(checkout -q -b feature/tax upstream/develop))
+
+    assert HalC2.Git.base_branch(work, "feature/tax") == "upstream/develop"
+  end
 end
