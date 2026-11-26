@@ -904,6 +904,22 @@ defmodule HalC2.Terminal do
   def shell, do: Enum.find(shells(), &File.exists?(hd(&1)))
 
   defp shells do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> windows_shells()
+      _ -> posix_shells()
+    end
+  end
+
+  # PowerShell 7 first, then Windows PowerShell, then the command prompt:
+  # the first installed, by the name it is on the path under.
+  defp windows_shells do
+    for name <- ~w(pwsh powershell cmd),
+        path = System.find_executable(name),
+        path != nil,
+        do: [path]
+  end
+
+  defp posix_shells do
     requested = System.get_env("SHELL", "") |> String.split() |> List.first()
 
     [requested | Application.get_env(:hal_c2, :terminal_shells, @fallback_shells)]

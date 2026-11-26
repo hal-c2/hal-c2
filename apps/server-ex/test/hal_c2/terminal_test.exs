@@ -300,6 +300,27 @@ defmodule HalC2.TerminalTest do
                })
     end
 
+    # On Windows the pick is PowerShell 7, then Windows PowerShell, then cmd,
+    # by what is on the path; the stand-ins are links to this machine's shell.
+    @tag :tmp_dir
+    test "on Windows the shell is the first PowerShell installed, else cmd", %{tmp_dir: dir} do
+      Application.put_env(:hal_c2, :os_type, {:win32, :nt})
+      previous = System.get_env("PATH")
+      on_exit(fn -> Application.delete_env(:hal_c2, :os_type) end)
+      on_exit(fn -> System.put_env("PATH", previous) end)
+
+      for name <- ~w(powershell cmd), do: File.ln_s!("/bin/sh", Path.join(dir, name))
+      System.put_env("PATH", dir)
+      assert Terminal.shell() == [Path.join(dir, "powershell")]
+
+      File.ln_s!("/bin/sh", Path.join(dir, "pwsh"))
+      assert Terminal.shell() == [Path.join(dir, "pwsh")]
+
+      File.rm!(Path.join(dir, "pwsh"))
+      File.rm!(Path.join(dir, "powershell"))
+      assert Terminal.shell() == [Path.join(dir, "cmd")]
+    end
+
     test "a missing cwd is a contract error", %{input: input} do
       assert {:error, %{"_tag" => "TerminalCwdNotFoundError"}} =
                Terminal.open(%{input | "cwd" => "/nope/not/here"})
