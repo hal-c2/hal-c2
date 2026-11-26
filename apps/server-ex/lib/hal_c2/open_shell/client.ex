@@ -669,26 +669,46 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
-    {opts, dial} = within(opts, dial)
+    opts = within(opts)
 
     with {:ok, _sandbox} <- get_sandbox(conn, name, opts) do
+      dial = within(opts, dial)
       Exec.start(fn -> dial(dial) end, start, Keyword.get(opts, :owner, self()))
     end
   end
 
-  # An exec started for a caller with a `:deadline` checks the sandbox, and opens
-  # its connection, within what is left of it.
+  # An exec started for a caller with a `:deadline` checks the sandbox, and then
+  # opens its connection, each within what is left of it by then. The connection's
+  # TLS handshake has the same bound: gRPC's `:connect_timeout` alone stops waiting
+  # but leaves a handshake that never ends to be shut down, seconds later.
+  defp within(opts) do
+    case Keyword.fetch(opts, :deadline) do
+      {:ok, deadline} ->
+        Keyword.put(opts, :timeout, min(Keyword.get(opts, :timeout, @timeout), left(deadline)))
+
+      :error ->
+        opts
+    end
+  end
+
   defp within(opts, {target, dial_opts} = dial) do
     case Keyword.fetch(opts, :deadline) do
       {:ok, deadline} ->
-        left = max(deadline - now(), 1)
-        opts = Keyword.put(opts, :timeout, min(Keyword.get(opts, :timeout, @timeout), left))
-        {opts, {target, Keyword.put(dial_opts, :connect_timeout, left)}}
+        left = left(deadline)
+
+        dial_opts =
+          dial_opts
+          |> Keyword.put(:connect_timeout, left)
+          |> Keyword.put(:adapter_opts, transport_opts: [timeout: left])
+
+        {target, dial_opts}
 
       :error ->
-        {opts, dial}
+        dial
     end
   end
+
+  defp left(deadline), do: max(deadline - now(), 1)
 
   # OpenShell 0.1.7's supervisor queues at most 4 MiB of a command's stdin that the
   # command has not read (`MAX_PENDING_INPUT`), and input past that is not held back

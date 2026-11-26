@@ -635,6 +635,23 @@ defmodule HalC2.OpenShell.ClientTest do
       refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
 
+    # The lookup takes most of the deadline, and the exec's own connection then goes
+    # to a gateway that never answers: the connection gets only what is left.
+    @tag gateway: [get_sandbox: &__MODULE__.slow_lookup/0], timeout: 10_000, capture_log: true
+    test "an exec's connection has only what its lookup left of the deadline", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      {:ok, silent} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      on_exit(fn -> :gen_tcp.close(silent) end)
+      {:ok, port} = :inet.port(silent)
+      {_, dial_opts} = conn.dial
+      conn = %{conn | dial: {"ipv4:127.0.0.1:#{port}", dial_opts}}
+
+      started = System.monotonic_time(:millisecond)
+      deadline = started + 1_000
+      assert {:error, _} = Client.exec(conn, "box", ["true"], deadline: deadline)
+      assert System.monotonic_time(:millisecond) - started < 1_500
+    end
+
     @tag exec: :pieces
     test "a file that cannot be read is the write's error, and starts no command", %{
       conn: conn,
@@ -661,6 +678,9 @@ defmodule HalC2.OpenShell.ClientTest do
 
   @doc false
   def never, do: receive(do: (:never -> :ok))
+
+  @doc false
+  def slow_lookup, do: Process.sleep(800)
 
   # What the fake gateway runs for a test's `@tag exec:`.
   defp handler(:fails, _test) do
