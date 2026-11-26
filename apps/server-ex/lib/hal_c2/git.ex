@@ -76,7 +76,16 @@ defmodule HalC2.Git do
   # and says it where `stop_children/1` can find it when the caller was killed instead.
   defp stopping_children(key, argv, run) do
     File.mkdir_p!(Path.dirname(children_file(key)))
-    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
+
+    result =
+      try do
+        run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
+      catch
+        # The caller is stopping (`within/2`): what git started goes first.
+        :exit, reason ->
+          stop_children(key)
+          exit(reason)
+      end
 
     if match?({:ok, {:ok, _}}, result),
       do: File.rm(children_file(key)),
@@ -120,8 +129,11 @@ defmodule HalC2.Git do
 
   # Killing the task takes the program with it: Exile stops a process its owner
   # left, and the task stays linked so killing the caller takes both. Exits are
-  # trapped around the yield, so a task that exits abnormally reports
-  # `{:exit, reason}` here instead of taking the caller with it.
+  # trapped around the wait, so a task that exits abnormally reports
+  # `{:exit, reason}` here instead of taking the caller with it. A caller that did
+  # not trap exits itself still stops on another process's exit signal (its
+  # supervisor's `:shutdown`, a linked owner's crash) as it would have, taking the
+  # task with it, rather than carrying on once the task is done.
   @doc """
   Runs `fun` in a task given `ms` to finish (`nil` runs it in place):
   `{:ok, result}`, `{:exit, reason}` or `:timeout`.
@@ -133,11 +145,7 @@ defmodule HalC2.Git do
     task = Task.async(fun)
 
     try do
-      case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
-        {:ok, result} -> {:ok, result}
-        {:exit, reason} -> {:exit, reason}
-        nil -> :timeout
-      end
+      await(task, ms, trap)
     after
       receive do
         {:EXIT, pid, _reason} when pid == task.pid -> :ok
@@ -146,6 +154,28 @@ defmodule HalC2.Git do
       end
 
       Process.flag(:trap_exit, trap)
+    end
+  end
+
+  defp await(%Task{ref: ref, pid: pid} = task, ms, trap) do
+    receive do
+      {^ref, result} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, result}
+
+      {:DOWN, ^ref, _, _, reason} ->
+        {:exit, reason}
+
+      {:EXIT, from, reason} when from != pid and not trap and reason != :normal ->
+        Task.shutdown(task, :brutal_kill)
+        exit(reason)
+    after
+      ms ->
+        case Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> {:ok, result}
+          {:exit, reason} -> {:exit, reason}
+          nil -> :timeout
+        end
     end
   end
 

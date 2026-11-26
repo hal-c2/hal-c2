@@ -36,6 +36,52 @@ defmodule HalC2.GitTest do
     assert String.ends_with?(err, "without `workflow` scope\n")
   end
 
+  # A plugin's run, linked to the plugin, is stopped with it mid-fetch: it must not go
+  # on to the next step once git is gone.
+  test "a caller stopped while git runs stops there, and what git started with it",
+       %{tmp_dir: dir} do
+    git = Path.join(dir, "git")
+
+    File.write!(git, """
+    #!/bin/sh
+    sleep 60 &
+    echo $! > '#{dir}/child'
+    wait
+    """)
+
+    File.chmod!(git, 0o755)
+    previous = Application.fetch_env(:hal_c2, :git_command)
+    Application.put_env(:hal_c2, :git_command, git)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:hal_c2, :git_command, value)
+        :error -> Application.delete_env(:hal_c2, :git_command)
+      end
+    end)
+
+    test = self()
+
+    {caller, ref} =
+      spawn_monitor(fn ->
+        HalC2.Git.run(dir, ["fetch"], timeout: 60_000, stop_children: {__MODULE__, dir})
+        send(test, :went_on)
+      end)
+
+    child = Path.join(dir, "child")
+
+    {_, 0} =
+      System.cmd("timeout", ["5", "sh", "-c", "until [ -s '#{child}' ]; do sleep 0.05; done"])
+
+    Process.exit(caller, :shutdown)
+
+    assert_receive {:DOWN, ^ref, :process, ^caller, :shutdown}, 5_000
+    refute_received :went_on
+
+    pid = child |> File.read!() |> String.trim()
+    assert {_, 1} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+  end
+
   test "a variable named in unset is not in git's environment", %{tmp_dir: dir} do
     vars = ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
     previous = Map.new(vars, &{&1, System.get_env(&1)})
