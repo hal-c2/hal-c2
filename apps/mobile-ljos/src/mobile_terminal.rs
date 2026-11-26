@@ -385,10 +385,12 @@ impl MobileTerminal {
         let mut items: Vec<Item> = Vec::new();
         let mut terminals_group = Item::new("terminals", "Terminals");
         for listed in listing {
-            let ended = matches!(listed.status.as_str(), "exited" | "error");
-            if ended && listed.terminal_id != active {
-                continue;
-            }
+            // Every listed terminal is a row, ended ones included:
+            // a single screen keeps an ended shell in its listing
+            // and restarts it when it is opened, so dropping a
+            // non-active ended one here (as the C++ menu did before
+            // that listing existed) would leave it unreachable once
+            // another shell is the active one.
             let mut row = Item::new(
                 format!("terminal:{}", listed.terminal_id),
                 listed.label.clone(),
@@ -806,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_lists_live_terminals_scripts_and_the_open_ones_actions() {
+    fn the_menu_lists_terminals_scripts_and_the_open_ones_actions() {
         let listed = |id: &str, status: &str| ListedTerminal {
             terminal_id: id.into(),
             label: format!("Terminal {id}"),
@@ -832,9 +834,10 @@ mod tests {
                 "close"
             ]
         );
-        // The ended one is not the active one: it is not listed.
+        // The ended one is listed too, though it is not the active
+        // one: choosing it restarts its shell.
         let children: Vec<&str> = items[0].children.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(children, ["terminal:term-1"]);
+        assert_eq!(children, ["terminal:term-1", "terminal:term-2"]);
         assert!(items[0].children[0].checked);
         assert_eq!(items[2].children[0].label, "Test (setup)");
         // Shut: no context or text-size rows.
