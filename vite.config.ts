@@ -60,7 +60,7 @@ export default defineConfig({
       "packages/qml/HalC2/Bricks/js/usageChart.js",
       "packages/qml/HalC2/Bricks/js/spaceChart.js",
       // Exported Lottie animation, kept as the tool wrote it.
-      "apps/desktop-qt/examples/dashboard/cat-playing.json",
+      "apps/desktop-ljos/examples/dashboard/cat-playing.json",
       "*.icon/**",
     ],
     sortPackageJson: {},

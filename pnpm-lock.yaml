@@ -64,9 +64,6 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
-      lucide-react:
-        specifier: ^0.564.0
-        version: 0.564.0(react@19.2.6)
 
   apps/marketing:
     dependencies:
@@ -230,6 +227,12 @@ importers:
       react:
         specifier: 19.2.6
         version: 19.2.6
+
+  packages/qml:
+    devDependencies:
+      lucide-react:
+        specifier: ^0.564.0
+        version: 0.564.0(react@19.2.6)
 
   packages/shared:
     dependencies:

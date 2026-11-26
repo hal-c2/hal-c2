@@ -28,7 +28,7 @@ On macOS, `glass-macos` follows the system light/dark appearance, with real wind
 [Qt Quick's macOS controls](https://doc.qt.io/qt-6/qtquickcontrols-macos.html),
 and a [qt-liquid-glass](https://github.com/fsalinas26/qt-liquid-glass) backdrop.
 Copy all three files (`shell.qml`, `MacToolbarButton.qml`, and `theme.json`) into
-your shell directory, or pass `--config-dir apps/desktop-qt/examples/glass-macos`
+your shell directory, or pass `--config-dir apps/desktop-ljos/examples/glass-macos`
 to the Qt executable. A rebuild is required for the native backdrop support.
 The first macOS configure fetches a pinned dependency; an offline checkout can
 be supplied with `-DFETCHCONTENT_SOURCE_DIR_QT_LIQUID_GLASS=/path/to/qt-liquid-glass`.

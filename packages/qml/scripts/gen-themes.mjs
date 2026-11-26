@@ -1,7 +1,7 @@
 // Regenerates packages/qml/themes.json: the built-in palettes the shell resolves
 // its theme from (ThemeController), taken from packages/shared's
 // themePalettes.ts. Run
-// `node apps/desktop-qt/scripts/gen-themes.mjs` from the repo root after
+// `node packages/qml/scripts/gen-themes.mjs` from the repo root after
 // changing a palette. Colours stay as written there (oklch or hex); the shell
 // converts them when it loads the file.
 import * as NodeFS from "node:fs";

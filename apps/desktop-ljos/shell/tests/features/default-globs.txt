@@ -1,0 +1,865 @@
+# The scenarios this runner runs by default, one glob per line, relative to
+# features/ (a glob may name scenarios after a colon). Taken from
+# desktop-qt's tst_Features.cpp kDefaultGlobs and tst_Scenarios.qml when
+# desktop-ljos stopped reading them (#1661); this file is the list now.
+# Files whose leading comment block names this runner are added on top
+# (main.rs's own_files). mise-tasks/features/check reads this for the
+# held-outside-the-default-scope check; RATCHET is the proof.
+desktop/native-*.feature
+desktop/stage.feature
+connections/cluster.feature
+timeline/streaming.feature
+timeline/tool-calls.feature
+timeline/runs-and-queue.feature
+timeline/plans-and-subagents.feature
+timeline/markdown.feature
+timeline/scrolling-and-links.feature:A bare web address*
+timeline/scrolling-and-links.feature:A link in a reply opens only*
+timeline/scrolling-and-links.feature:A link's menu in a reply*
+timeline/scrolling-and-links.feature:A long thread opens*
+timeline/scrolling-and-links.feature:Earlier turns load*
+timeline/scrolling-and-links.feature:A thread that does not fill*
+timeline/scrolling-and-links.feature:The view follows new output*
+timeline/scrolling-and-links.feature:The end of the thread holds still*
+timeline/scrolling-and-links.feature:Scrolling away stops the view*
+timeline/scrolling-and-links.feature:The user returns to the end*
+connections/local-cache.feature
+timeline/scrolling-and-links.feature:The user cites part of a reply*
+navigation/environment-themes.feature
+navigation/windows.feature:The window title follows*
+navigation/windows.feature:A second window works on its own
+navigation/windows.feature:Closing a second window leaves the first alone
+navigation/windows.feature:Every window shows a backend failure
+navigation/windows.feature:A setting that fails to save*
+navigation/windows.feature:Closing the first window leaves the others open
+navigation/windows.feature:Closing the last window quits
+navigation/windows.feature:Closing a window keeps its unsent work
+navigation/windows.feature:Closing a window while it waits on the MC
+navigation/windows.feature:Windows share the sign-in but not the navigation
+navigation/windows.feature:A window restores its drafts and panels after a restart
+navigation/windows.feature:A window keeps its files in its own folder
+navigation/windows.feature:A restart skips a saved window that names another folder
+navigation/windows.feature:The settings shortcut opens settings
+navigation/windows.feature:Zooming the app*
+navigation/windows.feature:Actual size undoes the zoom
+navigation/windows.feature:Every window follows the app's zoom
+navigation/windows.feature:Holding the quit shortcut quits
+navigation/windows.feature:Pressing the quit shortcut twice quits
+navigation/windows.feature:A single quick press does not quit
+navigation/windows.feature:Double press mode asks for a second press
+navigation/windows.feature:Direct mode quits on one press
+navigation/windows.feature:Quit from the command palette is immediate
+navigation/focus.feature:Leaving settings goes back to the thread
+navigation/focus.feature:The palette keeps focus while it is open
+navigation/focus.feature:Thread shortcuts do nothing while the command palette is open*
+navigation/focus.feature:The window's shortcuts still run while the command palette is open*
+navigation/command-palette.feature
+navigation/welcome-wizard.feature
+threads/search.feature:Searching from the thread list opens the command palette
+settings/search-and-navigation.feature
+navigation/appearance.feature:System appearance follows*
+navigation/appearance.feature:Choosing an appearance mode*
+navigation/appearance.feature:The appearance shortcut cycles*
+navigation/appearance.feature:Choosing a theme
+navigation/appearance.feature:Settings*Appearance marks the theme in use*
+navigation/appearance.feature:Different themes for light and dark
+navigation/appearance.feature:A theme with only one appearance*
+navigation/appearance.feature:A theme choice that cannot be saved*
+navigation/appearance.feature:An appearance setting can be put back*
+navigation/appearance.feature:A font preference can be reset*
+navigation/appearance.feature:Clearing *
+navigation/appearance.feature:Holding the appearance shortcut*
+navigation/appearance.feature:The theme shortcut opens*
+navigation/appearance.feature:Interface sliders*
+navigation/appearance.feature:Diff colors*
+navigation/appearance.feature:Font smoothing*
+navigation/appearance.feature:Composer context*
+navigation/appearance.feature:Word wrap*
+navigation/appearance.feature:Font preferences*
+navigation/appearance.feature:A new interface font reaches*
+navigation/appearance.feature:The environment can be identified*
+navigation/appearance.feature:A development build is identified as Dev*
+navigation/appearance.feature:The app's name carries its stage*
+navigation/appearance.feature:A shell without the brand band*
+navigation/appearance.feature:Panel animations*
+navigation/appearance.feature:Switching threads never*
+navigation/theme-editor.feature
+settings/general.feature
+settings/saving-settings.feature
+timeline/approvals-and-questions.feature
+composer/question-answers.feature
+composer/queue-and-steer.feature:The follow-up setting decides*
+composer/queue-and-steer.feature:Stopping the running turn*
+composer/queue-and-steer.feature:A running turn with nothing to send*
+composer/drafting-and-sending.feature:A narrow composer folds*
+composer/drafting-and-sending.feature:Send stands out*
+composer/queue-and-steer.feature:A shortcut bound to stop*
+composer/queue-and-steer.feature:Queued messages are listed*
+composer/queue-and-steer.feature:A queued message that quotes the agent*
+composer/queue-and-steer.feature:What the MC queued for the agent itself*
+composer/queue-and-steer.feature:Removing a queued message cancels its run*
+composer/queue-and-steer.feature:A removal the MC refuses*
+composer/queue-and-steer.feature:A queued message can steer*
+composer/queue-and-steer.feature:A steer the MC refuses*
+composer/queue-and-steer.feature:Editing the last queued message*
+composer/queue-and-steer.feature:Saving an edited queued message*
+composer/queue-and-steer.feature:An edit the MC refuses*
+composer/queue-and-steer.feature:An edit whose message starts running*
+composer/queue-and-steer.feature:Leaving the thread keeps the edit
+composer/queue-and-steer.feature:A save that finishes after a newer edit began*
+composer/queue-and-steer.feature:An edit whose message starts while its thread is closed*
+composer/queue-and-steer.feature:Deleting a thread ends its queued edit
+composer/queue-and-steer.feature:An edit open when a question arrives*
+composer/queue-and-steer.feature:A queued message's attachments are listed*
+composer/queue-and-steer.feature:Editing a queued message can drop its attachments
+composer/queue-and-steer.feature:A queued message offers to send it now*
+composer/queue-and-steer.feature:A queued message on a stopped thread*
+composer/queue-and-steer.feature:One queue action at a time
+composer/queue-and-steer.feature:The steer shortcut sends the first queued message*
+composer/queue-and-steer.feature:Sending with Mod+Enter during a turn*
+composer/queue-and-steer.feature:An unchanged edit whose message starts running closes quietly
+composer/queue-and-steer.feature:A queued message is listed before the MC confirms it
+composer/queue-and-steer.feature:A queued message cannot be edited while a question is open
+composer/queue-and-steer.feature:A queued message being edited is marked*
+composer/queue-and-steer.feature:A second save of a queued message*
+composer/queue-and-steer.feature:The queue can be folded away*
+composer/queue-and-steer.feature:The send control says what sending will do*
+composer/context-references.feature:A bare @*
+composer/context-references.feature:The @ menu says it cannot search*
+composer/context-references.feature:A trigger character offers*
+composer/context-references.feature:Choosing a file suggestion*
+composer/context-references.feature:Dismissing suggestions*
+composer/context-references.feature:Provider commands only apply*
+composer/context-references.feature:A slash typed after other text*
+composer/context-references.feature:A slash after leading spaces*
+composer/context-references.feature:A path typed in the composer*
+composer/context-references.feature:Choosing a built-in command*
+composer/context-references.feature:A suggestion list with nothing*
+composer/context-references.feature:A suggestion list that is still looking*
+composer/context-references.feature:The suggestion list is walked*
+composer/context-references.feature:Enter or Tab takes*
+composer/context-references.feature:Suggestions are ordered*
+composer/context-references.feature:Equally good matches*
+composer/context-references.feature:A skill offered among the slash commands*
+composer/context-references.feature:Each skill is offered once*
+composer/context-references.feature:A provider command named like a skill*
+composer/context-references.feature:A skill without a display name*
+composer/context-references.feature:A skill is found by its description*
+composer/context-references.feature:Any currency sign*
+composer/context-references.feature:Typing a price*
+composer/context-references.feature:A bare currency sign*
+composer/context-references.feature:Closing the suggestions*
+composer/context-references.feature:A provider command is put into the draft*
+composer/context-references.feature:A thread offers the skills and commands of the folder*
+composer/queue-and-steer.feature:A held queue*
+composer/queue-and-steer.feature:A resume that the MC refuses*
+composer/queue-and-steer.feature:A resume while reconnecting*
+composer/queue-and-steer.feature:A resume warning dismissed*
+composer/context-references.feature:A terminal excerpt*
+composer/context-references.feature:A removed terminal excerpt*
+composer/context-references.feature:A send the MC rejects gives its terminal excerpt back
+composer/context-references.feature:Part of an assistant response can be quoted*
+composer/context-references.feature:A quoted response is sent*
+composer/context-references.feature:A stashed quote*
+terminal/composer-context.feature:The user adds selected terminal output*
+terminal/composer-context.feature:A one-line selection*
+terminal/composer-context.feature:Selecting only blank lines*
+terminal/composer-context.feature:The draft lists its terminal excerpts
+terminal/composer-context.feature:The user removes a terminal excerpt*
+terminal/composer-context.feature:Adding to chat is not offered*
+terminal/composer-context.feature:The terminal's menu offers*
+terminal/composer-context.feature:An excerpt whose text is gone*
+terminal/composer-context.feature:The user is told when expired*
+terminal/composer-context.feature:A draft holding only expired*
+terminal/composer-context.feature:Toasts about several expired*
+composer/drafting-and-sending.feature:Each thread keeps its own draft*
+composer/drafting-and-sending.feature:Sending while disconnected*
+composer/drafting-and-sending.feature:A send the MC rejects*
+composer/drafting-and-sending.feature:The thread says a message is sending*
+composer/drafting-and-sending.feature:A new thread's first message leaves*
+composer/drafting-and-sending.feature:Text typed while a new thread starts*
+composer/drafting-and-sending.feature:A new thread's prompt that failed*
+composer/sending-turns.feature
+composer/editors-and-keys.feature
+composer/drafting-and-sending.feature:A background prompt*
+composer/drafting-and-sending.feature:Enter sends*
+composer/drafting-and-sending.feature:Shift+Enter*
+composer/drafting-and-sending.feature:The send shortcut*
+composer/drafting-and-sending.feature:mod+alt+Enter*
+composer/drafting-and-sending.feature:Switching threads before*
+composer/qt-scenarios.feature
+composer/drafting-and-sending.feature:One prompt starts a thread*
+composer/model-and-mode.feature:A new thread can run on a machine*
+composer/qt-shell-backlog.feature
+composer/model-and-mode.feature:Ultrathink*
+composer/model-and-mode.feature:The last model used*
+composer/model-and-mode.feature:New threads start with the default permissions
+composer/model-and-mode.feature:The user chooses which environment*
+composer/model-and-mode.feature:The user chooses to work in*
+composer/model-and-mode.feature:A branch that does not exist*
+composer/model-and-mode.feature:New worktree mode needs*
+composer/attachments.feature
+composer/drafting-and-sending.feature:A message over 120,000 characters*
+composer/model-and-mode.feature:Searching the models*
+composer/model-and-mode.feature:A model that cannot be used*
+composer/model-and-mode.feature:The user chooses a model with the keyboard
+composer/model-and-mode.feature:The user moves between providers*
+composer/model-and-mode.feature:The user jumps to a model*
+composer/model-and-mode.feature:The model picker shortcut*
+composer/model-and-mode.feature:The user switches the model*
+composer/model-and-mode.feature:Models from unavailable providers*
+composer/model-and-mode.feature:Models are grouped by provider
+composer/model-and-mode.feature:The chosen model is shown*
+composer/model-and-mode.feature:The user sets the reasoning effort*
+composer/model-and-mode.feature:The user sets what the agent may do*
+composer/model-and-mode.feature:Permissions picked as the app quit*
+composer/model-and-mode.feature:Unavailable providers stay listed*
+composer/model-and-mode.feature:Favourite models are listed first*
+composer/model-and-mode.feature:A started thread can move*
+composer/model-and-mode.feature:A second instance with no draft model of its own*
+composer/model-and-mode.feature:The model button shows the name the user would say*
+composer/model-and-mode.feature:A short name the model manifest gives*
+composer/model-and-mode.feature:Each model keeps the options the user last gave it
+composer/model-and-mode.feature:A prompt that says ultrathink in its own words*
+composer/model-and-mode.feature:The user steps the effort from the keyboard*
+composer/model-and-mode.feature:Stepping the effort does nothing*
+composer/model-and-mode.feature:An effort outside the model's levels*
+composer/model-and-mode.feature:Stepping the effort leaves Ultrathink*
+composer/model-and-mode.feature:The composer names the model's effort*
+composer/model-and-mode.feature:A provider's older models are shown in place*
+composer/model-and-mode.feature:Every saved custom model is offered
+composer/model-and-mode.feature:A draft follows a model change made on another client
+composer/model-and-mode.feature:A send picked against a selection that moved elsewhere is refused
+composer/model-and-mode.feature:A send with no pick keeps a change made on another client
+composer/model-and-mode.feature:A pick reaches the thread on an MC that keeps no selection revision
+composer/model-and-mode.feature:The user's own access change keeps their unsent pick
+composer/model-and-mode.feature:In a cluster, each machine's answers decide only its own threads' picks
+composer/model-and-mode.feature:A thread whose account is off keeps it rather than move to another
+composer/model-and-mode.feature:A new thread on another machine shows that machine's defaults
+composer/model-and-mode.feature:A thread saved under a model alias keeps its effort
+composer/model-and-mode.feature:At the default chat width*
+composer/model-and-mode.feature:A project that is not a Git repository*
+composer/model-and-mode.feature:A thread still preparing its worktree*
+composer/model-and-mode.feature:Checkouts of one repository*
+composer/model-and-mode.feature:The user lets a new thread's machine*
+composer/model-and-mode.feature:The user takes a new thread off Auto balance
+composer/model-and-mode.feature:Auto balance is refused*
+composer/model-and-mode.feature:A machine is named the way*
+composer/model-and-mode.feature:The only connected machine is still shown*
+composer/model-and-mode.feature:A started thread names its machine*
+composer/model-and-mode.feature:The machine is left out*
+composer/model-and-mode.feature:A composer that falls back to another account*
+composer/model-and-mode.feature:A fallback account takes no options*
+composer/model-and-mode.feature:A custom model named like a Codex alias*
+composer/model-and-mode.feature:Search results keep the provider's newest-first order
+composer/model-and-mode.feature:The model picker opens on the favourites*
+composer/model-and-mode.feature:A favourite older model is listed outside*
+composer/model-and-mode.feature:Searching the models finds a provider's older models too
+composer/model-and-mode.feature:A search that matches no model says so
+composer/model-and-mode.feature:A model the provider has just added is marked as new
+composer/model-and-mode.feature:A provider that cannot be used says why*
+composer/model-and-mode.feature:A provider that needs setting up offers its setup*
+composer/model-and-mode.feature:The model cannot be changed while a message is on its way
+composer/model-and-mode.feature:The model picker waits for the provider list*
+composer/model-and-mode.feature:A composer with no usable provider says so*
+composer/model-and-mode.feature:A saved model its provider no longer lists*
+composer/model-and-mode.feature:Each option's default is marked
+composer/model-and-mode.feature:Choosing another effort takes Ultrathink off the prompt
+composer/model-and-mode.feature:Planning and building are toggled on the desktop only*
+composer/model-and-mode.feature:Only the permissions the provider supports are offered
+composer/model-and-mode.feature:A thread whose saved permissions its provider no longer offers*
+composer/model-and-mode.feature:A started thread always names its permissions
+composer/model-and-mode.feature:A new thread says which permissions*
+composer/model-and-mode.feature:One control chooses the model*
+composer/model-and-mode.feature:A key opens the model control*
+composer/model-and-mode.feature:The model control stays open*
+composer/model-and-mode.feature:An agent's own options do not crowd*
+composer/model-and-mode.feature:Confirming input-method text*
+navigation/toasts.feature
+preview/automation.feature
+preview/devices.feature
+preview/remote.feature
+plugins/ui-plugins.feature
+plugins/plugin-catalog.feature
+plugins/keymaps.feature
+plugins/plugin-contributions.feature
+plugins/turn-hooks.feature
+plugins/token-economizer-*.feature
+plugins/cliproxyapi.feature
+navigation/qt-shell-backlog.feature:A device tab streams a device screen
+navigation/qt-shell-backlog.feature:Opening a folder*
+desktop/shell-host.feature:A screenshot taken without a display shows the app's window
+desktop/shell-host.feature:A screenshot of a desktop app that fails to start*
+navigation/qt-shell-backlog.feature:The previous worktree shortcut works in the native composer
+navigation/qt-shell-backlog.feature:Thread number shortcuts work in the native desktop shell
+navigation/qt-scenarios.feature
+threads/qt-scenarios.feature
+threads/sidebar-list.feature:Moving through the list with the keyboard*
+threads/sidebar-list.feature:Enter on a shelf header folds the shelf
+timeline/notifications.feature:A notification's action runs it
+timeline/notifications.feature:Dismissing the last notification hides the notifications
+timeline/notifications.feature:A thread that changes state*
+timeline/notifications.feature:Threads *
+timeline/notifications.feature:The thread being viewed*
+timeline/notifications.feature:The user opens a thread from its alert
+timeline/notifications.feature:The user dismisses an in-app alert
+timeline/notifications.feature:The alert setting decides*
+timeline/notifications.feature:Clicking a system notification*
+timeline/notifications.feature:A newer alert*
+timeline/notifications.feature:Turning system notifications off*
+timeline/notifications.feature:A system notification is not shown*
+timeline/notifications.feature:The user mutes alerts for one thread
+timeline/notifications.feature:The user unmutes a thread
+timeline/notifications.feature:Coming back to the window*
+timeline/qt-shell-backlog.feature
+settings/connections.feature
+settings/load-balancing.feature
+connections/environments.feature:A preference saved by an older build*
+connections/environments.feature:Turning load balancing off*
+connections/pairing.feature
+providers/provider-instances.feature:Adding an instance derives*
+providers/provider-instances.feature:A clashing instance id*
+providers/provider-instances.feature:Instance ids are validated*
+providers/provider-instances.feature:Provider settings follow the chosen device
+providers/provider-instances.feature:Provider settings for a disconnected device*
+providers/provider-instances.feature:Provider status headlines*
+providers/provider-instances.feature:A disabled provider says so once*
+providers/usage.feature:Usage can be filtered by environment
+providers/usage.feature:Environments still scanning*
+providers/usage-limits.feature:Automatic checks wait*
+providers/claude.feature
+providers/codex.feature
+providers/capabilities.feature
+providers/permission-modes.feature:The permission mode can be changed from the desktop*
+providers/usage-limits.feature:The /usage-limits command*
+providers/usage-limits.feature:The /usage-limits answer*
+providers/usage-limits.feature:An account named by its email*
+providers/usage-limits.feature:A Grok account with no metered usage yet*
+providers/models.feature:Favourite, hidden and ordered models*
+providers/models.feature:A hidden model can be shown again
+providers/usage.feature:A custom price is saved*
+providers/usage.feature:An offline environment is marked*
+providers/usage.feature:Environments with different prices*
+providers/usage.feature:A reset marked for removal*
+mc/platform/storage-layout.feature:The desktop app's home directory outranks*
+mc/platform/storage-layout.feature:The desktop app's control socket lives*
+mc/platform/storage-layout.feature:The desktop app on Windows keeps*
+mc/platform/storage-layout.feature:The desktop app a developer builds uses*
+mc/orchestration/runs.feature:A failed turn keeps the output*
+mc/orchestration/runs.feature:A provider retry is recorded*
+mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*
+providers/codex.feature:A plan Codex marked finished*
+connections/environments.feature:The icon cannot be changed*
+connections/environments.feature:A preference saved by an older build*
+connections/environments.feature:Turning load balancing off*
+connections/connection-health.feature:A dropped connection retries*
+connections/connection-health.feature:A dropped connection is reported once*
+connections/connection-health.feature:A shell of the user's that uses the built-in layout*
+connections/connection-health.feature:A request the MC has not answered within 15 seconds*
+connections/connection-health.feature:The slow-request warning lists*
+connections/connection-health.feature:Answered requests leave the slow-request warning*
+connections/connection-health.feature:Updating a provider or the server is reported as slow*
+connections/connection-health.feature:Pull request lookups and live subscriptions*
+connections/connection-health.feature:A thread on a computer that stays unavailable*
+connections/connection-health.feature:The 20 seconds start again*
+connections/connection-health.feature:A computer that comes back inside*
+connections/connection-health.feature:The computer the app runs on cannot*
+connections/connection-health.feature:Disconnecting from a thread's notice*
+connections/connection-health.feature:A disconnect that fails*
+connections/connection-health.feature:A reconnect that fails*
+connections/connection-health.feature:An offline computer is named*
+connections/connection-health.feature:A computer that stops connecting during an update*
+connections/connection-health.feature:A brief reconnect is not announced*
+connections/connection-health.feature:A computer still reconnecting after two seconds*
+connections/connection-health.feature:A computer restarting for an update shows the update*
+connections/connection-health.feature:Reconnecting to a computer on another version*
+connections/connection-health.feature:An offline device waits*
+connections/connection-health.feature:A device that lost*
+connections/connection-health.feature:A network that comes back*
+connections/connection-health.feature:An environment on this machine is reached*
+connections/connection-health.feature:A client opened without a network*
+connections/connection-health.feature:A refused credential waits*
+connections/connection-health.feature:Foregrounding*
+connections/connection-health.feature:A connection is ready only*
+connections/connection-health.feature:A failed shell subscription*
+connections/connection-health.feature:The environment's status says*
+connections/connection-health.feature:The connection's state is an icon*
+connections/connection-health.feature:A reconnect within a second and a half*
+connections/connection-health.feature:An app that starts with its environment*
+connections/connection-health.feature:The user copies a connection's trace id*
+connections/connection-health.feature:Cached data stays readable*
+connections/connection-health.feature:A thread left for*
+connections/connection-health.feature:Subscriptions follow a replaced*
+connections/connection-health.feature:Reconnecting does not repeat*
+connections/connection-health.feature:Removing an environment clears*
+connections/connection-health.feature:A protocol mismatch blocks*
+connections/connection-health.feature:A server on another HAL-C2 version*
+connections/connection-health.feature:One connection serves every MC*
+connections/connection-health.feature:A cluster connection resumes*
+connections/connection-health.feature:What the environment answers decides*
+connections/connection-health.feature:An address that answers as a different*
+connections/connection-health.feature:A connection that does not answer the check*
+connections/connection-health.feature:A connection that is not set up within*
+connections/connection-health.feature:The retry delays start over*
+connections/connection-health.feature:A blocked environment is tried again*
+connections/connection-health.feature:An action for an environment that is not connected*
+connections/connection-health.feature:A connection with nothing to say*
+connections/connection-health.feature:An action waiting for its answer*
+connections/connection-health.feature:A slow MC finishes*
+connections/connection-health.feature:Cached data never overwrites*
+connections/connection-health.feature:A kept copy the client cannot read*
+connections/connection-health.feature:A new task offline still offers*
+connections/connection-health.feature:Only the whole branch list*
+connections/connection-health.feature:A change to a repository's branches*
+connections/connection-health.feature:Only the environment with the bad credential stops*
+connections/connection-health.feature:A saved environment whose record or credential has gone*
+connections/connection-health.feature:An expiring credential does not close*
+connections/connection-health.feature:A failed renewal affects only its request*
+connections/connection-health.feature:A damaged record of saved environments*
+connections/connection-health.feature:Pairing fails when the system's secure storage*
+mc/platform/websocket-protocol.feature:A client refuses a server speaking*
+mc/platform/websocket-protocol.feature:A client skips an event type*
+mc/platform/openshell.feature:Settings*
+threads/drafts.feature
+source-control/pull-request-list.feature
+source-control/agent-code-review.feature
+settings/usage.feature
+providers/usage-limits.feature:The same account on two environments*
+settings/usage-limit-sources.feature:A hub's accounts are pooled*
+settings/usage-limit-sources.feature:An account both a hub*
+settings/usage-limit-sources.feature:A hub that cannot be read is named*
+settings/usage-limit-sources.feature:A reset credit a hub also reports*
+settings/usage-limit-sources.feature:The user adds a hub
+settings/usage-limit-sources.feature:A hub cannot be added without*
+settings/usage-limit-sources.feature:The user removes a hub
+settings/providers-panel.feature:This machine is listed first*
+settings/providers-panel.feature:A disconnected environment cannot*
+settings/providers-panel.feature:An environment that reconnects*
+settings/providers-panel.feature:Leaving the Providers settings*
+settings/providers-panel.feature:The panel says when providers were last checked
+settings/providers-panel.feature:Turning an instance off and on
+settings/providers-panel.feature:A change that cannot be saved*
+settings/providers-panel.feature:A provider's own API key can be cleared*
+settings/providers-panel.feature:Installing the managed runtime shows*
+settings/providers-panel.feature:A runtime download can be cancelled*
+settings/providers-panel.feature:A downloaded runtime is removed*
+settings/providers-panel.feature:Signing in finishes*
+settings/providers-panel.feature:A sign-in page an agent waits on*
+settings/providers-panel.feature:Continuing a sign-in page the agent stopped*
+settings/providers-panel.feature:A sign-in in progress*
+settings/providers-panel.feature:Choosing how to sign in
+settings/providers-panel.feature:A sign-in answered after switching*
+providers/provider-instances.feature:An instance can be renamed*
+providers/provider-instances.feature:Clearing the accent colour*
+settings/providers-panel.feature:An agent prepared after its wizard*
+settings/providers-panel.feature:Signing in through the agent*
+settings/providers-panel.feature:A login terminal that has gone*
+settings/providers-panel.feature:Signing in with credentials
+settings/providers-panel.feature:Pasting the final sign-in address*
+settings/providers-panel.feature:A sign-in that fails*
+settings/providers-panel.feature:Declining to sign out*
+settings/providers-panel.feature:An update that cannot run*
+settings/providers-panel.feature:A provider behind its latest*
+settings/providers-panel.feature:A provider update shows*
+settings/providers-panel.feature:An update that fails*
+settings/providers-panel.feature:A provider version outside*
+settings/providers-panel.feature:The health check interval*
+settings/providers-panel.feature:Adding a second instance*
+settings/providers-panel.feature:A taken instance id*
+settings/providers-panel.feature:The instance id must be valid*
+settings/providers-panel.feature:Going back in the wizard*
+settings/providers-panel.feature:An instance that cannot be saved*
+settings/providers-panel.feature:Renaming an instance*
+settings/providers-panel.feature:Sensitive environment variables*
+settings/providers-panel.feature:Removing an environment variable
+settings/providers-panel.feature:Renaming a stored secret*
+settings/providers-panel.feature:Deleting an instance*
+settings/providers-panel.feature:A recommended version is installed*
+settings/providers-panel.feature:Installing the recommended version
+settings/providers-panel.feature:Adding a custom model with its own options
+settings/providers-panel.feature:Copying options from a built-in model
+settings/providers-panel.feature:A search with no compatible agent*
+settings/providers-panel.feature:An agent already added is marked*
+settings/providers-panel.feature:Choosing a registry agent names*
+settings/providers-panel.feature:The registry step needs an agent*
+settings/providers-panel.feature:Importing a native session*
+settings/providers-panel.feature:An imported session cannot be deleted*
+settings/providers-panel.feature:Deleting a native session*
+settings/providers-panel.feature:Pointing an agent's model provider*
+settings/providers-panel.feature:Model provider headers must be*
+settings/providers-panel.feature:Logging out of an ACP agent
+settings/providers-panel.feature:A custom option must be complete before saving*
+settings/providers-panel.feature:A custom model id is checked*
+settings/providers-panel.feature:A model lists what it can do
+settings/providers-panel.feature:A long models list*
+settings/providers-panel.feature:A custom model without options uses the provider's defaults
+providers/provider-setup.feature:Signing out asks*
+threads/menu-actions.feature
+threads/moving-between-machines.feature
+threads/thread-list.feature
+terminal/drawer.feature
+terminal/tabs.feature
+terminal/sessions.feature
+terminal/errors.feature
+terminal/io.feature
+terminal/links-and-graphics.feature
+terminal/reconnect.feature
+threads/creating.feature:A new thread start*
+threads/creating.feature:Starting a thread from another thread's branch
+threads/creating.feature:A request to several models cut off by a quit comes back to its draft once
+threads/menu-and-selection.feature:Opening a thread's menu
+threads/menu-and-selection.feature:The thread menu offers*
+threads/menu-and-selection.feature:Actions the environment does not support*
+threads/menu-and-selection.feature:Copying details of a thread confirms*
+threads/menu-and-selection.feature:Copying a path that is missing*
+threads/menu-and-selection.feature:A failed copy*
+threads/menu-and-selection.feature:Copying a thread reference*
+threads/menu-and-selection.feature:Filtering the list*
+threads/menu-and-selection.feature:Opening a thread's project settings
+threads/archive-delete.feature:Archiving waits for the agent*
+threads/archive-delete.feature:Archiving asks first*
+threads/archive-delete.feature:Deleting from the desktop and phone asks*
+threads/archive-delete.feature:Deleting the open thread opens the next*
+threads/archive-delete.feature:Deleting the open thread opens the latest*
+threads/archive-delete.feature:Deleting the open thread, the last*
+threads/archive-delete.feature:Archiving the open thread opens a new thread*
+threads/archive-delete.feature:Archiving and unarchiving from the desktop*
+threads/archive-delete.feature:An unarchived thread leaves the archived threads at once
+threads/archive-delete.feature:The archived threads list says*
+threads/archive-delete.feature:The archived threads page does not ask to reconnect*
+threads/archive-delete.feature:Archived threads are grouped*
+threads/archive-delete.feature:Archived threads for one project*
+threads/archive-delete.feature:An archived thread action that fails*
+threads/archive-delete.feature:Deleting an archived thread*
+threads/pinning-and-order.feature
+threads/creating.feature:A new worktree needs a base branch
+threads/creating.feature:A thread cannot start from an empty task
+composer/drafting-and-sending.feature:The first message of a new thread creates*
+threads/sidebar-list.feature:Projects *
+threads/sidebar-list.feature:Threads started by other agents*
+threads/sidebar-list.feature:Threads on an offline environment*
+files/search.feature:The file picker*
+files/search.feature:Content search groups*
+files/search.feature:The result count*
+files/search.feature:Content search explains*
+files/search.feature:The search is cleared*
+threads/sidebar-list.feature:Threads are grouped*
+threads/sidebar-list.feature:Active threads are listed newest first
+threads/sidebar-list.feature:A thread row reads its title first, then its project and branch
+threads/sidebar-list.feature:Settled threads are listed by when they settled
+threads/sidebar-list.feature:A settled thread's age*
+threads/sidebar-list.feature:Very long settled*
+threads/sidebar-list.feature:The open thread stays listed past*
+threads/sidebar-list.feature:The open thread stays in view when*
+threads/sidebar-list.feature:*plugin*
+threads/sidebar-list.feature:Opening a *from the list
+threads/sidebar-list.feature:Scoping the list*
+threads/sidebar-list.feature:Hiding and showing the thread list
+threads/sidebar-list.feature:The list catches up after a reconnect
+threads/sidebar-list.feature:The list starts over*
+threads/sidebar-list.feature:A thread with unsent text in its composer*
+threads/sidebar-list.feature:A drop in the sidebar sticks*
+threads/sidebar-list.feature:The project filter is remembered across restarts
+threads/sidebar-list.feature:A remembered project filter waits*
+threads/sidebar-list.feature:Leaving the thread list for settings keeps the project filter
+threads/sidebar-list.feature:The user can switch the thread list to one tree*
+threads/sidebar-list.feature:A project in the tree*
+threads/sidebar-list.feature:The number of threads a project shows*
+threads/sidebar-list.feature:The user chooses how projects and threads are sorted*
+threads/sidebar-list.feature:Renaming a project from its menu*
+threads/sidebar-list.feature:A project rename the environment refuses*
+threads/sidebar-list.feature:A project chooses how it is grouped*
+threads/sidebar-list.feature:Removing a project that still has threads asks first
+threads/sidebar-list.feature:The Working section *
+threads/sidebar-list.feature:Working threads keep their order*
+threads/sidebar-list.feature:A thread that stops working waits*
+threads/sidebar-list.feature:A thread's status has a spoken name
+threads/snooze.feature
+threads/settle.feature
+threads/unread-and-status.feature:A thread row names its state*
+threads/unread-and-status.feature:The most urgent state wins
+threads/unread-and-status.feature:A project shows the most urgent state*
+threads/unread-and-status.feature:A working thread shows how long*
+threads/unread-and-status.feature:Pinning a thread does not change its age
+threads/unread-and-status.feature:Marking a thread unread from its menu
+threads/limited-threads.feature
+threads/moving-between-machines.feature
+threads/creating.feature:A new thread uses the project default model*
+threads/creating.feature:Starting a thread in the background opens a fresh draft
+threads/creating.feature:Each background start into a new worktree*
+threads/creating.feature:Fanning one request out to several models
+threads/creating.feature:Several models cannot be chosen outside a Git project
+threads/creating.feature:Changing a draft's project picks an environment that has it
+threads/creating.feature:The new thread button asks which project when there are several
+threads/creating.feature:The new thread button starts straight away when there is one project
+threads/creating.feature:Shift on the new thread button starts in the current project
+threads/creating.feature:A new thread keeps the current model and mode
+threads/creating.feature:A new thread from another thread takes that thread's model and mode
+threads/creating.feature:A failed start does not put back a prompt over a newer draft
+threads/creating.feature:A thread whose start fails gets its prompt back without touching a newer draft
+threads/creating.feature:A draft whose project is gone cannot be sent
+threads/creating.feature:A failed thread creation is reported
+threads/creating.feature:A new thread cannot be created while the environment is offline
+threads/search.feature:Searching spans every connected environment
+threads/search.feature:An offline environment is left out of the search
+threads/search.feature:Moving through search results with the keyboard
+threads/search.feature:Leaving a search
+threads/menu-and-selection.feature:Selecting several threads*
+threads/menu-and-selection.feature:Clearing a selection
+threads/menu-and-selection.feature:Changing the project filter clears the selection
+threads/menu-and-selection.feature:The selection menu counts*
+threads/menu-and-selection.feature:A menu action applies to every selected thread*
+threads/menu-and-selection.feature:The selection cannot be archived*
+threads/menu-and-selection.feature:A partly failed delete*
+threads/archive-delete.feature:Deleting several threads at once
+threads/archive-delete.feature:Deleting the last thread in a worktree*
+threads/archive-delete.feature:The worktree is removed without asking*
+threads/archive-delete.feature:A worktree that cannot be removed is reported
+threads/archive-delete.feature:Archiving the open thread when the next thread cannot be opened
+threads/unread-and-status.feature:Marking several threads unread
+threads/unread-and-status.feature:Reading a thread tells the environment it was seen
+threads/unread-and-status.feature:Pointing at a thread previews it
+threads/sidebar-list.feature:Jump hints appear while holding the modifier
+threads/migration-and-handoffs.feature:The user is told threads were migrated
+threads/migration-and-handoffs.feature:The user is told about threads migrated while the app is open
+threads/pull-request-links.feature
+threads/worktree-setup.feature
+threads/fork-and-lineage.feature
+files/adding-projects.feature
+navigation/palette-add-project.feature:A project can come from*
+navigation/palette-add-project.feature:A repository source that is not set up*
+navigation/palette-add-project.feature:Cloning asks*
+navigation/palette-add-project.feature:Browsing starts in the home folder
+navigation/palette-add-project.feature:A clone's destination starts*
+navigation/palette-add-project.feature:Failures while adding*
+navigation/palette-add-project.feature:The user chooses which environment*
+navigation/palette-add-project.feature:An environment that goes away*
+navigation/palette-add-project.feature:A folder that does not exist yet*
+navigation/palette-add-project.feature:Relative paths need*
+navigation/palette-add-project.feature:mod+Enter adds*
+navigation/palette-add-project.feature:A highlighted folder is added with mod+Enter*
+navigation/palette-add-project.feature:The folder browser names what Enter does
+navigation/palette-add-project.feature:A folder that does not exist is created and added
+files/removing-and-listing-projects.feature:Removing *
+files/removing-and-listing-projects.feature:Confirming removal*
+files/removing-and-listing-projects.feature:Cancelling removal*
+files/removing-and-listing-projects.feature:A confirmation for a project that goes away*
+files/removing-and-listing-projects.feature:A removal the environment refuses*
+threads/titles.feature
+source-control/refs-and-branches.feature
+source-control/worktrees-and-setup-scripts.feature
+source-control/git-actions.feature:The recommended action*
+source-control/git-actions.feature:Uncommitted changes on a branch behind*
+source-control/git-actions.feature:A detached checkout*
+source-control/git-actions.feature:A repository without a remote*
+source-control/git-actions.feature:A menu entry that cannot run*
+source-control/git-actions.feature:Opening the pull request of the branch
+source-control/git-actions.feature:Opening the git menu refreshes status
+source-control/git-actions.feature:The actions use the host's own name*
+source-control/git-actions.feature:A new pull request can be viewed*
+source-control/git-actions.feature:An action with nothing to do*
+source-control/git-actions.feature:Initializing Git
+source-control/git-actions.feature:A refused initialization*
+source-control/git-actions.feature:A machine that is offline*
+source-control/git-actions.feature:Publishing pushes*
+source-control/git-actions.feature:A refused publish*
+source-control/git-actions.feature:A repository name needs*
+source-control/git-actions.feature:Cancelling the dialog publishes nothing
+source-control/push-pull-and-default-branch.feature:Pushing a branch that tracks an upstream
+source-control/push-pull-and-default-branch.feature:A finished action's result goes away*
+source-control/push-pull-and-default-branch.feature:Pulling fast-forwards the branch
+source-control/push-pull-and-default-branch.feature:A refused pull is reported
+source-control/push-pull-and-default-branch.feature:Actions that would land on the default branch ask first ?Push?
+source-control/push-pull-and-default-branch.feature:Actions that would land on the default branch ask first ?Create PR?
+source-control/push-pull-and-default-branch.feature:Actions that would land on the default branch ask first ?Commit & push?
+source-control/push-pull-and-default-branch.feature:Continuing on the default branch
+source-control/push-pull-and-default-branch.feature:Aborting on the default branch
+source-control/push-pull-and-default-branch.feature:Moving the work onto a new branch instead
+source-control/commit-and-generated-messages.feature:Committing with a message the user wrote
+source-control/commit-and-generated-messages.feature:A blank message is written by the writer model
+source-control/commit-and-generated-messages.feature:Committing only the files the user picked
+source-control/commit-and-generated-messages.feature:Committing on a new branch
+source-control/commit-and-generated-messages.feature:The progress toast names*
+source-control/commit-and-generated-messages.feature:A failed action is reported
+source-control/commit-and-generated-messages.feature:A commit offers to push it
+source-control/commit-and-generated-messages.feature:A git action on another machine*
+source-control/commit-and-generated-messages.feature:The running action shows*
+source-control/commit-and-generated-messages.feature:Leaving every file out*
+source-control/commit-and-generated-messages.feature:Cancelling the commit*
+source-control/commit-and-generated-messages.feature:Committing on the default branch carries*
+source-control/errors.feature:A failed git action stays*
+source-control/errors.feature:A failure a *
+source-control/status-and-changes.feature
+source-control/repository-discovery-clone-publish.feature
+source-control/commit-and-generated-messages.feature:Opening a changed file from the commit review
+source-control/commit-and-generated-messages.feature:No editor to open a changed file in
+files/project-scripts-and-actions.feature
+navigation/keybindings.feature
+navigation/keybinding-customisation.feature
+navigation/keybinding-settings.feature:Every command is listed*
+navigation/keybinding-settings.feature:Searching filters bindings*
+navigation/keybinding-settings.feature:Commands have readable names*
+navigation/keybinding-settings.feature:Recording a new shortcut*
+navigation/keybinding-settings.feature:A shortcut needs a modifier
+navigation/keybinding-settings.feature:Recorded modifiers follow the platform*
+navigation/keybinding-settings.feature:Conditions read as words
+navigation/keybinding-settings.feature:A malformed condition*
+navigation/keybinding-settings.feature:An unknown condition variable*
+navigation/keybinding-settings.feature:Conflicting bindings*
+navigation/keybinding-settings.feature:Resetting a custom binding*
+navigation/keybinding-settings.feature:Default bindings cannot be removed*
+navigation/keybinding-settings.feature:Removing a custom binding
+navigation/keybinding-settings.feature:Adding a binding for a command
+navigation/keybinding-settings.feature:Save failures are reported*
+navigation/keybinding-settings.feature:Conditions are built*
+navigation/keybinding-settings.feature:A change is saved to every connected environment
+navigation/keybinding-settings.feature:The file *
+navigation/focus.feature:Searching settings lists*
+navigation/focus.feature:A settings result opens from the keyboard
+navigation/focus.feature:Nothing matches the settings search
+navigation/focus.feature:Escape clears the settings search
+navigation/focus.feature:The search follows a query set elsewhere
+navigation/focus.feature:Typing while a terminal starts*
+navigation/focus.feature:Number shortcuts pick entries*
+source-control/checkpoint-diffs.feature
+source-control/review-diffs.feature
+timeline/checkpoints.feature
+files/folder-operations.feature
+files/project-file.feature
+files/project-identity.feature
+files/file-explorer.feature
+files/file-viewer-and-editing.feature
+files/files-on-another-machine.feature
+navigation/layout.feature:Opening and closing the right panel
+navigation/layout.feature:Switching between right panel tabs
+navigation/layout.feature:Closing a right panel tab
+navigation/layout.feature:Adding a tab to the right panel*
+navigation/layout.feature:A tab kind that the thread cannot show*
+navigation/layout.feature:Right panel contents survive closing the panel
+navigation/layout.feature:Resizing the right panel
+navigation/layout.feature:Opening the right panel's tab in the thread's centre
+navigation/layout.feature:The right panel's tabs and width survive a restart
+navigation/layout.feature:Toggling the thread details panel
+navigation/layout.feature:Hiding the thread details panel
+navigation/layout.feature:The thread details panel leads to the thread it was forked from
+source-control/pull-request-threads.feature
+source-control/pull-request-review.feature
+source-control/pull-request-actions.feature
+source-control/stacked-pull-requests.feature
+preview/surfaces.feature
+navigation/layout.feature:Showing the terminal from the header
+navigation/layout.feature:Hiding the terminal
+navigation/layout.feature:Choosing the project in the header*
+navigation/layout.feature:The header names the project and thread
+navigation/layout.feature:The thread title uses the room it has
+navigation/layout.feature:The header gives up its project, labels*
+navigation/layout.feature:The header opens the thread's workspace in another editor
+navigation/layout.feature:Hiding the sidebar
+navigation/layout.feature:A window too narrow for the sidebar and the thread*
+navigation/layout.feature:A hidden sidebar stays hidden in a narrow window
+navigation/layout.feature:The sidebar's rows follow the window's width*
+navigation/layout.feature:A monospace interface font widens the sidebar
+navigation/layout.feature:Resizing the window does not hide or show the sidebar
+navigation/layout.feature:Showing the sidebar again from the header
+navigation/layout.feature:The sidebar shortcut hides and shows the sidebar
+navigation/layout.feature:A hidden sidebar stays hidden after a restart
+navigation/layout.feature:Settings replace the thread list*
+navigation/layout.feature:The sidebar snaps*
+navigation/layout.feature:Resizing the sidebar is remembered
+navigation/layout.feature:The sidebar cannot be narrower*
+navigation/layout.feature:Resetting the sidebar width
+navigation/layout.feature:Right panel contents survive a visit to settings
+navigation/layout.feature:A hidden right panel does no work
+navigation/layout.feature:The header runs the project's action the user ran last
+navigation/layout.feature:The header runs any of the project's actions
+navigation/layout.feature:The header offers no action to run when the project has none
+navigation/layout.feature:The header opens the thread's workspace in the preferred editor
+navigation/layout.feature:The header prefers the host's default editor until the user picks another
+navigation/layout.feature:The header offers no editor when the environment has none
+navigation/layout.feature:The thread's git actions are in the header
+navigation/appearance.feature:Panels open and close immediately by default
+navigation/header.feature
+navigation/landing.feature
+settings/storage.feature:Settings for several machines show mixed values
+settings/storage.feature:A machine too old for storage cleanup*
+settings/scopes-and-inheritance.feature:Changing one axis of the scope*
+settings/scopes-and-inheritance.feature:Offline environments are marked*
+settings/scopes-and-inheritance.feature:An environment-wide change is saved*
+settings/scopes-and-inheritance.feature:Saving on some environments*
+settings/scopes-and-inheritance.feature:A setting cannot be changed while*
+settings/scopes-and-inheritance.feature:The page states*
+settings/scopes-and-inheritance.feature:A project change is saved*
+settings/scopes-and-inheritance.feature:A device preference*
+settings/scopes-and-inheritance.feature:An environment-wide setting cannot*
+settings/scopes-and-inheritance.feature:Resetting a project override*
+settings/scopes-and-inheritance.feature:A value that differs*
+settings/scopes-and-inheritance.feature:A model missing*
+settings/scopes-and-inheritance.feature:The inheritance chain*
+settings/scopes-and-inheritance.feature:The environment view lists*
+settings/scheduled-tasks.feature
+settings/source-control.feature
+settings/source-control-writing.feature
+settings/integrations.feature
+settings/projects.feature
+settings/project-defaults.feature
+settings/licenses.feature
+settings/diagnostics.feature
+settings/updates.feature:At launch*
+settings/updates.feature:A server behind the app offers*
+settings/updates.feature:A successful update names*
+settings/updates.feature:Updating every machine confirms*
+settings/updates.feature:The user copies the update command*
+settings/updates.feature:Copying the update command says*
+settings/updates.feature:A copy that fails*
+settings/updates.feature:A dismissed update notice*
+settings/updates.feature:A failed server update*
+settings/updates.feature:A server run by another machine's desktop app*
+settings/updates.feature:A server run by a desktop app this client*
+settings/updates.feature:Updating a server run by a desktop app*
+settings/updates.feature:Provider updates on several machines*
+settings/updates.feature:The sidebar shows how a provider update*
+settings/updates.feature:A finished provider update notice*
+settings/updates.feature:A failed provider update notice*
+settings/updates.feature:The provider update notice opens*
+settings/updates.feature:Provider updates that finished before*
+settings/updates.feature:Several outdated providers*
+settings/updates.feature:A provider that cannot be updated from here*
+settings/updates.feature:A provider whose latest release*
+settings/updates.feature:A disabled provider is not offered*
+settings/updates.feature:A newer release of a dismissed provider*
+settings/updates.feature:A provider that is still out of date*
+settings/updates.feature:A failed update with no reason*
+settings/updates.feature:A provider with several instances*
+settings/updates.feature:A provider installed more than one way*
+settings/updates.feature:Windows and WSL*
+settings/updates.feature:The update notice waits for a WSL*
+settings/updates.feature:Each environment's update row*
+settings/updates.feature:A changed set of environment updates*
+settings/updates.feature:A provider update that never answers*
+settings/updates.feature:A late answer replaces*
+settings/updates.feature:A provider update on an environment that is not connected*
+settings/*.feature
+settings/notifications.feature
+settings/background-service.feature:Clients report what the user is looking at
+settings/project-actions.feature
+settings/load-balancing.feature
+settings/snap-shot.feature
+source-control/snap-shot.feature
+planning/planner.feature
+space/pages.feature
+space/page-history.feature
+space/agent-in-page.feature
+space/self-updating-pages.feature
+space/visualize.feature
+space/slides.feature
+space/sites.feature
+space/images.feature
+space/presence.feature
+space/markdown.feature
+space/project-files.feature
+space/prompt.feature
+composer/qt-scenarios.feature
+navigation/qt-scenarios.feature
+threads/qt-scenarios.feature
+timeline/notifications.feature:A notification's action runs it
+timeline/notifications.feature:Dismissing the last notification hides the notifications

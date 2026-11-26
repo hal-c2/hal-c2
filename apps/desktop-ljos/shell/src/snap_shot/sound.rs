@@ -5,10 +5,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// desktop-qt's copies, so there is one recording of each.
-const WHOOSH: &[u8] =
-    include_bytes!("../../../../desktop-qt/src/native/sounds/snap-shot-whoosh.oga");
-const CLICK: &[u8] = include_bytes!("../../../../desktop-qt/src/native/sounds/snap-shot-click.oga");
+/// The shell's own copies of each recording (desktop-qt's, taken over
+/// with the port; the Qt clients keep theirs under src/native/sounds).
+const WHOOSH: &[u8] = include_bytes!("sounds/snap-shot-whoosh.oga");
+const CLICK: &[u8] = include_bytes!("sounds/snap-shot-click.oga");
 
 /// The sound's file name and what it holds: `camera-shutter` is Click, any
 /// other name Whoosh.

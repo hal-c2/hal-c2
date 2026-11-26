@@ -3,8 +3,9 @@
 # :/hal-c2/licenses/third-party-licenses.json, where MobileApp points the page.
 # The desktop stages the file beside its runtime; an APK has no such place.
 #
-# The manifest is written when the app is built, by the script that writes
-# the desktop's (apps/desktop-qt/scripts/third-party-licenses.ts --mobile),
+# The manifest is written when the app is built, by this app's script
+# (apps/mobile-qt/scripts/third-party-licenses.ts --mobile, which also
+# writes the Qt desktop's),
 # from the notices tagged `mobile-qt` in third-party-licenses.config.json, so
 # nothing generated is committed. That takes the repo's Node and nothing
 # installed with it. A license text it has not used before is fetched from
@@ -14,7 +15,7 @@
 
 function(hal_c2_target_licenses target)
   get_filename_component(_repo "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../.." ABSOLUTE)
-  set(_script "${_repo}/apps/desktop-qt/scripts/third-party-licenses.ts")
+  set(_script "${_repo}/apps/mobile-qt/scripts/third-party-licenses.ts")
 
   find_program(HAL_C2_NODE node DOC "The Node that writes the open source notices")
   set(_node_version "")

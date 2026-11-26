@@ -20,8 +20,8 @@
  *
  * `mise run desktop-ljos:licenses` writes the one a dev build reads,
  * apps/desktop-ljos/licenses/ (gitignored), without fetching missing
- * SPDX texts; the release writes it over stage-runtime's desktop-qt
- * manifest in share/hal-c2/licenses/.
+ * SPDX texts; the release writes it into the staged runtime's licenses/
+ * (share/hal-c2/licenses/), which stage-runtime.mjs lays out.
  *
  * Usage: node third-party-licenses.ts <output> [--offline]
  */

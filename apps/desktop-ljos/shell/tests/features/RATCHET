@@ -1,4 +1,4 @@
-# The desktop-qt scenarios that pass on desktop-ljos, one id per line.
+# The desktop scenarios that pass on desktop-ljos, one id per line.
 # `cargo test -p hal_c2_shell --test features` fails when one of them stops
 # passing; `-- --raise` adds the ones that newly pass. Never remove a line to
 # make a run pass: fix the regression.

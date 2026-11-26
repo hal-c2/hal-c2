@@ -1,0 +1,9 @@
+{
+  "name": "@hal-c2/qml",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "lucide-react": "^0.564.0"
+  }
+}

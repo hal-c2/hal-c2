@@ -13,7 +13,7 @@ you audit it, so you know what it should do and what is `@backlog-desktop`.
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Window size | 1600x1000 (the sandbox's whole display), 1280x800, 960x1000 (half of a tiled 1920 screen, a common real size), 640x400 (the window minimum) |
 | Panels      | at each size: sidebar open and collapsed, right panel closed and open                                                                       |
-| Appearance  | light and dark (Settings › Appearance › Color scheme), plus one custom `theme.json` (examples in `apps/desktop-qt/examples/`)               |
+| Appearance  | light and dark (Settings › Appearance › Color scheme), plus one custom `theme.json` (examples in `apps/desktop-ljos/examples/`)             |
 
 `ux size <w> <h>` floats the window in the sandbox's sway and resizes it
 (`set_window_frame` does not stick under sway). Shoot again after it, and

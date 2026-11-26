@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
-#MISE description="Build the Linux release into release/: the MC (release:mc) and the Qt desktop AppImage that carries it"
+#MISE description="Build the Linux release into release/: the MC (release:mc) and the Ljós desktop that carries it (release:desktop-ljos)"
 #MISE dir="{{config_root}}"
-#MISE depends=["release:mc", "desktop:helpers"]
+#MISE depends=["release:desktop-ljos"]
 set -euo pipefail
 
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
-  echo "release:linux builds on x86_64 Linux only (apps/desktop-qt/scripts/package-linux.sh)." >&2
+[[ $(uname -s) == Linux ]] || {
+  echo "release:linux builds on Linux only." >&2
   exit 1
 }
 
-node apps/desktop-qt/scripts/dev-qt.mjs --configure-only --release
-# linuxdeploy's own strip is older than the system libraries a rolling distribution
-# ships (.relr.dyn) and fails on them. CI packages on Ubuntu and keeps stripping.
-export NO_STRIP="${NO_STRIP:-1}"
-# Beside a Qt 5 the Qt plugin would pick qmake-qt5 and find no modules to deploy.
-export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
-# cmake --install carries the capture helpers desktop:helpers just built.
-# package-linux.sh stages the MC release:mc just built (apps/server-ex/_build/prod/rel/hal_c2).
-apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release
-
+# The desktop is desktop-ljos (#1661): release:desktop-ljos lays it out as
+# installed — hal-c2-ljos, its helper and CEF's runtime beside each other,
+# Node and the MC under share/hal-c2. There is no Qt AppImage anymore.
 read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
-out="release/hal-c2-qt-$version-linux-x64.AppImage"
-cp apps/desktop-qt/build/release/hal-c2-qt-x86_64.AppImage "$out"
+arch="$(uname -m)"
+out="release/hal-c2-ljos-$version-linux-${arch/x86_64/x64}"
+out="${out/aarch64/arm64}"
+[[ -d $out ]] || { echo "release:linux: no $out from release:desktop-ljos" >&2; exit 1; }
 echo "$out"

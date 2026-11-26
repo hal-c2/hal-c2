@@ -8,9 +8,9 @@ HAL-C2 ships the MC, the Qt desktop, the desktop on Ljós (`apps/desktop-ljos`) 
 
 ```sh
 mise run release:mc            # release/hal-c2-mc-<version>-<platform>: the single-file MC, and its .tar.gz upgrade bundle
-mise run release:linux         # the same, plus release/hal-c2-qt-<version>-linux-x64.AppImage
-mise run release:macos         # the same, plus release/hal-c2-qt-<version>-darwin-<arch>.zip, holding HAL-C2.app
-mise run release:desktop-ljos  # the same, plus release/hal-c2-ljos-<version>-<platform>/, laid out as it is installed
+mise run release:linux         # the same, plus release/hal-c2-ljos-<version>-linux-<arch>/, laid out as it is installed
+mise run release:macos         # the same, plus release/hal-c2-ljos-<version>-darwin-<arch>/, holding HAL-C2 Ljós.app
+mise run release:desktop-ljos  # the same task the two above run, for either platform
 ```
 
 The macOS apps are signed ad hoc, not with a Developer ID: they run on the Mac that built them, and
@@ -23,8 +23,8 @@ makes the MC's sidecars run on the bundled Node from `share/hal-c2` beside its `
 not the build flag's doing: the launcher (`resolve_launch` in
 `apps/desktop-ljos/shell/src/mc_launcher.rs`) picks, in every build, `HAL_C2_MC_RELEASE` when set,
 else the bundled MC under that same `share/hal-c2`, else the checkout's `apps/server-ex` run from
-source, so diagnose a missing bundle or an unexpected source launch against that order. On Linux CEF's runtime sits beside the binary; the macOS bundle
-does not carry CEF yet, so its browser tabs show no pages ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
+source, so diagnose a missing bundle or an unexpected source launch against that order. On Linux CEF's runtime sits beside the binary. The macOS
+bundle carries CEF's framework, taken from `CEF_PATH`, which the macOS build needs set, and is signed whole after staging ([README](../../apps/desktop-ljos/README.md#browser-pages)). The build ends with `hal-c2-ljos --check`,
 which fails when a QML file of the checkout is missing from the binary.
 
 A local build is versioned `<package version>-local.<commit time>.g<commit>` unless
@@ -38,7 +38,6 @@ installed before. Machines cluster whatever versions they run.
 ```sh
 mise run release:install               # all of the below this machine builds, the MC release built once
 mise run release:install:mc            # the MC, as the background service
-mise run release:install:desktop-qt    # ~/.local/bin/hal-c2 with hal-c2.desktop (x86_64 Linux), ~/Applications/HAL-C2.app (macOS)
 mise run release:install:desktop-ljos  # ~/.local/bin/hal-c2-ljos with hal-c2-ljos.desktop (Linux), ~/Applications/HAL-C2 Ljós.app (macOS)
 ```
 
@@ -96,8 +95,8 @@ a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that releas
 
 ## Qt desktop
 
-`.github/workflows/desktop-qt.yml` builds and tests an unsigned Linux AppImage on every change to
-`main` and every pull request that touches the desktop, and keeps it as a workflow artifact. The
-macOS app bundle (`apps/desktop-qt/scripts/package-macos.sh`, as `release:macos` builds it) is
-built only when the workflow is dispatched by hand with `macos` checked, since
-macOS runners are expensive. Nothing publishes either yet.
+`.github/workflows/desktop-qt.yml` builds and tests it on every change to `main` and every pull
+request that touches it. Its own packaging scripts (`apps/desktop-qt/scripts/package-linux.sh`,
+`package-macos.sh`) still build its AppImage and app bundle by hand, but `release:linux` and
+`release:macos` no longer use them: they package the Ljós desktop through
+`release:desktop-ljos`. Nothing publishes either yet.

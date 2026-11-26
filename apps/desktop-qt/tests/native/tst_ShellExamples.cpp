@@ -308,7 +308,7 @@ private slots:
   void layoutsFit() {
     QFETCH(QString, example);
     QFETCH(int, width);
-    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
+    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/../desktop-ljos/examples/") + example);
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -655,7 +655,7 @@ private slots:
   }
 
   void dashboardDimmerPreservesRoundedCorners() {
-    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/dashboard"));
+    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/../desktop-ljos/examples/dashboard"));
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -1312,7 +1312,7 @@ private slots:
     QFETCH(QString, example);
     QFile::remove(directory.filePath("shell.qml"));
     if (example != "default") {
-      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
+      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/../desktop-ljos/examples/") + example);
       for (const auto& file : source.entryList(QDir::Files)) {
         const QString target = directory.filePath(file);
         if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -1369,7 +1369,7 @@ private slots:
     QFETCH(QString, example);
     QFile::remove(directory.filePath("shell.qml"));
     if (example != "default") {
-      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
+      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/../desktop-ljos/examples/") + example);
       for (const auto& file : source.entryList(QDir::Files)) {
         const QString target = directory.filePath(file);
         if (QFile::exists(target)) QVERIFY(QFile::remove(target));

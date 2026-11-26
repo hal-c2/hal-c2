@@ -1,8 +1,8 @@
 name: desktop-ljos
 
-# The Ljós desktop (apps/desktop-ljos): a Rust shell that loads desktop-qt's
-# QML bricks unchanged. It builds and tests from its own Cargo workspace; the
-# Qt desktop builds in desktop-qt.yml.
+# The Ljós desktop (apps/desktop-ljos): a Rust shell that loads the shared
+# QML bricks (packages/qml) unchanged. It builds and tests from its own
+# Cargo workspace.
 
 on:
   push:
@@ -10,15 +10,10 @@ on:
       - main
     paths: &paths
       - "apps/desktop-ljos/**"
-      # What the shell loads or embeds at build and test time: the bricks, the
-      # sounds and themes (src/native), the MC's version, the plugins' files,
-      # the code colouring crate (native/syntax), and the two files the
-      # features runner reads to learn desktop-qt's scenario list
-      # (tst_Features.cpp, tst_Scenarios.qml).
+      # What the shell loads or embeds at build and test time: the bricks and
+      # themes (packages/qml), the MC's version, the plugins' files, and the
+      # code colouring crate (native/syntax).
       - "packages/qml/**"
-      - "apps/desktop-qt/src/native/**"
-      - "apps/desktop-qt/tests/native/tst_Features.cpp"
-      - "apps/desktop-qt/tests/tst_Scenarios.qml"
       - "apps/server-ex/VERSION"
       - "features/**"
       - "plugins/**"
@@ -276,7 +271,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        # desktop-qt's scenarios, by domain (features/), about 400 to 550
+        # The desktop scenarios, by domain (features/), about 400 to 550
         # scenarios a shard. Each shard runs its globs and fails when a
         # scenario RATCHET holds in them stops passing. A domain in none of
         # them is never run: add it here when features/ gains one.

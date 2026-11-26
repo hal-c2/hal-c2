@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build the desktop-ljos release into release/: hal-c2-ljos (its QML compiled in) with the desktop host, Node and MC (release:mc) it runs, laid out as it is installed"
+#MISE description="Build the desktop-ljos release into release/: hal-c2-ljos (its QML compiled in) with Node and the MC (release:mc) it runs, laid out as it is installed"
 #MISE dir="{{config_root}}"
 #MISE depends=["release:mc"]
 set -euo pipefail
@@ -86,10 +86,10 @@ else
   cp -R "$target/locales" "$bin/"
 fi
 
-# The host, Node and the MC, as desktop-qt's packages stage them.
-node apps/desktop-qt/scripts/stage-runtime.mjs "$share"
-# stage-runtime writes desktop-qt's license manifest; this app ships its
-# own, from its Cargo.lock and CEF (apps/desktop-ljos/scripts).
+# Node and the MC beside the binary (no Node host: the shell launches the
+# MC itself), staged by this app's own script.
+node apps/desktop-ljos/scripts/stage-runtime.mjs "$share"
+# This app's license manifest, from its Cargo.lock and CEF.
 node apps/desktop-ljos/scripts/third-party-licenses.ts "$share/licenses/third-party-licenses.json"
 if [[ $os == Linux ]]; then
   # Snap Shot: GNOME's extension and the KDE Plasma and Hyprland capture helpers,

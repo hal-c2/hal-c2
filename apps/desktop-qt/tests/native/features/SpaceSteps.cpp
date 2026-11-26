@@ -4318,7 +4318,7 @@ bool hasEffort(const QJsonObject& selection, const QString& level) {
 }
 
 // The desktop's own window, drawn by `shell`: "default" (DefaultShell) or an
-// example shell a user may copy (apps/desktop-qt/examples/<shell>), which lays
+// example shell a user may copy (apps/desktop-ljos/examples/<shell>), which lays
 // out its own Composer.
 QQuickWindow* shellWindow(World& world, const QString& shell = {}) {
   const QDir dir(QDir(world.homeDir()).filePath(QStringLiteral("windows")));
@@ -4331,7 +4331,7 @@ QQuickWindow* shellWindow(World& world, const QString& shell = {}) {
       expect(file.open(QIODevice::WriteOnly) && file.write("import HalC2.Bricks\nDefaultShell { width: 1200; height: 800 }\n") > 0, path);
     } else {
       // With the files beside it, as a user copies it (glass-macos has MacToolbarButton).
-      const QDir example(QStringLiteral(HAL_C2_QML_DIR "/../examples/%1").arg(shell));
+      const QDir example(QStringLiteral(HAL_C2_QML_DIR "/../../apps/desktop-ljos/examples/%1").arg(shell));
       expect(example.exists(QStringLiteral("shell.qml")), QStringLiteral("no example shell at %1").arg(example.path()));
       for (const QString& file : example.entryList(QDir::Files)) QFile::copy(example.filePath(file), dir.filePath(file));
     }

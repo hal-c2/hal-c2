@@ -1,4 +1,4 @@
-//! desktop-qt's device fixture (a solid red 72x160 H.264 clip, Annex-B) as
+//! The device fixture desktop-qt's tests made (a solid red 72x160 H.264 clip, Annex-B) as
 //! the device hub sends it: serve-sim's AVCC body and serve-emu's SEMU
 //! frames; and [`red_blue`], a 72x160 clip that turns from red to blue.
 //! Included by the device tests
@@ -16,7 +16,7 @@ pub struct Fixture {
 pub fn fixture() -> Fixture {
     clip(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../desktop-qt/tests/native/features/fixtures/device-72x160.h264"
+        "/tests/fixtures/device-72x160.h264"
     ))
 }
 
