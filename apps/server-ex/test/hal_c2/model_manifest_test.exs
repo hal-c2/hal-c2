@@ -60,4 +60,15 @@ defmodule HalC2.ModelManifestTest do
 
     assert ModelManifest.valid?(manifest(model(%{}), sound))
   end
+
+  test "a claudeCode that is present and not a map is refused, on a model and on a profile" do
+    refute ModelManifest.valid?(manifest(model("x")))
+    refute ModelManifest.valid?(manifest(model(42)))
+
+    profile = %{"adapter" => %{"claudeCode" => "x"}}
+    refute ModelManifest.valid?(manifest(model(%{}), profile))
+
+    assert ModelManifest.valid?(manifest(model(nil)))
+    assert ModelManifest.valid?(manifest(model(%{}), %{"adapter" => %{"claudeCode" => nil}}))
+  end
 end

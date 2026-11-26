@@ -247,6 +247,10 @@ defmodule HalC2.ModelManifest do
       (min == nil or max == nil or Version.compare(min, max) == :lt)
   end
 
+  defp gates?(%{"adapter" => %{"claudeCode" => claude}})
+       when not is_map(claude) and not is_nil(claude),
+       do: false
+
   defp gates?(%{"adapter" => adapter}) when not is_map(adapter), do: false
   defp gates?(_model), do: true
 
@@ -260,6 +264,10 @@ defmodule HalC2.ModelManifest do
     map?(claude["effortMap"], &(is_binary(&1) or is_nil(&1))) and
       map?(claude["contextWindowTokens"], &(is_integer(&1) and &1 > 0))
   end
+
+  defp profile?(%{"adapter" => %{"claudeCode" => claude}})
+       when not is_map(claude) and not is_nil(claude),
+       do: false
 
   defp profile?(%{"adapter" => adapter}) when not is_map(adapter), do: false
   defp profile?(%{}), do: true
