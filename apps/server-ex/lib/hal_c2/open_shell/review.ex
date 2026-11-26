@@ -95,6 +95,17 @@ defmodule HalC2.OpenShell.Review do
   def supported?(driver), do: Map.has_key?(@drivers, driver)
 
   @doc """
+  Whether a sandboxed review on provider instance `instance` has a way to its model
+  (`HalC2.OpenShell.Route`): `:ok`, or `{:error, message}` with the refusal `open/1`
+  would give, for a settings page to show before a review fails on it.
+  """
+  def route(instance) do
+    driver = HalC2.Orchestration.driver_for(instance)
+
+    with {:ok, _model} <- model(driver, instance), do: :ok
+  end
+
+  @doc """
   The argv `driver`'s agent runs as in the sandbox, from the image's PATH: a host
   path in the instance's settings means nothing there.
   """
@@ -654,6 +665,9 @@ defmodule HalC2.OpenShell.Review do
   # provider holds the key under the variable the upstream API's takes either way, so
   # the profile and the sign-in are the same.
   defp model(driver, instance) do
+    settings = HalC2.Settings.settings()
+    plugin = Host.added_instances(settings, "cliproxyapi")
+
     with {:ok, model} <- driver_model(driver),
          {:ok, args} <- launch_args(driver, instance),
          {:ok, route} <-
@@ -662,7 +676,8 @@ defmodule HalC2.OpenShell.Review do
              %{
                env: HalC2.Settings.instance_env(instance),
                args: args,
-               plugin?: instance in Host.added_instances(HalC2.Settings.settings(), "cliproxyapi")
+               plugin?: instance in plugin,
+               proxied: proxied(settings, plugin, driver)
              },
              model.key,
              %{model.key => System.get_env(model.key)}
@@ -670,6 +685,18 @@ defmodule HalC2.OpenShell.Review do
          {:ok, route} <- Route.reachable(route, HalC2.OpenShell.state()["driver"]) do
       {:ok, Map.merge(model, %{credentials: %{model.key => route.key}, proxy: route.proxy})}
     end
+  end
+
+  # The name of the CLIProxyAPI plugin's instance of `driver` that is on, if there is
+  # one: the way to a review without the upstream API's key.
+  defp proxied(settings, plugin, driver) do
+    Enum.find_value(plugin, fn id ->
+      case get_in(settings, ["providerInstances", id]) do
+        %{"driver" => ^driver, "enabled" => false} -> nil
+        %{"driver" => ^driver} = entry -> entry["displayName"] || id
+        _ -> nil
+      end
+    end)
   end
 
   defp driver_model(driver) do

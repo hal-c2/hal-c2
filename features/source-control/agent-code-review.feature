@@ -586,6 +586,17 @@ Feature: Agent code review
       When the user starts a review of #12
       Then the review of #12 is failed saying "on CLIProxyAPI through the CLIProxyAPI plugin's provider."
 
+    # A subscription sign-in stays on this machine, and the CLIProxyAPI plugin's Claude
+    # reaches a sandbox without the API's key, so the refusal names it.
+    @mc @plugin-cliproxyapi
+    Scenario: A sandboxed Claude review without an API key names Claude via CLIProxyAPI
+      Given pull requests are not trusted and OpenShell is installed
+      And a fake CLIProxyAPI
+      And the CLIProxyAPI plugin runs the fake binary
+      And "code-review" reviews with Claude
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Pick Claude via CLIProxyAPI as the review agent in Settings → Code review, or set ANTHROPIC_API_KEY in this provider's environment in Settings → Providers."
+
     @mc
     Scenario: By default a trusted pull request is reviewed in a sandbox too
       Given pull requests are trusted and OpenShell is installed
@@ -648,6 +659,13 @@ Feature: Agent code review
       Given "code-review" reviews with an agent that cannot run in a sandbox
       When the user opens the settings of "code-review"
       Then they read that its reviews fail, and to pick Claude or Codex
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui @plugin-cliproxyapi
+    Scenario: The settings warn that an agent with no API key for a sandbox fails its reviews
+      Given "code-review" reviews with Claude signed in on this machine, with no API key
+      And the CLIProxyAPI plugin has added "Claude via CLIProxyAPI"
+      When the user opens the settings of "code-review"
+      Then they read that its reviews fail, and to pick "Claude via CLIProxyAPI" or set ANTHROPIC_API_KEY
 
     @mc
     Scenario: A sandboxed Claude review takes none of this machine's Claude settings

@@ -112,7 +112,10 @@ which **Settings → Review sandboxes** installs, and its agent must be Claude o
 with an API key, or **Claude via CLIProxyAPI** or **Codex via CLIProxyAPI** from the
 [CLIProxyAPI plugin](plugins.md#cliproxyapi). Any other agent, a provider that sends
 its agent to a base URL of its own, or an MC without OpenShell fails the review and
-says what to set up. A review never falls back to running on your machine.
+says what to set up. A review never falls back to running on your machine. A sign-in
+to Claude or Codex on this machine does not reach the sandbox, so an agent signed in
+without an API key fails its reviews too: **Settings → Code review** says so when you
+pick it, and names the CLIProxyAPI plugin's provider to pick instead.
 
 **Review trusted pull requests on this machine** opts out for the pull requests
 HAL-C2 trusts: those opened by a member or collaborator of the repository, or by one
