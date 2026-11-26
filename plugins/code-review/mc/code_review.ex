@@ -3351,7 +3351,7 @@ defmodule HalC2Plugins.CodeReview do
   # The review's body on the pull request, its verdict in words when it is posted as
   # a comment.
   defp review_body(review, as_comment, settings) do
-    heading = String.trim(settings["heading"] || "")
+    heading = heading(settings)
 
     body =
       [
@@ -3367,6 +3367,10 @@ defmodule HalC2Plugins.CodeReview do
 
     String.trim("#{body}\n\n#{marker(review)}")
   end
+
+  # The heading as `review_body/3` renders it, so a change that only adds or removes
+  # whitespace around it does not make an identical preview stale (`version/2`).
+  defp heading(settings), do: String.trim(settings["heading"] || "")
 
   # Whether the run of `review` is no longer the one being published.
   defp replaced?(%{"key" => key, "threadId" => thread_id}) do
@@ -4032,7 +4036,7 @@ defmodule HalC2Plugins.CodeReview do
   # other findings, or a heading changed since the preview, is another one.
   defp version(review, settings) do
     {review["threadId"], review["reviewedSha"], review["verdict"], review["summary"],
-     review["comments"], review["general"], review["validation"], settings["heading"]}
+     review["comments"], review["general"], review["validation"], heading(settings)}
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)

@@ -91,6 +91,7 @@ defmodule HalC2.CodeReviewPropTest do
     "comment" => "COMMENT"
   }
   @statuses Map.new(@order, &{Atom.to_string(&1), &1})
+  @headings ["Agentic code review", "Custom heading", ""]
 
   setup_all do
     # `behind_a_post?/1` looks for `run/2` under a process's backoff; the default
@@ -501,6 +502,7 @@ defmodule HalC2.CodeReviewPropTest do
     # Mostly a review there is something to do with.
     waiting = for {key, %{status: :waiting}} <- m.reviews, do: key
     published = if waiting == [], do: key, else: frequency([{3, elements(waiting)}, {1, key}])
+    other_heading = elements(List.delete(@headings, m.settings.heading))
     commented = for {key, %{comments: [_ | _]}} <- m.reviews, do: key
     commented = if commented == [], do: key, else: frequency([{3, elements(commented)}, {1, key}])
 
@@ -535,6 +537,8 @@ defmodule HalC2.CodeReviewPropTest do
         {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
         {if(waiting == [], do: 2, else: 10),
          {:call, __MODULE__, :publish, [published, frequency([{6, true}, {1, false}])]}},
+        {if(waiting == [], do: 1, else: 3),
+         {:call, __MODULE__, :heading_staleness, [published, other_heading]}},
         {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}},
         {2, {:call, __MODULE__, :save_mid_read, [trust_setting()]}}
       ] ++
@@ -581,7 +585,7 @@ defmodule HalC2.CodeReviewPropTest do
             {"display", oneof(~w(page threads both))},
             {"model", oneof(~w(fake/one fake/two))},
             {"reviewTrustedOnThisMachine", boolean()},
-            {"heading", oneof(["Agentic code review", "Custom heading", ""])}
+            {"heading", oneof(@headings)}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -607,7 +611,7 @@ defmodule HalC2.CodeReviewPropTest do
         {"label", oneof(~w(agent-review ship-it))}
       ])
 
-  @plugin_commands ~w(refresh poll start start_stop retry resume approve unapprove dismiss discard stop relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
+  @plugin_commands ~w(refresh poll start start_stop retry resume approve unapprove dismiss discard stop relist_discard publish heading_staleness age disable report turn_finished limited late_published save_mid_read)a
 
   def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
@@ -818,6 +822,16 @@ defmodule HalC2.CodeReviewPropTest do
       _ ->
         {m, :error}
     end
+  end
+
+  # The version a preview showed belongs to the heading it would post under
+  # (`version/2`): saving a different one makes that version stale, so publishing
+  # with it is refused and nothing more is posted, whatever a fresh one taken after
+  # the save would do.
+  defp step(m, {:call, _, :heading_staleness, [key, heading]}) do
+    m = %{m | settings: %{m.settings | heading: heading}}
+    {m, reply} = step(m, {:call, nil, :publish, [key, true]})
+    {m, {:error, reply}}
   end
 
   defp step(m, {:call, _, :report, [{key, k}, kind]}) do
@@ -1681,16 +1695,34 @@ defmodule HalC2.CodeReviewPropTest do
   # the version the user saw, or (`fresh` false) one the review had before, and the
   # verdict its preview said it posts with.
   def publish(key, fresh) do
-    ref = make_ref()
     shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
     version = if fresh, do: shown && shown["version"], else: "stale"
+    observe(publish_with_version(key, version))
+  end
+
+  # The version a preview showed, saved under a heading later changed to `heading`:
+  # publishing with it is refused and posts nothing, as it belongs to the heading it
+  # was taken under (`version/2`); a fresh one taken after the save still publishes.
+  def heading_staleness(key, heading) do
+    before = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    stale_version = before && before["version"]
+    :ok = plugins("saveSettings", %{"id" => @id, "settings" => %{"heading" => heading}})
+    stale = publish_with_version(key, stale_version)
+
+    after_save = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    fresh = publish_with_version(key, after_save && after_save["version"])
+    observe({stale, fresh})
+  end
+
+  defp publish_with_version(key, version) do
+    ref = make_ref()
     send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, verdict(key)}})
     drain()
 
     receive do
-      {^ref, reply} -> observe(reply(reply))
+      {^ref, reply} -> reply(reply)
     after
-      0 -> observe(:held)
+      0 -> :held
     end
   end
 
