@@ -1385,6 +1385,9 @@ struct Facts {
     active_group: String,
     group_sizes: BTreeMap<String, usize>,
     drawer_count: usize,
+    /// The single screen's listing as (id, status, busy): its
+    /// consumers are told of a shell starting or a task running.
+    listed: Vec<(String, String, bool)>,
 }
 
 pub struct Terminals {
@@ -2035,6 +2038,7 @@ impl Terminals {
             .get(&self.thread_key)
             .and_then(|k| k.get(&terminal_id))
             .is_some_and(|s| s.busy);
+        let mut started = false;
         if self.single_screen {
             // On a single screen a script never lands in a shell the
             // user is at: the first terminal when nothing runs, else
@@ -2066,6 +2070,7 @@ impl Terminals {
             {
                 summary.status = "starting".into();
             }
+            started = ids.contains(&terminal_id);
         } else if busy {
             if ids.len() >= MAX_TERMINALS {
                 toast(
@@ -2096,6 +2101,23 @@ impl Terminals {
             Box::new(move |engine, result| {
                 let failed = format!("Failed to run script \"{name}\".");
                 if let Err(error) = result {
+                    if started {
+                        // The shell never started: it is ended again.
+                        controller::with::<Terminals, _>(engine, |t, engine| {
+                            if let Some(summary) = t
+                                .known
+                                .entry(t.thread_key.clone())
+                                .or_default()
+                                .get_mut(&terminal_id)
+                            {
+                                summary.status = "exited".into();
+                            }
+                            if t.thread_key == thread_key {
+                                t.sync_tabs(engine);
+                                t.notify(engine);
+                            }
+                        });
+                    }
                     toast(engine, &failed, &error.message);
                     return;
                 }
@@ -2207,6 +2229,11 @@ impl Terminals {
             active_group: self.active_group(),
             group_sizes: self.group_sizes(),
             drawer_count: self.drawer_count(),
+            listed: self
+                .listing()
+                .into_iter()
+                .map(|listed| (listed.terminal_id, listed.status, listed.busy))
+                .collect(),
         }
     }
 
@@ -2446,12 +2473,13 @@ impl Terminals {
         }
         // What the visit left that the thread no longer has.
         self.drop_parked(engine, &thread_key);
-        if self.single_screen {
-            let group = self.active_group();
-            for row in self.tabs.rows() {
-                if let Some(session) = &row.session {
-                    session.set_parked(!ui.open || row.group != group);
-                }
+        // A single screen parks all but the shown group; the drawer
+        // holds none of its rows back, so leaving single-screen
+        // releases what it parked.
+        let group = self.active_group();
+        for row in self.tabs.rows() {
+            if let Some(session) = &row.session {
+                session.set_parked(self.single_screen && (!ui.open || row.group != group));
             }
         }
     }
@@ -2777,6 +2805,14 @@ impl Terminals {
                 .and_then(|k| k.get(terminal_id))
                 .is_some_and(Summary::ended);
         if ended {
+            if self.live_of(&self.terminal_ids()).len() >= MAX_TERMINALS {
+                toast(
+                    engine,
+                    &format!("At most {MAX_TERMINALS} terminals per thread."),
+                    "",
+                );
+                return;
+            }
             self.restart_terminal(engine, terminal_id);
         }
         let ui = self.ui_mut();

@@ -79,8 +79,8 @@ impl TerminalEvents {
         );
         let event = WheelEvent {
             pos: centre,
-            angle_delta: kurbo::Vec2::new(0.0, (pixels * 120.0 / 15.0).round()),
-            pixel_delta: kurbo::Vec2::new(0.0, pixels.round()),
+            angle_delta: kurbo::Vec2::new(0.0, pixels * 120.0 / 15.0),
+            pixel_delta: kurbo::Vec2::new(0.0, pixels),
             phase: ljos::item::ScrollPhase::None,
             modifiers: Modifiers::empty(),
             time: engine.now(),

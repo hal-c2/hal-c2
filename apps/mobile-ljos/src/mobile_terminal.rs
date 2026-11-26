@@ -534,6 +534,8 @@ impl MobileTerminal {
     }
 
     fn clear(&mut self, engine: &Engine) {
+        // The key row's clear releases a held modifier either way.
+        self.held.clear();
         let place = controller::with::<Terminals, _>(engine, |terminals, _| {
             let id = terminals.active_terminal_id();
             let has = terminals.session(&id).is_some();
@@ -542,7 +544,6 @@ impl MobileTerminal {
         let Some((true, Some(place), active)) = place else {
             return;
         };
-        self.held.clear();
         self.publish(engine);
         self.mc.call(
             &place.environment_id,
@@ -590,17 +591,29 @@ impl MobileTerminal {
         let x = payload.get("x").and_then(Json::as_f64).unwrap_or_default();
         let y = payload.get("y").and_then(Json::as_f64).unwrap_or_default();
         let me = self.me.clone();
+        // The lines are the shown terminal's: its identity is
+        // captured with them, as settling may move on meanwhile.
+        let shown = self
+            .shown(engine)
+            .map(|shown| (shown.terminal_id, shown.label))
+            .unwrap_or_default();
         controller::with::<Menus, _>(engine, |menus, engine| {
             menus.open(engine, x, y, items, move |engine, id| {
-                let (id, visible) = (id.to_owned(), visible.clone());
+                let (id, visible, shown) = (id.to_owned(), visible.clone(), shown.clone());
                 me.run(engine, move |c: &mut MobileTerminal, engine| {
-                    c.menu_chosen(engine, &id, visible);
+                    c.menu_chosen(engine, &id, visible, shown);
                 });
             });
         });
     }
 
-    fn menu_chosen(&mut self, engine: &Engine, id: &str, visible: Vec<String>) {
+    fn menu_chosen(
+        &mut self,
+        engine: &Engine,
+        id: &str,
+        visible: Vec<String>,
+        shown: (String, String),
+    ) {
         if let Some(terminal_id) = id.strip_prefix("terminal:") {
             self.bridge.dispatch(
                 engine,
@@ -615,7 +628,7 @@ impl MobileTerminal {
                 terminals.run_script(engine, &script_id);
             });
         } else if id == "context" {
-            self.open_context(engine, visible);
+            self.open_context_captured(engine, visible, shown);
         } else if id == "smaller" {
             self.set_text_size(engine, self.text_size - TEXT_SIZE_STEP);
         } else if id == "larger" {
@@ -673,6 +686,19 @@ impl MobileTerminal {
     }
 
     fn open_context(&mut self, engine: &Engine, lines: Vec<String>) {
+        let shown = self
+            .shown(engine)
+            .map(|shown| (shown.terminal_id, shown.label))
+            .unwrap_or_default();
+        self.open_context_captured(engine, lines, shown);
+    }
+
+    fn open_context_captured(
+        &mut self,
+        engine: &Engine,
+        lines: Vec<String>,
+        shown: (String, String),
+    ) {
         let toast = |engine: &Engine, title: &str, description: &str| {
             let (title, description) = (title.to_owned(), description.to_owned());
             controller::with::<Toasts, _>(engine, |toasts, engine| {
@@ -701,10 +727,7 @@ impl MobileTerminal {
             );
             return;
         }
-        self.context_terminal = self
-            .shown(engine)
-            .map(|shown| (shown.terminal_id, shown.label))
-            .unwrap_or_default();
+        self.context_terminal = shown;
         self.choosing = Some(context);
         self.publish(engine);
     }

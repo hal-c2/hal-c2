@@ -975,3 +975,54 @@ mod session_model {
         }
     }
 }
+
+fn summary_status(thread: &str, id: &str, status: &str) -> Json {
+    json!({"threadId": thread, "terminalId": id, "label": "", "hasRunningSubprocess": false,
+           "status": status, "cwd": "/w/p-wt"})
+}
+
+#[test]
+fn a_single_screen_moves_on_when_its_shell_ends_and_restarts_an_ended_one() {
+    let hub = on_thread("main", Some("/w/p-wt"));
+    hub.with_controller::<Terminals, _>(|t, engine| t.set_single_screen(engine, true));
+    hub.dispatch("terminal.toggle", json!(null));
+    hub.dispatch("terminal.new", json!(null));
+    assert_eq!(active(&hub), "term-2");
+    attach(&hub, "term-1", "");
+    attach(&hub, "term-2", "");
+    // The active shell ends: the screen moves to the nearest live
+    // one below it, the listing keeps the ended one, and nothing
+    // is closed on the MC.
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-2", "exited")}),
+    );
+    on_terminal(&hub, "term-2", json!({"type": "exited"}));
+    assert_eq!(active(&hub), "term-1");
+    assert!(is_open(&hub));
+    assert_eq!(count(&hub, "terminal.close"), 0);
+    let listed_now = hub.with_controller::<Terminals, _>(|t, _| t.listing());
+    assert_eq!(listed_now.len(), 2);
+    assert_eq!(listed_now[1].status, "exited");
+    // Opening the ended one again restarts its shell.
+    let opens = count(&hub, "terminal.open");
+    hub.dispatch("terminal.select", json!({"terminalId": "term-2"}));
+    assert_eq!(count(&hub, "terminal.open"), opens + 1);
+    assert_eq!(
+        last(&hub, "env-1", "terminal.open")["terminalId"],
+        "term-2"
+    );
+    hub.mc.answer(&hub.engine, "terminal.open", Ok(json!({"ok": true})));
+    // The last live one ends: the screen shuts, the ended one
+    // stays the active id its menu names.
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-1", "exited")}),
+    );
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-2", "exited")}),
+    );
+    assert!(!is_open(&hub));
+    assert_eq!(active(&hub), "term-2");
+}
