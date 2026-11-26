@@ -267,7 +267,10 @@ defmodule HalC2.Plugins do
 
   @doc """
   Calls a running tool pack's or extension's tool for an agent in `thread_id`:
-  `{:ok, value}`, `{:error, code, message}`, or nil when no running plugin has it.
+  `{:ok, value}`, `{:error, code, message, %{"plugin" => id}}` (with `"details"` when
+  the plugin gave them), or nil when no running plugin has it. The code is the
+  plugin's own when its error is structured, and `plugin_failed` when it crashed or
+  gave anything else.
   """
   def call_tool(name, arguments, thread_id \\ nil) do
     pack =
@@ -303,11 +306,65 @@ defmodule HalC2.Plugins do
     end)
   end
 
+  # A plugin's own error code reaches the agent, so it can tell invalid input from an
+  # expired login or a rate limit: an error that is a map, or a JSON object, with a
+  # `code` and a `message` (and optionally `details`) keeps them, and `plugin` names
+  # the plugin, so its codes are never taken for HAL-C2's own. A crash, or any other
+  # error, is `plugin_failed`.
   defp tool_answer(id, fun) do
-    case safely(fun) do
-      {:ok, value} -> {:ok, value}
-      {:error, message} -> {:error, "plugin_failed", "#{id}: #{text(message)}"}
+    case safely(fn -> {:returned, fun.()} end) do
+      {:returned, {:ok, value}} -> {:ok, value}
+      {:returned, {:error, reason}} -> tool_error(id, reason)
+      {:returned, other} -> plugin_failed(id, "answered #{inspect(other)}")
+      {:error, crash} -> plugin_failed(id, crash)
     end
+  end
+
+  defp tool_error(id, reason) do
+    case structured_error(reason) do
+      {code, message, extra} -> {:error, code, message, Map.put(extra, "plugin", id)}
+      nil -> plugin_failed(id, text(reason))
+    end
+  end
+
+  defp plugin_failed(id, message),
+    do: {:error, "plugin_failed", "#{id}: #{message}", %{"plugin" => id}}
+
+  @doc false
+  # `{code, message, extra}` of a structured tool error, or nil: `code` is a short word
+  # (`invalid_input`, `rate-limited`, `Unauthenticated`), `message` a text, and `extra`
+  # holds `details` when it is there and JSON.
+  def structured_error("{" <> _ = text) do
+    case JSON.decode(text) do
+      {:ok, %{} = error} -> structured_error(error)
+      _ -> nil
+    end
+  end
+
+  def structured_error(%{} = error) do
+    code = field(error, "code", :code)
+    message = field(error, "message", :message)
+    details = field(error, "details", :details)
+
+    with true <- is_binary(code) and code =~ ~r/\A[A-Za-z][A-Za-z0-9_.:-]{0,63}\z/,
+         true <- is_binary(message) and String.trim(message) != "",
+         {:ok, extra} <- details(details) do
+      {code, message, extra}
+    else
+      _ -> nil
+    end
+  end
+
+  def structured_error(_reason), do: nil
+
+  defp field(error, key, atom), do: Map.get(error, key, Map.get(error, atom))
+
+  defp details(nil), do: {:ok, %{}}
+
+  defp details(details) do
+    {:ok, %{"details" => json(details)}}
+  rescue
+    _ -> :error
   end
 
   # `{id, module, context}` of the running extensions that may offer agents tools.

@@ -1784,7 +1784,7 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  defp told({:error, _, _}), do: :error
+  defp told({:error, _, _, _}), do: :error
   defp told(nil), do: nil
 
   def turn_finished({key, k}, status) do

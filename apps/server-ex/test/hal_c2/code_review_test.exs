@@ -926,7 +926,7 @@ defmodule HalC2.CodeReviewTest do
 
     assert Enum.any?(HalC2.Plugins.tools(old["threadId"]), &(&1["name"] == "code_review_report"))
 
-    assert {:error, "plugin_failed", message} =
+    assert {:error, "plugin_failed", message, %{"plugin" => "code-review"}} =
              HalC2.Plugins.call_tool(
                "code_review_report",
                %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
@@ -959,7 +959,7 @@ defmodule HalC2.CodeReviewTest do
     {:ok, _} = call("stop", %{"key" => @key})
     arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
 
-    assert {:error, _, message} =
+    assert {:error, _, message, _} =
              HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
 
     assert message =~ "no longer running"
@@ -974,7 +974,7 @@ defmodule HalC2.CodeReviewTest do
     settle()
     again = %{first | "verdict" => "request-changes", "summary" => "Wait, no."}
 
-    assert {:error, "plugin_failed", message} =
+    assert {:error, "plugin_failed", message, _} =
              HalC2.Plugins.call_tool("code_review_report", again, review["threadId"])
 
     assert message =~ "the first report is final"
@@ -1810,7 +1810,7 @@ defmodule HalC2.CodeReviewTest do
     {:ok, _} = call("publish", seen())
     settle()
 
-    assert {:error, "plugin_failed", message} =
+    assert {:error, "plugin_failed", message, _} =
              HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
 
     assert message =~ "already published"
@@ -2124,7 +2124,7 @@ defmodule HalC2.CodeReviewTest do
        context do
     review = start_review()
 
-    assert {:error, "plugin_failed", message} =
+    assert {:error, "plugin_failed", message, _} =
              HalC2.Plugins.call_tool(
                "code_review_report",
                %{
@@ -3108,7 +3108,7 @@ defmodule HalC2.CodeReviewTest do
 
       arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
 
-      assert {:error, _, message} =
+      assert {:error, _, message, _} =
                HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
 
       assert message =~ "no longer running"

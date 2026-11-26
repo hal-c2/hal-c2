@@ -838,6 +838,30 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context
   end
 
+  step "the agent searches Jira for {string}", %{args: [query]} = context do
+    answer =
+      mcp(context, "tools/call", %{"name" => "jira_search", "arguments" => %{"query" => query}})
+
+    Map.put(context, :tool_answer, answer)
+  end
+
+  step ~r/^the tool fails from "(?<id>[^"]+)" with the code "(?<code>[^"]+)" and the details (?<details>.+)$/,
+       %{args: [id, code, details]} = context do
+    assert %{"isError" => true, "content" => [%{"type" => "text", "text" => text}]} =
+             context.tool_answer
+
+    failure = JSON.decode!(text)
+    assert %{"_tag" => "OrchestratorMcpFailure", "code" => ^code, "plugin" => ^id} = failure
+    assert is_binary(failure["message"]) and failure["message"] != ""
+
+    if details == "none",
+      do: refute(Map.has_key?(failure, "details")),
+      else: assert(failure["details"] == JSON.decode!(details))
+
+    if code == "plugin_failed", do: assert(failure["message"] =~ "#{id}: ")
+    context
+  end
+
   step "the project has MCP turned off", context do
     context = World.create_project(context, "shop")
     project = context.projects["shop"].id
