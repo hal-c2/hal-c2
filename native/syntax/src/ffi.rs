@@ -1,4 +1,4 @@
-//! The C functions desktop-qt and the phone call (`hal_c2_syntax.h` beside
+//! The C functions the phone calls (`hal_c2_syntax.h` beside
 //! this crate). A handle is one [`Highlighter`]; the caller frees it.
 
 use std::ffi::c_void;
