@@ -89,8 +89,11 @@ struct State {
     expires_at: Option<DateTime<Utc>>,
     /// None: [`DEFAULT_RENEW_WITHIN`].
     renew_within: Option<chrono::TimeDelta>,
-    /// Who waits on the renewal in flight; empty while none is.
-    renewing: Vec<Renewed>,
+    /// Who waits on a renewal in flight, by the session it is for;
+    /// empty while none is. `renew_posted` is the sessions a renew
+    /// request is out for.
+    renewing: Vec<((Option<Url>, String), Renewed)>,
+    renew_posted: Vec<(Option<Url>, String)>,
     /// The timings set on it, for [`McClient::copy_timings_to`].
     timings: Timings,
 }
@@ -661,11 +664,13 @@ impl McClient {
         // over that session's.
         let opened = {
             let mut state = self.state();
-            state.renewing.push(done);
-            if state.renewing.len() > 1 {
+            let opened = (state.origin.clone(), state.token.clone());
+            state.renewing.push((opened.clone(), done));
+            if state.renew_posted.contains(&opened) {
                 return;
             }
-            (state.origin.clone(), state.token.clone())
+            state.renew_posted.push(opened.clone());
+            opened
         };
         let client = self.downgrade();
         let id = self.expect(Pending::Value(Box::new(
@@ -709,7 +714,15 @@ impl McClient {
                         "The environment credential could not be renewed (the session changed).",
                     ))
                 };
-                let waiting = std::mem::take(&mut client.state().renewing);
+                let waiting: Vec<Renewed> = {
+                    let mut state = client.state();
+                    state.renew_posted.retain(|posted| *posted != opened);
+                    state
+                        .renewing
+                        .extract_if(.., |(for_session, _)| *for_session == opened)
+                        .map(|(_, done)| done)
+                        .collect()
+                };
                 for done in waiting {
                     done(renewed.clone());
                 }

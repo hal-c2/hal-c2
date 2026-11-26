@@ -555,3 +555,39 @@ fn a_live_mc_keeps_its_socket_behind_a_burst_the_queues_hold() {
     // the pongs wait in the connection behind the burst.
     a_live_mc_keeps_its_socket_behind(100);
 }
+
+#[test]
+fn a_renewal_reply_for_a_left_session_writes_no_expiry_and_fails_its_waiter() {
+    let harness = Harness::new();
+    let renewed = Rc::new(RefCell::new(Vec::new()));
+    harness.client.on_credential_renewed({
+        let renewed = renewed.clone();
+        move |at| renewed.borrow_mut().push(at)
+    });
+    harness.open();
+    harness.ready();
+    // A request made within the renew window renews first (post).
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    harness.client.set_credential_expiry(Some(past));
+    // The reply waits behind the gate while another session opens.
+    harness.fall_behind();
+    let (slot, reply) = reply_slot();
+    harness.client.post("/api/auth/session", json!({}), reply);
+    harness.mc_sees(|seen| matches!(seen, Seen::Renew { .. }));
+    harness
+        .client
+        .open(harness.mc.origin.clone(), "other-token");
+    let others = chrono::Utc::now() + chrono::Duration::days(30);
+    harness.client.set_credential_expiry(Some(others));
+    harness.catch_up();
+    harness.until(|_| slot.borrow().is_some());
+    let result = slot.borrow_mut().take().unwrap();
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|e| e.message.contains("session changed")),
+        "{result:?}"
+    );
+    assert_eq!(harness.client.credential_expiry(), Some(others));
+    assert!(renewed.borrow().is_empty(), "no renewal is notified");
+}
