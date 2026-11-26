@@ -362,7 +362,8 @@ fn start_shell(engine: &Engine, options: &Options, mc: Rc<dyn hal_c2_shell::mc::
         Bridge::of(engine).dispatch(engine, "pairing.pair", serde_json::json!({"link": link}));
     }
     if let Some(link) = &options.offered {
-        hal_c2_mobile::pairing::offer_link(engine, link);
+        // A thread link opens its thread; any other is Pairing's to show.
+        hal_c2_mobile::notifications::open_link(engine, link);
     }
 }
 
