@@ -25,8 +25,8 @@ mise run mc:pair --release     # the same for the installed MC, when both run
 mise run mc:reload       # compile this checkout and upgrade that MC in place; sockets and agents stay up
 mise run mc:reload --release   # build a release of this checkout and move the installed MC to it
 mise run plugins:install [ID ...]   # this checkout's plugins/ into that MC, loaded at once (--release for the installed MC)
-mise run desktop           # build the Qt shell, pair it with the running MC, launch
-mise run desktop:build     # build only (--release for a Release build)
+mise run desktop           # build the Ljós desktop, pair it with the running MC, launch
+mise run desktop-ljos:check  # build it and compile-check its QML, without launching
 mise run mobile            # build the phone client for this machine and run it, state in .hal-c2/mobile
 mise run mobile:android    # the phone client's APK; with one device or emulator attached, install and start it
 mise run tui               # bundle apps/tui and open it on the running MC
@@ -38,14 +38,14 @@ mise run release:install   # build and install: the MC as this user's background
 mise run release:install:mc    # one of them: also release:install:desktop-ljos
 ```
 
-Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
+Arguments pass straight through (`mise run desktop -- --help` for the shell's own
 flags). The build tasks declare their sources, so a dependent task skips them while nothing
-changed. The Qt shell pairs with the MC on
-`HAL_C2_MC_PORT` (default 3780); `--url` takes a pairing link for another MC, and
-`--standalone` starts the shell's own MC from source, as the installed app does; without
-`--home-dir` that is the dev profile's MC, so do not combine it with `mise run mc`.
+changed. The Ljós shell's in-process host uses the MC already running on the dev profile's
+files, or starts this checkout's from source, as the installed app does; `--url` takes a
+pairing link for another MC (the old `--standalone` is still accepted and names what a bare
+run does).
 
-The Qt shell `mise run desktop` builds keeps its files in the XDG `hal-c2-dev` profile, beside
+The shell `mise run desktop` builds keeps its files in the XDG `hal-c2-dev` profile, beside
 the dev MC's (`~/.config/hal-c2-dev/shell` for the rice, and so on), not in the checkout;
 `--home-dir <dir>` gives one run a root of its own.
 

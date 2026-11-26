@@ -264,7 +264,7 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   };
 };
 
-// The shell config dir the Qt shell reads: `<config>/shell`, where config is
+// The shell config dir the desktop shell reads: `<config>/shell`, where config is
 // HAL_C2_HOME's, else the XDG config directory. `dev` is the shell started with
 // --dev (`mise run desktop`): the hal-c2-dev profile, which does not read
 // HAL_C2_HOME. A directory argument gets theme.json inside it; a .json argument is
@@ -285,7 +285,7 @@ export const resolveOutput = (argument, env = process.env, dev = false) => {
 const USAGE = `usage: vp run theme:qt [--dev] [shell-dir | theme.json]
 
 Asks the terminal it runs in for its colours (OSC 10/11/12/17 and 4;n) and
-writes theme.json for the Qt shell. Without an argument the file goes to the
+writes theme.json for the desktop shell. Without an argument the file goes to the
 shell's config dir (~/.config/hal-c2/shell, or with --dev the one \`mise run
 desktop\` uses, ~/.config/hal-c2-dev/shell); a directory or a .json path picks the spot.`;
 

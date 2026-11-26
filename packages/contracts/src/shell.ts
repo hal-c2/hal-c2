@@ -3,7 +3,7 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { TimestampFormat } from "./settings.ts";
 
 /**
- * View models the Qt shell publishes under `Shell.state` (sidebar, composer,
+ * View models the shells publish under `Shell.state` (sidebar, composer,
  * git, settings, notifications, …) and the actions its chrome dispatches.
  * The TUI builds the same view models from its own MC connection.
  *

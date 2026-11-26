@@ -230,7 +230,7 @@ Feature: Repository status and working tree changes
     When the fetch interval elapses
     Then the MC does not fetch "shop" from the remote
 
-  # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
+  # A scratch MC on a copy of real data, started on copied data, names real checkouts.
   @mc
   Scenario: An MC without automatic actions does not fetch on its own
     Given the MC runs without automatic actions

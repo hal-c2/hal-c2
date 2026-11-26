@@ -1,16 +1,16 @@
 # Property tests
 
-Stateful property tests of the Qt clients' C++, written with
+Stateful property tests of the Qt client's C++, written with
 [RapidCheck](https://github.com/emil-e/rapidcheck) (BSD-2-Clause, fetched by
-`cmake/RapidCheck.cmake`; only these tests link it). The desktop's live here, the
-phone's in `apps/mobile-qt/tests/prop` on the same harness:
+`cmake/RapidCheck.cmake`; only these tests link it). They all live here, in
+`apps/mobile-qt/tests/prop`: the shared shell's (the retired Qt desktop's,
+moved with its classes) and the phone's own, on the one harness:
 
 ```sh
-mise prop:desktop                              # every desktop property
-mise prop:desktop SidebarProp                  # one
-mise prop:mobile                               # the phone's
-RC_PARAMS="max_success=1000" mise prop:desktop # a longer soak
-RC_PARAMS="verbose_progress=1" mise prop:desktop
+mise prop:mobile                               # every property
+mise prop:mobile SidebarProp                   # one
+RC_PARAMS="max_success=1000" mise prop:mobile  # a longer soak
+RC_PARAMS="verbose_progress=1" mise prop:mobile
 ```
 
 A failed property prints its shrunk command sequence and a `reproduce` string;

@@ -87,8 +87,8 @@ and siblings), apart from an installed HAL-C2, and every checkout and worktree s
 | Show, invite to, join or leave the cluster                     | `mise run mc:cluster [invite \| join LINK]` |
 | Install this checkout's plugins into the running MC            | `mise run plugins:install [ID ...]`         |
 | Import threads from T3 Code or an older HAL-C2                 | `mise run threads:import`                   |
-| Build the desktop without launching it                         | `mise run desktop:build`                    |
-| Let the desktop start its own MC, as the installed app does    | `mise run desktop -- --standalone`          |
+| Build the desktop without launching it                         | `mise run desktop-ljos:check`               |
+| Let the desktop start its own MC, as the installed app does    | `mise run desktop` (no MC needs to run)     |
 | Build the phone app's APK and install it on an attached device | `mise run mobile:android`                   |
 | List every task                                                | `mise tasks`                                |
 
