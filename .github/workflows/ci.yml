@@ -355,7 +355,8 @@ jobs:
     if: needs.changes.outputs.proofs != '[]'
     runs-on: ubuntu-24.04
     # code_review_claims has taken from 13 to over 37 minutes on the same model, and its
-    # slowest search may use 30 of them (its proof's `timeout`).
+    # slowest search may use 30 of them (its proof's `timeout`). A proof that outruns this
+    # tags some checks as a shard (ci-changes.sh), which runs in a job of its own.
     timeout-minutes: 60
     strategy:
       # In the queue one failure decides the entry; on a pull request, see them all.
@@ -376,8 +377,14 @@ jobs:
         uses: ./.github/actions/setup-mc
 
       - name: Proofs
-        run: mix proof proof/hal_c2/${{ matrix.proof }}_proof_test.exs
+        run: |
+          file=proof/hal_c2/${PROOF%%:*}_proof_test.exs
+          case "$PROOF" in
+            *:*) mix proof "$file" --only "shard:${PROOF#*:}" ;;
+            *) mix proof "$file" --exclude shard ;;
+          esac
         env:
+          PROOF: ${{ matrix.proof }}
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 

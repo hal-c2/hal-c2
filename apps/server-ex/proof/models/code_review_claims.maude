@@ -962,10 +962,10 @@ mod CODE-REVIEW-CLAIMS is
   eq boxless(Pe, Pu, Cr, Sp, Bo, Li, Br, Mu) =
        { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Pe) free later
          budget(Pu, Cr, Sp, Bo, 0, Li) breaks(Br) mutes(Mu) } .
-  --- The same two, looking in turn, b finding it cannot Br times.
-  op handed : Nat -> Sys .
-  eq handed(Br) =
-       { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(inf) turn(a)
+  --- The same two, looking in turn Pe more times, b finding it cannot Br times.
+  op handed : Nat Budget -> Sys .
+  eq handed(Br, Bu) =
+       { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Bu) turn(a)
          budget(0, 0, 0, 0, 0, 0) breaks(Br) } .
   --- a, which cannot open review sandboxes, is starting the review; b and c can, and
   --- neither has looked. b, offered it first, may leave (Cr) or its connection to a

@@ -219,6 +219,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
            peer-claims elsewhere-seen)
 
   # The same with a machine that cannot open review sandboxes handing its runs over.
+  # Its checks are tagged as shards, which CI runs as jobs of their own: with the rest
+  # they outrun one job.
   @handing ~w(handoff offer) ++ @fair
 
   # The plugin is loaded by the plugin host at run time; the facts need its compiled
@@ -336,39 +338,48 @@ defmodule HalC2.CodeReviewClaimsProofTest do
               boxless(0,0,0,0,0,0,1,0) boxless(0,0,0,0,0,0,0,1)]
 
   for init <- @boxless do
+    @tag shard: :handoff
     test "no machine claims, starts or posts a commit a connected machine it locked has, as one hands its run over, from #{init}",
          %{proof: proof} do
       refute_reachable(proof, unquote(init), "unsafe", [])
     end
   end
 
+  @tag shard: :handoff
   test "a machine that cannot run review sandboxes leaves the review to one that can",
        %{proof: proof} do
-    assert_ltl(proof, "handed(0)", "<> [] boxed", fair: @handing)
+    assert_ltl(proof, "handed(0,inf)", "<> [] boxed", fair: @handing)
   end
 
-  test "the review moves on when the machine that took it leaves before starting it",
-       %{proof: proof} do
-    for init <- ~w[gone(1,0,0) gone(0,1,0)] do
-      assert_ltl(proof, init, "[] steady(a) -> <> [] boxed", fair: @handing)
+  # One test per start: each gets a Maude of its own, and a check in one that searched
+  # before pays for that search's memory.
+  # A shard of their own: gone(0,1,0) alone takes a quarter of the rest.
+  for init <- ~w[gone(1,0,0) gone(0,1,0)] do
+    @tag shard: :leaving
+    test "the review moves on when the machine that took it leaves before starting it, from #{init}",
+         %{proof: proof} do
+      assert_ltl(proof, unquote(init), "[] steady(a) -> <> [] boxed", fair: @handing)
     end
   end
 
   # A machine that finds it cannot after all hands the run on if it finds out before
   # its claim, and otherwise fails it there: either way the review settles on a machine,
-  # which says why it failed, and does not go back and forth.
-  test "a review settles when the machine that took it cannot open its sandbox after all",
-       %{proof: proof} do
-    fair = ["sandbox-failed" | @handing]
-    assert_ltl(proof, "handed(1)", "<> [] settled", fair: fair)
-
-    for init <- ~w[gone(0,0,1) gone(0,0,2)],
-        do: assert_ltl(proof, init, "<> [] settled", fair: fair)
+  # which says why it failed, and does not go back and forth. handed(1,1) looks once more
+  # after the first looks; with looks forever the search runs past half an hour on a
+  # runner, and with more of them, longer.
+  for init <- ~w[handed(1,1) gone(0,0,1) gone(0,0,2)] do
+    @tag shard: :handoff
+    test "a review settles when the machine that took it cannot open its sandbox after all, from #{init}",
+         %{proof: proof} do
+      assert_ltl(proof, unquote(init), "<> [] settled", fair: ["sandbox-failed" | @handing])
+    end
   end
 
-  test "no machine claims a commit twice as the machines that took it go or cannot",
-       %{proof: proof} do
-    for init <- ~w[stranded(1,0) stranded(0,1)],
-        do: refute_reachable(proof, init, "unsafe", [])
+  for init <- ~w[stranded(1,0) stranded(0,1)] do
+    @tag shard: :handoff
+    test "no machine claims a commit twice as the machines that took it go or cannot, from #{init}",
+         %{proof: proof} do
+      refute_reachable(proof, unquote(init), "unsafe", [])
+    end
   end
 end
