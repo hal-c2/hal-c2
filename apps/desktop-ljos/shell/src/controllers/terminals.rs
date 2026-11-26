@@ -1385,9 +1385,9 @@ struct Facts {
     active_group: String,
     group_sizes: BTreeMap<String, usize>,
     drawer_count: usize,
-    /// The single screen's listing as (id, status, busy): its
-    /// consumers are told of a shell starting or a task running.
-    listed: Vec<(String, String, bool)>,
+    /// The single screen's listing as (id, label, status, busy, cwd):
+    /// its consumers are told of a shell starting or a task running.
+    listed: Vec<(String, String, String, bool, String)>,
 }
 
 pub struct Terminals {
@@ -2106,7 +2106,7 @@ impl Terminals {
                         controller::with::<Terminals, _>(engine, |t, engine| {
                             if let Some(summary) = t
                                 .known
-                                .entry(t.thread_key.clone())
+                                .entry(thread_key.clone())
                                 .or_default()
                                 .get_mut(&terminal_id)
                             {
@@ -2232,7 +2232,15 @@ impl Terminals {
             listed: self
                 .listing()
                 .into_iter()
-                .map(|listed| (listed.terminal_id, listed.status, listed.busy))
+                .map(|listed| {
+                    (
+                        listed.terminal_id,
+                        listed.label,
+                        listed.status,
+                        listed.busy,
+                        listed.cwd,
+                    )
+                })
                 .collect(),
         }
     }

@@ -542,6 +542,9 @@ impl MobileTerminal {
             (has, terminals.place().cloned(), id)
         });
         let Some((true, Some(place), active)) = place else {
+            // The release is shown at once, even with no live
+            // session to clear.
+            self.publish(engine);
             return;
         };
         self.publish(engine);

@@ -1008,11 +1008,9 @@ fn a_single_screen_moves_on_when_its_shell_ends_and_restarts_an_ended_one() {
     let opens = count(&hub, "terminal.open");
     hub.dispatch("terminal.select", json!({"terminalId": "term-2"}));
     assert_eq!(count(&hub, "terminal.open"), opens + 1);
-    assert_eq!(
-        last(&hub, "env-1", "terminal.open")["terminalId"],
-        "term-2"
-    );
-    hub.mc.answer(&hub.engine, "terminal.open", Ok(json!({"ok": true})));
+    assert_eq!(last(&hub, "env-1", "terminal.open")["terminalId"], "term-2");
+    hub.mc
+        .answer(&hub.engine, "terminal.open", Ok(json!({"ok": true})));
     // The last live one ends: the screen shuts, the ended one
     // stays the active id its menu names.
     listed(

@@ -79,13 +79,13 @@ ColumnLayout {
     function extendSelection(position) {
         handleAt = position;
         const at = fingers.mapToItem(term, position.x, position.y);
-        events.mouse(term, "move", at.x, at.y);
+        events.mouse(term, "move", at.x, at.y, 0);
     }
 
     function letGoOfSelection() {
         if (selecting && term !== null) {
             const at = fingers.mapToItem(term, handleAt.x, handleAt.y);
-            events.mouse(term, "release", at.x, at.y);
+            events.mouse(term, "release", at.x, at.y, 0);
         }
         selecting = false;
     }
@@ -254,8 +254,8 @@ ColumnLayout {
                 const at = fingers.mapToItem(screen.term, point.x, point.y);
                 // A program with the mouse gets the tap; otherwise it may be a link.
                 if (screen.term.mouseTracking) {
-                    events.mouse(screen.term, "press", at.x, at.y);
-                    events.mouse(screen.term, "release", at.x, at.y);
+                    events.mouse(screen.term, "press", at.x, at.y, 0);
+                    events.mouse(screen.term, "release", at.x, at.y, 0);
                     return;
                 }
                 const link = screen.term.linkUnder(at);
@@ -388,7 +388,7 @@ ColumnLayout {
 
             RowKey {
                 name: "esc"
-                onClicked: events.key(screen.term, Qt.Key_Escape)
+                onClicked: events.key(screen.term, Qt.Key_Escape, 0)
             }
             Repeater {
                 model: screen.mine !== null ? screen.mine.modifiers : []
@@ -403,7 +403,7 @@ ColumnLayout {
             }
             RowKey {
                 name: "tab"
-                onClicked: events.key(screen.term, Qt.Key_Tab)
+                onClicked: events.key(screen.term, Qt.Key_Tab, 0)
             }
             RowKey {
                 name: "paste"
@@ -418,22 +418,22 @@ ColumnLayout {
             RowKey {
                 name: "up"
                 text: "↑"
-                onClicked: events.key(screen.term, Qt.Key_Up)
+                onClicked: events.key(screen.term, Qt.Key_Up, 0)
             }
             RowKey {
                 name: "down"
                 text: "↓"
-                onClicked: events.key(screen.term, Qt.Key_Down)
+                onClicked: events.key(screen.term, Qt.Key_Down, 0)
             }
             RowKey {
                 name: "left"
                 text: "←"
-                onClicked: events.key(screen.term, Qt.Key_Left)
+                onClicked: events.key(screen.term, Qt.Key_Left, 0)
             }
             RowKey {
                 name: "right"
                 text: "→"
-                onClicked: events.key(screen.term, Qt.Key_Right)
+                onClicked: events.key(screen.term, Qt.Key_Right, 0)
             }
             Repeater {
                 model: ["~", "|", "/", "-"]
