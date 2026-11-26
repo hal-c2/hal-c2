@@ -12,7 +12,8 @@ defmodule HalC2.CodexGeneratedImagesPropTest do
   appended to its last final reply (one without a phase or a `final_answer`),
   or make a reply of their own when it had none. An image saved after a
   completed turn ended joins the same reply; after a stopped or failed turn, or
-  an app-server that died, an image still generating never shows.
+  an app-server that died, an image still generating never shows. A sandboxed
+  review's turn (#1412) shows none: the paths its Codex saves are in its sandbox.
 
   The turn runs on the fake app-server in `test/support/fake_codex.py`, which
   leaves a turn saying "wait" open; the test then plays Codex's side itself.
@@ -36,21 +37,23 @@ defmodule HalC2.CodexGeneratedImagesPropTest do
   property "a Codex turn's saved images join its last final reply once",
     numtests: HalC2.Prop.numtests(25),
     max_size: 14 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        start()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        HalC2.Prop.stop_services()
-        HalC2.Prop.restore_env()
+    forall sandboxed <- boolean() do
+      forall cmds <- commands(__MODULE__, %{initial_state() | sandboxed: sandboxed}) do
+        trap_exit do
+          start(sandboxed)
+          {history, state, result} = run_commands(__MODULE__, cmds)
+          HalC2.Prop.stop_services()
+          HalC2.Prop.restore_env()
 
-        (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+          (result == :ok)
+          |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+          |> aggregate(command_names(cmds))
+        end
       end
     end
   end
 
-  defp start do
+  defp start(sandboxed) do
     home = HalC2.Prop.scratch_home("codex-generated-images")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -115,6 +118,13 @@ defmodule HalC2.CodexGeneratedImagesPropTest do
           false
       end
     end)
+
+    # A sandboxed review's runtime learns so from its sandbox connection, before
+    # Codex reports anything of the turn; the fake app-server runs here.
+    if sandboxed do
+      {pid, _} = runtime()
+      :sys.replace_state(pid, &Map.put(&1, :sandboxed, true))
+    end
   end
 
   # --- model ---------------------------------------------------------------------
@@ -123,9 +133,17 @@ defmodule HalC2.CodexGeneratedImagesPropTest do
   # may still save an image); or :gone (the app-server died). images: image n's
   # state (:running, :saved or :failed); saved: images in the order first saved;
   # late: the images still generating when the turn ended. answers: the phase of
-  # each reply sent, in order.
+  # each reply sent, in order. sandboxed: the turn is a sandboxed review's.
   def initial_state,
-    do: %{phase: :running, ended: nil, images: %{}, saved: [], late: [], answers: []}
+    do: %{
+      phase: :running,
+      ended: nil,
+      images: %{},
+      saved: [],
+      late: [],
+      answers: [],
+      sandboxed: false
+    }
 
   def command(%{phase: :running} = state) do
     generating = for {n, :running} <- state.images, do: n
@@ -230,8 +248,10 @@ defmodule HalC2.CodexGeneratedImagesPropTest do
   end
 
   # The replies the thread shows: Codex's own, and once the turn ended, the saved
-  # images appended to the last final one or, without one, a reply of their own.
+  # images appended to the last final one or, without one, a reply of their own;
+  # a sandboxed review's images stay in its sandbox.
   defp replies(%{ended: nil} = state), do: Enum.map(1..length(state.answers)//1, &reply/1)
+  defp replies(%{sandboxed: true} = state), do: Enum.map(1..length(state.answers)//1, &reply/1)
 
   defp replies(state) do
     texts = Enum.map(1..length(state.answers)//1, &reply/1)
