@@ -471,7 +471,7 @@ defmodule HalC2.PullRequests.GitHub do
         {:ok, %{"id" => Integer.to_string(id), "login" => login}}
 
       {:ok, _} ->
-        decoded(:error)
+        {:error, {:failed, "The signed-in account could not be verified."}}
 
       error ->
         error

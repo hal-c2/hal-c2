@@ -253,12 +253,20 @@ Feature: Settings scopes and inheritance
       Then settings.json is readable only by the user the MC runs as
       And it is replaced in one step so a crash never leaves half a file
 
-    @backlog @mc
+    @mc
     Scenario: Only settings that differ from the defaults are written
       Given the user changed one setting
       When the MC saves the settings
       Then settings.json holds only that setting
-      And a setting the user never changed follows a newer version's default
+
+    # Review of hal-c2#1837: the step above can only show the newer default is not
+    # pinned in the file; exercising a changed default takes a second version.
+    @backlog @mc
+    Scenario: A setting the user never changed follows a newer version's default
+      Given a setting whose default differs between the older and the newer version
+      And the user changed other settings on the older version and the MC saved them
+      When the MC upgrades to the newer version
+      Then the effective value of the setting the user never changed is the newer version's default
 
     @backlog @mc @priority-low
     Scenario Outline: A retired streaming mode becomes the nearest current one

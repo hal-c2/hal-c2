@@ -223,7 +223,9 @@ defmodule HalC2.Checkpoint do
          {:ok, diff} <-
            diff_git(
              cwd,
-             ~w(diff --patch --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/) ++
+             # `diff.suppressBlankEmpty` would write blank context lines empty,
+             # which readers of the patch drop, misnumbering what follows.
+             ~w(-c diff.suppressBlankEmpty=false diff --patch --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/) ++
                if(ignore_whitespace, do: ["--ignore-all-space"], else: []) ++
                ["#{from_ref}^{commit}", "#{resolved(cwd, to_checkpoint["ref"])}^{commit}"],
              max_bytes: @diff_max_bytes
