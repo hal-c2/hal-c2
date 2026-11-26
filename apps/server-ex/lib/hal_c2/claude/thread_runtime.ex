@@ -3386,7 +3386,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     structured = @terminal_errors[reason]
 
     gateway_reset = gateway_reset(result, api_status)
-    limits = if gateway_reset, do: %{gateway: gateway_reset}, else: limits
+    limits = if gateway_reset, do: Map.put(limits, :gateway, gateway_reset), else: limits
 
     # Claude ends a turn on a full context window as a `blocking_limit` too: that is a
     # usage limit only with rate-limit evidence (Upstream #19848).

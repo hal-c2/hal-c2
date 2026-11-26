@@ -1426,6 +1426,14 @@ Feature: Claude
       | (reset after 4m 6s) (last error: all credentials cooling) | with a reset time of 13:04:06 |
       | All credentials are cooling down                          | without a reset time       |
 
+  Scenario: A gateway cooldown does not move a later window's reset earlier
+    When Claude ends a turn refused by a limit resetting in five hours and then by a gateway 429
+    Then the thread's reset time is the later window's
+
+  Scenario: A gateway cooldown does not give an unknown window a reset time
+    When Claude ends a turn refused by a limit with no reset time and then by a gateway 429
+    Then the thread is marked as limited without a reset time
+
   # Upstream #25061: a gateway's relative cooldown was counted from when the waiting wake result was
   # replayed, so the reset moved later by however long it waited.
   @backlog @priority-low
