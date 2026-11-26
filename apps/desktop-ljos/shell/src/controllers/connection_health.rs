@@ -265,8 +265,9 @@ fn compare(left: &Version, right: &Version, with_prerelease: bool) -> i32 {
 }
 
 /// Whether a server on `server` is behind a client on `client`: two
-/// nightlies compare whole, anything else by its core major.minor.patch, so
-/// a release and a nightly of one core do not differ.
+/// builds on one dated channel (nightly or preview) compare whole,
+/// anything else by its core major.minor.patch, so a release and a
+/// nightly of one core do not differ.
 pub fn server_behind(client: &str, server: &str) -> bool {
     if client.trim().is_empty() || server.trim().is_empty() {
         return false;
@@ -275,8 +276,14 @@ pub fn server_behind(client: &str, server: &str) -> bool {
         // Versions that are not semver differ when their text does.
         return client.trim() != server.trim();
     };
-    let nightly = |v: &Version| v.prerelease.first().is_some_and(|p| p == "nightly");
-    compare(&theirs, &ours, nightly(&ours) && nightly(&theirs)) < 0
+    let dated = |v: &Version| {
+        v.prerelease
+            .first()
+            .filter(|p| *p == "nightly" || *p == "preview")
+            .cloned()
+    };
+    let same_channel = dated(&ours).is_some() && dated(&ours) == dated(&theirs);
+    compare(&theirs, &ours, same_channel) < 0
 }
 
 pub struct ConnectionHealth {

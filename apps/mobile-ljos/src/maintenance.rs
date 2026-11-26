@@ -316,6 +316,9 @@ struct Waiting {
 #[derive(Default)]
 pub struct Core {
     pub session: Session,
+    /// The session read in flight: a read answers only while it is
+    /// still this one (see [`Core::forget_session`]).
+    pub session_read: u64,
     /// Other machines' providers, as `server.refreshProviders` last
     /// answered.
     pub providers: HashMap<String, Vec<Json>>,
@@ -341,6 +344,25 @@ pub struct Core {
 }
 
 impl Core {
+    /// Start reading the session; the read's number.
+    pub fn begin_session_read(&mut self) -> u64 {
+        self.session = Session::Reading;
+        self.session_read += 1;
+        self.session_read
+    }
+
+    /// Another connection may be another session: forget this one,
+    /// and a read started for it no longer answers.
+    pub fn forget_session(&mut self) {
+        self.session_read += 1;
+        self.session = Session::Unknown;
+    }
+
+    /// Whether `read` is still the session read in flight.
+    pub fn session_read_is_current(&self, read: u64) -> bool {
+        read == self.session_read
+    }
+
     /// Why nothing can be started on the machine, "" when it can.
     pub fn blocked(&self, machine: &Machine, ready: bool) -> String {
         if !ready || !machine.online {
@@ -697,7 +719,6 @@ pub struct Maintenance {
     write_clipboard: ClipboardWriter,
     reconnect_deadline_ms: u64,
     open: bool,
-    generation: u64,
     waiting: HashMap<String, Waiting>,
     wait_run: u64,
     published: Json,
@@ -738,7 +759,7 @@ impl Controller for Maintenance {
             let me = init.me.clone();
             move |engine, ready| {
                 me.run(engine, move |c: &mut Maintenance, engine| {
-                    c.core.session = Session::Unknown;
+                    c.core.forget_session();
                     if ready && c.open {
                         c.read_session(engine);
                         c.read_providers(engine);
@@ -773,7 +794,6 @@ impl Controller for Maintenance {
             write_clipboard,
             reconnect_deadline_ms,
             open: false,
-            generation: 0,
             waiting: HashMap::new(),
             wait_run: 0,
             published: Json::Null,
@@ -984,15 +1004,13 @@ impl Maintenance {
         if !self.mc.is_ready() {
             return;
         }
-        self.core.session = Session::Reading;
-        self.generation += 1;
-        let generation = self.generation;
+        let read = self.core.begin_session_read();
         let me = self.me.clone();
         self.mc.get(
             "/api/auth/session",
             Box::new(move |engine, result| {
                 me.run(engine, move |c: &mut Maintenance, engine| {
-                    if generation != c.generation {
+                    if !c.core.session_read_is_current(read) {
                         return;
                     }
                     c.core.session = match &result {
@@ -1577,6 +1595,40 @@ mod tests {
             core.target(&nightly, "0.5.0-nightly.20260902.1"),
             "0.5.0-nightly.20260902.1"
         );
+    }
+
+    #[test]
+    fn a_session_read_for_a_forgotten_connection_no_longer_answers() {
+        let mut core = Core::default();
+        let read = core.begin_session_read();
+        assert!(core.session_read_is_current(read));
+        // The connection changes while the read is in flight.
+        core.forget_session();
+        assert_eq!(core.session, Session::Unknown);
+        assert!(!core.session_read_is_current(read), "the stale read is dropped");
+        // A read started for the new connection answers.
+        let next = core.begin_session_read();
+        assert!(core.session_read_is_current(next));
+        assert!(!core.session_read_is_current(read));
+    }
+
+    #[test]
+    fn a_newer_preview_is_the_target() {
+        // Preview prereleases are ordered by their date, as
+        // nightlies are: 20260902 is newer than 20260901.
+        let mut core = Core::default();
+        let own = machine("env-a", "0.5.0-preview.20260901.1");
+        assert_eq!(core.target(&own, "0.5.0-preview.20260902.1"), "0.5.0-preview.20260902.1");
+        assert_eq!(core.target(&own, "0.5.0-preview.20260901.1"), "");
+        core.releases.insert(
+            "env-a".into(),
+            Release {
+                checking: false,
+                text: String::new(),
+                available: "0.5.0-preview.20260902.1".into(),
+            },
+        );
+        assert_eq!(core.target(&own, "0.5.0"), "0.5.0-preview.20260902.1");
     }
 
     #[test]
