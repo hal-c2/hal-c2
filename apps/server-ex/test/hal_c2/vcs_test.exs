@@ -452,26 +452,44 @@ defmodule HalC2.VcsTest do
       "source" => "manual"
     }
 
-    put_thread = fn snapshot ->
-      HalC2.Shell.put_row(
-        "t1",
-        {"thread", %{"id" => "t1", "pullRequests" => [Map.put(link, "snapshot", snapshot)]}}
-      )
+    put_thread = fn snapshot, extra ->
+      row =
+        Map.merge(
+          %{"id" => "t1", "pullRequests" => [Map.put(link, "snapshot", snapshot)]},
+          extra
+        )
 
+      HalC2.Shell.put_row("t1", {"thread", row})
       :ok = HalC2.Shell.sync()
       :ok = HalC2.PullRequests.Branches.forget(repo)
     end
 
-    put_thread.(%{"state" => "closed", "closedAt" => "2026-08-24T00:00:00Z"})
+    put_thread.(%{"state" => "closed", "closedAt" => "2026-08-24T00:00:00Z"}, %{})
     assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
 
     assert_receive {:sync_cast, {:request, ref}}
     assert ref["repository"] == "acme/app"
     assert ref["number"] == 12
 
-    put_thread.(%{"state" => "open"})
+    put_thread.(%{"state" => "open"}, %{})
     assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
     refute_receive {:sync_cast, _}, 100
+
+    # An open snapshot on a settled thread would stay revivable forever:
+    # asking again on every fresh look-up repeats a host read, and a settled
+    # thread hears nothing anyway.
+    put_thread.(%{"state" => "open"}, %{"settledOverride" => "settled"})
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+    refute_receive {:sync_cast, _}, 100
+
+    # Settled by override or on its own, a closed snapshot still revives.
+    put_thread.(
+      %{"state" => "closed", "closedAt" => "2026-08-24T00:00:00Z"},
+      %{"settledAt" => "2026-09-01T00:00:00Z"}
+    )
+
+    assert %{"number" => 12} = Vcs.branch_pull_request(repo, "feature/x")
+    assert_receive {:sync_cast, {:request, _ref}}
   end
 
   defp sync_dummy(test) do

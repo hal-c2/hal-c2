@@ -546,6 +546,7 @@ defmodule HalC2.PullRequestWakesPropTest do
           "ownActivity" => List.last(own),
           "activities" => activities,
           "ownActivities" => own,
+          "commentStamp" => "edited",
           "mergeQueue" => nil,
           "mergeQueueRemoval" => removal
         },

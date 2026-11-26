@@ -213,13 +213,13 @@ defmodule HalC2.PullRequests.Wakes do
       true ->
         # Comment activity is stamped when it last changed, so an edit counts.
         # A link heard under the creation-time stamp has no `commentEditAt`:
-        # its first read under the new stamp only re-baselines comment news,
-        # so edits from before it are not woken for.
+        # its first read of an edit-stamped snapshot only re-baselines comment
+        # news, so edits from before it are not woken for.
         changes =
           heard
           |> changes(snapshot, runs)
           |> then(fn changes ->
-            if Map.has_key?(heard, "commentEditAt"),
+            if Map.has_key?(heard, "commentEditAt") or snapshot["commentStamp"] != "edited",
               do: changes,
               else: Enum.reject(changes, &(event(&1) == "comments"))
           end)
@@ -364,7 +364,10 @@ defmodule HalC2.PullRequests.Wakes do
   # telling (a subscription to the other) never hides the other's. A link heard
   # before the kinds were kept apart starts both at `activityAt`. `commentEditAt`
   # only marks that the comment marker was written under the edit-time stamp:
-  # present (a time or nil) once a snapshot's activities advanced it.
+  # present (a time or nil) once a snapshot carrying that stamp (its
+  # `commentStamp`) advanced it. A snapshot synced before the stamp existed
+  # still holds creation times, so advancing over it writes no mark: a boot
+  # check over stored rows must not re-baseline before the first new sync.
   defp advance_activity(next, heard, snapshot) do
     cond do
       Map.has_key?(snapshot, "activity") or Map.has_key?(snapshot, "activities") ->
@@ -382,7 +385,16 @@ defmodule HalC2.PullRequests.Wakes do
             end
           )
 
-        Map.put(advanced, "commentEditAt", advanced["commentActivityAt"])
+        cond do
+          snapshot["commentStamp"] == "edited" ->
+            Map.put(advanced, "commentEditAt", advanced["commentActivityAt"])
+
+          Map.has_key?(heard, "commentEditAt") ->
+            Map.put(advanced, "commentEditAt", heard["commentEditAt"])
+
+          true ->
+            advanced
+        end
 
       Map.has_key?(heard, "activityAt") ->
         Map.merge(

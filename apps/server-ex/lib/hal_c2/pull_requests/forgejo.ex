@@ -256,7 +256,10 @@ defmodule HalC2.PullRequests.Forgejo do
       "activity" => newest(trusted),
       "ownActivity" => newest(own),
       "activities" => newest_of_each_kind(trusted),
-      "ownActivities" => newest_of_each_kind(own)
+      "ownActivities" => newest_of_each_kind(own),
+      # Comment times here are edit times; a snapshot without this was synced
+      # under the creation-time stamp (`Wakes.advance_activity/3`).
+      "commentStamp" => "edited"
     }
   end
 

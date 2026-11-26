@@ -308,9 +308,9 @@ defmodule HalC2.Vcs do
   defp reread(_pr), do: :ok
 
   # A live thread links this pull request with a snapshot the sweep no longer
-  # reads: not open, or open on a settled thread. No snapshot yet is the
-  # sweep's next read, and an open one on an unsettled thread is read every
-  # sweep already.
+  # reads: not open. No snapshot yet is the sweep's next read, and an open
+  # one is read every sweep already — settled or not, asking again only
+  # repeats a host read whose answer stays open.
   defp left_sweep?(remote, number) do
     repository = String.downcase(remote.repository)
 
@@ -325,8 +325,7 @@ defmodule HalC2.Vcs do
                 snapshot = link["snapshot"]
 
                 normalized["repository"] == repository and normalized["number"] == number and
-                  is_map(snapshot) and
-                  (snapshot["state"] != "open" or row["settledOverride"] == "settled")
+                  is_map(snapshot) and snapshot["state"] != "open"
               end
             )
 
