@@ -939,7 +939,7 @@ defmodule HalC2.PullRequests.GitHub do
 
   # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
   # the last few of each, enough to find the newest from a trusted author (`activity/2`).
-  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt updatedAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
   # Kept apart: an Enterprise host whose schema has no merge queue rejects the whole
   # document over these, so a chunk that fails for them is read again without them
   # (`summaries_chunk/2`).
@@ -1052,10 +1052,12 @@ defmodule HalC2.PullRequests.GitHub do
   defp activity(pr, viewer) do
     viewer = String.downcase(viewer || "")
 
+    # A comment's news is when it last changed: an edit is news once, as a new
+    # comment is (upstream #18120).
     comments =
       for node <- get_in(pr, ["comments", "nodes"]) || [],
           is_map(node),
-          do: {node, node["createdAt"], "comment", nil}
+          do: {node, latest(node["createdAt"], node["updatedAt"]), "comment", nil}
 
     reviews =
       for node <- get_in(pr, ["reviews", "nodes"]) || [],
@@ -1075,6 +1077,12 @@ defmodule HalC2.PullRequests.GitHub do
       "activities" => newest_of_each_kind(trusted),
       "ownActivities" => newest_of_each_kind(own)
     }
+  end
+
+  defp latest(a, b) do
+    Enum.max_by([a, b] |> Enum.reject(&is_nil/1), &(HalC2.Projection.JS.epoch_ms(&1) || 0), fn ->
+      nil
+    end)
   end
 
   defp newest_of_each_kind(activities) do

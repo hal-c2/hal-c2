@@ -269,20 +269,35 @@ defmodule HalC2.Vcs do
 
   defp host_pull_request(cwd, url, branch, fresh?) do
     if String.contains?(url, "github.com"),
-      do: github_pull_request(cwd, branch, fresh?),
+      do: github_pull_request(cwd, url, branch, fresh?),
       else: other_host_change_request(cwd, url, branch)
   end
 
   # Asked once for every reader of the branch (`HalC2.PullRequests.Branches`).
   # Unauthenticated, offline or rate limited `gh` means no pull request, quietly.
-  defp github_pull_request(cwd, branch, fresh?) do
-    case HalC2.PullRequests.Branches.pull_request(cwd, branch, fresh: fresh?) do
-      {:ok, %{} = pr} ->
+  # A look-up that read the host and found the pull request open revives its
+  # thread links' sync, which a long-closed snapshot has left (upstream #30071).
+  defp github_pull_request(cwd, url, branch, fresh?) do
+    case HalC2.PullRequests.Branches.lookup(cwd, branch, fresh: fresh?) do
+      {{:ok, %{} = pr}, read?} ->
+        if read? and pr["state"] == "open", do: reread(url, pr)
         Map.take(pr, ~w(number title url baseRef headRef headSha state isDraft updatedAt))
 
       _ ->
         nil
     end
+  end
+
+  defp reread(url, %{"number" => number}) when is_integer(number) do
+    with %{} = remote <- HalC2.PullRequests.parse_remote(url) do
+      HalC2.PullRequests.Sync.request(%{
+        "host" => remote.host,
+        "repository" => remote.repository,
+        "number" => number
+      })
+    end
+
+    :ok
   end
 
   # A host that does not answer in ten seconds has no change request, as with `gh`.

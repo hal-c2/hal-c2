@@ -384,7 +384,7 @@ Feature: Pull requests linked to a thread
       | without saying when        | is asked     |
 
   # Upstream #30071: a reopened pull request is still picked up once it has left the sweep.
-  @backlog @mc
+  @mc
   Scenario Outline: A pull request that left the sweep is read again when something asks
     Given pull request "acme/app#12" is linked to "t1" and its last read said closed 8 days ago
     When <what>

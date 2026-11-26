@@ -51,6 +51,9 @@ defmodule HalC2.Projects do
       HalC2.Workspace.mc_own_dir?(root) ->
         {:error, "#{root} is inside the MC's own directories"}
 
+      refusal = shape_refusal(m, []) ->
+        {:error, refusal}
+
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
 
@@ -96,7 +99,16 @@ defmodule HalC2.Projects do
         )
       )
 
-    case relative_root(fields) || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
+    current = Enum.find(stored(), &(&1["id"] == id))
+    existing = for script <- (current && current["scripts"]) || [], do: script["id"]
+
+    refused =
+      case relative_root(fields) do
+        {:refused, error} -> {:refused, error}
+        nil -> if(error = shape_refusal(fields, existing), do: {:refused, error})
+      end
+
+    case refused || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
       {:refused, error} ->
         {:error, error}
 
@@ -496,6 +508,42 @@ defmodule HalC2.Projects do
 
   defp relative_error(path),
     do: "Workspace #{path} is not an absolute path. Use a full path or one starting with ~/."
+
+  # Why an icon or a script in `fields` cannot be saved, or nil. A script's id
+  # doubles as its shortcut, so a new one must be sayable as one; ids already
+  # saved stay editable even if they no longer fit.
+  defp shape_refusal(fields, existing_script_ids) do
+    icon_refusal(fields["projectIcon"]) || script_refusal(fields["scripts"], existing_script_ids)
+  end
+
+  defp icon_refusal(%{"kind" => "monogram", "text" => text}), do: monogram_refusal(text)
+
+  defp icon_refusal(%{"kind" => "lucide"} = icon),
+    do: monogram_refusal(icon["monogramText"] || icon["monogram"])
+
+  defp icon_refusal(_icon), do: nil
+
+  defp monogram_refusal(text) when is_binary(text) do
+    if length(String.graphemes(text)) > 2,
+      do: "Project monograms must contain at most two characters."
+  end
+
+  defp monogram_refusal(_text), do: nil
+
+  defp script_refusal(scripts, existing) when is_list(scripts) do
+    Enum.find_value(scripts, fn
+      %{"id" => id} when is_binary(id) ->
+        if id not in existing and not Regex.match?(~r/^[a-z0-9][a-z0-9-]{0,23}$/, id) do
+          "Script ID '#{id}' must be 1-24 lowercase letters, digits or hyphens, " <>
+            "starting with a letter or digit."
+        end
+
+      _other ->
+        nil
+    end)
+  end
+
+  defp script_refusal(_scripts, _existing), do: nil
 
   defp expand("~"), do: home()
   defp expand("~/" <> rest), do: Path.join(home(), rest)

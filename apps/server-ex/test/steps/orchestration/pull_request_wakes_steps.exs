@@ -201,6 +201,13 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     |> check()
   end
 
+  # The owner's comment already woke the thread once, and that wake was counted.
+  step "the agent of {string} was woken for a comment from the owner",
+       %{args: [thread]} = context do
+    [pr] = Map.keys(context.prs)
+    context |> change(pr, "the owner comments") |> read() |> woken_once(thread, pr)
+  end
+
   # --- outcomes ---------------------------------------------------------------------
 
   step "the agent of {string} is woken once about {string}", %{args: [thread, pr]} = context do
@@ -333,6 +340,15 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
 
         "the owner comments" ->
           comment(pr_state, at, "owner-1", "User", "OWNER")
+
+        "the owner edits that comment" ->
+          update_in(pr_state, ["comments", "nodes"], fn nodes ->
+            Enum.map(nodes, fn node ->
+              if get_in(node, ["author", "login"]) == "owner-1",
+                do: Map.put(node, "updatedAt", at),
+                else: node
+            end)
+          end)
 
         "a collaborator comments" ->
           comment(pr_state, at, "collaborator-1", "User", "COLLABORATOR")

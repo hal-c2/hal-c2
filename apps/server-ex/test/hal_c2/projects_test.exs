@@ -54,6 +54,56 @@ defmodule HalC2.ProjectsTest do
                    1_000
   end
 
+  test "a monogram over two characters and a new script id that cannot be a shortcut are refused",
+       %{tmp_dir: dir} do
+    assert {:ok, _} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => dir
+             })
+
+    update = %{"type" => "project.update", "projectId" => "p1"}
+
+    assert {:error, "Project monograms must contain at most two characters."} =
+             Projects.mutate(
+               Map.put(update, "projectIcon", %{
+                 "kind" => "monogram",
+                 "text" => "ABC",
+                 "color" => "violet"
+               })
+             )
+
+    # Two graphemes, one of them with a combining mark, are fine.
+    assert {:ok, _} =
+             Projects.mutate(
+               Map.put(update, "projectIcon", %{
+                 "kind" => "monogram",
+                 "text" => "e\u0301x",
+                 "color" => "violet"
+               })
+             )
+
+    script = %{
+      "name" => "Build",
+      "command" => "make",
+      "icon" => "build",
+      "runOnWorktreeCreate" => false
+    }
+
+    for id <- ["Build", "-build", "build_all", String.duplicate("a", 25)] do
+      assert {:error, message} =
+               Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", id)]))
+
+      assert message ==
+               "Script ID '#{id}' must be 1-24 lowercase letters, digits or hyphens, " <>
+                 "starting with a letter or digit."
+    end
+
+    assert {:ok, _} =
+             Projects.mutate(Map.put(update, "scripts", [Map.put(script, "id", "build-2")]))
+  end
+
   test "browse lists matching folders, hiding dot-folders unless asked", %{tmp_dir: dir} do
     for name <- ~w(alpha alps beta .hidden), do: File.mkdir_p!(Path.join(dir, name))
     File.write!(Path.join(dir, "alpine.txt"), "")

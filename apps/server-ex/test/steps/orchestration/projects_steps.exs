@@ -449,7 +449,39 @@ defmodule HalC2.Steps.Orchestration.Projects do
     context
   end
 
+  # --- icon and scripts ------------------------------------------------------------
+
+  step "a client sets the icon of {string} to the monogram {string}",
+       %{args: [id, text]} = context do
+    mutate(context, %{
+      "type" => "project.update",
+      "projectId" => id,
+      "projectIcon" => %{"kind" => "monogram", "text" => text, "color" => "violet"}
+    })
+  end
+
+  step "a client adds a script to {string} with the id {string}",
+       %{args: [id, script_id]} = context do
+    scripts = (stored(id)["scripts"] || []) ++ [Map.put(script(), "id", script_id)]
+    mutate(context, %{"type" => "project.update", "projectId" => id, "scripts" => scripts})
+  end
+
   # --- shared folders ---------------------------------------------------------------
+
+  step "a client creates another project for {string}", %{args: [folder]} = context do
+    context = World.create_project(context, "p2")
+    mapped = Mc.Host.path(context, folder)
+
+    {created, context} =
+      World.call(context, "projects.mutate", %{
+        "type" => "project.create",
+        "projectId" => "p3",
+        "workspaceRoot" => mapped,
+        "commandId" => "create-p3"
+      })
+
+    Map.merge(context, %{replies: [created], folder: Path.expand(mapped)})
+  end
 
   step "a client creates or moves another project to {string}", %{args: [folder]} = context do
     context = World.create_project(context, "p2")
