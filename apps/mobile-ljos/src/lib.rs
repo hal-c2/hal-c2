@@ -17,7 +17,9 @@ pub mod maintenance;
 pub mod mobile_terminal;
 pub mod notifications;
 pub mod pairing;
+pub mod qr_reader;
 pub mod resume;
+pub mod scan_camera;
 pub mod scanner;
 
 use std::path::{Path, PathBuf};

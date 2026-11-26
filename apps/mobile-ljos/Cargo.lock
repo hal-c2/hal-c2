@@ -2466,6 +2466,7 @@ dependencies = [
  "ljos_controls",
  "ljos_webengine",
  "proptest",
+ "qrcodegen",
  "serde",
  "serde_json",
  "tempfile",

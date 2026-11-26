@@ -65,6 +65,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "10ec7bc69e59b287df69b27609a6485ebfe15d53", default-features = false, features = ["build"] }
 
 [dev-dependencies]
+# The encoder the desktop draws its codes with, for the round trip.
+qrcodegen = "1"
 # `testing`: a window without a platform, on a virtual clock, for the
 # features harness's touches.
 ljos = { git = "https://github.com/hal-c2/ljos-ui", rev = "10ec7bc69e59b287df69b27609a6485ebfe15d53", default-features = false, features = ["testing"] }
