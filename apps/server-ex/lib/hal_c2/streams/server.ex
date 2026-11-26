@@ -581,7 +581,9 @@ defmodule HalC2.Streams.Server do
         pins: []
     }
 
-    {:noreply, compact(state), timeout(state)}
+    # Demoting resets the release floor, which the timeout reads.
+    state = compact(state)
+    {:noreply, state, timeout(state)}
   end
 
   # One the stream's own read already waited for.
