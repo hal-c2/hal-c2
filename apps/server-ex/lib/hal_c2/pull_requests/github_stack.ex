@@ -138,7 +138,10 @@ defmodule HalC2.PullRequests.GitHubStack do
   end
 
   # `done` holds the layers already handled; a push to one of them since would make it
-  # the next layer's base unnoticed, so it stops the rebase.
+  # the next layer's base unnoticed, so it stops the rebase. The read below is the
+  # last word the MC gets: the update pins only this layer's own head, so a push to
+  # an earlier layer between the read and the update can still become this layer's
+  # base on GitHub. The next layer's read then sees the move and stops there.
   defp rebase_layer(ctx, owner, name, layer, index, done) do
     variables = %{
       "owner" => owner,

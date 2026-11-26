@@ -344,10 +344,19 @@ defmodule HalC2.Steps.SourceControl.StackedPullRequests do
   end
 
   step "{int} and {int} are rebased onto {string} without {int}'s own commits",
-       %{args: [a, b, base, _merged]} = context do
+       %{args: [a, b, base, merged]} = context do
     assert {:ok, _} = context.reply
-    assert context.stack.base == base
-    assert rebases(context) == for(n <- [a, b], do: %{"id" => "PR_#{n}", "sha" => sha("a", n)})
+    # The stack the MC read for the rebase is based where the scenario says.
+    {stack, _context} = read_stack(context, a)
+    assert stack["base"] == base
+
+    # GitHub replays the commits; what the MC controls is which layers it asks
+    # to rebase, in which order, pinning each layer's own head (`rebases/1` also
+    # asserts REBASE). The merged layer is never sent an update, so its commits
+    # are not replayed under either open layer.
+    sent = rebases(context)
+    assert sent == for(n <- [a, b], do: %{"id" => "PR_#{n}", "sha" => sha("a", n)})
+    refute Enum.any?(sent, &(&1["id"] == "PR_#{merged}"))
     context
   end
 

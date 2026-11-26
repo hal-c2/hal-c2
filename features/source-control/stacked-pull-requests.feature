@@ -462,6 +462,16 @@ Feature: Stacked pull requests
     Then pull request 42 is not rebased onto the new revision
     And the user is told which layer changed and how many finished before it
 
+  # Review of hal-c2#1837: the check above reads the finished layers' heads right
+  # before each update; a push landing between that read and the update itself is
+  # beyond what the update can pin (it pins only the layer's own head).
+  @backlog @mc
+  Scenario: A push to a layer between the check and the update is not built on
+    Given someone pushes to pull request 41 after pull request 42 was checked but before it was updated
+    When the user rebases the stack
+    Then pull request 42 is not rebased onto the new revision
+    And the user is told which layer changed and how many finished before it
+
   @mc
   Scenario: A rebase that fails on one layer says which layer and how many finished
     Given GitHub refuses to rebase pull request 43

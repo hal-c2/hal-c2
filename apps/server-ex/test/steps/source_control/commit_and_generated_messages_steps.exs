@@ -288,17 +288,24 @@ defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
     context
   end
 
-  step "another git process holds the index lock of {string}",
-       %{args: [_project]} = context do
-    lock = Path.join(context.cwd, ".git/index.lock")
-    File.write!(lock, "")
-    ExUnit.Callbacks.on_exit(fn -> File.rm(lock) end)
+  step "the index of {string} cannot be rewritten", %{args: [_project]} = context do
+    # Stage the left-out file first, so only the reset would unstage it; then make
+    # .git unwritable. No index.lock exists, so the lock check passes and the
+    # reset itself is what fails (it cannot create its lock).
+    World.git!(context.cwd, ["add", "--", "src/tax.ts"])
+    dot_git = Path.join(context.cwd, ".git")
+    File.chmod!(dot_git, 0o555)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dot_git, 0o755) end)
     context
   end
 
   step "the commit fails with the error of resetting the index", context do
-    # The MC names the held index lock before it ever stages (`Vcs.lock_error/1`).
-    assert World.failure(context) =~ "Git index is locked"
+    assert World.failure(context) =~ "git reset failed"
+    context
+  end
+
+  step "{string} is still staged", %{args: [path]} = context do
+    assert World.git!(context.cwd, ~w(diff --cached --name-only)) =~ path
     context
   end
 

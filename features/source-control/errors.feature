@@ -111,7 +111,7 @@ Feature: When source control goes wrong
 
   # Upstream #22904: a push the remote refused said only "Git command exited with a non-zero
   # status." Git's own rejection lines now pick a fixed sentence; no remote output is quoted.
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A push the remote refuses says why
     Given git reports the push of "feature/tax" as <rejection>
     When the user pushes

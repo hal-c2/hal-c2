@@ -942,7 +942,7 @@ Feature: Updating the server, the desktop app and providers
         | an error line 500 characters long                              | its first 200 characters     |
 
     # Upstream #22506: a timeout keeps its own message.
-    @mc
+    @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: A provider update that times out says so
       Given updating Codex takes longer than the MC waits
       When the user updates Codex

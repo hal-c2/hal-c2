@@ -768,11 +768,6 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     context
   end
 
-  step "a setting the user never changed follows a newer version's default", context do
-    refute Map.has_key?(saved(), "enableProviderUpdateChecks")
-    context
-  end
-
   defp settings_path, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
 
   defp saved do

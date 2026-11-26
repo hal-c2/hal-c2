@@ -48,7 +48,7 @@ Feature: Committing with written or generated messages
 
   # Upstream #19605: a message the user wrote skips building the diff the writer model would
   # need; a blank message still gets the full context.
-  @mc @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A commit with the user's own message does not need a readable diff
     Given a git text converter configured for "src/tax.ts" fails
     When the user commits with the message "Add tax to the cart"
@@ -94,12 +94,13 @@ Feature: Committing with written or generated messages
 
   # Upstream #28275: a failed index reset before committing picked files was ignored, so the commit
   # could hold files the user left out; the commit now stops with the reset's error.
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Committing picked files stops when the index cannot be reset
-    Given another git process holds the index lock of "shop"
+    Given the index of "shop" cannot be rewritten
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit fails with the error of resetting the index
     And nothing is committed
+    And "src/tax.ts" is still staged
 
   # Upstream #20175: in a project nested inside its repository the picked files resolved against
   # the wrong folder.
@@ -223,7 +224,7 @@ Feature: Committing with written or generated messages
       | Conventional Commits   | keep the title concise without forcing Conventional Commit syntax         |
       | Custom instructions    | follow the user's own instructions                                        |
 
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A pull request title the writer leaves empty falls back to a generic title
     When the writer model answers the pull request title with nothing
     Then the pull request title is "Update project changes"
@@ -238,7 +239,7 @@ Feature: Committing with written or generated messages
     And a description that only reports a status is not accepted
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: findOpenPr before generating)
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A branch that already has an open pull request gets no second one
     Given the branch "feature/tax" is pushed and has the open pull request #42
     When the user runs "Create PR"
@@ -253,14 +254,14 @@ Feature: Committing with written or generated messages
     Then the action fails with "Current branch has not been pushed. Push before creating a PR."
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep)
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A pull request is not created from a detached checkout
     Given the checkout is on a detached HEAD
     When the user runs "Create PR"
     Then the action fails with "Cannot create a pull request from detached HEAD."
 
   # Legacy: apps/server/src/git/GitManager.ts (resolveBaseBranch)
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: The pull request goes to the branch the checkout was set up to target
     Given <situation>
     When the user runs "Create PR"
@@ -275,7 +276,7 @@ Feature: Committing with written or generated messages
       | nothing records a default branch                                                       | main    |
 
   # Upstream #18754: configured pull request bases resolve to branch names
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A recorded base that is not a branch gives way to the default branch
     Given "feature/tax" has the recorded merge base <ref> and the host's default is "main"
     When the user runs "Create PR"
@@ -288,7 +289,7 @@ Feature: Committing with written or generated messages
       | the revision "HEAD~2"   |
 
   # Upstream #18754: configured pull request bases resolve to branch names
-  @mc
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A recorded base names the branch the pull request targets
     Given "feature/tax" has the recorded merge base "<ref>"
     When the user runs "Create PR"

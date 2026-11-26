@@ -258,7 +258,14 @@ Feature: Settings scopes and inheritance
       Given the user changed one setting
       When the MC saves the settings
       Then settings.json holds only that setting
-      And a setting the user never changed follows a newer version's default
+
+    # Review of hal-c2#1837: the step above can only show the newer default is not
+    # pinned in the file; exercising a changed default takes a second version.
+    @backlog @mc
+    Scenario: A setting the user never changed follows a newer version's default
+      Given the user changed one setting
+      When the MC saves the settings
+      Then the effective value of a setting the user never changed is the newer version's default
 
     @backlog @mc @priority-low
     Scenario Outline: A retired streaming mode becomes the nearest current one
