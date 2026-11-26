@@ -199,6 +199,8 @@ defmodule HalC2.ModelManifest do
   Whether `manifest` is one this MC can use (`ModelManifestSchema`): version 1,
   `currentModels` naming model ids per provider, catalogs whose models have unique
   ids and name profiles and a default that exist, and policies with their ranges.
+  A Claude catalog is refused as a whole when a model's version gate or a profile's
+  effort or context-window map is malformed: the rest being sound does not save it.
   """
   def valid?(%{"version" => 1, "currentModels" => %{} = current} = manifest) do
     Enum.all?(current, fn {_driver, models} -> strings?(models) end) and
@@ -218,7 +220,9 @@ defmodule HalC2.ModelManifest do
     slugs = for %{"slug" => slug} <- models, do: slug
     default = get_in(catalog, ["defaults", "chat"])
 
-    Enum.all?(models, &model?(&1, profiles)) and slugs == Enum.uniq(slugs) and
+    Enum.all?(models, &model?(&1, profiles)) and
+      Enum.all?(profiles, fn {_, profile} -> profile?(profile) end) and
+      slugs == Enum.uniq(slugs) and
       (default == nil or default in slugs)
   end
 
@@ -227,10 +231,46 @@ defmodule HalC2.ModelManifest do
   defp model?(%{"slug" => slug, "name" => name, "status" => status} = model, profiles) do
     text?(slug) and text?(name) and status in ["current", "legacy"] and
       (model["profile"] == nil or is_map(profiles[model["profile"]])) and
-      (model["aliases"] == nil or strings?(model["aliases"]))
+      (model["aliases"] == nil or strings?(model["aliases"])) and gates?(model)
   end
 
   defp model?(_, _), do: false
+
+  # A Claude model's version gate, when it has one: semantic versions, the
+  # lowest below the highest. `HalC2.Claude.Provider` compares them with
+  # `Version.compare/2`, which raises on a version it cannot read.
+  defp gates?(%{"adapter" => %{"claudeCode" => %{} = claude}}) do
+    min = claude["minVersion"]
+    max = claude["maxVersion"]
+
+    version?(min) and version?(max) and
+      (min == nil or max == nil or Version.compare(min, max) == :lt)
+  end
+
+  defp gates?(%{"adapter" => adapter}) when not is_map(adapter), do: false
+  defp gates?(_model), do: true
+
+  defp version?(nil), do: true
+  defp version?(version) when is_binary(version), do: match?({:ok, _}, Version.parse(version))
+  defp version?(_version), do: false
+
+  # A profile's Claude maps, when it has them: efforts onto effort names (or
+  # nothing, for one Claude has no name for), windows onto token counts.
+  defp profile?(%{"adapter" => %{"claudeCode" => %{} = claude}}) do
+    map?(claude["effortMap"], &(is_binary(&1) or is_nil(&1))) and
+      map?(claude["contextWindowTokens"], &(is_integer(&1) and &1 > 0))
+  end
+
+  defp profile?(%{"adapter" => adapter}) when not is_map(adapter), do: false
+  defp profile?(%{}), do: true
+  defp profile?(_profile), do: false
+
+  defp map?(nil, _value?), do: true
+
+  defp map?(%{} = map, value?),
+    do: Enum.all?(map, fn {key, value} -> is_binary(key) and value?.(value) end)
+
+  defp map?(_map, _value?), do: false
 
   defp policies?(policies) when is_list(policies) do
     Enum.all?(policies, fn
