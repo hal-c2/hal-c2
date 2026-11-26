@@ -921,6 +921,7 @@ mc/platform/openshell.feature: Settings says how to install OpenShell where it c
 mc/platform/openshell.feature: Settings says review sandboxes can run once the MC has a gateway
 mc/platform/openshell.feature: Settings says what to install on a machine without Podman or Docker
 mc/platform/openshell.feature: Settings says when the MC could not answer, and can ask again
+mc/platform/openshell.feature: Settings says which machines take the reviews that need a sandbox
 mc/platform/openshell.feature: Settings shows whether review sandboxes can run, and what to fix
 mc/platform/openshell.feature: Settings' actions are off on a device that cannot manage the MC's machine
 mc/platform/storage-layout.feature: The desktop app a developer builds uses the development profile

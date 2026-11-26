@@ -10,7 +10,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   bare `:peer` node with only a stand-in `HalC2.Plugins.Host`, whose `peer/3` answers
   the rows (queued, running, claimed, published, each maybe holding a claim of the
   other commit) the test gives it, or that its plugin is restarting, or does not answer
-  at all, so the plugin sees a peer whose claims the test controls. The laptop is a member of this machine's
+  at all, so the plugin sees a peer whose claims the test controls; it takes a review
+  handed to it, or refuses it, as the test says. The laptop is a member of this machine's
   cluster, connected at the start or never yet in reach, when this machine has only
   its share of the limits until the two meet. The commands set and clear those rows,
   restart the laptop's plugin, stop it answering and let it answer again (telling no
@@ -50,7 +51,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     over it waits as ready, limited (while the laptop is cut off, for a half), and one
     the user asked for starts anyway and counts;
   - the laptop hears of every start this machine makes while it can say what it
-    started, before that start runs, so the two count the same starts once apart.
+    started, before that start runs, so the two count the same starts once apart;
+  - in a case where every review needs a sandbox (`sandbox`), which this machine
+    cannot open, a review about to start goes to the laptop while it is connected,
+    answering and takes it (`takes`), before it counts toward the limits: it shows
+    queued there and launches nothing here. With no laptop that takes it, it runs
+    here and fails at its sandbox once it claimed its commit, and three such failures
+    in a row pause the queue. A review the user stops while the laptop is taking it
+    (`hold_take`) is stopped here, and the laptop, told once it took it, has none.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -162,10 +170,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   property "of two connected machines one reviews each commit, and it posts its review once",
     numtests: HalC2.Prop.numtests(60),
     max_size: 40 do
-    forall met <- frequency([{3, true}, {1, false}]) do
-      forall cmds <- commands(__MODULE__, initial_state(met)) do
+    forall {met, sandbox} <-
+             {frequency([{3, true}, {1, false}]), frequency([{3, false}, {1, true}])} do
+      forall cmds <- commands(__MODULE__, initial_state(met, sandbox)) do
         trap_exit do
-          begin_case(met)
+          begin_case(met, sandbox)
           {history, state, result} = run_commands(__MODULE__, cmds)
           end_case()
 
@@ -236,7 +245,13 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # usage limit, until the user asks for a review. `starts`: the starts this machine
   # counted toward the review limits; `peer`: the laptop's, `{id, whether within the
   # last day}`; `merged`: the ids of those this machine took in, which it keeps;
-  # `told`: how many of this machine's starts the laptop heard of.
+  # `told`: how many of this machine's starts the laptop heard of. `sandbox`: whether
+  # every review needs a sandbox, which this machine cannot open; `takes`: whether the
+  # laptop takes such a review; `take_hold`: whether the laptop holds its answer to a
+  # take until let go; `handing`: the key of the review it holds the take of and
+  # whether the user stopped it meanwhile (`{key, stopped}`), or nil; `failures`: the
+  # runs that failed in a row, three of which pause the queue; `paused_by`: `:limit`
+  # or `:failures`, why it is paused.
   #
   # The plugin reviews every new head of both pull requests on its own, one at a time,
   # and keeps reviews for the user to publish. Its first look finds both at head 1. The
@@ -244,7 +259,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # reach, when this machine counts it out of reach all the same.
   def initial_state, do: initial_state(true)
 
-  def initial_state(met) do
+  def initial_state(met, sandbox \\ false) do
     look(%{
       prs: Map.new(@keys, &{&1, 1}),
       reviews: %{},
@@ -263,8 +278,22 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       starts: 0,
       peer: [],
       merged: MapSet.new(),
-      told: 0
+      told: 0,
+      sandbox: sandbox,
+      takes: true,
+      take_hold: false,
+      handing: nil,
+      failures: 0,
+      paused_by: nil
     })
+  end
+
+  # While the laptop holds a take, the user may stop that review, or the laptop lets go.
+  def command(%{handing: {key, stopped}}) do
+    frequency(
+      [{2, {:call, __MODULE__, :hold_take, [false]}}] ++
+        if(stopped, do: [], else: [{3, {:call, __MODULE__, :stop, [key]}}])
+    )
   end
 
   def command(m) do
@@ -364,9 +393,32 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           do: [{2, {:call, __MODULE__, :limited, [elements(running)]}}],
           else: []
         ) ++
-        if(not m.hold and m.crashes < 2, do: [{1, {:call, __MODULE__, :crash, []}}], else: [])
+        if(not m.hold and m.crashes < 2, do: [{1, {:call, __MODULE__, :crash, []}}], else: []) ++
+        if(m.sandbox,
+          do: [
+            {2, {:call, __MODULE__, :takes, [not m.takes]}},
+            {2, {:call, __MODULE__, :hold_take, [not m.take_hold]}}
+          ],
+          else: []
+        )
     )
   end
+
+  # A take held, only its stop (with nothing queued to start in its place) or its end.
+  def precondition(%{handing: {key, stopped}} = m, {:call, _, cmd, args}) do
+    case {cmd, args} do
+      {:hold_take, [false]} ->
+        true
+
+      {:stop, [^key]} ->
+        not stopped and not Enum.any?(m.reviews, &(elem(&1, 1).status == :queued))
+
+      _ ->
+        false
+    end
+  end
+
+  def precondition(_m, {:call, _, :stop, _}), do: false
 
   def precondition(m, {:call, _, cmd, [{key, k}]}) when cmd in [:report, :limited],
     do: Enum.at(m.runs[key] || [], k - 1) == true
@@ -391,7 +443,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       posts: m.posts,
       starts: m.starts + MapSet.size(m.merged),
       told: m.told,
-      problems: if(m.paused, do: [@paused], else: [])
+      problems: if(m.paused, do: [paused_text(m.paused_by)], else: [])
     }
 
     if observed != expected do
@@ -482,6 +534,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     case m.reviews[key] do
       # A run's first report is final: one waiting has reported.
       %{run: ^k, status: s} = r when s in [:running, :failed] ->
+        m = %{m | failures: 0}
         {m |> put_review(key, %{r | status: :waiting, publish_error: false}) |> pump(), :ok}
 
       _ ->
@@ -492,8 +545,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # The run waits in the queue again, and nothing starts until the user asks.
   defp step(m, {:call, _, :limited, [{key, k}]}) do
     case m.reviews[key] do
-      %{run: ^k, status: :running} -> {%{queue(m, key, m.reviews[key].asked) | paused: true}, nil}
-      _ -> {m, nil}
+      %{run: ^k, status: :running} ->
+        m = queue(m, key, m.reviews[key].asked)
+        {%{m | paused: true, paused_by: :limit, failures: 0}, nil}
+
+      _ ->
+        {m, nil}
     end
   end
 
@@ -531,7 +588,30 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp step(m, {:call, _, :on_github, [key, head, mine]}),
     do: {%{m | github: m.github ++ [{key, head, mine}]}, :ok}
 
+  defp step(m, {:call, _, :takes, [on]}), do: {%{m | takes: on}, :ok}
+
+  defp step(m, {:call, _, :hold_take, [true]}), do: {%{m | take_hold: true}, :ok}
+
+  # Let go, the laptop takes the review it held: this machine shows it there, or, the
+  # user having stopped it, tells the laptop, which then has none.
+  defp step(%{handing: {key, stopped}} = m, {:call, _, :hold_take, [false]}) do
+    m = %{m | take_hold: false, handing: nil}
+
+    if stopped,
+      do: {%{m | rows: Map.delete(m.rows, key)}, :ok},
+      else: {handed(m, key, m.reviews[key]), :ok}
+  end
+
+  defp step(m, {:call, _, :hold_take, [false]}), do: {%{m | take_hold: false}, :ok}
+
+  # The user stops the review the laptop is taking: it failed here, stopped.
+  defp step(%{handing: {key, false}} = m, {:call, _, :stop, [key]}) do
+    m = %{m | handing: {key, true}}
+    {m |> put_review(key, %{m.reviews[key] | status: :failed}) |> pump(), :ok}
+  end
+
   # The plugin starts again from what it saved, a run it had in hand failed, and looks.
+  # It counts failures in a row afresh.
   defp step(m, {:call, _, :crash, []}) do
     reviews =
       Map.new(m.reviews, fn {key, r} ->
@@ -539,7 +619,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
          %{r | status: if(r.status == :running, do: :failed, else: r.status), elsewhere: nil}}
       end)
 
-    {look(%{m | reviews: reviews, crashes: m.crashes + 1}), nil}
+    {look(%{m | reviews: reviews, crashes: m.crashes + 1, failures: 0}), nil}
   end
 
   defp put_review(m, key, review), do: %{m | reviews: Map.put(m.reviews, key, review)}
@@ -683,8 +763,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     |> pump()
   end
 
-  # Starts the oldest queued review while none runs and the queue is not paused; held
-  # at the fetch while the hold is on.
+  # Starts the oldest queued review while none runs and the queue is not paused, unless
+  # it goes to the laptop first (`hand_off/3`); held at the fetch while the hold is on.
   defp pump(%{paused: true} = m), do: m
 
   defp pump(m) do
@@ -698,41 +778,60 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     case {running, queued} do
       {false, [{key, r} | _]} ->
-        # The start is counted with the laptop's of the last day, if it can say them;
-        # one the watch would start over the limit goes back to ready, and if it has not
-        # reviewed the head it saw, reads the laptop's claims again, as a run stepping
-        # back does. It had a thread id of its own, which never launches, and the
-        # checkout of the run before stays.
-        m =
-          if tells?(m),
-            do: %{
-              m
-              | merged: MapSet.union(m.merged, MapSet.new(for {id, true} <- m.peer, do: id))
-            },
-            else: m
-
-        limit = if tells?(m), do: @per_repository, else: div(@per_repository, 2)
-
-        if not r.asked and m.starts + MapSet.size(m.merged) >= limit,
-          do:
-            %{m | runs: Map.update(m.runs, key, [false], &(&1 ++ [false]))}
-            |> put_review(key, %{
-              r
-              | status: :ready,
-                limited: if(tells?(m), do: :day, else: :apart)
-            })
-            |> pump()
-            |> then(&if(r.reviewed != r.seen, do: peer_claims(&1), else: &1)),
-          else:
-            launch(
-              %{m | starts: m.starts + 1, told: m.told + if(tells?(m), do: 1, else: 0)},
-              key,
-              r
-            )
+        if m.sandbox and m.takes and tells?(m), do: hand_off(m, key, r), else: budget(m, key, r)
 
       _ ->
         m
     end
+  end
+
+  # A review that needs a sandbox goes to the laptop that takes it, before the limits
+  # count it: queued there, it shows so here, and its thread id here never launches;
+  # the checkout of the run before is gone, as when a run starts. The laptop's row of
+  # it is a queued one at the head there is now. While the laptop holds its take, the
+  # review runs here until it answers.
+  defp hand_off(m, key, r) do
+    runs = (m.runs[key] || []) ++ [false]
+    r = Map.delete(%{r | run: length(runs)}, :asked_at)
+    m = %{m | runs: Map.put(m.runs, key, runs)}
+
+    if m.take_hold,
+      do: %{m | handing: {key, false}} |> put_review(key, %{r | status: :running}),
+      else: handed(m, key, r)
+  end
+
+  defp handed(m, key, r) do
+    %{m | rows: Map.put(m.rows, key, {m.prs[key], "queued", false, nil})}
+    |> put_review(key, %{r | status: :ready, elsewhere: {"queued", false}})
+    |> pump()
+    |> peer_claims()
+  end
+
+  # The start is counted with the laptop's of the last day, if it can say them; one
+  # the watch would start over the limit goes back to ready, and if it has not reviewed
+  # the head it saw, reads the laptop's claims again, as a run stepping back does. It
+  # had a thread id of its own, which never launches, and the checkout of the run
+  # before stays.
+  defp budget(m, key, r) do
+    m =
+      if tells?(m),
+        do: %{m | merged: MapSet.union(m.merged, MapSet.new(for {id, true} <- m.peer, do: id))},
+        else: m
+
+    limit = if tells?(m), do: @per_repository, else: div(@per_repository, 2)
+
+    if not r.asked and m.starts + MapSet.size(m.merged) >= limit,
+      do:
+        %{m | runs: Map.update(m.runs, key, [false], &(&1 ++ [false]))}
+        |> put_review(key, %{r | status: :ready, limited: if(tells?(m), do: :day, else: :apart)})
+        |> pump()
+        |> then(&if(r.reviewed != r.seen, do: peer_claims(&1), else: &1)),
+      else:
+        launch(
+          %{m | starts: m.starts + 1, told: m.told + if(tells?(m), do: 1, else: 0)},
+          key,
+          r
+        )
   end
 
   defp launch(m, key, r) do
@@ -770,6 +869,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
             |> pump()
             |> peer_claims()
 
+          # Claimed, its sandbox cannot open here: it fails, launching nothing, and
+          # the next queued starts.
+          nil when m.sandbox ->
+            m
+            |> put_review(key, %{r | status: :failed, reviewed: head, claimed: true})
+            |> failed_run()
+            |> pump()
+
           nil ->
             m = put_review(m, key, %{r | reviewed: head, claimed: true})
             %{m | runs: Map.update!(m.runs, key, &List.replace_at(&1, k - 1, true))}
@@ -779,6 +886,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         m
     end
   end
+
+  # Three failures in a row pause the queue, and the count starts again.
+  defp failed_run(%{failures: 2} = m), do: %{m | failures: 0, paused: true, paused_by: :failures}
+  defp failed_run(m), do: %{m | failures: m.failures + 1}
+
+  defp paused_text(:failures),
+    do: "code-review reports: Reviews are paused after repeated failures."
+
+  defp paused_text(_), do: @paused
 
   # What this machine shares of a review, `{head, status, claimed, held}`: the commit
   # it started on, or the head it is about to start or has queued (unless paused, when
@@ -894,6 +1010,37 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     if not on, do: tell()
     observe(:ok)
   end
+
+  # The laptop able to open review sandboxes, so it takes the reviews this machine
+  # hands it, or (`on` false) not, so it refuses them.
+  def takes(on) do
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_takes, on])
+    observe(:ok)
+  end
+
+  # The laptop holds its answer to the next take until let go (`on` false), when it
+  # answers the one it holds.
+  def hold_take(true) do
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_take_hold, true])
+    observe(:ok)
+  end
+
+  def hold_take(false) do
+    release_take()
+    observe(:ok)
+  end
+
+  defp release_take do
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_take_hold, false])
+
+    case :peer.call(laptop().pid, :erlang, :whereis, [:cr_peer_take]) do
+      pid when is_pid(pid) -> send(pid, :release)
+      _ -> :ok
+    end
+  end
+
+  # The user's Stop of the review of `key`.
+  def stop(key), do: observe(reply(call("stop", %{"key" => key})))
 
   # The laptop connected but not answering (as one too busy to, within the time
   # `Host.peers/4` gives it), so this machine cannot tell what it has; answering
@@ -1346,14 +1493,21 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     for ref <- refs, do: Process.demonitor(ref, [:flush])
   end
 
-  # Runs held at the fetch: the git pid of each fetch the hold keeps waiting.
+  # Runs held at the fetch: the git pid of each fetch the hold keeps waiting; and the
+  # run whose take the laptop holds. A take released is not held, though its name
+  # stays until it has written the row: drain/2 waits for that.
   defp parked do
-    if File.exists?(fx_path("fetch.hold")) do
-      holds = fx_path("holds")
-      Enum.count(File.ls!(holds), &(&1 =~ ~r/^\d+$/))
-    else
-      0
-    end
+    fetches =
+      if File.exists?(fx_path("fetch.hold")) do
+        holds = fx_path("holds")
+        Enum.count(File.ls!(holds), &(&1 =~ ~r/^\d+$/))
+      else
+        0
+      end
+
+    taking = :peer.call(laptop().pid, :erlang, :whereis, [:cr_peer_take])
+    holding = :peer.call(laptop().pid, :persistent_term, :get, [:cr_peer_take_hold, false])
+    fetches + if(is_pid(taking) and holding, do: 1, else: 0)
   end
 
   # Back once the process replacing `old` publishes, as it does on starting. The
@@ -1377,7 +1531,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # A bare node: no MC, only a `HalC2.Plugins.Host` whose `peer/3` answers the rows
-  # in its `:cr_peer_rows`. It is named as the cluster's member `id` is
+  # in its `:cr_peer_rows`, and takes a review handed to it while `:cr_peer_takes`,
+  # queued at its head in `:cr_peer_heads`. It is named as the cluster's member `id` is
   # (`HalC2.Cluster.mc_name/1`), and reached as members are, without a port mapper
   # (`HalC2.Prop.Epmd`). Its control runs over standard io, so cutting the
   # distribution connection leaves it running. It stops with a process of its own,
@@ -1460,6 +1615,25 @@ defmodule HalC2.CodeReviewClaimsPropTest do
                 persistent_term:get(cr_peer_starts, []) ++ persistent_term:get(cr_peer_told, [])
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
+    answer(<<"code-review">>, take, [Ask]) ->
+        Result = case {persistent_term:get(cr_peer_restarting, false), persistent_term:get(cr_peer_takes, false)} of
+            {true, _} -> {error, <<"Code review is not running on this machine.">>};
+            {false, false} -> {error, <<"Review sandboxes can't run on this machine either.">>};
+            {false, true} ->
+                case persistent_term:get(cr_peer_take_hold, false) of
+                    true -> register(cr_peer_take, self()), receive release -> ok end;
+                    false -> ok
+                end,
+                Key = <<(maps:get(<<"repository">>, Ask))/binary, "#", (integer_to_binary(maps:get(<<"number">>, Ask)))/binary>>,
+                Row = \#{<<"sha">> => maps:get(Key, persistent_term:get(cr_peer_heads)), <<"status">> => <<"queued">>, <<"claimed">> => false},
+                persistent_term:put(cr_peer_rows, maps:put(Key, Row, persistent_term:get(cr_peer_rows, \#{}))),
+                {ok, nil}
+        end,
+        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
+    answer(<<"code-review">>, untake, [Ask]) ->
+        Key = <<(maps:get(<<"repository">>, Ask))/binary, "#", (integer_to_binary(maps:get(<<"number">>, Ask)))/binary>>,
+        persistent_term:put(cr_peer_rows, maps:remove(Key, persistent_term:get(cr_peer_rows, \#{}))),
+        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => {ok, nil}}};
     answer(_, _, _) ->
         none.
     """
@@ -1502,7 +1676,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     :ignore
   end
 
-  defp begin_case(met) do
+  # `sandbox`: every review needs a sandbox, which this machine cannot open.
+  defp begin_case(met, sandbox \\ false) do
     home = HalC2.Prop.scratch_home("code-review-claims")
     fx = fx_dir()
     File.write!(fx_path("calls.jsonl"), "")
@@ -1536,6 +1711,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_silent, false])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_starts, []])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_told, []])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_takes, true])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_take_hold, false])
     :net_kernel.monitor_nodes(true)
 
     cond do
@@ -1625,8 +1802,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           "readReviewMd" => false,
           "reviewsPerAuthorPerDay" => 0,
           "reviewsPerRepositoryPerDay" => @per_repository,
-          # The fake agents run here.
-          "reviewTrustedOnThisMachine" => true
+          # The fake agents run here, unless every review needs a sandbox.
+          "reviewTrustedOnThisMachine" => not sandbox
         }
       })
 
@@ -1642,6 +1819,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   defp end_case do
     File.rm(fx_path("fetch.hold"))
+    release_take()
     HalC2.Prop.stop_services()
     # The fake Codex turns still open end, and their processes with them.
     File.write(Path.join(System.get_env("FAKE_CODEX_GATE"), "answer"), "")
@@ -1658,6 +1836,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # `world`: key → its head.
   defp put_world(world) do
     Process.put(:cr_world, world)
+    heads = Map.new(world, fn {key, head} -> {key, sha(key, head)} end)
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_heads, heads])
 
     details =
       for key <- @keys do

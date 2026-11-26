@@ -12,7 +12,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   alias HalC2.OpenShell
   alias HalC2.OpenShell.{Client, Command, Config, Install, Manifest, Platform, Service}
-  alias HalC2.Test.{FakeOpenShell, Mc, Storage, SystemdUnit}
+  alias HalC2.Test.{FakeOpenShell, Machines, Mc, Storage, SystemdUnit}
 
   @podman %{
     kind: :podman,
@@ -953,6 +953,49 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert %{"code" => "not-installed", "message" => message} = hd(context.settings["problems"])
     assert message == "Press Install to install it."
     assert %{"operation" => "install", "label" => "Install"} in context.settings["actions"]
+    context
+  end
+
+  step "they read that code reviews that need a sandbox fail until a machine of the cluster can run them",
+       context do
+    assert context.settings["sandboxMachines"] == []
+    context
+  end
+
+  # --- where code reviews that need a sandbox go -----------------------------------
+
+  # This VM is the machine `label`; it runs review sandboxes once the next step has made
+  # it a cluster with the machine that cannot.
+  step "review sandboxes can run on this machine, {string}", %{args: [label]} = context do
+    Map.put(context, :sandbox_machine, label)
+  end
+
+  # The cluster restarts this MC, so its gateway and review broker come after it: the
+  # fake gateway installed with this home's reaper, as code review's scenarios run it.
+  step "the user's machine {string} in the cluster is an Intel Mac", %{args: [label]} = context do
+    context = Machines.cluster(context, context.sandbox_machine, [label])
+    gateway = FakeOpenShell.start(OpenShell.pki_dir())
+    FakeOpenShell.install!(gateway)
+
+    FakeOpenShell.put_env(
+      openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
+    )
+
+    Mc.ensure(OpenShell.Review)
+    facts = Map.fetch!(@machines, "is an Intel Mac")
+    :ok = Machines.on(context, label, Application, :put_env, [:hal_c2, :openshell_facts, facts])
+    Map.put(context, :gateway, gateway)
+  end
+
+  # What `server.getOpenShellStatus` answers on that machine.
+  step "the user opens the sandbox settings on {string}", %{args: [label]} = context do
+    {:ok, settings} = Machines.on(context, label, Command, :settings_status, [])
+    Map.put(context, :settings, settings)
+  end
+
+  step "they read that code reviews that need a sandbox go to {string}",
+       %{args: [label]} = context do
+    assert context.settings["sandboxMachines"] == [label]
     context
   end
 

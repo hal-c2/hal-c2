@@ -61,6 +61,13 @@ them run nightly. A
 proof whose model should have changed is caught only by the coverage test, so a fact
 mapped to a rule has to mean it.
 
+Each proof is one CI job with an hour to run, and its checks run one after another, so a
+proof's time is the sum of its searches, on runners several times slower than a desktop.
+A check that loops over starts in one test pays, in each later search, for the memory of
+the ones before it: give each start a test of its own. When a proof's checks still
+outrun the job, tag some `@tag shard: :name`, and CI runs them as a job of their own
+(`code_review_claims_proof_test.exs` does).
+
 ## Reading a counterexample
 
 A failed `refute_reachable` prints the rule labels from the initial state to the bad

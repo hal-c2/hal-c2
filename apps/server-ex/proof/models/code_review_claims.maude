@@ -12,6 +12,9 @@ sload model-checker
 --- and a commit posted already is published. A review shown on a machine that started
 --- it stays shown there while that machine is out of reach.
 --- A machine paused at its agent's usage limit stops sharing the reviews it has queued.
+--- A machine that cannot open review sandboxes offers its run to the connected machines,
+--- and the first that can and takes it has it; with none, it runs here and fails at its
+--- sandbox. A machine that could may find it cannot after all.
 --- proof/hal_c2/code_review_claims_proof_test.exs maps it to the code and checks it.
 
 mod CODE-REVIEW-CLAIMS is
@@ -71,6 +74,10 @@ mod CODE-REVIEW-CLAIMS is
   --- A run (run/2): checking out, checked out a commit, the nodes trans/3 locks, and
   --- the nodes it holds the lock on.
   op fetch : -> Phase [ctor] .
+  --- On a machine that cannot open sandboxes (handoff/2): the machines it has yet to
+  --- offer the review to, then checking out here with none left that took it.
+  op offer : Ids -> Phase [ctor] .
+  op here : -> Phase [ctor] .
   op out : Sha -> Phase [ctor] .
   op want : Sha Ids -> Phase [ctor] .
   op held : Sha Ids -> Phase [ctor] .
@@ -119,8 +126,17 @@ mod CODE-REVIEW-CLAIMS is
   --- busy, say), which answers :unanswered for it.
   op mute : Id -> Item [ctor] .
 
+  --- A machine that cannot open review sandboxes (Host.sandboxes_ready?/1).
+  op nosb : Id -> Item [ctor] .
+
   --- What is left to happen.
-  ops pushes crashes splits bounces fails limits mutes : Nat -> Item [ctor] .
+  ops pushes crashes splits bounces fails limits mutes breaks : Nat -> Item [ctor] .
+  --- The machine that goes down once, where only it may, and does not come back; the
+  --- connection that drops once, where only it may.
+  op falls : Id -> Item [ctor] .
+  op drops : Id Id -> Item [ctor] .
+  --- The machine that finds once that it cannot open review sandboxes after all.
+  op unable : Id -> Item [ctor] .
 
   --- A review's life after its claim (a failed turn, the report, the post) happens; the
   --- checks that reviews get done leave it out, as nothing in it gives a claim up.
@@ -242,6 +258,41 @@ mod CODE-REVIEW-CLAIMS is
   op stopped : Id Conf -> Bool .
   eq stopped(X, paused(X) C) = true .
   eq stopped(X, C) = false [owise] .
+
+  op unboxed : Id Conf -> Bool .
+  eq unboxed(X, nosb(X) C) = true .
+  eq unboxed(X, C) = false [owise] .
+
+  --- take/1 on Y, of a review Y has as R, at the head S there is now: a paused machine
+  --- refuses it, as does one that cannot open sandboxes either or whose run of that
+  --- head failed ...
+  op takes : Id Review Sha Conf -> Bool .
+  eq takes(Y, R, S, C) = not stopped(Y, C) and not unboxed(Y, C) and not failedAt(R, S) .
+  op failedAt : Review Sha -> Bool .
+  eq failedAt(rv(failed, Cl, Rd, S, E, Ho), S) = true .
+  eq failedAt(R, S) = false [owise] .
+  --- ... and the rest start it as {:start, ...} does, but one that reviewed the head or
+  --- shows it claimed by another machine at that head, which it leaves there.
+  op taken : Review Sha -> Review .
+  eq taken(unknown, S) = queued(rv(ready, false, nosha, S, nobody, nohold)) .
+  ceq taken(rv(St, Cl, Rd, Hd, E, Ho), S) = rv(St, Cl, Rd, Hd, E, Ho)
+    if active(St) or (Cl and Rd == S and (St == waiting or St == publishing or St == published))
+       or (claimedThere(rv(St, Cl, Rd, Hd, E, Ho), S)) .
+  --- The head read with the ask is the row's from then on ({:take, ...} reads it afresh).
+  eq taken(rv(St, Cl, Rd, Hd, E, Ho), S) = queued(rv(St, Cl, Rd, S, E, Ho)) [owise] .
+  --- The machine another one claimed the head on, which take/1 answers ({:ok, elsewhere}).
+  op claimedThere : Review Sha -> Bool .
+  eq claimedThere(rv(St, Cl, Rd, S, on(A), Ho), S) = left(rv(St, Cl, Rd, S, on(A), Ho)) .
+  eq claimedThere(R, S) = false [owise] .
+  op there : Id Review Sha -> Ref .
+  eq there(Y, rv(St, Cl, Rd, Hd, E, Ho), S) =
+    if claimedThere(rv(St, Cl, Rd, Hd, E, Ho), S) then E else Y fi .
+  eq there(Y, R, S) = Y [owise] .
+  --- Host.peer_call/5 on X: Y takes it, and says so in time.
+  op answers : Id Id Conf -> Bool .
+  ceq answers(X, Y, mc(Y, true, true, R) gh(S) C) = true
+    if linked(X, Y, C) /\ not muted(Y, C) /\ takes(Y, R, S, C) .
+  eq answers(X, Y, C) = false [owise] .
 
   op st : Review -> Status .
   eq st(rv(St, Cl, Rd, Hd, E, Ho)) = St .
@@ -571,7 +622,27 @@ mod CODE-REVIEW-CLAIMS is
     if R' := (if B then R else applied(R, S, orAway(W, R, S, near(X, C))) fi) .
 
   --- run/2: Checkout.prepare/5 fetches the head there is now.
-  rl [checkout] : run(X, fetch) gh(S) => run(X, out(S)) gh(S) .
+  crl [checkout] : { run(X, fetch) gh(S) C } => { run(X, out(S)) gh(S) C } if not unboxed(X, C) .
+  rl [checkout] : run(X, here) gh(S) => run(X, out(S)) gh(S) .
+
+  --- handoff/2: a run on a machine that cannot open sandboxes offers its review to the
+  --- machines connected now (Node.list()), before it counts toward the limits ...
+  rl [handoff] : { run(X, fetch) nosb(X) C } => { run(X, offer(near(X, C))) nosb(X) C } .
+  --- ... and with none left to offer it to, runs it here, where its sandbox fails.
+  rl [handoff] : run(X, offer(noids)) => run(X, here) .
+  --- take/1 on Y: Y starts it, and X shows it there ({:elsewhere, ...}), or on the
+  --- machine Y says claimed it ...
+  crl [offer] :
+    { run(X, offer(Y & I)) mc(Y, true, true, R) gh(S) C }
+    => { ew(X, there(Y, R, S)) pump(Y, set(Y, R, taken(R, S), mc(Y, true, true, R) gh(S) C)) }
+    if answers(X, Y, mc(Y, true, true, R) gh(S) C) .
+  --- ... or Y does not answer in time and may take it all the same, as X goes on ...
+  crl [offer] :
+    { run(X, offer(Y & I)) mc(Y, true, true, R) mute(Y) gh(S) C }
+    => { run(X, offer(I)) pump(Y, set(Y, R, taken(R, S), mc(Y, true, true, R) mute(Y) gh(S) C)) }
+    if linked(X, Y, C) /\ takes(Y, R, S, mute(Y) C) .
+  --- ... or X goes on to the next, as Y refused it or could not be asked.
+  crl [offer] : { run(X, offer(Y & I)) C } => { run(X, offer(I)) C } if not answers(X, Y, C) .
 
   --- handle_cast {:start_failed, ...}: the checkout failed ...
   rl [start-failed] :
@@ -579,11 +650,18 @@ mod CODE-REVIEW-CLAIMS is
     => { set(X, rv(running, Cl, Rd, Hd, E, Ho), rv(failed, Cl, Rd, Hd, E, Ho),
            mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) fails(F) hurt(X) C) } .
   --- ... or at the agent's usage limit: the review waits in the queue, and the machine
-  --- is paused.
+  --- is paused ...
   rl [start-failed] :
     { run(X, fetch) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) limits(s F) C }
     => { note(X, shareOf(X, rv(running, Cl, Rd, Hd, E, Ho), C),
            mc(X, true, N, queued(rv(running, Cl, Rd, Hd, E, Ho))) once(paused(X), limits(F) C)) } .
+
+  --- ... or, on a machine that cannot open sandboxes, Host.open_sandbox/3 fails once
+  --- its run claimed the commit: the review failed there, its claim standing.
+  rl [sandbox-failed] :
+    { nosb(X) mc(X, true, N, rv(running, true, Rd, Hd, E, Ho)) C }
+    => { nosb(X) set(X, rv(running, true, Rd, Hd, E, Ho), rv(failed, true, Rd, Hd, E, Ho),
+           mc(X, true, N, rv(running, true, Rd, Hd, E, Ho)) C) } .
 
   --- claim/3: trans/3 takes [node() | Node.list()] once ...
   rl [claim] : { run(X, out(S)) C } => { run(X, want(S, X & near(X, C))) C } .
@@ -714,11 +792,14 @@ mod CODE-REVIEW-CLAIMS is
   eq elsewhereIs(R, Y) = false [owise] .
 
   --- handle_info :peer_claims: a review left to others reads their rows at its head,
-  --- and which of them are restarting ...
+  --- and which of them are restarting ... Two reads in flight that say the same are one:
+  --- {:elsewhere_seen, ...} shows nothing the first did not, but for one more look,
+  --- and a machine handing its run over to one whose run is still at the head before
+  --- would pile them up for as long as that run takes, an unbounded search.
   rl [peer-claims] :
     { ping(X) mc(X, true, N, R) C }
-    => { mc(X, true, N, R)
-         (if left(R) then sn(X, head(R), seenAt(X, head(R), C), restarting(X, C)) else empty fi) C } .
+    => { if left(R) then once(sn(X, head(R), seenAt(X, head(R), C), restarting(X, C)), mc(X, true, N, R) C)
+         else mc(X, true, N, R) C fi } .
   op head : Review -> Sha .
   eq head(rv(St, Cl, Rd, S, E, Ho)) = S .
 
@@ -794,6 +875,10 @@ mod CODE-REVIEW-CLAIMS is
   rl [crash] :
     { mc(X, P, true, R) crashes(s F) C }
     => { cut(X, lose(X, mc(X, false, false, R) crashes(F) hurt(X) C)) } .
+  --- ... or leaves for good: without its poll it does not restart.
+  rl [crash] :
+    { mc(X, P, true, R) poll(X, Pl) falls(X) C }
+    => { cut(X, lose(X, mc(X, false, false, R) hurt(X) C)) } .
 
   --- The plugin's server alone goes down (it crashed, say), its node connected
   --- throughout. A settings save stops and starts the plugin in one host call, which
@@ -809,6 +894,7 @@ mod CODE-REVIEW-CLAIMS is
     => { pings(near(X, C), mc(X, true, true, reload(R)) poll(X, armed) C) } .
 
   rl [partition] : { link(X, Y) splits(s F) C } => { sever(X, Y, link(X, Y) C) splits(F) } .
+  rl [partition] : { link(X, Y) drops(X, Y) C } => { sever(X, Y, link(X, Y) C) } .
 
   --- A machine stops answering the others in time, and later answers again, telling
   --- no one.
@@ -817,6 +903,12 @@ mod CODE-REVIEW-CLAIMS is
   crl [mute] : { bm(X, true, Sts, I, F') mutes(s F) C } => { bm(X, true, Sts, I, F') mute(X) mutes(F) C }
     if not muted(X, C) .
   rl [unmute] : { mute(X) C } => { C } .
+
+  --- A machine that could open review sandboxes no longer can (its gateway stopped, say).
+  crl [break] : { mc(X, P, true, R) breaks(s F) C } => { mc(X, P, true, R) nosb(X) breaks(F) C }
+    if not unboxed(X, C) .
+  crl [break] : { mc(X, P, true, R) unable(X) C } => { mc(X, P, true, R) nosb(X) C }
+    if not unboxed(X, C) .
 
   crl [connect] :
     { mc(X, P, true, R) mc(Y, B, true, R') C }
@@ -861,6 +953,36 @@ mod CODE-REVIEW-CLAIMS is
        { mc(a, true, true, rv(ready, false, nosha, h1, b, nohold)) poll(a, spent) looks(a, nolook)
          mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
          run(b, fetch) link(a, b) gh(h1) periodic(0) turn(a) budget(0, Cr, Sp, 0, 0, Li) } .
+
+  --- a cannot open review sandboxes and b can, neither has looked yet; then periodic
+  --- looks, pushes, crashes, partitions, plugin restarts, usage limits, b finding it
+  --- cannot after all, and a machine not answering in time.
+  op boxless : Nat Nat Nat Nat Nat Nat Nat Nat -> Sys .
+  vars Br : Nat .
+  eq boxless(Pe, Pu, Cr, Sp, Bo, Li, Br, Mu) =
+       { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Pe) free later
+         budget(Pu, Cr, Sp, Bo, 0, Li) breaks(Br) mutes(Mu) } .
+  --- The same two, looking in turn Bu more times, b finding it cannot Br times.
+  op handed : Nat Budget -> Sys .
+  eq handed(Br, Bu) =
+       { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Bu) turn(a)
+         budget(0, 0, 0, 0, 0, 0) breaks(Br) } .
+  --- a, which cannot open review sandboxes, is starting the review; b and c can, and
+  --- neither has looked. b, offered it first, may leave (Cr) or its connection to a
+  --- drop (Sp), and Br of them find they cannot after all.
+  op gone : Nat Nat Nat -> Sys .
+  eq gone(Cr, Sp, Br) =
+       { mc(a, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(a, spent)
+         looks(a, nolook) run(a, fetch) nosb(a)
+         mc(b, true, true, unknown) poll(b, spent) looks(b, nolook)
+         mc(c, true, true, unknown) poll(c, spent) looks(c, nolook)
+         link(a, b) link(a, c) link(b, c) gh(h1) periodic(0) free
+         (if Cr == 0 then empty else falls(b) fi) (if Sp == 0 then empty else drops(a, b) fi)
+         breaks(Br) } .
+  --- The same, b leaving (Cr) or its connection to a dropping (Sp), as c, the machine
+  --- the review moves on to, finds it cannot after all.
+  op stranded : Nat Nat -> Sys .
+  ceq stranded(Cr, Sp) = { unable(c) C } if { C } := gone(Cr, Sp, 0) .
 
   --- b has the review queued behind another of its reviews, and a shows it there.
   op behind : Nat Nat Nat -> Sys .
@@ -985,6 +1107,8 @@ mod CODE-REVIEW-CLAIMS is
   eq renamed(pwant(I), Pm) = pwant(idsAs(I, Pm)) .
   eq renamed(pheld(I, Sg), Pm) = pheld(idsAs(I, Pm), Sg) .
   eq renamed(fetch, Pm) = fetch .
+  eq renamed(offer(I), Pm) = offer(idsAs(I, Pm)) .
+  eq renamed(here, Pm) = here .
   eq renamed(out(S), Pm) = out(S) .
   op renamed : Looks Perm -> Looks .
   eq renamed(nolook, Pm) = nolook .
@@ -1013,6 +1137,7 @@ mod CODE-REVIEW-CLAIMS is
   eq renamedItem(repost(X, Y, S), Pm) = repost(X @ Pm, Y @ Pm, S) .
   eq renamedItem(hurt(X), Pm) = hurt(X @ Pm) .
   eq renamedItem(mute(X), Pm) = mute(X @ Pm) .
+  eq renamedItem(nosb(X), Pm) = nosb(X @ Pm) .
   eq renamedItem(bm(X, P, Sts, I, F), Pm) = bm(X @ Pm, P, startsAs(Sts, Pm), idsAs(I, Pm), F) .
   eq renamedItem(asks(X, F), Pm) = asks(X @ Pm, F) .
   eq renamedItem(bw(X, I), Pm) = bw(X @ Pm, idsAs(I, Pm)) .
@@ -1034,6 +1159,10 @@ mod CODE-REVIEW-CLAIMS is
   eq renamedItem(fails(F), Pm) = fails(F) .
   eq renamedItem(limits(F), Pm) = limits(F) .
   eq renamedItem(mutes(F), Pm) = mutes(F) .
+  eq renamedItem(breaks(F), Pm) = breaks(F) .
+  eq renamedItem(falls(X), Pm) = falls(X @ Pm) .
+  eq renamedItem(drops(X, Y), Pm) = drops(X @ Pm, Y @ Pm) .
+  eq renamedItem(unable(X), Pm) = unable(X @ Pm) .
   eq renamedItem(cap(F), Pm) = cap(F) .
   op startAs : Start Perm -> Start .
   eq startAs(sr(X, F), Pm) = sr(X @ Pm, F) .
@@ -1155,6 +1284,18 @@ mod CODE-REVIEW-CLAIMS-PROPS is
   op reviewed : -> Prop [ctor] .
   eq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= reviewed = true .
   eq { C } |= reviewed = false [owise] .
+
+  --- A machine that can open review sandboxes claimed the head there is now.
+  op boxed : -> Prop [ctor] .
+  ceq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= boxed = true if not unboxed(X, C) .
+  eq { C } |= boxed = false [owise] .
+
+  --- Some machine claimed the head there is now and can open review sandboxes, or its
+  --- review of it failed, saying why: the review is not left running for good.
+  op settled : -> Prop [ctor] .
+  ceq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= settled = true
+    if not unboxed(X, C) or St == failed .
+  eq { C } |= settled = false [owise] .
 
   --- No fault hurt X.
   op steady : Id -> Prop [ctor] .

@@ -39,6 +39,7 @@ struct FakeOpenShell {
   bool managed = false;       // a gateway this MC installed and runs
   int reviews = 0;            // this MC's review sandboxes on it
   bool cannotManage = false;  // paired without access:write and terminal:operate
+  QStringList sandboxMachines;  // the cluster's machines that can run review sandboxes
   // The openShell shape's state: the operation running or last run.
   QJsonObject operation{{QStringLiteral("operation"), QJsonValue()}, {QStringLiteral("run"), 0}, {QStringLiteral("running"), false},
                         {QStringLiteral("steps"), QJsonArray()}, {QStringLiteral("result"), QJsonValue()}};
@@ -77,6 +78,7 @@ QJsonObject status(const FakeOpenShell& machine) {
           {QStringLiteral("problems"), machine.intelMac ? problem(QStringLiteral("intel-mac"), kIntelMac)
                                        : ready          ? QJsonArray()
                                                         : problem(QStringLiteral("not-installed"), kNotInstalled)}};
+  answer.insert(QStringLiteral("sandboxMachines"), QJsonArray::fromStringList(machine.sandboxMachines));
   // Like the MC: no Podman is a platform problem, and Install starts its socket once it is there.
   if (machine.noPodman) {
     answer.insert(QStringLiteral("supported"), false);
@@ -218,6 +220,11 @@ void expectSummary(World& world, const QString& summary) {
 const Steps steps([] {
   step(QStringLiteral("a Linux machine with rootless Podman"), [](World&, const Captures&, const Table&) {});
   step(QStringLiteral("a machine that is an Intel Mac"), [](World& world, const Captures&, const Table&) { machine(world).intelMac = true; });
+  step(QStringLiteral("a machine that is an Intel Mac, in a cluster with \"([^\"]+)\", which can run review sandboxes"),
+       [](World& world, const Captures& c, const Table&) {
+         machine(world).intelMac = true;
+         machine(world).sandboxMachines = {c[0]};
+       });
   step(QStringLiteral("a machine that has no Podman"), [](World& world, const Captures&, const Table&) { machine(world).noPodman = true; });
   step(QStringLiteral("a gateway the user runs, with its CA and a client certificate"),
        [](World& world, const Captures&, const Table&) { machine(world).gateway = true; });
@@ -245,6 +252,14 @@ const Steps steps([] {
     expectSummary(world, QStringLiteral("Review sandboxes can't run on this machine."));
     expect(text(world, QStringLiteral("sandboxProblem:intel-mac")) == kIntelMac, QStringLiteral("the page does not say why"));
   });
+  step(QStringLiteral("they read that code reviews that need a sandbox go to \"([^\"]+)\""), [](World& world, const Captures& c, const Table&) {
+    expectText(world, QStringLiteral("sandboxDetail"), QStringLiteral("Code reviews that need a sandbox go to %1.").arg(c[0]));
+  });
+  step(QStringLiteral("they read that code reviews that need a sandbox fail until a machine of the cluster can run them"),
+       [](World& world, const Captures&, const Table&) {
+         expectText(world, QStringLiteral("sandboxDetail"),
+                    QStringLiteral("Code reviews that need a sandbox fail here until this machine or another of your cluster can run them."));
+       });
   step(QStringLiteral("they read that OpenShell is not installed, and how to install it"), [](World& world, const Captures&, const Table&) {
     expectSummary(world, QStringLiteral("Review sandboxes can't run here yet."));
     expect(text(world, QStringLiteral("sandboxProblem:not-installed")) == kNotInstalled, QStringLiteral("the page does not say how to install it"));
