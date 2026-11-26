@@ -12,9 +12,10 @@
 use std::collections::BTreeMap;
 
 use chrono::{TimeZone, Utc};
-use hal_c2_shell::thread_view::turn_agents::TurnAgents;
+use hal_c2_shell::thread_view::agents::format_elapsed;
 use hal_c2_shell::thread_view::summary::Obj;
 use hal_c2_shell::thread_view::time::Clock;
+use hal_c2_shell::thread_view::turn_agents::TurnAgents;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -22,7 +23,13 @@ const KEY: &str = "env-1:thread-1";
 const MAX_RUNS: usize = 3;
 const MAX_AGENTS: usize = 6;
 const STATUSES: &[&str] = &[
-    "pending", "running", "waiting", "idle", "completed", "failed", "cancelled",
+    "pending",
+    "running",
+    "waiting",
+    "idle",
+    "completed",
+    "failed",
+    "cancelled",
 ];
 
 fn live(status: &str) -> bool {
@@ -61,8 +68,21 @@ fn run_id(n: usize) -> String {
     format!("run-{n}")
 }
 
-/// The rows the list should show, as (id, status, thread), and its
-/// summary.
+fn status_label(status: &str) -> &'static str {
+    if live(status) {
+        return "Working";
+    }
+    match status {
+        "idle" => "Idle · resumable",
+        "completed" => "Completed",
+        "failed" => "Failed",
+        "cancelled" | "interrupted" => "Stopped",
+        _ => "",
+    }
+}
+
+/// The rows the list should show, as (id, status, thread), in start
+/// order then id order, and its summary.
 fn expected(model: &Model) -> (Vec<(String, String, String)>, String) {
     let mut run: Option<usize> = None;
     if model.running {
@@ -83,10 +103,17 @@ fn expected(model: &Model) -> (Vec<(String, String, String)>, String) {
     }
     let mut rows = Vec::new();
     let mut live_count = 0;
-    for (n, agent) in &model.agents {
-        if Some(agent.run) != run {
-            continue;
-        }
+    let mut shown: Vec<(&usize, &Agent)> = model
+        .agents
+        .iter()
+        .filter(|(_, agent)| Some(agent.run) == run)
+        .collect();
+    shown.sort_by(|(a_id, a), (b_id, b)| {
+        a.started
+            .cmp(&b.started)
+            .then_with(|| agent_id(**a_id).cmp(&agent_id(**b_id)))
+    });
+    for (n, agent) in shown {
         rows.push((
             agent_id(*n),
             agent.status.to_owned(),
@@ -149,8 +176,15 @@ fn entities(model: &Model) -> (BTreeMap<String, Obj>, BTreeMap<String, Obj>) {
 enum Action {
     StartRun,
     SettleRun,
-    Spawn { status: &'static str, native: bool },
-    Move { pick: usize, status: &'static str },
+    Spawn {
+        status: &'static str,
+        native: bool,
+        backdate: i64,
+    },
+    Move {
+        pick: usize,
+        status: &'static str,
+    },
     Show(bool),
 }
 
@@ -158,8 +192,16 @@ fn action() -> impl Strategy<Value = Action> {
     prop_oneof![
         Just(Action::StartRun),
         Just(Action::SettleRun),
-        (prop_oneof![Just("pending"), Just("running")], any::<bool>())
-            .prop_map(|(status, native)| Action::Spawn { status, native }),
+        (
+            prop_oneof![Just("pending"), Just("running")],
+            any::<bool>(),
+            0i64..6
+        )
+            .prop_map(|(status, native, backdate)| Action::Spawn {
+                status,
+                native,
+                backdate
+            }),
         (0usize..MAX_AGENTS, prop::sample::select(STATUSES))
             .prop_map(|(pick, status)| Action::Move { pick, status }),
         any::<bool>().prop_map(Action::Show),
@@ -174,6 +216,20 @@ fn check(core: &TurnAgents, model: &Model) -> Result<(), TestCaseError> {
         prop_assert_eq!(core.value(index, "status"), Some(json!(status)));
         prop_assert_eq!(core.value(index, "thread"), Some(json!(thread)));
         prop_assert_eq!(core.value(index, "running"), Some(json!(live(status))));
+        prop_assert_eq!(
+            core.value(index, "statusLabel"),
+            Some(json!(status_label(status)))
+        );
+        // The core's clock is fixed an hour after the base: a working
+        // row counts to it, a settled one to its last update (the
+        // entities name no completedAt).
+        let n: usize = id.trim_start_matches("agent-").parse().unwrap();
+        let agent = &model.agents[&n];
+        let ended = if live(status) { 3600 } else { agent.updated };
+        prop_assert_eq!(
+            core.value(index, "elapsed"),
+            Some(json!(format_elapsed(ended - agent.started)))
+        );
     }
     prop_assert_eq!(core.summary(), summary.as_str());
     prop_assert_eq!(core.active(), model.active);
@@ -207,7 +263,7 @@ proptest! {
                     model.clock += 1;
                     true
                 }
-                Action::Spawn { status, native }
+                Action::Spawn { status, native, backdate }
                     if model.running && model.agents.len() < MAX_AGENTS =>
                 {
                     model.clock += 1;
@@ -215,7 +271,7 @@ proptest! {
                     model.agents.insert(n, Agent {
                         run: model.runs - 1,
                         status,
-                        started: model.clock,
+                        started: model.clock - backdate,
                         updated: model.clock,
                         native,
                     });

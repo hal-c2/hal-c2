@@ -162,10 +162,12 @@ impl TurnAgents {
         runs: &BTreeMap<String, Obj>,
         thread_key: &str,
     ) {
-        self.environment = thread_key
+        let environment = thread_key
             .split_once(':')
             .map_or("", |(environment, _)| environment)
             .to_owned();
+        let environment_changed = environment != self.environment;
+        self.environment = environment;
         let zone = self.clock.zone;
         let at = |agent: &Obj, field: &str| time_of(agent.get(field), zone);
         // The running turn, the latest when several are.
@@ -255,7 +257,19 @@ impl TurnAgents {
             }
             self.rows = held;
             self.changes.push(RowChange::Reset(keys));
+        } else if environment_changed && !self.rows.is_empty() {
+            // The same agents on another environment: the thread
+            // role now names its child threads.
+            self.changes.push(RowChange::Changed {
+                first: 0,
+                count: self.rows.len(),
+                roles: &["thread"],
+            });
         }
+        // Keys of agents no longer shown do not accumulate.
+        let shown: std::collections::HashSet<&str> =
+            self.rows.iter().map(|row| text(&row.agent, "id")).collect();
+        self.keys.retain(|id, _| shown.contains(id.as_str()));
         self.summary = summary;
         self.live = live;
     }
@@ -450,7 +464,7 @@ impl TurnAgentsObject {
                 core.ticking(),
             )
         });
-        let told = {
+        let was_ticking = {
             let mut told = inner.told.borrow_mut();
             if *told == (count, summary.clone(), ticking) {
                 return;
@@ -459,7 +473,6 @@ impl TurnAgentsObject {
             *told = (count, summary.clone(), ticking);
             was_ticking
         };
-        let told = told;
         let result = engine
             .set_internal(obj, TurnAgentsObject::COUNT, count)
             .and_then(|()| {
@@ -468,7 +481,7 @@ impl TurnAgentsObject {
         if let Err(e) = result {
             warn(engine, &e);
         }
-        if ticking != told {
+        if ticking != was_ticking {
             inner.tick.cancel(engine);
             if ticking {
                 let tick = schedule::every(
