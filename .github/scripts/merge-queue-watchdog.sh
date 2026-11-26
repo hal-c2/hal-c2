@@ -131,8 +131,29 @@ while IFS=$'\t' read -r _ _ sha number pr; do
   gh pr comment "$number" --repo "$repo" --body "Dropped from the merge queue: GitHub wedged its run ($why). Waiting would have held the queue for its check timeout. $verdict"
 done <<<"$awaiting"
 
+# Promoted runs that ended, answered where their `CI result` could not, whether or not a run
+# behind them still goes (which stops the walk from the back below). The last one to pass
+# answers for the entries ahead of it too.
+answered=''
+while IFS=$'\t' read -r _ state sha number _; do
+  [ "${state:-}" = AWAITING_CHECKS ] || continue
+  run=$(latest_run "$sha")
+  [ -n "$run" ] || continue
+  IFS=$'\t' read -r id _ _ event _ url suite attempt <<<"$run"
+  [ "$event" = workflow_dispatch ] || continue
+  result=$(run_result "$id" "$event" "$suite" "$attempt")
+  if [ "$result" = success ]; then
+    echo "#$number's promoted run passed; answering for it and the entries ahead"
+    GITHUB_EVENT_NAME=$event act "$here/merge-queue-stamp.sh" "$sha" "$url" success
+    answered="$answered $sha"
+    break
+  elif [ "$result" = failure ] || [ "$result" = cancelled ]; then
+    ! fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || answered="$answered $sha"
+  fi
+done < <(tac <<<"$built")
+
 # The last entry being built ahead of any failed one: it tests, or has passed.
-started='' failed_one='' failed='' passed='' searching=''
+started='' failed_one='' passed='' searching=''
 while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
   run=$(latest_run "$sha")
@@ -140,16 +161,19 @@ while IFS=$'\t' read -r _ state sha number _; do
   IFS=$'\t' read -r id status _ event branch url suite attempt <<<"$run"
   result=$(run_result "$id" "$event" "$suite" "$attempt")
   if [ "$result" = failure ] || [ "$result" = cancelled ]; then
-    if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ]; then
+    if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ] &&
+      [[ " $answered " != *" $sha "* ]]; then
       fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || break
     fi
-    failed_one=$sha failed="$failed $sha"
+    failed_one=$sha
     continue
   fi
   if [ "$result" = success ]; then
-    echo "#$number passed; answering for it and the entries ahead"
     passed=$sha
-    GITHUB_EVENT_NAME=$event act "$here/merge-queue-stamp.sh" "$sha" "$url" success
+    if [[ " $answered " != *" $sha "* ]]; then
+      echo "#$number passed; answering for it and the entries ahead"
+      GITHUB_EVENT_NAME=$event act "$here/merge-queue-stamp.sh" "$sha" "$url" success
+    fi
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
     echo "#$number is the last entry but its run $id parked: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
@@ -162,21 +186,15 @@ done < <(tac <<<"$built")
 
 # An entry failed: test every parked entry ahead of it at once, to find the culprit. GitHub
 # lists one as UNMERGEABLE a little after its `CI result` fails. Not when one ahead passed:
-# so did all ahead of it. A promoted one that failed is failed here: the walk from the back
-# stops at a promoted run still going behind it.
+# so did all ahead of it.
 if [ -z "$passed" ] && { [ -n "$failed_one" ] || awk -F'\t' '$2 == "UNMERGEABLE" { f = 1 } END { exit !f }' <<<"$entries"; }; then
   while IFS=$'\t' read -r _ state sha number _; do
-    [ "${state:-}" = AWAITING_CHECKS ] && [[ " $started $failed " != *" $sha "* ]] || continue
+    [ "${state:-}" = AWAITING_CHECKS ] && [[ " $started " != *" $sha "* ]] || continue
     run=$(latest_run "$sha")
     [ -n "$run" ] || continue
-    IFS=$'\t' read -r id status _ event branch url suite attempt <<<"$run"
-    result=$(run_result "$id" "$event" "$suite" "$attempt")
-    if [ "$event" = workflow_dispatch ]; then
-      case $result in failure | cancelled) fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || true ;; esac
-      continue
-    fi
-    [ "$status" != completed ] || continue
-    case $result in success | failure | cancelled) continue ;; esac
+    IFS=$'\t' read -r id status _ event branch _ suite attempt <<<"$run"
+    [ "$event" = merge_group ] && [ "$status" != completed ] || continue
+    case $(run_result "$id" "$event" "$suite" "$attempt") in success | failure | cancelled) continue ;; esac
     parked "$id" || continue
     echo "#$number parked ahead of a failed entry: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
