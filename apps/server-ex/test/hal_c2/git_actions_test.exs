@@ -237,6 +237,139 @@ defmodule HalC2.GitActionsTest do
     refute calls =~ "--head upstream/effect-atom"
   end
 
+  # Review finding r4705513530 on #1837: a branch published to a fork push
+  # remote opens its pull request from the fork owner's head, and the
+  # existing-PR lookup does not take a same-named branch on the base
+  # repository for the fork's pull request. The remotes are given GitHub
+  # addresses whose fetches and pushes git rewrites to the local bare
+  # repositories (`insteadOf`), so the push still lands locally.
+  test "a pull request for a branch published to a fork uses the fork owner's head", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = fork_remotes!(repo, origin)
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "fork/feature/tax"}} = result
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+
+    # The open pull request #99 is from the base repository's own
+    # feature/tax, so it is not this branch's pull request: a new one is
+    # created from the fork.
+    assert %{"pr" => %{"status" => "created", "number" => 7, "headBranch" => "feature/tax"}} =
+             result
+
+    create =
+      log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.find("", &String.starts_with?(&1, "pr create"))
+
+    assert create =~ "--head forker:feature/tax"
+    refute create =~ "--head feature/tax"
+  end
+
+  # The triangular case of the same finding: the branch tracks
+  # `origin/feature/tax`, but `pushRemote` names the fork, so a plain
+  # `git push` publishes it there and the pull request head must follow.
+  test "a pull request for a branch tracking origin but pushing to a fork uses the fork owner's head",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = fork_remotes!(repo, origin)
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+    File.write!(Path.join(repo, "t2.txt"), "t2\n")
+    git!(repo, ~w(add t2.txt))
+    git!(repo, ~w(commit -q -m tax-two))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed"}} = result
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax-two\n"
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+
+    assert %{"pr" => %{"status" => "created", "number" => 7, "headBranch" => "feature/tax"}} =
+             result
+
+    create =
+      log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.find("", &String.starts_with?(&1, "pr create"))
+
+    assert create =~ "--head forker:feature/tax"
+    refute create =~ "--head feature/tax"
+  end
+
+  # What the fake `gh` answers `pr list` with in the fork tests: an open
+  # pull request from the base repository's own `feature/tax`.
+  defp base_repo_pr_list,
+    do:
+      ~s([{"number":99,"title":"Base repo tax","url":"https://github.com/acme/shop/pull/99","baseRefName":"main","headRefName":"feature/tax","headRepositoryOwner":{"login":"acme"},"isCrossRepository":false}])
+
+  # Installs a fake `gh` answering `pr list` with `pr_list_json` and
+  # `pr create` with pull request 7, plus the fake text generator the
+  # create path asks for a title. Returns the `gh` call log's path.
+  defp fake_gh!(dir, pr_list_json) do
+    log = Path.join(dir, "gh.log")
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/bin/sh
+    echo "$@" >> "#{log}"
+    if [ "$1 $2" = "pr list" ]; then echo '#{pr_list_json}'; exit 0; fi
+    if [ "$1 $2" = "pr create" ]; then echo 'https://github.com/acme/shop/pull/7'; exit 0; fi
+    echo '{}'
+    """)
+
+    File.chmod!(gh, 0o755)
+
+    claude = Path.join(dir, "claude")
+
+    File.write!(claude, """
+    #!/bin/sh
+    cat > "#{Path.join(dir, "claude.log")}"
+    printf '{"type":"result","structured_output":{"subject":"Add greeting file.","title":"Add greeting","body":"- says hello","branch":"add greeting"}}\\n'
+    """)
+
+    File.chmod!(claude, 0o755)
+
+    previous_gh = Application.get_env(:hal_c2, :gh_command)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    Application.put_env(:hal_c2, :text_claude_command, claude)
+    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+    log
+  end
+
+  # Gives `repo` an `origin` naming `acme/shop` and a `fork` naming
+  # `forker/shop`, both rewritten (`insteadOf`) to local bare repositories
+  # so fetches and pushes still land locally. Returns the fork's path.
+  defp fork_remotes!(repo, origin) do
+    dir = Path.dirname(repo)
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://github.com/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://github.com/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://github.com/acme/shop.git"])
+    git!(repo, ["remote", "add", "fork", "https://github.com/forker/shop.git"])
+    fork
+  end
+
   test "feature branch names" do
     assert GitActions.feature_branch_name("Add Login Form!") == "feature/add-login-form"
     assert GitActions.feature_branch_name("feature/x y") == "feature/x-y"
