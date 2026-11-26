@@ -66,6 +66,9 @@ defmodule HalC2.Shell do
   require Logger
 
   @table __MODULE__
+  # Match variables for `query/1`'s spec, made once at compile time so a query
+  # creates no atoms however many fields it names.
+  @query_vars Enum.map(1..32, &:"$#{&1}")
   @mcs HalC2.Shell.Mcs
   # `{{mc, stream_id}, rev}`: the owning MC's count at each row's latest change.
   @revs HalC2.Shell.Revs
@@ -107,7 +110,7 @@ defmodule HalC2.Shell do
     * `where` — `%{field => value}`: the row holds `field` with exactly that
       value (a field the row lacks never matches, `nil` included).
     * `present` — a field, or fields, the row holds with a value other than
-      `nil`.
+      `nil`. Together, `where` and `present` name at most 32 fields.
     * `limit` — at most this many rows.
   """
   @spec query(keyword) :: [{{node, String.t()}, {String.t(), map}}]
@@ -140,15 +143,31 @@ defmodule HalC2.Shell do
 
     kind = Keyword.get(opts, :kind, :_)
     where = Keyword.get(opts, :where, %{})
-    present = opts |> Keyword.get(:present, []) |> List.wrap()
+    present = opts |> Keyword.get(:present, []) |> List.wrap() |> Enum.uniq()
+    fields = Enum.uniq(Map.keys(where) ++ present)
 
-    {fields, guards} =
-      Enum.reduce(Enum.with_index(present, 10), {where, []}, fn {field, n}, {fields, guards} ->
-        var = :"$#{n}"
-        {Map.put(fields, field, var), [{:"/=", var, nil} | guards]}
+    if length(fields) > length(@query_vars) do
+      raise ArgumentError,
+            "query takes at most #{length(@query_vars)} where/present fields, " <>
+              "got #{length(fields)}"
+    end
+
+    # One variable per field: a `where` value placed in the map pattern would
+    # match any map that extends it, and a second variable for a field in both
+    # `where` and `present` would drop the equality. Guards carry both.
+    {pattern, guards} =
+      Enum.reduce(Enum.zip(fields, @query_vars), {%{}, []}, fn {field, var}, {pattern, guards} ->
+        guards =
+          case Map.fetch(where, field) do
+            {:ok, value} -> [{:"=:=", var, {:const, value}} | guards]
+            :error -> guards
+          end
+
+        guards = if field in present, do: [{:"/=", var, nil} | guards], else: guards
+        {Map.put(pattern, field, var), guards}
       end)
 
-    row = if fields == %{}, do: :_, else: fields
+    row = if fields == [], do: :_, else: pattern
     {{{mc, Keyword.get(opts, :id, :_)}, {kind, row}}, guards, [:"$_"]}
   end
 

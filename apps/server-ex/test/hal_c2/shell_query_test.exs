@@ -28,7 +28,16 @@ defmodule HalC2.ShellQueryTest do
       {"thread", %{"id" => "q-idle", "activeRunId" => nil, "lastErrorClass" => "other"}}
     )
 
-    Shell.put_row("q-bare", {"thread", %{"id" => "q-bare"}})
+    Shell.put_row("q-bare", {"thread", %{"id" => "q-bare", "lineage" => %{}}})
+
+    Shell.put_row("q-sub", {
+      "thread",
+      %{
+        "id" => "q-sub",
+        "lineage" => %{"parentThreadId" => "q-run", "relationshipToParent" => "subagent"}
+      }
+    })
+
     Shell.put_row("q-proj", {"project", %{"id" => "q-proj", "title" => "Q"}})
     :ok = Shell.sync()
     :ok
@@ -84,5 +93,37 @@ defmodule HalC2.ShellQueryTest do
     assert length(Shell.query(kind: "thread", limit: 1)) == 1
     assert Shell.query(mc: :"nobody@nowhere.invalid") == []
     assert Shell.query(mc: :"nobody@nowhere.invalid", limit: 1) == []
+  end
+
+  defp ids(rows), do: rows |> Enum.map(fn {{_mc, id}, _} -> id end) |> Enum.sort()
+
+  test "where matches a map value exactly, not a map that extends it" do
+    assert ids(Shell.query(where: %{"lineage" => %{}})) == ["q-bare"]
+
+    lineage = %{"parentThreadId" => "q-run", "relationshipToParent" => "subagent"}
+    assert ids(Shell.query(where: %{"lineage" => lineage})) == ["q-sub"]
+    assert Shell.query(where: %{"lineage" => %{"parentThreadId" => "q-run"}}) == []
+  end
+
+  test "a field in both where and present must satisfy both" do
+    assert ids(
+             Shell.query(where: %{"lastErrorClass" => "usage_limit"}, present: "lastErrorClass")
+           ) == ["q-run"]
+
+    assert ids(Shell.query(where: %{"activeRunId" => nil})) == ["q-idle"]
+    assert Shell.query(where: %{"activeRunId" => nil}, present: "activeRunId") == []
+  end
+
+  test "duplicate present fields query as one" do
+    assert sorted(Shell.query(present: ["activeRunId", "activeRunId"])) ==
+             sorted(Shell.query(present: "activeRunId"))
+
+    assert ids(Shell.query(present: ["activeRunId", "activeRunId"])) == ["q-run"]
+  end
+
+  test "a query naming more fields than it has match variables is refused" do
+    assert_raise ArgumentError, ~r/at most 32/, fn ->
+      Shell.query(present: Enum.map(1..33, &"field#{&1}"))
+    end
   end
 end

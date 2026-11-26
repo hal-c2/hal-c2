@@ -174,16 +174,12 @@ defmodule HalC2.Push do
       started_at: clock.(),
       seen: %{},
       # The MCs whose rows were seen: the first rows of another are a baseline. The
-      # shell sends a member's rows whole when it joins, even none.
+      # shell sends a member's rows whole when it joins, even none, and records a
+      # version for every member whose rows it takes (`held_mcs/0`), so one with
+      # no threads — or none at all — is covered. A descriptor alone is not: it
+      # can arrive before the rows it travels with.
       known:
-        MapSet.new(
-          [node() | HalC2.Shell.held_mcs()] ++
-            for({{mc, _id}, _} <- shell, do: mc) ++
-            if(Process.whereis(HalC2.Shell),
-              do: for({mc, _descriptor} <- HalC2.Shell.environments(), do: mc),
-              else: []
-            )
-        ),
+        MapSet.new([node() | HalC2.Shell.held_mcs()] ++ for({{mc, _id}, _} <- shell, do: mc)),
       registrations: registrations,
       # Per session: what of the card it was last sent, and the alerts held for quiet
       # hours.

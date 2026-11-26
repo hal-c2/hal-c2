@@ -856,7 +856,26 @@ defmodule HalC2.ShellPropTest do
       [present: ["pinnedAt", "settledAt"]],
       [where: %{"title" => "a"}],
       [where: %{"projectId" => "p1"}],
-      [kind: "thread", where: %{"projectId" => "p2"}, present: "activeRunId"]
+      [kind: "thread", where: %{"projectId" => "p2"}, present: "activeRunId"],
+      # A field in both `where` and `present` must satisfy both, `present`
+      # fields may repeat, and a map value matches only that exact map
+      # (`s3`/`r3` rows carry a three-entry lineage).
+      [where: %{"title" => "a"}, present: "title"],
+      [where: %{"activeRunId" => nil}, present: "activeRunId"],
+      [where: %{"title" => "a"}, present: ["title", "title", "activeRunId"]],
+      [present: ["activeRunId", "activeRunId"]],
+      [where: %{"lineage" => %{}}],
+      [where: %{"lineage" => %{"parentThreadId" => "parent-s3"}}],
+      [
+        where: %{
+          "lineage" => %{
+            "parentThreadId" => "parent-s3",
+            "relationshipToParent" => "subagent",
+            "rootThreadId" => "parent-s3"
+          }
+        },
+        present: ["lineage", "lineage"]
+      ]
     ]
 
     unequal =
