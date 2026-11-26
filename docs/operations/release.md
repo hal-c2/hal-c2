@@ -95,8 +95,8 @@ a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that releas
 
 ## Qt desktop
 
-`.github/workflows/desktop-qt.yml` builds and tests an unsigned Linux AppImage on every change to
-`main` and every pull request that touches the desktop, and keeps it as a workflow artifact. The
-macOS app bundle (`apps/desktop-qt/scripts/package-macos.sh`, as `release:macos` builds it) is
-built only when the workflow is dispatched by hand with `macos` checked, since
-macOS runners are expensive. Nothing publishes either yet.
+`.github/workflows/desktop-qt.yml` builds and tests it on every change to `main` and every pull
+request that touches it. Its own packaging scripts (`apps/desktop-qt/scripts/package-linux.sh`,
+`package-macos.sh`) still build its AppImage and app bundle by hand, but `release:linux` and
+`release:macos` no longer use them: they package the Ljós desktop through
+`release:desktop-ljos`. Nothing publishes either yet.
