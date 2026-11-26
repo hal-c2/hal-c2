@@ -724,7 +724,7 @@ defmodule HalC2.CodeReviewTest do
     File.write!(fake, """
     #!/bin/sh
     case "$*" in
-      "init -q --bare "*/hal-c2-submodules)
+      *"init -q --bare "*/hal-c2-submodules)
         touch '#{held}'
         while [ -e '#{hold}' ]; do sleep 0.05; done ;;
     esac
