@@ -31,7 +31,10 @@ defmodule HalC2.Test.FakeOpenShell do
   `:unspecified`, `{:accepted, n}` (the sandbox goes after `n` more GetSandbox
   calls, or never for `:never`) or `:replaced` (another sandbox takes its name), and
   `:delete_provider`: how DeleteProvider answers, `:completed` (the default),
-  `:accepted` (the provider stays) or `:unspecified`.
+  `:accepted` (the provider stays) or `:unspecified`, and `:max_input`: a number of
+  bytes past which a command's stdin ends it with exit status 74 and no output, as
+  0.1.7's supervisor does once more input arrives than it queues (4 MiB) for a
+  command that has read none of it (none by default).
 
   As 0.1.7's, it starts with no provider profiles (`:profiles`, a list of
   `%ProviderProfile{}`, puts some there as if imported), and CreateProvider refuses
@@ -867,16 +870,29 @@ defmodule HalC2.Test.FakeOpenShell do
             |> put_resp_header("content-type", "application/grpc")
             |> send_chunked(200)
 
-          io = %{conn: conn, buffer: buffer, pending: rest, eof: false}
+          io = %{
+            conn: conn,
+            buffer: buffer,
+            pending: rest,
+            eof: false,
+            taken: 0,
+            max_input: config[:max_input]
+          }
+
           Process.put(:fake_io, io)
           # The sandbox's policy, for the proxy `HalC2.Test.FakeSandbox` puts in front of
           # what its agents send.
           Process.put(:fake_policy, Agent.get(config.store, & &1.policies[start.sandbox]))
           # A handler of three arguments also gets the start request (its workdir and
           # environment).
-          case Map.get(config, :exec, &echo/2) do
-            run when is_function(run, 3) -> run.(start.command, io_funs(), start)
-            run -> run.(start.command, io_funs())
+          try do
+            case Map.get(config, :exec, &echo/2) do
+              run when is_function(run, 3) -> run.(start.command, io_funs(), start)
+              run -> run.(start.command, io_funs())
+            end
+          catch
+            # More input than `:max_input`: the command was ended with 74.
+            :throw, :input_refused -> :ok
           end
 
           Process.get(:fake_io).conn
@@ -921,7 +937,7 @@ defmodule HalC2.Test.FakeOpenShell do
         %{pending: [next | rest]} ->
           Process.put(:fake_io, %{io | pending: rest})
           %Pb.ExecSandboxInput{payload: payload} = Pb.ExecSandboxInput.decode(next)
-          payload
+          taken(payload)
 
         %{eof: true} ->
           :eof
@@ -939,6 +955,23 @@ defmodule HalC2.Test.FakeOpenShell do
           end
       end
     end
+
+    # Counts the command's stdin against `:max_input`; past it, the command ends with
+    # exit status 74 and nothing on stderr, and its handler runs no further.
+    defp taken({:stdin, data} = payload) do
+      io = Process.get(:fake_io)
+      io = %{io | taken: io.taken + byte_size(data)}
+      Process.put(:fake_io, io)
+
+      if io.max_input && io.taken > io.max_input do
+        event(%Pb.ExecSandboxEvent{payload: {:exit, %Pb.ExecSandboxExit{exit_code: 74}}})
+        throw(:input_refused)
+      end
+
+      payload
+    end
+
+    defp taken(payload), do: payload
 
     defp event(event) do
       io = Process.get(:fake_io)

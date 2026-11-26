@@ -314,7 +314,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert Review.ended(@thread) == "tokens"
   end
 
-  @tag sandbox: [hold: "tar"]
+  @tag sandbox: [hold: :checkout]
   test "a stop while the sandbox is made leaves none behind", %{gateway: g, repo: repo} do
     task = Task.async(fn -> Review.open(spec(repo)) end)
     assert_receive {:sandbox_held, handler}, 5_000
@@ -386,7 +386,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert Review.binding(@thread) == nil
   end
 
-  @tag sandbox: [hold: "tar"]
+  @tag sandbox: [hold: :checkout]
   test "a checkout that does not reach its sandbox within the review's time leaves nothing",
        %{gateway: g, repo: repo} do
     assert {:error, "The review's checkout did not reach its sandbox in time."} =

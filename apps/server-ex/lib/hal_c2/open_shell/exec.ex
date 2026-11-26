@@ -16,10 +16,14 @@ defmodule HalC2.OpenShell.Exec do
   started on is its own, and it closes that when it stops.
 
   `send_stdin/2` returns once the gateway has taken the bytes, which is
-  backpressure: the gateway takes no more than the command reads. It waits as long
+  backpressure while the gateway's flow-control windows are full. It waits as long
   as that takes, so a command that does not read its stdin holds the writer until
-  it is cancelled. `close_stdin/1` half-closes after every byte sent before it; the
-  command sees end of input and its output keeps coming until it exits.
+  it is cancelled. That is not a bound on what the sandbox queues: OpenShell 0.1.7
+  queues at most 4 MiB of input the command has not read and ends the command with
+  exit status 74 when more arrives, so a large input goes in pieces
+  (`HalC2.OpenShell.Client.write_file/5`). `close_stdin/1` half-closes after every
+  byte sent before it; the command sees end of input and its output keeps coming
+  until it exits.
   """
 
   use GenServer, restart: :temporary

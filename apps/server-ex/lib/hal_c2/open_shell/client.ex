@@ -9,7 +9,7 @@ defmodule HalC2.OpenShell.Client do
       {:ok, %{version: "0.1.7"}} = Client.health(conn)
       {:ok, sandbox} = Client.create_sandbox(conn, "review-42", labels: %{"halc2.github.io/review" => "42"},
         image: image, policy: policy, limits: %{cpu: "2", memory: "4Gi"})
-      :ok = Client.upload(conn, "review-42", "/sandbox/src", tar)
+      :ok = Client.write_file(conn, "review-42", "/sandbox/review.bundle", {:file, bundle})
       {:ok, exec} = Client.exec(conn, "review-42", ["claude", "--print"])
       # {:openshell_exec, ^exec, {:stdout, data}} ... {:openshell_exec, ^exec, {:exit, 0}}
       {:ok, sandboxes} = Client.list_sandboxes(conn, %{"halc2.github.io/review" => "42"})
@@ -690,61 +690,44 @@ defmodule HalC2.OpenShell.Client do
     end
   end
 
+  # OpenShell 0.1.7's supervisor queues at most 4 MiB of a command's stdin that the
+  # command has not read (`MAX_PENDING_INPUT`), and input past that is not held back
+  # by flow control: it ends the command with exit status 74 and, on purpose, no
+  # output. A piece of half that, given to a command that exits before the next
+  # starts, never fills the queue however slowly the command reads.
+  @piece 2 * 1024 * 1024
+
+  @doc "The most stdin `write_file/5` gives one command."
+  def piece_bytes, do: @piece
+
   @doc """
-  Unpacks the tar archive `tar` (an iodata or a file path as `{:file, path}`) into
-  directory `dest` in sandbox `name`, over the same exec stream: `tar -x -C dest`
-  with the archive on its stdin. `:ok` once tar exits 0.
+  Writes `source` (an iodata or a local file as `{:file, path}`) to file `path` in
+  sandbox `name`, replacing it. It goes in pieces of at most `piece_bytes/0`, in
+  order, each on the stdin of a command of its own (`cat > path`, then
+  `cat >> path`) that has exited 0 before the next piece starts, so OpenShell never
+  holds more than one piece of it. `:ok` once the last piece is written.
 
-  The whole upload, writing included, has one deadline, `:upload_timeout` ms from
-  the call (600_000); past it, `{:error, :timeout}`. A file that cannot be read is
-  `{:error, {:read, reason}}`. However it returns, the command is cancelled.
+  The whole write has one deadline, `:upload_timeout` ms from the call (600_000);
+  past it, `{:error, :timeout}`, and no further piece starts. A command that fails
+  is `{:error, {:upload_failed, code, stderr}}`, OpenShell's refusal of its input
+  among them (code 74 with no stderr), and a file that cannot be read
+  `{:error, {:read, reason}}`. However it returns, no command of it is left running.
   """
-  def upload(%__MODULE__{} = conn, name, dest, tar, opts \\ []) do
+  def write_file(%__MODULE__{} = conn, name, path, source, opts \\ []) do
     deadline = now() + Keyword.get(opts, :upload_timeout, 600_000)
-    command = ["tar", "-x", "--no-same-owner", "-C", dest, "-f", "-"]
-
-    with {:ok, exec} <- started(exec(conn, name, command, [deadline: deadline] ++ opts), deadline) do
-      # The writer is its own process: a write waits on flow control for as long as
-      # the sandbox does not read, and only killing the writer ends that wait.
-      {writer, ref} =
-        spawn_monitor(fn ->
-          exit({:written, with(:ok <- write_tar(exec, tar), do: Exec.close_stdin(exec))})
-        end)
-
-      try do
-        await_upload(exec, ref, [], deadline)
-      after
-        Process.demonitor(ref, [:flush])
-        Process.exit(writer, :kill)
-        Exec.cancel(exec)
-        flush(exec)
-      end
-    end
+    opts = Keyword.put(opts, :deadline, deadline)
+    pieces(source, fn piece, index -> put_piece(conn, name, path, piece, index, opts) end)
   end
 
-  # A start that failed for want of time is the upload's timeout.
-  defp started({:ok, exec}, _deadline), do: {:ok, exec}
-
-  defp started(error, deadline) do
-    if now() >= deadline, do: {:error, :timeout}, else: error
-  end
-
-  # Once cancelled, the exec sends nothing more; what it already sent is the upload's.
-  defp flush(exec) do
-    receive do
-      {:openshell_exec, ^exec, _} -> flush(exec)
-    after
-      0 -> :ok
-    end
-  end
-
-  # A local file the MC itself chose to upload.
+  # Hands `fun` each piece of `source` with its index, until one is not `:ok`; an
+  # empty source is one empty piece, so the file is still made. A `{:file, path}` is
+  # a local file the MC itself chose to write.
   # sobelow_skip ["Traversal.FileModule"]
-  defp write_tar(exec, {:file, path}) do
+  defp pieces({:file, path}, fun) do
     case File.open(path, [:read, :binary, :raw]) do
       {:ok, file} ->
         try do
-          write_file(exec, file)
+          file_pieces(file, 0, fun)
         after
           File.close(file)
         end
@@ -754,40 +737,80 @@ defmodule HalC2.OpenShell.Client do
     end
   end
 
-  defp write_tar(exec, iodata), do: Exec.send_stdin(exec, iodata)
+  defp pieces(iodata, fun), do: binary_pieces(IO.iodata_to_binary(iodata), 0, fun)
 
-  defp write_file(exec, file) do
-    case IO.binread(file, 65_536) do
-      :eof ->
-        :ok
-
-      {:error, reason} ->
-        {:error, {:read, reason}}
-
-      chunk ->
-        with :ok <- Exec.send_stdin(exec, chunk), do: write_file(exec, file)
+  defp file_pieces(file, index, fun) do
+    case IO.binread(file, @piece) do
+      :eof when index == 0 -> fun.("", 0)
+      :eof -> :ok
+      {:error, reason} -> {:error, {:read, reason}}
+      piece -> with :ok <- fun.(piece, index), do: file_pieces(file, index + 1, fun)
     end
   end
 
-  # Until tar exits or the deadline passes. A write the stream refused is not the
-  # answer: how the command ended says why, so that is still awaited.
-  defp await_upload(exec, writer, stderr, deadline) do
-    receive do
-      {:DOWN, ^writer, :process, _, {:written, {:error, {:read, _}} = error}} ->
-        error
+  defp binary_pieces(<<piece::binary-size(@piece), rest::binary>>, index, fun) when rest != "" do
+    with :ok <- fun.(piece, index), do: binary_pieces(rest, index + 1, fun)
+  end
 
+  defp binary_pieces(piece, index, fun), do: fun.(piece, index)
+
+  defp put_piece(conn, name, path, piece, index, opts) do
+    deadline = opts[:deadline]
+    script = if index == 0, do: ~s(cat > "$1"), else: ~s(cat >> "$1")
+
+    with :ok <- if(now() < deadline, do: :ok, else: {:error, :timeout}),
+         {:ok, exec} <-
+           started(exec(conn, name, ["sh", "-c", script, "sh", path], opts), deadline) do
+      # The writer is its own process: a write waits on flow control for as long as
+      # the sandbox does not read, and only killing the writer ends that wait.
+      {writer, ref} =
+        spawn_monitor(fn ->
+          exit({:written, with(:ok <- Exec.send_stdin(exec, piece), do: Exec.close_stdin(exec))})
+        end)
+
+      try do
+        await_piece(exec, ref, [], deadline)
+      after
+        Process.demonitor(ref, [:flush])
+        Process.exit(writer, :kill)
+        Exec.cancel(exec)
+        flush(exec)
+      end
+    end
+  end
+
+  # A start that failed for want of time is the write's timeout.
+  defp started({:ok, exec}, _deadline), do: {:ok, exec}
+
+  defp started(error, deadline) do
+    if now() >= deadline, do: {:error, :timeout}, else: error
+  end
+
+  # Once cancelled, the exec sends nothing more; what it already sent is the write's.
+  defp flush(exec) do
+    receive do
+      {:openshell_exec, ^exec, _} -> flush(exec)
+    after
+      0 -> :ok
+    end
+  end
+
+  # Until the command exits or the deadline passes. A write the stream refused is not
+  # the answer: how the command ended says why, so that is still awaited.
+  defp await_piece(exec, writer, stderr, deadline) do
+    receive do
       {:DOWN, ^writer, :process, _, {:written, _}} ->
-        await_upload(exec, nil, stderr, deadline)
+        await_piece(exec, nil, stderr, deadline)
 
       {:DOWN, ^writer, :process, _, reason} ->
         {:error, {:writer, reason}}
 
       {:openshell_exec, ^exec, {:stdout, _}} ->
-        await_upload(exec, writer, stderr, deadline)
+        await_piece(exec, writer, stderr, deadline)
 
       {:openshell_exec, ^exec, {:stderr, data}} ->
         stderr = [stderr, data] |> IO.iodata_to_binary() |> binary_part_tail(4096)
-        await_upload(exec, writer, stderr, deadline)
+        await_piece(exec, writer, stderr, deadline)
 
       {:openshell_exec, ^exec, {:exit, 0}} ->
         :ok
