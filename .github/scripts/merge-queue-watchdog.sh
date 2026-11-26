@@ -5,8 +5,12 @@
 #   - Drops an entry whose CI run GitHub has wedged: the run ended but its `CI result` job
 #     never finished (it never got a runner), or the run has sat queued without a single
 #     job for STUCK_MINUTES. It gets a comment saying why; its owner re-queues it.
+#   - Looks for the culprit when an entry fails: every entry ahead of it whose run parked
+#     tests at once. The first of them to fail is the culprit, and those ahead of it pass and
+#     merge, in one round of runs rather than one round per entry walked back. Entries
+#     behind a failed one are built on it; GitHub rebuilds them once it leaves.
 #   - Starts the tests of the last entry being built when its run is parked: the entry it
-#     waited on left the queue. Entries whose `CI result` failed are on their way out.
+#     waited on left the queue.
 #   - Answers for a last entry whose run passed and the entries ahead of it, or for one
 #     whose promoted run failed, when `CI result` could not (merge-queue-stamp.sh).
 #   - Cancels queue runs whose commit is no longer in the queue: no one reads them.
@@ -73,8 +77,10 @@ parked() {
 
 entries=$("$here/merge-queue-entries.sh")
 awaiting=$(awk -F'\t' '$2 == "AWAITING_CHECKS" && $3 != "-"' <<<"$entries")
-# A passed entry waits as MERGEABLE for those ahead of it.
-built=$(awk -F'\t' '($2 == "AWAITING_CHECKS" || $2 == "MERGEABLE") && $3 != "-"' <<<"$entries")
+# The entries ahead of the first failed one: those behind it hold its failure. A passed entry
+# waits as MERGEABLE for those ahead of it.
+built=$(awk -F'\t' '$2 == "UNMERGEABLE" { exit }
+  ($2 == "AWAITING_CHECKS" || $2 == "MERGEABLE") && $3 != "-"' <<<"$entries")
 
 # Wedged runs.
 while IFS=$'\t' read -r _ _ sha number pr; do
@@ -114,7 +120,8 @@ while IFS=$'\t' read -r _ _ sha number pr; do
   gh pr comment "$number" --repo "$repo" --body "Dropped from the merge queue: GitHub wedged its run ($why). Waiting would have held the queue for its check timeout. $verdict"
 done <<<"$awaiting"
 
-# The last entry being built, past those on their way out: it tests, or has passed.
+# The last entry being built ahead of any failed one: it tests, or has passed.
+started='' failed_one='' passed='' searching=''
 while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
   run=$(latest_run "$sha")
@@ -131,19 +138,44 @@ while IFS=$'\t' read -r _ state sha number _; do
       echo "#$number's promoted run ended $result; failing the entry"
       act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
     fi
+    failed_one=$sha
     continue
   fi
   if [ "$result" = success ]; then
     echo "#$number passed; answering for it and the entries ahead"
+    passed=$sha
     GITHUB_EVENT_NAME=$event act "$here/merge-queue-stamp.sh" "$sha" "$url" success
   elif [ "$event" = merge_group ] && [ "$status" != completed ] && parked "$id"; then
     echo "#$number is the last entry but its run $id parked: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
+    started=$sha
     [ -n "${DRY_RUN:-}" ] || promoted "$sha" ||
       echo "::warning::#$number's promoted run is not listed yet; the next watchdog may start it again"
   fi
   break
 done < <(tac <<<"$built")
+
+# An entry failed: test every parked entry ahead of it at once, to find the culprit. GitHub
+# lists one as UNMERGEABLE a little after its `CI result` fails. Not when one ahead passed:
+# so did all ahead of it.
+if [ -z "$passed" ] && { [ -n "$failed_one" ] || awk -F'\t' '$2 == "UNMERGEABLE" { f = 1 } END { exit !f }' <<<"$entries"; }; then
+  while IFS=$'\t' read -r _ state sha number _; do
+    [ "${state:-}" = AWAITING_CHECKS ] && [[ " $started " != *" $sha "* ]] || continue
+    run=$(latest_run "$sha")
+    [ -n "$run" ] || continue
+    IFS=$'\t' read -r id status _ event branch _ suite attempt <<<"$run"
+    [ "$event" = merge_group ] && [ "$status" != completed ] || continue
+    case $(run_result "$id" "$event" "$suite" "$attempt") in success | failure | cancelled) continue ;; esac
+    parked "$id" || continue
+    echo "#$number parked ahead of a failed entry: testing it"
+    act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
+    started="$started $sha" searching="$searching $sha"
+  done <<<"$built"
+  for sha in $searching; do
+    [ -n "${DRY_RUN:-}" ] || promoted "$sha" ||
+      echo "::warning::$sha's promoted run is not listed yet; the next watchdog may start it again"
+  done
+fi
 
 # Runs no entry reads: the entry merged, left, or was rebuilt as another commit. Not one a
 # few minutes old, which may be ahead of the queue listing.
