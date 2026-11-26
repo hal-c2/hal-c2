@@ -4,7 +4,7 @@ The phone app on [Ljós](https://github.com/hal-c2/ljos-ui): mobile-qt's
 `HalC2.Mobile` (`MobileShell.qml`, in `apps/mobile-qt/qml`) over
 desktop-ljos's Rust shell, controllers and MC client
 (`apps/desktop-ljos/shell`, `apps/desktop-ljos/mc`), as mobile-qt is
-desktop-qt's shell with another root. This is the host build (Linux, and
+the shared Qt shell with another root. This is the host build (Linux, and
 macOS where it costs nothing) that proves the phone's QML on Ljós;
 Android comes once Ljós has an Android host (hal-c2/ljos-ui#613). Why the
 phone is shaped as it is: `docs/internals/mobile-qt.md`.
@@ -30,7 +30,7 @@ The crate is its own cargo workspace beside desktop-ljos's (a member
 outside that root cannot inherit from it), so its Ljós pin is spelled out
 in `Cargo.toml` and follows desktop-ljos's when it moves. The phone's QML
 is read where it lives (`apps/mobile-qt/qml`), so both clients show the
-same files; the bricks are desktop-qt's until they move.
+same files; the bricks are the shared ones in packages/qml.
 
 As desktop-ljos, the app runs the QML its `build.rs` compiled into it
 (its pack: the bricks, `qml/` and mobile-qt's `HalC2.Mobile`), with the

@@ -6,7 +6,7 @@ surface's tag ('@desktop', '@mobile', or '@shared' for both plus '@tui')
 and no '@backlog' / '@backlog-<surface>'. A runner, though, only runs
 the scenarios its globs name. This check mirrors
 runner::collectScenarios / parseFeature
-(apps/desktop-qt/tests/native/features/Runner.cpp) and fails on every
+(apps/mobile-qt/tests/native/features/Runner.cpp) and fails on every
 scenario the ledger claims but no proof selects, so the claim and the
 proof cannot drift apart. Scenarios a QML test proves instead still get
 the backlog tag: the ledger claims only what a counted runner runs

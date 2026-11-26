@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 /**
  * Which MCs run on the machine the user sits at: only there may an editor or a
  * file manager start for them. As the desktop decides it
- * (apps/desktop-qt/src/native/ThisMachine.cpp), from the id the MC serves as
+ * (apps/mobile-qt/src/native/ThisMachine.cpp), from the id the MC serves as
  * `platform.machineId` (apps/server-ex/lib/hal_c2/environment/machine.ex).
  */
 

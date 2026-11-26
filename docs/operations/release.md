@@ -93,10 +93,7 @@ a `version` (defaulting to `apps/server-ex/VERSION`). MCs fetch from that releas
 `HAL_C2_UPGRADE_URL` names another host, and pass bundles on to their cluster peers. See the
 [MC README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
 
-## Qt desktop
+## Desktop
 
-`.github/workflows/desktop-qt.yml` builds and tests an unsigned Linux AppImage on every change to
-`main` and every pull request that touches the desktop, and keeps it as a workflow artifact. The
-macOS app bundle (`apps/desktop-qt/scripts/package-macos.sh`, as `release:macos` builds it) is
-built only when the workflow is dispatched by hand with `macos` checked, since
-macOS runners are expensive. Nothing publishes either yet.
+`.github/workflows/desktop-ljos.yml` builds and tests the Ljós desktop on every change to
+`main` and every pull request that touches it. Nothing publishes a desktop build yet.

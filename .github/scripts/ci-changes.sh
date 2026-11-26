@@ -23,7 +23,7 @@
 # thought of runs everything.
 set -euo pipefail
 
-not_mc='^(docs/|apps/(tui|desktop-qt|mobile-qt|marketing)/|assets/|[^/]*\.md$|(.*/)?README\.md$)'
+not_mc='^(docs/|apps/(tui|mobile-qt|marketing)/|assets/|[^/]*\.md$|(.*/)?README\.md$)'
 not_tui='^(docs/|apps/(server-ex|mobile-qt|marketing)/|native/|assets/|[^/]*\.md$)'
 # test/support is shared by every tier, so it is in none of these. Unit tests read neither
 # features/ nor test/steps/, which only scenarios_test.exs loads.

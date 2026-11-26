@@ -3,17 +3,46 @@
 `apps/mobile-qt` is the Android client for phones, tablets and laptops. How to build and run it is in its
 [README](../../apps/mobile-qt/README.md). This page records why it is shaped the way it is.
 
-## The desktop's shell with another root
+## The shared shell with a phone root
 
-It is not a second client. It compiles the desktop's `hal_c2_native` (the MC client, the store and
-every controller) and `HalC2.Bricks` from `apps/desktop-qt`, and adds one QML module,
-`HalC2.Mobile`, with a root of its own. A behaviour fixed in a controller or a brick is fixed on
-both, which is what `@shared` in `features/` means.
+It is not a second client. The shared native shell lives here now (it was desktop-qt's until
+that client retired): `src/native` is `hal_c2_native` — the MC client, the store and every
+controller — compiled through [`cmake/NativeShell.cmake`](../../apps/mobile-qt/cmake/NativeShell.cmake),
+with `HalC2.Bricks` from `packages/qml`, and this client adds one QML module, `HalC2.Mobile`,
+with a root of its own. The desktop (desktop-ljos) reimplements the same controllers in Rust
+against the same bricks and the same `Shell.state` keys, which is what `@shared` in
+`features/` means: a behaviour fixed in a brick is fixed on both, and a controller behaviour
+has to be fixed twice, once per shell, with the ledger as the contract between them.
 
 So a brick must not learn about phones. Where this client needs a brick to behave differently,
 the brick gets a property that defaults to what the desktop does (`ShellWindow.firstRunGate`,
 `Sidebar.touchRows`), and the root sets it. The same holds for controllers
 (`DraftController::setLandsOnDraft`).
+
+What is easy to get wrong in the shared C++:
+
+- **`hal_c2_native` is an OBJECT library, not an archive.** Controllers register themselves
+  from static initialisers (`NativeControllerRegistrar`), which a static archive would drop.
+  Every file in `src/native` is globbed in on the next build; there is no list to edit.
+- **QML reads `Shell.state`; controllers fill it.** Controllers publish view models
+  (`ShellBridge::publish(key, value)` → `Shell.state[key]`), bricks act with
+  `Shell.dispatch(action, payload)`. `Shell.state` is a `QQmlPropertyMap`, so a publish only
+  re-evaluates bindings on that key, and a key must be declared in its controller's
+  registration before a binding will follow it.
+- **One owner of retries.** `McClient` is the only thing that reconnects; controllers must
+  not add timers of their own. A subscription says where it resumes from each time its `sub`
+  frame is sent (`McClient::Resume`): the owner of the data is asked, never the client.
+- **FFmpeg is loaded, never linked.** A Device tab's H.264 is decoded with libavcodec found
+  through pkg-config at build time and `dlopen`ed at run time (`src/native/FFmpeg.cpp`), so
+  the app starts without it and the tab says what to install. Android leaves it out
+  (`HAL_C2_HAS_FFMPEG`).
+- **Compiled-in resources.** `themes.json` (from `packages/qml/scripts/gen-themes.mjs`), the
+  settings sections JS and the Snap Shot sounds are Qt resources on `hal_c2_native`, and the
+  client cache (`LocalCache`, QtSql) needs Qt's SQLite driver at run time — a package
+  without it starts with an empty cache and no error worth the name.
+- **Its tests are the shell's.** The RapidCheck properties and regressions under `tests/prop`
+  and `tests/native` were the Qt desktop's; they test these classes, so they live here. Run
+  them with `mise prop:mobile` and `mise run features:mobile`.
 
 ## One root, two layouts
 
@@ -55,16 +84,16 @@ the connection is down: an environment that never comes back can still be forgot
 
 ## No host, so the phone pairs itself
 
-The desktop gets its MC from a Node host process that starts or finds one. A phone runs neither
-Node nor an MC, so [`Pairing`](../../apps/mobile-qt/src/Pairing.h) does the host's attach in C++:
+The desktop launches its own MC from its Rust shell. A phone runs neither an MC nor a
+launcher, so [`Pairing`](../../apps/mobile-qt/src/Pairing.h) does the attach in C++:
 it spends a pairing link's token on a session, keeps that session in the app's private storage,
 and opens the shell's connection with it. The exchange itself is shared with the desktop's
-`connection.pair` ([`PairingExchange`](../../apps/desktop-qt/src/native/PairingExchange.h)).
+`connection.pair` ([`PairingExchange`](../../apps/mobile-qt/src/native/PairingExchange.h)).
 
 Several environments are the desktop's model, not a second one. The first environment the phone
 pairs with is the shell's own connection, kept by `Pairing` in `pairing.json`. Every other one is
 handed to the desktop's
-[`SavedEnvironmentsController`](../../apps/desktop-qt/src/native/SavedEnvironmentsController.h),
+[`SavedEnvironmentsController`](../../apps/mobile-qt/src/native/SavedEnvironmentsController.h),
 which keeps it in the catalog (credentials in the app's private storage on Android), gives it a
 connection of its own, and folds its `shell` shape into the shell's lists, as the desktop does for
 machines paired beside its own MC. So each environment costs one connection and the desktop's

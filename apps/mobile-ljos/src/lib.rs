@@ -1,6 +1,6 @@
 //! The HAL-C2 phone shell on Ljós: mobile-qt's `HalC2.Mobile`
 //! (`MobileShell.qml`) over desktop-ljos's `HalC2.Shell`, as mobile-qt is
-//! desktop-qt's shell with another root (docs/internals/mobile-qt.md).
+//! the shared Qt shell with another root (docs/internals/mobile-qt.md).
 //!
 //! Everything the desktop already has in Rust is reused as it is: the MC
 //! client (`hal_c2_mc`), the controllers behind `Shell.state`, the Theme
@@ -26,7 +26,7 @@ use hal_c2_shell::controller::{Registration, Scope};
 use hal_c2_shell::qml::Roots;
 use ljos::prelude::Engine;
 
-/// The QML roots in this checkout: the bricks (desktop-qt's, until they
+/// The QML roots in this checkout: the bricks (packages/qml's, until they
 /// move), this app's entry and stubs, and the phone's own screens
 /// (mobile-qt's `HalC2.Mobile`, read where they live so both clients show
 /// the same files).

@@ -49,7 +49,7 @@ through `QDesktopServices`, as Qt for Android does it.
 
 ## Toolchain for Android
 
-The desktop's requirements (`docs/internals/desktop-qt.md`, "Setup"), with this machine's Qt at
+Qt 6.9 or later with its WebSockets, Sql (and the SQLite driver), Quick and QuickControls2 modules, with this machine's Qt at
 the same version as the one for Android, since its `androiddeployqt` and QML tools make the
 package. Then:
 
@@ -139,7 +139,7 @@ desktop already has:
   sizes, delete `build/android/android-build/build` and the APK and build again.
 - A link opens the app from a shell with
   `adb shell am start -a android.intent.action.VIEW -d 'hal-c2://pair?pairingUrl=<the pairing
-link, percent-encoded>'`, whether it is running or not.
+  link, percent-encoded>'`, whether it is running or not.
 - The emulator's back camera can look at a picture: start it with
   `-camera-back virtualscene -virtualscene-poster wall=<png>`, walk the camera to that wall with
   `adb emu automation play <sdk>/emulator/resources/macros/Walk_to_image_room`, and change the

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Run every surface's feature suite (MC, TUI, Qt desktop, QML phone), continuing past failures"
+#MISE description="Run every surface's feature suite (MC, TUI, Ljós desktop, QML phone), continuing past failures"
 #USAGE flag "--backlog" help="Also run @backlog scenarios on the MC and the TUI (or set INCLUDE_BACKLOG=1)"
 set -euo pipefail
 summary=() status=0

@@ -66,14 +66,14 @@ an HTTP body of AVCC envelopes, with input on a separate binary WebSocket;
 Android multiplexes SEMU-framed H.264 and JSON gestures over one WebSocket.
 The viewer speaks both so one panel covers both platforms.
 
-The Qt desktop's [`DeviceStream`](../../apps/desktop-qt/src/native/DeviceStream.cpp)
+The Qt client's [`DeviceStream`](../../apps/mobile-qt/src/native/DeviceStream.cpp)
 decodes in software with libavcodec on its own thread
-([`DeviceDecoder`](../../apps/desktop-qt/src/native/DeviceDecoder.cpp)), so
+([`DeviceDecoder`](../../apps/mobile-qt/src/native/DeviceDecoder.cpp)), so
 every profile decodes and MJPEG only seeds the first picture. QtMultimedia was
 not used: its player paces by timestamp and buffers, and cannot drop frames or
 ask for keyframes. A decoder that falls behind drops its backlog and waits for
 the next keyframe instead of showing old pictures late. FFmpeg is not linked or
-shipped (licensing and size): [`FFmpeg.cpp`](../../apps/desktop-qt/src/native/FFmpeg.cpp)
+shipped (licensing and size): [`FFmpeg.cpp`](../../apps/mobile-qt/src/native/FFmpeg.cpp)
 loads the user's libraries at run time, and only at the major versions of the
 headers the app was built with, since the decoder reads FFmpeg's structs
 directly. Without them the app runs and the Device tab says to install FFmpeg.

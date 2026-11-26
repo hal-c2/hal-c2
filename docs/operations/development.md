@@ -130,8 +130,7 @@ vp run --filter <package> typecheck
 
 Behaviour scenarios run per surface with `mise run features:mc <globs>`, `features:tui` and
 `features:desktop`; see [running features](../../features/README.md#running).
-`mise run desktop:lint` runs qmllint over the desktop's QML. CI covers the MC, the TUI and the Qt
-desktop ([ci.yml](../../.github/workflows/ci.yml), [desktop-qt.yml](../../.github/workflows/desktop-qt.yml)).
+CI covers the MC, the TUI and the desktops ([ci.yml](../../.github/workflows/ci.yml), [desktop-ljos.yml](../../.github/workflows/desktop-ljos.yml)).
 
 ### Unused code
 
@@ -149,9 +148,7 @@ fixtures. Runtime-discovered entrypoints and dependency exceptions belong in
 
 ## Desktop artifacts
 
-`mise run release:linux`, `release:macos` and `release:desktop-ljos` build the desktops into `release/` beside the MC
-([release](./release.md#building-one-locally)). They are unsigned: the AppImage tooling
-(linuxdeploy and its Qt plugin) is downloaded on first use, and the macOS app is signed ad hoc.
-Qt, cmake and the other build dependencies are those of `mise run desktop`
-([desktop README](../../apps/desktop-qt/README.md)), and the Ljós desktop's those of
-`mise run desktop-ljos` ([its README](../../apps/desktop-ljos/README.md)).
+`mise run release:linux`, `release:macos` and `release:desktop-ljos` build the Ljós desktop into `release/` beside the MC
+([release](./release.md#building-one-locally)). They are unsigned: the macOS app is signed ad hoc.
+The build dependencies are those of `mise run desktop`
+([desktop README](../../apps/desktop-ljos/README.md)).
