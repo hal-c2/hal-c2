@@ -75,6 +75,17 @@ parked() {
     --jq ".jobs[] | select(.name == \"$park_job\" and .conclusion != \"skipped\") | .id")" ]
 }
 
+# Fails an entry whose promoted run failed, when the run's `CI result` could not answer.
+fail_promoted() { # id attempt sha url number result
+  # Read last, as a retry may have started since. One can still start as the stamp posts.
+  if [ "$(gh api "repos/$repo/actions/runs/$1" --jq .run_attempt)" != "$2" ]; then
+    echo "#$5's promoted run $1 is no longer known to be at attempt $2; not failing it"
+    return 1
+  fi
+  echo "#$5's promoted run ended $6; failing the entry"
+  act "$here/merge-queue-stamp.sh" "$3" "$4" failure
+}
+
 entries=$("$here/merge-queue-entries.sh")
 awaiting=$(awk -F'\t' '$2 == "AWAITING_CHECKS" && $3 != "-"' <<<"$entries")
 # The entries ahead of the first failed one: those behind it hold its failure. A passed entry
@@ -121,7 +132,7 @@ while IFS=$'\t' read -r _ _ sha number pr; do
 done <<<"$awaiting"
 
 # The last entry being built ahead of any failed one: it tests, or has passed.
-started='' failed_one='' passed='' searching=''
+started='' failed_one='' failed='' passed='' searching=''
 while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
   run=$(latest_run "$sha")
@@ -130,15 +141,9 @@ while IFS=$'\t' read -r _ state sha number _; do
   result=$(run_result "$id" "$event" "$suite" "$attempt")
   if [ "$result" = failure ] || [ "$result" = cancelled ]; then
     if [ "$event" = workflow_dispatch ] && [ "$state" = AWAITING_CHECKS ]; then
-      # Read last, as a retry may have started since. One can still start as the stamp posts.
-      if [ "$(gh api "repos/$repo/actions/runs/$id" --jq .run_attempt)" != "$attempt" ]; then
-        echo "#$number's promoted run $id is no longer known to be at attempt $attempt; not failing it"
-        break
-      fi
-      echo "#$number's promoted run ended $result; failing the entry"
-      act "$here/merge-queue-stamp.sh" "$sha" "$url" failure
+      fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || break
     fi
-    failed_one=$sha
+    failed_one=$sha failed="$failed $sha"
     continue
   fi
   if [ "$result" = success ]; then
@@ -157,15 +162,21 @@ done < <(tac <<<"$built")
 
 # An entry failed: test every parked entry ahead of it at once, to find the culprit. GitHub
 # lists one as UNMERGEABLE a little after its `CI result` fails. Not when one ahead passed:
-# so did all ahead of it.
+# so did all ahead of it. A promoted one that failed is failed here: the walk from the back
+# stops at a promoted run still going behind it.
 if [ -z "$passed" ] && { [ -n "$failed_one" ] || awk -F'\t' '$2 == "UNMERGEABLE" { f = 1 } END { exit !f }' <<<"$entries"; }; then
   while IFS=$'\t' read -r _ state sha number _; do
-    [ "${state:-}" = AWAITING_CHECKS ] && [[ " $started " != *" $sha "* ]] || continue
+    [ "${state:-}" = AWAITING_CHECKS ] && [[ " $started $failed " != *" $sha "* ]] || continue
     run=$(latest_run "$sha")
     [ -n "$run" ] || continue
-    IFS=$'\t' read -r id status _ event branch _ suite attempt <<<"$run"
-    [ "$event" = merge_group ] && [ "$status" != completed ] || continue
-    case $(run_result "$id" "$event" "$suite" "$attempt") in success | failure | cancelled) continue ;; esac
+    IFS=$'\t' read -r id status _ event branch url suite attempt <<<"$run"
+    result=$(run_result "$id" "$event" "$suite" "$attempt")
+    if [ "$event" = workflow_dispatch ]; then
+      case $result in failure | cancelled) fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || true ;; esac
+      continue
+    fi
+    [ "$status" != completed ] || continue
+    case $result in success | failure | cancelled) continue ;; esac
     parked "$id" || continue
     echo "#$number parked ahead of a failed entry: testing it"
     act gh workflow run ci.yml --repo "$repo" --ref "$branch" -f queue=true
