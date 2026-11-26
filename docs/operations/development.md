@@ -35,7 +35,7 @@ mise run tui:build         # the TUI bundle, stamped with apps/server-ex/VERSION
 mise run release:linux     # the MC and the Ljós desktop in release/ (release:mc for the MC alone)
 mise run release:macos     # the MC and the Ljós desktop app in release/
 mise run release:desktop-ljos  # the MC and the Ljós desktop, laid out as installed, in release/
-mise run release:install   # build and install: the MC as this user's background service, both desktops as launcher entries or in ~/Applications
+mise run release:install   # build and install: the MC as this user's background service, the Ljós desktop as a launcher entry or in ~/Applications
 mise run release:install:mc    # one of them: also release:install:desktop-ljos
 ```
 

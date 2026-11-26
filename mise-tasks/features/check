@@ -11,9 +11,10 @@ scenario the ledger claims but no proof selects, so the claim and the
 proof cannot drift apart. Scenarios a QML test proves instead still get
 the backlog tag: the ledger claims only what a counted runner runs
 (#213). The desktop's proof is the desktop-ljos RATCHET alone (#1661):
-its runner's default scope is its own default-globs.txt, and every file
-whose leading comment block names that runner counts too, as behaviour
-only that shell has, such as its bounded side streams. The phone still
+its runner's default scope is its own default-globs.txt plus every file
+whose leading comment block names that runner (behaviour only that shell
+has, such as its bounded side streams); the scope says what runs, the
+RATCHET what passes. The phone still
 counts mobile-qt's tst_Features.cpp globs
 (apps/mobile-qt/tests/tst_Features.cpp) next to mobile-ljos's RATCHET.
 A RATCHET id that names no scenario fails here, where a rename is seen,
@@ -320,11 +321,12 @@ def analyse():
         row_ids = ratchet_row_ids(all_rows, surface)
         runner = HEADER_RUNNERS.get(surface)
         if runner:
+            # A file naming the Ljós runner is in its default scope, not
+            # proof: for the desktop the RATCHET alone proves a claim, so
+            # these rows only join in_scope (the held-outside-scope check).
             for rel, rows in all_rows.items():
                 if header_names(FEATURES / rel, runner):
-                    ids = {id(row) for row in rows}
-                    selected.update(ids)
-                    in_scope.update(ids)
+                    in_scope.update(id(row) for row in rows)
         stale[surface] = sorted(ratchet - known_ids - set(row_ids.values()))
         # A held scenario since backlogged, dropped or blocked here: the Ljós
         # runner leaves it out, so its run fails the id as missing.
