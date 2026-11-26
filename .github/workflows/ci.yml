@@ -249,7 +249,14 @@ jobs:
         run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3'
 
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
-      # Its own step, so its download's retry budget isn't shared with apt's.
+      # Its own step, so its download's retry budget isn't shared with apt's. The tarball is
+      # cached: its release download has broken CI setup with a 403 before (#1769).
+      - name: Cache the ripgrep tarball
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/ripgrep
+          key: ripgrep-14.1.1-x86_64-linux-musl
+
       - name: Install ripgrep
         timeout-minutes: 10
         run: '"$GITHUB_WORKSPACE"/.github/scripts/install-ripgrep.sh'
@@ -443,7 +450,15 @@ jobs:
         run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3'
 
       # Regex content search needs ripgrep, which the runner image lacks.
-      # Its own step, so its download's retry budget isn't shared with apt's.
+      # Its own step, so its download's retry budget isn't shared with apt's. The tarball is
+      # cached: its release download has broken CI setup with a 403 before (#1769).
+      - name: Cache the ripgrep tarball
+        if: contains(matrix.dirs, 'files')
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/ripgrep
+          key: ripgrep-14.1.1-x86_64-linux-musl
+
       - name: Install ripgrep
         if: contains(matrix.dirs, 'files')
         timeout-minutes: 10
