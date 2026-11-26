@@ -914,11 +914,16 @@ files/search.feature: The search is cleared when the user switches project
 mc/orchestration/queue-and-steering.feature: A usage limit keeps the queue as it was
 mc/orchestration/runs.feature: A failed turn keeps the output it had already produced
 mc/orchestration/runs.feature: A provider retry is recorded as a retry
+mc/platform/openshell.feature: Settings asks again when another review started before the user agreed
+mc/platform/openshell.feature: Settings asks before an uninstall stops this MC's reviews
+mc/platform/openshell.feature: Settings installs OpenShell and shows each step
 mc/platform/openshell.feature: Settings says how to install OpenShell where it can run
 mc/platform/openshell.feature: Settings says review sandboxes can run once the MC has a gateway
+mc/platform/openshell.feature: Settings says what to install on a machine without Podman or Docker
 mc/platform/openshell.feature: Settings says when the MC could not answer, and can ask again
 mc/platform/openshell.feature: Settings says which machines take the reviews that need a sandbox
 mc/platform/openshell.feature: Settings shows whether review sandboxes can run, and what to fix
+mc/platform/openshell.feature: Settings' actions are off on a device that cannot manage the MC's machine
 mc/platform/storage-layout.feature: The desktop app a developer builds uses the development profile
 mc/platform/storage-layout.feature: The desktop app on Windows keeps its named pipe
 mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
@@ -1498,6 +1503,12 @@ planning/planner.feature: The user picks a view with the keyboard
 planning/planner.feature: The user picks the board and its date fields from lists in the settings
 planning/planner.feature: The user picks the planner's Slack channel in its settings
 planning/planner.feature: What the user changes while the settings save is kept
+plugins/cliproxyapi.feature: The page says when it is connected to a proxy it did not start
+plugins/cliproxyapi.feature: The page says when the proxy refused the management key
+plugins/cliproxyapi.feature: The page says why a proxy gives no usage
+plugins/cliproxyapi.feature: The page says why an instance of the plugin's was not added
+plugins/cliproxyapi.feature: The page shows the proxy, its accounts, usage, keys and log
+plugins/cliproxyapi.feature: The page signs in by asking for the address the browser ended on
 plugins/keymaps.feature: Resetting keybindings removes every override
 plugins/plugin-catalog.feature: A member's MC plugins are listed once the cluster learns it
 plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
@@ -2636,13 +2647,16 @@ source-control/agent-code-review.feature: A review thread is marked as a review 
 source-control/agent-code-review.feature: A review thread shows the pull request and the verdict above the conversation
 source-control/agent-code-review.feature: Publishing from a review thread first shows what will be posted
 source-control/agent-code-review.feature: Resetting the prompt leaves the user's other changes unsaved
+source-control/agent-code-review.feature: The reviews page finds a pull request by its number, title or branch
 source-control/agent-code-review.feature: The reviews page lets the user review here what a machine out of reach had
 source-control/agent-code-review.feature: The reviews page lets the user withdraw an approval of any commit
 source-control/agent-code-review.feature: The reviews page lists reviews by state
+source-control/agent-code-review.feature: The reviews page says until when reviews are paused, and resumes them
 source-control/agent-code-review.feature: The reviews page says why a pull request is not reviewed and lets the user approve it
 source-control/agent-code-review.feature: The reviews page shows a check the machine blocked as a problem of the machine
 source-control/agent-code-review.feature: The reviews page shows a review's findings and publishes them
 source-control/agent-code-review.feature: The reviews page shows which machine reviews a pull request
+source-control/agent-code-review.feature: The reviews page starts a queued review now
 source-control/agent-code-review.feature: The settings offer each source control host
 source-control/agent-code-review.feature: The user starts a review from the reviews page
 source-control/checkpoint-diffs.feature: A diff can be shown side by side or as one column
@@ -3769,6 +3783,8 @@ timeline/markdown.feature: A reply being written keeps what is already shown
 timeline/markdown.feature: A reply shows its formatting
 timeline/markdown.feature: A reply's right-click menu cannot change the reply
 timeline/markdown.feature: A reply's selected text is copied from its right-click menu
+timeline/markdown.feature: A table right under a line of text is shown as a table [at the top level]
+timeline/markdown.feature: A table right under a line of text is shown as a table [inside a list item]
 timeline/markdown.feature: A table's rows grow to fit their wrapped cells
 timeline/markdown.feature: A user message keeps its line breaks
 timeline/markdown.feature: Code follows the theme without being read again

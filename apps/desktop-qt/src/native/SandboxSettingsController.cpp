@@ -27,8 +27,9 @@
 // `confirm` asks before an operation this page asked for stops this MC's
 // reviews (or runs without knowing whether it would); a yes names the reviews it
 // asked about (`drain`), and the MC asks again when others run by then
-// (`sandboxes-changed`). `refusal` also says when
-// the MC restarted before the run this page asked for told how it went.
+// (`sandboxes-changed`). `refusal` also says when the MC lost track of the run
+// this page asked for before it told how it went (it restarted, or a later run
+// replaced it unseen).
 //
 // Actions: `sandboxSettings.refresh`, `sandboxSettings.run` {operation},
 // `sandboxSettings.confirm`, `sandboxSettings.cancel`.
@@ -119,7 +120,10 @@ public:
       // session may.
       if (m_open && offered(operation) && m_status.value(QLatin1String("canManage")).toBool() && !busy()) run(operation, {});
     } else if (action == QLatin1String("sandboxSettings.confirm")) {
-      if (m_confirmOperation.isEmpty()) return true;
+      // As a press of an action: not while one runs (another device may have
+      // started one since the page asked). The question stays, to confirm
+      // once that run ends.
+      if (m_confirmOperation.isEmpty() || busy()) return true;
       const QString operation = m_confirmOperation;
       const QJsonObject flags = m_confirmFlags;
       clearConfirm();
@@ -262,7 +266,10 @@ private:
   // What is installed may have changed once a run ended: the status is read
   // again for each run seen ended, once, whether or not this page saw it run (it
   // may have ended on another device while the connection was down), and for a
-  // run this page saw going that went with a restart (`ended`).
+  // run this page saw going that went with a restart (`ended`), and when a
+  // frame's number went back across a restart (`back`, through `settle`): what
+  // that MC has installed may differ from what the one before it said, run or
+  // no run seen going.
   bool reread(const QJsonObject& next, bool ended) {
     const qint64 number = runOf(next);
     if (!m_open || next.value(QLatin1String("running")).toBool() || m_known == number ||
@@ -283,22 +290,24 @@ private:
     if (!running && result.isObject() && !m_asked.isEmpty() && m_asked == operation && runOf(next) == m_awaited) {
       m_asked.clear();
       answer(operation, result.toObject());
-    } else if (!m_asked.isEmpty() && m_awaited >= 0 && (back || (operation.isEmpty() && runOf(next) > m_awaited))) {
-      // A frame with no operation is from an MC that has run none since it
-      // started, and its number is when it started. Above the run's number, it
-      // started after the run did: it restarted, and the run's outcome went with
-      // the old one (a restart of only its Operations service takes the run back
-      // and shows it going on). Whether the run's work got done is unknown, so
-      // the words promise no retry. This
-      // holds whatever the frame's order: a frame from before the run (the
-      // shape's first, one sent before a reconnect) carries a smaller number, as
-      // the run's is larger than every number before it. An MC whose clock went
-      // back across the restart numbers below the run, and the number going
-      // below the last frame's says so instead.
+    } else if (!m_asked.isEmpty() && m_awaited >= 0 && (back || runOf(next) > m_awaited)) {
+      // A frame numbered above the run's is not it: with no operation it is from
+      // an MC that has run none since it started, its number is when it started,
+      // and above the run's number it started after the run did — it restarted,
+      // and the run's outcome went with the old one (a restart of only its
+      // Operations service takes the run back and shows it going on); with an
+      // operation it is a later run (this page was away while its own ended and
+      // another device's followed), and its own run's outcome went unseen either
+      // way. Whether the run's work got done is unknown, so the words promise no
+      // retry. This holds whatever the frame's order: a frame from before the run
+      // (the shape's first, one sent before a reconnect) carries a smaller
+      // number, as the run's is larger than every number before it. An MC whose
+      // clock went back across the restart numbers below the run, and the number
+      // going below the last frame's says so instead.
       m_asked.clear();
       m_refusal = QStringLiteral("The MC lost track of the run; check the status before trying again.");
     }
-    if (!reread(next, ended)) publish();
+    if (!reread(next, ended || back)) publish();
   }
 
   // An outcome this page asked for may need the user's yes to go on.

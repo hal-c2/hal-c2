@@ -545,10 +545,16 @@ const Steps steps([] {
   });
   step(QStringLiteral("the page says when reviews start again, in the user's own time"), [](World& world, const Captures&, const Table&) {
     const QString until = state(world).pausedUntil;
+    // The time as the user reads it, not the MC's ISO 8601: the harness pins
+    // the zone to UTC, the locale to en-US and now to 2026-09-23 (World), so
+    // the fixture's own reading is the one expected — an invalid or wrongly
+    // zoned rendering does not produce it.
+    const QDateTime at = QDateTime::fromString(until, Qt::ISODate);
+    expect(at.isValid(), QStringLiteral("the pause's end is not a time: %1").arg(until));
+    const QString expected = QStringLiteral("They start again at %1.").arg(at.toLocalTime().toString(QStringLiteral("M/d h:mm AP")));
     const QString objectName = QStringLiteral("codeReviewProblem:") + world.mc.environmentId;
-    world.waitFor([&] { return textOf(world, objectName).contains(QLatin1String("They start again at")); },
-                  [&] { return QStringLiteral("the page to say when reviews start again, not %1").arg(textOf(world, objectName)); });
-    // The time as the user reads it, not the MC's ISO 8601.
+    world.waitFor([&] { return textOf(world, objectName).contains(expected); },
+                  [&] { return QStringLiteral("the page to say \"%1\", not %2").arg(expected, textOf(world, objectName)); });
     expect(!textOf(world, objectName).contains(until.left(16)), QStringLiteral("the page shows the raw time: %1").arg(textOf(world, objectName)));
   });
   step(QStringLiteral("the user resumes the reviews from the page"), [](World& world, const Captures&, const Table&) {

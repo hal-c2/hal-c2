@@ -32,6 +32,9 @@ struct Seen {
     // The code block's colours: its fence, and the colours it had before.
     fence: String,
     colours: Vec<Option<ljos::prelude::Color>>,
+    // Where the table under a line of text was put: "at the top level",
+    // "inside a list item" or "inside a quote".
+    table_place: String,
 }
 
 fn name_of(engine: &Engine, item: ObjectId) -> String {
@@ -989,6 +992,68 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Tables.
+    steps.step(
+        "the agent answers with a line of text and, on the next line with no blank line between, a table (.+)",
+        |world, c, _| {
+            // tst_Markdown.qml's lateTables shapes: the delimiter row makes
+            // the line above it a table's header, wherever it sits. Inside
+            // a list item each table line carries the item's content
+            // indent: unindented, the table's first line interrupts the
+            // item (markdown.js's interrupts) and the table is top-level.
+            let table = "x | y\n--|--\n1 | 2";
+            let text = match c[0].as_str() {
+                "at the top level" => format!("Text before\n{table}"),
+                "inside a list item" => "- item\n  x | y\n  --|--\n  1 | 2".to_owned(),
+                "inside a quote" => format!("> quote\n{table}"),
+                other => fail!("unknown place for a table: {other}"),
+            };
+            world.part::<Seen>().table_place = c[0].clone();
+            answer(world, &text)
+        },
+    );
+    steps.step(
+        "the table is shown as a table and not as a run-on paragraph",
+        |world, _, _| {
+            let message = reply(world, 1)?;
+            world.wait_for_with(
+                |w| within(w, message, "tableCell").len() == 4,
+                |w| {
+                    format!(
+                        "the table's 4 cells, in a reply drawn as {}",
+                        kinds_of(w, message).join(", ")
+                    )
+                },
+            )?;
+            for prose in within(world, message, "markdownProse") {
+                let shown = plain(world, prose)?;
+                expect!(
+                    !shown.contains('|'),
+                    "the table runs on in the paragraph \"{shown}\""
+                );
+            }
+            // Inside a list item the table is drawn at the item's indent,
+            // not at the margin as a top-level table is. Which shape was
+            // sent comes from the When step, not from the drawn prose: if
+            // the item stopped being drawn as prose, guessing from its
+            // text would skip this check.
+            let place = world.part::<Seen>().table_place.clone();
+            expect!(!place.is_empty(), "the table's place was not recorded");
+            if place == "inside a list item" {
+                let Some(table) = within(world, message, "markdownSegment")
+                    .into_iter()
+                    .find(|&segment| str_of(world, segment, "kind") == "table")
+                else {
+                    fail!("no table segment in the reply")
+                };
+                let indent = int_of(world, table, "indent");
+                expect!(
+                    indent > 0,
+                    "the table is drawn at indent {indent}, outside the list item"
+                );
+            }
+            Ok(())
+        },
+    );
     steps.step("the agent's reply has a table", |world, _, _| {
         answer(world, TABLE)
     });

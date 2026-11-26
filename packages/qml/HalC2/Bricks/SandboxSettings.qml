@@ -174,6 +174,9 @@ SettingsPage {
                     objectName: "sandboxConfirmYes"
                     primary: true
                     text: qsTr("Go ahead")
+                    // Not while one runs, as the actions below; the
+                    // question stays to answer once it ends.
+                    enabled: sandboxes.canRun
                     onClicked: Shell.dispatch("sandboxSettings.confirm")
                 }
 

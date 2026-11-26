@@ -181,7 +181,7 @@ Feature: Formatted messages
     When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
     Then the table is shown as a table and not as a run-on paragraph
 
-    @backlog-desktop @backlog-mobile
+    @backlog-mobile
     Examples:
       | where              |
       | at the top level   |
