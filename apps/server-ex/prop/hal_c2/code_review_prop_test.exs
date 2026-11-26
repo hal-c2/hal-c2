@@ -635,6 +635,11 @@ defmodule HalC2.CodeReviewPropTest do
       Enum.at(after_start.runs[key], after_start.reviews[key].run - 1) == true
   end
 
+  # Shrinking can drop the save that made `heading` differ; saving the same one
+  # leaves the preview current, so the command no longer tests staleness.
+  defp allowed?(m, {:call, _, :heading_staleness, [_key, heading]}),
+    do: m.enabled and heading != m.settings.heading
+
   defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
   defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
   defp allowed?(_m, _call), do: true
