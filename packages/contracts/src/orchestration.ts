@@ -305,6 +305,9 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   activities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
   // The same, by the account the MC reads the host as.
   ownActivities: Schema.optional(Schema.Array(ThreadPullRequestActivity)),
+  // Comment activity here is stamped when it was last edited; absent on
+  // snapshots synced before that, whose comment times are creation times.
+  commentStamp: Schema.optional(Schema.Literal("edited")),
   // In the host's merge queue now, and where; null when it is not (or the host has none).
   mergeQueue: Schema.optional(
     Schema.NullOr(Schema.Struct({ state: Schema.String, position: NonNegativeInt })),
