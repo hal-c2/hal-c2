@@ -179,6 +179,10 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
     context
   end
 
+  step "the repository has the remote {string}", %{args: [name]} = context do
+    add_remote(context, name)
+  end
+
   step "the local branch {string} tracks {string}",
        %{args: [name, "origin/" <> upstream]} = context do
     git(context, ["branch", "-f", upstream, "HEAD"])

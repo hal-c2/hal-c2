@@ -443,9 +443,9 @@ defmodule HalC2.GitActions do
     upstream = upstream && upstream_ref_exists?(cwd, upstream) && upstream
     upstream_name = upstream && upstream_branch_name(upstream)
 
-    # A local branch named after its upstream under another prefix
+    # A local branch named after its upstream under a remote's prefix
     # ("upstream/effect-atom" tracking "origin/effect-atom") is that branch.
-    same? = upstream_name == branch or String.ends_with?(branch, "/#{upstream_name}")
+    same? = upstream_name && Git.same_branch?(cwd, branch, upstream_name)
 
     cond do
       upstream && same? && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
@@ -499,11 +499,7 @@ defmodule HalC2.GitActions do
   # The remote a first push goes to: the branch's pushRemote, the repository's
   # pushDefault, then the primary remote — as git's own settings name them.
   defp push_remote(cwd, branch) do
-    remotes =
-      case Git.ok(cwd, ["remote"]) do
-        {:ok, out} -> String.split(out, "\n", trim: true)
-        _ -> []
-      end
+    remotes = Git.remotes(cwd)
 
     configured =
       Enum.find_value(["branch.#{branch}.pushRemote", "remote.pushDefault"], fn key ->

@@ -86,4 +86,41 @@ defmodule HalC2.GitTest do
     assert {:ok, %{status: 128}} =
              HalC2.Git.run(dir, args, env: env, unset: ["GIT_CONFIG_VALUE_0"])
   end
+
+  # Review of #1837: a branch named after its upstream under a remote's prefix is that
+  # branch, so it is based on the default branch, not on its own remote counterpart
+  # (a pull request from it would have the same head and base).
+  test "an alias of its upstream is based on the default branch", %{tmp_dir: dir} do
+    git = fn cwd, args ->
+      {out, 0} =
+        System.cmd("git", ["-c", "user.name=t", "-c", "user.email=t@t" | args],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: [{"GIT_CONFIG_COUNT", nil}, {"GIT_CONFIG_GLOBAL", "/dev/null"}]
+        )
+
+      out
+    end
+
+    bare = Path.join(dir, "origin.git")
+    work = Path.join(dir, "work")
+    File.mkdir_p!(bare)
+    File.mkdir_p!(work)
+    git.(bare, ~w(init -q --bare -b main))
+    git.(work, ~w(init -q -b main))
+    git.(work, ~w(commit -q --allow-empty -m init))
+    git.(work, ["remote", "add", "origin", bare])
+    git.(work, ["remote", "add", "upstream", bare])
+    git.(work, ~w(push -q -u origin main))
+    git.(work, ~w(push -q origin main:effect-atom))
+    git.(work, ~w(fetch -q origin))
+    git.(work, ~w(remote set-head origin main))
+    git.(work, ~w(checkout -q -b upstream/effect-atom origin/effect-atom))
+
+    assert HalC2.Git.base_branch(work, "upstream/effect-atom") == "origin/main"
+
+    # A prefix that is not a remote names a branch of its own, cut from its upstream.
+    git.(work, ~w(checkout -q -b fix/effect-atom origin/effect-atom))
+    assert HalC2.Git.base_branch(work, "fix/effect-atom") == "origin/effect-atom"
+  end
 end

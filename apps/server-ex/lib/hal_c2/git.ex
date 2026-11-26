@@ -268,13 +268,15 @@ defmodule HalC2.Git do
         end
 
     # A branch tracking another branch was cut from it, so that branch is its
-    # base; tracking its own name says nothing.
+    # base; tracking its own name (or itself under a remote's prefix) says nothing.
     tracked =
       case upstream(root, branch) do
         %{remote: nil, ref: name} -> name
         %{remote: remote, ref: ref} -> String.replace_prefix(ref, "#{remote}/", "")
         _ -> nil
       end
+
+    tracked = if tracked && same_branch?(root, branch, tracked), do: nil, else: tracked
 
     [configured, tracked, default, "main", "master"]
     |> Enum.reject(&(&1 in [nil, ""]))
@@ -319,14 +321,25 @@ defmodule HalC2.Git do
 
   @doc "`origin` when it exists, else the first remote, or nil."
   def primary_remote(root) do
-    case ok(root, ["remote"]) do
-      {:ok, out} ->
-        remotes = String.split(out, "\n", trim: true)
-        if "origin" in remotes, do: "origin", else: List.first(remotes)
+    remotes = remotes(root)
+    if "origin" in remotes, do: "origin", else: List.first(remotes)
+  end
 
-      _ ->
-        nil
+  @doc "The repository's remote names, or [] when it has none or git fails."
+  def remotes(root) do
+    case ok(root, ["remote"]) do
+      {:ok, out} -> String.split(out, "\n", trim: true)
+      _ -> []
     end
+  end
+
+  @doc """
+  Whether the local `branch` is the branch `name` itself: named `name`, or `name` under
+  a remote's prefix ("upstream/effect-atom" for "effect-atom" when "upstream" is a
+  remote). Any other prefix ("fix/main" for "main") names a branch of its own.
+  """
+  def same_branch?(root, branch, name) do
+    branch == name or Enum.any?(remotes(root), &(branch == "#{&1}/#{name}"))
   end
 
   @doc """
