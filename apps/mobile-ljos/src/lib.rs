@@ -19,6 +19,7 @@ pub mod notifications;
 pub mod pairing;
 pub mod push_crypto;
 pub mod push_inbox;
+pub mod push_receiver;
 pub mod push_system;
 pub mod resume;
 pub mod scanner;
