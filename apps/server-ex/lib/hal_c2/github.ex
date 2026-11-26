@@ -497,7 +497,10 @@ defmodule HalC2.GitHub do
       reasons = body["errors"] |> List.wrap() |> Enum.map(&reason/1)
 
       reason =
-        [message | reasons] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.uniq() |> Enum.join(": ")
+        [clip(message) | reasons]
+        |> Enum.reject(&(&1 in [nil, ""]))
+        |> Enum.uniq()
+        |> Enum.join(": ")
 
       status = http_status(err) || (head && head.status)
 

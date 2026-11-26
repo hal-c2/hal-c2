@@ -481,7 +481,7 @@ defmodule HalC2.PullRequestsTest do
 
   # gh prints only "gh: Unprocessable Entity (HTTP 422)" when GitHub's answer has both a
   # message and an `errors` list; the reason is in the body, on stdout.
-  defp refused_review(errors),
+  defp refused_review(errors, message \\ "Unprocessable Entity"),
     do: [
       permissions_rule("WRITE"),
       %{
@@ -493,7 +493,7 @@ defmodule HalC2.PullRequestsTest do
         "exit" => 1,
         "stderr" => "gh: Unprocessable Entity (HTTP 422)\n",
         "stdout" => %{
-          "message" => "Unprocessable Entity",
+          "message" => message,
           "errors" => errors,
           "documentation_url" => "https://docs.github.com/rest/pulls/reviews",
           "status" => "422"
@@ -527,6 +527,15 @@ defmodule HalC2.PullRequestsTest do
 
     assert {:error, %{"detail" => "Unprocessable Entity: Label name invalid (HTTP 422)"}} =
              PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    # A long message and a long reason are each cut to 200 characters.
+    rules!(dir, refused_review([String.duplicate("r", 500)], String.duplicate("m", 500)))
+    clipped = fn char -> String.duplicate(char, 199) <> "…" end
+
+    assert {:error, %{"detail" => detail}} =
+             PullRequests.submit_review(Map.merge(@ref, %{"verdict" => "comment", "body" => "x"}))
+
+    assert detail == "#{clipped.("m")}: #{clipped.("r")} (HTTP 422)"
   end
 
   test "a review GitHub refuses for a draft left on GitHub says to finish that draft",
