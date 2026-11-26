@@ -38,7 +38,7 @@ mise run release:install   # build and install: the MC as this user's background
 mise run release:install:mc    # one of them: also release:install:desktop-ljos
 ```
 
-Arguments pass straight through to the shell (its flags — `--url`, `--home-dir`, `--dev`
+Arguments pass straight through to the shell (its flags — `--url` and `--home-dir`
 among them — are in [its README](../../apps/desktop-ljos/README.md#run-check-and-render)).
 The build tasks declare their sources, so a dependent task skips them while nothing
 changed. The Ljós shell's in-process host uses the MC already running on the dev profile's
