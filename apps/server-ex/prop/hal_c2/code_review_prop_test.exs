@@ -411,7 +411,7 @@ defmodule HalC2.CodeReviewPropTest do
   # (the head the last look saw, 1 or 2), reviewed, changed, verdict, comments (one
   # dismissed flag each), publish_error, seq (order queued)}. `runs`: key → whether
   # each run so far got its thread and checkout, kept when a review is discarded.
-  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`;
+  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, heading, headline}`;
   # `github`: the `{key, reviewed}` of those GitHub took.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
   # `waiting_pubs`: posts behind a held post of their pull request, `{key, run, reviewed, sent}`.
@@ -580,7 +580,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"reviewNewPushes", boolean()},
             {"display", oneof(~w(page threads both))},
             {"model", oneof(~w(fake/one fake/two))},
-            {"reviewTrustedOnThisMachine", boolean()}
+            {"reviewTrustedOnThisMachine", boolean()},
+            {"heading", oneof(["Agentic code review", "Custom heading", ""])}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -939,7 +940,8 @@ defmodule HalC2.CodeReviewPropTest do
         "reviewsPerRepositoryPerDay" => :per_repository,
         "trustedLogins" => :trusted_logins,
         "label" => :label,
-        "reviewTrustedOnThisMachine" => :here
+        "reviewTrustedOnThisMachine" => :here,
+        "heading" => :heading
       }[field]
 
     value = if field == "trustedLogins", do: value != [], else: value
@@ -1372,7 +1374,7 @@ defmodule HalC2.CodeReviewPropTest do
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
-    sent = {key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}
+    sent = {key, r.reviewed, kept, @events[r.verdict], m.settings.heading, headline(r.comments)}
 
     cond do
       Enum.any?(m.held_pubs, &(elem(&1, 0) == key)) ->
@@ -2198,8 +2200,9 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
 
-  # Every review posted to the fake GitHub: `{key, head, comments, event, first line}`,
-  # the first line after a verdict posted as a comment.
+  # Every review posted to the fake GitHub: `{key, head, comments, event, heading, first
+  # line}`, the heading (or "" when there is none) and the first line after it, after a
+  # verdict posted as a comment.
   defp posts do
     fx_path("calls.jsonl")
     |> File.read!()
@@ -2212,16 +2215,21 @@ defmodule HalC2.CodeReviewPropTest do
         [_, repo, number] ->
           body = JSON.decode!(call["stdin"])
 
+          {heading, rest} =
+            case Regex.run(~r/\A## (.*?)\n\n(.*)/s, body["body"]) do
+              [_, heading, rest] -> {heading, rest}
+              nil -> {"", body["body"]}
+            end
+
           first =
-            body["body"]
-            |> String.replace(~r/\A## Agentic code review\n\n/, "")
+            rest
             |> String.replace(~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
             |> String.split("\n", parts: 2)
             |> hd()
 
           [
             {"acme/#{repo}##{number}", head(body["commit_id"]), length(body["comments"] || []),
-             body["event"], first}
+             body["event"], heading, first}
           ]
 
         nil ->

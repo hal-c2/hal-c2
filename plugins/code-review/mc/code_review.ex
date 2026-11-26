@@ -170,6 +170,11 @@ defmodule HalC2Plugins.CodeReview do
                Enum.all?(settings["trustedLogins"] || [], &is_binary/1)) ->
         {:error, "trustedLogins: give them as a list of logins on the host."}
 
+      not (is_binary(settings["heading"] || "") and
+               String.length(settings["heading"] || "") <= 200) ->
+        {:error,
+         "heading: keep it to 200 characters or fewer, well under the pull request's own limit."}
+
       key =
           Enum.find(
             ~w(reviewsPerAuthorPerDay reviewsPerRepositoryPerDay),
@@ -279,7 +284,7 @@ defmodule HalC2Plugins.CodeReview do
 
         {:ok,
          %{
-           "version" => version(review),
+           "version" => version(review, settings),
            "verdict" => input["verdict"],
            "body" => input["body"],
            "comments" =>
@@ -922,8 +927,10 @@ defmodule HalC2Plugins.CodeReview do
       # posted is what the user saw: the version they saw names it, and the verdict they
       # saw it go with is checked against the one it goes with now.
       %{"status" => "waiting"} = review when is_binary(version) ->
+        settings = state.settings
+
         cond do
-          version != version(review) ->
+          version != version(review, settings) ->
             {:reply,
              {:error,
               "The review of #{key} changed since you looked at it. Look at it again, then publish."},
@@ -943,7 +950,6 @@ defmodule HalC2Plugins.CodeReview do
                 "autoPost" => false
               })
 
-            settings = state.settings
             spawn_link(fn -> GenServer.reply(from, publish(review, settings, verdict)) end)
             {:noreply, state |> put(review) |> changed()}
         end
@@ -3724,7 +3730,7 @@ defmodule HalC2Plugins.CodeReview do
       {id,
        review
        |> Map.take(@thread_fields)
-       |> Map.put("version", review["verdict"] && version(review))}
+       |> Map.put("version", review["verdict"] && version(review, state.settings))}
     end
   end
 
@@ -3750,7 +3756,10 @@ defmodule HalC2Plugins.CodeReview do
           review =
             if review["verdict"],
               do:
-                Map.merge(review, %{"headline" => headline(review), "version" => version(review)}),
+                Map.merge(review, %{
+                  "headline" => headline(review),
+                  "version" => version(review, state.settings)
+                }),
               else: review
 
           review = Map.put(review, "untrusted", untrusted(state.settings, review))
@@ -4018,11 +4027,12 @@ defmodule HalC2Plugins.CodeReview do
     |> DateTime.add(@day_seconds, :second)
   end
 
-  # Names the run and its findings as they stand, dismissed comments included: a
-  # digest, so a run again with the same findings, or other findings, is another one.
-  defp version(review) do
+  # Names the run and its findings as they stand, dismissed comments included, and the
+  # heading they would post under: a digest, so a run again with the same findings or
+  # other findings, or a heading changed since the preview, is another one.
+  defp version(review, settings) do
     {review["threadId"], review["reviewedSha"], review["verdict"], review["summary"],
-     review["comments"], review["general"], review["validation"]}
+     review["comments"], review["general"], review["validation"], settings["heading"]}
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
