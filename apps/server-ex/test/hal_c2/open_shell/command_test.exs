@@ -57,6 +57,16 @@ defmodule HalC2.OpenShell.CommandTest do
                Command.settings_status(fn -> unreachable end)
     end
 
+    test "names the machines of the cluster that can run review sandboxes" do
+      status = fn -> status(%{"supported" => false, "problems" => ["intel-mac"]}) end
+
+      assert {:ok, %{"sandboxMachines" => ["desk", "lab"]}} =
+               Command.settings_status(status, 1_000, fn -> ["desk", "lab"] end)
+
+      # On its own, no machine takes them.
+      assert {:ok, %{"sandboxMachines" => []}} = Command.settings_status(status)
+    end
+
     test "a status that does not answer in time is the contract's error" do
       assert {:error, %{"_tag" => "ServerOpenShellStatusError", "message" => message}} =
                Command.settings_status(fn -> Process.sleep(:infinity) end, 0)

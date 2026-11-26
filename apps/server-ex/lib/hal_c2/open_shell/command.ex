@@ -214,12 +214,21 @@ defmodule HalC2.OpenShell.Command do
   `server.getOpenShellStatus`: `HalC2.OpenShell.Install.status/0` as a client's
   settings show it: each problem's message names the Settings action that fixes it
   (`settings_problem_message/2`), and `actions` are the operations Settings offers
-  (`settings_actions/1`, run by `HalC2.OpenShell.Operations`). Read when a client
-  asks, never pushed. `{:error, %{"_tag" => "ServerOpenShellStatusError"}}` when it
+  (`settings_actions/1`, run by `HalC2.OpenShell.Operations`). `sandboxMachines`
+  are the connected machines of the cluster that can run review sandboxes now
+  (`machines`, `HalC2.OpenShell.Review.machines/0`), where code review sends a review
+  that needs one while this machine can't run it. Read when a client asks, never
+  pushed. `{:error, %{"_tag" => "ServerOpenShellStatusError"}}` when it
   takes longer than `timeout` ms, or fails; a failure's details go to the MC's log,
   not the client.
   """
-  def settings_status(status \\ &Install.status/0, timeout \\ @status_timeout) do
+  def settings_status(
+        status \\ &Install.status/0,
+        timeout \\ @status_timeout,
+        machines \\ &HalC2.OpenShell.Review.machines/0
+      ) do
+    # Asked alongside the status, each peer bounded by the multicall's own timeout.
+    machines = Task.async(fn -> machines.() end)
     # Caught inside the task: it is linked, so a raise would take the RPC down with it.
     task =
       Task.async(fn ->
@@ -232,6 +241,7 @@ defmodule HalC2.OpenShell.Command do
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:failed, failure}} ->
+        Task.shutdown(machines, :brutal_kill)
         Logger.error("OpenShell's status failed for settings: " <> failure)
 
         {:error,
@@ -257,10 +267,13 @@ defmodule HalC2.OpenShell.Command do
                code <- status["problems"],
                do: %{"code" => code, "message" => settings_problem_message(code, label)}
              ),
-           "actions" => actions
+           "actions" => actions,
+           "sandboxMachines" => Task.await(machines, :infinity)
          }}
 
       _ ->
+        Task.shutdown(machines, :brutal_kill)
+
         {:error,
          %{
            "_tag" => "ServerOpenShellStatusError",

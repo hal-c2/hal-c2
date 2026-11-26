@@ -18,6 +18,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
 #   https://github.com/hal-c2/hal-c2/issues/1795 (a review on this machine gets its report tool alone, and trusted comments alone)
 #   apps/server-ex/lib/hal_c2/mcp.ex (a plugin's thread kept to that plugin's tools)
+#   The user's cluster of a Linux MC with Podman and a Mac with no container runtime: the Mac's reviews that need a sandbox go to the Linux MC
 
 @plugin-code-review
 Feature: Agent code review
@@ -524,7 +525,9 @@ Feature: Agent code review
     model's API, or on the CLIProxyAPI plugin's proxy, and the one tool it reports with. Its turns take no checkpoint: git here
     would run this machine's filters on whatever files the pull request's attributes
     send through them. A review that cannot have its sandbox fails, saying what to set
-    up, and never runs on this machine instead. With "Review trusted pull requests on
+    up, and never runs on this machine instead. On a machine that cannot open review
+    sandboxes, a review that needs one goes to a machine of the user's cluster that can,
+    as the rule on which machine reviews each commit says. With "Review trusted pull requests on
     this machine" on, a pull request HAL-C2 trusts is reviewed here by an agent that has
     its report tool and none of HAL-C2's others, and whose prompt quotes only the review
     comments of people HAL-C2 trusts, since anyone may comment; one it does not trust, as the rule on who gets reviews says, is sandboxed whatever
@@ -1341,6 +1344,15 @@ Feature: Agent code review
 
   Rule: One of the user's machines reviews each commit
 
+    A machine that cannot open review sandboxes now (no OpenShell, or a gateway that does
+    not answer) does not start a review that needs one while a connected machine of the
+    cluster takes it: one that can run it as its own settings say and has the
+    repository. That machine reviews it as though it had queued it, under its own
+    limits, for whatever asked: the watch, a comment, or the user's ask on the machine
+    that handed it over, which shows it there. With no such machine connected, it runs
+    where it was asked for and fails saying what to set up. A review that needs no
+    sandbox stays where it is.
+
     @mc
     Scenario: Two machines watching the same repository review a pull request once
       Given "code-review" watches "acme/api" automatically
@@ -1373,6 +1385,43 @@ Feature: Agent code review
       And "laptop" is reviewing #11 and has #12 queued
       And this machine shows #12 queued on "laptop"
       When the agent on "laptop" reaches its usage limit
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A machine that cannot run review sandboxes leaves the review to one that can
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster, which cannot run review sandboxes, watches "acme/api" automatically too
+      And review sandboxes can run on this MC
+      And "code-review" keeps its default of sandboxing every review
+      When the pull request #12 is opened and "laptop" looks at "acme/api" first
+      Then #12 is reviewed in a sandbox on this machine
+      And "laptop" shows #12 reviewing on this machine
+
+    @mc
+    Scenario: A review the user asks for on a machine that cannot run review sandboxes runs on one that can
+      Given "code-review" watches "acme/api" selectively with the trigger "comment command"
+      And the user's machine "laptop" in the cluster, which cannot run review sandboxes, watches "acme/api" too, reviewing what the user asks for
+      And review sandboxes can run on this MC
+      And "code-review" keeps its default of sandboxing every review
+      And the pull request #12 is opened on "acme/api"
+      When the user asks "laptop" to review #12
+      Then #12 is reviewed in a sandbox on this machine
+      And "laptop" shows #12 reviewing on this machine
+
+    @mc
+    Scenario: A review that needs a sandbox fails when no machine of the cluster can run it
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster, which cannot run review sandboxes, watches "acme/api" too, reviewing what the user asks for
+      And pull requests are trusted
+      And "code-review" keeps its default of sandboxing every review
+      When the pull request #12 is opened on "acme/api"
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+
+    @mc
+    Scenario: A machine that cannot run review sandboxes reviews what needs none itself
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" too, reviewing what the user asks for
+      When the pull request #12 is opened on "acme/api"
       Then #12 is reviewed on this machine
 
     @mc

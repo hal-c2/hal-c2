@@ -96,6 +96,28 @@ fn opened(route: &Json) -> bool {
         && route.get("section").and_then(Json::as_str) == Some(SECTION)
 }
 
+/// Where this machine's code reviews that need a sandbox go while it can't run one:
+/// the status's `sandboxMachines`, the cluster's machines that can (absent from older
+/// MCs).
+fn handoff(status: &Json) -> String {
+    let mut machines: Vec<&str> = status
+        .get("sandboxMachines")
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Json::as_str)
+        .collect();
+    match machines.pop() {
+        None => "Code reviews that need a sandbox fail here until this machine or another of your cluster can run them."
+            .to_owned(),
+        Some(last) if machines.is_empty() => format!("Code reviews that need a sandbox go to {last}."),
+        Some(last) => format!(
+            "Code reviews that need a sandbox go to {} and {last}.",
+            machines.join(", ")
+        ),
+    }
+}
+
 fn mode_name(mode: &str) -> &str {
     match mode {
         "managed" => "run by this MC",
@@ -176,14 +198,15 @@ impl SandboxSettings {
             (
                 "unsupported",
                 "Review sandboxes can't run on this machine.",
-                "Code reviews run without a sandbox here.".to_owned(),
+                handoff(&self.status),
             )
         } else if !flag("ready") {
             (
                 "attention",
                 "Review sandboxes can't run here yet.",
                 format!(
-                    "OpenShell {} is the version this MC pins.",
+                    "{} OpenShell {} is the version this MC pins.",
+                    handoff(&self.status),
                     field("pinnedVersion")
                 ),
             )

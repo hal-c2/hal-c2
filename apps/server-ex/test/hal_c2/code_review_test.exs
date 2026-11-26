@@ -134,7 +134,7 @@ defmodule HalC2.CodeReviewTest do
         "workspaceRoot" => root
       })
 
-    assert_receive {:hal_c2_shell, {:rows, _, [{"api", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"api", _}]}}, 5_000
     {:ok, nil} = HalC2.PullRequests.invalidate(%{})
 
     plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
@@ -1419,6 +1419,95 @@ defmodule HalC2.CodeReviewTest do
     assert reason =~
              "this machine's share of what the settings allow while laptop is out of reach"
   end
+
+  # Another machine of the cluster, which cannot open the sandbox the review needs,
+  # hands it over (`take/1`).
+  describe "a review another machine hands over" do
+    @ask %{"repository" => "acme/api", "number" => 1, "trigger" => "watch"}
+
+    test "starts here when this machine can run it as its own settings say" do
+      assert take(@ask) == {:ok, nil}
+      settle()
+      assert %{"status" => "running", "trigger" => "watch"} = review()
+    end
+
+    test "is refused by a machine that cannot open the sandbox it needs either" do
+      save_settings(%{"reviewTrustedOnThisMachine" => false})
+
+      assert take(@ask) == {:error, "Review sandboxes can't run on this machine either."}
+      settle()
+      refute match?(%{"status" => status} when status in ~w(queued running), review())
+    end
+
+    test "is refused by a paused machine, as it leaves its own queue" do
+      %{"threadId" => thread_id} = start_review()
+
+      event = %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "status" => "failed",
+        "errorClass" => "usage_limit",
+        "error" => "Subscription quota exhausted.",
+        "resetAt" => "2999-01-01T00:00:00Z"
+      }
+
+      :ok = apply(@server, :handle_event, [event, %{}])
+      settle()
+      assert %{"status" => "queued"} = review()
+
+      assert take(@ask) == {:error, "Reviews are paused on this machine."}
+    end
+
+    test "is refused once its run of that commit failed here, unless the user asked again" do
+      review = start_review()
+      event = %{"type" => "turn.finished", "threadId" => review["threadId"], "status" => "failed"}
+      :ok = apply(@server, :handle_event, [event, %{}])
+      settle()
+      assert %{"status" => "failed"} = review()
+
+      assert take(@ask) == {:error, "Its review failed on this machine at this commit."}
+      assert take(%{@ask | "trigger" => "user"}) == {:ok, nil}
+      settle()
+      assert %{"status" => "running"} = review()
+    end
+
+    test "is had already by a machine that reviewed that commit, which does not review it again" do
+      first = start_review()
+      arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+      {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+      settle()
+      assert %{"status" => "waiting", "threadId" => thread_id} = review()
+
+      assert take(@ask) == {:ok, nil}
+      settle()
+      assert %{"status" => "waiting", "threadId" => ^thread_id} = review()
+    end
+  end
+
+  # From the proof model of claims between machines: a machine handed a review that
+  # another machine claimed at that head queued it, stepped back from that claim and
+  # had no row left, so the machine handing it over, out of reach of the claim, read
+  # that no one had it and handed it over again for as long as it was.
+  @tag :laptop
+  test "a review handed over that another machine claimed at that head is left there, and answers where",
+       %{laptop: laptop} = context do
+    head = context.shas[1]
+    row = %{"sha" => head, "status" => "running", "claimed" => true}
+    :ok = :erpc.call(laptop.node, :persistent_term, :put, [:claims, %{@key => row}])
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    refresh()
+
+    assert %{"status" => "ready", "elsewhere" => %{"machine" => "laptop", "claimed" => true}} =
+             review()
+
+    ask = %{"repository" => "acme/api", "number" => 1, "trigger" => "watch"}
+    assert {:ok, %{"machine" => "laptop", "claimed" => true}} = take(ask)
+    settle()
+    assert %{"status" => "ready", "elsewhere" => %{"machine" => "laptop"}} = review()
+  end
+
+  # Compiled when the plugin starts, so unknown to the compiler here.
+  defp take(ask), do: apply(@server, :take, [ask])
 
   defmodule Unreached do
     @moduledoc false

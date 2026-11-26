@@ -2625,6 +2625,66 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     })
   end
 
+  # A peer has no OpenShell of its own; without the steps' default of reviewing trusted
+  # pull requests on the machine, every review it starts needs a sandbox.
+  step "the user's machine {string} in the cluster, which cannot run review sandboxes, watches {string} automatically too",
+       %{args: [label, repo]} = context do
+    join(context, label, %{
+      "repositories" => [repo],
+      "activation" => "automatic",
+      "reviewTrustedOnThisMachine" => nil
+    })
+  end
+
+  step "the user's machine {string} in the cluster, which cannot run review sandboxes, watches {string} too, reviewing what the user asks for",
+       %{args: [label, repo]} = context do
+    join(context, label, %{
+      "repositories" => [repo],
+      "activation" => "selective",
+      "reviewTrustedOnThisMachine" => nil
+    })
+  end
+
+  step "the user's machine {string} in the cluster watches {string} too, reviewing what the user asks for",
+       %{args: [label, repo]} = context do
+    join(context, label, %{"repositories" => [repo], "activation" => "selective"})
+  end
+
+  step "the pull request \#{int} is opened and {string} looks at {string} first",
+       %{args: [number, label, _repo]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+    context
+  end
+
+  step "the user asks {string} to review \#{int}", %{args: [label, number]} = context do
+    input = %{"repository" => context.repository, "number" => number}
+    assert {:ok, _} = on_plugin(context, label, "start", input)
+    context
+  end
+
+  step "\#{int} is reviewed in a sandbox on this machine", %{args: [number]} = context do
+    {review, context} =
+      await_review(context, number, &(&1["checkout"] && &1["status"] == "running"))
+
+    assert review["sandboxed"] == true and review["elsewhere"] == nil, inspect(review)
+    assert_receive {:sandbox_exec, ["codex", "app-server"], %{workdir: "/review/src"}}, 15_000
+    context
+  end
+
+  step "{string} shows \#{int} reviewing on this machine", %{args: [label, number]} = context do
+    reviewing =
+      &match?(
+        %{"elsewhere" => %{"machine" => "desk", "status" => "running", "claimed" => true}},
+        &1
+      )
+
+    {review, context} = await_peer(context, number, reviewing)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert context.peer == label
+    context
+  end
+
   step "the pull request \#{int} is opened and both machines look at {string} at once",
        %{args: [number, _repo]} = context do
     context = open(context, number)

@@ -642,7 +642,8 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # The user's ask, with who stands behind the pull request read afresh: what it says
-  # now is what the review may start on.
+  # now is what the review may start on. One another machine handed over (`take/1`)
+  # brings the commit the user approved there, if any.
   # A row of the same name kept from another host (or project) is another pull request:
   # it takes none of this one's trust, and this one starts from what was read of it.
   def handle_call({:start, pr, trigger}, _from, state) do
@@ -651,7 +652,7 @@ defmodule HalC2Plugins.CodeReview do
 
     review =
       if same?,
-        do: Map.merge(known, Map.take(pr, ~w(trust seenAt))),
+        do: Map.merge(known, Map.take(pr, ~w(trust seenAt approved))),
         else: pr
 
     cond do
@@ -674,6 +675,44 @@ defmodule HalC2Plugins.CodeReview do
         |> reply_snapshot()
     end
   end
+
+  # Another machine hands over its review of `pr` (`take/1`), asked for by `trigger`:
+  # it starts here as the user's ask does, under this machine's limits. A paused
+  # machine leaves it alone, as it leaves its own queue, and so does one whose run of
+  # that commit failed already, unless the user asked again: the machine handing it
+  # over would only hand it back at its next look. One that reviewed that commit
+  # already has it, and does not review it again; one that shows it claimed by
+  # another machine leaves it there, unless the user asked again, and answers where.
+  # Started, it would only find that claim and step back, and the machine handing it
+  # over, out of that one's reach, would read that no one has it and hand it over
+  # again for as long as it is. `{:ok, nil}`, `{:ok, elsewhere}` or `{:error, why}`.
+  def handle_call({:take, pr, trigger}, from, state) do
+    known = state.reviews[pr["key"]]
+
+    cond do
+      paused?(state) ->
+        {:reply, {:error, "Reviews are paused on this machine."}, state}
+
+      known != nil and claimed?(known) and known["reviewedSha"] == pr["headSha"] and
+          known["status"] in ~w(waiting publishing published) ->
+        {:reply, {:ok, nil}, state}
+
+      trigger not in ~w(user retry) and known != nil and known["status"] == "failed" and
+          known["headSha"] == pr["headSha"] ->
+        {:reply, {:error, "Its review failed on this machine at this commit."}, state}
+
+      trigger not in ~w(user retry) and known != nil and
+        match?(%{"claimed" => true}, known["elsewhere"]) and
+          known["headSha"] == pr["headSha"] and left?(known) ->
+        {:reply, {:ok, known["elsewhere"]}, state}
+
+      true ->
+        {:reply, reply, state} = handle_call({:start, pr, trigger}, from, state)
+        {:reply, with({:ok, _} <- reply, do: {:ok, nil}), state}
+    end
+  end
+
+  def handle_call(:settings, _from, state), do: {:reply, state.settings, state}
 
   def handle_call({:approve, key, sha}, _from, state) do
     case state.reviews[key] do
@@ -2120,15 +2159,61 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # Checks the pull request out and starts the review's thread, if the review limits
-  # leave room for it; tells the server how it went.
+  # leave room for it; tells the server how it went. A review that needs a sandbox
+  # this machine cannot open goes to a connected machine that can (`handoff/2`),
+  # before it counts toward this machine's limits.
   defp run(review, settings) do
-    if budget(review) == :ok, do: launch(review, settings)
+    case handoff(review, settings) do
+      {:elsewhere, other} ->
+        GenServer.cast(__MODULE__, {:elsewhere, review["key"], review["threadId"], other})
+
+      :here ->
+        if budget(review) == :ok, do: launch(review, settings)
+    end
   rescue
     e ->
       GenServer.cast(
         __MODULE__,
         {:start_failed, review["key"], review["threadId"], Exception.message(e)}
       )
+  end
+
+  # A review that needs a sandbox, on a machine that cannot open one now, is offered to
+  # the connected machines in turn (`take/1`); the first that takes it has it, as
+  # though it had queued it, and this one shows it there, or on the machine that one
+  # says claimed it. With none that does, it runs
+  # here, where its sandbox fails and says what to set up. The machine that took it
+  # starts it as its own settings say.
+  defp handoff(review, settings) do
+    peers = Node.list()
+
+    if peers != [] and sandboxed?(settings, review) and not Host.sandboxes_ready?(@id) do
+      ask = %{
+        "repository" => review["repository"],
+        "number" => review["number"],
+        "trigger" => review["trigger"],
+        "approved" => review["approved"]
+      }
+
+      peers
+      |> Enum.map(&to_string/1)
+      |> Enum.sort()
+      |> Enum.find_value(:here, fn node ->
+        case Host.peer_call(@id, node, :take, [ask], 60_000) do
+          %{"result" => {:ok, %{} = there}} ->
+            {:elsewhere, there}
+
+          %{"result" => {:ok, nil}, "machine" => machine} ->
+            {:elsewhere,
+             %{"machine" => machine, "node" => node, "status" => "queued", "claimed" => false}}
+
+          _ ->
+            nil
+        end
+      end)
+    else
+      :here
+    end
   end
 
   # Counts the start under one lock across the machines connected now, with the starts
@@ -2522,7 +2607,8 @@ defmodule HalC2Plugins.CodeReview do
         {:ok, activity} ->
           existing_comments(settings, review, sandboxed, activity["reviewThreads"] || [])
 
-        _ -> []
+        _ ->
+          []
       end
 
     %{
@@ -3428,6 +3514,34 @@ defmodule HalC2Plugins.CodeReview do
     GenServer.call(__MODULE__, {:count_start, row})
   catch
     :exit, _ -> :restarting
+  end
+
+  @doc false
+  # Another machine of the cluster, which cannot open the sandbox its review of pull
+  # request `number` of `repository` needs, hands it to this one (`handoff/2`), with
+  # what asked for it and the commit the user approved there. This machine takes it
+  # if it can run it as its own settings say, in a sandbox it can open or in none, and
+  # has the repository: the pull request is read afresh, as for the user's ask.
+  # `{:ok, nil}`, `{:ok, elsewhere}` where another machine claimed it, or
+  # `{:error, why}`.
+  def take(%{"repository" => repository, "number" => number, "trigger" => trigger} = ask)
+      when is_binary(repository) and is_integer(number) do
+    settings = server(:settings)
+
+    with {:ok, pr} <- find(settings, repository, number),
+         pr =
+           if(ask["approved"] == pr["headSha"],
+             do: Map.put(pr, "approved", pr["headSha"]),
+             else: pr
+           ),
+         true <-
+           (not sandboxed?(settings, pr) or Host.sandboxes_ready?(@id)) ||
+             {:error, "Review sandboxes can't run on this machine either."},
+         {:ok, _} = taken <- server({:take, pr, trigger || "user"}) do
+      taken
+    end
+  catch
+    :exit, _ -> {:error, "Code review is not running on this machine."}
   end
 
   @doc false

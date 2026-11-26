@@ -516,6 +516,14 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  Whether this machine can open the plugin's sandboxes now
+  (`HalC2.OpenShell.Review.ready?/0`), asked each time: it reaches the gateway.
+  """
+  def sandboxes_ready?(id) do
+    permit(id, "threads:create") == :ok and HalC2.OpenShell.Review.ready?()
+  end
+
+  @doc """
   Deletes the sandbox of thread `thread_id`, if it has one: its agent can run no
   more. `reason` says why for `sandbox_ended/2`.
   """
@@ -598,6 +606,33 @@ defmodule HalC2.Plugins.Host do
       end)
     else
       answers
+    end
+  end
+
+  @doc """
+  Calls `function` of the plugin's MC part with `args` on the machine `node` (as
+  `peers/4` names it) alone, answering as `peers/4` does for it:
+  `%{"machine" => label, "node" => node, "result" => result}`, where the result is
+  `:none` when that machine does not run the plugin or a version with `function`,
+  and `:unanswered` when it is out of reach or does not answer within `timeout`.
+  """
+  def peer_call(id, node, function, args, timeout \\ 30_000) do
+    answer =
+      try do
+        :erpc.call(
+          String.to_existing_atom(node),
+          __MODULE__,
+          :peer,
+          [id, function, args],
+          timeout
+        )
+      catch
+        _, _ -> :unanswered
+      end
+
+    case answer do
+      {:ok, %{"result" => _} = answer} -> Map.put(answer, "node", node)
+      _ -> %{"machine" => node, "node" => node, "result" => :unanswered}
     end
   end
 

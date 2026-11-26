@@ -473,6 +473,12 @@ export const ServerOpenShellStatus = Schema.Struct({
    */
   canManage: Schema.Boolean,
   manageReason: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * The labels of the connected machines of this MC's cluster that can run review
+   * sandboxes now: where a review that needs one goes while this machine can't run
+   * it. Absent from MCs from before the handoff; read it as empty.
+   */
+  sandboxMachines: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ServerOpenShellStatus = typeof ServerOpenShellStatus.Type;
 

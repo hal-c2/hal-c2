@@ -35,6 +35,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QStringList>
 #include <QVariantMap>
 #include <optional>
 
@@ -68,6 +69,18 @@ QString reviews(int count) {
 }
 
 QVariant orNull(const QString& text) { return text.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(text); }
+
+// Where this machine's code reviews that need a sandbox go while it can't run one: the
+// status's `sandboxMachines`, the cluster's machines that can (absent from older MCs).
+QString handoff(const QJsonObject& status) {
+  QStringList machines;
+  for (const QJsonValue& machine : status.value(QLatin1String("sandboxMachines")).toArray()) machines.append(machine.toString());
+  if (machines.isEmpty())
+    return QStringLiteral("Code reviews that need a sandbox fail here until this machine or another of your cluster can run them.");
+  const QString last = machines.takeLast();
+  return QStringLiteral("Code reviews that need a sandbox go to %1.")
+      .arg(machines.isEmpty() ? last : QStringLiteral("%1 and %2").arg(machines.join(QStringLiteral(", ")), last));
+}
 
 }  // namespace
 
@@ -351,11 +364,12 @@ private:
     } else if (!m_status.value(QLatin1String("supported")).toBool()) {
       state = QStringLiteral("unsupported");
       summary = QStringLiteral("Review sandboxes can't run on this machine.");
-      detail = QStringLiteral("Code reviews run without a sandbox here.");
+      detail = handoff(m_status);
     } else if (!m_status.value(QLatin1String("ready")).toBool()) {
       state = QStringLiteral("attention");
       summary = QStringLiteral("Review sandboxes can't run here yet.");
-      detail = QStringLiteral("OpenShell %1 is the version this MC pins.").arg(m_status.value(QLatin1String("pinnedVersion")).toString());
+      detail = QStringLiteral("%1 OpenShell %2 is the version this MC pins.")
+                   .arg(handoff(m_status), m_status.value(QLatin1String("pinnedVersion")).toString());
     } else {
       state = QStringLiteral("ready");
       summary = QStringLiteral("Review sandboxes can run here.");

@@ -251,6 +251,48 @@ defmodule HalC2.OpenShell.Review do
   def ended_text(_), do: "This review's sandbox is gone."
 
   @doc """
+  Whether this MC can open a review sandbox now: the checks `open/1` makes before
+  it asks for a sandbox, and a gateway that answers. A code review that needs a
+  sandbox goes to a machine of the cluster that can when this one cannot
+  (HalC2Plugins.CodeReview), and Settings names those machines (`machines/1`).
+  """
+  def ready? do
+    with true <- Process.whereis(__MODULE__) != nil,
+         :ok <- installed(),
+         :ok <- Service.reaped(),
+         {:ok, _disk} <- disk(),
+         {:ok, conn} <- GenServer.call(__MODULE__, :conn, 10_000),
+         {:ok, %{status: :healthy}} <- Client.health(conn, timeout: 3_000) do
+      true
+    else
+      _ -> false
+    end
+  catch
+    :exit, _ -> false
+  end
+
+  @doc """
+  This machine's name and whether it can open review sandboxes now (`ready?/0`),
+  for another machine of the cluster (`machines/1`).
+  """
+  def readiness, do: %{"machine" => HalC2.Environment.label(), "ready" => ready?()}
+
+  @doc """
+  The names of the machines among `nodes` (the connected ones) that can open
+  review sandboxes now. A machine that does not answer in `timeout` ms, or runs an
+  MC from before `readiness/0`, is left out.
+  """
+  def machines(nodes \\ Node.list(), timeout \\ 5_000) do
+    nodes
+    |> :erpc.multicall(__MODULE__, :readiness, [], timeout)
+    |> Enum.flat_map(fn
+      {:ok, %{"machine" => machine, "ready" => true}} when is_binary(machine) -> [machine]
+      _ -> []
+    end)
+    |> Enum.sort()
+  end
+
+  @doc """
   Opens the sandbox of review thread `thread_id`. `spec`: `%{thread_id,
   instance, clone, head_ref, base_ref, head, merge_base, review, tool, minutes,
   tokens, owner}`: the checkout is made from refs `head_ref` (at `head`) and `base_ref` of
