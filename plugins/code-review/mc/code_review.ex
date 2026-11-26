@@ -103,10 +103,9 @@ defmodule HalC2Plugins.CodeReview do
 
   One comment per root cause, not per line it touches. Do not repeat a finding that \
   is fixed or that its author declined with a reason you accept; repeat one that is \
-  still open, in its existing thread if it has one. Keep praise for the summary, \
-  never as a line comment. Report at most three low findings; fold any more into \
-  one line of the summary. Request changes only when a high finding must be fixed \
-  first.\
+  still open. Keep praise for the summary, never as a line comment. Report at most \
+  three low findings; fold any more into one line of the summary. Request changes \
+  only when a high finding must be fixed first.\
   """
 
   # --- extension ------------------------------------------------------------------------
@@ -2661,9 +2660,9 @@ defmodule HalC2Plugins.CodeReview do
     do: {:ok, %{"url" => "https://#{project["host"]}/#{review["repository"]}.git", "gh" => true}}
 
   # The pull request beyond its diff, read for the prompt: what its author says
-  # it does, the checks already failing, and the review comments already on it,
-  # so the agent judges the change against its intent and does not raise what
-  # someone else already has. Unread, the review goes ahead without it.
+  # it does, the checks already failing, and the review threads still open on it,
+  # so the agent judges the change against its intent and checks each open thread
+  # instead of standing off it. Unread, the review goes ahead without it.
   defp pull_request_context(settings, review, sandboxed) do
     ref = Map.take(review, ~w(projectId repository number))
 
@@ -2697,16 +2696,22 @@ defmodule HalC2Plugins.CodeReview do
   def existing_comments(settings, review, sandboxed, threads) do
     viewer = get_in(review, ["trust", "viewer"])
 
-    for thread <- threads,
-        not thread["isResolved"],
-        first = List.first(thread["comments"] || []),
-        first != nil,
-        sandboxed or trusted?(settings, first["author"], viewer) do
-      author = get_in(first, ["author", "login"]) || "someone"
+    quoted =
+      for thread <- threads,
+          not thread["isResolved"],
+          first = List.first(thread["comments"] || []),
+          first != nil,
+          sandboxed or trusted?(settings, first["author"], viewer) do
+        author = get_in(first, ["author", "login"]) || "someone"
 
-      "#{author} on #{thread["path"]}:#{thread["line"]}: #{truncate(String.trim(first["body"] || ""), 300)}"
-    end
-    |> Enum.take(30)
+        "#{author} on #{thread["path"]}:#{thread["line"]}: #{truncate(String.trim(first["body"] || ""), 300)}"
+      end
+
+    shown = Enum.take(quoted, 30)
+
+    if length(quoted) > 30,
+      do: shown ++ ["#{length(quoted) - 30} more open thread(s), not shown here."],
+      else: shown
   end
 
   defp checks_line(checks) do
@@ -2739,6 +2744,7 @@ defmodule HalC2Plugins.CodeReview do
       "pr.head" => review["headBranch"],
       "pr.headSha" => checkout["headSha"],
       "pr.mergeBase" => checkout["mergeBase"] || checkout["baseSha"],
+      "pr.baseSha" => checkout["baseSha"] || checkout["mergeBase"],
       "pr.body" => review["body"],
       "repository" => review["repository"]
     }
@@ -2787,6 +2793,22 @@ defmodule HalC2Plugins.CodeReview do
               "- #{c["path"]}:#{c["line"]}: #{truncate(String.trim(c["body"] || ""), 300)}"
             end)
 
+          summary =
+            case previous["summary"] do
+              text when is_binary(text) and byte_size(text) > 0 ->
+                case String.trim(text) do
+                  "" ->
+                    ""
+
+                  trimmed ->
+                    "\n\nPrevious summary, including findings outside the diff:\n" <>
+                      truncate(trimmed, 8_192)
+                end
+
+              _ ->
+                ""
+            end
+
           """
           You reviewed this pull request before, at #{sha} (verdict: #{previous["verdict"]}). \
           The commits since are `git diff #{sha} HEAD`. Check each of your previous findings: \
@@ -2794,7 +2816,7 @@ defmodule HalC2Plugins.CodeReview do
           still open in the new code. Review the new commits in full, not only the fixes. \
           Check each fix in those commits, including fixes you suggested.
           Previous findings:
-          #{findings}\
+          #{findings}#{summary}\
           """
 
         _ ->
