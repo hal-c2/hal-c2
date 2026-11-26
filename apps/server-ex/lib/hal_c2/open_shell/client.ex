@@ -293,8 +293,7 @@ defmodule HalC2.OpenShell.Client do
         workspace_scope: scope(),
         name: name,
         labels: labels,
-        spec: spec,
-        request_id: request_id()
+        spec: spec
       }
 
       with {:ok, %Pb.SandboxResponse{sandbox: sandbox}} <-
@@ -400,8 +399,7 @@ defmodule HalC2.OpenShell.Client do
         request = %Pb.DeleteSandboxRequest{
           workspace_scope: scope(),
           name: name,
-          allow_missing: true,
-          request_id: request_id()
+          allow_missing: true
         }
 
         with {:ok, %Pb.DeleteSandboxResponse{} = response} <-
@@ -478,8 +476,7 @@ defmodule HalC2.OpenShell.Client do
       {:error, %{status: :not_found}} ->
         request = %Pb.ImportProviderProfilesRequest{
           workspace_scope: scope(),
-          profiles: [%Pb.ProviderProfileImportItem{profile: profile, source: "hal-c2"}],
-          request_id: request_id()
+          profiles: [%Pb.ProviderProfileImportItem{profile: profile, source: "hal-c2"}]
         }
 
         case call(conn, :import_provider_profiles, request, opts) do
@@ -544,8 +541,7 @@ defmodule HalC2.OpenShell.Client do
           # Its profile is this workspace's (`ensure_profile/3`), not one of the
           # gateway's by the same id.
           profile_workspace: OpenShell.workspace()
-        },
-        request_id: request_id()
+        }
       }
 
       with {:ok, %Pb.ProviderResponse{}} <- call(conn, :create_provider, request, opts), do: :ok
@@ -601,8 +597,7 @@ defmodule HalC2.OpenShell.Client do
     request = %Pb.DeleteProviderRequest{
       workspace_scope: scope(),
       name: name,
-      allow_missing: true,
-      request_id: request_id()
+      allow_missing: true
     }
 
     with {:ok, %Pb.ProviderResponse{provider: %{metadata: %{labels: labels}}}} <-
@@ -665,8 +660,7 @@ defmodule HalC2.OpenShell.Client do
         case Keyword.get(opts, :timeout_seconds) do
           nil -> nil
           seconds -> %Google.Protobuf.Duration{seconds: seconds}
-        end,
-      request_id: request_id()
+        end
     }
 
     {opts, dial} = within(opts, dial)
@@ -869,16 +863,10 @@ defmodule HalC2.OpenShell.Client do
       Regex.match?(@label_value, value)
   end
 
+  # No request sets `request_id`. The gateway keeps each one for a day, at most
+  # 1,000 a caller, so a retry with it replays; the MC never retries by ID, so each
+  # would only take a slot (#1883).
   defp scope, do: %WorkspaceSelector{selection: {:workspace, OpenShell.workspace()}}
-
-  # The gateway wants a hyphenated UUID; a random (v4) one.
-  defp request_id do
-    <<a::48, _::4, b::12, _::2, c::62>> = :crypto.strong_rand_bytes(16)
-    <<u::128>> = <<a::48, 4::4, b::12, 2::2, c::62>>
-    hex = u |> Integer.to_string(16) |> String.pad_leading(32, "0") |> String.downcase()
-    <<p1::binary-8, p2::binary-4, p3::binary-4, p4::binary-4, p5::binary-12>> = hex
-    Enum.join([p1, p2, p3, p4, p5], "-")
-  end
 
   # One unary call: `{:ok, response}` or `{:error, %{status, message}}`, where
   # `status` is the gRPC status as an atom (`:not_found`, `:permission_denied`, ...).

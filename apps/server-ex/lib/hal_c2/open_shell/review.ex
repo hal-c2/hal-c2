@@ -1087,8 +1087,12 @@ defmodule HalC2.OpenShell.Review do
     do:
       "This MC's OpenShell gateway holds another HAL-C2 environment's sandboxes, so it makes no review sandbox. Give each environment a gateway of its own."
 
-  def why(%{message: message}) when is_binary(message),
-    do: "OpenShell refused the review sandbox: #{message}"
+  # The gateway's cap on the mutations it remembers, a day each (#1883).
+  def why(%{message: message}) when is_binary(message) do
+    if message =~ "durable mutation admission limit",
+      do: "The review hit OpenShell's request limit; this clears within a day.",
+      else: "OpenShell refused the review sandbox: #{message}"
+  end
 
   def why(reason), do: "OpenShell refused the review sandbox: #{inspect(reason)}"
 
