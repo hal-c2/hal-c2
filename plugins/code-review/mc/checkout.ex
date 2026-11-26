@@ -22,6 +22,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # waits on; one past these is not parsed (`diff_lines/4`).
   @diff_ms 60_000
   @diff_bytes 8 * 1024 * 1024
+  # The git commands that start programs of their own, which a deadline kills with them.
+  @starting ~w(fetch submodule worktree)
 
   @doc """
   Fetches pull request `number` and its base branch `base` from `remote` into the bare
@@ -580,7 +582,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
       {:ok, _} ->
         :ok
 
+      # An add cut off keeps its entry locked as initializing, which prune skips.
       error ->
+        git(root, ["worktree", "unlock", path])
         File.rm_rf(path)
         git(root, ["worktree", "prune"])
         error
@@ -685,8 +689,10 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   # The clone is the plugin's, so git runs in it as in any repository the MC keeps for
   # itself (`HalC2.Git.isolated/1`), with the token taken out of a failed one's error.
-  # Each git has a deadline and a cap on its output; past the deadline it is killed with
-  # what it started (a fetch's transport and credential helper).
+  # Each git has a deadline and a cap on its output; past the deadline it is killed, and
+  # a git that starts programs (a fetch's transport and credential helper, a submodule
+  # update's clones, a worktree's checkout) with what it started. A quick read starts
+  # nothing, so it runs without the shell that records its group.
   defp git(cwd, args, env \\ [], opts \\ []) do
     with {:ok, out} <- raw_git(cwd, args, env, opts), do: {:ok, String.trim(out)}
   end
@@ -702,7 +708,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
            unset: isolated[:unset] ++ Enum.map(unset, &elem(&1, 0)),
            timeout: Keyword.get(opts, :timeout, @git_ms),
            max_bytes: max,
-           stop_children: {__MODULE__, make_ref()}
+           stop_children: if(command(args) in @starting, do: {__MODULE__, make_ref()})
          ) do
       {:ok, %{status: 0, truncated: true}} ->
         {:error, "git #{command(args)} wrote more than #{max} bytes."}

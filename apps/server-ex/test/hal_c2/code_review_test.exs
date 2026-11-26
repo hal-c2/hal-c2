@@ -752,14 +752,16 @@ defmodule HalC2.CodeReviewTest do
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/cut-short")
 
-    # A git whose worktree add writes the checkout and then fails, as one cut off would.
+    # A git whose worktree add writes the checkout and then fails with its entry still
+    # locked as initializing, as one cut off would.
     real = System.find_executable("git")
     fake = Path.join(context.dir, "bin/git")
+    lock = Path.join(clone, "worktrees/cut-short/locked")
 
     File.write!(fake, """
     #!/bin/sh
     case "$*" in
-      *"worktree add "*) '#{real}' "$@"; exit 1 ;;
+      *"worktree add "*) '#{real}' "$@"; echo initializing > '#{lock}'; exit 1 ;;
     esac
     exec '#{real}' "$@"
     """)
@@ -769,6 +771,7 @@ defmodule HalC2.CodeReviewTest do
     assert {:error, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
     :ok = apply(checkout, :release, [])
     refute File.exists?(path)
+    refute File.exists?(Path.dirname(lock))
     refute git!(context.dir, ["--git-dir", clone, "worktree", "list"]) =~ path
   end
 
