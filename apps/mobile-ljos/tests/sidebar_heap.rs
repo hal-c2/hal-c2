@@ -165,7 +165,6 @@ fn shows(engine: &Engine, item: ObjectId, name: &str) -> bool {
 }
 
 #[test]
-#[ignore = "needs a Ljós pin that sweeps replaced records at every collection (hal-c2/ljos-ui#734, #1728): on this one the heap holds 78 MB at frame 50 (hal-c2/hal-c2#1793)"]
 fn rows_news_does_not_exhaust_a_large_lists_script_heap() {
     let home = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a home for the phone");
     let dir = |name: &str| Some(home.path().join(name));
