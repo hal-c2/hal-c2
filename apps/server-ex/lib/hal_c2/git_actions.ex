@@ -544,7 +544,7 @@ defmodule HalC2.GitActions do
 
     case target do
       %{kind: "forgejo"} ->
-        forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
+        forgejo_pull_request(cwd, branch, Map.put(target, :url, url), pushed?)
 
       %{kind: kind} when kind not in ["unknown"] ->
         github_pull_request(cwd, branch, kind, target, pushed?)
@@ -646,19 +646,22 @@ defmodule HalC2.GitActions do
 
   # The branch the pull request is from, as its remote has it (`pr_head/2`),
   # and the owner of the fork it was published to — nil when that is the base
-  # repository itself, as `forgejo_head/3` tells it.
-  defp github_head(cwd, branch, target, pushed?),
-    do: {pr_head(cwd, branch), fork_owner(cwd, branch, target && target.repository, pushed?)}
+  # repository itself, as `forgejo_head/4` tells it.
+  defp github_head(cwd, branch, target, pushed?) do
+    fork = fork_repository(cwd, branch, target && target.repository, pushed?)
+    {pr_head(cwd, branch), fork && fork |> String.split("/") |> hd()}
+  end
 
-  # The owner is read from the remote's push URL: git pushes to `pushurl`
-  # when one is set, whatever the fetch URL names.
-  defp fork_owner(cwd, branch, base_repository, pushed?) do
+  # The fork the branch was published to as `owner/name` (nil when that is the
+  # base repository itself), read from the published remote's push URL: git
+  # pushes to `pushurl` when one is set, whatever the fetch URL names.
+  defp fork_repository(cwd, branch, base_repository, pushed?) do
     with remote when is_binary(remote) <- published_remote(cwd, branch, pushed?),
          url when is_binary(url) <- push_url(cwd, remote),
          %{repository: repository} <- PullRequests.parse_remote(url),
          false <- same_repository?(repository, base_repository),
-         [owner, _name | _] <- String.split(repository, "/"),
-         do: owner,
+         [_owner, _name | _] <- String.split(repository, "/"),
+         do: repository,
          else: (_ -> nil)
   end
 
@@ -721,9 +724,9 @@ defmodule HalC2.GitActions do
 
   # As the Forgejo provider's `createChangeRequest`: in the repository the primary
   # remote names, from `owner:branch` when the branch is pushed to a fork of it.
-  defp forgejo_pull_request(cwd, branch, target) do
+  defp forgejo_pull_request(cwd, branch, target, pushed?) do
     {base, base_qualified} = pr_base(cwd, branch)
-    {head_branch, fork} = forgejo_head(cwd, branch, target)
+    {head_branch, fork} = forgejo_head(cwd, branch, target, pushed?)
     owner = fork && fork |> String.split("/") |> hd()
 
     # Only a pull request from this branch's own repository is its pull request: a fork
@@ -777,32 +780,13 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # The branch the pull request is from, as its upstream names it, and the fork it was
-  # pushed to as `owner/name` (nil when that is the target repository itself).
-  defp forgejo_head(cwd, branch, target) do
-    config = fn key ->
-      case Git.ok(cwd, ["config", "--get", "branch.#{branch}.#{key}"]) do
-        {:ok, value} -> String.trim(value)
-        _ -> nil
-      end
-    end
-
-    head =
-      case config.("merge") do
-        "refs/heads/" <> head -> head
-        _ -> branch
-      end
-
-    fork =
-      with remote when is_binary(remote) <- config.("remote"),
-           url when is_binary(url) <- remote_url(cwd, remote),
-           %{repository: repository} <- PullRequests.parse_remote(url),
-           false <- String.downcase(repository) == String.downcase(target.repository),
-           do: repository,
-           else: (_ -> nil)
-
-    {head, fork}
-  end
+  # The branch the pull request is from, as its remote has it (`pr_head/2`),
+  # and the fork it was published to as `owner/name` (nil when that is the
+  # target repository itself) — as `github_head/4` tells them, from where the
+  # branch was published (`published_remote/3`, `push_url/2`), not from the
+  # upstream it tracks.
+  defp forgejo_head(cwd, branch, target, pushed?),
+    do: {pr_head(cwd, branch), fork_repository(cwd, branch, target.repository, pushed?)}
 
   defp remote_url(cwd, remote) do
     case Git.ok(cwd, ["config", "--get", "remote.#{remote}.url"]) do
