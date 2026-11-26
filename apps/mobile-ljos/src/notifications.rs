@@ -113,6 +113,27 @@ pub fn phase_of(thread: &Thread, now: i64) -> Option<(&'static str, i64)> {
     }
 }
 
+/// The distributor a subscribe lands on — the saved one while it
+/// is still installed, else the only installed one, else none (the
+/// user is asked, or there is none to ask about) — and whether
+/// landing there switches distributors, which invalidates the
+/// saved endpoint: an endpoint belongs to the distributor that
+/// gave it, and the new one's has not arrived yet.
+fn distributor_choice(
+    saved: &str,
+    installed: &[crate::push_system::Distributor],
+) -> (String, bool) {
+    if !saved.is_empty() && installed.iter().any(|d| d.id == saved) {
+        return (saved.to_owned(), false);
+    }
+    if installed.len() == 1 {
+        let chosen = installed[0].id.clone();
+        let switched = chosen != saved;
+        return (chosen, switched);
+    }
+    (String::new(), false)
+}
+
 pub struct Notifications {
     bridge: Bridge,
     me: Me<Notifications>,
@@ -366,19 +387,23 @@ impl Notifications {
 
     fn subscribe(&mut self, engine: &Engine) {
         let installed = self.system.distributors();
-        let mut chosen = self
+        let saved = self
             .inbox_value("distributor")
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if !installed.iter().any(|d| d.id == chosen) {
-            chosen = if installed.len() == 1 {
-                installed[0].id.clone()
-            } else {
-                String::new()
-            };
-        }
+        let (chosen, switched) = distributor_choice(&saved, &installed);
         if !chosen.is_empty() {
+            // An endpoint belongs to the distributor that gave it:
+            // landing on another one (automatically, because the
+            // saved one is gone and only one is installed) clears
+            // it until the new distributor answers, as an explicit
+            // pick does. Otherwise `enabled` and a registration in
+            // that window would pair the new distributor with the
+            // old one's endpoint.
+            if switched {
+                self.set_inbox_value("endpoint", json!(""));
+            }
             self.set_inbox_value("distributor", json!(chosen));
             self.message.clear();
             self.system.subscribe(&chosen);
@@ -401,8 +426,10 @@ impl Notifications {
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if previous != id && !previous.is_empty() {
-            self.system.unsubscribe();
+        if previous != id {
+            if !previous.is_empty() {
+                self.system.unsubscribe();
+            }
             self.set_inbox_value("endpoint", json!(""));
         }
         self.set_inbox_value("distributor", json!(id));
@@ -736,6 +763,41 @@ mod tests {
             listed: true,
             ..Thread::default()
         }
+    }
+
+    #[test]
+    fn a_distributor_switch_invalidates_the_saved_endpoint() {
+        use crate::push_system::Distributor;
+        let d = |id: &str| Distributor {
+            id: id.into(),
+            label: id.into(),
+        };
+        // Saved A is gone and B is the only one installed: the
+        // subscribe lands on B as a switch, so A's endpoint goes
+        // until B gives its own.
+        assert_eq!(
+            distributor_choice("a.example", &[d("b.example")]),
+            ("b.example".to_owned(), true)
+        );
+        // Resubscribing to the same distributor keeps its endpoint.
+        assert_eq!(
+            distributor_choice("a.example", &[d("a.example"), d("b.example")]),
+            ("a.example".to_owned(), false)
+        );
+        // Nothing saved, one installed: landing on it is a switch
+        // from no distributor, so no stale endpoint is trusted.
+        assert_eq!(
+            distributor_choice("", &[d("b.example")]),
+            ("b.example".to_owned(), true)
+        );
+        // Nothing to land on yet (several to choose from, or none
+        // installed): no choice, and the saved pair stays as it is
+        // until a pick switches it.
+        assert_eq!(
+            distributor_choice("a.example", &[d("b.example"), d("c.example")]),
+            (String::new(), false)
+        );
+        assert_eq!(distributor_choice("a.example", &[]), (String::new(), false));
     }
 
     #[test]
