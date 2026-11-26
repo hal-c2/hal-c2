@@ -574,9 +574,11 @@ fn a_renewal_reply_for_a_left_session_writes_no_expiry_and_fails_its_waiter() {
     let (slot, reply) = reply_slot();
     harness.client.post("/api/auth/session", json!({}), reply);
     harness.mc_sees(|seen| matches!(seen, Seen::Renew { .. }));
-    harness
-        .client
-        .open(harness.mc.origin.clone(), "other-token");
+    // Another session, at another MC with the same token.
+    let (events, _seen) = channel();
+    let other_mc = FakeMc::start(events);
+    harness.client.open(other_mc.origin.clone(), TOKEN);
+    let _held = &other_mc;
     let others = chrono::Utc::now() + chrono::Duration::days(30);
     harness.client.set_credential_expiry(Some(others));
     harness.catch_up();
@@ -590,4 +592,19 @@ fn a_renewal_reply_for_a_left_session_writes_no_expiry_and_fails_its_waiter() {
     );
     assert_eq!(harness.client.credential_expiry(), Some(others));
     assert!(renewed.borrow().is_empty(), "no renewal is notified");
+
+    // The new session's own queue is its own: its renewal-dependent
+    // request starts a second renewal (not the first session's),
+    // runs after it, and the renewal it completes is notified.
+    harness.client.set_credential_expiry(Some(past));
+    let (slot, reply) = reply_slot();
+    harness.client.post("/api/auth/session", json!({}), reply);
+    harness.until(|_| slot.borrow().is_some());
+    let result = slot.borrow_mut().take().unwrap();
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        harness.client.credential_expiry().map(|at| at.to_rfc3339()),
+        Some("2027-01-01T00:00:00+00:00".to_owned())
+    );
+    assert_eq!(renewed.borrow().len(), 1);
 }
