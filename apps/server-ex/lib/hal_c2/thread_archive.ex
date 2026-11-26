@@ -181,12 +181,12 @@ defmodule HalC2.ThreadArchive do
   @doc "Removes the files `build/2` made for an archive."
   def discard(archive) do
     for %{"temporary" => true, "path" => path} <- files(archive), do: File.rm(path)
-    with {:entities, path, _kinds} <- archive["entities"], do: File.rm(path)
+    with {:entities, path, _kinds, _count} <- archive["entities"], do: File.rm(path)
     :ok
   end
 
   @doc "The kinds of entity an archive holds."
-  def kinds(%{"entities" => {:entities, _path, kinds}}), do: kinds
+  def kinds(%{"entities" => {:entities, _path, kinds, _count}}), do: kinds
   def kinds(%{"entities" => entities}), do: MapSet.new(entities, &hd/1)
 
   # A built archive's entities: a JSON array in a file made for it, written a row at
@@ -195,22 +195,22 @@ defmodule HalC2.ThreadArchive do
   defp entities_file(state) do
     path = scratch()
 
-    kinds =
+    {kinds, count} =
       File.open!(path, [:write, :raw, :binary, :delayed_write], fn out ->
-        {_, kinds} =
+        {_, kinds, count} =
           state
           |> StreamState.rows()
-          |> Enum.reduce({"[", MapSet.new()}, fn {kind, eid, entity}, {comma, kinds} ->
+          |> Enum.reduce({"[", MapSet.new(), 0}, fn {kind, eid, entity}, {comma, kinds, count} ->
             :ok = :file.write(out, [comma, JSON.encode_to_iodata!([kind, eid, entity])])
-            {",", MapSet.put(kinds, kind)}
+            {",", MapSet.put(kinds, kind), count + 1}
           end)
 
         :ok = :file.write(out, "]")
-        kinds
+        {kinds, count}
       end)
 
     File.chmod(path, 0o600)
-    {:entities, path, kinds}
+    {:entities, path, kinds, count}
   end
 
   @doc "Every file an archive carries."
@@ -261,7 +261,7 @@ defmodule HalC2.ThreadArchive do
     |> Kernel.<>("]" <> rest)
   end
 
-  def encode(%{"entities" => {:entities, path, _kinds}} = archive) do
+  def encode(%{"entities" => {:entities, path, _kinds, _count}} = archive) do
     {marker, archive} = entities_marker(archive)
     [before, rest] = archive |> JSON.encode!() |> String.split(marker)
     before <> File.read!(path) <> rest
@@ -288,7 +288,7 @@ defmodule HalC2.ThreadArchive do
 
     {entities, archive} =
       case archive["entities"] do
-        {:entities, source, _kinds} ->
+        {:entities, source, _kinds, _count} ->
           {marker, archive} = entities_marker(archive)
           {{marker, source}, archive}
 
@@ -1100,11 +1100,17 @@ defmodule HalC2.ThreadArchive do
 
   # --- pieces ---------------------------------------------------------------------
 
-  @doc "A short account of an archive: `%{thread, title, attachments, terminalLogs, checkpoints, session}`."
+  @doc "A short account of an archive: `%{thread, title, events, attachments, terminalLogs, checkpoints, session}`."
   def summary(archive) do
     %{
       thread: archive["thread"]["id"],
       title: archive["thread"]["title"],
+      events:
+        case archive["entities"] do
+          {:entities, _path, _kinds, count} -> count
+          entities when is_list(entities) -> length(entities)
+          _ -> 0
+        end,
       attachments: length(archive["attachments"] || []),
       terminal_logs: length(archive["terminalLogs"] || []),
       checkpoints: length((archive["checkpoints"] || %{})["refs"] || []),

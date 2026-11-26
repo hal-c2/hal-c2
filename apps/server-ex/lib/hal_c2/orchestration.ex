@@ -2431,8 +2431,15 @@ defmodule HalC2.Orchestration do
     {root, pull_requests} =
       case HalC2.Shell.row(node(), thread_id) do
         {"thread", row} ->
-          {row["worktreePath"] || project_root(row["projectId"]),
-           PullRequests.visible(row["pullRequests"] || [])}
+          # The worktree may have been cleaned up since: the title writer is
+          # started in a folder that is still there, or the system's temp one.
+          root =
+            Enum.find(
+              [row["worktreePath"], project_root(row["projectId"])],
+              &(is_binary(&1) and File.dir?(&1))
+            )
+
+          {root, PullRequests.visible(row["pullRequests"] || [])}
 
         _ ->
           {nil, []}
