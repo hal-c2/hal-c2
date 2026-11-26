@@ -5,15 +5,19 @@
 //! as the link it is. The camera itself is behind
 //! [`crate::scan_camera`]'s seam.
 //!
-//! Publishes `scanner`:
-//!   {scanning: frames are being read,
-//!    access:   0 unknown, 1 asking or unasked, 2 granted, 3 denied,
-//!    failed:   "" while the camera runs,
-//!    message:  a sentence for the user, "" when none}
+//! Publishes `scanner`, as `MobileShell.qml` and `ScanScreen.qml`
+//! read it (mobile-qt's Scanner::publish):
+//!   {open:    the scan screen shows,
+//!    access:  "asking" | "granted" | "denied" | "unknown",
+//!    failed:  the camera gives no picture,
+//!    message: a sentence for the user, "" when none}
 //!
-//! Actions: `scanner.open {sink}` (the preview's sink, for the
-//! frame producer that will feed it), `scanner.close`,
-//! `scanner.requestAccess`, `scanner.openSettings`.
+//! Actions: `scanner.open`, `scanner.close`,
+//! `scanner.preview {sink}` (the preview's sink, for the frame
+//! producer that will feed it), `scanner.settings`,
+//! `scanner.retry`; `scanner.requestAccess` and
+//! `scanner.openSettings` are kept as aliases of the asking and
+//! the settings.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -29,16 +33,6 @@ use crate::scan_camera::{self, Access, Failure, ScanCamera};
 
 const KEY: &str = "scanner";
 
-/// The published access numbers, as the screen reads them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AccessState {
-    #[default]
-    Unknown = 0,
-    Unasked = 1,
-    Granted = 2,
-    Denied = 3,
-}
-
 pub struct Scanner {
     bridge: Bridge,
     me: Me<Scanner>,
@@ -47,16 +41,15 @@ pub struct Scanner {
     sink: Option<ObjectId>,
     open: bool,
     active: bool,
-    access: AccessState,
+    access: Access,
     asking: bool,
-    /// Read on open, when the system's word cannot change as the page shows.
-    remembered: AccessState,
-    failed: String,
+    failed: bool,
     started: bool,
     message: String,
-    /// Runs since the screen opened: the answers to a screen that
-    /// has gone are dropped.
-    generation: u64,
+    /// The camera run in flight: each start is a new one, and a
+    /// frame read (or a failure) from an older run is dropped,
+    /// however soon a new run follows.
+    run: u64,
     /// A frame is being read.
     reading: Rc<Cell<bool>>,
 }
@@ -72,10 +65,11 @@ impl Controller for Scanner {
                     let active = matches!(engine.read_by_name(app, "active"), Value::Bool(true));
                     me.run(engine, move |c: &mut Scanner, engine| {
                         c.active = active;
-                        // Access may have been given back in the system's settings.
-                        if active && c.open && c.access == AccessState::Denied {
-                            c.access = AccessState::Unasked;
-                            c.message.clear();
+                        // Behind another app the camera is off; back
+                        // at the front, the user may have been to
+                        // the system's settings to allow it.
+                        if active && c.open && !c.asking {
+                            c.access = c.camera.access(engine);
                         }
                         c.update(engine);
                     });
@@ -88,13 +82,12 @@ impl Controller for Scanner {
             sink: None,
             open: false,
             active: true,
-            access: AccessState::Unknown,
+            access: Access::Undetermined,
             asking: false,
-            remembered: AccessState::Unknown,
-            failed: String::new(),
+            failed: false,
             started: false,
             message: String::new(),
-            generation: 0,
+            run: 0,
             reading: Rc::new(Cell::new(false)),
         }
     }
@@ -103,19 +96,14 @@ impl Controller for Scanner {
         self.publish(engine);
     }
 
-    fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
+    fn handle(&mut self, engine: &Engine, action: &str, _payload: &Json) -> bool {
         match action {
-            "scanner.open" => {
-                // The sink reaches the controller as the QML value
-                // it is where the bridge carries one; the producer
-                // that will feed it is the Android side's (see
-                // scan_camera), so nothing here needs it yet.
-                let _ = payload;
-                self.open_with(engine, None);
-            }
+            "scanner.open" => self.open(engine),
             "scanner.close" => self.close(engine),
+            "scanner.preview" => self.preview(engine),
+            "scanner.settings" | "scanner.openSettings" => self.camera.open_settings(engine),
+            "scanner.retry" => self.retry(engine),
             "scanner.requestAccess" => self.request_access(engine),
-            "scanner.openSettings" => self.camera.open_settings(engine),
             _ => return false,
         }
         true
@@ -123,138 +111,137 @@ impl Controller for Scanner {
 }
 
 impl Scanner {
-    pub fn open_with(&mut self, engine: &Engine, sink: Option<ObjectId>) {
-        self.generation += 1;
-        self.sink = sink;
+    pub fn open(&mut self, engine: &Engine) {
+        if self.open {
+            return;
+        }
         self.open = true;
-        self.message.clear();
-        self.access = if self.remembered == AccessState::Unknown {
-            AccessState::Unasked
-        } else {
-            self.remembered
-        };
+        self.access = self.camera.access(engine);
+        // Asked whenever the app does not have it: only the system
+        // knows whether it will still put the question, and it
+        // answers at once when it will not.
+        if self.access != Access::Granted && !self.asking {
+            self.ask(engine);
+        }
         self.update(engine);
     }
 
     pub fn close(&mut self, engine: &Engine) {
-        self.generation += 1;
+        if !self.open {
+            return;
+        }
         self.open = false;
+        self.failed = false;
+        self.message.clear();
         self.sink = None;
         self.update(engine);
-        self.bridge.publish(engine, KEY, json!(null));
+    }
+
+    /// The screen's preview is up. The sink reaches the controller
+    /// as a QML value the bridge cannot carry as an object yet,
+    /// and no frame producer feeds it on this host (scan_camera's
+    /// note), so for now the action only says the screen is there:
+    /// the camera's frames come through the seam's callback.
+    fn preview(&mut self, engine: &Engine) {
+        self.update(engine);
+    }
+
+    fn retry(&mut self, engine: &Engine) {
+        if !self.open || !self.failed {
+            return;
+        }
+        self.failed = false;
+        self.message.clear();
+        self.update(engine);
     }
 
     fn request_access(&mut self, engine: &Engine) {
-        if self.asking {
-            return;
-        }
         self.message.clear();
-        if self.access == AccessState::Granted {
+        if self.access == Access::Granted || self.asking {
             self.update(engine);
             return;
         }
-        self.asking = true;
+        self.ask(engine);
         self.publish(engine);
-        let generation = self.generation;
+    }
+
+    fn ask(&mut self, engine: &Engine) {
+        self.asking = true;
         let me = self.me.clone();
         self.camera.request_access(
             engine,
-            Rc::new(move |engine, access| {
+            Rc::new(move |engine, answered| {
                 // A camera that answers at once (a test's, or a
                 // system that has decided) still lands after this
                 // controller returns.
                 me.run_after(engine, move |c: &mut Scanner, engine| {
                     c.asking = false;
-                    if generation != c.generation {
-                        c.publish(engine);
-                        return;
-                    }
-                    match access {
-                        Access::Granted => c.access = AccessState::Granted,
-                        Access::Denied => {
-                            c.access = AccessState::Denied;
-                            c.message = "Camera access was denied.".into();
-                        }
-                        Access::Undetermined => {
-                            c.message = "Camera access was not decided. Try again.".into();
-                        }
-                    }
-                    c.remembered = c.access;
+                    c.access = answered;
                     c.update(engine);
                 });
             }),
         );
     }
 
-    /// The camera runs while the screen shows, the app is in front,
-    /// and access is granted.
-    fn update(&mut self, engine: &Engine) {
-        if self.open
-            && self.access == AccessState::Unasked
-            && self.remembered == AccessState::Unknown
-        {
-            // The word is read here, after what open published: on
-            // iOS the word is cached without the app having told the
-            // OS about cameras.
-            self.remembered = match self.camera.access(engine) {
-                Access::Granted => AccessState::Granted,
-                Access::Denied => AccessState::Denied,
-                Access::Undetermined => AccessState::Unasked,
-            };
-            if self.remembered != AccessState::Unasked {
-                self.access = self.remembered;
+    fn failure(&mut self, engine: &Engine, why: Failure) {
+        // The camera's to let go of, for whichever app has it now;
+        // what a frame from before held is dropped with it (found
+        // checks the run).
+        self.camera.stop();
+        self.started = false;
+        self.failed = true;
+        self.message = match why {
+            Failure::NoCamera => {
+                "This device has no camera. Go back and enter the pairing link instead.".into()
             }
-        }
-        let run = self.open && self.active && self.access == AccessState::Granted;
-        if run == self.started {
-            self.publish(engine);
-            return;
-        }
-        self.started = run;
-        if !run {
-            self.camera.stop();
-            self.publish(engine);
-            return;
-        }
-        self.failed.clear();
-        let generation = self.generation;
-        let me = self.me.clone();
-        let reading = self.reading.clone();
-        self.camera.start(
-            engine,
-            self.sink,
-            Rc::new(move |engine, frame| {
-                let me = me.clone();
-                let reading = reading.clone();
-                me.run(engine, move |c: &mut Scanner, engine| {
-                    if generation == c.generation {
-                        c.frame(engine, frame, &reading, generation);
-                    }
-                });
-            }),
-            Rc::new({
-                let me = self.me.clone();
-                move |engine, failure| {
-                    me.run(engine, move |c: &mut Scanner, engine| {
-                        if generation != c.generation {
-                            return;
-                        }
-                        c.failed = match failure {
-                            Failure::NoCamera => "This device has no camera.".into(),
-                            Failure::Stopped => {
-                                "The camera stopped. Close anything else using it, then try again."
-                                    .into()
-                            }
-                        };
-                        c.publish(engine);
-                    });
-                }
-            }),
-        );
+            Failure::Stopped => "The camera cannot be used right now. Another app may be using it: close that app and try again, or go back and enter the pairing link.".into(),
+        };
         self.publish(engine);
     }
 
-    fn frame(&mut self, engine: &Engine, frame: Frame, reading: &Rc<Cell<bool>>, generation: u64) {
+    /// The camera runs while the screen shows, the app is in
+    /// front, access is granted and it has not failed.
+    fn update(&mut self, engine: &Engine) {
+        let wanted = self.open && !self.failed && self.access == Access::Granted && self.active;
+        if wanted && !self.started {
+            self.started = true;
+            self.run += 1;
+            let run = self.run;
+            let me = self.me.clone();
+            let reading = self.reading.clone();
+            self.camera.start(
+                engine,
+                self.sink,
+                Rc::new(move |engine, frame| {
+                    let me = me.clone();
+                    let reading = reading.clone();
+                    // A camera may deliver its first frame from
+                    // inside start: take it after update returns.
+                    me.run_after(engine, move |c: &mut Scanner, engine| {
+                        if c.started && run == c.run {
+                            c.frame(engine, frame, &reading, run);
+                        }
+                    });
+                }),
+                Rc::new({
+                    let me = self.me.clone();
+                    move |engine, failure| {
+                        me.run(engine, move |c: &mut Scanner, engine| {
+                            if run == c.run && c.started {
+                                c.failure(engine, failure);
+                            }
+                        });
+                    }
+                }),
+            );
+        } else if !wanted && self.started {
+            self.camera.stop();
+            self.started = false;
+        }
+        self.publish(engine);
+    }
+
+    fn frame(&mut self, engine: &Engine, frame: Frame, reading: &Rc<Cell<bool>>, run: u64) {
         if !self.started || reading.get() {
             return;
         }
@@ -271,8 +258,10 @@ impl Scanner {
                 done.set(false);
                 let texts = texts.unwrap_or_default();
                 me.run(engine, move |c: &mut Scanner, engine| {
-                    if generation == c.generation {
-                        c.read(engine, texts);
+                    // Read off a frame from before the camera
+                    // stopped, even if it runs again.
+                    if c.started && run == c.run {
+                        c.found(engine, texts);
                     }
                 });
             },
@@ -282,25 +271,39 @@ impl Scanner {
         }
     }
 
-    fn read(&mut self, engine: &Engine, texts: Vec<String>) {
-        // Offline, pairing waits for the connection (read()).
-        for text in texts {
-            self.bridge
-                .dispatch(engine, "pairing.pair", json!({"link": text}));
+    fn found(&mut self, engine: &Engine, texts: Vec<String>) {
+        if texts.is_empty() {
+            return;
         }
+        for text in &texts {
+            if let Some(invitation) = hal_c2_mc::pairing::read_invitation(text) {
+                let link = invitation.link;
+                self.close(engine);
+                self.bridge
+                    .dispatch(engine, "pairing.pair", json!({"link": link}));
+                return;
+            }
+        }
+        self.message = "That is not a HAL-C2 pairing code. Scan the code under Settings → Connections on the machine that runs HAL-C2.".into();
+        self.publish(engine);
     }
 
     fn publish(&self, engine: &Engine) {
-        if !self.open {
-            self.bridge.publish(engine, KEY, json!(null));
-            return;
-        }
+        let access = if self.asking {
+            "asking"
+        } else {
+            match self.access {
+                Access::Granted => "granted",
+                Access::Denied => "denied",
+                Access::Undetermined => "unknown",
+            }
+        };
         self.bridge.publish(
             engine,
             KEY,
             json!({
-                "scanning": self.started && self.failed.is_empty(),
-                "access": self.access as i32,
+                "open": self.open,
+                "access": access,
                 "failed": self.failed,
                 "message": self.message,
             }),

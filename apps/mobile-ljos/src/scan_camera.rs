@@ -108,7 +108,11 @@ struct DeviceCamera {
     permission: RefCell<Option<ObjectId>>,
     /// A failed start answering on a later turn.
     failing: Held,
-    started: Cell<bool>,
+    started: Rc<Cell<bool>>,
+    /// The start in flight: a stopped (or superseded) start's
+    /// failure is never told (stop takes no engine to cancel the
+    /// timer with, so the timer checks these).
+    run: Rc<Cell<u64>>,
 }
 
 impl DeviceCamera {
@@ -176,20 +180,28 @@ impl ScanCamera for DeviceCamera {
     ) {
         // No frames can come from anywhere yet (the seam's note
         // above): failed on a later turn, as a camera that did not
-        // start says so.
+        // start says so — unless this start was stopped first.
         self.started.set(true);
+        self.run.set(self.run.get() + 1);
+        let run = self.run.get();
+        let (started, current) = (self.started.clone(), self.run.clone());
         let timer = schedule::after(
             engine,
             "scan camera failed",
             None,
             std::time::Duration::ZERO,
-            move |engine| failed(engine, Failure::NoCamera),
+            move |engine| {
+                if started.get() && current.get() == run {
+                    failed(engine, Failure::NoCamera);
+                }
+            },
         );
         self.failing.hold(engine, timer);
     }
 
     fn stop(&self) {
         self.started.set(false);
+        self.run.set(self.run.get() + 1);
     }
 
     fn open_settings(&self, engine: &Engine) {

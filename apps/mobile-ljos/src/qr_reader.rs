@@ -11,11 +11,11 @@
 /// One byte of brightness a pixel, which is all a reader looks at.
 #[derive(Clone, Debug)]
 pub struct Gray {
-    pub width: usize,
-    pub height: usize,
+    width: usize,
+    height: usize,
     /// Row-major, `stride` bytes a row (at least width).
-    pub stride: usize,
-    pub data: Vec<u8>,
+    stride: usize,
+    data: Vec<u8>,
 }
 
 impl Gray {
@@ -26,6 +26,26 @@ impl Gray {
             stride: width,
             data,
         })
+    }
+
+    /// A picture whose rows are padded to `stride`: the last row
+    /// needs no padding after its pixels.
+    pub fn with_stride(width: usize, height: usize, stride: usize, data: Vec<u8>) -> Option<Gray> {
+        let needed = needed_bytes(width, height, stride)?;
+        (stride >= width && data.len() >= needed).then_some(Gray {
+            width,
+            height,
+            stride,
+            data,
+        })
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
     }
 
     fn at(&self, x: usize, y: usize) -> u8 {
@@ -84,6 +104,15 @@ pub struct Frame {
     pub planes: Vec<(Vec<u8>, usize)>,
 }
 
+/// The bytes `height` rows of `row_bytes` at `stride` need: no
+/// padding is owed after the last row's pixels.
+fn needed_bytes(row_bytes: usize, height: usize, stride: usize) -> Option<usize> {
+    if height == 0 || stride < row_bytes {
+        return None;
+    }
+    stride.checked_mul(height - 1)?.checked_add(row_bytes)
+}
+
 /// What a frame shows as one byte of brightness a pixel. Most
 /// cameras' formats carry that as their first plane, which is
 /// copied as it is; any other frame's pixels are converted. None
@@ -94,7 +123,8 @@ pub fn luminance(frame: &Frame) -> Option<Gray> {
     }
     let (plane, stride) = &frame.planes[0];
     if frame.format.starts_with_luminance() {
-        if *stride < frame.width || plane.len() < stride * frame.height {
+        let needed = needed_bytes(frame.width, frame.height, *stride)?;
+        if plane.len() < needed {
             return None;
         }
         let mut data = Vec::with_capacity(frame.width * frame.height);
@@ -105,14 +135,19 @@ pub fn luminance(frame: &Frame) -> Option<Gray> {
     }
     match frame.format {
         FrameFormat::Rgba8888 | FrameFormat::Bgra8888 => {
-            if *stride < frame.width * 4 || plane.len() < stride * frame.height {
+            let row_bytes = frame.width.checked_mul(4)?;
+            let needed = needed_bytes(row_bytes, frame.height, *stride)?;
+            if plane.len() < needed {
                 return None;
             }
+            let bgra = frame.format == FrameFormat::Bgra8888;
             let mut data = Vec::with_capacity(frame.width * frame.height);
             for y in 0..frame.height {
                 for x in 0..frame.width {
                     let at = y * stride + x * 4;
-                    let (r, g, b) = (plane[at] as u32, plane[at + 1] as u32, plane[at + 2] as u32);
+                    let (first, g, third) =
+                        (plane[at] as u32, plane[at + 1] as u32, plane[at + 2] as u32);
+                    let (r, b) = if bgra { (third, first) } else { (first, third) };
                     // QImage's grayscale conversion (ITU-R 601 luma).
                     data.push(((r * 11 + g * 16 + b * 5) / 32) as u8);
                 }
@@ -141,16 +176,24 @@ pub fn read(picture: &Gray) -> Vec<String> {
     let mut bits = binarize(picture);
     let mut texts = Vec::new();
     for _ in 0..4 {
-        let Some(found) = detect(&bits) else {
-            break;
-        };
-        let quad = found.quad;
-        if let Some(text) = decode(&bits, &found)
-            && !texts.contains(&text)
-        {
-            texts.push(text);
+        // The squarest triple is not always the code's: an
+        // alignment pattern among the finders can score better
+        // under perspective. Try the candidates in score order
+        // and keep the first that decodes.
+        let mut decoded = false;
+        for found in detect_candidates(&bits) {
+            if let Some(text) = decode(&bits, &found)
+                && !texts.contains(&text)
+            {
+                texts.push(text);
+                blank(&mut bits, &found.quad);
+                decoded = true;
+                break;
+            }
         }
-        blank(&mut bits, &quad);
+        if !decoded {
+            break;
+        }
     }
     texts
 }
@@ -320,10 +363,16 @@ fn cross_vertical(bits: &Bits, x: i32, y: i32, half: i32) -> Option<(f32, f32)> 
         ];
         let top = window[0].2 - window[0].1 as i32;
         let bottom = window[4].2;
-        if top > y || bottom <= y {
+        // The hit must sit in the candidate's middle run, and a
+        // window that merely contains it may not be the pattern:
+        // keep looking past one whose counts do not fit.
+        let middle_top = window[2].2 - window[2].1 as i32;
+        if top > y || bottom <= y || y < middle_top || y >= window[2].2 {
             continue;
         }
-        let (module, _) = ratio_ok(&counts)?;
+        let Some((module, _)) = ratio_ok(&counts) else {
+            continue;
+        };
         return Some((centre(bottom, &counts), module));
     }
     None
@@ -411,8 +460,11 @@ fn order(a: Finder, b: Finder, c: Finder) -> Option<(Finder, Finder, Finder, f32
     } else {
         2
     };
-    let others: Vec<usize> = (0..3).filter(|i| *i != corner).collect();
-    let (p, q) = (pts[others[0]], pts[others[1]]);
+    let (p, q) = match corner {
+        0 => (pts[1], pts[2]),
+        1 => (pts[0], pts[2]),
+        _ => (pts[0], pts[1]),
+    };
     let corner_f = pts[corner];
     let cross = (p.x - corner_f.x) * (q.y - corner_f.y) - (p.y - corner_f.y) * (q.x - corner_f.x);
     if cross == 0.0 {
@@ -508,6 +560,46 @@ impl Transform {
     }
 }
 
+/// The vertical half of an alignment check: the same 1:1:1:1:1 as
+/// horizontal (the finder cross check wants 1:1:3:1:1 and would
+/// reject an alignment centre).
+fn cross_alignment_vertical(bits: &Bits, x: i32, y: i32, half: i32) -> Option<f32> {
+    let col = runs(
+        |at| {
+            (0..bits.height as i32)
+                .contains(&at)
+                .then(|| bits.at(x, at))
+        },
+        (y - half).max(0),
+        (y + half).min(bits.height as i32),
+    );
+    for window in col.windows(5) {
+        if !window[0].0 {
+            continue;
+        }
+        let counts: Vec<u32> = window.iter().map(|r| r.1).collect();
+        let middle_top = window[2].2 - window[2].1 as i32;
+        if y < middle_top || y >= window[2].2 {
+            continue;
+        }
+        let total: u32 = counts.iter().sum();
+        if total == 0 {
+            continue;
+        }
+        let unit = total as f32 / 5.0;
+        if counts
+            .iter()
+            .any(|c| (*c as f32 - unit).abs() > unit * 0.9 + 1.0)
+        {
+            continue;
+        }
+        return Some(
+            window[4].2 as f32 - counts[4] as f32 - counts[3] as f32 - counts[2] as f32 / 2.0,
+        );
+    }
+    None
+}
+
 /// Searches a small window for an alignment pattern centre: a dark
 /// module with the counts of one around it, both ways.
 fn find_alignment(bits: &Bits, near: (f32, f32), module: f32) -> Option<(f32, f32)> {
@@ -539,8 +631,8 @@ fn find_alignment(bits: &Bits, near: (f32, f32), module: f32) -> Option<(f32, f3
             }
             let mid_x =
                 window[4].2 as f32 - counts[4] as f32 - counts[3] as f32 - counts[2] as f32 / 2.0;
-            if let Some((mid_y, _)) =
-                cross_vertical(bits, mid_x as i32, y, (module * 4.0) as i32 + 2)
+            if let Some(mid_y) =
+                cross_alignment_vertical(bits, mid_x as i32, y, (module * 4.0) as i32 + 2)
             {
                 let score = (mid_x - near.0).abs() + (mid_y - near.1).abs();
                 if best.is_none_or(|(_, _, held)| score < held) {
@@ -583,40 +675,56 @@ fn sample(bits: &Bits, transform: &Transform, dimension: usize, module_px: f32) 
     grid
 }
 
-fn detect(bits: &Bits) -> Option<Found> {
-    let found = finders(bits);
-    let mut best: Option<(Finder, Finder, Finder, f32)> = None;
+/// Plausible finder triples, best score first (at most eight).
+fn detect_candidates(bits: &Bits) -> Vec<Found> {
+    // Only the strongest clusters are tried as triples: the work
+    // grows with the cube of their number, and a real finder is
+    // seen on many rows around its centre.
+    let mut found = finders(bits);
+    found.sort_by_key(|f| std::cmp::Reverse(f.count));
+    found.truncate(32);
+    let mut triples: Vec<(Finder, Finder, Finder, f32)> = Vec::new();
     for i in 0..found.len() {
         for j in i + 1..found.len() {
             for k in j + 1..found.len() {
                 let Some((tl, tr, bl, score)) = order(found[i], found[j], found[k]) else {
                     continue;
                 };
-                if score > 0.6 {
-                    continue;
-                }
-                if best.is_none_or(|(_, _, _, held)| score < held) {
-                    best = Some((tl, tr, bl, score));
+                if score <= 0.6 {
+                    triples.push((tl, tr, bl, score));
                 }
             }
         }
     }
-    let (tl, tr, bl, _) = best?;
-    let module = (tl.module + tr.module + bl.module) / 3.0;
-    let br = (tr.x + bl.x - tl.x, tr.y + bl.y - tl.y);
-    let pad = module * 3.5;
-    Some(Found {
-        tl: (tl.x, tl.y),
-        tr: (tr.x, tr.y),
-        bl: (bl.x, bl.y),
-        module,
-        quad: [
-            (tl.x - pad, tl.y - pad),
-            (tr.x + pad, tr.y - pad),
-            (br.0 + pad, br.1 + pad),
-            (bl.x - pad, bl.y + pad),
-        ],
-    })
+    triples.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+    let mut out: Vec<Found> = Vec::new();
+    for (tl, tr, bl, _) in triples {
+        let module = (tl.module + tr.module + bl.module) / 3.0;
+        let near = |a: (f32, f32), b: (f32, f32)| dist(a, b) < module.max(1.0);
+        if out.iter().any(|f| {
+            near(f.tl, (tl.x, tl.y)) && near(f.tr, (tr.x, tr.y)) && near(f.bl, (bl.x, bl.y))
+        }) {
+            continue;
+        }
+        let br = (tr.x + bl.x - tl.x, tr.y + bl.y - tl.y);
+        let pad = module * 3.5;
+        out.push(Found {
+            tl: (tl.x, tl.y),
+            tr: (tr.x, tr.y),
+            bl: (bl.x, bl.y),
+            module,
+            quad: [
+                (tl.x - pad, tl.y - pad),
+                (tr.x + pad, tr.y - pad),
+                (br.0 + pad, br.1 + pad),
+                (bl.x - pad, bl.y + pad),
+            ],
+        });
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
 }
 
 /// The transform and grid for every plausible dimension of a found
@@ -1236,6 +1344,125 @@ mod tests {
             }
         }
         assert_eq!(decode_grid(&grid, dim).as_deref(), Some(LINK));
+    }
+
+    #[test]
+    fn a_projectively_warped_code_is_read() {
+        // One corner pulled, so the alignment pattern, not the
+        // parallelogram guess, places the fourth corner.
+        let code = QrCode::encode_text(LINK, QrCodeEcc::Medium).unwrap();
+        let modules = code.size() as f64;
+        let span = modules + 8.0;
+        let (width, height) = (1280usize, 720usize);
+        let corners = [
+            (0.30 * width as f64, 0.20 * height as f64),
+            (0.85 * width as f64, 0.26 * height as f64),
+            (0.80 * width as f64, 0.88 * height as f64),
+            (0.22 * width as f64, 0.76 * height as f64),
+        ];
+        let back = Transform::from_points(
+            corners,
+            [(0.0, 0.0), (span, 0.0), (span, span), (0.0, span)],
+        )
+        .unwrap();
+        let mut picture = desk(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let (u, v) = back.map(x as f64, y as f64);
+                if u >= 0.0 && v >= 0.0 && u < span && v < span {
+                    let (mx, my) = (u as i32 - 4, v as i32 - 4);
+                    let dark = (0..modules as i32).contains(&mx)
+                        && (0..modules as i32).contains(&my)
+                        && code.get_module(mx, my);
+                    picture.data[y * width + x] = if dark { 0 } else { 255 };
+                }
+            }
+        }
+        assert_eq!(read(&picture), vec![LINK.to_string()]);
+    }
+
+    #[test]
+    fn bgra_order_and_an_unpadded_last_row() {
+        // A red code on blue: first and third channels swapped in
+        // BGRA must not reverse its contrast.
+        let code = QrCode::encode_text(LINK, QrCodeEcc::Medium).unwrap();
+        let modules = code.size() as usize;
+        let scale = 8usize;
+        let side = (modules + 8) * scale;
+        let mut bgra = vec![0u8; side * side * 4];
+        for y in 0..side {
+            for x in 0..side {
+                let (mx, my) = ((x / scale) as i32 - 4, (y / scale) as i32 - 4);
+                let dark = (0..modules as i32).contains(&mx)
+                    && (0..modules as i32).contains(&my)
+                    && code.get_module(mx, my);
+                // Dark modules blue, light ones red, in BGRA byte
+                // order: reading the channels swapped inverts them.
+                let at = (y * side + x) * 4;
+                bgra[at] = if dark { 255 } else { 30 };
+                bgra[at + 1] = 30;
+                bgra[at + 2] = if dark { 0 } else { 200 };
+                bgra[at + 3] = 255;
+            }
+        }
+        let frame = Frame {
+            format: FrameFormat::Bgra8888,
+            width: side,
+            height: side,
+            planes: vec![(bgra, side * 4)],
+        };
+        assert_eq!(read(&luminance(&frame).unwrap()), vec![LINK.to_string()]);
+
+        // A Y8 plane whose last row carries no padding.
+        let picture = sees(LINK, 640, 480, 230, 0.0);
+        let stride = picture.width + 16;
+        let mut plane = Vec::new();
+        for y in 0..picture.height {
+            plane.extend_from_slice(&picture.data[y * picture.width..(y + 1) * picture.width]);
+            if y + 1 < picture.height {
+                plane.extend_from_slice(&[0u8; 16]);
+            }
+        }
+        let frame = Frame {
+            format: FrameFormat::Y8,
+            width: picture.width,
+            height: picture.height,
+            planes: vec![(plane, stride)],
+        };
+        assert_eq!(read(&luminance(&frame).unwrap()), vec![LINK.to_string()]);
+        assert!(Gray::with_stride(4, 2, 8, vec![0u8; 12]).is_some());
+        assert!(Gray::with_stride(4, 2, 8, vec![0u8; 11]).is_none());
+    }
+
+    #[test]
+    fn a_code_among_many_finder_lookalikes_is_read() {
+        // Forty bullseyes around the code: more finder candidates
+        // than detect tries, ranked out by the real ones' counts.
+        let mut picture = sees(LINK, 1280, 960, 420, 0.0);
+        let unit = 4usize;
+        for spot in 0..48 {
+            let (x0, y0) = (30 + (spot % 8) * 150, 25 + (spot / 8) * 150);
+            // Not over the code itself (its middle, side 420).
+            if (480..990).contains(&x0) && (220..670).contains(&y0) {
+                continue;
+            }
+            for y in 0..9 * unit {
+                for x in 0..9 * unit {
+                    picture.data[(y0 + y) * picture.width + x0 + x] = 255;
+                }
+            }
+            let (x0, y0) = (x0 + unit, y0 + unit);
+            for y in 0..7 * unit {
+                for x in 0..7 * unit {
+                    let (mx, my) = (x / unit, y / unit);
+                    let ring = mx.min(my).min(6 - mx).min(6 - my);
+                    let dark = ring != 1;
+                    picture.data[(y0 + y) * picture.width + x0 + x] = if dark { 0 } else { 255 };
+                }
+            }
+        }
+        assert!(finders(&binarize(&picture)).len() > 32);
+        assert_eq!(read(&picture), vec![LINK.to_string()]);
     }
 
     #[test]

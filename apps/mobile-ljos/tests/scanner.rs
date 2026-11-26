@@ -55,14 +55,17 @@ struct FakeCamera {
 
 impl FakeCamera {
     fn fail(&self, engine: &Engine) {
-        if let (Some(failed), Some(failure)) = (self.failed.borrow().as_ref(), self.fail_with.get())
-        {
+        // The callback stops the camera, which takes the
+        // callbacks back: hand it a clone, not the borrowed cell.
+        let failed = self.failed.borrow().clone();
+        if let (Some(failed), Some(failure)) = (failed, self.fail_with.get()) {
             failed(engine, failure);
         }
     }
 
     fn emit(&self, engine: &Engine, frame: Frame) {
-        if let Some(on_frame) = self.on_frame.borrow().as_ref() {
+        let on_frame = self.on_frame.borrow().clone();
+        if let Some(on_frame) = on_frame {
             on_frame(engine, frame);
         }
     }
@@ -135,6 +138,7 @@ fn frame_of(text: &str) -> Frame {
 struct Phone {
     engine: Engine,
     window: TestWindow,
+    root: ObjectId,
     streams: Pump,
     camera: Rc<FakeCamera>,
     data: PathBuf,
@@ -180,15 +184,47 @@ impl Phone {
         );
         hal_c2_mobile::start(&engine);
         streams.pump(&engine);
-        let window = TestWindow::new(&engine, 412.0, 915.0);
-        Phone {
+        // The phone's own QML in the window, as the features
+        // harness opens it: the scan screen the tests below read
+        // is the one `MobileShell.qml` loads.
+        let mut window = TestWindow::new(&engine, 412.0, 915.0);
+        let root = hal_c2_shell::runtime::open(&engine).expect("the phone's root");
+        window.show(root).expect("the root in the window");
+        let mut phone = Phone {
             engine,
             window,
+            root,
             streams,
             camera,
             data,
             _home: home,
+        };
+        phone.pump();
+        phone
+    }
+
+    /// The item named `object_name` under the root, however deep
+    /// a Loader put it (the features harness's walk).
+    fn find(&self, object_name: &str) -> Option<ObjectId> {
+        fn walk(engine: &Engine, item: ObjectId, name: &str, depth: usize) -> Option<ObjectId> {
+            if depth > 64 {
+                return None;
+            }
+            if engine
+                .to_js_string(&engine.read_by_name(item, "objectName"))
+                .to_string()
+                == name
+            {
+                return Some(item);
+            }
+            for child in engine.children(item) {
+                if let Some(found) = walk(engine, child, name, depth + 1) {
+                    return Some(found);
+                }
+            }
+            None
         }
+        walk(&self.engine, self.root, object_name, 0)
     }
 
     fn dispatch(&mut self, action: &str, payload: Json) {
@@ -207,7 +243,8 @@ impl Phone {
     }
 
     /// Pumps until `condition` holds (an exchange or a frame read
-    /// on its own thread is real time), up to five seconds.
+    /// on its own thread is real time), up to five seconds; a
+    /// timeout is a failure, never a silent pass.
     fn wait_for(&mut self, condition: impl Fn(&Phone) -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
@@ -218,6 +255,7 @@ impl Phone {
             let _ = self.window.advance(16);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        assert!(condition(self), "wait_for timed out");
     }
 
     fn published(&self, key: &str) -> Json {
@@ -236,23 +274,31 @@ fn a_scanned_code_pairs_and_the_camera_runs_only_while_open() {
     let mut phone = Phone::start("scanner-pairs");
     phone.camera.access.set(Access::Granted);
     phone.dispatch("scanner.open", json!(null));
-    assert_eq!(phone.published("scanner")["scanning"], json!(true));
+    assert_eq!(phone.published("scanner")["open"], json!(true));
+    assert_eq!(phone.published("scanner")["access"], json!("granted"));
     assert!(phone.camera.held.get());
-    // A frame with nothing readable changes nothing.
+    // A code that is no pairing invitation is refused by the
+    // scanner itself, with the reason on its screen.
     phone.camera.emit(&phone.engine, frame_of("not a link"));
     phone.wait_for(|phone| {
-        !phone.published("pairing")["error"]
+        phone.published("scanner")["message"]
             .as_str()
-            .unwrap_or_default()
-            .is_empty()
+            .is_some_and(|message| message.contains("not a HAL-C2 pairing code"))
     });
     assert!(!phone.paired());
-    phone.camera.emit(&phone.engine, frame_of(LINK));
+    // The wrapped form an MC's QR may carry pairs as its link.
+    let wrapped = format!(
+        "hal-c2://pair?pairingUrl={}",
+        LINK.bytes()
+            .map(|b| format!("%{b:02X}"))
+            .collect::<String>()
+    );
+    phone.camera.emit(&phone.engine, frame_of(&wrapped));
     phone.wait_for(|phone| phone.paired());
     assert!(phone.paired(), "the scanned link paired");
-    phone.dispatch("scanner.close", json!(null));
-    assert_eq!(phone.published("scanner"), Json::Null);
-    assert!(!phone.camera.held.get(), "closing lets the camera go");
+    // Pairing closes the scanner, as the C++ does.
+    assert_eq!(phone.published("scanner")["open"], json!(false));
+    assert!(!phone.camera.held.get(), "pairing lets the camera go");
 }
 
 #[test]
@@ -260,10 +306,11 @@ fn denied_and_missing_cameras_say_why() {
     let mut phone = Phone::start("scanner-denied");
     phone.camera.access.set(Access::Denied);
     phone.dispatch("scanner.open", json!(null));
-    assert_eq!(phone.published("scanner")["access"], json!(3));
-    assert_eq!(phone.published("scanner")["scanning"], json!(false));
+    phone.wait_for(|phone| phone.published("scanner")["access"] == json!("denied"));
+    assert_eq!(phone.published("scanner")["failed"], json!(false));
     assert!(!phone.camera.started.get());
     phone.dispatch("scanner.close", json!(null));
+    assert_eq!(phone.published("scanner")["open"], json!(false));
 
     let mut phone = Phone::start("scanner-no-camera");
     phone.camera.access.set(Access::Granted);
@@ -271,23 +318,78 @@ fn denied_and_missing_cameras_say_why() {
     phone.dispatch("scanner.open", json!(null));
     phone.camera.fail(&phone.engine);
     phone.pump();
-    assert_eq!(
-        phone.published("scanner")["failed"],
-        json!("This device has no camera.")
+    assert_eq!(phone.published("scanner")["failed"], json!(true));
+    assert!(
+        phone.published("scanner")["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no camera"))
     );
-    assert_eq!(phone.published("scanner")["scanning"], json!(false));
+    assert!(!phone.camera.held.get(), "a failed camera is let go");
+    // The screen's Try again starts it again.
+    phone.camera.fail_with.set(None);
+    phone.dispatch("scanner.retry", json!(null));
+    assert_eq!(phone.published("scanner")["failed"], json!(false));
+    assert!(phone.camera.held.get(), "retry starts the camera again");
 }
 
 #[test]
 fn asking_grants_and_starts() {
     let mut phone = Phone::start("scanner-asks");
     phone.camera.merge.set(true);
+    // Opening asks, as the C++ does: the word comes back granted
+    // and the camera starts.
     phone.dispatch("scanner.open", json!(null));
-    assert_eq!(phone.published("scanner")["access"], json!(1));
+    phone.wait_for(|phone| phone.published("scanner")["access"] == json!("granted"));
+    assert!(phone.camera.held.get());
+    // A second open is no new screen: the running camera's
+    // callbacks are the ones that answer.
+    phone.dispatch("scanner.open", json!(null));
+    phone.camera.emit(&phone.engine, frame_of(LINK));
+    phone.wait_for(|phone| phone.paired());
+}
+
+/// The contract `MobileShell.qml`/`ScanScreen.qml` read, driven
+/// through the real QML: the loader gates on `scanner.open`, the
+/// screen compares `access` to words and `failed` to true.
+#[test]
+fn the_scan_screen_the_phone_loads_shows() {
+    use ljos::prelude::Value;
+    let mut phone = Phone::start("scanner-qml");
+    assert!(phone.find("scanScreen").is_none(), "closed, no scan screen");
+    phone.camera.access.set(Access::Denied);
+    phone.dispatch("scanner.open", json!(null));
+    phone.wait_for(|phone| phone.find("scanScreen").is_some());
+    let screen = phone.find("scanScreen").expect("the scan screen");
+    assert_eq!(
+        phone
+            .engine
+            .to_js_string(&phone.engine.read_by_name(screen, "access"))
+            .to_string(),
+        "denied"
+    );
+    assert!(
+        phone.find("scanDenied").is_some(),
+        "the denied word is on it"
+    );
+    assert!(phone.find("scanSettings").is_some(), "the way to settings");
+    // Granted now (as a return from the system settings would
+    // find it), the camera starts and the viewfinder shows.
+    phone.camera.access.set(Access::Granted);
     phone.dispatch("scanner.requestAccess", json!(null));
-    phone.pump();
-    assert_eq!(phone.published("scanner")["access"], json!(2));
-    assert_eq!(phone.published("scanner")["scanning"], json!(true));
+    phone.wait_for(|phone| phone.camera.held.get());
+    let failed_at = phone.engine.read_by_name(screen, "failed");
+    assert!(matches!(failed_at, Value::Bool(false)));
+    phone.camera.fail_with.set(Some(Failure::Stopped));
+    phone.camera.fail(&phone.engine);
+    phone.wait_for(|phone| {
+        matches!(
+            phone.engine.read_by_name(screen, "failed"),
+            Value::Bool(true)
+        )
+    });
+    assert!(phone.find("scanRetry").is_some(), "the way to try again");
+    phone.dispatch("scanner.close", json!(null));
+    assert_eq!(phone.published("scanner")["open"], json!(false));
 }
 
 use proptest::prelude::*;
@@ -332,6 +434,7 @@ proptest! {
         phone.camera.merge.set(true);
         let mut open = false;
         let mut access = Access::Undetermined;
+        let mut paired_seen = false;
         for step in steps {
             match step {
                 Step::Open => {
@@ -360,13 +463,19 @@ proptest! {
             let _ = access;
             let shown = phone.published("scanner");
             if !open {
-                prop_assert_eq!(&shown, &Json::Null);
+                prop_assert_eq!(&shown["open"], &json!(false));
                 prop_assert!(!phone.camera.held.get(), "closed holds no camera");
-            } else if shown["scanning"] == json!(true) {
-                prop_assert!(phone.camera.held.get(), "scanning holds the camera");
-                prop_assert_eq!(&shown["access"], &json!(2), "scanning is granted");
             }
-            if phone.paired() {
+            if phone.camera.held.get() {
+                prop_assert_eq!(&shown["open"], &json!(true), "held is open");
+                prop_assert_eq!(&shown["access"], &json!("granted"), "held is granted");
+                prop_assert_eq!(&shown["failed"], &json!(false), "held has not failed");
+            }
+            // A pairing that lands was scanned while open; one
+            // already there (it closes the scanner itself) is not
+            // evidence of a scan while closed.
+            if phone.paired() && !paired_seen {
+                paired_seen = true;
                 prop_assert!(open, "a scan paired while closed");
             }
         }
