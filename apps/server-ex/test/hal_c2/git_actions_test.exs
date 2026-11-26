@@ -508,6 +508,58 @@ defmodule HalC2.GitActionsTest do
     assert create =~ "--head forker:feature/tax"
   end
 
+  # Follow-up to #1837 (#1851): the branch was published to the base
+  # repository and is in sync with it, so no push runs; `pushurl` has
+  # since been aimed at a fork. Nothing in git's refs tells the two
+  # apart, so the open pull request is looked for under both owners.
+  test "an in-sync branch reuses the base repository's pull request despite a pushurl fork", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://github.com/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://github.com/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://github.com/acme/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://github.com/forker/shop.git"])
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "opened_existing", "number" => 99}} = result
+    assert git!(fork, ~w(branch --list feature/tax)) == ""
+    refute File.read!(log) =~ "pr create"
+  end
+
+  # The Forgejo twin of the in-sync `pushurl` case above.
+  test "a Forgejo in-sync branch reuses the target repository's pull request despite a pushurl fork",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_forgejo!(dir, [forgejo_pull(99, "feature/tax", "acme/shop")])
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://codeberg.org/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://codeberg.org/forker/shop.git"])
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "opened_existing", "number" => 99}} = result
+    assert forgejo_posts(log) == []
+  end
+
   # The Forgejo twin of the triangular GitHub case above: the branch
   # tracks `origin/feature/tax` (the target repository on codeberg.org),
   # but `pushRemote` names the fork, so the push lands there and the pull

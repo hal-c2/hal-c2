@@ -580,8 +580,9 @@ defmodule HalC2.GitActions do
     {base, base_qualified} = pr_base(cwd, branch)
     {head_branch, fork_owner} = github_head(cwd, branch, target, pushed?)
     head = if fork_owner, do: "#{fork_owner}:#{head_branch}", else: head_branch
+    lookup_owners = pr_lookup_owners(cwd, branch, fork_owner, pushed?)
 
-    case existing_github_pull_request(cwd, head_branch, fork_owner) do
+    case existing_github_pull_request(cwd, head_branch, lookup_owners) do
       %{"url" => url} = pr ->
         %{
           "status" => "opened_existing",
@@ -623,13 +624,29 @@ defmodule HalC2.GitActions do
     end
   end
 
+  # The head owners an existing pull request may be from, in the order to
+  # take them: the fork owner's alone, or — for a branch whose repository
+  # cannot be told apart (`published_repositories/3` names more than one) —
+  # every candidate's owner. Nil keeps "the base repository's own branch".
+  defp pr_lookup_owners(cwd, branch, fork_owner, pushed?) do
+    case published_repositories(cwd, branch, pushed?) do
+      [_one, _two | _] = repositories ->
+        repositories
+        |> Enum.map(&(String.split(&1, "/") |> hd()))
+        |> Enum.uniq_by(&String.downcase/1)
+
+      _ ->
+        if fork_owner, do: [fork_owner]
+    end
+  end
+
   # The open pull request from `head_branch`, or nil. `gh pr list --head` takes
   # a branch name only (`<owner>:<branch>` is not supported there), so a list
   # for a fork's branch also holds same-named branches on the base repository
-  # and other forks: for a fork, more are fetched and only the fork owner's
-  # is taken.
-  defp existing_github_pull_request(cwd, head_branch, fork_owner) do
-    limit = if fork_owner, do: "100", else: "1"
+  # and other forks: for a fork, more are fetched and only a named owner's
+  # is taken, the first owner that has one winning.
+  defp existing_github_pull_request(cwd, head_branch, fork_owners) do
+    limit = if fork_owners, do: "100", else: "1"
 
     args =
       ~w(pr list --state open --limit) ++
@@ -638,8 +655,19 @@ defmodule HalC2.GitActions do
         [head_branch]
 
     case gh_json(cwd, args) do
-      prs when is_list(prs) -> Enum.find(prs, &own_pull_request?(&1, fork_owner))
-      _ -> nil
+      prs when is_list(prs) ->
+        case fork_owners do
+          nil ->
+            Enum.find(prs, &own_pull_request?(&1, nil))
+
+          owners ->
+            Enum.find_value(owners, fn owner ->
+              Enum.find(prs, &own_pull_request?(&1, owner))
+            end)
+        end
+
+      _ ->
+        nil
     end
   end
 
@@ -675,6 +703,39 @@ defmodule HalC2.GitActions do
          do: repository,
          else: (_ -> nil)
   end
+
+  # The repositories the branch may already have a pull request from, in
+  # the order to look in: where it was published (the published remote's
+  # push URL, as `fork_repository/4` reads it), plus — when no push ran
+  # and that remote fetches from a different repository than it pushes
+  # to (`pushurl`) — the fetch repository. A push through `pushurl` and
+  # a fetch update the same remote-tracking ref, so git's refs cannot
+  # tell which repository an in-sync branch lives on; looking under
+  # both finds its open pull request either way. Creating still uses
+  # the push repository, as `fork_repository/4` tells it.
+  defp published_repositories(cwd, branch, pushed?) do
+    case published_remote(cwd, branch, pushed?) do
+      remote when is_binary(remote) ->
+        push = repository_at(push_url(cwd, remote))
+        fetch = repository_at(remote_url(cwd, remote))
+
+        if !pushed? && push && fetch && !same_repository?(push, fetch),
+          do: [push, fetch],
+          else: Enum.reject([push], &is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp repository_at(url) when is_binary(url) do
+    case PullRequests.parse_remote(url) do
+      %{repository: repository} -> repository
+      _ -> nil
+    end
+  end
+
+  defp repository_at(_url), do: nil
 
   # Read from config, as `remote_url/2` reads the fetch URL: `git remote
   # get-url --push` would first expand the checkout's `insteadOf` rewrites,
@@ -740,13 +801,7 @@ defmodule HalC2.GitActions do
     {head_branch, fork} = forgejo_head(cwd, branch, target, pushed?)
     owner = fork && fork |> String.split("/") |> hd()
 
-    # Only a pull request from this branch's own repository is its pull request: a fork
-    # can hold a branch of the same name.
-    case ChangeRequests.forgejo_list(cwd, target, head_branch,
-           state: "open",
-           limit: 1,
-           head_repository: fork || target.repository
-         ) do
+    case existing_forgejo_pull_request(cwd, branch, head_branch, target, fork, pushed?) do
       [pr | _] ->
         %{
           "status" => "opened_existing",
@@ -789,6 +844,29 @@ defmodule HalC2.GitActions do
           _ -> fail!("Forgejo answered the new PR in an unexpected shape.")
         end
     end
+  end
+
+  # Only a pull request from this branch's own repository is its pull
+  # request: a fork can hold a branch of the same name. Where that
+  # repository cannot be told apart (`published_repositories/3`), each
+  # candidate is looked in, the push repository first.
+  defp existing_forgejo_pull_request(cwd, branch, head_branch, target, fork, pushed?) do
+    repositories =
+      case published_repositories(cwd, branch, pushed?) do
+        [_one, _two | _] = repositories -> repositories
+        _ -> [fork || target.repository]
+      end
+
+    Enum.find_value(repositories, [], fn repository ->
+      case ChangeRequests.forgejo_list(cwd, target, head_branch,
+             state: "open",
+             limit: 1,
+             head_repository: repository
+           ) do
+        [] -> nil
+        pulls -> pulls
+      end
+    end)
   end
 
   # The branch the pull request is from, as its remote has it (`pr_head/2`),
