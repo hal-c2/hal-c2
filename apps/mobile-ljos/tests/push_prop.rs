@@ -270,7 +270,10 @@ proptest! {
                     if fresh(sent) && permitted && at >= *last {
                         *last = at;
                         let was_active = std::mem::replace(&mut model.last_active, active);
-                        let until = activity_at(active, at)["expiresAt"].as_f64().unwrap_or_default() as i64;
+                        // The expected expiry comes from the specified lifetimes
+                        // (120 minutes active, 15 finished), not from the
+                        // production `activity` the input was built with.
+                        let until = at + if active { 120 * MINUTE } else { 15 * MINUTE };
                         if until <= model.now || !model.live {
                             model.card = None;
                             model.dismissed = false;
