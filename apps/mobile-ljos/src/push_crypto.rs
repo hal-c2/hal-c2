@@ -173,9 +173,11 @@ pub fn decrypt(body: &[u8], keys: &Keys) -> Option<Vec<u8>> {
 /// secret, with a fresh sender key and salt; empty when it cannot be
 /// made.
 pub fn encrypt(plaintext: &[u8], receiver_public_key: &[u8], auth: &[u8]) -> Vec<u8> {
-    // One record holds at most rs - 17 plaintext octets: its tag and
-    // the delimiter (RFC 8188 section 2).
-    if plaintext.len() > RECORD_SIZE as usize - TAG_SIZE - 1 {
+    // The whole body fits a push message's 4096 octets (RFC 8291
+    // section 4): the header, the delimiter and the tag leave 3993
+    // for the plaintext, under the record's own rs - 17 bound
+    // (RFC 8188 section 2).
+    if plaintext.len() > RECORD_SIZE as usize - HEADER_SIZE - TAG_SIZE - 1 {
         return Vec::new();
     }
     let made = (|| {
@@ -263,11 +265,12 @@ mod tests {
             .to_vec();
         let body = encrypt(b"hello", &compressed, &keys.auth);
         assert_eq!(decrypt(&body, &keys).as_deref(), Some(b"hello".as_slice()));
-        // rs - 17 fits one record; one more does not.
-        let longest = vec![b'x'; RECORD_SIZE as usize - TAG_SIZE - 1];
+        // 3993 bytes make a 4096-octet body; one more does not fit.
+        let longest = vec![b'x'; RECORD_SIZE as usize - HEADER_SIZE - TAG_SIZE - 1];
         let body = encrypt(&longest, &keys.public_key, &keys.auth);
+        assert_eq!(body.len(), RECORD_SIZE as usize);
         assert_eq!(decrypt(&body, &keys), Some(longest));
-        let too_long = vec![b'x'; RECORD_SIZE as usize - TAG_SIZE];
+        let too_long = vec![b'x'; RECORD_SIZE as usize - HEADER_SIZE - TAG_SIZE];
         assert!(encrypt(&too_long, &keys.public_key, &keys.auth).is_empty());
     }
 
