@@ -1210,14 +1210,27 @@ impl Maintenance {
                         .unwrap_or_default();
                     match result {
                         Err(error) => {
-                            let outcome = Outcome {
-                                ok: false,
-                                text: format!("{} update failed: {}", machine.label, error.message),
-                            };
-                            c.core
+                            // A late reconnect may have settled the
+                            // first attempt while this retry waited:
+                            // its success stands.
+                            if !c
+                                .core
                                 .outcomes
-                                .insert(machine.environment_id.clone(), outcome.clone());
-                            c.core.message = Some(outcome);
+                                .get(&machine.environment_id)
+                                .is_some_and(|outcome| outcome.ok)
+                            {
+                                let outcome = Outcome {
+                                    ok: false,
+                                    text: format!(
+                                        "{} update failed: {}",
+                                        machine.label, error.message
+                                    ),
+                                };
+                                c.core
+                                    .outcomes
+                                    .insert(machine.environment_id.clone(), outcome.clone());
+                                c.core.message = Some(outcome);
+                            }
                         }
                         Ok(result) => {
                             c.core.gave_up_on.remove(&machine.environment_id);
