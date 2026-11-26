@@ -388,7 +388,7 @@ defmodule HalC2Plugins.CodeReview do
   @impl HalC2.Plugins.Extension
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
     with {:ok, review} <- server({:for_thread, thread_id}),
-         {:ok, settings} <- server(:settings),
+         settings = server(:settings),
          {:ok, findings} <- findings(arguments, review, settings),
          # Each GitHub command of the post has a timeout of its own.
          {:ok, review} <- GenServer.call(__MODULE__, {:report, thread_id, findings}, :infinity) do

@@ -1408,10 +1408,10 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # The line a post opens with: the heading, then the findings of a report the user
+  # The line a post opens with, after its heading: the findings of a report the user
   # kept, where a report with findings has a high one and an unrated one on lines
   # (`dismissed` says which the user dismissed) and an unrated one in the summary.
-  defp headline([]), do: "## Agentic code review"
+  defp headline([]), do: "No findings."
 
   defp headline([high_dismissed, other_dismissed]) do
     high = if high_dismissed, do: 0, else: 1
@@ -1420,8 +1420,8 @@ defmodule HalC2.CodeReviewPropTest do
     noun = if count == 1, do: "finding", else: "findings"
 
     if high == 1,
-      do: "## Agentic code review",
-      else: "## Agentic code review"
+      do: "#{count} #{noun}: 1 high, #{unrated} unrated.",
+      else: "#{count} #{noun}."
   end
 
   # GitHub's answer to the post of run `run` lands only on that run, still being posted;
@@ -2214,6 +2214,7 @@ defmodule HalC2.CodeReviewPropTest do
 
           first =
             body["body"]
+            |> String.replace(~r/\A## Agentic code review\n\n/, "")
             |> String.replace(~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
             |> String.split("\n", parts: 2)
             |> hd()

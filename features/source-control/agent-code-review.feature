@@ -924,22 +924,25 @@ Feature: Agent code review
       Given a review of #12 is running
       When the agent reports a high finding with a suggested fix on "src/limits.ts"
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "## Agentic code review"
+      Then the review posted to #12 opens with "## Agentic code review" then "2 findings: 1 high, 1 unrated."
 
     @mc
     Scenario: A published review with nothing to fix says so first
       Given a review of #12 is running
       When the agent reports the verdict "approved" with only a summary
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "## Agentic code review"
+      Then the review posted to #12 opens with "## Agentic code review" then "No findings."
 
     @mc
-    Scenario: The heading of posted reviews is the user's to set or turn off
+    Scenario: The heading of posted reviews is the user's to set
       Given a review of #12 is running
       When the agent reports the verdict "approved" with only a summary
       And the user sets the review heading to "Custom review"
       And the user publishes the review of #12
       Then the review posted to #12 opens with "## Custom review"
+
+    @mc
+    Scenario: The heading of posted reviews is the user's to turn off
       Given a review of #13 is running
       When the agent reports the verdict "approved" with only a summary
       And the user sets the review heading to ""

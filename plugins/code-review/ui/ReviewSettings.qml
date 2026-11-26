@@ -691,13 +691,15 @@ ColumnLayout {
 
         SettingsField {
             title: qsTr("Review heading")
+            description: qsTr("The first line of every posted review. Leave empty for none.")
 
-            TextField {
+            ShellTextField {
                 objectName: "codeReviewSetting:heading"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Agentic code review")
-                text: settings.values.heading ?? "Agentic code review"
-                onEditingFinished: settings.set("heading", text)
+                Accessible.name: qsTr("Review heading")
+                Accessible.description: qsTr("The first line of every posted review. Leave empty for none.")
+                implicitWidth: 240
+                text: settings.values.heading ?? ""
+                onTextEdited: settings.set("heading", text)
             }
         }
 
