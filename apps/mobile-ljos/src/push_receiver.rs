@@ -59,8 +59,6 @@ mod tests {
     use crate::push_crypto::encrypt;
     use serde_json::json;
 
-    const NOW: i64 = 1_790_000_000_000;
-
     #[test]
     fn a_receiver_opens_records_and_dismisses_through_the_inbox_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -88,11 +86,27 @@ mod tests {
             json!("hal-c2://threads/env-a/thread-1")
         );
         // Not permitted: nothing is shown and nothing is recorded,
-        // so the same push shows once it may.
+        // so the same push shows once it may. A fresh alert id, so
+        // the absence is the permission gate's doing, not dedup's:
+        // the push above already recorded run-1 in `seen`.
+        let plain = serde_json::to_vec(&json!({
+            "v": 1,
+            "sentAt": chrono::Utc::now().timestamp_millis() as f64,
+            "alert": {"id": "env-a:thread-1:completed:run-2", "title": "Fix checkout",
+                      "environmentId": "env-a", "threadId": "thread-1"}
+        }))
+        .unwrap();
+        let body = encrypt(&plain, &keys.public_key, &keys.auth);
         let effects: serde_json::Value =
             serde_json::from_str(&receive(data, &body, false, 36)).unwrap();
         assert!(effects.get("alert").is_none());
-        let _ = NOW;
+        let effects: serde_json::Value =
+            serde_json::from_str(&receive(data, &body, true, 36)).unwrap();
+        assert_eq!(
+            effects["alert"]["link"],
+            json!("hal-c2://threads/env-a/thread-1"),
+            "unpermitted recorded nothing, so the same push shows once it may"
+        );
         // A dismissal takes the card down.
         let effects: serde_json::Value = serde_json::from_str(&dismiss(data)).unwrap();
         assert_eq!(effects["cancelCard"], json!(true));
