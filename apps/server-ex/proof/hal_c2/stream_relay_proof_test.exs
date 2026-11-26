@@ -14,7 +14,7 @@ defmodule HalC2.StreamRelayProofTest do
   @migration "the migration of an older MC's snapshot; while it runs the stream never idles out, fewer stops than the model's timeout rule allows"
   @pins "reads the stream's state; a reader of a migrating one is sent its pin once it is done; changes no subscription"
   @demote "when memory moves older runs to the cold table with a snapshot; changes no event or subscriber"
-  @release "the heap the state itself needed at the last garbage release; the release collects only garbage, answers and sends nothing, and arms the same idle timeout behind it"
+  @release "the heap the state itself needed at the last garbage release; the release collects only garbage, answers nothing, sends subscribers nothing (its only word out is a telemetry receipt no step reads), and arms the same idle timeout behind it; demotion zeroes it so the next release is not held off by a floor from before"
   use HalC2.Proof,
     model: "stream_relay.maude",
     module: "STREAM-RELAY",

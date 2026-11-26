@@ -453,12 +453,16 @@ defmodule HalC2.Streams.Server do
       now = map_size(StreamState.get(compacted, "turn-item"))
       demote_at = max(2 * StreamState.hot_items(), if(now == held, do: 2 * held, else: 0))
 
-      snapshot_seq =
-        if compacted.floor != stream.floor or now != held,
-          do: compacted.seq,
-          else: state.snapshot_seq
+      demoted? = compacted.floor != stream.floor or now != held
+      snapshot_seq = if demoted?, do: compacted.seq, else: state.snapshot_seq
 
-      %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+      state = %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+
+      # The floor was the heap of a state that held what just went cold: left
+      # standing, it would hold the release off until the heap grows half as
+      # much again. Zero makes this commit's `timeout/1` schedule the release,
+      # which records the floor of what remains.
+      if demoted?, do: Map.put(state, :gc_floor, 0), else: state
     else
       state
     end
@@ -472,7 +476,17 @@ defmodule HalC2.Streams.Server do
         state
       else
         :erlang.garbage_collect()
-        Map.put(state, :gc_floor, heap_words())
+        floor = heap_words()
+
+        # The receipt that the collection ran and what it left: a caller of the
+        # burst was answered before this continue, so nothing else says it did.
+        :telemetry.execute(
+          [:hal_c2, :streams, :release_memory],
+          %{heap_words: floor},
+          %{stream: state.id, server: self()}
+        )
+
+        Map.put(state, :gc_floor, floor)
       end
 
     {:noreply, state, idle_timeout(state)}

@@ -96,9 +96,15 @@ defmodule HalC2.StreamsServerTest do
 
   # Deciding a command can churn far more than the state it leaves behind. The
   # garbage goes once the work is done, not after 15 quiet seconds no sweep
-  # allows: a following call is answered only after the release.
+  # allows. The burst's caller is answered before the release runs (a reply
+  # precedes a continue, and a release with work queued collects nothing), so
+  # the release's own receipt is the thing to wait on, not a later call.
   test "a stream releases the garbage a burst of work left behind" do
+    on_release()
     pid = Streams.ensure("th-1")
+    # Answered only after the load's release ran: no receipt of it is in flight.
+    _ = HalC2.Streams.Server.sequence(pid)
+    flush_releases(pid)
 
     :ok =
       Streams.transact("th-1", :thread, fn _ ->
@@ -107,9 +113,99 @@ defmodule HalC2.StreamsServerTest do
         {[], :ok}
       end)
 
-    _ = HalC2.Streams.Server.sequence(pid)
+    assert_receive {:hal_c2_stream_released, ^pid, _heap_words}, 5_000
     assert {:memory, memory} = Process.info(pid, :memory)
     assert memory < 4_000_000, "stream still holds #{memory} bytes after its burst"
+  end
+
+  # Demotion drops most of the state's entities to the cold table. The release
+  # floor recorded before it must not stand: it is the heap of a state that
+  # held them, and the release would wait for another half of it to accrue.
+  test "a demoted stream releases what demotion let go" do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    on_release()
+    for i <- 1..7, do: run(i)
+    # Heap-heavy, so the heap is past the release's slack whatever collection
+    # the demoting commit itself happens to do on the way.
+    run(8, 15_000)
+    pid = Streams.ensure("th-1")
+    _ = HalC2.Streams.Server.sequence(pid)
+    flush_releases(pid)
+
+    # A floor from before some demotion, and a heap grown well past what the
+    # remaining state needs but nowhere near half that floor again.
+    :sys.replace_state(pid, fn state ->
+      garbage = for i <- 1..200_000, do: {i, "item-#{i}", [i, i, i]}
+      _ = length(garbage)
+      Map.put(state, :gc_floor, 10_000_000)
+    end)
+
+    # This run demotes the one before it out of memory.
+    run(9, 15_000)
+
+    assert_receive {:hal_c2_stream_released, ^pid, _heap_words}, 5_000
+    assert {:memory, memory} = Process.info(pid, :memory)
+    assert memory < 4_000_000, "demoted stream still holds #{memory} bytes"
+    state = HalC2.Streams.Server.state(pid)
+    assert HalC2.StreamState.get(state, "turn-item")["r8-i1"] == nil
+    assert HalC2.StreamState.get(state, "turn-item")["r9-i1"] != nil
+  end
+
+  # Sends this test `{:hal_c2_stream_released, server, heap_words}` for every
+  # release that collects, until the test ends.
+  defp on_release do
+    test = self()
+    id = {__MODULE__, test, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        id,
+        [:hal_c2, :streams, :release_memory],
+        fn _event, %{heap_words: words}, %{server: server}, _config ->
+          send(test, {:hal_c2_stream_released, server, words})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+  end
+
+  defp flush_releases(pid) do
+    receive do
+      {:hal_c2_stream_released, ^pid, _heap_words} -> flush_releases(pid)
+    after
+      0 -> :ok
+    end
+  end
+
+  # One settled run of three turn items, `ordinal` `i` (as in StreamsColdTest).
+  # With `heavy`, each item also carries a list of that many integers of its own.
+  defp run(i, heavy \\ 0) do
+    run = "r#{i}"
+
+    item = fn j ->
+      fields = %{"runId" => run, "threadId" => "th-1", "text" => "#{i}.#{j}"}
+      fields = if heavy > 0, do: Map.put(fields, "blob", Enum.to_list(1..heavy)), else: fields
+      {"turn-item", "#{run}-i#{j}", %{"s" => fields}}
+    end
+
+    {:ok, _} =
+      Streams.commit("th-1", :thread, [
+        {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+        {"message", "#{run}-m", %{"s" => %{"runId" => run, "text" => "q#{i}"}}}
+        | Enum.map(1..3, item)
+      ])
+
+    {:ok, _} =
+      Streams.commit("th-1", :thread, [{"run", run, %{"s" => %{"status" => "completed"}}}])
   end
 
   test "a transaction that raises fails its caller and leaves the stream serving" do
