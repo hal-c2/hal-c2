@@ -32,6 +32,7 @@
 #   https://github.com/pingdotgg/t3code/pull/29688
 #   https://github.com/pingdotgg/t3code/pull/30142
 #   https://github.com/pingdotgg/t3code/pull/29457
+#   https://github.com/hal-c2/hal-c2/issues/1851
 
 Feature: Finding hosting tools, cloning and publishing repositories
   The MC finds which version control and hosting tools it can use and whether they are
@@ -458,7 +459,9 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | GitLab | acme/infra |
 
   # Upstream #21325: ".git" was dropped only at the very end, so "web.git/" and "web.git?tab=readme"
-  # looked up "acme/web.git" and found nothing.
+  # looked up "acme/web.git" and found nothing. The pasted host is kept for every host,
+  # github.com included (#1851): without it, `gh` would read the repository on its
+  # default host — GH_HOST's, or a sole Enterprise login's.
   @mc
   Scenario Outline: A pasted GitHub address ending in ".git" with more after it names the repository
     When the user looks up "<pasted>" on GitHub
@@ -466,10 +469,10 @@ Feature: Finding hosting tools, cloning and publishing repositories
 
     Examples:
       | pasted                                     | repository       |
-      | https://github.com/acme/web.git/           | acme/web         |
-      | https://github.com/acme/web.git?tab=readme | acme/web         |
+      | https://github.com/acme/web.git/           | github.com/acme/web |
+      | https://github.com/acme/web.git?tab=readme | github.com/acme/web |
       | acme/web.git/                              | acme/web         |
-      | github.com/acme/web.git                    | acme/web         |
+      | github.com/acme/web.git                    | github.com/acme/web |
       | acme/web.git.git                           | acme/web.git     |
       | https://github.example.com/acme/web.git/   | github.example.com/acme/web |
       | github.example.com/acme/web                | github.example.com/acme/web |
