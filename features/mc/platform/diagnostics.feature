@@ -138,7 +138,7 @@ Feature: MC diagnostics
       | an OAuth code, state or challenge           |
 
   # Upstream #27904: the state folder was readable by everyone.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: The MC's state folder is readable only by its owner
     When the MC starts
     Then its state folder can be read only by the user the MC runs as
