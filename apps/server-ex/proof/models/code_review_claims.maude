@@ -962,7 +962,7 @@ mod CODE-REVIEW-CLAIMS is
   eq boxless(Pe, Pu, Cr, Sp, Bo, Li, Br, Mu) =
        { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Pe) free later
          budget(Pu, Cr, Sp, Bo, 0, Li) breaks(Br) mutes(Mu) } .
-  --- The same two, looking in turn Pe more times, b finding it cannot Br times.
+  --- The same two, looking in turn Bu more times, b finding it cannot Br times.
   op handed : Nat Budget -> Sys .
   eq handed(Br, Bu) =
        { fresh(a) fresh(b) nosb(a) link(a, b) gh(h1) periodic(Bu) turn(a)
