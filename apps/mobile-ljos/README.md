@@ -18,10 +18,13 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   screen's exchange, `pairing.json`, environments beside the first),
   `mobile_terminal.rs` (MobileTerminal's key row, text size and line
   picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
-  `resume.rs` (Resume's decision, unwired without an Android host), and
+  `resume.rs` (Resume's decision, unwired without an Android host),
+  `push_crypto.rs` and `push_inbox.rs` (PushCrypto's RFC 8291
+  decryption and PushInbox's showing rules, ported; the Android
+  receivers that call them wait for hal-c2/ljos-ui#616), and
   stand-ins that publish the C++ state shape until H1 ports them:
   `scanner.rs` (Scanner/ScanCamera/QrReader), `notifications.rs`
-  (Notifications and the push inbox), `maintenance.rs` (Maintenance).
+  (Notifications over the inbox), `maintenance.rs` (Maintenance).
 - `qml/` is the entry and the QML stubs in `HalC2.Shell` for the two C++
   types the phone's screens name, `TerminalEvents` and `TurnAgents`
   (#1624), each saying what it cannot do until the real type lands.
