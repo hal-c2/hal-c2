@@ -334,9 +334,12 @@ defmodule HalC2.Plugins do
   # `{code, message, extra}` of a structured tool error, or nil: `code` is a short word
   # (`invalid_input`, `rate-limited`, `Unauthenticated`), `message` a text, and `extra`
   # holds `details` when it is there and JSON.
-  def structured_error("{" <> _ = text) do
-    case JSON.decode(text) do
-      {:ok, %{} = error} -> structured_error(error)
+  def structured_error(text) when is_binary(text) do
+    # JSON allows whitespace around the object, so ` \n{"code": ...}` is one too.
+    with true <- text =~ ~r/\A[ \t\n\r]*\{/,
+         {:ok, %{} = error} <- JSON.decode(text) do
+      structured_error(error)
+    else
       _ -> nil
     end
   end

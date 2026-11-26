@@ -9,15 +9,17 @@ defmodule HalC2.PluginToolErrorsPropTest do
   use PropCheck
 
   property "a structured error keeps its code, message and details, and nothing else counts as one" do
-    forall {{code, code_ok}, {message, message_ok}, {details, details_ok}, keys, form} <-
-             {code(), message(), details(), oneof([:string, :atom]), oneof([:map, :json])} do
+    forall {{code, code_ok}, {message, message_ok}, {details, details_ok}, keys, form, pad} <-
+             {code(), message(), details(), oneof([:string, :atom]), oneof([:map, :json]),
+              json_whitespace()} do
       error =
         %{code: code, message: message}
         |> then(&if(details == :absent, do: &1, else: Map.put(&1, :details, details)))
         |> keyed(keys)
 
       # A tuple has no JSON, so only the map form can carry one.
-      reason = if form == :json and details_ok, do: JSON.encode!(error), else: error
+      # JSON may surround the object with whitespace (RFC 8259).
+      reason = if form == :json and details_ok, do: pad <> JSON.encode!(error) <> pad, else: error
 
       expected =
         if code_ok and message_ok and details_ok,
@@ -40,6 +42,8 @@ defmodule HalC2.PluginToolErrorsPropTest do
       HalC2.Plugins.structured_error(reason) == nil
     end
   end
+
+  defp json_whitespace, do: oneof([exactly(""), exactly(" \n"), exactly("\t\r\n  ")])
 
   defp code do
     oneof([
