@@ -133,8 +133,8 @@ done <<<"$awaiting"
 
 # Promoted runs that ended, answered where their `CI result` could not, whether or not a run
 # behind them still goes (which stops the walk from the back below). The last one to pass
-# answers for the entries ahead of it too.
-answered=''
+# answers for the entries ahead of it too. A failed one sets off the culprit search below.
+answered='' failed_one=''
 while IFS=$'\t' read -r _ state sha number _; do
   [ "${state:-}" = AWAITING_CHECKS ] || continue
   run=$(latest_run "$sha")
@@ -148,12 +148,12 @@ while IFS=$'\t' read -r _ state sha number _; do
     answered="$answered $sha"
     break
   elif [ "$result" = failure ] || [ "$result" = cancelled ]; then
-    ! fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || answered="$answered $sha"
+    ! fail_promoted "$id" "$attempt" "$sha" "$url" "$number" "$result" || answered="$answered $sha" failed_one=$sha
   fi
 done < <(tac <<<"$built")
 
 # The last entry being built ahead of any failed one: it tests, or has passed.
-started='' failed_one='' passed='' searching=''
+started='' passed='' searching=''
 while IFS=$'\t' read -r _ state sha number _; do
   [ -n "${sha:-}" ] || continue
   run=$(latest_run "$sha")
