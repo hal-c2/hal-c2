@@ -2337,6 +2337,12 @@ defmodule HalC2.PullRequests.GitHub do
          do: done(graphql(ctx, @comment_mutations[kind], %{"commentId" => id, "body" => body}))
   end
 
+  # GitHub keeps one pending review per account per pull request, and refuses a new
+  # one while a draft started on GitHub is unsubmitted. The draft is the user's: it is
+  # named, never submitted or discarded for them.
+  @pending_review "This account has an unsubmitted draft review on this pull request on GitHub. " <>
+                    "Submit or discard it there, then publish again."
+
   @doc """
   Submits a whole review, its line comments with it, of `commit_id` when given (else
   of the head GitHub has then).
@@ -2363,7 +2369,16 @@ defmodule HalC2.PullRequests.GitHub do
     }
 
     review = if is_binary(commit_id), do: Map.put(review, "commit_id", commit_id), else: review
-    done(rest(ctx, "pulls/#{ctx.number}/reviews", method: "POST", input: JSON.encode!(review)))
+
+    case rest(ctx, "pulls/#{ctx.number}/reviews", method: "POST", input: JSON.encode!(review)) do
+      {:error, {reason, detail}} = error when is_binary(detail) ->
+        if String.contains?(String.downcase(detail), "one pending review"),
+          do: {:error, {reason, @pending_review}},
+          else: error
+
+      answer ->
+        done(answer)
+    end
   end
 
   def reply(ctx, thread_id, body),

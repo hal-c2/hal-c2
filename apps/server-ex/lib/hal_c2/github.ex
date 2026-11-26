@@ -434,7 +434,8 @@ defmodule HalC2.GitHub do
     told = String.downcase(err)
 
     detail =
-      (api_error(err) || first_line(err) || first_line(out) || "gh failed.")
+      (rest_error(out, err, head) || api_error(err) || first_line(err) || first_line(out) ||
+         "gh failed.")
       |> String.replace_prefix("gh: ", "")
 
     cond do
@@ -482,6 +483,56 @@ defmodule HalC2.GitHub do
 
     case Enum.split_while(lines, &(not (&1 =~ ~r/\(HTTP \d{3}\)$/))) do
       {["gh: " <> _ | _] = before, [last | _]} -> Enum.join(before ++ [last], ": ")
+      _ -> nil
+    end
+  end
+
+  # GitHub refuses a REST call with `{"message": …, "errors": […]}` on stdout. gh's
+  # stderr keeps the message and drops `errors`, strings or objects, where the reason
+  # usually is ("User can only have one pending review per pull request"). A GraphQL
+  # answer has no top-level `message` and is left to gh's own line.
+  defp rest_error(out, err, head) do
+    with "{" <> _ = text <- String.trim(out),
+         {:ok, %{"message" => message} = body} when is_binary(message) <- JSON.decode(text) do
+      reasons = body["errors"] |> List.wrap() |> Enum.map(&reason/1)
+
+      reason =
+        [message | reasons] |> Enum.reject(&(&1 in [nil, ""])) |> Enum.uniq() |> Enum.join(": ")
+
+      status = http_status(err) || (head && head.status)
+
+      cond do
+        reason == "" -> nil
+        status -> "#{reason} (HTTP #{status})"
+        true -> reason
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp reason(text) when is_binary(text), do: clip(text)
+  defp reason(%{"message" => text}) when is_binary(text), do: clip(text)
+
+  # A validation error without a message: `{"resource": "Label", "field": "name",
+  # "code": "already_exists"}`.
+  defp reason(%{} = error) do
+    case for(key <- ~w(resource field code), is_binary(error[key]), do: error[key]) do
+      [] -> nil
+      parts -> clip(Enum.join(parts, " "))
+    end
+  end
+
+  defp reason(_), do: nil
+
+  defp clip(text) do
+    text = String.trim(text)
+    if String.length(text) > 200, do: String.slice(text, 0, 199) <> "…", else: text
+  end
+
+  defp http_status(err) do
+    case Regex.run(~r/\(HTTP (\d{3})\)/, err) do
+      [_, code] -> String.to_integer(code)
       _ -> nil
     end
   end
