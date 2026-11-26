@@ -53,6 +53,7 @@
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex, apps/server-ex/lib/hal_c2/codex/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/codex/generated_images.ex (a sandboxed review's images, #1412)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (provider.uploadFeedback)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (@openai/codex advisory)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex (account/rateLimits/read, reset credits)
@@ -1215,6 +1216,13 @@ Feature: Codex
       | path                                  |
       | C:\Users\ana\.codex\images\fox.png    |
       | \\fileserver\share\images\fox.png     |
+
+  # A sandboxed review's Codex (#1412) saves its images in its sandbox, at a path the
+  # MC's machine does not have; the reply does not name it as one of the MC's files.
+  @mc
+  Scenario: An image a sandboxed review's Codex makes stays in the sandbox
+    When a sandboxed review's Codex saves a generated image at "/sandbox/.codex/generated_images/fox.png"
+    Then the reply shows no image
 
   # Upstream #23284: an image a Codex tool returned as a data address was saved but not shown.
   @shared @backlog-desktop @backlog-mobile @backlog-tui
