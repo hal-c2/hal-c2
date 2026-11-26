@@ -361,6 +361,7 @@ impl Core {
         // another client may have moved the machine past it.
         if let Some(release) = self.releases.get(&machine.environment_id)
             && !release.available.is_empty()
+            && channel_of(&release.available) == channel_of(&machine.version)
             && server_behind(&release.available, &machine.version)
         {
             return release.available.clone();
@@ -406,6 +407,21 @@ impl Core {
             })
             .cloned()
             .collect()
+    }
+
+    /// A server update the MC refused. A success a late reconnect
+    /// settled while this attempt waited stands.
+    pub fn update_failed(&mut self, environment_id: &str, label: &str, why: &str) {
+        if self.outcomes.get(environment_id).is_some_and(|o| o.ok) {
+            return;
+        }
+        let outcome = Outcome {
+            ok: false,
+            text: format!("{label} update failed: {why}"),
+        };
+        self.outcomes
+            .insert(environment_id.to_owned(), outcome.clone());
+        self.message = Some(outcome);
     }
 
     /// A machine back on another version settles the update that
@@ -1210,27 +1226,11 @@ impl Maintenance {
                         .unwrap_or_default();
                     match result {
                         Err(error) => {
-                            // A late reconnect may have settled the
-                            // first attempt while this retry waited:
-                            // its success stands.
-                            if !c
-                                .core
-                                .outcomes
-                                .get(&machine.environment_id)
-                                .is_some_and(|outcome| outcome.ok)
-                            {
-                                let outcome = Outcome {
-                                    ok: false,
-                                    text: format!(
-                                        "{} update failed: {}",
-                                        machine.label, error.message
-                                    ),
-                                };
-                                c.core
-                                    .outcomes
-                                    .insert(machine.environment_id.clone(), outcome.clone());
-                                c.core.message = Some(outcome);
-                            }
+                            c.core.update_failed(
+                                &machine.environment_id,
+                                &machine.label,
+                                &error.message,
+                            );
                         }
                         Ok(result) => {
                             c.core.gave_up_on.remove(&machine.environment_id);
@@ -1534,6 +1534,49 @@ mod tests {
         assert_eq!(path_of(&caps), Path::DesktopManual);
         caps.insert("desktopAppUpdate".into(), json!(true));
         assert_eq!(path_of(&caps), Path::Desktop);
+    }
+
+    #[test]
+    fn a_retry_failure_does_not_clobber_a_settled_success() {
+        // Given up on, retried, then the first attempt comes back
+        // while the retry's answer is in flight: its failure must
+        // not replace the settlement (the interleaving the prop
+        // cannot reach, since it writes outcomes itself).
+        let mut core = Core::default();
+        core.gave_up_on.insert("env-a".into(), "0.4.0".into());
+        let back = machine("env-a", "0.6.0");
+        assert_eq!(core.settle(&[back]).len(), 0, "settles through gave_up_on");
+        assert!(core.outcomes["env-a"].ok);
+        core.update_failed("env-a", "Machine env-a", "refused");
+        assert!(core.outcomes["env-a"].ok, "the success stands");
+        assert!(core.message.as_ref().is_some_and(|m| m.ok));
+
+        // With no settlement during the retry, the failure is told.
+        let mut core = Core::default();
+        core.update_failed("env-a", "Machine env-a", "refused");
+        assert!(!core.outcomes["env-a"].ok);
+        assert!(core.outcomes["env-a"].text.contains("refused"));
+    }
+
+    #[test]
+    fn a_cached_release_on_another_channel_is_not_offered() {
+        let mut core = Core::default();
+        core.releases.insert(
+            "env-a".into(),
+            Release {
+                checking: false,
+                text: String::new(),
+                available: "0.6.0".into(),
+            },
+        );
+        // The machine moved to nightly since the check: the cached
+        // stable release is not its target (the app's own may be).
+        let nightly = machine("env-a", "0.5.0-nightly.20260901.1");
+        assert_eq!(core.target(&nightly, "0.5.0"), "");
+        assert_eq!(
+            core.target(&nightly, "0.5.0-nightly.20260902.1"),
+            "0.5.0-nightly.20260902.1"
+        );
     }
 
     #[test]
