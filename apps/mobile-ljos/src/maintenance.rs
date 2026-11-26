@@ -1605,7 +1605,10 @@ mod tests {
         // The connection changes while the read is in flight.
         core.forget_session();
         assert_eq!(core.session, Session::Unknown);
-        assert!(!core.session_read_is_current(read), "the stale read is dropped");
+        assert!(
+            !core.session_read_is_current(read),
+            "the stale read is dropped"
+        );
         // A read started for the new connection answers.
         let next = core.begin_session_read();
         assert!(core.session_read_is_current(next));
@@ -1618,7 +1621,10 @@ mod tests {
         // nightlies are: 20260902 is newer than 20260901.
         let mut core = Core::default();
         let own = machine("env-a", "0.5.0-preview.20260901.1");
-        assert_eq!(core.target(&own, "0.5.0-preview.20260902.1"), "0.5.0-preview.20260902.1");
+        assert_eq!(
+            core.target(&own, "0.5.0-preview.20260902.1"),
+            "0.5.0-preview.20260902.1"
+        );
         assert_eq!(core.target(&own, "0.5.0-preview.20260901.1"), "");
         core.releases.insert(
             "env-a".into(),
