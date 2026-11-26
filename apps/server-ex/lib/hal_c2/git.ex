@@ -218,6 +218,42 @@ defmodule HalC2.Git do
     :exit, reason -> {:error, "#{name} did not exit: #{inspect(reason)}"}
   end
 
+  # Tracing is off, as a trace of a fetch can carry its credentials into an error.
+  @untraced ~w(GIT_TRACE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA GIT_CURL_VERBOSE
+               GIT_TRACE_PACKET GIT_TRACE_PACKFILE GIT_TRACE_SETUP GIT_TRACE2
+               GIT_TRACE2_EVENT GIT_TRACE2_PERF)
+
+  @doc """
+  `run/3`'s `:env` and `:unset` for git in a repository the MC keeps for itself, such
+  as the code review plugin's clones: the user's git config is left out (its
+  `insteadOf` can turn an HTTPS address into SSH, and its hooks have no business
+  there), git never prompts, an inherited `GIT_SSL_NO_VERIFY` does not turn off a
+  server's certificate check, nor `GIT_CONFIG` point `git config` at another file
+  than the one a fetch reads, and tracing is off.
+
+  `repository` is the directory git runs in, or nil (`git init`). One with no `.git` in
+  it is a bare repository and is named to git (`GIT_DIR`), as `run/3` has git look
+  for none on its own.
+  """
+  def isolated(repository) do
+    bare =
+      if repository && not File.exists?(Path.join(repository, ".git")),
+        do: [{"GIT_DIR", repository}],
+        else: []
+
+    [
+      env:
+        bare ++
+          [
+            {"GIT_TERMINAL_PROMPT", "0"},
+            {"GIT_CONFIG_GLOBAL", "/dev/null"},
+            {"GIT_CONFIG_NOSYSTEM", "1"},
+            {"GIT_TRACE_REDACT", "1"}
+          ],
+      unset: ["GIT_CONFIG", "GIT_SSL_NO_VERIFY" | @untraced]
+    ]
+  end
+
   @doc "Runs git and returns its stdout when it exits 0."
   @spec ok(Path.t(), [String.t()], keyword) :: {:ok, binary} | {:error, term}
   def ok(cwd, args, opts \\ []) do

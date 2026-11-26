@@ -425,7 +425,10 @@ defmodule HalC2.CodeReviewTest do
     held = HalC2Plugins.CodeReview.Checkout.Held
     remote = %{"url" => Path.join(context.dir, "remotes/acme/api.git")}
     clone = Path.join(context.dir, "sweep/api.git")
-    prepare = fn n -> apply(checkout, :prepare, [clone, "#{clone}-#{n}", remote, 1, "main"]) end
+
+    prepare = fn n ->
+      apply(checkout, :prepare, [clone, "#{clone}-#{n}", remote, 1, "main", :any])
+    end
 
     refs = fn ->
       git!(clone, ["for-each-ref", "--format=%(refname)", "refs/hal-c2/code-review/1/"])
@@ -475,7 +478,7 @@ defmodule HalC2.CodeReviewTest do
 
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
-    prepare = fn path -> apply(checkout, :prepare, [clone, path, remote, 3, "main"]) end
+    prepare = fn path -> apply(checkout, :prepare, [clone, path, remote, 3, "main", :any]) end
     first = Path.join(context.dir, "subs/first")
     second = Path.join(context.dir, "subs/second")
 
@@ -524,7 +527,7 @@ defmodule HalC2.CodeReviewTest do
     second = Path.join(context.dir, "subs/second")
 
     for path <- [first, second] do
-      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
       assert :ok = apply(checkout, :submodules, [clone, path, remote])
       assert File.read!(Path.join(path, " leading lib/inner.txt")) == "lib\n"
       assert File.read!(Path.join(path, "my dir/inner.txt")) == "inner\n"
@@ -551,7 +554,7 @@ defmodule HalC2.CodeReviewTest do
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/unchecked")
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
 
     # Each submodule fetch says whether git would check the certificate of its server.
     log = Path.join(context.dir, "ssl.log")
@@ -602,7 +605,7 @@ defmodule HalC2.CodeReviewTest do
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/empty-value")
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
 
     included = Path.join(context.dir, "github.gitconfig")
     File.write!(included, "[credential \"https://example.invalid\"]\n\thelper =\n")
@@ -626,7 +629,7 @@ defmodule HalC2.CodeReviewTest do
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/none")
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
     assert :ok = apply(checkout, :submodules, [clone, path, remote])
     assert File.read!(Path.join(path, "lib/inner.txt")) == "inner\n"
     :ok = apply(checkout, :release, [])
@@ -648,7 +651,7 @@ defmodule HalC2.CodeReviewTest do
     second = Path.join(context.dir, "subs/second")
 
     for path <- [first, second] do
-      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+      assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
       assert :ok = apply(checkout, :submodules, [clone, path, remote])
       assert File.read!(Path.join(path, "lib/lib.txt")) == "pinned\n"
     end
@@ -665,7 +668,7 @@ defmodule HalC2.CodeReviewTest do
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/plain-git")
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
     assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
     assert reason =~ "transport 'git' not allowed"
     assert File.regular?(Path.join(path, "README.md"))
@@ -687,12 +690,12 @@ defmodule HalC2.CodeReviewTest do
     first = Path.join(context.dir, "subs/first")
     second = Path.join(context.dir, "subs/second")
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, first, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, first, remote, 3, "main", :any])
     assert {:error, reason} = apply(checkout, :submodules, [clone, first, remote])
     assert reason =~ "transport 'git' not allowed"
     :ok = apply(checkout, :remove, [clone, first])
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, second, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, second, remote, 3, "main", :any])
     assert {:error, _} = apply(checkout, :submodules, [clone, second, remote])
     # The failed clone stops the update before any checkout, but the one cloned again
     # borrowed everything from the store.
@@ -709,7 +712,7 @@ defmodule HalC2.CodeReviewTest do
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/locked")
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
     :ok = apply(checkout, :release, [])
 
     # A git that says when it is making the store, and waits there until let go.
@@ -748,7 +751,7 @@ defmodule HalC2.CodeReviewTest do
     remote = %{"url" => "https://github.com/acme/api.git"}
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/wrapped")
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
 
     # A wrapper named by `GIT_SSH` alone, which says it ran.
     log = Path.join(context.dir, "wrapper.log")
@@ -780,7 +783,7 @@ defmodule HalC2.CodeReviewTest do
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/local")
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 3, "main", :any])
     assert {:error, reason} = apply(checkout, :submodules, [clone, path, remote])
     assert reason =~ "transport 'file' not allowed"
     refute File.exists?(Path.join(path, "lib/secret.txt"))
@@ -794,10 +797,106 @@ defmodule HalC2.CodeReviewTest do
     clone = Path.join(context.dir, "subs/api.git")
     path = Path.join(context.dir, "subs/plain")
 
-    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 1, "main"])
+    assert {:ok, _} = apply(checkout, :prepare, [clone, path, remote, 1, "main", :any])
     assert :ok = apply(checkout, :submodules, [clone, path, remote])
     refute File.exists?(Path.join(clone, "hal-c2-submodules"))
     :ok = apply(checkout, :release, [])
+  end
+
+  test "a checkout whose head is not the one it must be at is refused before anything is checked out",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    remote = %{"url" => Path.join(context.dir, "remotes/acme/api.git")}
+    clone = Path.join(context.dir, "only/api.git")
+    path = Path.join(context.dir, "only/checkout")
+    fetched = context.shas[1]
+
+    published = fn ->
+      git!(clone, ["for-each-ref", "--format=%(refname)", "refs/hal-c2/code-review/1/"])
+    end
+
+    for only <- [context.shas[2], nil] do
+      assert {:error, {:head, ^fetched}} =
+               apply(checkout, :prepare, [clone, path, remote, 1, "main", only])
+
+      refute File.exists?(path)
+      assert published.() == ""
+    end
+
+    assert {:ok, %{"headSha" => ^fetched}} =
+             apply(checkout, :prepare, [clone, path, remote, 1, "main", fetched])
+
+    :ok = apply(checkout, :release, [])
+  end
+
+  test "whether a commit has a regular .gitmodules is read from its tree", context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    repo = Path.join(context.dir, "trees")
+    git!(context.dir, ["init", "-q", repo])
+    File.write!(Path.join(repo, "modules"), "[submodule \"lib\"]\n")
+    blob = git!(repo, ["hash-object", "-w", "modules"])
+
+    # Trees made whole, as git refuses to stage a link at .gitmodules.
+    tree = fn entry ->
+      {sha, 0} =
+        System.cmd("sh", ["-c", ~S(printf '%s\n' "$1" | git mktree), "sh", entry], cd: repo)
+
+      String.trim(sha)
+    end
+
+    commit = &git!(repo, ["commit-tree", "-m", "Tree", tree.(&1)])
+    regular? = &apply(checkout, :regular?, [repo, &1, ".gitmodules"])
+
+    assert regular?.(commit.("100644 blob #{blob}\t.gitmodules"))
+    assert regular?.(commit.("100755 blob #{blob}\t.gitmodules"))
+    refute regular?.(commit.("120000 blob #{blob}\t.gitmodules"))
+    refute regular?.(commit.("040000 tree #{tree.("100644 blob #{blob}\tx")}\t.gitmodules"))
+    refute regular?.(commit.("100644 blob #{blob}\tREADME.md"))
+  end
+
+  test "the lines a report's comments may sit on are read from a diff of their files alone",
+       context do
+    checkout = HalC2Plugins.CodeReview.Checkout
+    restore = app([:code_review_diff_bytes])
+    on_exit(restore)
+    repo = Path.join(context.dir, "diffs")
+    git!(context.dir, ["init", "-q", repo])
+    write = fn file, text -> File.write!(Path.join(repo, file), text) end
+    numbered = Enum.map_join(1..10, &"line #{&1}\n")
+
+    write.("a.txt", "a1\n")
+    write.("b.txt", "b1\n")
+    write.("old.txt", numbered)
+    git!(repo, ["add", "."])
+    git!(repo, ["commit", "-q", "-m", "Base"])
+    base = git!(repo, ["rev-parse", "HEAD"])
+    write.("a.txt", "a2\n")
+    write.("b.txt", "b2\n")
+    git!(repo, ["mv", "old.txt", "new.txt"])
+    write.("new.txt", String.replace(numbered, "line 10\n", "line ten\n"))
+    git!(repo, ["commit", "-qam", "Head"])
+    head = git!(repo, ["rev-parse", "HEAD"])
+    lines = &apply(checkout, :diff_lines, [repo, base, head, &1])
+
+    # No file asks git nothing, a path that names no checkout at all included.
+    assert apply(checkout, :diff_lines, [Path.join(context.dir, "nowhere"), base, head, []]) ==
+             {:ok, %{}}
+
+    assert {:ok, %{"a.txt" => %{{"new", 1} => "added", {"old", 1} => "deleted"}} = only} =
+             lines.(["a.txt"])
+
+    assert Map.keys(only) == ["a.txt"]
+    assert lines.(["missing.txt"]) == {:ok, %{}}
+
+    # A renamed file still reads as a rename, not as a file added whole.
+    assert {:ok, %{"new.txt" => renamed} = both} = lines.(["new.txt"])
+    assert Map.keys(both) == ["new.txt"]
+    assert renamed[{"new", 10}] == "added" and renamed[{"new", 7}] == "context"
+    refute Map.has_key?(renamed, {"new", 1})
+
+    # A diff past its cap places nothing.
+    Application.put_env(:hal_c2, :code_review_diff_bytes, 16)
+    assert lines.(["a.txt"]) == :error
   end
 
   test "an agent is told which submodules its checkout lacks" do
@@ -1034,6 +1133,22 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "waiting", "sandboxed" => true} = review()
     assert posts(context) == []
+  end
+
+  test "a pull request nobody trusted whose head moved past the approved commit is refused before anything is checked out",
+       context do
+    sandboxed!(context)
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    # GitHub still lists the approved commit, but the pull request's head is past it.
+    push!(context, 2)
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    await_review(&(&1["status"] == "failed"))
+
+    assert review()["error"] =~ "has new commits since you approved it"
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+    refute_received {:openshell_request, "CreateSandbox", _}
   end
 
   test "a push takes back the approval of a pull request nobody trusted, even pushed back",
