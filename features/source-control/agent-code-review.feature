@@ -325,6 +325,17 @@ Feature: Agent code review
       And the review of #12 says "Opened by stranger"
 
     @mc
+    Scenario: A pull request pushed past the commit the user approved is not checked out
+      Given "code-review" watches "acme/api" automatically
+      And review sandboxes can run on this MC
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      And #12 is pushed again before "code-review" lists it
+      When the user approves #12 at its head commit
+      Then the review of #12 is failed saying "has new commits since you approved it. Look at them, then approve it again."
+      And no review sandbox was made
+      And no checkout of #12 is left
+
+    @mc
     Scenario: A pull request pushed back to the commit the user approved needs their approval again
       Given "code-review" reviews new pushes
       And review sandboxes can run on this MC
@@ -442,6 +453,12 @@ Feature: Agent code review
       And it is told how to report what it finds
 
     @mc
+    Scenario: The agent is told to re-raise an open finding instead of skipping it
+      When #12 is reviewed
+      Then the agent's prompt includes "repeat one that is still open"
+      And the agent's prompt does not include "already raised in the existing comments"
+
+    @mc
     Scenario: A repository's own review instructions are added to the prompt
       Given "acme/api" has extra review instructions "Never approve schema changes"
       When #12 is reviewed
@@ -461,6 +478,31 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
       And the new review's prompt includes "You reviewed this pull request before"
       And the new review's prompt includes "Finding 1."
+
+    @mc
+    Scenario: A re-review is told to check fixes in the new commits
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Check each fix in those commits, including fixes you suggested."
+
+    @mc
+    Scenario: A re-review is told the previous review's summary, including off-diff findings
+      Given "code-review" reviews new pushes
+      And #12 was reviewed with an off-diff finding at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Previous summary, including findings outside the diff"
+      And the new review's prompt includes "Check the caller."
+
+    @mc
+    Scenario: The prompt says when there are more open threads than it shows
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And 31 members left unresolved review comments on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "more open thread(s), not shown here."
 
     @mc
     Scenario: The repository's REVIEW.md is followed when the user wants that
@@ -651,6 +693,15 @@ Feature: Agent code review
       When #12 is reviewed
       Then the agent's prompt includes "Check the limit's unit"
       And the agent's prompt does not include "Rename the limit"
+
+    @mc
+    Scenario: The prompt no longer tells the agent to leave open threads alone
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Review threads still open on this pull request, quoted from their authors"
+      And the agent's prompt does not include "do not raise these again"
 
     @mc
     Scenario: A sandboxed review quotes every unresolved review comment
@@ -857,6 +908,14 @@ Feature: Agent code review
       And the review of #12 is still running in the same thread
 
     @mc
+    Scenario: A report without comments reads no diff
+      Given the MC's git notes which commands it runs
+      And a review of #12 is running
+      When the agent reports the verdict "approved" with only a summary
+      Then the review of #12 is finished with no comments
+      And no diff of #12 was read to place comments
+
+    @mc
     Scenario: A run's first report is final
       Given a review of #12 is running
       When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
@@ -961,14 +1020,30 @@ Feature: Agent code review
       Given a review of #12 is running
       When the agent reports a high finding with a suggested fix on "src/limits.ts"
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "2 findings: 1 high, 1 unrated."
+      Then the review posted to #12 opens with "## Agentic code review" then "2 findings: 1 high, 1 unrated."
 
     @mc
     Scenario: A published review with nothing to fix says so first
       Given a review of #12 is running
       When the agent reports the verdict "approved" with only a summary
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "No findings."
+      Then the review posted to #12 opens with "## Agentic code review" then "No findings."
+
+    @mc
+    Scenario: The heading of posted reviews is the user's to set
+      Given a review of #12 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user sets the review heading to "Custom review"
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "## Custom review"
+
+    @mc
+    Scenario: The heading of posted reviews is the user's to turn off
+      Given a review of #13 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user sets the review heading to ""
+      And the user publishes the review of #13
+      Then the review posted to #13 does not open with "##"
 
     @mc
     Scenario: What the agent checked is reported apart from the summary
@@ -1049,6 +1124,13 @@ Feature: Agent code review
     Scenario: A comment on a line the pull request does not change is kept as a general comment
       When the agent reports a comment on a line that is not in the diff of #12
       Then the comment is kept in the review's summary instead of on the line
+
+    @mc
+    Scenario: Comments are kept as general comments when the diff is longer than a review reads
+      Given the diff of #12 is longer than a review reads
+      And a review of #12 is running
+      When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
+      Then the comments are kept in the review's summary instead of on their lines
 
   Rule: The user decides what happens with the findings
 

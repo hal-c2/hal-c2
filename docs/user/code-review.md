@@ -180,7 +180,9 @@ merging it or otherwise: what is only on the pull request's head is left out.
 
 The agent reports a verdict, a summary, comments on lines, and what it checked.
 A comment on a line the pull request does not change goes into the summary
-instead. A posted review opens with the count of its findings, such as "No
+instead. Every comment goes into the summary when the change to the files they
+are on is too large to read whole (more than 8 MiB of diff together, or more than
+a minute to read), or when git cannot read it. A posted review opens with the count of its findings, such as "No
 findings." or "2 findings: 1 high, 1 medium". It counts the comments you kept
 and those moved into the summary, which cannot be dismissed. What the agent
 checked follows the summary: what it left out and why, and what this machine
@@ -193,8 +195,8 @@ comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. HAL-C2 also puts the pull request's description and its
 unresolved review comments in the agent's prompt (on this machine, only the
-comments of people HAL-C2 trusts), so it can judge the change against what it says it does and leave out what
-someone else already raised. Resolved comments are not included.
+comments of people HAL-C2 trusts), so it can judge the change against what it says it does and check whether
+each of them is fixed, still open, or wrong, rather than skip them. Resolved comments are not included.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
@@ -204,6 +206,8 @@ repository:
   comments you do not want first.
 - **Post automatically** posts it as soon as the agent is done. A pull request
   from someone the repository does not trust waits for you to publish instead.
+
+**Review heading** sets the first line of every posted review, so readers can tell an agent wrote it; leave it empty to skip the heading.
 
 With **Post verdicts as comments**, a review is posted as a comment rather than
 an approval or a request for changes. On your own pull requests, which GitHub

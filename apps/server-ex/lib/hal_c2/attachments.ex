@@ -657,14 +657,17 @@ defmodule HalC2.Attachments do
   defp favicon_expiry(now), do: (div(now, 30 * 60_000) + 2) * 30 * 60_000
 
   defp saved_favicon(cwd) do
-    Enum.find_value(HalC2.Shell.rows(), fn
-      {{_mc, _id}, {"project", %{"workspaceRoot" => ^cwd, "faviconPath" => path}}}
-      when is_binary(path) ->
-        path
-
-      _ ->
-        nil
-    end)
+    Enum.find_value(
+      HalC2.Shell.query(
+        kind: "project",
+        where: %{"workspaceRoot" => cwd},
+        present: "faviconPath"
+      ),
+      fn
+        {{_mc, _id}, {"project", %{"faviconPath" => path}}} when is_binary(path) -> path
+        _ -> nil
+      end
+    )
   end
 
   defp identity(path) do

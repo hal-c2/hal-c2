@@ -916,7 +916,7 @@ defmodule HalC2.OpenShell.Review do
     echo "base $(git merge-base HEAD refs/review/base || true)"
     """
 
-    with {:ok, file} <- bundle(spec),
+    with {:ok, file} <- bundle(spec, max(deadline - now(), 1) * 1000),
          upload =
            Client.write_file(conn, name, @bundle, {:file, file},
              upload_timeout: max(deadline - now(), 1) * 1000
@@ -942,32 +942,37 @@ defmodule HalC2.OpenShell.Review do
 
   # `review.bundle`, a git bundle of the review's two refs, in a directory of its own
   # the caller removes. The directory is the MC's temporary one and a unique integer;
-  # nothing a client or the agent sends names it.
+  # nothing a client or the agent sends names it. Git runs in the clone as the
+  # plugin's own git does (`HalC2.Git.isolated/1`), and has `ms`, the review's own
+  # time limit, before it is given up and killed with what it started.
   # sobelow_skip ["Traversal.FileModule"]
-  defp bundle(spec) do
+  defp bundle(spec, ms) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-review-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     file = Path.join(dir, Path.basename(@bundle))
+    isolated = HalC2.Git.isolated(spec.clone)
 
-    env = [
-      {"GIT_CONFIG_GLOBAL", "/dev/null"},
-      {"GIT_CONFIG_NOSYSTEM", "1"},
-      {"GIT_TERMINAL_PROMPT", "0"}
-    ]
+    bundled =
+      HalC2.Git.run(spec.clone, ["bundle", "create", "-q", file, spec.head_ref, spec.base_ref],
+        env: isolated[:env],
+        unset: isolated[:unset],
+        timeout: ms,
+        max_bytes: 65_536,
+        stop_children: {__MODULE__, dir}
+      )
 
-    case System.cmd("git", ["bundle", "create", "-q", file, spec.head_ref, spec.base_ref],
-           cd: spec.clone,
-           env: env,
-           stderr_to_stdout: true
-         ) do
-      {_, 0} ->
+    case bundled do
+      {:ok, %{status: 0}} ->
         {:ok, file}
 
-      {out, _} ->
+      failed ->
         File.rm_rf(dir)
-        {:error, "The review's checkout could not be bundled: #{String.trim(out)}"}
+        {:error, "The review's checkout could not be bundled: #{bundle_error(failed)}"}
     end
   end
+
+  defp bundle_error({:ok, %{out: out, err: err}}), do: String.trim(out <> err)
+  defp bundle_error({:error, reason}) when is_binary(reason), do: reason
 
   defp sha?(value),
     do: is_binary(value) and Regex.match?(~r/\A[0-9a-f]{40}([0-9a-f]{24})?\z/, value)

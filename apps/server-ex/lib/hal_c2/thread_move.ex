@@ -145,7 +145,7 @@ defmodule HalC2.ThreadMove do
   not known.
   """
   def locate(id) do
-    rows = for {{mc, ^id}, {"thread", row}} <- Shell.rows(), do: {mc, row}
+    rows = for {{mc, _id}, {"thread", row}} <- Shell.query(kind: "thread", id: id), do: {mc, row}
     # Late in a move both ends list it: the one it is going to holds it by then.
     live = Enum.filter(rows, fn {_mc, row} -> row["movedTo"] == nil end)
 

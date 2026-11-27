@@ -91,6 +91,7 @@ defmodule HalC2.CodeReviewPropTest do
     "comment" => "COMMENT"
   }
   @statuses Map.new(@order, &{Atom.to_string(&1), &1})
+  @headings ["Agentic code review", "Custom heading", ""]
 
   setup_all do
     # `behind_a_post?/1` looks for `run/2` under a process's backoff; the default
@@ -411,7 +412,7 @@ defmodule HalC2.CodeReviewPropTest do
   # (the head the last look saw, 1 or 2), reviewed, changed, verdict, comments (one
   # dismissed flag each), publish_error, seq (order queued)}. `runs`: key → whether
   # each run so far got its thread and checkout, kept when a review is discarded.
-  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`;
+  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, heading, headline}`;
   # `github`: the `{key, reviewed}` of those GitHub took.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
   # `waiting_pubs`: posts behind a held post of their pull request, `{key, run, reviewed, sent}`.
@@ -436,7 +437,9 @@ defmodule HalC2.CodeReviewPropTest do
         label: "agent-review",
         # Whether trusted pull requests are reviewed on this machine rather than in a
         # sandbox, as `setup` saves it.
-        here: true
+        here: true,
+        # The heading each posted review opens with, or "" for none.
+        heading: "Agentic code review"
       },
       # `labeled`: whether it carries both labels, agent-review added by monalisa and
       # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
@@ -499,6 +502,7 @@ defmodule HalC2.CodeReviewPropTest do
     # Mostly a review there is something to do with.
     waiting = for {key, %{status: :waiting}} <- m.reviews, do: key
     published = if waiting == [], do: key, else: frequency([{3, elements(waiting)}, {1, key}])
+    other_heading = elements(List.delete(@headings, m.settings.heading))
     commented = for {key, %{comments: [_ | _]}} <- m.reviews, do: key
     commented = if commented == [], do: key, else: frequency([{3, elements(commented)}, {1, key}])
 
@@ -533,6 +537,8 @@ defmodule HalC2.CodeReviewPropTest do
         {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
         {if(waiting == [], do: 2, else: 10),
          {:call, __MODULE__, :publish, [published, frequency([{6, true}, {1, false}])]}},
+        {if(waiting == [], do: 1, else: 3),
+         {:call, __MODULE__, :heading_staleness, [published, other_heading]}},
         {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}},
         {2, {:call, __MODULE__, :save_mid_read, [trust_setting()]}}
       ] ++
@@ -578,7 +584,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"reviewNewPushes", boolean()},
             {"display", oneof(~w(page threads both))},
             {"model", oneof(~w(fake/one fake/two))},
-            {"reviewTrustedOnThisMachine", boolean()}
+            {"reviewTrustedOnThisMachine", boolean()},
+            {"heading", oneof(@headings)}
           ])
         ]}},
       # The watch's own starts, which the review limits hold back, and the limits.
@@ -604,7 +611,7 @@ defmodule HalC2.CodeReviewPropTest do
         {"label", oneof(~w(agent-review ship-it))}
       ])
 
-  @plugin_commands ~w(refresh poll start start_stop retry resume approve unapprove dismiss discard stop relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
+  @plugin_commands ~w(refresh poll start start_stop retry resume approve unapprove dismiss discard stop relist_discard publish heading_staleness age disable report turn_finished limited late_published save_mid_read)a
 
   def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
@@ -627,6 +634,11 @@ defmodule HalC2.CodeReviewPropTest do
       Enum.sort(running.(after_start)) == Enum.sort([key | running.(m)]) and
       Enum.at(after_start.runs[key], after_start.reviews[key].run - 1) == true
   end
+
+  # Shrinking can drop the save that made `heading` differ; saving the same one
+  # leaves the preview current, so the command no longer tests staleness.
+  defp allowed?(m, {:call, _, :heading_staleness, [_key, heading]}),
+    do: m.enabled and heading != m.settings.heading
 
   defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
   defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
@@ -817,6 +829,16 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # The version a preview showed belongs to the heading it would post under
+  # (`version/2`): saving a different one makes that version stale, so publishing
+  # with it is refused and nothing more is posted, whatever a fresh one taken after
+  # the save would do.
+  defp step(m, {:call, _, :heading_staleness, [key, heading]}) do
+    m = %{m | settings: %{m.settings | heading: heading}}
+    {m, reply} = step(m, {:call, nil, :publish, [key, true]})
+    {m, {:error, reply}}
+  end
+
   defp step(m, {:call, _, :report, [{key, k}, kind]}) do
     case m.reviews[key] do
       # A stopped run's checkout is gone; what its agent says is not a review.
@@ -937,7 +959,8 @@ defmodule HalC2.CodeReviewPropTest do
         "reviewsPerRepositoryPerDay" => :per_repository,
         "trustedLogins" => :trusted_logins,
         "label" => :label,
-        "reviewTrustedOnThisMachine" => :here
+        "reviewTrustedOnThisMachine" => :here,
+        "heading" => :heading
       }[field]
 
     value = if field == "trustedLogins", do: value != [], else: value
@@ -1370,7 +1393,7 @@ defmodule HalC2.CodeReviewPropTest do
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
-    sent = {key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}
+    sent = {key, r.reviewed, kept, @events[r.verdict], m.settings.heading, headline(r.comments)}
 
     cond do
       Enum.any?(m.held_pubs, &(elem(&1, 0) == key)) ->
@@ -1406,9 +1429,9 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # The line a post opens with: the findings of a report the user kept, where a
-  # report with findings has a high one and an unrated one on lines (`dismissed`
-  # says which the user dismissed) and an unrated one in the summary.
+  # The line a post opens with, after its heading: the findings of a report the user
+  # kept, where a report with findings has a high one and an unrated one on lines
+  # (`dismissed` says which the user dismissed) and an unrated one in the summary.
   defp headline([]), do: "No findings."
 
   defp headline([high_dismissed, other_dismissed]) do
@@ -1677,16 +1700,34 @@ defmodule HalC2.CodeReviewPropTest do
   # the version the user saw, or (`fresh` false) one the review had before, and the
   # verdict its preview said it posts with.
   def publish(key, fresh) do
-    ref = make_ref()
     shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
     version = if fresh, do: shown && shown["version"], else: "stale"
+    observe(publish_with_version(key, version))
+  end
+
+  # The version a preview showed, saved under a heading later changed to `heading`:
+  # publishing with it is refused and posts nothing, as it belongs to the heading it
+  # was taken under (`version/2`); a fresh one taken after the save still publishes.
+  def heading_staleness(key, heading) do
+    before = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    stale_version = before && before["version"]
+    :ok = plugins("saveSettings", %{"id" => @id, "settings" => %{"heading" => heading}})
+    stale = publish_with_version(key, stale_version)
+
+    after_save = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    fresh = publish_with_version(key, after_save && after_save["version"])
+    observe({stale, fresh})
+  end
+
+  defp publish_with_version(key, version) do
+    ref = make_ref()
     send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, verdict(key)}})
     drain()
 
     receive do
-      {^ref, reply} -> observe(reply(reply))
+      {^ref, reply} -> reply(reply)
     after
-      0 -> observe(:held)
+      0 -> :held
     end
   end
 
@@ -2196,8 +2237,9 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
 
-  # Every review posted to the fake GitHub: `{key, head, comments, event, first line}`,
-  # the first line after a verdict posted as a comment.
+  # Every review posted to the fake GitHub: `{key, head, comments, event, heading, first
+  # line}`, the heading (or "" when there is none) and the first line after it, after a
+  # verdict posted as a comment.
   defp posts do
     fx_path("calls.jsonl")
     |> File.read!()
@@ -2210,15 +2252,21 @@ defmodule HalC2.CodeReviewPropTest do
         [_, repo, number] ->
           body = JSON.decode!(call["stdin"])
 
+          {heading, rest} =
+            case Regex.run(~r/\A## (.*?)\n\n(.*)/s, body["body"]) do
+              [_, heading, rest] -> {heading, rest}
+              nil -> {"", body["body"]}
+            end
+
           first =
-            body["body"]
+            rest
             |> String.replace(~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
             |> String.split("\n", parts: 2)
             |> hd()
 
           [
             {"acme/#{repo}##{number}", head(body["commit_id"]), length(body["comments"] || []),
-             body["event"], first}
+             body["event"], heading, first}
           ]
 
         nil ->

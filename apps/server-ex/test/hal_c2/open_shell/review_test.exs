@@ -410,6 +410,32 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  test "a checkout git cannot bundle opens no sandbox and leaves no bundle behind", %{
+    gateway: g,
+    repo: repo,
+    tmp_dir: dir
+  } do
+    fake_git!(dir, ~S(echo "bundle refused" >&2; exit 1))
+    left = fn -> Path.wildcard(Path.join(System.tmp_dir!(), "hal-c2-review-*")) end
+    before = left.()
+
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "The review's checkout could not be bundled: bundle refused"
+    assert left.() -- before == []
+    assert_gone(g)
+  end
+
+  test "a bundle past the review's time is given up", %{gateway: g, repo: repo, tmp_dir: dir} do
+    fake_git!(dir, "exec tail -f /dev/null")
+    left = fn -> Path.wildcard(Path.join(System.tmp_dir!(), "hal-c2-review-*")) end
+    before = left.()
+
+    assert {:error, message} = Review.open(%{spec(repo) | minutes: 1 / 60})
+    assert message =~ "The review's checkout could not be bundled: git bundle timed out"
+    assert left.() -- before == []
+    assert_gone(g)
+  end
+
   test "an agent whose sandbox is no longer this MC's does not start", %{gateway: g, repo: repo} do
     {:ok, %{sandbox: name}} = Review.open(spec(repo))
     FakeOpenShell.put_sandbox(g, name, %{})
@@ -666,6 +692,33 @@ defmodule HalC2.OpenShell.ReviewTest do
     FakeOpenShell.put_provider(gateway, "review-left", owned(labels))
     # Another home's, on a gateway the two share: not this MC's to reconcile.
     FakeOpenShell.put_sandbox(gateway, "review-home", owned(other_home(labels)))
+  end
+
+  # A stand-in for git (`:git_command`) that runs `script` for `git bundle create`
+  # and the real git for everything else.
+  defp fake_git!(dir, script) do
+    git = Path.join(dir, "fake-git")
+    real = System.find_executable("git")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in
+      *"bundle create"*)
+        #{script} ;;
+    esac
+    exec '#{real}' "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    previous = Application.fetch_env(:hal_c2, :git_command)
+    Application.put_env(:hal_c2, :git_command, git)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:hal_c2, :git_command, value)
+        :error -> Application.delete_env(:hal_c2, :git_command)
+      end
+    end)
   end
 
   defp assert_gone(g) do

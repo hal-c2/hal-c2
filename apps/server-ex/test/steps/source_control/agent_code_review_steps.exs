@@ -32,6 +32,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     "commented" => "comment"
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
+  @heading "## Agentic code review\n\n"
   # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
@@ -413,6 +414,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-05T00:00:00Z"})
   end
 
+  # The pull request's head moves on the host while the list still shows the one before.
+  step "\#{int} is pushed again before {string} lists it", %{args: [number, @id]} = context do
+    push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+    context
+  end
+
   step "the user asks to review \#{int} again", %{args: [number]} = context do
     {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
     Map.put(context, :reply, reply)
@@ -613,6 +620,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "\#{int} was reviewed at an older head commit", %{args: [number]} = context do
     context = reviewed(context, number)
+
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  step "\#{int} was reviewed with an off-diff finding at an older head commit",
+       %{args: [number]} = context do
+    context =
+      context
+      |> save(%{"repositories" => [context.repository], "activation" => "automatic"})
+      |> open(number)
+      |> refresh()
+      |> started(number)
+      |> report(%{
+        "verdict" => "comment",
+        "summary" => "Mostly fine.",
+        "comments" => [%{"path" => "src/other.ts", "line" => 40, "body" => "Check the caller."}]
+      })
+      |> await_review!(number, &(&1["status"] == "waiting"))
 
     head =
       push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
@@ -982,6 +1012,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "someone who is not a member or collaborator left the unresolved review comment {string} on \#{int}",
        %{args: [body, number]} = context do
     review_comment(context, number, "stranger", "NONE", body)
+  end
+
+  step "{int} members left unresolved review comments on \#{int}",
+       %{args: [count, number]} = context do
+    Enum.reduce(1..count, context, fn i, context ->
+      review_comment(context, number, "octocat", "MEMBER", "Note #{i}.")
+    end)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -1632,6 +1669,49 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # A stand-in for git that writes each command line to `context.git_log`.
+  step "the MC's git notes which commands it runs", context do
+    dir = Mc.tmp_dir(context.mc, "git-log")
+    log = Path.join(dir, "commands")
+    git = Path.join(dir, "git")
+    real = System.find_executable("git")
+    File.write!(git, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '#{log}'\nexec '#{real}' \"$@\"\n")
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    Map.put(context, :git_log, log)
+  end
+
+  step "the review of \#{int} is finished with no comments", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "waiting"))
+    assert review["comments"] == []
+    context
+  end
+
+  step "no diff of \#{int} was read to place comments", %{args: [_number]} = context do
+    commands = File.read!(context.git_log)
+    # The checkout went through this git, so the diff would have too.
+    assert commands =~ "fetch", commands
+    refute commands =~ "--name-status", commands
+    refute commands =~ " -U3 ", commands
+    context
+  end
+
+  step "the diff of \#{int} is longer than a review reads", %{args: [_number]} = context do
+    World.put_app_env(:code_review_diff_bytes, 16)
+    context
+  end
+
+  step "the comments are kept in the review's summary instead of on their lines", context do
+    {review, context} = await_review(context, 12, &(&1["status"] == "waiting"))
+    assert review["comments"] == []
+
+    assert review["summary"] ==
+             "The limits are never enforced.\n\n`src/limits.ts:1`:\n\nMake the limit configurable." <>
+               "\n\n`src/limits.ts:4`:\n\nThis always allows."
+
+    context
+  end
+
   step "the agent's turn ends without a report", context do
     end_turns(context)
   end
@@ -1783,13 +1863,40 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the review posted to \#{int} opens with {string} then {string}",
+       %{args: [number, heading, headline]} = context do
+    [_, body | _] = posted_review(context, number)
+    assert String.starts_with?(body, "#{heading}\n\n#{headline}\n\n"), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the review posted to \#{int} does not open with {string}",
+       %{args: [number, prefix]} = context do
+    [_, body | _] = posted_review(context, number)
+    refute String.starts_with?(body, prefix), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the user sets the review heading to {string}", %{args: [heading]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"heading" => heading}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
   step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
        %{args: [number]} = context do
     [_, body | _] = posted_review(context, number)
     [visible | _] = String.split(body, "<details>")
     assert visible =~ "**Not run**\n\n- the full suite: it needs the staging database"
     assert visible =~ ~r/\*\*Blocked[^\n]*\n\n- the e2e tests: STRIPE_KEY is not set/
-    assert String.starts_with?(body, "No findings.\n\nBumps the HTTP client.\n\n"), body
+
+    assert String.starts_with?(body, "#{@heading}No findings.\n\nBumps the HTTP client.\n\n"),
+           body
+
     context
   end
 
@@ -1848,7 +1955,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the review of \#{int} is failed saying {string}", %{args: [number, why]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert String.ends_with?(review["error"], why), "the review says #{inspect(review["error"])}"
-    context
+    Map.put(context, :review, review)
   end
 
   step "the review of \#{int} failed", %{args: [number]} = context do
@@ -2321,7 +2428,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert review["event"] == "COMMENT"
-    assert String.starts_with?(review["body"], "**Changes requested**")
+    assert String.starts_with?(review["body"], "#{@heading}**Changes requested**")
     context
   end
 
