@@ -38,13 +38,13 @@ defmodule HalC2.Orchestration.IdleSessions do
   end
 
   @impl true
-  def handle_call(:check, _from, state), do: {:reply, release_idle(), state}
+  def handle_call(:check, _from, state), do: {:reply, release_idle(), state, :hibernate}
 
   @impl true
   def handle_info(:check, state) do
     release_idle()
     schedule()
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   defp schedule do
@@ -57,8 +57,9 @@ defmodule HalC2.Orchestration.IdleSessions do
   # Runs of this MC's threads that started, and that neither a provider process nor
   # anything else drives.
   defp end_abandoned do
-    for {{mc, thread_id}, {"thread", %{"activeRunId" => run_id}}} <- HalC2.Shell.rows(),
-        mc == node() and is_binary(run_id),
+    for {{_mc, thread_id}, {"thread", %{"activeRunId" => run_id}}} <-
+          HalC2.Shell.query(mc: :local, kind: "thread", present: "activeRunId"),
+        is_binary(run_id),
         run =
           HalC2.Streams.state(thread_id)
           |> HalC2.StreamState.get("run")
@@ -77,19 +78,18 @@ defmodule HalC2.Orchestration.IdleSessions do
   # Subagent threads of this MC with nothing running and no process, whose caller still
   # waits on a task (working, or its task item pending): the rest settled long ago.
   defp settle_quiet_tasks do
-    rows = HalC2.Shell.rows()
+    rows = HalC2.Shell.query(mc: :local, kind: "thread")
 
     waiting =
-      for {{mc, id}, {"thread", row}} <- rows,
-          mc == node(),
+      for {{_mc, id}, {"thread", row}} <- rows,
           waiting?(row),
           into: MapSet.new(),
           do: id
 
-    for {{mc, thread_id},
+    for {{_mc, thread_id},
          {"thread", %{"lineage" => %{"relationshipToParent" => "subagent"} = lineage} = row}} <-
           rows,
-        mc == node() and row["activeRunId"] == nil and row["deletedAt"] == nil,
+        row["activeRunId"] == nil and row["deletedAt"] == nil,
         MapSet.member?(waiting, lineage["parentThreadId"]),
         not live?(thread_id),
         do: settle_quiet_task(thread_id)

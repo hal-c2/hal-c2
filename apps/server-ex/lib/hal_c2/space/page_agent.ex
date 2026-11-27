@@ -604,7 +604,7 @@ defmodule HalC2.Space.PageAgent do
   end
 
   defp local_rows do
-    rows = HalC2.Shell.rows() |> Enum.flat_map(&local_row/1)
+    rows = HalC2.Shell.query(mc: :local) |> Enum.flat_map(&local_row/1)
     threads = for {"thread", row} <- rows, row["deletedAt"] == nil, by_user?(row), do: row
     projects = for {"project", row} <- rows, row["deletedAt"] == nil, do: row
     {threads, projects}

@@ -101,12 +101,36 @@ defmodule HalC2.Steps.Providers.CodexImages do
   # An image Codex saved on the MC's own disk, at a path written as Windows writes it.
   # A regex keeps the path as written: `{string}` would read a UNC path's `\\` as one.
   step ~r/^Codex saved a generated image at "(?<path>[^"]+)"$/, %{args: [path]} = context do
+    save_generated_image(context, path)
+  end
+
+  # The runtime is told it runs in a review's sandbox once its turn started, as
+  # its sandbox connection says (`sandboxed`); the fake app-server is not in one.
+  step ~r/^a sandboxed review's Codex saves a generated image at "(?<path>[^"]+)"$/,
+       %{args: [path]} = context do
+    save_generated_image(context, path, sandboxed: true)
+  end
+
+  step "the reply shows no image", context do
+    assert World.replies(context, @thread) == ["Here it is."]
+
+    refute Enum.any?(
+             StreamState.list(World.stream(context, @thread), "turn-item"),
+             &(is_binary(&1["text"]) and &1["text"] =~ context.saved_path)
+           )
+
+    context
+  end
+
+  # Codex saves a generated image at `path` and then answers "Here it is.".
+  defp save_generated_image(context, path, opts \\ []) do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
 
     World.await_running(context, @thread)
     World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
-    {_, runtime} = World.codex_runtime(context, @thread)
+    {pid, runtime} = World.codex_runtime(context, @thread)
+    if opts[:sandboxed], do: :sys.replace_state(pid, &Map.put(&1, :sandboxed, true))
     ctx = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
     image = %{"type" => "imageGeneration", "id" => "image-windows", "status" => "inProgress"}
     reply = %{"type" => "agentMessage", "id" => "msg-windows", "phase" => "final_answer"}

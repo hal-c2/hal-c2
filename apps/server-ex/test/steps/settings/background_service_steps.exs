@@ -130,8 +130,20 @@ defmodule HalC2.Steps.Settings.BackgroundService do
   }
 
   step ~r/^the user installs the background service(?: again)?$/, context do
-    context = Storage.service(context, "install")
-    assert context.service_output =~ ~r/^Background service (installed|updated)\. Logs: /
+    if context[:host] == :windows do
+      context |> Storage.user("Windows") |> Storage.service("install")
+    else
+      context = Storage.service(context, "install")
+      assert context.service_output =~ ~r/^Background service (installed|updated)\. Logs: /
+      context
+    end
+  end
+
+  step "the install fails closed saying the background service is not available on Windows",
+       context do
+    assert context.service_output ==
+             "Background services are supported on Linux (systemd) and macOS only."
+
     context
   end
 

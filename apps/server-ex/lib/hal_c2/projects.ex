@@ -229,8 +229,8 @@ defmodule HalC2.Projects do
   what it had. Not a user edit, so the update time stays.
   """
   def identify_repositories do
-    for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
-        mc == node() and project["deletedAt"] == nil,
+    for {{_mc, id}, {"project", project}} <- HalC2.Shell.query(mc: :local, kind: "project"),
+        project["deletedAt"] == nil,
         (identity = repository_identity(project["workspaceRoot"])) != nil,
         identity["canonicalKey"] != get_in(project, ["repositoryIdentity", "canonicalKey"]),
         do: update(id, identify(identity))
@@ -263,8 +263,9 @@ defmodule HalC2.Projects do
 
   # The project's threads not yet deleted, archived ones included.
   defp threads(id) do
-    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["projectId"] == id and row["deletedAt"] == nil,
+    for {{_mc, thread_id}, {"thread", row}} <-
+          HalC2.Shell.query(mc: :local, kind: "thread", where: %{"projectId" => id}),
+        row["deletedAt"] == nil,
         do: thread_id
   end
 
@@ -313,9 +314,9 @@ defmodule HalC2.Projects do
   """
   def auto_pull do
     roots =
-      for {{mc, _id}, {"project", project}} <- HalC2.Shell.rows(),
+      for {{_mc, _id}, {"project", project}} <-
+            HalC2.Shell.query(mc: :local, kind: "project"),
           Application.get_env(:hal_c2, :auto_actions, true),
-          mc == node(),
           project["deletedAt"] == nil,
           HalC2.Settings.for_project(project["id"])["defaultAutoPull"] == true,
           uniq: true,
@@ -343,21 +344,25 @@ defmodule HalC2.Projects do
   """
   def at(path) when is_binary(path) do
     path = Path.expand(path)
-    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
 
     worktree =
-      Enum.find_value(rows, fn
-        {"thread", %{"worktreePath" => root, "projectId" => id}} when is_binary(root) ->
-          if within?(path, root), do: id
+      Enum.find_value(
+        HalC2.Shell.query(mc: :local, kind: "thread", present: "worktreePath"),
+        fn
+          {_key, {"thread", %{"worktreePath" => root, "projectId" => id}}}
+          when is_binary(root) ->
+            if within?(path, root), do: id
 
-        _ ->
-          nil
-      end)
+          _ ->
+            nil
+        end
+      )
 
     worktree ||
-      rows
+      HalC2.Shell.query(mc: :local, kind: "project", present: "workspaceRoot")
       |> Enum.flat_map(fn
-        {"project", %{"workspaceRoot" => root, "id" => id} = row} when is_binary(root) ->
+        {_key, {"project", %{"workspaceRoot" => root, "id" => id} = row}}
+        when is_binary(root) ->
           if row["deletedAt"] == nil and within?(path, root), do: [{root, id}], else: []
 
         _ ->
@@ -371,16 +376,20 @@ defmodule HalC2.Projects do
 
   @doc "Every folder of this MC's projects: thread worktrees and live project workspaces."
   def roots do
-    for {{mc, _id}, {kind, row}} <- HalC2.Shell.rows(),
-        mc == node(),
-        root = owned_root(kind, row),
-        is_binary(root),
-        do: root
-  end
+    worktrees =
+      for {{_mc, _id}, {"thread", row}} <-
+            HalC2.Shell.query(mc: :local, kind: "thread", present: "worktreePath"),
+          is_binary(row["worktreePath"]),
+          do: row["worktreePath"]
 
-  defp owned_root("thread", row), do: row["worktreePath"]
-  defp owned_root("project", row), do: if(row["deletedAt"] == nil, do: row["workspaceRoot"])
-  defp owned_root(_kind, _row), do: nil
+    workspaces =
+      for {{_mc, _id}, {"project", row}} <-
+            HalC2.Shell.query(mc: :local, kind: "project", present: "workspaceRoot"),
+          row["deletedAt"] == nil and is_binary(row["workspaceRoot"]),
+          do: row["workspaceRoot"]
+
+    worktrees ++ workspaces
+  end
 
   defp within?(path, root) do
     root = Path.expand(root)

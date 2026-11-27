@@ -166,7 +166,7 @@ defmodule HalC2.Service do
   `{:ok, %{"previouslyInstalled" => boolean, ...status}}` or `{:error, message}`.
   """
   def install do
-    with manager when manager != nil <- manager() || {:error, unsupported()},
+    with {:ok, manager} <- manager_or_unsupported(),
          # A service systemd could not keep running is refused before anything changes.
          :ok <- prerequisites(manager) do
       before = status()
@@ -197,7 +197,7 @@ defmodule HalC2.Service do
   `{:ok, true}`, `{:ok, false}` when no service is installed, or `{:error, message}`.
   """
   def restart do
-    with manager when manager != nil <- manager() || {:error, unsupported()} do
+    with {:ok, manager} <- manager_or_unsupported() do
       path = unit_path(manager)
 
       if File.exists?(path) do
@@ -254,7 +254,7 @@ defmodule HalC2.Service do
   through its restarts with it. Projects and settings stay.
   """
   def uninstall do
-    with manager when manager != nil <- manager() || {:error, unsupported()},
+    with {:ok, manager} <- manager_or_unsupported(),
          units = installed(manager),
          homes = Enum.map(units, fn {_name, path} -> unit_state(manager, path) end),
          :ok <- remove(manager, units) do
@@ -398,6 +398,13 @@ defmodule HalC2.Service do
   end
 
   defp unsupported, do: "Background services are supported on Linux (systemd) and macOS only."
+
+  defp manager_or_unsupported do
+    case manager() do
+      nil -> {:error, unsupported()}
+      manager -> {:ok, manager}
+    end
+  end
 
   @doc false
   def user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()

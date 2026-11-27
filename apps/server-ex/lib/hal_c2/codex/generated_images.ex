@@ -11,6 +11,10 @@ defmodule HalC2.Codex.GeneratedImages do
   saved and drops the ones still generating, and an app-server that is gone
   takes its unfinished images with it.
 
+  A sandboxed review's turn (#1412) shows none: the paths its Codex saves
+  name files in its sandbox, which the MC and the clients would read as files
+  of the MC's machine, so its images stay in the sandbox.
+
   The embeds are portable (`embed/1`): a Windows drive path is written with
   forward slashes and a UNC path as a `file:` URL, so every client reads it as
   the MC's file; `host_path/1` reads one back.
@@ -102,13 +106,15 @@ defmodule HalC2.Codex.GeneratedImages do
   defp images(state), do: Map.get(state, :images, %{})
 
   # A turn's entry, made for the current turn the first time it is needed; an
-  # unknown turn that is not the current one has none.
+  # unknown turn that is not the current one has none, nor has a sandboxed turn.
   defp entry(state, turn_id) do
     case Map.get(images(state), turn_id) do
       nil ->
         case state.turn do
           %{native_turn_id: ^turn_id, ids: ids} ->
-            %{running: MapSet.new(), saved: [], answer: nil, ids: ids, ended: false}
+            if sandboxed?(state),
+              do: nil,
+              else: %{running: MapSet.new(), saved: [], answer: nil, ids: ids, ended: false}
 
           _ ->
             nil
@@ -118,6 +124,9 @@ defmodule HalC2.Codex.GeneratedImages do
         entry
     end
   end
+
+  defp sandboxed?(state),
+    do: Map.get(state, :sandboxed) == true or match?(%{sandbox: true}, state.turn)
 
   # An ended turn's entry goes once nothing is left to arrive for it, and an
   # open one is kept only while it holds an image or a reply to show them under.

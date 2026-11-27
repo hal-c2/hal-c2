@@ -440,6 +440,12 @@ Feature: Agent code review
       And it is told how to report what it finds
 
     @mc
+    Scenario: The agent is told to re-raise an open finding instead of skipping it
+      When #12 is reviewed
+      Then the agent's prompt includes "repeat one that is still open"
+      And the agent's prompt does not include "already raised in the existing comments"
+
+    @mc
     Scenario: A repository's own review instructions are added to the prompt
       Given "acme/api" has extra review instructions "Never approve schema changes"
       When #12 is reviewed
@@ -459,6 +465,31 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
       And the new review's prompt includes "You reviewed this pull request before"
       And the new review's prompt includes "Finding 1."
+
+    @mc
+    Scenario: A re-review is told to check fixes in the new commits
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Check each fix in those commits, including fixes you suggested."
+
+    @mc
+    Scenario: A re-review is told the previous review's summary, including off-diff findings
+      Given "code-review" reviews new pushes
+      And #12 was reviewed with an off-diff finding at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Previous summary, including findings outside the diff"
+      And the new review's prompt includes "Check the caller."
+
+    @mc
+    Scenario: The prompt says when there are more open threads than it shows
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And 31 members left unresolved review comments on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "more open thread(s), not shown here."
 
     @mc
     Scenario: The repository's REVIEW.md is followed when the user wants that
@@ -589,6 +620,17 @@ Feature: Agent code review
       When the user starts a review of #12
       Then the review of #12 is failed saying "on CLIProxyAPI through the CLIProxyAPI plugin's provider."
 
+    # A subscription sign-in stays on this machine, and the CLIProxyAPI plugin's Claude
+    # reaches a sandbox without the API's key, so the refusal names it.
+    @mc @plugin-cliproxyapi
+    Scenario: A sandboxed Claude review without an API key names Claude via CLIProxyAPI
+      Given pull requests are not trusted and OpenShell is installed
+      And a fake CLIProxyAPI
+      And the CLIProxyAPI plugin runs the fake binary
+      And "code-review" reviews with Claude
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Pick Claude via CLIProxyAPI as the review agent in Settings → Code review, or set ANTHROPIC_API_KEY in this provider's environment in Settings → Providers."
+
     @mc
     Scenario: By default a trusted pull request is reviewed in a sandbox too
       Given pull requests are trusted and OpenShell is installed
@@ -623,6 +665,15 @@ Feature: Agent code review
       And the agent's prompt does not include "Rename the limit"
 
     @mc
+    Scenario: The prompt no longer tells the agent to leave open threads alone
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Review threads still open on this pull request, quoted from their authors"
+      And the agent's prompt does not include "do not raise these again"
+
+    @mc
     Scenario: A sandboxed review quotes every unresolved review comment
       Given pull requests are not trusted and OpenShell is installed
       And a member left the unresolved review comment "Check the limit's unit" on #12
@@ -651,6 +702,13 @@ Feature: Agent code review
       Given "code-review" reviews with an agent that cannot run in a sandbox
       When the user opens the settings of "code-review"
       Then they read that its reviews fail, and to pick Claude or Codex
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui @plugin-cliproxyapi
+    Scenario: The settings warn that an agent with no API key for a sandbox fails its reviews
+      Given "code-review" reviews with Claude signed in on this machine, with no API key
+      And the CLIProxyAPI plugin has added "Claude via CLIProxyAPI"
+      When the user opens the settings of "code-review"
+      Then they read that its reviews fail, and to pick "Claude via CLIProxyAPI" or set ANTHROPIC_API_KEY
 
     @mc
     Scenario: A sandboxed Claude review takes none of this machine's Claude settings
@@ -924,14 +982,30 @@ Feature: Agent code review
       Given a review of #12 is running
       When the agent reports a high finding with a suggested fix on "src/limits.ts"
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "2 findings: 1 high, 1 unrated."
+      Then the review posted to #12 opens with "## Agentic code review" then "2 findings: 1 high, 1 unrated."
 
     @mc
     Scenario: A published review with nothing to fix says so first
       Given a review of #12 is running
       When the agent reports the verdict "approved" with only a summary
       And the user publishes the review of #12
-      Then the review posted to #12 opens with "No findings."
+      Then the review posted to #12 opens with "## Agentic code review" then "No findings."
+
+    @mc
+    Scenario: The heading of posted reviews is the user's to set
+      Given a review of #12 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user sets the review heading to "Custom review"
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "## Custom review"
+
+    @mc
+    Scenario: The heading of posted reviews is the user's to turn off
+      Given a review of #13 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user sets the review heading to ""
+      And the user publishes the review of #13
+      Then the review posted to #13 does not open with "##"
 
     @mc
     Scenario: What the agent checked is reported apart from the summary
@@ -1120,6 +1194,14 @@ Feature: Agent code review
       When the user publishes the review of #12
       Then the user is told GitHub's reason
       And the review of #12 is still waiting with its comments
+
+    @mc
+    Scenario: A publish refused for a draft review left on GitHub says to finish that draft
+      Given the review of #12 is waiting to be published
+      And the user has an unsubmitted draft review on #12 on GitHub
+      When the user publishes the review of #12
+      Then the user is told to submit or discard their draft review on GitHub, then publish again
+      And the review of #12 is still waiting, its draft on GitHub left alone
 
     @mc
     Scenario: A post GitHub's rate limit turned away is posted again at the next look

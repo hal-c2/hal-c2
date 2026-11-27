@@ -66,6 +66,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.call_tool/3" => "runs a plugin's tool in the caller's process",
       "HalC2.Plugins.call_tool_of/4" =>
         "runs one plugin's tool in the caller's process, refusing any other",
+      "HalC2.Plugins.structured_error/1" =>
+        "reads a plugin tool's error reply into a code and message; starts and stops nothing",
       "HalC2.Plugins.generate/3" => "runs a plugin's text generation in the caller's process",
       "HalC2.Plugins.pull_requests/2" => "asks a plugin's git host in the caller's process",
       "HalC2.Plugins.observing?/0" => @hooks,

@@ -61,14 +61,18 @@ defmodule HalC2.PullRequests.Discovery do
   end
 
   @impl true
-  def handle_call(:sweep, _from, state), do: {:reply, :ok, synchronize(state, nil, false)}
+  def handle_call(:sweep, _from, state),
+    do: {:reply, :ok, synchronize(state, nil, false), :hibernate}
 
   @impl true
-  def handle_info(:backfill, state), do: {:noreply, state |> synchronize(nil, true) |> tick()}
-  def handle_info(:tick, state), do: {:noreply, state |> synchronize(nil, false) |> tick()}
+  def handle_info(:backfill, state),
+    do: {:noreply, state |> synchronize(nil, true) |> tick(), :hibernate}
+
+  def handle_info(:tick, state),
+    do: {:noreply, state |> synchronize(nil, false) |> tick(), :hibernate}
 
   def handle_info(:run, state),
-    do: {:noreply, synchronize(%{state | pending: %{}}, state.pending, false)}
+    do: {:noreply, synchronize(%{state | pending: %{}}, state.pending, false), :hibernate}
 
   def handle_info({:hal_c2_shell, {:rows, mc, rows}}, state) when mc == node() do
     {seen, pending} =
@@ -84,7 +88,7 @@ defmodule HalC2.PullRequests.Discovery do
       end
 
     if state.pending == %{} and pending != %{}, do: send(self(), :run)
-    {:noreply, %{state | seen: seen, pending: pending}}
+    {:noreply, %{state | seen: seen, pending: pending}, :hibernate}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -114,8 +118,8 @@ defmodule HalC2.PullRequests.Discovery do
   end
 
   defp threads do
-    for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil,
+    for {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+        row["deletedAt"] == nil,
         do: row
   end
 

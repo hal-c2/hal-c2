@@ -60,6 +60,19 @@ defmodule HalC2.Steps.SourceControl.RefsAndBranches do
     context
   end
 
+  step "the thread's git status is read from the checkout", context do
+    assert {:ok, %{"isRepo" => true, "refs" => [_ | _]}} = context.reply
+    context
+  end
+
+  step "nothing is fetched and no pull request is looked up", context do
+    # A fetch would have written FETCH_HEAD, and a pull request lookup would
+    # have asked the fake host CLI.
+    refute File.exists?(Path.join(context.cwd, ".git/FETCH_HEAD"))
+    assert World.cli_calls(context, "pr list") == []
+    context
+  end
+
   step "{string} is marked current and listed first", %{args: [name]} = context do
     assert [%{"name" => ^name, "current" => true} | _] = refs(context)
     context

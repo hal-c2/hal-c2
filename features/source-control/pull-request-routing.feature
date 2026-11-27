@@ -181,7 +181,7 @@ Feature: Sharing GitHub access between environments
     Then it is refused with "The change request does not belong to the selected project."
     And the host is not asked anything
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A pull request on a host no project of the environment reads is unsupported
     Given "build-box" has no project on "git.example.test"
     When a client asks for pull request 7 of "team/app" on "git.example.test"
@@ -203,7 +203,7 @@ Feature: Sharing GitHub access between environments
     Then "shop" has no pull requests
     And no failed pull request lookup is logged
 
-  @backlog @mc
+  @mc
   Scenario: An account that cannot be told is refused
     Given the GitHub CLI of "build-box" answers without a login or an account id
     When a client asks "build-box" who it is on "github.com"

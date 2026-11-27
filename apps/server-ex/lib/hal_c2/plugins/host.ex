@@ -53,7 +53,7 @@ defmodule HalC2.Plugins.Host do
   so `name` is the one the user gave the instance), for a plugin that starts threads
   to pick from:
   `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
-  "availability", "auth" => %{"status"}, "sandboxable", "models" => [%{"slug",
+  "availability", "auth" => %{"status"}, "sandboxable", "sandboxRefusal", "models" => [%{"slug",
   "name", "isDefault", "options"}]}`.
 
   `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
@@ -64,8 +64,10 @@ defmodule HalC2.Plugins.Host do
   `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
   are the instance's provider status, for a plugin that offers only the instances
   that can run a thread now. `sandboxable` is whether its agent can run in an
-  OpenShell review sandbox (`HalC2.OpenShell.Review.supported?/1`). An instance's
-  settings and messages are left out.
+  OpenShell review sandbox (`HalC2.OpenShell.Review.supported?/1`), and
+  `sandboxRefusal` why a sandboxed review on it would still fail for want of a way to
+  its model (`HalC2.OpenShell.Review.route/1`: no API key, a proxy the sandbox cannot
+  reach), else nil. An instance's settings and messages are left out.
 
   A model's `options` are its option descriptors (`%{"id", "label", "type",
   "options"}`) — reasoning effort among them — for a plugin that picks a model for
@@ -85,6 +87,7 @@ defmodule HalC2.Plugins.Host do
          "availability" => provider["availability"] || "available",
          "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
          "sandboxable" => HalC2.OpenShell.Review.supported?(provider["driver"]),
+         "sandboxRefusal" => sandbox_refusal(provider),
          "models" =>
            for model <- provider["models"] || [] do
              %{
@@ -112,6 +115,17 @@ defmodule HalC2.Plugins.Host do
        }
      end}
   end
+
+  defp sandbox_refusal(%{"instanceId" => instance, "driver" => driver}) do
+    with true <- HalC2.OpenShell.Review.supported?(driver),
+         {:error, message} <- HalC2.OpenShell.Review.route(instance) do
+      message
+    else
+      _ -> nil
+    end
+  end
+
+  defp sandbox_refusal(_provider), do: nil
 
   @doc """
   The provider instances plugin `id` added, each an ordinary `providerInstances` entry
@@ -441,8 +455,8 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, "threads:read") do
       {:ok,
        for(
-         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-         mc == node() and row["deletedAt"] == nil,
+         {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+         row["deletedAt"] == nil,
          do: row
        )
        |> ThreadRelay.with_project_titles()}
@@ -886,8 +900,9 @@ defmodule HalC2.Plugins.Host do
     with :ok <- permit(id, "turns:observe") do
       {:ok,
        for(
-         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-         mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+         {{_mc, _}, {"thread", row}} <-
+           HalC2.Shell.query(mc: :local, kind: "thread", where: %{"projectId" => project_id}),
+         row["deletedAt"] == nil,
          do:
            Map.take(
              row,
