@@ -37,8 +37,9 @@ We have a qml desktop app which allows for customising your app as much as you w
   keeps threads in its SQLite event log, and hot-reloads new code without dropping agents
   or terminals. MCs on your machines cluster and share one sidebar, and threads move between
   them.
-- **The desktop** is a Qt/QML app in [`apps/desktop-qt`](./apps/desktop-qt). Its QML can be
-  rearranged and themed live from `~/.config/hal-c2/shell/`.
+- **The desktop** is a Ljós Rust shell in [`apps/desktop-ljos`](./apps/desktop-ljos) running
+  the QML bricks in [`packages/qml`](./packages/qml). Its QML can be rearranged and themed
+  live from `~/.config/hal-c2/shell/`.
 - **The TUI** is QML too, rendered in the terminal by OpenTUI, in [`apps/tui`](./apps/tui).
 - **The phone app** is the desktop's QML with a phone layout, in
   [`apps/mobile-qt`](./apps/mobile-qt). Android first.
@@ -54,8 +55,8 @@ in [`mise.toml`](./mise.toml). Besides mise you need:
 
 - `vp`, the [Vite+](https://viteplus.dev/guide/) CLI, which installs the TUI's packages:
   `curl -fsSL https://vite.plus | bash`.
-- For the desktop and phone app: Qt 6.9+ and cmake from your system package manager. The
-  desktop's [README](./apps/desktop-qt/README.md) lists the Qt modules and the optional FFmpeg.
+- For the phone app: Qt 6.9+ and cmake from your system package manager. The phone's
+  [README](./apps/mobile-qt/README.md) lists the Qt modules and the optional FFmpeg.
 
 ```sh
 mise install          # Erlang, Elixir, Node and Bun
@@ -86,8 +87,8 @@ and siblings), apart from an installed HAL-C2, and every checkout and worktree s
 | Show, invite to, join or leave the cluster                     | `mise run mc:cluster [invite \| join LINK]` |
 | Install this checkout's plugins into the running MC            | `mise run plugins:install [ID ...]`         |
 | Import threads from T3 Code or an older HAL-C2                 | `mise run threads:import`                   |
-| Build the desktop without launching it                         | `mise run desktop:build`                    |
-| Let the desktop start its own MC, as the installed app does    | `mise run desktop -- --standalone`          |
+| Build the desktop without launching it                         | `mise run desktop-ljos:check`               |
+| Let the desktop start its own MC, as the installed app does    | `mise run desktop` (no MC needs to run)     |
 | Build the phone app's APK and install it on an attached device | `mise run mobile:android`                   |
 | List every task                                                | `mise tasks`                                |
 

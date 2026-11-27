@@ -1,8 +1,8 @@
 // Run from a hal-c2 checkout:
-//   ljos test --import apps/desktop-qt/tests/imports --import packages/qml \
+//   ljos test --import apps/mobile-qt/tests/imports --import packages/qml \
 //     plugins/cliproxyapi/test/tst_CliProxyApiPage.qml
 // and with Qt 6, with QT_QPA_PLATFORM=offscreen:
-//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/desktop-qt/tests/imports -import packages/qml \
+//   "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" -import apps/mobile-qt/tests/imports -import packages/qml \
 //     -input plugins/cliproxyapi/test/tst_CliProxyApiPage.qml
 import QtQuick
 import QtTest

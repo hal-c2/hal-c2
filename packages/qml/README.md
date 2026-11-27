@@ -15,6 +15,6 @@ path at it and the module URIs are the directories under it.
   include.
 
 Readers: desktop-ljos and mobile-ljos compile this tree into their packs;
-desktop-qt and mobile-qt compile `HalC2.Bricks` as a Qt QML module and load
+mobile-qt compiles `HalC2.Bricks` as a Qt QML module and loads
 it from here in development builds. A user's `shell.qml` imports the same
 `HalC2.Bricks` URI wherever the tree lives in a checkout.

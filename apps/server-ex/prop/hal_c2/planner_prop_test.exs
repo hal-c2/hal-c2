@@ -3470,7 +3470,7 @@ defmodule HalC2.PlannerPropTest do
   defp reply({:ok, _}), do: :ok
   defp reply(:ok), do: :ok
   defp reply({:error, _}), do: :error
-  defp reply({:error, _, _}), do: :error
+  defp reply({:error, _, _, _}), do: :error
   # The thread of a run that takes no more reports is not offered the tool at all.
   defp reply(nil), do: :error
 

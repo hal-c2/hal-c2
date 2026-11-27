@@ -8,7 +8,7 @@ import {
 
 // What a group of the agent's tool calls did, in one sentence, and whether one
 // of them failed (port of packages/client-runtime/src/work-log/presentation.ts
-// summarizeToolGroup; the desktop's is apps/desktop-qt/src/native/TimelineSummary.cpp).
+// summarizeToolGroup; the desktop's is apps/mobile-qt/src/native/TimelineSummary.cpp).
 // Calls are the MC's turn items as the client gets them.
 
 export type TurnItemRecord = Readonly<Record<string, unknown>>;

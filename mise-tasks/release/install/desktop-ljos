@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build desktop-ljos (release:desktop-ljos) and install it for this user beside the Qt desktop: on Linux as `hal-c2-ljos` (~/.local/lib/hal-c2-ljos) with a launcher entry, on macOS as ~/Applications/HAL-C2 Ljós.app"
+#MISE description="Build desktop-ljos (release:desktop-ljos) and install it for this user: on Linux as `hal-c2-ljos` (~/.local/lib/hal-c2-ljos) with a launcher entry, on macOS as ~/Applications/HAL-C2 Ljós.app"
 #MISE dir="{{config_root}}"
 #MISE depends=["release:desktop-ljos"]
 set -euo pipefail

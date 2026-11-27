@@ -15,7 +15,7 @@
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
 #   apps/server-ex/lib/hal_c2/subprocess/orphans.ex (the pids of its programs)
 #   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, --dev, shell config dir, web profile, --base-dir for the hosted server)
-#   apps/desktop-qt/scripts/dev-qt.mjs (`mise run desktop` starts the shell with --dev)
+#   mise-tasks/desktop-ljos/_default (`mise run desktop` starts the shell with --dev)
 #   packages/shared/src/desktopAppControlSocket.ts, apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
 #   apps/desktop/src/wsl/DesktopWslEnvironment.ts (wsl-runtime inside a distro)
 #   apps/tui/src/shellConfigDir.ts (HAL_C2_TUI_SHELL_DIR, config/shell/tui)

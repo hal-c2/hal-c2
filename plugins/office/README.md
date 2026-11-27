@@ -69,18 +69,18 @@ root object, its opening line and closing brace in the first column.
 
 ## Running the tests
 
-From the repository root, with both `-import` paths: `apps/desktop-qt/tests/imports`
+From the repository root, with both `-import` paths: `apps/mobile-qt/tests/imports`
 holds the fake `HalC2.Shell` and `packages/qml` the bricks. Without them
 the run fails with "module HalC2.Shell is not installed".
 
 ```bash
 # Ljós
-ljos test --import apps/desktop-qt/tests/imports --import packages/qml \
+ljos test --import apps/mobile-qt/tests/imports --import packages/qml \
   plugins/office/test/tst_OfficePage.qml
 
 # Qt 6 (a bare qmltestrunner may be Qt 5's, which prints nothing and exits 1)
 QT_QPA_PLATFORM=offscreen "$(qmake6 -query QT_INSTALL_BINS)/qmltestrunner" \
-  -import apps/desktop-qt/tests/imports -import packages/qml \
+  -import apps/mobile-qt/tests/imports -import packages/qml \
   -input plugins/office/test/tst_OfficePage.qml
 ```
 

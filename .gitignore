@@ -23,7 +23,6 @@ __screenshots__/
 .gstack/
 .plans/
 /audits/
-apps/desktop-qt/licenses/
 apps/desktop-ljos/licenses/
 /.generated/
 .github/pr-assets/

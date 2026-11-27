@@ -185,9 +185,6 @@ defmodule HalC2.OpenShell.ClientTest do
       assert request.spec.restart_policy == :SANDBOX_RESTART_POLICY_NEVER
       assert {:workspace, "hal-c2"} = request.workspace_scope.selection
 
-      assert request.request_id =~
-               ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
-
       # Limits only: OpenShell's Docker driver refuses requests (FAILED_PRECONDITION).
       limits = Google.Protobuf.to_map(request.spec.template.resources)
       assert limits == %{"limits" => %{"cpu" => "2", "memory" => "4Gi"}}
@@ -394,6 +391,25 @@ defmodule HalC2.OpenShell.ClientTest do
 
       assert {:error, {:deletion_outcome, :DELETION_OUTCOME_UNSPECIFIED}} =
                Client.delete_provider(conn, "mine")
+    end
+  end
+
+  # The gateway keeps each request id a day, at most 1,000 a caller, to replay a
+  # retry with it. The MC retries nothing by id, so each would only take a slot and
+  # about 125 reviews would lock reviews out for a day (#1883).
+  test "no mutation takes one of the gateway's request ids", %{conn: conn} do
+    :ok = Client.ensure_profile(conn, profile("openai"))
+    :ok = Client.create_provider(conn, "mine", "openai", %{"OPENAI_API_KEY" => "k"})
+    {:ok, _} = Client.create_sandbox(conn, "mine")
+    {:ok, exec} = Client.exec(conn, "mine", ["cat"])
+    :ok = Exec.close_stdin(exec)
+    assert {"", {:exit, 0}} = collect(exec)
+    :ok = Client.delete_sandbox(conn, "mine")
+    :ok = Client.delete_provider(conn, "mine")
+
+    for method <-
+          ~w(ImportProviderProfiles CreateProvider CreateSandbox ExecSandboxInteractive DeleteSandbox DeleteProvider) do
+      assert_received {:openshell_request, ^method, %{request_id: ""}}
     end
   end
 

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run the desktop's feature scenarios (desktop-ljos's runner): [globs relative to features/] [--backlog] [--raise] [--list]"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# The desktop is desktop-ljos (#1661); `mise run features:desktop-ljos` is the same.
+exec mise run features:desktop-ljos "$@"

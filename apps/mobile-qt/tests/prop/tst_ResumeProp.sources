@@ -1,2 +1,2 @@
 ../../src/Resume.cpp
-../../../desktop-qt/tests/native/features/FakeMc.cpp
+../native/features/FakeMc.cpp

@@ -1,13 +1,8 @@
 # Open source license notices
 
-License notices are generated independently for each Qt client that ships them:
+License notices are generated independently for each client that ships them. The Ljós desktop
+stages its own beside its binary (`apps/desktop-ljos/scripts/third-party-licenses.ts`).
 
-- The Qt desktop stages `licenses/third-party-licenses.json` beside its runtime
-  (`apps/desktop-qt/scripts/stage-runtime.mjs`, or `vp run --filter @hal-c2/desktop-qt licenses` for
-  a dev build). It holds the packages of the Cursor sidecar the MC release ships
-  (`packages/cursor-acp`) plus the `desktop-qt` custom notices: Qt, the Erlang/OTP and Elixir runtime
-  of the MC, the Node.js it ships, and the icons the bricks draw. `LicensesController` reads it when
-  the Open source licenses section opens.
 - The Qt mobile client compiles its manifest into the binary when an APK is built
   (`apps/mobile-qt/cmake/Licenses.cmake`), since an APK has no directory beside the binary. It holds
   the `mobile-qt` custom notices and no packages: what an APK ships is native code (Qt, OpenSSL, the
@@ -19,8 +14,8 @@ No path depends on the connected environment or an RPC.
 ## What the build collects
 
 The generator follows installed production and optional dependencies, including dependencies of
-workspace packages, and omits first-party `@hal-c2/*` packages. The desktop manifest starts from the
-`packages/cursor-acp` package manifest; the mobile manifest starts from none.
+workspace packages, and omits first-party `@hal-c2/*` packages. The Ljós desktop's manifest starts
+from the `packages/cursor-acp` package manifest and its Cargo.lock; the mobile manifest starts from none.
 
 The build fails when a collected package has no distributable license identifier or contains no
 license or notice text. Generated notices use license templates from the pinned SPDX License List.
@@ -33,7 +28,7 @@ preventing incomplete release artifacts.
 
 The repository-level `third-party-licenses.config.json` holds manually maintained exceptions for
 all clients. Add an entry to `customNotices` for adapted icons, fonts, media, native modules, or
-another asset that did not come from an npm package. The clients are `desktop-qt` and `mobile-qt`:
+another asset that did not come from an npm package. The clients are `desktop-ljos` and `mobile-qt`:
 
 ```json
 {
@@ -46,7 +41,7 @@ another asset that did not come from an npm package. The clients are `desktop-qt
     }
   ],
   "sourceUrl": "https://example.com/source",
-  "bundles": ["assets", "desktop-qt"]
+  "bundles": ["assets", "mobile-qt"]
 }
 ```
 

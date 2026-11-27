@@ -1,5 +1,5 @@
 // Run from a hal-c2 checkout, with QT_QPA_PLATFORM=offscreen:
-//   qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
+//   qmltestrunner -import apps/mobile-qt/tests/imports -import packages/qml \
 //     -input plugins/code-review/test
 import QtQuick
 import QtTest
@@ -27,10 +27,12 @@ Item {
             prompt: "Review {{pr.number}}."
         })
 
-    // The agents the `settings` call lists: Codex reviews in a sandbox, OpenCode cannot.
+    // The agents the `settings` call lists: Codex reviews in a sandbox, OpenCode cannot,
+    // and Claude signed in with no API key has no way to its model there.
     readonly property var providers: [
-        { instanceId: "codex", name: "Codex", sandboxable: true, models: [] },
-        { instanceId: "opencode", name: "OpenCode", sandboxable: false, models: [] }
+        { instanceId: "codex", name: "Codex", sandboxable: true, sandboxRefusal: null, models: [] },
+        { instanceId: "opencode", name: "OpenCode", sandboxable: false, sandboxRefusal: null, models: [] },
+        { instanceId: "claudeAgent", name: "Claude", sandboxable: true, sandboxRefusal: "A review sandbox needs ANTHROPIC_API_KEY for Claude. Pick Claude via CLIProxyAPI as the review agent in Settings → Code review.", models: [] }
     ]
 
     // The plugin object a settings page gets, with the MC part faked:
@@ -127,6 +129,24 @@ Item {
             verify(warning.text.indexOf("does not trust fail") >= 0);
 
             loader.item.set("provider", "codex");
+            verify(!warning.visible);
+        }
+
+        // A sign-in does not reach a sandbox: the MC's reason, naming what to pick
+        // instead, is shown before the first review fails on it.
+        function test_an_agent_with_no_way_to_its_model_in_a_sandbox_is_warned_of() {
+            const warning = find("codeReviewSandboxRoute");
+            verify(!warning.visible);
+            loader.item.set("provider", "claudeAgent");
+            verify(warning.visible);
+            verify(warning.text.indexOf("Every review runs in a sandbox, where Claude fails") >= 0);
+            verify(warning.text.indexOf("Pick Claude via CLIProxyAPI") >= 0);
+            verify(!find("codeReviewSandboxAgent").visible);
+
+            loader.item.set("reviewTrustedOnThisMachine", true);
+            verify(warning.text.indexOf("does not trust run in a sandbox") >= 0);
+
+            loader.item.set("provider", "opencode");
             verify(!warning.visible);
         }
 

@@ -41,6 +41,37 @@ defmodule HalC2.OpenShell.RouteTest do
       assert message =~ "needs OPENAI_API_KEY"
     end
 
+    # A subscription sign-in does not reach a sandbox, and the CLIProxyAPI plugin's
+    # instance does: the refusal names it, or the plugin when it has added none.
+    test "a refusal for a missing key names the CLIProxyAPI instance of the same driver" do
+      for {driver, key, proxied} <- [
+            {"claudeAgent", "ANTHROPIC_API_KEY", "Claude via CLIProxyAPI"},
+            {"codex", "OPENAI_API_KEY", "Codex via CLIProxyAPI"}
+          ] do
+        bare = %{env: %{}, args: [], plugin?: false}
+
+        assert {:error, named} = Route.pick(driver, Map.put(bare, :proxied, proxied), key)
+        assert named =~ "Pick #{proxied} as the review agent in Settings → Code review"
+        assert named =~ "or set #{key} in this provider's environment"
+
+        assert {:error, plain} = Route.pick(driver, bare, key)
+        assert plain =~ "Set #{key} in this provider's environment"
+        assert plain =~ "via CLIProxyAPI, which the CLIProxyAPI plugin adds"
+
+        # A sandbox on Docker reaches no CLIProxyAPI here, so neither is offered.
+        for instance <- [bare, Map.put(bare, :proxied, proxied)] do
+          assert {:error, docker} = Route.pick(driver, Map.put(instance, :runtime, "docker"), key)
+          assert docker =~ "Set #{key} in this provider's environment"
+          assert docker =~ "needs OpenShell on Podman"
+          refute docker =~ "Pick "
+          refute docker =~ "which the CLIProxyAPI plugin adds"
+        end
+
+        assert {:error, ^named} =
+                 Route.pick(driver, Map.merge(bare, %{proxied: proxied, runtime: "podman"}), key)
+      end
+    end
+
     test "Claude's own address is no proxy" do
       claude = %{
         env: %{"ANTHROPIC_BASE_URL" => "https://api.anthropic.com/", "ANTHROPIC_API_KEY" => "k"},

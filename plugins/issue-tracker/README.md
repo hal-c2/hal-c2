@@ -58,6 +58,6 @@ The page and the settings, against a fake MC part, from a hal-c2 checkout's
 root:
 
 ```bash
-QT_QPA_PLATFORM=offscreen qmltestrunner -import apps/desktop-qt/tests/imports -import packages/qml \
+QT_QPA_PLATFORM=offscreen qmltestrunner -import apps/mobile-qt/tests/imports -import packages/qml \
   -input <this folder>/test
 ```

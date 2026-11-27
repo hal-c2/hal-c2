@@ -1,6 +1,6 @@
 # Sources:
 #   features/space/beyond-pages.feature (the backlog entry for seeing who else is on a page)
-#   spaces-feature-bdd-tests branch, apps/desktop-qt/examples/space/PresenceCluster.qml and
+#   spaces-feature-bdd-tests branch, apps/desktop-ljos/examples/space/PresenceCluster.qml and
 #     features/space/collaboration-agents-and-dots.feature (the prototype; read for ideas only)
 #   packages/contracts/src/space.ts (SpacePresenceViewer, subscribeSpacePresence)
 #   apps/server-ex/lib/hal_c2/space/presence.ex

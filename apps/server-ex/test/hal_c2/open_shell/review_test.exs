@@ -56,6 +56,21 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert a != b
   end
 
+  # It clears as the gateway's day-old records go (#1883).
+  test "the gateway's request limit reads as one that clears, not as a broken sandbox" do
+    limit = %{
+      status: :resource_exhausted,
+      message:
+        "caller has reached the durable mutation admission limit; unresolved requests require reconciliation"
+    }
+
+    assert Review.why(limit) ==
+             "The review hit OpenShell's request limit; this clears within a day."
+
+    assert Review.why(%{status: :invalid_argument, message: "bad"}) ==
+             "OpenShell refused the review sandbox: bad"
+  end
+
   test "a review's sandbox holds a checkout at its head made from a bundle, and its key only in a provider",
        %{gateway: g, root: root, repo: repo} do
     assert {:ok, %{sandbox: name}} = Review.open(spec(repo))

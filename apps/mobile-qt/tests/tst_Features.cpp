@@ -1,7 +1,7 @@
 // Runs the phone's scenarios (the @mobile and @shared ones in the files
 // kDefaultGlobs names) against a fake MC: the Gherkin reader and step
-// definitions the desktop's runner shares (apps/desktop-qt/tests/native/
-// features/Runner.h), the steps the files in features/ register (Harness.h),
+// definitions the shared harness has (tests/native/features/Runner.h, the
+// retired desktop runner's), the steps the files in features/ register (Harness.h),
 // and one QTest row per scenario. Each scenario gets a phone of its own
 // (features/World.h): the app as main.cpp builds it, with its real root.
 // HAL_C2_FEATURES narrows the run to other globs under features/ (space

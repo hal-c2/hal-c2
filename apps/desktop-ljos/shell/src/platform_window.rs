@@ -1,7 +1,7 @@
-//! desktop-qt's PlatformWindow: what the shell asks of the platform about
-//! the window's looks and the user's preferences. desktop-qt did all of it
-//! on macOS only and left blur to the compositor elsewhere
-//! (docs/internals/desktop-qt.md).
+//! desktop-qt's PlatformWindow (now mobile-qt's): what the shell asks of
+//! the platform about the window's looks and the user's preferences.
+//! desktop-qt did all of it on macOS only and left blur to the compositor
+//! elsewhere.
 //!
 //! Ljós gives the shell the application's colour scheme
 //! (`Qt.styleHints.colorScheme`), which is all `applyApplicationAppearance`

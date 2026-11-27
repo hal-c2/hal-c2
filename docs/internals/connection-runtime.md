@@ -3,7 +3,7 @@
 Each client keeps one connection owner per environment: the TUI's
 [`makeTuiSupervisor`](../../apps/tui/src/connection.ts) over the RPC client and state in
 `packages/client-runtime`, and the Qt desktop and phone clients'
-[`McClient`](../../apps/desktop-qt/src/native/McClient.h). Keeping retries and session
+[`McClient`](../../apps/mobile-qt/src/native/McClient.h). Keeping retries and session
 lifetime in one place prevents competing reconnect loops when several views need the same
 environment.
 

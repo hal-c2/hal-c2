@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-#MISE description="Build the Qt desktop shell, pair it with the running MC (mise run mc), and launch it (args go to dev-qt.mjs and hal-c2-qt)"
-#MISE dir="{{config_root}}/apps/desktop-qt"
+#MISE description="Open the desktop shell (desktop-ljos), paired with the running MC (mise run mc); args go to hal-c2-ljos"
+#MISE dir="{{config_root}}"
 set -euo pipefail
-# Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780), or attaches to
-# the pairing link --url names; --standalone starts the shell's own MC instead.
-exec node scripts/dev-qt.mjs "$@"
+# The desktop is desktop-ljos (#1661); `mise run desktop-ljos` is the same.
+exec mise run desktop-ljos "$@"

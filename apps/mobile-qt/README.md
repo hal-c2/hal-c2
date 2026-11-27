@@ -1,7 +1,8 @@
 # HAL-C2 mobile (Qt)
 
-The Android client for phones, tablets and laptops: the desktop's shell (`apps/desktop-qt`'s
-`hal_c2_native` and its `HalC2.Bricks`) with a root of its own, `HalC2.Mobile`, which shows the
+The Android client for phones, tablets and laptops: the shared native shell (this app's
+`hal_c2_native` in `src/native` and the shared `HalC2.Bricks`) with a root of its own,
+`HalC2.Mobile`, which shows the
 desktop's layout in a window with room for it and a phone layout below that
 (`docs/internals/mobile-qt.md`). It is built for this machine, to work on the layouts, and for
 Android arm64.
@@ -23,8 +24,7 @@ mise run features:mobile   # build apps/mobile-qt/build/tests when needed, then 
 ```
 
 `Features` runs the `@mobile` and `@shared` scenarios in the feature files `tests/tst_Features.cpp`
-lists (`features/mobile/pairing-and-environments.feature` and five more) against the desktop
-harness's fake MC, skipping `@backlog`, `@backlog-mobile`, `@dropped` and `@blocked`;
+lists (`features/mobile/pairing-and-environments.feature` and five more) against the harness's fake MC (`tests/native/features`, desktop-qt's), skipping `@backlog`, `@backlog-mobile`, `@dropped` and `@blocked`;
 `HAL_C2_FEATURES="mobile/composer.feature"` narrows it, and `HAL_C2_BACKLOG=1` runs only the
 backlog ones instead, to see what each still lacks (the task takes them as globs and `--backlog`).
 `HAL_C2_SHOTS=<dir>` keeps what the window showed after each step.
@@ -35,9 +35,9 @@ root read from `qml/`, an empty home, and an MC that sells sessions for pairing 
 `tests/features/`, one self-registering file per domain, and act as a user does: a touch on the
 item with the `objectName`, a mouse's click or drag there, keys into what has the keyboard, a
 hardware keyboard's chord through the window's shortcuts, Android's Back. The Gherkin reader and
-the step registry are the desktop runner's (`apps/desktop-qt/tests/native/features/Runner.h`).
+the step registry are the shared harness's (`tests/native/features/Runner.h`).
 `Pairing` is the pairing class by itself, with the links it must refuse, and `Scanner` the scanner.
-`Qml` runs `tests/qml` with `qmltestrunner` over the desktop's fake `HalC2.Shell`, for what a screen
+`Qml` runs `tests/qml` with `qmltestrunner` over the fake `HalC2.Shell` in `tests/imports`, for what a screen
 decides by itself.
 
 No test opens a camera. The device's is one object (`src/ScanCamera.h`), and the tests put
@@ -49,7 +49,7 @@ through `QDesktopServices`, as Qt for Android does it.
 
 ## Toolchain for Android
 
-The desktop's requirements (`docs/internals/desktop-qt.md`, "Setup"), with this machine's Qt at
+Qt 6.9 or later with its WebSockets, Sql (and the SQLite driver), Quick and QuickControls2 modules, with this machine's Qt at
 the same version as the one for Android, since its `androiddeployqt` and QML tools make the
 package. Then:
 
@@ -72,7 +72,7 @@ it too, for the tests and `mise run mobile` (Homebrew's `qt` has it); it adds ab
 Homebrew's) and `JAVA_HOME` (Android Studio's JDK). They are read when `build/android` is first
 configured; delete that directory to change them.
 
-The terminal is the desktop's (qml-ghostty, `apps/desktop-qt/README.md`) and asks for nothing
+The terminal is the shared one (qml-ghostty, `cmake/QmlGhostty.cmake`) and asks for nothing
 more to be installed. Its libghostty-vt is built when a build directory is first configured, with
 the Zig 0.15.2 and the Ghostty checkout in `~/.cache/qml-ghostty`; a machine that has neither
 gets them there first (about two minutes in all). For Android the library is cross-built against
@@ -126,11 +126,11 @@ desktop already has:
 - The C++ is compiled with `HAL_C2_HAS_TERMINAL` exactly when `Ghostty` is linked in
   (`cmake/Terminal.cmake`). In a build without it the bricks that import `Ghostty` do not load,
   so nothing may instantiate them there.
-- The terminal's library is cross-built per ABI by `apps/desktop-qt/cmake/QmlGhosttyAndroid.cmake`,
+- The terminal's library is cross-built per ABI by `cmake/QmlGhosttyAndroid.cmake`,
   which names one Zig target for each: a new ABI needs its line there, as it needs its OpenSSL
   target. The terminal adds about 0.6 MB to the APK.
 - A phone build has no FFmpeg, so a Device tab's screen says it is unavailable
-  (`HAL_C2_HAS_FFMPEG` in `apps/desktop-qt/cmake/NativeShell.cmake`). That includes Qt
+  (`HAL_C2_HAS_FFMPEG` in `cmake/NativeShell.cmake`). That includes Qt
   Multimedia's FFmpeg backend: `cmake/Scanner.cmake` packages its Android backend alone, and the
   scanner adds 1.4 MB to the APK where both backends would add 10 MB.
 - The scanner's reader is zxing-cpp, fetched at a pinned commit when a build directory is first
@@ -139,7 +139,7 @@ desktop already has:
   sizes, delete `build/android/android-build/build` and the APK and build again.
 - A link opens the app from a shell with
   `adb shell am start -a android.intent.action.VIEW -d 'hal-c2://pair?pairingUrl=<the pairing
-link, percent-encoded>'`, whether it is running or not.
+  link, percent-encoded>'`, whether it is running or not.
 - The emulator's back camera can look at a picture: start it with
   `-camera-back virtualscene -virtualscene-poster wall=<png>`, walk the camera to that wall with
   `adb emu automation play <sdk>/emulator/resources/macros/Walk_to_image_room`, and change the

@@ -1,7 +1,7 @@
 # Sources:
 #   features/space/beyond-pages.feature ("The user looks back through a page's history")
 #   spaces-feature-bdd-tests branch, features/space/living-pages-and-visualizations.feature and
-#     apps/desktop-qt/examples/space/VersionHistoryDrawer.qml (the prototype; read for ideas only)
+#     apps/desktop-ljos/examples/space/VersionHistoryDrawer.qml (the prototype; read for ideas only)
 #   packages/contracts/src/space.ts (space.page.history, space.page.version, space.page.restoreVersion)
 #   apps/server-ex/lib/hal_c2/space/history.ex
 #   features/space/images.feature (a block on an image that left stays and says so)

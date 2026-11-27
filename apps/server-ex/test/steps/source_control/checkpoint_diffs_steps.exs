@@ -238,6 +238,47 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
     |> Map.merge(%{played: true, turns: Map.new(1..3, &{&1, {"imported", nil}}), imported: refs})
   end
 
+  step "the user set git to suppress blank context lines in the project", context do
+    World.git!(context.cwd, ["config", "diff.suppressBlankEmpty", "true"])
+    context
+  end
+
+  step "turn {int} changed a line of {string} that follows a blank line",
+       %{args: [n, path]} = context do
+    World.commit!(context.cwd, %{path => "if (total) {\n\n  pay(total)\n}\n"}, "Add a blank line")
+    file = Path.join(context.cwd, path)
+
+    edit = fn ->
+      File.write!(file, String.replace(File.read!(file), "pay(total)", "pay(total + tax)"))
+    end
+
+    put_in(context, [:turns, n], {"say hello", edit})
+  end
+
+  step "the blank line is shown as context and the changed line keeps its line number",
+       context do
+    lines = String.split(patch(context), "\n")
+    hunk = Enum.drop_while(lines, &(not String.starts_with?(&1, "@@")))
+    assert [header | body] = hunk
+    [_, new_start] = Regex.run(~r/\+(\d+)/, header)
+    # The blank line is a context line (one leading space), never an empty line.
+    body = Enum.reverse(Enum.drop_while(Enum.reverse(body), &(&1 == "")))
+    assert " " in body
+    refute "" in body
+
+    {line_no, _} =
+      Enum.reduce_while(body, {String.to_integer(new_start), false}, fn line, {no, _} ->
+        cond do
+          String.starts_with?(line, "+") and line =~ "pay(total + tax)" -> {:halt, {no, true}}
+          String.starts_with?(line, "-") -> {:cont, {no, false}}
+          true -> {:cont, {no + 1, false}}
+        end
+      end)
+
+    assert line_no == 3
+    context
+  end
+
   step "turn {int}'s changes are shown", %{args: [n]} = context do
     diff = patch(context)
     assert diff =~ "+++ b/old#{n}.ts"

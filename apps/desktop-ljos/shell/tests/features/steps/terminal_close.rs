@@ -650,7 +650,7 @@ fn register_failures(steps: &mut Steps) {
     steps.step(
         "the user's links open in the in-app browser",
         |world, _, _| {
-            // The desktop has no in-app browser (docs/internals/desktop-qt.md):
+            // The Qt desktop had no in-app browser:
             // the setting another client chose changes nothing here.
             fake_config(&mut world.mc)
                 .settings

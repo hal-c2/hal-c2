@@ -1,7 +1,7 @@
 # Sources:
 #   https://chatgpt.com/features/space/ (scheduled pages)
 #   spaces-feature-bdd-tests branch, features/space/self-updating-pages-and-schedules.feature
-#     and apps/desktop-qt/examples/space/AutomationCard.qml (the prototype; read for ideas only)
+#     and apps/desktop-ljos/examples/space/AutomationCard.qml (the prototype; read for ideas only)
 #   packages/contracts/src/space.ts (space.page.schedule.set, space.page.schedule.setEnabled,
 #     space.page.schedule.runNow, space.page.schedule.remove)
 #   apps/server-ex/lib/hal_c2/space/schedule.ex

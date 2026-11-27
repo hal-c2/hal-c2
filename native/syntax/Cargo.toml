@@ -6,7 +6,7 @@ edition = "2024"
 license = "MIT"
 publish = false
 
-# A static library desktop-qt and the phone link (cmake/Syntax.cmake), and a
+# A static library the phone links (cmake/Syntax.cmake), and a
 # crate a Rust client takes as it is.
 [lib]
 name = "hal_c2_syntax"

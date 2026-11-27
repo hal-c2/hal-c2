@@ -513,7 +513,7 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 
-    // The shell theme file (docs/internals/desktop-qt.md).
+    // The shell theme file (the ricing contract).
     steps.step("the desktop shell is running", |world, _, _| {
         shell_running(world)
     });
