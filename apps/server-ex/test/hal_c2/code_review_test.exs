@@ -3354,7 +3354,7 @@ defmodule HalC2.CodeReviewTest do
 
     # A run stopped as its sandbox was made fails to open it, which for a review no
     # longer running removed nothing from its checkout.
-    @tag sandbox: [hold: "tar"]
+    @tag sandbox: [hold: :checkout]
     test "a review stopped while its sandbox is made keeps no checkout", _context do
       start_untrusted()
       assert_receive {:sandbox_held, handler}, 15_000

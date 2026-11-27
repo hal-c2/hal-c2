@@ -916,12 +916,12 @@ defmodule HalC2.OpenShell.Review do
     echo "base $(git merge-base HEAD refs/review/base || true)"
     """
 
-    with {:ok, tar} <- bundle(spec, max(deadline - now(), 1) * 1000),
+    with {:ok, file} <- bundle(spec, max(deadline - now(), 1) * 1000),
          upload =
-           Client.upload(conn, name, Path.dirname(@bundle), {:file, tar},
+           Client.write_file(conn, name, @bundle, {:file, file},
              upload_timeout: max(deadline - now(), 1) * 1000
            ),
-         File.rm_rf(Path.dirname(tar)),
+         File.rm_rf(Path.dirname(file)),
          :ok <- upload,
          {:ok, out} <- run(conn, name, ["sh", "-c", script]) do
       lines = String.split(out, "\n", trim: true)
@@ -940,20 +940,17 @@ defmodule HalC2.OpenShell.Review do
     end
   end
 
-  # A tar holding `review.bundle`, a git bundle of the review's two refs, in a
-  # directory of its own the caller removes. The directory is the MC's temporary one
-  # and a unique integer; nothing a client or the agent sends names it. Git runs in
-  # the clone as the plugin's own git does (`HalC2.Git.isolated/1`), and the bundle
-  # and its tar have `ms`, the review's own time limit, before they are given up and
-  # git killed with what it started.
+  # `review.bundle`, a git bundle of the review's two refs, in a directory of its own
+  # the caller removes. The directory is the MC's temporary one and a unique integer;
+  # nothing a client or the agent sends names it. Git runs in the clone as the
+  # plugin's own git does (`HalC2.Git.isolated/1`), and has `ms`, the review's own
+  # time limit, before it is given up and killed with what it started.
   # sobelow_skip ["Traversal.FileModule"]
   defp bundle(spec, ms) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-review-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     file = Path.join(dir, Path.basename(@bundle))
-    tar = Path.join(dir, "review.tar")
     isolated = HalC2.Git.isolated(spec.clone)
-    until = System.monotonic_time(:millisecond) + ms
 
     bundled =
       HalC2.Git.run(spec.clone, ["bundle", "create", "-q", file, spec.head_ref, spec.base_ref],
@@ -964,16 +961,10 @@ defmodule HalC2.OpenShell.Review do
         stop_children: {__MODULE__, dir}
       )
 
-    with {:ok, %{status: 0}} <- bundled,
-         left = max(until - System.monotonic_time(:millisecond), 1),
-         {:ok, :ok} <-
-           HalC2.Git.within(left, fn ->
-             :erl_tar.create(to_charlist(tar), [
-               {to_charlist(Path.basename(file)), to_charlist(file)}
-             ])
-           end) do
-      {:ok, tar}
-    else
+    case bundled do
+      {:ok, %{status: 0}} ->
+        {:ok, file}
+
       failed ->
         File.rm_rf(dir)
         {:error, "The review's checkout could not be bundled: #{bundle_error(failed)}"}
@@ -982,9 +973,6 @@ defmodule HalC2.OpenShell.Review do
 
   defp bundle_error({:ok, %{out: out, err: err}}), do: String.trim(out <> err)
   defp bundle_error({:error, reason}) when is_binary(reason), do: reason
-  defp bundle_error({:ok, {:error, reason}}), do: inspect(reason)
-  defp bundle_error({:exit, reason}), do: "tar exited: #{inspect(reason)}"
-  defp bundle_error(:timeout), do: "it ran past the review's time limit."
 
   defp sha?(value),
     do: is_binary(value) and Regex.match?(~r/\A[0-9a-f]{40}([0-9a-f]{24})?\z/, value)
@@ -1112,6 +1100,22 @@ defmodule HalC2.OpenShell.Review do
     do: "The review's sandbox is not one this MC made, so nothing was run in it."
 
   def why(:timeout), do: "The review's checkout did not reach its sandbox in time."
+
+  # OpenShell 0.1.7 ends a command it has no room to queue more input for with exit
+  # status 74 and, on purpose, nothing on stderr.
+  def why({:upload_failed, 74, ""}),
+    do:
+      "OpenShell refused to take the review's checkout into its sandbox. Starting the review again may get through."
+
+  def why({:upload_failed, code, stderr}) do
+    case String.trim(stderr) do
+      "" ->
+        "The review's checkout could not be put in its sandbox: its command exited #{code}."
+
+      out ->
+        "The review's checkout could not be put in its sandbox: its command exited #{code}: #{out}"
+    end
+  end
 
   def why({:read, reason}),
     do: "The review's checkout could not be read for its sandbox: #{:file.format_error(reason)}."

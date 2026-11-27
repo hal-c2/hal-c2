@@ -24,7 +24,6 @@
   {"lib/hal_c2/git.ex", [stop_asking: :wait]},
   {"lib/hal_c2/import/picker.ex", [stty: :wait]},
   {"lib/hal_c2/machine_files/share.ex", [pin: :wait, wait: :loop]},
-  {"lib/hal_c2/open_shell/client.ex", [write_file: :loop]},
   {"lib/hal_c2/open_shell/install.ex", [gateway: :wait]},
   {"lib/hal_c2/orchestration.ex", [regenerate_title: :loop, run_ended?: :loop, stop_runs: :loop]},
   {"lib/hal_c2/orchestration/wake.ex", [drain: :wait]},

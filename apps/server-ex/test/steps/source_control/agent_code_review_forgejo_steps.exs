@@ -421,7 +421,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
   end
 
   # `{review, context}` once `done?` holds for the review of `number` on the plugin's
-  # `reviews` topic; the last value seen is kept, as the topic only moves forward.
+  # `reviews` topic; the last value seen is kept, as the topic only moves forward. It
+  # waits as long as `Mc.await/3` does: the first scenario of a run on a busy runner
+  # can take more than 10 s to get its review going.
   defp await_review(context, number, done?) do
     found = fn value ->
       with %{"reviews" => reviews} <- value,
@@ -439,8 +441,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReviewForgejo do
       {frame, client} =
         Mc.await(
           World.client(context, "reviews"),
-          &(&1["t"] == "plugin" and &1["id"] == sub and found.(&1["value"])),
-          10_000
+          &(&1["t"] == "plugin" and &1["id"] == sub and found.(&1["value"]))
         )
 
       context =

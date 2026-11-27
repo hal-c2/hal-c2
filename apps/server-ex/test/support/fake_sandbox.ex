@@ -4,7 +4,9 @@ defmodule HalC2.Test.FakeSandbox do
   the commands `HalC2.OpenShell.Review` and the thread runtimes run in one, with the
   sandbox's `/review` standing for directory `root` here.
 
-  - `tar -x ... -C dest -f -` unpacks its stdin into `dest`;
+  - `sh -c 'cat > "$1"' sh path` (and `>>`) writes (appends) its stdin to `path`,
+    or with `refuse_input: true` exits 74 with no output, as OpenShell does with
+    input it has no room for;
   - `sh -c script` runs `script` here, `/review` in it rewritten to `root`;
   - `printenv NAME` answers the placeholder OpenShell puts in a sandbox's
     environment for a provider's credential, `openshell:resolve:env:fake_NAME`, or
@@ -36,7 +38,8 @@ defmodule HalC2.Test.FakeSandbox do
   Claude's `{:sandbox_prompt, content}` for each message it is sent, and Codex's
   `{:sandbox_thread_start, params}` for each thread it starts. With
   `hold: program`, a command of `program` waits to start for `:release`, sent to the
-  pid of `{:sandbox_held, pid}`.
+  pid of `{:sandbox_held, pid}`; `hold: :checkout` holds each piece of the review's
+  bundle as it is written.
   """
 
   @report %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
@@ -63,7 +66,7 @@ defmodule HalC2.Test.FakeSandbox do
       )
 
       # `hold: program` keeps that program from starting until the test releases it.
-      if List.first(command) == opts[:hold] do
+      if held?(command, opts[:hold]) do
         send(test, {:sandbox_held, self()})
 
         receive do
@@ -80,12 +83,22 @@ defmodule HalC2.Test.FakeSandbox do
     end
   end
 
-  defp run(["tar", "-x" | args], io, s) do
-    dest = args |> Enum.drop_while(&(&1 != "-C")) |> Enum.at(1) |> local(s)
-    archive = stdin(io, [])
-    File.mkdir_p!(dest)
-    :ok = :erl_tar.extract({:binary, archive}, cwd: to_charlist(dest))
-    io.exit.(0)
+  defp held?(["sh", "-c", "cat " <> _, "sh", "/review/review.bundle"], :checkout), do: true
+  defp held?([program | _], program), do: true
+  defp held?(_command, _hold), do: false
+
+  # A file put in the sandbox in pieces (`HalC2.OpenShell.Client.write_file/5`).
+  defp run(["sh", "-c", "cat " <> redirect, "sh", path], io, s)
+       when redirect in [~s(> "$1"), ~s(>> "$1")] do
+    data = stdin(io, [])
+
+    if s.opts[:refuse_input] do
+      io.exit.(74)
+    else
+      mode = if redirect == ~s(> "$1"), do: [:binary], else: [:binary, :append]
+      File.write!(local(path, s), data, mode)
+      io.exit.(0)
+    end
   end
 
   defp run(["sh", "-c", script], io, s) do
