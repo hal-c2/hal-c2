@@ -59,6 +59,10 @@ fn a_link_pairs_once_and_says_who_the_client_is() {
     let paired = exchange(&link(&[&origin]), &client());
     assert_eq!(paired.outcome, Outcome::Paired);
     assert_eq!(paired.token, TOKEN);
+    // The MC's expires_in (3600 from the fake) counted from its answer.
+    let expires = paired.expires_at.expect("the MC said when it runs out");
+    let left = (expires - chrono::Utc::now()).num_seconds();
+    assert!((3500..=3600).contains(&left), "{left}s left");
     assert_eq!(paired.origin, origin);
     assert_eq!(paired.descriptor["environmentId"], "env-1");
     let forms = exchanges(&seen);
@@ -81,6 +85,7 @@ fn a_link_pairs_once_and_says_who_the_client_is() {
     let again = exchange(&link(&[&origin]), &client());
     assert_eq!(again.outcome, Outcome::Refused);
     assert!(again.token.is_empty());
+    assert_eq!(again.expires_at, None);
 }
 
 #[test]

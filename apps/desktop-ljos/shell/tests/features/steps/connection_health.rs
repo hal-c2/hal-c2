@@ -312,6 +312,7 @@ fn open_at(world: &mut World, origin: &str) -> Outcome {
         token: "mc-token".into(),
         label: String::new(),
         environment_id: String::new(),
+        expires_at: String::new(),
     };
     hal_c2_shell::open(world.engine(), &session).map_err(Failure)?;
     world.pump()
@@ -3476,6 +3477,7 @@ fn start_on_mc(world: &mut World) -> Outcome {
         token: "mc-token".into(),
         label: String::new(),
         environment_id: String::new(),
+        expires_at: String::new(),
     };
     hal_c2_shell::open(world.engine(), &session).map_err(Failure)?;
     drain_cache(world);
