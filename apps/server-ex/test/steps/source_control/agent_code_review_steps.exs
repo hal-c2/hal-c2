@@ -32,6 +32,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     "commented" => "comment"
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
+  @heading "## Agentic code review\n\n"
   # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
@@ -1768,13 +1769,40 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the review posted to \#{int} opens with {string} then {string}",
+       %{args: [number, heading, headline]} = context do
+    [_, body | _] = posted_review(context, number)
+    assert String.starts_with?(body, "#{heading}\n\n#{headline}\n\n"), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the review posted to \#{int} does not open with {string}",
+       %{args: [number, prefix]} = context do
+    [_, body | _] = posted_review(context, number)
+    refute String.starts_with?(body, prefix), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the user sets the review heading to {string}", %{args: [heading]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"heading" => heading}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
   step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
        %{args: [number]} = context do
     [_, body | _] = posted_review(context, number)
     [visible | _] = String.split(body, "<details>")
     assert visible =~ "**Not run**\n\n- the full suite: it needs the staging database"
     assert visible =~ ~r/\*\*Blocked[^\n]*\n\n- the e2e tests: STRIPE_KEY is not set/
-    assert String.starts_with?(body, "No findings.\n\nBumps the HTTP client.\n\n"), body
+
+    assert String.starts_with?(body, "#{@heading}No findings.\n\nBumps the HTTP client.\n\n"),
+           body
+
     context
   end
 
@@ -2306,7 +2334,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert review["event"] == "COMMENT"
-    assert String.starts_with?(review["body"], "**Changes requested**")
+    assert String.starts_with?(review["body"], "#{@heading}**Changes requested**")
     context
   end
 

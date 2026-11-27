@@ -703,6 +703,20 @@ ColumnLayout {
             }
         }
 
+        SettingsField {
+            title: qsTr("Review heading")
+            description: qsTr("The first line of every posted review. Leave empty for none.")
+
+            ShellTextField {
+                objectName: "codeReviewSetting:heading"
+                Accessible.name: qsTr("Review heading")
+                Accessible.description: qsTr("The first line of every posted review. Leave empty for none.")
+                implicitWidth: 240
+                text: settings.values.heading ?? ""
+                onTextEdited: settings.set("heading", text)
+            }
+        }
+
         Toggle {
             key: "verdictAsComment"
             title: qsTr("Post verdicts as comments")
