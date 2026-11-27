@@ -40,7 +40,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: The first push goes to the remote the repository's settings name
     Given "feature/tax" has never been pushed
     And <settings>
@@ -54,7 +54,7 @@ Feature: Pushing, pulling and guarding the default branch
       | no push remote or push default is set and "origin" and "upstream" exist               | origin/feature/tax      |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: upstream is the branch's base)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A branch cut from another branch is pushed under its own name
     Given "feature/tax" was cut from "origin/dev" and tracks it
     And "feature/tax" is 1 commit ahead
@@ -63,10 +63,21 @@ Feature: Pushing, pulling and guarding the default branch
     And "feature/tax" tracks "origin/feature/tax" from now on
     And "dev" is remembered as the base the pull request will target
 
+  # Review of hal-c2#1837: only a remote's prefix makes a branch an alias of its upstream,
+  # so "fix/dev" cut from "origin/dev" must not push its commits onto "dev".
+  @mc @priority-high
+  Scenario: A branch whose name ends in the branch it was cut from is pushed under its own name
+    Given "fix/dev" was cut from "origin/dev" and tracks it
+    And "fix/dev" is 1 commit ahead
+    When the user pushes
+    Then "origin/fix/dev" has the new commit and "origin/dev" is unchanged
+    And "fix/dev" tracks "origin/fix/dev" from now on
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: isAliasOfUpstreamHead)
-  @mc @backlog
+  @mc
   Scenario: A branch that tracks a remote branch of the same name under another prefix is pushed to it
-    Given the local branch "upstream/effect-atom" tracks "origin/effect-atom"
+    Given the repository has the remote "upstream"
+    And the local branch "upstream/effect-atom" tracks "origin/effect-atom"
     And "upstream/effect-atom" is 1 commit ahead
     When the user pushes
     Then "origin/effect-atom" has the new commit
@@ -81,7 +92,7 @@ Feature: Pushing, pulling and guarding the default branch
     And "feature/tax" tracks "fork/feature/tax" from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: resolvePublishBranchName)
-  @mc @backlog
+  @mc
   Scenario: A branch named after a remote branch is published without the remote's prefix
     Given the checkout is on a local branch named "origin/hotfix"
     When the user pushes it to "origin"

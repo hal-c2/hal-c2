@@ -411,8 +411,7 @@ defmodule HalC2.Orchestration.Rollback do
   end
 
   defp other_threads(thread_id) do
-    for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node(),
+    for {{_mc, id}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
         id != thread_id,
         row["deletedAt"] == nil,
         do: {id, row}

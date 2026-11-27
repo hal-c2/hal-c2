@@ -26,6 +26,7 @@ pub mod thread_diff;
 pub mod time;
 pub mod timeline;
 pub mod timeline_model;
+pub mod turn_agents;
 pub mod workspace_files;
 
 use ljos::prelude::Engine;
@@ -36,6 +37,7 @@ pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [
         timeline_model::TimelineModel,
         agents::AgentsModel,
+        turn_agents::TurnAgentsObject,
         diff::DiffModel,
         file_tree::FileTreeModel,
         previews::ThreadPreviews,

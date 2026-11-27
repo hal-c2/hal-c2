@@ -54,7 +54,20 @@ defmodule HalC2.Git do
           "-c",
           "safe.bareRepository=explicit",
           "-c",
-          "core.fsmonitor=false" | args
+          "core.fsmonitor=false",
+          # The MC reads git's output (and shows some of it to the writer model), so a
+          # checkout's colour setting must never colour it. `color.ui` alone does
+          # not win over the per-command settings, so those are switched off too.
+          "-c",
+          "color.ui=false",
+          "-c",
+          "color.diff=false",
+          "-c",
+          "color.status=false",
+          "-c",
+          "color.branch=false",
+          "-c",
+          "color.grep=false" | args
         ]
 
     opts = Keyword.put(opts, :env, env)
@@ -241,8 +254,9 @@ defmodule HalC2.Git do
   end
 
   @doc """
-  The branch this one merges into: its gh-merge-base, the remote's default
-  branch, then main or master; remote-tracking refs preferred.
+  The branch this one merges into: its gh-merge-base, the branch it tracks when
+  that is another branch (it was cut from it), the remote's default branch,
+  then main or master; remote-tracking refs preferred.
   """
   def base_branch(root, branch) do
     configured = git_line(root, ["config", "--get", "branch.#{branch}.gh-merge-base"])
@@ -262,7 +276,25 @@ defmodule HalC2.Git do
           _ -> nil
         end
 
-    [configured, default, "main", "master"]
+    # A branch tracking another branch was cut from it, so that branch is its
+    # base; tracking its own name (or itself under a remote's prefix) says nothing.
+    # The tracked ref keeps its remote ("upstream/develop"), so the candidate loop
+    # cannot substitute the primary remote's branch of the same name.
+    tracked =
+      case upstream(root, branch) do
+        %{remote: nil, ref: name} ->
+          if same_branch?(root, branch, name), do: nil, else: name
+
+        %{remote: remote, ref: ref} ->
+          if same_branch?(root, branch, String.replace_prefix(ref, "#{remote}/", "")),
+            do: nil,
+            else: ref
+
+        _ ->
+          nil
+      end
+
+    [configured, tracked, default, "main", "master"]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.map(fn candidate ->
       candidate
@@ -277,6 +309,8 @@ defmodule HalC2.Git do
     |> Enum.reject(&(&1 == "" or &1 == branch))
     |> Enum.find_value(fn candidate ->
       cond do
+        # A candidate that already names its remote ("upstream/develop") is that ref.
+        ref?(root, "refs/remotes/#{candidate}") -> candidate
         remote && ref?(root, "refs/remotes/#{remote}/#{candidate}") -> "#{remote}/#{candidate}"
         ref?(root, "refs/heads/#{candidate}") -> candidate
         true -> nil
@@ -305,14 +339,25 @@ defmodule HalC2.Git do
 
   @doc "`origin` when it exists, else the first remote, or nil."
   def primary_remote(root) do
-    case ok(root, ["remote"]) do
-      {:ok, out} ->
-        remotes = String.split(out, "\n", trim: true)
-        if "origin" in remotes, do: "origin", else: List.first(remotes)
+    remotes = remotes(root)
+    if "origin" in remotes, do: "origin", else: List.first(remotes)
+  end
 
-      _ ->
-        nil
+  @doc "The repository's remote names, or [] when it has none or git fails."
+  def remotes(root) do
+    case ok(root, ["remote"]) do
+      {:ok, out} -> String.split(out, "\n", trim: true)
+      _ -> []
     end
+  end
+
+  @doc """
+  Whether the local `branch` is the branch `name` itself: named `name`, or `name` under
+  a remote's prefix ("upstream/effect-atom" for "effect-atom" when "upstream" is a
+  remote). Any other prefix ("fix/main" for "main") names a branch of its own.
+  """
+  def same_branch?(root, branch, name) do
+    branch == name or Enum.any?(remotes(root), &(branch == "#{&1}/#{name}"))
   end
 
   @doc """

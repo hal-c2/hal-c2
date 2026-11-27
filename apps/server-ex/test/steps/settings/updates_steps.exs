@@ -464,6 +464,15 @@ defmodule HalC2.Steps.Settings.Updates do
     context
   end
 
+  step "updating Codex takes longer than the MC waits", context do
+    context = install(context, "Codex", "a global npm install")
+    npm = Path.join([context.mc.home, "npm", "bin", "npm"])
+    File.write!(npm, "#!/bin/sh\nsleep 5\n")
+    File.chmod!(npm, 0o755)
+    World.put_app_env(:provider_update_timeout, 200)
+    context
+  end
+
   step "Codex is not installed", context do
     context = setup_providers(context)
     World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])

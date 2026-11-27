@@ -285,12 +285,16 @@ defmodule HalC2.Plugins.McpToolPack do
   @moduledoc """
   Tools offered to agents next to HAL-C2's own in the `hal-c2` MCP server (`HalC2.Mcp`),
   in projects that allow it. Tools are MCP tool definitions (`name`, `description`,
-  `inputSchema`); a call answers JSON or an error the agent reads.
+  `inputSchema`); a call answers JSON or an error the agent reads. An error that is a
+  map, or a JSON object, with a `code` (a short word such as `invalid_input`), a
+  `message` and optionally JSON `details` reaches the agent with that code and those
+  details, and `plugin` naming the plugin; any other error, or a crash, reaches it as
+  `plugin_failed`.
   """
   use HalC2.Plugins.Kind
   @callback tools(settings :: map) :: [map]
   @callback call_tool(name :: String.t(), arguments :: map, settings :: map) ::
-              {:ok, term} | {:error, String.t()}
+              {:ok, term} | {:error, String.t() | map}
 end
 
 defmodule HalC2.Plugins.GitHost do
@@ -347,8 +351,8 @@ defmodule HalC2.Plugins.Extension do
       "connected"}`. Each runs in a process of its own, so it may take its time;
       `slack.status` events reach a plugin one at a time, in the order they happened.
     * `agent_tools(context)` and `call_agent_tool(name, arguments, context)`: tools
-      offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
-      plugin was granted `agentTools`. The context names the thread whose agent is
+      offered to agents in HAL-C2's MCP server, as an MCP tool pack's are (errors
+      included), when the plugin was granted `agentTools`. The context names the thread whose agent is
       asking, so a plugin can offer a tool to its own threads only.
     * `observe(event, context)`: with `turns:observe`, what agents do in every
       thread, as it happens (`HalC2.Plugins.observe/1`): `turn.started` (`"threadId",
@@ -397,7 +401,7 @@ defmodule HalC2.Plugins.Extension do
   @callback handle_event(event :: map, context :: map) :: any
   @callback agent_tools(context :: map) :: [map]
   @callback call_agent_tool(name :: String.t(), arguments :: map, context :: map) ::
-              {:ok, term} | {:error, String.t()}
+              {:ok, term} | {:error, String.t() | map}
   @callback observe(event :: map, context :: map) :: any
   @callback shape_run(run :: map, context :: map) :: map | nil
   @optional_callbacks handle_event: 2,

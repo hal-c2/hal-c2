@@ -16,10 +16,12 @@ name: CI
 # The queue builds several entries at once, each on top of the ones ahead, so the last
 # entry's commit holds every change ahead of it. Only that entry tests: the ones ahead park
 # (`park`), holding no runner, and when the last passes it marks them passed too
-# (merge-queue-stamp.sh), so the queue merges them together. When the last entry fails and
-# leaves, the watchdog starts the new last one's tests (merge-queue-watchdog.sh), as a
-# workflow_dispatch run with `queue` set, which then counts as a queue run. The queue can't
-# see that run's checks, so it copies its answer to where the queue looks (ci-result.sh).
+# (merge-queue-stamp.sh), so the queue merges them together. When an entry fails, the
+# watchdog starts the tests of every parked entry ahead of it at once (merge-queue-watchdog.sh),
+# so the first of them to fail is the culprit and the rest ahead of it merge; entries behind a
+# failed one park until GitHub rebuilds them without it. A promoted run is a workflow_dispatch
+# run with `queue` set, which then counts as a queue run. The queue can't see that run's
+# checks, so it copies its answer to where the queue looks (ci-result.sh).
 
 on:
   pull_request:

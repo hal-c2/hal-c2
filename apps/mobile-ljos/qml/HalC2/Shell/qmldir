@@ -1,3 +1,2 @@
 module HalC2.Shell
-TurnAgents 1.0 TurnAgents.qml
 MultiPointTouchArea 1.0 MultiPointTouchArea.qml

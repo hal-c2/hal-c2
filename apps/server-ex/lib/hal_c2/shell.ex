@@ -66,6 +66,9 @@ defmodule HalC2.Shell do
   require Logger
 
   @table __MODULE__
+  # Match variables for `query/1`'s spec, made once at compile time so a query
+  # creates no atoms however many fields it names.
+  @query_vars Enum.map(1..32, &:"$#{&1}")
   @mcs HalC2.Shell.Mcs
   # `{{mc, stream_id}, rev}`: the owning MC's count at each row's latest change.
   @revs HalC2.Shell.Revs
@@ -92,6 +95,80 @@ defmodule HalC2.Shell do
   def rows do
     # Without the shell (tools, some tests) there are no rows.
     if :ets.whereis(@table) == :undefined, do: [], else: :ets.tab2list(@table)
+  end
+
+  @doc """
+  Rows matching `opts`, filtered in ETS so only matches are copied onto the
+  caller's heap. Same shape as `rows/0`; prefer this over filtering `rows/0`
+  (the whole cluster sidebar) in any process that lives between sweeps.
+
+  Options:
+
+    * `mc` — a node, or `:local` for this MC; omitted means every MC.
+    * `id` — one stream id (on every MC unless `mc` says otherwise).
+    * `kind` — `"thread"` or `"project"`.
+    * `where` — `%{field => value}`: the row holds `field` with exactly that
+      value (a field the row lacks never matches, `nil` included).
+    * `present` — a field, or fields, the row holds with a value other than
+      `nil`. Together, `where` and `present` name at most 32 fields.
+    * `limit` — at most this many rows.
+  """
+  @spec query(keyword) :: [{{node, String.t()}, {String.t(), map}}]
+  def query(opts \\ []) do
+    if :ets.whereis(@table) == :undefined do
+      []
+    else
+      spec = [match_spec(opts)]
+
+      case Keyword.get(opts, :limit) do
+        nil ->
+          :ets.select(@table, spec)
+
+        limit ->
+          case :ets.select(@table, spec, limit) do
+            :"$end_of_table" -> []
+            {rows, _continuation} -> rows
+          end
+      end
+    end
+  end
+
+  defp match_spec(opts) do
+    mc =
+      case Keyword.get(opts, :mc) do
+        nil -> :_
+        :local -> node()
+        mc -> mc
+      end
+
+    kind = Keyword.get(opts, :kind, :_)
+    where = Keyword.get(opts, :where, %{})
+    present = opts |> Keyword.get(:present, []) |> List.wrap() |> Enum.uniq()
+    fields = Enum.uniq(Map.keys(where) ++ present)
+
+    if length(fields) > length(@query_vars) do
+      raise ArgumentError,
+            "query takes at most #{length(@query_vars)} where/present fields, " <>
+              "got #{length(fields)}"
+    end
+
+    # One variable per field: a `where` value placed in the map pattern would
+    # match any map that extends it, and a second variable for a field in both
+    # `where` and `present` would drop the equality. Guards carry both.
+    {pattern, guards} =
+      Enum.reduce(Enum.zip(fields, @query_vars), {%{}, []}, fn {field, var}, {pattern, guards} ->
+        guards =
+          case Map.fetch(where, field) do
+            {:ok, value} -> [{:"=:=", var, {:const, value}} | guards]
+            :error -> guards
+          end
+
+        guards = if field in present, do: [{:"/=", var, nil} | guards], else: guards
+        {Map.put(pattern, field, var), guards}
+      end)
+
+    row = if fields == [], do: :_, else: pattern
+    {{{mc, Keyword.get(opts, :id, :_)}, {kind, row}}, guards, [:"$_"]}
   end
 
   @doc "One row as `{kind, row}`, or `nil`."
@@ -236,7 +313,10 @@ defmodule HalC2.Shell do
   @spec family(String.t()) :: [{node, String.t(), String.t(), map}]
   def family(thread_id) do
     by_id =
-      Map.new(for {{mc, id}, {"thread", row}} <- rows(), do: {id, {mc, id, "thread", row}})
+      Map.new(
+        for {{mc, id}, {"thread", row}} <- query(kind: "thread"),
+            do: {id, {mc, id, "thread", row}}
+      )
 
     case by_id[thread_id] do
       nil ->
