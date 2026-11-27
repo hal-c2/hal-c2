@@ -56,7 +56,9 @@ down to once a minute; **Look now** on the page looks at once. When the host
 limits its requests, the next look waits twice as long, up to eight times the
 interval, until a look goes through. A commit is reviewed once. With **Review new pushes** on, a pull
 request is reviewed again when its head changes; with it off, it is marked as
-changed since its review. A pull request you asked for a review of is followed
+changed since its review. A push that only rebases the reviewed change keeps its
+published or kept review, marked as carried, and counts toward no review limit;
+turn on **Review rebases** to review those again too. A pull request you asked for a review of is followed
 from then on: new pushes to it are picked up in either mode, and even if you
 later take its repository out of the watched list. Discarding its review stops
 following it. A re-review is told the previous review's findings, so it can say

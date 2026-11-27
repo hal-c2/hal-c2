@@ -121,6 +121,24 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
 
     @mc
+    Scenario: A push that only rebases the same change is not reviewed again
+      Given "code-review" reviews new pushes
+      And #12 was reviewed and kept in HAL-C2
+      When #12 is rebased onto a newer base branch
+      And "code-review" looks at "acme/api" again
+      Then the review of #12 is carried over to the new head commit
+      And no new review of #12 starts
+
+    @mc
+    Scenario: A rebase is reviewed again when the user wants that
+      Given "code-review" reviews new pushes
+      And "code-review" reviews rebases
+      And #12 was reviewed and kept in HAL-C2
+      When #12 is rebased onto a newer base branch
+      And "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+
+    @mc
     Scenario: A new run stops the agent it replaces before removing its checkout
       Given "code-review" reviews new pushes
       And a review of #12 is running
