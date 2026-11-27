@@ -38,6 +38,7 @@ fn paired(link: &Link) -> Exchanged {
         origin: link.origins[0].clone(),
         token: "session-1".into(),
         descriptor,
+        expires_at: None,
     }
 }
 
