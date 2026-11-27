@@ -8,9 +8,10 @@
 //! [`hal_c2_shell::start_with`]. This crate adds only what is the
 //! phone's alone: its controllers ([`pairing`], [`scanner`],
 //! [`notifications`], [`maintenance`], [`mobile_terminal`], [`layout`],
-//! [`resume`]), its QML entry (`qml/Main.qml`) and the QML stubs in
-//! `qml/HalC2/Shell` for the two C++ types the phone's screens name
-//! (`TerminalEvents`, `TurnAgents`, #1624).
+//! [`resume`]), its QML entry (`qml/Main.qml`) and the QML stub in
+//! `qml/HalC2/Shell`
+//! for the C++ type the phone's screens name that Ljós cannot do
+//! yet (`TerminalEvents`, #1624).
 
 pub mod layout;
 pub mod maintenance;
