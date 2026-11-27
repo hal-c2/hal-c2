@@ -9,7 +9,9 @@ defmodule HalC2.ProjectDeleteOverridesPropTest do
   delete of it: the delete that tombstones it drops the entry, and a repeated
   delete, though refused as unknown, drops a leftover one. An update of a
   deleted project is refused too and drops nothing, and deleting an id that
-  never was a project drops nothing either.
+  never was a project drops nothing either. Restarts of `HalC2.Settings` and
+  `HalC2.Streams` between steps change none of that: the overrides and the
+  tombstones are read back from disk.
   """
 
   use ExUnit.Case, async: false
@@ -69,7 +71,8 @@ defmodule HalC2.ProjectDeleteOverridesPropTest do
       {3, {:call, __MODULE__, :put_override, [oneof(@ids)]}},
       {4, {:call, __MODULE__, :delete_project, [oneof(@ids)]}},
       {2, {:call, __MODULE__, :update_project, [oneof(@ids)]}},
-      {2, {:call, __MODULE__, :read_override, [oneof(@ids)]}}
+      {2, {:call, __MODULE__, :read_override, [oneof(@ids)]}},
+      {1, {:call, __MODULE__, :restart, [oneof([HalC2.Settings, HalC2.Streams])]}}
     ])
   end
 
@@ -99,6 +102,8 @@ defmodule HalC2.ProjectDeleteOverridesPropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(_state, {:call, _, :put_override, [_id]}, present?), do: present?
+
+  def postcondition(_state, {:call, _, :restart, [_service]}, result), do: result == :ok
 
   def postcondition(state, {:call, _, :read_override, [id]}, present?),
     do: present? == MapSet.member?(state.overrides, id)
@@ -157,6 +162,9 @@ defmodule HalC2.ProjectDeleteOverridesPropTest do
 
     {reply, read_override(id)}
   end
+
+  # A restart keeps the model: what the service had stored must come back.
+  def restart(service), do: HalC2.Prop.restart_service(service)
 
   def read_override(id),
     do: Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"] || %{}, id)
