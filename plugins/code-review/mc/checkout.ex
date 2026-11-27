@@ -11,6 +11,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # The attempts whose refs a process holds: `{clone, attempt}` to its pid.
   @held HalC2Plugins.CodeReview.Checkout.Held
 
+  # The most of a change `same_patch?/4` reads: past it the change counts as new.
+  @patch_bytes 50_000_000
+
   @doc """
   Fetches pull request `number` and its base branch `base` from `remote` into the bare
   clone at `clone`, made on first use, and puts the worktree at `path` on its head.
@@ -358,6 +361,44 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end)
 
     :ok
+  end
+
+  @doc """
+  Whether the change `old_base`..`old_head` in the repository at `clone` is the change
+  between a checkout's (`prepare/5`'s answer) `"mergeBase"` and `"headSha"`: the same
+  `git patch-id --stable` of the diff from the merge base, as after a rebase that only
+  moved the change. False when either range is empty, a commit is missing (a force-push
+  took the old head away and it was never fetched) or git fails.
+  """
+  def same_patch?(clone, old_base, old_head, %{"mergeBase" => new_base, "headSha" => new_head}) do
+    ranges = [{old_base, old_head}, {new_base, new_head}]
+
+    if Enum.all?(ranges, fn {base, head} -> is_binary(base) and is_binary(head) end) do
+      case Enum.map(ranges, &patch_id(clone, &1)) do
+        [{:ok, id}, {:ok, id}] -> true
+        _ -> false
+      end
+    else
+      false
+    end
+  end
+
+  # The patch id of the diff `base`..`head`, `:none` when it is empty or too big to read.
+  # `HalC2.Git.run/3` opens a bare clone only when `GIT_DIR` names it.
+  defp patch_id(clone, {base, head}) do
+    {unset, set} = Enum.split_with(git_env() ++ [{"GIT_DIR", clone}], &match?({_, nil}, &1))
+    opts = [env: set, unset: Enum.map(unset, &elem(&1, 0)), max_bytes: @patch_bytes]
+    diff = ["diff", "--no-color", "--no-ext-diff", "--full-index", "--binary", base, head]
+
+    with {:ok, %{status: 0, out: out, truncated: false}} when out != "" <-
+           HalC2.Git.run(clone, diff, opts),
+         {:ok, %{status: 0, out: id, truncated: false}} <-
+           HalC2.Git.run(clone, ["patch-id", "--stable"], [{:input, out} | opts]),
+         [id | _] <- String.split(id) do
+      {:ok, id}
+    else
+      _ -> :none
+    end
   end
 
   @doc """

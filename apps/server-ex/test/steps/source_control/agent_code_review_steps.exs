@@ -664,6 +664,47 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
   end
 
+  step "\#{int} was reviewed and kept in HAL-C2", %{args: [number]} = context do
+    context
+    |> save(%{
+      "repositories" => [context.repository],
+      "activation" => "automatic",
+      "publishing" => "local"
+    })
+    |> open(number)
+    |> refresh()
+    |> started(number)
+    |> report(findings("approve", 1))
+    |> await_review!(number, &(&1["status"] == "kept"))
+  end
+
+  # The same change, committed again onto a main that moved on.
+  step "\#{int} is rebased onto a newer base branch", %{args: [number]} = context do
+    context = push_base(context, %{"NOTES.md" => "Notes.\n"})
+    head = push_head(context, number, %{"src/limits.ts" => @limits})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  step "the review of \#{int} is carried over to the new head commit",
+       %{args: [number]} = context do
+    head = context.heads[number]
+
+    {review, context} =
+      await_review(context, number, &(&1["carried"] != nil and &1["reviewedSha"] == head))
+
+    assert %{"status" => "kept", "verdict" => "approve"} = review
+    assert review["threadId"] == context.thread
+    assert is_binary(review["carried"]["from"]) and review["carried"]["from"] != head
+    Map.put(context, :snapshot, context.reviews_last)
+  end
+
+  step "{string} reviews rebases", %{args: [@id]} = context do
+    save(context, %{"reviewRebases" => true})
+  end
+
   step "{string} stops watching {string}", %{args: [@id, _repo]} = context do
     save(context, %{"repositories" => []})
   end

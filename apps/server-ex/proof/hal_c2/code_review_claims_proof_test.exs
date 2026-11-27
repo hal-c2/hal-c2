@@ -145,6 +145,10 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "fills in the submodules of a checkout prepare made, before its claim, and fails nothing; the model's checkout has no files",
       "HalC2Plugins.CodeReview.Checkout.start/0" =>
         "the table of the attempt refs a machine's runs hold, made when its plugin starts; no claim or post goes through it",
+      "HalC2Plugins.CodeReview.Checkout.same_patch?/4" =>
+        "whether a new push only rebased the reviewed change, read from the clone after prepare; the model's checkout has one head and no patch",
+      "HalC2Plugins.CodeReview handle_call {:carried, _, _}" =>
+        "a run past its claim whose push only rebased what was reviewed: the claim stands as the model's started, and its start is taken off the limits on every machine told, which only makes room, so what the model's budget counts is never more than it admitted",
       "HalC2Plugins.CodeReview.Checkout.release/0" =>
         "a run lets its attempt's refs go once its review has started; the model's checkout has one head and no refs",
       "HalC2.Plugins.Host.publish/3" => @shown,
