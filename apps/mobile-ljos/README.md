@@ -24,10 +24,10 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   `resume.rs` (Resume's decision and its Application wiring),
   `push_crypto.rs` and `push_inbox.rs` (PushCrypto's RFC 8291
   decryption and PushInbox's showing rules, ported; the Android
-  receivers that call them wait for hal-c2/ljos-ui#616), and
-  stand-ins that publish the C++ state shape until H1 ports them:
-  `notifications.rs` (Notifications over the inbox),
-  `maintenance.rs` (Maintenance).
+  receivers that call them wait for hal-c2/ljos-ui#616),
+  `maintenance.rs` (Maintenance, ported), and stand-ins that
+  publish the C++ state shape until H1 ports them:
+  `notifications.rs` (Notifications over the inbox).
 - `qml/` is the entry and the QML stub in `HalC2.Shell` for the C++
   type the phone's screens name that Ljós cannot do yet,
   `TerminalEvents` (#1624), saying what it cannot do until the real
