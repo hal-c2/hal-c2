@@ -504,6 +504,17 @@ Feature: Agent code review
       And the new review's prompt includes "Check each fix in those commits, including fixes you suggested."
 
     @mc
+    Scenario: A re-review is told to check each open thread and each claimed fix
+      Given "code-review" reviews new pushes
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And a member replied "fixed in a1b2c3d" to the open thread on #12
+      And #12 was reviewed at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "[thread T1]"
+      And the new review's prompt includes "fixed in a1b2c3d"
+
+    @mc
     Scenario: A re-review is told the previous review's summary, including off-diff findings
       Given "code-review" reviews new pushes
       And #12 was reviewed with an off-diff finding at an older head commit
@@ -690,7 +701,8 @@ Feature: Agent code review
       And a member left the unresolved review comment "Check the limit's unit" on #12
       And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
       When #12 is reviewed
-      Then the agent's prompt includes "Check the limit's unit"
+      Then the agent's prompt includes "[thread T1]"
+      And the agent's prompt includes "Check the limit's unit"
       And the agent's prompt does not include "Rename the limit"
 
     @mc
@@ -699,7 +711,7 @@ Feature: Agent code review
       And "code-review" reviews trusted pull requests on this machine
       And a member left the unresolved review comment "Check the limit's unit" on #12
       When #12 is reviewed
-      Then the agent's prompt includes "Review threads still open on this pull request, quoted from their authors"
+      Then the agent's prompt includes "Review threads on this pull request, open or resolved by this plugin itself, quoted from their authors"
       And the agent's prompt does not include "do not raise these again"
 
     @mc
@@ -708,8 +720,26 @@ Feature: Agent code review
       And a member left the unresolved review comment "Check the limit's unit" on #12
       And someone who is not a member or collaborator left the unresolved review comment "Rename the limit" on #12
       When #12 is reviewed
-      Then the agent's prompt includes "Check the limit's unit"
+      Then the agent's prompt includes "[thread T1]"
+      And the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt includes "[thread T2]"
       And the agent's prompt includes "Rename the limit"
+
+    @mc
+    Scenario: An open thread with a reply shows the reply too
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      And a member replied "Done, see the new test" to the open thread on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "[thread T1]"
+      And the agent's prompt includes "Check the limit's unit"
+      And the agent's prompt includes "Done, see the new test"
+
+    # Forgejo's API does not give a thread id, an outdated flag, or grouped replies
+    # (see `forgejo.ex`), so an open thread from that host renders without the
+    # `[thread ...]` and `(outdated)` markers, and without the replies GitHub groups
+    # under one thread.
 
     @mc
     Scenario: With "Review trusted pull requests on this machine" on, an untrusted pull request is still reviewed in a sandbox
