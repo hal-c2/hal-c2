@@ -975,3 +975,111 @@ mod session_model {
         }
     }
 }
+
+fn summary_status(thread: &str, id: &str, status: &str) -> Json {
+    json!({"threadId": thread, "terminalId": id, "label": "", "hasRunningSubprocess": false,
+           "status": status, "cwd": "/w/p-wt"})
+}
+
+#[test]
+fn a_single_screen_moves_on_when_its_shell_ends_and_restarts_an_ended_one() {
+    let hub = on_thread("main", Some("/w/p-wt"));
+    hub.with_controller::<Terminals, _>(|t, engine| t.set_single_screen(engine, true));
+    hub.dispatch("terminal.toggle", json!(null));
+    hub.dispatch("terminal.new", json!(null));
+    assert_eq!(active(&hub), "term-2");
+    attach(&hub, "term-1", "");
+    attach(&hub, "term-2", "");
+    // The active shell ends: the screen moves to the nearest live
+    // one below it, the listing keeps the ended one, and nothing
+    // is closed on the MC.
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-2", "exited")}),
+    );
+    on_terminal(&hub, "term-2", json!({"type": "exited"}));
+    assert_eq!(active(&hub), "term-1");
+    assert!(is_open(&hub));
+    assert_eq!(count(&hub, "terminal.close"), 0);
+    let listed_now = hub.with_controller::<Terminals, _>(|t, _| t.listing());
+    assert_eq!(listed_now.len(), 2);
+    assert_eq!(listed_now[1].status, "exited");
+    // Opening the ended one again restarts its shell.
+    let opens = count(&hub, "terminal.open");
+    hub.dispatch("terminal.select", json!({"terminalId": "term-2"}));
+    assert_eq!(count(&hub, "terminal.open"), opens + 1);
+    assert_eq!(last(&hub, "env-1", "terminal.open")["terminalId"], "term-2");
+    hub.mc
+        .answer(&hub.engine, "terminal.open", Ok(json!({"ok": true})));
+    // The last live one ends: the screen shuts, the ended one
+    // stays the active id its menu names.
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-1", "exited")}),
+    );
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-2", "exited")}),
+    );
+    assert!(!is_open(&hub));
+    assert_eq!(active(&hub), "term-2");
+}
+
+/// A hub on t1 under a single screen, with one project script.
+fn single_screen_with_script() -> Hub {
+    let hub = clustered(Launch::default());
+    let scripts = json!({"scripts": [{"id": "test", "name": "Test", "command": "npm test",
+        "icon": "test", "runOnWorktreeCreate": false}]});
+    shell(&hub, vec![project(scripts), thread("t1", "main", None)]);
+    hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
+    hub.with_controller::<Terminals, _>(|t, engine| t.set_single_screen(engine, true));
+    hub
+}
+
+#[test]
+fn a_single_screen_script_never_lands_in_a_live_shell() {
+    // A live terminal: the script opens a fresh one.
+    let hub = single_screen_with_script();
+    hub.dispatch("terminal.toggle", json!(null));
+    assert_eq!(active(&hub), "term-1");
+    attach(&hub, "term-1", "");
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-1", "running")}),
+    );
+    hub.dispatch("workspace.runScript", json!({"scriptId": "test"}));
+    assert_eq!(
+        last(&hub, "env-1", "terminal.open")["terminalId"],
+        "term-2",
+        "a fresh terminal, not the live one"
+    );
+    hub.mc
+        .answer(&hub.engine, "terminal.open", Ok(json!({"ok": true})));
+
+    // Nothing live: the first terminal is restarted for it, and a
+    // failed start leaves it ended again.
+    let hub = single_screen_with_script();
+    hub.dispatch("terminal.toggle", json!(null));
+    attach(&hub, "term-1", "");
+    listed(
+        &hub,
+        json!({"type": "upsert", "terminal": summary_status("t1", "term-1", "exited")}),
+    );
+    on_terminal(&hub, "term-1", json!({"type": "exited"}));
+    hub.dispatch("workspace.runScript", json!({"scriptId": "test"}));
+    assert_eq!(
+        last(&hub, "env-1", "terminal.open")["terminalId"],
+        "term-1",
+        "the first terminal when nothing is live"
+    );
+    let listed_now = hub.with_controller::<Terminals, _>(|t, _| t.listing());
+    assert_eq!(listed_now[0].status, "starting");
+    hub.mc
+        .answer(&hub.engine, "terminal.open", Err(failure("no shell")));
+    let listed_now = hub.with_controller::<Terminals, _>(|t, _| t.listing());
+    assert_eq!(
+        listed_now[0].status, "exited",
+        "rolled back when the shell never started"
+    );
+    assert!(toasts(&hub).contains(&("Failed to run script \"Test\".".into(), "no shell".into())));
+}

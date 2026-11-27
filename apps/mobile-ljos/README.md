@@ -19,8 +19,8 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   `scanner.rs` with `scan_camera.rs` and `qr_reader.rs` (Scanner,
   ScanCamera and QrReader, ported; the device's camera frames wait
   for a Ljós frame source),
-  `mobile_terminal.rs` (MobileTerminal's key row, text size and line
-  picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
+  `mobile_terminal.rs` (MobileTerminal's key row, text size, menu
+  and line picking), `layout.rs` (MobileApp's `layout.desktop`),
   `resume.rs` (Resume's decision and its Application wiring),
   `push_crypto.rs` and `push_inbox.rs` (PushCrypto's RFC 8291
   decryption and PushInbox's showing rules, ported; the Android
@@ -28,11 +28,11 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   `notifications.rs` over `push_system.rs`'s seam (Notifications,
   ported; a host build's system supports no push),
   and `maintenance.rs` (Maintenance, ported).
-- `qml/` is the entry and the QML stub in `HalC2.Shell` for the C++
-  type the phone's screens name that Ljós cannot do yet,
-  `TerminalEvents` (#1624), saying what it cannot do until the real
-  type lands. `TurnAgents` is the shell's native type now
-  (`apps/desktop-ljos/shell/src/thread_view/turn_agents.rs`).
+- `qml/` is the entry. The C++ types the phone's screens name are
+  the shell's native types now (#1624): `TerminalEvents`
+  (`apps/desktop-ljos/shell/src/terminal/events.rs`) and
+  `TurnAgents` (`apps/desktop-ljos/shell/src/thread_view/turn_agents.rs`),
+  so no QML stubs remain in `HalC2.Shell`.
 
 The crate is its own cargo workspace beside desktop-ljos's (a member
 outside that root cannot inherit from it), so its Ljós pin is spelled out

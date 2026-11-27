@@ -25,6 +25,7 @@
 //! Not done: scrolling while a drag passes the item's edge, and images
 //! (kitty graphics, sixel).
 
+pub mod events;
 mod keys;
 mod paint;
 
@@ -54,6 +55,8 @@ use paint::{Look, Painted};
 /// Adds `Terminal` to module `Ghostty`.
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("Ghostty" 1.0 => [Terminal]));
+    // The phone's key row and finger, sent as its own events.
+    engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [events::TerminalEvents]));
     item::register_paint_item::<Terminal>(engine, read_paint);
     item::register_key_item::<Terminal>(
         engine,
