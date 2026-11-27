@@ -16,6 +16,9 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
 - `src/` is what is the phone's alone, each naming the mobile-qt C++ it
   ports or stands in for: `pairing.rs` (Pairing, ported: the pairing
   screen's exchange, `pairing.json`, environments beside the first),
+  `scanner.rs` with `scan_camera.rs` and `qr_reader.rs` (Scanner,
+  ScanCamera and QrReader, ported; the device's camera frames wait
+  for a Ljós frame source),
   `mobile_terminal.rs` (MobileTerminal's key row, text size and line
   picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
   `resume.rs` (Resume's decision and its Application wiring),
@@ -24,9 +27,7 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   receivers that call them wait for hal-c2/ljos-ui#616),
   `notifications.rs` over `push_system.rs`'s seam (Notifications,
   ported; a host build's system supports no push),
-  `maintenance.rs` (Maintenance, ported), and stand-ins that
-  publish the C++ state shape until H1 ports them: `scanner.rs`
-  (Scanner/ScanCamera/QrReader).
+  and `maintenance.rs` (Maintenance, ported).
 - `qml/` is the entry and the QML stub in `HalC2.Shell` for the C++
   type the phone's screens name that Ljós cannot do yet,
   `TerminalEvents` (#1624), saying what it cannot do until the real

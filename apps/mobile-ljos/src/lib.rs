@@ -22,7 +22,9 @@ pub mod push_crypto;
 pub mod push_inbox;
 pub mod push_receiver;
 pub mod push_system;
+pub mod qr_reader;
 pub mod resume;
+pub mod scan_camera;
 pub mod scanner;
 
 use std::path::{Path, PathBuf};

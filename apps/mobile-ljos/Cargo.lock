@@ -2561,6 +2561,7 @@ dependencies = [
  "ljos_webengine",
  "p256",
  "proptest",
+ "qrcodegen",
  "ring",
  "serde",
  "serde_json",
