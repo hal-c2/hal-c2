@@ -682,7 +682,7 @@ Feature: Agent code review
       And "code-review" reviews trusted pull requests on this machine
       And a member left the unresolved review comment "Check the limit's unit" on #12
       When #12 is reviewed
-      Then the agent's prompt includes "Review threads still open on this pull request, quoted from their authors"
+      Then the agent's prompt includes "Review threads on this pull request, open or resolved by this plugin itself, quoted from their authors"
       And the agent's prompt does not include "do not raise these again"
 
     @mc
