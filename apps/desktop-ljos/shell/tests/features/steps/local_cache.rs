@@ -94,6 +94,7 @@ fn point_at(world: &mut World, origin: String) -> Outcome {
         token: TOKEN.into(),
         label: String::new(),
         environment_id: String::new(),
+        expires_at: String::new(),
     };
     hal_c2_shell::open(world.engine(), &session).map_err(Failure)?;
     drain_cache(world);

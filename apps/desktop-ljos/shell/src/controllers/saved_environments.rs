@@ -410,7 +410,7 @@ impl SavedEnvironments {
                 id: id.clone(),
                 label,
                 origin: result.origin.clone(),
-                expires_at: String::new(),
+                expires_at: crate::session::expires_text(result.expires_at),
             },
             &result.token,
         )?;

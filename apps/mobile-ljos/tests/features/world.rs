@@ -383,6 +383,7 @@ pub fn fake_exchange(
                 String::new()
             },
             descriptor,
+            expires_at: None,
         }
     })
 }
