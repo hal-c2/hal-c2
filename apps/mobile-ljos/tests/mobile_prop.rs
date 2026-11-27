@@ -16,6 +16,7 @@ fn environment(id: &str) -> Environment {
         token: "session".into(),
         label: "My MacBook".into(),
         environment_id: id.into(),
+        expires_at: String::new(),
     }
 }
 
@@ -36,6 +37,9 @@ enum PairAction {
     /// A session that opened before the last forget lands after it
     /// (`remember` runs after the controller returns).
     RememberAfterForget,
+    /// The MC described itself, with the device holding the session
+    /// as it is (`saved`) or not.
+    Describe(bool),
     Forget,
 }
 
@@ -52,6 +56,7 @@ fn pair_action() -> impl Strategy<Value = PairAction> {
         Just(PairAction::PairOwnCurrent),
         any::<bool>().prop_map(PairAction::Remember),
         Just(PairAction::RememberAfterForget),
+        any::<bool>().prop_map(PairAction::Describe),
         Just(PairAction::Forget),
     ]
 }
@@ -168,6 +173,20 @@ proptest! {
                     prop_assert_eq!(core.remember(&opened, at), None, "a forgotten session is not saved back");
                     prop_assert_eq!(core.state(), after.state());
                     prop_assert_eq!(&core.paired, &after.paired);
+                }
+                PairAction::Describe(saved) => {
+                    let kept = core.describe("env-9", Some("Studio Mac"), "later", saved);
+                    match &before.paired {
+                        None => prop_assert_eq!(kept, None),
+                        Some(own) => {
+                            prop_assert_eq!(core.paired.as_ref().map(|e| e.environment_id.as_str()), Some("env-9"));
+                            prop_assert_eq!(core.paired.as_ref().map(|e| e.label.as_str()), Some("Studio Mac"));
+                            prop_assert_eq!(core.paired.as_ref().map(|e| e.expires_at.as_str()), Some("later"));
+                            prop_assert_eq!(core.paired.as_ref().map(|e| e.token.as_str()), Some(own.token.as_str()), "describe never changes the credential");
+                            prop_assert_eq!(kept.is_some(), before.paired != core.paired || !saved, "saved exactly when it changed or was unsaved");
+                        }
+                    }
+                    prop_assert_eq!(core.pairing, before.pairing);
                 }
                 PairAction::Forget => {
                     core.forgotten();

@@ -7,11 +7,10 @@
 //! ConnectionHealth wakes the client on foreground, as on the desktop),
 //! and a connection that is not ready to the client's own retry.
 //!
-//! The decision is ported and tested here; what reports the app's
-//! foreground and background on Ljós is the Android host's AppState,
-//! which has no host on a desktop build, so nothing feeds it yet (H1
-//! wires it, #1659). On the host the shell's own foreground wake is the
-//! whole behaviour.
+//! [`ResumeConnection`] feeds it the Ljós Application's state (the
+//! Android host's AppState on a phone, the window's on a host build)
+//! and replaces the connection when it says, beside the shell's own
+//! foreground wake, which only checks a waiting retry.
 
 /// The app's state as the system reports it, as Resume reads
 /// Qt::ApplicationState.
@@ -85,6 +84,65 @@ impl Resume {
     }
 }
 
+/// The Application state's Qt number as the decision reads it
+/// (Qt::ApplicationState: suspended 0, hidden 1, inactive 2,
+/// active 4); another number is no change it knows.
+pub fn app_state(qt_value: i32) -> Option<AppState> {
+    match qt_value {
+        0 => Some(AppState::Suspended),
+        1 => Some(AppState::Hidden),
+        2 => Some(AppState::Inactive),
+        4 => Some(AppState::Active),
+        _ => None,
+    }
+}
+
+/// Mobile-qt's Resume as MobileApp owns it: the Application's state
+/// in, the client's reconnect out, on the wall clock that keeps
+/// counting while the app is suspended (QDateTime's). Publishes
+/// nothing; the connection's phases are ConnectionHealth's.
+pub struct ResumeConnection {
+    resume: Resume,
+    mc: std::rc::Rc<dyn hal_c2_shell::mc::Mc>,
+}
+
+impl ResumeConnection {
+    fn state_changed(&mut self, engine: &ljos::prelude::Engine) {
+        let Ok(app) = engine.singleton::<ljos::prelude::Application>() else {
+            return;
+        };
+        let Some(state) = (match engine.read_by_name(app, "state") {
+            ljos::prelude::Value::Int(value) => app_state(value),
+            _ => None,
+        }) else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        if self.resume.state_changed(state, now, self.mc.is_ready()) == Decision::Reconnect {
+            self.mc.reconnect();
+        }
+    }
+}
+
+impl hal_c2_shell::controller::Controller for ResumeConnection {
+    fn new(init: hal_c2_shell::controller::Init<'_, Self>) -> Self {
+        if let Ok(app) = init.engine.singleton::<ljos::prelude::Application>() {
+            let me = init.me.clone();
+            let _ = init
+                .engine
+                .connect_by_name(app, "stateChanged", move |engine, _| {
+                    me.run(engine, |c: &mut ResumeConnection, engine| {
+                        c.state_changed(engine)
+                    });
+                });
+        }
+        ResumeConnection {
+            resume: Resume::new(),
+            mc: init.mc,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +177,14 @@ mod tests {
             resume.state_changed(AppState::Active, 200_000, true),
             Decision::Keep
         );
+    }
+
+    #[test]
+    fn qt_state_numbers_read_as_the_states() {
+        assert_eq!(app_state(0), Some(AppState::Suspended));
+        assert_eq!(app_state(1), Some(AppState::Hidden));
+        assert_eq!(app_state(2), Some(AppState::Inactive));
+        assert_eq!(app_state(4), Some(AppState::Active));
+        assert_eq!(app_state(3), None);
     }
 }

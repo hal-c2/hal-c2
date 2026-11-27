@@ -273,6 +273,9 @@ pub fn on_opened(engine: &Engine, f: impl Fn(&Engine, &session::Session) + 'stat
 /// store's listeners hear of the change once no controller is running.
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
+    // The client renews the credential before it runs out
+    // (Pairing::start's setCredentialExpiry).
+    mc.set_credential_expiry(session.expiry());
     // A session that names its environment opens at an MC that must serve
     // it (mobile-qt's Pairing::start): whichever answers at the address now
     // is not taken for the one paired with.

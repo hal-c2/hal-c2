@@ -91,7 +91,7 @@ use hal_c2_shell::notifications::NativeNotifications;
 #[cfg(feature = "dev-qml")]
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::scripted_run::{self, Step};
-use hal_c2_shell::session::Session;
+use hal_c2_shell::session::{Session, expires_text};
 use hal_c2_shell::storage::{Profile, StoragePaths};
 use hal_c2_shell::streams::Pump;
 use hal_c2_shell::{Launch, desktop_host, single_instance, store};
@@ -117,6 +117,9 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 struct Options {
     launch: Launch,
     mc_token: String,
+    /// When a `--pair`ed credential runs out; none for one supplied
+    /// by hand, whose expiry is unknown.
+    mc_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Where a `dev-qml` build compiles the QML from.
     #[cfg(feature = "dev-qml")]
     roots: Roots,
@@ -172,6 +175,7 @@ fn parse() -> Result<Options, String> {
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
+        mc_expires_at: None,
         #[cfg(feature = "dev-qml")]
         roots: Roots::checkout(),
         steps: Vec::new(),
@@ -586,6 +590,7 @@ fn connect_to(options: &mut Options) -> Result<(), Vec<String>> {
 fn attach(options: &mut Options) -> Result<(), String> {
     if let Some(link) = &options.pair {
         let kept = pair(link)?;
+        options.mc_expires_at = kept.expiry();
         options.launch.mc_origin = Some(kept.origin);
         options.mc_token = kept.token;
     }
@@ -646,6 +651,7 @@ fn pair(link: &str) -> Result<Session, String> {
         token: result.token.clone(),
         label: said("label"),
         environment_id: said("environmentId"),
+        expires_at: expires_text(result.expires_at),
     };
     eprintln!("hal-c2-ljos: paired with {} at {}", kept.label, kept.origin);
     Ok(kept)
@@ -796,6 +802,7 @@ fn render_to(
     let connection = match (&launch.mc_origin, &capture.failure) {
         (Some(origin), None) => {
             let connection = Connection::spawn(&wired.mc);
+            connection.set_credential_expiry(options.mc_expires_at);
             match connection.open(origin, &options.mc_token) {
                 Ok(()) => Some(connection),
                 Err(e) if capture.play_after_snapshot => {
@@ -1112,6 +1119,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
         // (hal_c2_shell::open).
         let connection = Connection::spawn(&wired.mc);
         if let Some(origin) = &options.launch.mc_origin {
+            connection.set_credential_expiry(options.mc_expires_at);
             connection.open(origin, &options.mc_token)?;
         }
         let mc: Rc<dyn Mc> = connection.clone();
@@ -1283,6 +1291,7 @@ fn hosted_said(engine: &Engine, event: desktop_host::Event) {
                 token,
                 label: String::new(),
                 environment_id: String::new(),
+                expires_at: String::new(),
             };
             hal_c2_shell::open(engine, &session).err()
         }
