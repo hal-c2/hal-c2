@@ -2792,17 +2792,18 @@ defmodule HalC2Plugins.CodeReview do
 
   defp more_replies(_thread, _rendered), do: nil
 
-  # Whether this plugin opened `comment`'s thread itself: its body carries the plugin's
-  # marker, as a top-level review's body and every inline finding this plugin posts now
-  # do (`marker/1`, `post_input/2`); or, for a finding posted before that marker, it is
-  # by the host login this machine posts as (`viewer`) and carries a severity badge
-  # (`severity_prefix/1`), as every finding this plugin posted always did.
+  # Whether this plugin opened `comment`'s thread itself: it is by the host login this
+  # machine posts as (`viewer`), and its body carries the plugin's marker, as every
+  # inline finding this plugin posts now does (`marker/1`, `post_input/2`), or, for a
+  # finding posted before that marker, a severity badge (`severity_prefix/1`). The
+  # marker is public, so anyone can paste it; only the login says who posted it, and
+  # an own thread skips the trust filter of a local review.
   defp own_thread?(comment, viewer) do
     body = comment["body"] || ""
     login = get_in(comment, ["author", "login"])
 
-    String.contains?(body, "hal-c2-code-review:") or
-      (login != nil and viewer != nil and same?(login, viewer) and
+    login != nil and viewer != nil and same?(login, viewer) and
+      (String.contains?(body, "hal-c2-code-review:") or
          Enum.any?(Map.values(@badges), &String.starts_with?(body, &1)))
   end
 
