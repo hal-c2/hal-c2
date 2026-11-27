@@ -38,6 +38,7 @@ fn paired_again(link: &Link) -> Exchanged {
         origin: link.origins[0].clone(),
         token: FRESH.into(),
         descriptor,
+        expires_at: None,
     }
 }
 
@@ -66,6 +67,7 @@ impl Phone {
                 token: own.into(),
                 label: "env-b".into(),
                 environment_id: "env-b".into(),
+                expires_at: String::new(),
             }
         ));
         let mut catalog = EnvironmentCatalog::open(&data.join(FILE), secrets.clone());

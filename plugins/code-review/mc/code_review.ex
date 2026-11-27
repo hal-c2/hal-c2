@@ -2344,9 +2344,7 @@ defmodule HalC2Plugins.CodeReview do
                review["repository"] <> ".git"
              ]),
            {:ok, remote} <- remote(project, review),
-           {:ok, checkout} <-
-             Checkout.prepare(clone, path, remote, review["number"], review["baseBranch"]),
-           :ok <- approved_head(settings, review, checkout, clone),
+           {:ok, checkout} <- prepare(settings, review, clone, path, remote),
            # A sandbox gets the two refs alone, so only a checkout the agent works in
            # here gets its submodules.
            checkout =
@@ -2456,21 +2454,24 @@ defmodule HalC2Plugins.CodeReview do
   # The agent is told so, rather than meeting git's errors in a sandbox that
   # reaches only its model and the MC.
   defp unfetched(checkout) do
-    if File.regular?(Path.join(checkout["path"], ".gitmodules")),
+    if Checkout.regular?(checkout["path"], checkout["headSha"], ".gitmodules"),
       do: Map.put(checkout, "submodules", :sandboxed),
       else: checkout
   end
 
   # A pull request the watch does not trust is reviewed only at the commit the user
-  # approved: one pushed since the approval is not checked out for the agent.
-  defp approved_head(settings, review, checkout, clone) do
-    if untrusted(settings, review) == nil or review["approved"] == checkout["headSha"] do
-      :ok
-    else
-      Checkout.remove(clone, checkout["path"])
+  # approved: one pushed since the approval is refused as soon as its head is fetched,
+  # before anything is checked out for the agent.
+  defp prepare(settings, review, clone, path, remote) do
+    only = if untrusted(settings, review) == nil, do: :any, else: review["approved"]
 
-      {:error,
-       "#{review["key"]} has new commits since you approved it. Look at them, then approve it again."}
+    case Checkout.prepare(clone, path, remote, review["number"], review["baseBranch"], only) do
+      {:error, {:head, _sha}} ->
+        {:error,
+         "#{review["key"]} has new commits since you approved it. Look at them, then approve it again."}
+
+      result ->
+        result
     end
   end
 
@@ -2645,7 +2646,7 @@ defmodule HalC2Plugins.CodeReview do
     do: is_binary(value) and Enum.any?(descriptor["options"] || [], &(&1["id"] == value))
 
   # Where the plugin's clone fetches `review`'s pull request from, and how it signs in
-  # (`Checkout.prepare/5`): GitHub over HTTPS with gh's credentials, Forgejo from the
+  # (`Checkout.prepare/6`): GitHub over HTTPS with gh's credentials, Forgejo from the
   # server and with the token the MC reads it with.
   defp remote(%{"kind" => "forgejo"} = project, review) do
     ref = %{
@@ -2893,11 +2894,19 @@ defmodule HalC2Plugins.CodeReview do
         validation
 
       true ->
+        # The diff is of the files the comments name alone, and none is read for a
+        # report without comments. One git could not give whole places no comment:
+        # each goes into the summary, as without a checkout.
+        files = comments |> Enum.map(& &1["path"]) |> Enum.uniq()
+
         lines =
-          if review["checkout"],
-            do:
-              Checkout.diff_lines(review["checkout"], review["mergeBase"], review["reviewedSha"]),
-            else: %{}
+          with checkout when is_binary(checkout) <- review["checkout"],
+               {:ok, lines} <-
+                 Checkout.diff_lines(checkout, review["mergeBase"], review["reviewedSha"], files) do
+            lines
+          else
+            _ -> %{}
+          end
 
         {placed, general} =
           comments

@@ -524,6 +524,7 @@ fn paired(origin: &str, token: &str) -> Pairing {
         origin: origin.into(),
         token: token.into(),
         descriptor,
+        expires_at: None,
     }
 }
 

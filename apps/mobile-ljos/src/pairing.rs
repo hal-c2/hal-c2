@@ -310,8 +310,46 @@ impl Core {
             if next.environment_id.is_empty() {
                 next.environment_id.clone_from(&own.environment_id);
             }
+            // The same credential keeps its expiry; a new one's is its
+            // own (Pairing::remember).
+            if next.token == own.token && next.expires_at.is_empty() {
+                next.expires_at.clone_from(&own.expires_at);
+            }
         }
         if self.paired.as_ref() == Some(&next) {
+            return None;
+        }
+        self.paired = Some(next.clone());
+        Some(next)
+    }
+
+    /// The connected MC described itself, and the client says when
+    /// its credential runs out now (mobile-qt's Pairing::describe and
+    /// its credentialRenewed together): its label and environment
+    /// may be news, and a renewal moved the expiry. The session to
+    /// save, when it changed or `saved` says the device does not
+    /// hold it as it is here. What the MC says of itself is shown
+    /// whether or not it can be saved: the device keeps it only to
+    /// have something to show before the MC next answers, and then
+    /// this runs again. `label` is what the MC calls the environment
+    /// `environment_id`, when it is known by that id.
+    pub fn describe(
+        &mut self,
+        environment_id: &str,
+        label: Option<&str>,
+        expires_at: &str,
+        saved: bool,
+    ) -> Option<Environment> {
+        let own = self.paired.as_ref()?;
+        let mut next = own.clone();
+        next.environment_id = environment_id.to_owned();
+        if let Some(label) = label {
+            next.label = label.to_owned();
+        }
+        if !expires_at.is_empty() {
+            next.expires_at = expires_at.to_owned();
+        }
+        if self.paired.as_ref() == Some(&next) && saved {
             return None;
         }
         self.paired = Some(next.clone());
@@ -422,10 +460,17 @@ pub fn set_exchange(engine: &Engine, exchange: Exchange) {
 pub struct Pairing {
     bridge: Bridge,
     me: Me<Pairing>,
+    mc: std::rc::Rc<dyn hal_c2_shell::mc::Mc>,
     core: Core,
     path: Option<PathBuf>,
     device: Client,
     exchange: Exchange,
+    /// The device keeps the session as it is here. False while it
+    /// does not: what the shell connected with by itself (remember)
+    /// and what the MC says of itself (describe) are held even when
+    /// they could not be saved, and saved the next time the MC
+    /// answers.
+    saved: bool,
     /// [`Core::forgets`], read as the shell opens a session, which may be
     /// while this controller is running.
     forgets: Rc<std::cell::Cell<u64>>,
@@ -455,13 +500,30 @@ impl Controller for Pairing {
                 c.remember(engine, &session, at)
             });
         });
+        // The connected MC described itself, on a status; its label
+        // follows the store (a snapshot that lands after Ready, a
+        // rename), and a renewal completes with no status at all.
+        let me = init.me.clone();
+        init.mc.on_status(Box::new(move |engine, _| {
+            me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
+        }));
+        let me = init.me.clone();
+        init.mc.on_credential_renewed(Box::new(move |engine, _| {
+            me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
+        }));
+        let me = init.me.clone();
+        hal_c2_shell::store::on_changed(init.engine, move |engine| {
+            me.run_after(engine, move |c: &mut Pairing, engine| c.describe(engine));
+        });
         Pairing {
             bridge: init.bridge,
             me: init.me,
+            mc: init.mc,
             core,
             path,
             device,
             exchange,
+            saved: true,
             forgets,
         }
     }
@@ -598,6 +660,7 @@ impl Pairing {
             token: result.token.clone(),
             label: text("label"),
             environment_id: text("environmentId"),
+            expires_at: hal_c2_shell::session::expires_text(result.expires_at),
         };
         const NOT_SAVED: &str = "This environment could not be paired: its session could not be saved on this device. The link is used now, so ask the environment for a fresh one.";
         // An environment beside the one the shell connects to is on a
@@ -613,7 +676,7 @@ impl Pairing {
                 id: next.environment_id.clone(),
                 label: next.label.clone(),
                 origin: next.origin.clone(),
-                expires_at: String::new(),
+                expires_at: next.expires_at.clone(),
             };
             let token = next.token.clone();
             let refused = controller::with::<SavedEnvironments, _>(engine, |c, engine| {
@@ -653,9 +716,53 @@ impl Pairing {
                 }
             });
         }
+        self.saved = true;
         self.core.paired_own(attempt, next.clone());
         self.publish(engine);
         self.open(engine, &next);
+    }
+
+    /// The connected MC described itself: its label and environment
+    /// may be news, and a renewal moved the credential's expiry
+    /// (Pairing::describe, and credentialRenewed read the same way).
+    fn describe(&mut self, engine: &Engine) {
+        if self.core.paired.is_none() || !self.mc.is_ready() {
+            return;
+        }
+        let environment_id = self.mc.environment();
+        // A status queued before the last open can name the MC that
+        // open left: only the environment the client is open for is
+        // saved against this session's origin and token.
+        let expected = self.mc.open_for();
+        if !expected.is_empty() && environment_id != expected {
+            return;
+        }
+        if environment_id.is_empty() {
+            return;
+        }
+        // The descriptor's label, only while the store knows this
+        // environment by the id: the C++ takes the descriptor's
+        // label when its id is the connected one.
+        let label = hal_c2_shell::store::with(engine, |store| {
+            let row = store.environment(&environment_id);
+            (!row.is_empty()).then(|| {
+                row.get("label")
+                    .and_then(Json::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        });
+        let expires_at = hal_c2_shell::session::expires_text(self.mc.credential_expiry());
+        let Some(next) =
+            self.core
+                .describe(&environment_id, label.as_deref(), &expires_at, self.saved)
+        else {
+            return;
+        };
+        // Shown whether or not it can be saved, and the user is not
+        // told: this runs again the next time the MC answers.
+        self.saved = self.path.as_deref().is_some_and(|path| save(path, &next));
+        self.publish(engine);
     }
 
     /// The shell is connected with `session` already, so it is this
@@ -665,9 +772,8 @@ impl Pairing {
         let Some(next) = self.core.remember(session, forgets) else {
             return;
         };
-        if let Some(path) = &self.path
-            && !save(path, &next)
-        {
+        self.saved = self.path.as_deref().is_some_and(|path| save(path, &next));
+        if !self.saved {
             controller::with::<Toasts, _>(engine, |toasts, engine| {
                 toasts.show(
                     engine,
@@ -875,6 +981,7 @@ impl Pairing {
                     token: connection.credential.clone(),
                     label: environment.label.clone(),
                     environment_id: environment.id.clone(),
+                    expires_at: environment.expires_at.clone(),
                 })
             })
         })
@@ -902,6 +1009,7 @@ impl Pairing {
         }
         let id = next.environment_id.clone();
         controller::with::<SavedEnvironments, _>(engine, |c, engine| c.remove(engine, &id));
+        self.saved = true;
         self.core.paired = Some(next.clone());
         self.publish(engine);
         self.open(engine, &next);
@@ -931,6 +1039,7 @@ mod tests {
             token: "session".into(),
             label: "My MacBook".into(),
             environment_id: id.into(),
+            expires_at: "2026-09-23T10:00:00.000Z".into(),
         }
     }
 
@@ -969,6 +1078,63 @@ mod tests {
         core.forgotten();
         assert_eq!(core.remember(&again, 0), None);
         assert_eq!(core.paired, None);
+    }
+
+    #[test]
+    fn expiry_and_description_follow_the_connected_mc() {
+        let mut core = Core {
+            paired: Some(environment("env-1")),
+            ..Core::default()
+        };
+        // The same credential opened again, naming no expiry: the
+        // kept expiry stands, so nothing is saved.
+        let same = Environment {
+            expires_at: String::new(),
+            ..environment("env-1")
+        };
+        assert_eq!(core.remember(&same, 0), None);
+        // A new credential naming none has none.
+        let fresh = Environment {
+            token: "fresh".into(),
+            expires_at: String::new(),
+            ..environment("env-1")
+        };
+        let kept = core.remember(&fresh, 0).expect("a new session is kept");
+        assert_eq!(kept.expires_at, "");
+        // The MC describes itself and a renewal moved the expiry.
+        let kept = core
+            .describe(
+                "env-1",
+                Some("Studio Mac"),
+                "2026-10-01T10:00:00.000Z",
+                true,
+            )
+            .expect("news to save");
+        assert_eq!(kept.label, "Studio Mac");
+        assert_eq!(kept.expires_at, "2026-10-01T10:00:00.000Z");
+        // The same news again, saved: nothing.
+        assert_eq!(
+            core.describe(
+                "env-1",
+                Some("Studio Mac"),
+                "2026-10-01T10:00:00.000Z",
+                true
+            ),
+            None
+        );
+        // The same news while the device does not hold it: saved again.
+        assert!(
+            core.describe(
+                "env-1",
+                Some("Studio Mac"),
+                "2026-10-01T10:00:00.000Z",
+                false
+            )
+            .is_some()
+        );
+        // No environment, no description.
+        core.forgotten();
+        assert_eq!(core.describe("env-1", Some("Studio Mac"), "", false), None);
     }
 
     #[cfg(unix)]
