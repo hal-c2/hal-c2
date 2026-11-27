@@ -114,7 +114,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Then the queue of "t2" is no longer held
 
   # Upstream #22850: every request no longer pending was reported as not found.
-  @backlog @mc
+  @mc
   Scenario Outline: Answering a question that is no longer pending says why
     Given the agent of "t2" asked the user a question
     And <state>

@@ -183,6 +183,30 @@ defmodule HalC2.GitActionsTest do
     assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "fork\n"
   end
 
+  # Follow-up to #1837 (#1851): a branch tracking a local branch was cut
+  # from it, so publishing records it as the base before `push -u`
+  # replaces the tracking that named it.
+  test "a branch tracking a local branch keeps it as its base when published", %{
+    repo: repo,
+    origin: origin
+  } do
+    git!(repo, ~w(branch develop))
+    git!(repo, ~w(checkout -q -b feature/tax))
+    git!(repo, ["config", "branch.feature/tax.remote", "."])
+    git!(repo, ["config", "branch.feature/tax.merge", "refs/heads/develop"])
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, %{"push" => push}}, _} = run(%{"cwd" => repo, "action" => "push"})
+    assert push["status"] == "pushed"
+    assert push["upstreamBranch"] == "origin/feature/tax"
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert HalC2.Git.base_branch(repo, "feature/tax") == "develop"
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "develop\n"
+    assert git!(repo, ~w(config --get branch.feature/tax.remote)) == "origin\n"
+  end
+
   # Review of #1837: publishing a branch cut from a non-primary remote's
   # branch replaces its tracking, so the remembered base keeps its remote —
   # the bare name would resolve on the primary remote instead.
@@ -305,6 +329,51 @@ defmodule HalC2.GitActionsTest do
     calls = File.read!(log)
     assert calls =~ "--head effect-atom"
     refute calls =~ "--head upstream/effect-atom"
+  end
+
+  # Review finding r4714064268 on #1886: a branch cut from `origin/dev` and level
+  # with it has no commits to push, but `dev` is its base, not where it is
+  # published, so creating its pull request publishes it first. The fake `gh`
+  # refuses a head the repository does not have, as GitHub does.
+  test "creating a pull request publishes a branch cut from another that is level with it", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = Path.join(dir, "gh.log")
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/bin/sh
+    echo "$@" >> "#{log}"
+    if [ "$1 $2" = "pr list" ]; then echo '[]'; exit 0; fi
+    if [ "$1 $2" = "pr create" ]; then
+      while [ $# -gt 0 ]; do
+        if [ "$1" = "--head" ]; then head="$2"; fi
+        shift
+      done
+      git --git-dir="#{origin}" rev-parse -q --verify "refs/heads/$head" > /dev/null ||
+        { echo "pull request create failed: Head sha can't be blank" >&2; exit 1; }
+      echo 'https://github.com/acme/shop/pull/7'; exit 0
+    fi
+    echo '{}'
+    """)
+
+    File.chmod!(gh, 0o755)
+    fake_claude!(dir)
+    previous_gh = Application.get_env(:hal_c2, :gh_command)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "origin/feature/tax"}} = result
+    assert %{"pr" => %{"status" => "created", "headBranch" => "feature/tax"}} = result
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "dev\n"
   end
 
   # Review finding r4705513530 on #1837: a branch published to a fork push
@@ -484,6 +553,156 @@ defmodule HalC2.GitActionsTest do
     assert create =~ "--head forker:feature/tax"
   end
 
+  # Follow-up to #1837 (#1851): the branch was published to the base
+  # repository and is in sync with it, so no push runs; `pushurl` has
+  # since been aimed at a fork. Nothing in git's refs tells the two
+  # apart, so the open pull request is looked for under both owners.
+  test "an in-sync branch reuses the base repository's pull request despite a pushurl fork", %{
+    repo: repo,
+    origin: origin
+  } do
+    dir = Path.dirname(repo)
+    log = fake_gh!(dir, base_repo_pr_list())
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://github.com/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://github.com/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://github.com/acme/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://github.com/forker/shop.git"])
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "opened_existing", "number" => 99}} = result
+    assert git!(fork, ~w(branch --list feature/tax)) == ""
+    refute File.read!(log) =~ "pr create"
+  end
+
+  # The Forgejo twin of the in-sync `pushurl` case above.
+  test "a Forgejo in-sync branch reuses the target repository's pull request despite a pushurl fork",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_forgejo!(dir, [forgejo_pull(99, "feature/tax", "acme/shop")])
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://codeberg.org/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://codeberg.org/forker/shop.git"])
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"pr" => %{"status" => "opened_existing", "number" => 99}} = result
+    assert forgejo_posts(log) == []
+  end
+
+  # The Forgejo twin of the triangular GitHub case above: the branch
+  # tracks `origin/feature/tax` (the target repository on codeberg.org),
+  # but `pushRemote` names the fork, so the push lands there and the pull
+  # request must be opened from the fork — not reuse the target
+  # repository's own pull request #99 from a branch of the same name.
+  test "a Forgejo pull request for a branch tracking origin but pushing to a fork uses the fork owner's head",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_forgejo!(dir, [forgejo_pull(99, "feature/tax", "acme/shop")])
+    fork = forgejo_fork_remotes!(repo, origin)
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q -u origin feature/tax))
+    git!(repo, ~w(config branch.feature/tax.pushRemote fork))
+    File.write!(Path.join(repo, "t2.txt"), "t2\n")
+    git!(repo, ~w(add t2.txt))
+    git!(repo, ~w(commit -q -m tax-two))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed"}} = result
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax-two\n"
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+
+    assert %{"pr" => %{"status" => "created", "number" => 43, "headBranch" => "feature/tax"}} =
+             result
+
+    assert [post] = forgejo_posts(log)
+    assert %{"head" => "forker:feature/tax", "base" => "main"} = JSON.decode!(post["body"])
+  end
+
+  # The Forgejo twin of the `pushurl` case above: the remote fetches from
+  # the target repository but pushes to a fork, so the fork's owner is
+  # the pull request's head owner.
+  test "a Forgejo pull request for a branch pushed through a pushurl uses the fork owner's head",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_forgejo!(dir, [forgejo_pull(99, "feature/tax", "acme/shop")])
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://codeberg.org/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["remote", "set-url", "--push", "origin", "https://codeberg.org/forker/shop.git"])
+    git!(repo, ~w(checkout -q -b feature/tax))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert git!(fork, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert git!(origin, ~w(branch --list feature/tax)) == ""
+
+    assert %{"pr" => %{"status" => "created", "number" => 43, "headBranch" => "feature/tax"}} =
+             result
+
+    assert [post] = forgejo_posts(log)
+    assert %{"head" => "forker:feature/tax", "base" => "main"} = JSON.decode!(post["body"])
+  end
+
+  # A branch cut from another (`feature/tax` from `origin/dev`) keeps its
+  # own name as the pull request's head, though `branch.feature/tax.merge`
+  # names `dev`, the branch it was cut from. The commit has since landed
+  # on `dev`, so the branch is level with it, but `dev` is not where it is
+  # published: the action publishes it before posting it as the head
+  # (r4714064268 on #1886). Its remembered base, main, is kept, and its
+  # commits are read against it.
+  test "a Forgejo pull request for a branch cut from another uses the branch's own name as its head",
+       %{repo: repo, origin: origin} do
+    dir = Path.dirname(repo)
+    log = fake_forgejo!(dir, [])
+    forgejo_fork_remotes!(repo, origin)
+    git!(repo, ~w(push -q origin main:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(checkout -q -b feature/tax origin/dev))
+    File.write!(Path.join(repo, "t.txt"), "t\n")
+    git!(repo, ~w(add t.txt))
+    git!(repo, ~w(commit -q -m tax))
+    git!(repo, ~w(push -q origin feature/tax:dev))
+    git!(repo, ~w(fetch -q origin))
+    git!(repo, ~w(config branch.feature/tax.gh-merge-base main))
+
+    assert {{:ok, result}, _} = run(%{"cwd" => repo, "action" => "create_pr"})
+
+    assert %{"push" => %{"status" => "pushed", "upstreamBranch" => "origin/feature/tax"}} = result
+    assert git!(origin, ~w(log -1 --format=%s feature/tax)) == "tax\n"
+    assert git!(repo, ~w(config --get branch.feature/tax.gh-merge-base)) == "main\n"
+
+    assert %{"pr" => %{"status" => "created", "number" => 43, "headBranch" => "feature/tax"}} =
+             result
+
+    assert [post] = forgejo_posts(log)
+    assert %{"head" => "feature/tax", "base" => "main"} = JSON.decode!(post["body"])
+  end
+
   # What the fake `gh` answers `pr list` with in the fork tests: an open
   # pull request from the base repository's own `feature/tax`.
   defp base_repo_pr_list,
@@ -506,7 +725,16 @@ defmodule HalC2.GitActionsTest do
     """)
 
     File.chmod!(gh, 0o755)
+    fake_claude!(dir)
 
+    previous_gh = Application.get_env(:hal_c2, :gh_command)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+    log
+  end
+
+  # The fake text generator the create path asks for a title and body.
+  defp fake_claude!(dir) do
     claude = Path.join(dir, "claude")
 
     File.write!(claude, """
@@ -516,12 +744,91 @@ defmodule HalC2.GitActionsTest do
     """)
 
     File.chmod!(claude, 0o755)
-
-    previous_gh = Application.get_env(:hal_c2, :gh_command)
-    Application.put_env(:hal_c2, :gh_command, gh)
     Application.put_env(:hal_c2, :text_claude_command, claude)
-    on_exit(fn -> Application.put_env(:hal_c2, :gh_command, previous_gh) end)
+  end
+
+  # A fake Forgejo server (codeberg.org) signed in with fj's token: its
+  # pull list answers `listed`, a create answers pull request 43. Returns
+  # the request log (`HalC2.Test.FakeHttp.requests/1`).
+  defp fake_forgejo!(dir, listed) do
+    keys = Path.join(dir, "keys.json")
+
+    File.write!(
+      keys,
+      JSON.encode!(%{
+        "hosts" => %{"codeberg.org" => %{"type" => "Application", "token" => "fj-token"}},
+        "aliases" => %{}
+      })
+    )
+
+    fj = Path.join(dir, "fj")
+    File.write!(fj, "#!/bin/sh\nexit 0\n")
+    File.chmod!(fj, 0o755)
+
+    previous_keys = Application.get_env(:hal_c2, :fj_keys_paths)
+    previous_fj = Application.get_env(:hal_c2, :fj_command)
+    Application.put_env(:hal_c2, :fj_keys_paths, [keys])
+    Application.put_env(:hal_c2, :fj_command, fj)
+
+    on_exit(fn ->
+      Application.put_env(:hal_c2, :fj_keys_paths, previous_keys)
+      Application.put_env(:hal_c2, :fj_command, previous_fj)
+    end)
+
+    created = %{
+      "number" => 43,
+      "html_url" => "https://codeberg.org/acme/shop/pulls/43",
+      "title" => "Add greeting"
+    }
+
+    {base, log} =
+      HalC2.Test.FakeHttp.start(%{
+        "/api/v1/repos/acme/shop/pulls" => fn
+          %{method: "POST"} ->
+            {201, created}
+
+          conn ->
+            {200, if(conn.query_string =~ "page=1", do: listed, else: [])}
+        end
+      })
+
+    previous_base = System.get_env("HAL_C2_FORGEJO_API_BASE_URL")
+    System.put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
+
+    on_exit(fn ->
+      if previous_base,
+        do: System.put_env("HAL_C2_FORGEJO_API_BASE_URL", previous_base),
+        else: System.delete_env("HAL_C2_FORGEJO_API_BASE_URL")
+    end)
+
+    fake_claude!(dir)
     log
+  end
+
+  defp forgejo_pull(number, head, head_repository),
+    do: %{
+      "number" => number,
+      "title" => "Change #{number}",
+      "html_url" => "https://codeberg.org/acme/shop/pulls/#{number}",
+      "state" => "open",
+      "merged" => false,
+      "base" => %{"ref" => "main"},
+      "head" => %{"ref" => head, "repo" => %{"full_name" => head_repository}}
+    }
+
+  defp forgejo_posts(log),
+    do: for(r <- HalC2.Test.FakeHttp.requests(log), r["method"] == "POST", do: r)
+
+  # As `fork_remotes!/2`, on codeberg.org (a Forgejo host) instead of GitHub.
+  defp forgejo_fork_remotes!(repo, origin) do
+    dir = Path.dirname(repo)
+    fork = Path.join(dir, "fork.git")
+    git!(dir, ["clone", "-q", "--bare", origin, fork])
+    git!(repo, ["config", "url.#{origin}.insteadOf", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["config", "url.#{fork}.insteadOf", "https://codeberg.org/forker/shop.git"])
+    git!(repo, ["remote", "set-url", "origin", "https://codeberg.org/acme/shop.git"])
+    git!(repo, ["remote", "add", "fork", "https://codeberg.org/forker/shop.git"])
+    fork
   end
 
   # Gives `repo` an `origin` naming `acme/shop` and a `fork` naming

@@ -122,6 +122,58 @@ defmodule HalC2.PullRequests.WakesTest do
     assert wake["notification"]["summary"] == "acme/app#12: left merge queue"
   end
 
+  # Comment activity is stamped when it last changed (an edit counts), but a
+  # link heard under the creation-time stamp is first re-baselined — and only
+  # by a snapshot that carries the new stamp. Hearing a pre-upgrade snapshot
+  # (as a boot check does, before the first sync) must not re-baseline it:
+  # an edit from before the upgrade is then not woken for, and a later edit is.
+  test "a link heard before comment edits were stamped is not woken for an old edit" do
+    comment = %{"at" => @at, "author" => "owner-1", "kind" => "comment", "state" => nil}
+
+    stamped = fn _old, at ->
+      activity = %{comment | "at" => at}
+
+      snapshot(%{
+        "mergeQueueRemoval" => nil,
+        "commentStamp" => "edited",
+        "activity" => activity,
+        "activities" => [activity],
+        "ownActivity" => nil,
+        "ownActivities" => []
+      })
+    end
+
+    old =
+      snapshot(%{
+        "mergeQueueRemoval" => nil,
+        "activity" => comment,
+        "activities" => [comment],
+        "ownActivity" => nil,
+        "ownActivities" => []
+      })
+
+    before =
+      heard(%{
+        "activityAt" => @at,
+        "reviewActivityAt" => @at,
+        "commentActivityAt" => @at
+      })
+
+    link = %{"snapshot" => old, "heard" => before}
+    assert {_quiet, [told], []} = Wakes.hear([link], false, true)
+    refute Map.has_key?(told["heard"], "commentEditAt")
+
+    edited = stamped.(old, @later)
+    assert {_quiet, [told], []} = Wakes.hear([%{told | "snapshot" => edited}], false, true)
+    assert told["heard"]["commentActivityAt"] == @later
+    assert Map.has_key?(told["heard"], "commentEditAt")
+
+    edited_again = stamped.(old, "2030-01-01T00:00:30Z")
+
+    assert {_quiet, _told, [{_link, [{:activity, %{"kind" => "comment"}}]}]} =
+             Wakes.hear([%{told | "snapshot" => edited_again}], false, true)
+  end
+
   test "a removal for another reason reads sensibly and is not a failure" do
     link = %{
       "host" => "github.com",

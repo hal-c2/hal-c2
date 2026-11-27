@@ -58,6 +58,12 @@ serde_json = "1"
 url = "2"
 # The credential's expiry the MC renews by (pairing.json's expiresAt).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Web Push (RFC 8291, src/push_crypto.rs): the P-256 agreement ring
+# cannot rebuild from the kept scalar, and the push file's base64url.
+# HMAC and AES-128-GCM are ring's, which hal_c2_mc's rustls brings.
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "std"] }
+ring = "0.17"
+base64 = "0.23"
 
 # build.rs: the phone's QML compiled into its pack, and its bindings
 # and handlers to Rust, as desktop-ljos's.

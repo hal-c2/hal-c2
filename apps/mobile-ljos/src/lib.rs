@@ -18,6 +18,8 @@ pub mod maintenance;
 pub mod mobile_terminal;
 pub mod notifications;
 pub mod pairing;
+pub mod push_crypto;
+pub mod push_inbox;
 pub mod qr_reader;
 pub mod resume;
 pub mod scan_camera;

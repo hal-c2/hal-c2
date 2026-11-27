@@ -41,4 +41,25 @@ defmodule HalC2.PathsTest do
       assert File.ls!(dir) == ["busy"]
     end
   end
+
+  describe "ensure!/1" do
+    test "a directory left readable by everyone is tightened to its owner", %{tmp_dir: dir} do
+      File.chmod!(dir, 0o755)
+      dirs = Map.new(~w(config data state cache)a, &{&1, Path.join(dir, Atom.to_string(&1))})
+
+      for path <- Map.values(dirs) do
+        File.mkdir_p!(path)
+        File.chmod!(path, 0o755)
+      end
+
+      Paths.ensure!(dirs)
+
+      for path <- Map.values(dirs) ++ [Path.join(dirs.data, "secrets")] do
+        assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o700
+      end
+
+      # The parent the directories share is not the MC's to tighten.
+      assert Bitwise.band(File.stat!(dir).mode, 0o077) != 0
+    end
+  end
 end
