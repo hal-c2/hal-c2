@@ -523,47 +523,47 @@ impl Inbox {
         } else {
             "lastUpdate"
         };
-        if let Some(activity) = message.get("activity").filter(|value| value.is_object()) {
-            if sent_at >= at(&state, last_update) {
-                let activity = object_of(activity);
-                state.insert(last_update.into(), json!(sent_at as f64));
-                let active = activity
-                    .get("active")
-                    .and_then(Json::as_bool)
-                    .unwrap_or(false);
-                let was_active = state
-                    .get("lastActive")
-                    .and_then(Json::as_bool)
-                    .unwrap_or(false);
-                state.insert("lastActive".into(), json!(active));
-                let expires_at = if activity.contains_key("expiresAt") {
-                    at(&activity, "expiresAt")
-                } else if active {
-                    sent_at.saturating_add(ACTIVE_LIFETIME)
-                } else {
-                    sent_at
-                };
-                let remaining = expires_at.saturating_sub(device.now).min(LONGEST_CARD);
-                let live = state
-                    .get("liveActivity")
-                    .and_then(Json::as_bool)
-                    .unwrap_or(true);
-                if remaining <= 0 || !live {
-                    cancel_card(&mut effects);
+        if let Some(activity) = message.get("activity").filter(|value| value.is_object())
+            && sent_at >= at(&state, last_update)
+        {
+            let activity = object_of(activity);
+            state.insert(last_update.into(), json!(sent_at as f64));
+            let active = activity
+                .get("active")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            let was_active = state
+                .get("lastActive")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            state.insert("lastActive".into(), json!(active));
+            let expires_at = if activity.contains_key("expiresAt") {
+                at(&activity, "expiresAt")
+            } else if active {
+                sent_at.saturating_add(ACTIVE_LIFETIME)
+            } else {
+                sent_at
+            };
+            let remaining = expires_at.saturating_sub(device.now).min(LONGEST_CARD);
+            let live = state
+                .get("liveActivity")
+                .and_then(Json::as_bool)
+                .unwrap_or(true);
+            if remaining <= 0 || !live {
+                cancel_card(&mut effects);
+                state.insert("dismissed".into(), json!(false));
+            } else {
+                // A run that starts again brings back a card the
+                // user put away.
+                if active && !was_active {
                     state.insert("dismissed".into(), json!(false));
-                } else {
-                    // A run that starts again brings back a card the
-                    // user put away.
-                    if active && !was_active {
-                        state.insert("dismissed".into(), json!(false));
-                    }
-                    if !state
-                        .get("dismissed")
-                        .and_then(Json::as_bool)
-                        .unwrap_or(false)
-                    {
-                        effects.insert("card".into(), card(&activity, remaining, device.sdk));
-                    }
+                }
+                if !state
+                    .get("dismissed")
+                    .and_then(Json::as_bool)
+                    .unwrap_or(false)
+                {
+                    effects.insert("card".into(), card(&activity, remaining, device.sdk));
                 }
             }
         }

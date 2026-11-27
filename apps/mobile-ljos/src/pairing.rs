@@ -440,6 +440,28 @@ struct Where {
     path: RefCell<Option<PathBuf>>,
     device: RefCell<Option<Client>>,
     exchange: RefCell<Option<Exchange>>,
+    forgetting: RefCell<Vec<ForgettingListener>>,
+}
+
+type ForgettingListener = Rc<dyn Fn(&Engine)>;
+
+/// Runs `f` as the shell's own environment is forgotten, its
+/// session already off the device and the connection about to
+/// close (Pairing::forgetting): who registered with that MC for
+/// this device unregisters while it still hears it.
+pub fn on_forgetting(engine: &Engine, f: impl Fn(&Engine) + 'static) {
+    engine
+        .extension::<Where>()
+        .forgetting
+        .borrow_mut()
+        .push(Rc::new(f));
+}
+
+fn tell_forgetting(engine: &Engine) {
+    let listeners = engine.extension::<Where>().forgetting.borrow().clone();
+    for listener in listeners {
+        listener(engine);
+    }
 }
 
 /// Says where the kept session is (`<data>/pairing.json`). Before start.
@@ -917,6 +939,7 @@ impl Pairing {
             .filter(|own_id| !own_id.is_empty());
         self.core.forgotten();
         self.forgets.set(self.core.forgets);
+        tell_forgetting(engine);
         // A fresh link ConnectionHealth is spending for it opens nothing:
         // the session it bought would be remembered as this device's.
         controller::with::<ConnectionHealth, _>(engine, |c, engine| c.cancel_pairing(engine));
