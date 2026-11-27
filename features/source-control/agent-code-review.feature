@@ -440,6 +440,12 @@ Feature: Agent code review
       And it is told how to report what it finds
 
     @mc
+    Scenario: The agent is told to re-raise an open finding instead of skipping it
+      When #12 is reviewed
+      Then the agent's prompt includes "repeat one that is still open"
+      And the agent's prompt does not include "already raised in the existing comments"
+
+    @mc
     Scenario: A repository's own review instructions are added to the prompt
       Given "acme/api" has extra review instructions "Never approve schema changes"
       When #12 is reviewed
@@ -459,6 +465,31 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
       And the new review's prompt includes "You reviewed this pull request before"
       And the new review's prompt includes "Finding 1."
+
+    @mc
+    Scenario: A re-review is told to check fixes in the new commits
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Check each fix in those commits, including fixes you suggested."
+
+    @mc
+    Scenario: A re-review is told the previous review's summary, including off-diff findings
+      Given "code-review" reviews new pushes
+      And #12 was reviewed with an off-diff finding at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "Previous summary, including findings outside the diff"
+      And the new review's prompt includes "Check the caller."
+
+    @mc
+    Scenario: The prompt says when there are more open threads than it shows
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And 31 members left unresolved review comments on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "more open thread(s), not shown here."
 
     @mc
     Scenario: The repository's REVIEW.md is followed when the user wants that
@@ -632,6 +663,15 @@ Feature: Agent code review
       When #12 is reviewed
       Then the agent's prompt includes "Check the limit's unit"
       And the agent's prompt does not include "Rename the limit"
+
+    @mc
+    Scenario: The prompt no longer tells the agent to leave open threads alone
+      Given pull requests are trusted
+      And "code-review" reviews trusted pull requests on this machine
+      And a member left the unresolved review comment "Check the limit's unit" on #12
+      When #12 is reviewed
+      Then the agent's prompt includes "Review threads still open on this pull request, quoted from their authors"
+      And the agent's prompt does not include "do not raise these again"
 
     @mc
     Scenario: A sandboxed review quotes every unresolved review comment

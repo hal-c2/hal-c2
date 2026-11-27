@@ -623,6 +623,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
   end
 
+  step "\#{int} was reviewed with an off-diff finding at an older head commit",
+       %{args: [number]} = context do
+    context =
+      context
+      |> save(%{"repositories" => [context.repository], "activation" => "automatic"})
+      |> open(number)
+      |> refresh()
+      |> started(number)
+      |> report(%{
+        "verdict" => "comment",
+        "summary" => "Mostly fine.",
+        "comments" => [%{"path" => "src/other.ts", "line" => 40, "body" => "Check the caller."}]
+      })
+      |> await_review!(number, &(&1["status"] == "waiting"))
+
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
   step "\#{int} was reviewed at an older head commit after the user asked for it",
        %{args: [number]} = context do
     context =
@@ -983,6 +1006,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "someone who is not a member or collaborator left the unresolved review comment {string} on \#{int}",
        %{args: [body, number]} = context do
     review_comment(context, number, "stranger", "NONE", body)
+  end
+
+  step "{int} members left unresolved review comments on \#{int}",
+       %{args: [count, number]} = context do
+    Enum.reduce(1..count, context, fn i, context ->
+      review_comment(context, number, "octocat", "MEMBER", "Note #{i}.")
+    end)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
