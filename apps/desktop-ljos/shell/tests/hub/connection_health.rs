@@ -403,6 +403,24 @@ fn versions_compare_by_core_and_nightlies_whole() {
     assert!(!server_behind("1.0.0", "1.0.0-beta.1"));
     assert!(server_behind("1.0.0-nightly.20", "1.0.0-nightly.19"));
     assert!(!server_behind("1.0.0-nightly.19", "1.0.0-nightly.20"));
+    // Preview is a dated channel too: a later date is newer.
+    assert!(server_behind(
+        "0.5.0-preview.20260902.1",
+        "0.5.0-preview.20260901.1"
+    ));
+    assert!(!server_behind(
+        "0.5.0-preview.20260901.1",
+        "0.5.0-preview.20260902.1"
+    ));
+    assert!(server_behind(
+        "0.5.0-preview.20260901.2",
+        "0.5.0-preview.20260901.1"
+    ));
+    // Different dated channels of one core do not differ.
+    assert!(!server_behind(
+        "0.5.0-preview.20260902.1",
+        "0.5.0-nightly.20260901.1"
+    ));
     assert!(server_behind("v2", "1.9.9"));
     // Not semver: differs when the text does.
     assert!(server_behind("abc", "abd"));
