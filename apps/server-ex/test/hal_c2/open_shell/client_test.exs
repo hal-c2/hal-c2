@@ -527,7 +527,7 @@ defmodule HalC2.OpenShell.ClientTest do
       refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
 
-    test "a sandbox this MC does not own runs nothing, and takes no upload", %{
+    test "a sandbox this MC does not own runs nothing, and takes no file", %{
       gateway: g,
       conn: conn
     } do
@@ -536,44 +536,72 @@ defmodule HalC2.OpenShell.ClientTest do
 
       for name <- ["theirs", "unlabelled"] do
         assert {:error, :not_owned} = Client.exec(conn, name, ["true"])
-        assert {:error, :not_owned} = Client.upload(conn, name, "/sandbox", "archive")
+        assert {:error, :not_owned} = Client.write_file(conn, name, "/sandbox/f", "data")
       end
 
       refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
   end
 
-  describe "upload" do
-    @tag exec: :untar
-    test "streams the archive into tar in the sandbox", %{conn: conn, tmp_dir: dir} do
+  describe "write_file" do
+    # OpenShell 0.1.7 ends a command sent more stdin than it queues (#1860).
+    @tag exec: :pieces, gateway: [max_input: 4 * 1024 * 1024]
+    test "a file larger than OpenShell queues goes in order, in pieces it always takes",
+         %{conn: conn, tmp_dir: dir} do
       {:ok, _} = Client.create_sandbox(conn, "box")
-      tar = :crypto.strong_rand_bytes(200_000)
-      path = Path.join(dir, "src.tar")
-      File.write!(path, tar)
+      assert Client.piece_bytes() < 4 * 1024 * 1024
+      data = :crypto.strong_rand_bytes(4 * Client.piece_bytes() + 1000)
+      path = Path.join(dir, "review.bundle")
+      File.write!(path, data)
 
-      assert :ok = Client.upload(conn, "box", "/sandbox/src", {:file, path})
+      for source <- [{:file, path}, data] do
+        assert :ok = Client.write_file(conn, "box", "/review/review.bundle", source)
+        pieces = received_pieces()
 
-      assert_receive {:command, ["tar", "-x", "--no-same-owner", "-C", "/sandbox/src", "-f", "-"],
-                      ^tar}
+        assert [~s(cat > "$1") | rest] = Enum.map(pieces, &elem(&1, 0))
+        assert rest == List.duplicate(~s(cat >> "$1"), 4)
+        assert Enum.all?(pieces, fn {_, piece} -> byte_size(piece) <= Client.piece_bytes() end)
+        assert pieces |> Enum.map(&elem(&1, 1)) |> IO.iodata_to_binary() == data
+      end
     end
 
-    @tag exec: :bad_tar
-    test "tar's failure is the upload's", %{conn: conn} do
+    @tag exec: :pieces
+    test "an empty source still makes the file", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      assert :ok = Client.write_file(conn, "box", "/review/empty", "")
+      assert [{~s(cat > "$1"), ""}] = received_pieces()
+    end
+
+    @tag exec: :pieces, gateway: [max_input: 1000]
+    test "input OpenShell has no room for is its refusal, exit 74 with no output", %{conn: conn} do
       {:ok, _} = Client.create_sandbox(conn, "box")
 
-      assert {:error, {:upload_failed, 2, "tar: not a tar archive\n"}} =
-               Client.upload(conn, "box", "/sandbox", "garbage")
+      assert {:error, {:upload_failed, 74, ""}} =
+               Client.write_file(conn, "box", "/review/f", :binary.copy("x", 2000))
+    end
+
+    @tag exec: :second_fails
+    test "a piece's failure is the write's, and no later piece starts", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      data = :binary.copy(<<1>>, 3 * Client.piece_bytes())
+
+      assert {:error, {:upload_failed, 1, "sh: write error: No space left on device\n"}} =
+               Client.write_file(conn, "box", "/review/f", data)
+
+      assert_received {:piece, ["sh", "-c", ~s(cat > "$1"), "sh", "/review/f"]}
+      assert_received {:piece, ["sh", "-c", ~s(cat >> "$1"), "sh", "/review/f"]}
+      refute_received {:piece, _}
     end
 
     @tag exec: :stalls, timeout: 10_000
-    test "a sandbox that stops reading times the upload out, and leaves the connection working",
+    test "a sandbox that stops reading times the write out, and leaves the connection working",
          %{conn: conn} do
       {:ok, _} = Client.create_sandbox(conn, "box")
-      # More than the flow-control windows hold, so the archive's writer is left waiting.
-      tar = :binary.copy(<<0>>, 4_000_000)
+      # More than the flow-control windows hold, so the piece's writer is left waiting.
+      data = :binary.copy(<<0>>, Client.piece_bytes())
 
       assert {:error, :timeout} =
-               Client.upload(conn, "box", "/sandbox", tar, upload_timeout: 200)
+               Client.write_file(conn, "box", "/review/f", data, upload_timeout: 200)
 
       # The gateway stopped the command, and nothing of it is left to the caller.
       assert_receive {:handler, handler}
@@ -589,44 +617,86 @@ defmodule HalC2.OpenShell.ClientTest do
     end
 
     @tag exec: :chatters, timeout: 10_000
-    test "the upload's deadline holds while the sandbox keeps talking", %{conn: conn} do
+    test "the write's deadline holds while the sandbox keeps talking", %{conn: conn} do
       {:ok, _} = Client.create_sandbox(conn, "box")
 
       assert {:error, :timeout} =
-               Client.upload(conn, "box", "/sandbox", "archive", upload_timeout: 300)
+               Client.write_file(conn, "box", "/review/f", "data", upload_timeout: 300)
 
       assert_receive {:handler, handler}
       ref = Process.monitor(handler)
       assert_receive {:DOWN, ^ref, :process, ^handler, _}
     end
 
+    # Each piece alone is well within the deadline; all of them are not.
+    @tag exec: :slow_pieces, timeout: 10_000
+    test "one deadline covers every piece", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      data = :binary.copy(<<2>>, 5 * Client.piece_bytes())
+
+      assert {:error, :timeout} =
+               Client.write_file(conn, "box", "/review/f", data, upload_timeout: 400)
+
+      started = received_pieces()
+      assert length(started) in 1..4
+      refute_receive {:piece, _, _}, 300
+    end
+
     # The gateway never answers whether the sandbox is there.
     @tag gateway: [get_sandbox: &__MODULE__.never/0], timeout: 5_000
-    test "the upload's deadline covers starting its command", %{conn: conn} do
+    test "the write's deadline covers starting its command", %{conn: conn} do
       assert {:error, :timeout} =
-               Client.upload(conn, "box", "/sandbox", "archive", upload_timeout: 200)
+               Client.write_file(conn, "box", "/review/f", "data", upload_timeout: 200)
 
       refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
 
-    @tag exec: :untar
-    test "an archive that cannot be read is the upload's error, and its command is stopped", %{
+    # The lookup takes most of the deadline, and the exec's own connection then goes
+    # to a gateway that never answers: the connection gets only what is left.
+    @tag gateway: [get_sandbox: &__MODULE__.slow_lookup/0], timeout: 10_000, capture_log: true
+    test "an exec's connection has only what its lookup left of the deadline", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      {:ok, silent} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      on_exit(fn -> :gen_tcp.close(silent) end)
+      {:ok, port} = :inet.port(silent)
+      {_, dial_opts} = conn.dial
+      conn = %{conn | dial: {"ipv4:127.0.0.1:#{port}", dial_opts}}
+
+      started = System.monotonic_time(:millisecond)
+      deadline = started + 1_000
+      assert {:error, _} = Client.exec(conn, "box", ["true"], deadline: deadline)
+      assert System.monotonic_time(:millisecond) - started < 1_500
+    end
+
+    @tag exec: :pieces
+    test "a file that cannot be read is the write's error, and starts no command", %{
       conn: conn,
       tmp_dir: dir
     } do
       {:ok, _} = Client.create_sandbox(conn, "box")
 
       assert {:error, {:read, :enoent}} =
-               Client.upload(conn, "box", "/sandbox", {:file, Path.join(dir, "missing.tar")})
+               Client.write_file(conn, "box", "/review/f", {:file, Path.join(dir, "missing")})
 
-      # Cancelled, so tar never saw the end of an archive.
-      refute_received {:command, _, _}
-      refute_received {:openshell_exec, _, _}
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
+    end
+  end
+
+  # What the `:pieces` handler took, in the order the commands ran: `{script, stdin}`.
+  defp received_pieces(acc \\ []) do
+    receive do
+      {:piece, ["sh", "-c", script, "sh", _path], stdin} ->
+        received_pieces([{script, stdin} | acc])
+    after
+      0 -> Enum.reverse(acc)
     end
   end
 
   @doc false
   def never, do: receive(do: (:never -> :ok))
+
+  @doc false
+  def slow_lookup, do: Process.sleep(800)
 
   # What the fake gateway runs for a test's `@tag exec:`.
   defp handler(:fails, _test) do
@@ -658,25 +728,42 @@ defmodule HalC2.OpenShell.ClientTest do
     end
   end
 
-  defp handler(:untar, test) do
+  defp handler(:pieces, test) do
     fn command, io ->
-      send(test, {:command, command, read_all(io, [])})
+      send(test, {:piece, command, read_all(io, [])})
       io.exit.(0)
     end
   end
 
-  defp handler(:bad_tar, _test) do
-    fn _command, io ->
+  # The second piece finds no room left.
+  defp handler(:second_fails, test) do
+    fn ["sh", "-c", script | _] = command, io ->
       read_all(io, [])
-      io.stderr.("tar: not a tar archive\n")
-      io.exit.(2)
+      send(test, {:piece, command})
+
+      if script == ~s(cat > "$1") do
+        io.exit.(0)
+      else
+        io.stderr.("sh: write error: No space left on device\n")
+        io.exit.(1)
+      end
+    end
+  end
+
+  # Each piece takes a while to write.
+  defp handler(:slow_pieces, test) do
+    fn command, io ->
+      stdin = read_all(io, [])
+      send(test, {:piece, command, stdin})
+      Process.sleep(150)
+      io.exit.(0)
     end
   end
 
   # Takes the first command's stdin no further; any later command is `cat`.
   defp handler(:stalls, test) do
     fn
-      ["tar" | _], _io ->
+      ["sh", "-c", "cat" <> _ | _], _io ->
         send(test, {:handler, self()})
 
         # Until the stream is gone, which stops this process.
@@ -688,14 +775,14 @@ defmodule HalC2.OpenShell.ClientTest do
     end
   end
 
-  # Takes the archive, then writes output for longer than the upload may take.
+  # Takes its input, then writes output for longer than the write may take.
   defp handler(:chatters, test) do
     fn _command, io ->
       read_all(io, [])
       send(test, {:handler, self()})
 
-      # Until the stream is gone, however long the upload's deadline takes to come:
-      # an exit of its own would end the upload before its deadline.
+      # Until the stream is gone, however long the write's deadline takes to come:
+      # an exit of its own would end the write before its deadline.
       chatter(io)
     end
   end

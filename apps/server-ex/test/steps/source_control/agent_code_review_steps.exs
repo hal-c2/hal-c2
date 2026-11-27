@@ -1100,6 +1100,21 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     sandbox(context, report: nil, tokens: 10, cli_tokens: tokens)
   end
 
+  # Random bytes, so the review's bundle is as large as the file.
+  step "the head of \#{int} adds a file larger than OpenShell queues of one command's input",
+       %{args: [number]} = context do
+    files = %{
+      "src/limits.ts" => @limits,
+      "assets/blob.bin" => :crypto.strong_rand_bytes(6 * 1024 * 1024)
+    }
+
+    put_in(context, [:heads, number], push_head(context, number, files))
+  end
+
+  step "OpenShell refuses the input that puts the review's checkout in its sandbox", context do
+    sandbox(context, refuse_input: true)
+  end
+
   step "the sandboxed agent works until it is stopped", context do
     sandbox(context, hang: true)
   end
@@ -3330,9 +3345,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     {:ok, options} = Agent.start_link(fn -> [] end)
     root = FakeSandbox.root()
 
+    # As 0.1.7, which ends a command sent more input than it queues (#1860).
     gateway =
       FakeOpenShell.start(OpenShell.pki_dir(),
         notify: self(),
+        max_input: 4 * 1024 * 1024,
         exec: FakeSandbox.exec(root, self(), fn -> Agent.get(options, & &1) end)
       )
 

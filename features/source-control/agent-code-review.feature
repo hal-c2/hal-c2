@@ -17,6 +17,8 @@
 #   apps/server-ex/lib/hal_c2/open_shell/route.ex (where a sandboxed agent's model requests go)
 #   https://github.com/hal-c2/hal-c2/issues/1774 (a sandboxed review is told it has no submodules)
 #   https://github.com/hal-c2/hal-c2/issues/1795 (a review on this machine gets its report tool alone, and trusted comments alone)
+#   https://github.com/hal-c2/hal-c2/issues/1860 (a review's checkout larger than OpenShell queues of one command's input)
+#   apps/server-ex/lib/hal_c2/open_shell/client.ex (write_file/5: a file put in a sandbox in pieces)
 #   apps/server-ex/lib/hal_c2/mcp.ex (a plugin's thread kept to that plugin's tools)
 #   The user's cluster of a Linux MC with Podman and a Mac with no container runtime: the Mac's reviews that need a sandbox go to the Linux MC
 
@@ -625,6 +627,23 @@ Feature: Agent code review
       Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
       And the sandbox's checkout has no "third_party/lib"
       And the agent of #12 is told its sandbox gets no submodules
+
+    # OpenShell 0.1.7 queues 4 MiB of a command's input, and when more arrives than
+    # that it ends the command with exit status 74 and says nothing. The checkout goes
+    # in pieces smaller than that, one command each (#1860).
+    @mc
+    Scenario: A sandboxed review's checkout larger than OpenShell takes in one command still reaches its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And the head of #12 adds a file larger than OpenShell queues of one command's input
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: A review whose checkout OpenShell refuses is failed saying so
+      Given pull requests are not trusted and OpenShell is installed
+      And OpenShell refuses the input that puts the review's checkout in its sandbox
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "OpenShell refused to take the review's checkout into its sandbox. Starting the review again may get through."
 
     # The API key is the user's, and the rest of the API opens the rest of their
     # account with it, their uploaded files among them.
