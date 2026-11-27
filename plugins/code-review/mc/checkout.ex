@@ -11,7 +11,20 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   # The attempts whose refs a process holds: `{clone, attempt}` to its pid.
   @held HalC2Plugins.CodeReview.Checkout.Held
 
-  # The most of a change `same_patch?/4` reads: past it the change counts as new.
+  # How long git has: a first fetch of a large repository takes minutes, as does its
+  # worktree; the rest reads or writes a ref or two. What git writes back is capped.
+  @fetch_ms 30 * 60_000
+  @checkout_ms 15 * 60_000
+  @submodules_ms 15 * 60_000
+  @git_ms 2 * 60_000
+  @git_bytes 8 * 1024 * 1024
+  # A report's comments are placed on a diff of their files alone, which a review
+  # waits on; one past these is not parsed (`diff_lines/4`).
+  @diff_ms 60_000
+  @diff_bytes 8 * 1024 * 1024
+  # The git commands that start programs of their own, which a deadline kills with them.
+  @starting ~w(fetch submodule worktree)
+  # `same_patch?/4` reads the whole change as one diff, bigger than `@git_bytes` covers.
   @patch_bytes 50_000_000
 
   @doc """
@@ -22,14 +35,22 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   "mergeBase", "headRef", "baseRef"}}`: `baseSha` is the base branch as fetched,
   `mergeBase` nil when it shares no history with the head, and the two refs hold the
   head and base in the clone until `release/0`.
+
+  `only` is the head the checkout must be at, or `:any`: a head fetched at another
+  commit answers `{:error, {:head, sha}}` before the worktree is made, with no ref
+  published and nothing checked out (`only` nil refuses every head).
+
+  Every git it runs has a deadline (`@fetch_ms` for the fetch, `@checkout_ms` for the
+  worktree, `@git_ms` for the rest) and a cap on what it may write back, and is
+  killed past it with the programs it started.
   """
-  def prepare(clone, path, %{"url" => url} = remote, number, base) do
+  def prepare(clone, path, %{"url" => url} = remote, number, base, only) do
     # Each attempt fetches into refs of its own: a stopped review's fetch may still
     # finish, and must not move the head or base this one reads.
     attempt = "refs/hal-c2/code-review/#{number}/attempt-#{System.unique_integer([:positive])}"
 
     with :ok <- hold(clone, attempt) do
-      case prepare_attempt(clone, path, remote, url, number, base, attempt) do
+      case prepare_attempt(clone, path, remote, url, number, base, attempt, only) do
         {:ok, checkout} ->
           {:ok,
            Map.merge(checkout, %{"headRef" => "#{attempt}/head", "baseRef" => "#{attempt}/base"})}
@@ -95,7 +116,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     :ok
   end
 
-  defp prepare_attempt(clone, path, remote, url, number, base, attempt) do
+  defp prepare_attempt(clone, path, remote, url, number, base, attempt, only) do
     head_ref = "refs/hal-c2/code-review/#{number}/head"
     base_ref = "refs/hal-c2/code-review/#{number}/base"
 
@@ -107,6 +128,11 @@ defmodule HalC2Plugins.CodeReview.Checkout do
              clone,
              credentials ++
                [
+                 # A transfer under 1 KB/s for a minute is dropped long before the deadline.
+                 "-c",
+                 "http.lowSpeedLimit=1000",
+                 "-c",
+                 "http.lowSpeedTime=60",
                  "fetch",
                  "-q",
                  "--no-tags",
@@ -116,16 +142,18 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                  "+refs/pull/#{number}/head:#{attempt}/head",
                  "+refs/heads/#{base}:#{attempt}/base"
                ],
-             env
+             env,
+             timeout: @fetch_ms
            ),
          {:ok, head} <- git(clone, ["rev-parse", "#{attempt}/head"]),
+         :ok <- if(only == :any or only == head, do: :ok, else: {:error, {:head, head}}),
          {:ok, base_sha} <- git(clone, ["rev-parse", "#{attempt}/base"]),
          :ok <- publish(clone, [{head_ref, head}, {base_ref, base_sha}]),
          :ok <- alone(clone, fn -> place(clone, path, head) end) do
       # Nil when the two have no common ancestor, as after the base branch was rewritten:
       # a merge-base git did not find is not one the sandbox can check its checkout for.
       merge_base =
-        case git(clone, ["merge-base", base_sha, head]) do
+        case git(clone, ["merge-base", base_sha, head], [], timeout: @checkout_ms) do
           {:ok, sha} when sha != "" -> sha
           _ -> nil
         end
@@ -181,7 +209,7 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   @doc """
   Checks out the submodules of the worktree at `path`, of the bare clone at `clone`,
   at the commits its head pins, nested ones included; `remote` signs in as for
-  `prepare/5`. Answers `:ok` at once when the head has no `.gitmodules`, else `:ok`
+  `prepare/6`. Answers `:ok` at once when the head has no `.gitmodules`, else `:ok`
   or `{:error, reason}`: a checkout missing some submodules is still reviewed.
 
   Git keeps a worktree's submodule repositories under its own admin directory in the
@@ -198,14 +226,14 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   update has `@submodules_ms` before it and what it started are killed.
   """
   def submodules(clone, path, %{"url" => url} = remote) do
-    if File.regular?(Path.join(path, ".gitmodules")) do
+    if regular?(path, "HEAD", ".gitmodules") do
       store = Path.join(clone, "hal-c2-submodules")
 
       with {:ok, _} <- alone(clone, fn -> git(clone, ["init", "-q", "--bare", store]) end),
            {:ok, {credentials, env}} <- credentials(clone, remote, url),
            {:ok, checked} <- checked_config(path) do
         updated =
-          bounded_git(
+          git(
             path,
             credentials ++
               [
@@ -227,7 +255,8 @@ defmodule HalC2Plugins.CodeReview.Checkout do
                 "--reference",
                 store
               ],
-            [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env]
+            [{"GIT_ALLOW_PROTOCOL", "https:http:ssh"} | ssh_env() ++ checked ++ env],
+            timeout: @submodules_ms
           )
 
         # What the update fetched before it failed or ran out of time still reaches the
@@ -240,8 +269,6 @@ defmodule HalC2Plugins.CodeReview.Checkout do
       :ok
     end
   end
-
-  @submodules_ms 15 * 60_000
 
   # The command-scope configuration the MC's environment hands git (`GIT_CONFIG_COUNT`,
   # `GIT_CONFIG_PARAMETERS` and the files they include), as git itself reads it, minus
@@ -365,10 +392,13 @@ defmodule HalC2Plugins.CodeReview.Checkout do
 
   @doc """
   Whether the change `old_base`..`old_head` in the repository at `clone` is the change
-  between a checkout's (`prepare/5`'s answer) `"mergeBase"` and `"headSha"`: the same
+  between a checkout's (`prepare/6`'s answer) `"mergeBase"` and `"headSha"`: the same
   `git patch-id --stable` of the diff from the merge base, as after a rebase that only
   moved the change. False when either range is empty, a commit is missing (a force-push
   took the old head away and it was never fetched) or git fails.
+
+  Each diff has `@git_ms` and `@patch_bytes` before it is given up, the same bound as
+  the plugin's other quick reads, only with room for a whole change's diff.
   """
   def same_patch?(clone, old_base, old_head, %{"mergeBase" => new_base, "headSha" => new_head}) do
     ranges = [{old_base, old_head}, {new_base, new_head}]
@@ -383,17 +413,14 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
-  # The patch id of the diff `base`..`head`, `:none` when it is empty or too big to read.
-  # `HalC2.Git.run/3` opens a bare clone only when `GIT_DIR` names it.
+  # The patch id of the diff `base`..`head`, `:none` when it is empty, git fails, or it
+  # ran past `@patch_bytes` or `@git_ms`.
   defp patch_id(clone, {base, head}) do
-    {unset, set} = Enum.split_with(git_env() ++ [{"GIT_DIR", clone}], &match?({_, nil}, &1))
-    opts = [env: set, unset: Enum.map(unset, &elem(&1, 0)), max_bytes: @patch_bytes]
     diff = ["diff", "--no-color", "--no-ext-diff", "--full-index", "--binary", base, head]
 
-    with {:ok, %{status: 0, out: out, truncated: false}} when out != "" <-
-           HalC2.Git.run(clone, diff, opts),
-         {:ok, %{status: 0, out: id, truncated: false}} <-
-           HalC2.Git.run(clone, ["patch-id", "--stable"], [{:input, out} | opts]),
+    with {:ok, out} when out != "" <- raw_git(clone, diff, [], max_bytes: @patch_bytes),
+         {:ok, id} <-
+           raw_git(clone, ["patch-id", "--stable"], [], max_bytes: @patch_bytes, input: out),
          [id | _] <- String.split(id) do
       {:ok, id}
     else
@@ -408,10 +435,9 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   links included.
   """
   def read(path, sha, file, limit) do
-    with {:ok, entry} <- git(path, ["ls-tree", "-l", sha, "--", file]),
-         [mode, "blob", object, size | _] when mode in ~w(100644 100755) <- String.split(entry),
-         true <- String.to_integer(size) <= limit,
-         {:ok, text} <- git(path, ["cat-file", "blob", object]),
+    with {object, size} <- blob(path, sha, file),
+         true <- size <= limit,
+         {:ok, text} <- git(path, ["cat-file", "blob", object], [], max_bytes: limit),
          true <- String.valid?(text) do
       text
     else
@@ -420,16 +446,75 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   end
 
   @doc """
-  The lines of the change `from`..`to` in the checkout at `path` a review comment
-  can sit on, as `%{path => %{{side, line} => kind}}`: `side` is `"new"` or `"old"`
-  and `kind` is `"added"`, `"deleted"` or `"context"`.
+  Whether commit `sha` of the checkout at `path` has a regular file at `file`, read
+  from git's tree rather than the worktree, whose links the pull request decides.
   """
-  def diff_lines(path, from, to) do
-    case git(path, ["diff", "--no-color", "--no-ext-diff", "-U3", from, to]) do
-      {:ok, diff} -> parse(diff)
-      _ -> %{}
+  def regular?(path, sha, file), do: blob(path, sha, file) != nil
+
+  # `{object, size}` of the regular file `file` at `sha`, or nil.
+  defp blob(path, sha, file) do
+    with {:ok, entry} <-
+           git(path, ["ls-tree", "-l", sha, "--", file], [{"GIT_LITERAL_PATHSPECS", "1"}]),
+         [mode, "blob", object, size | _] when mode in ~w(100644 100755) <- String.split(entry),
+         {size, ""} <- Integer.parse(size) do
+      {object, size}
+    else
+      _ -> nil
     end
   end
+
+  @doc """
+  The lines of the change `from`..`to` in the checkout at `path`, of the files in
+  `files`, a review comment can sit on, as `{:ok, %{path => %{{side, line} => kind}}}`:
+  `side` is `"new"` or `"old"` and `kind` is `"added"`, `"deleted"` or `"context"`.
+  No file asks git nothing. `:error` when git failed, or its diff ran past `@diff_ms`
+  or `@diff_bytes`: a diff cut short would place a comment on the wrong line.
+
+  The diff is of `files` and the paths they were renamed or copied from or to, so a
+  renamed file still reads as a rename rather than as a file added whole.
+  """
+  def diff_lines(_path, _from, _to, []), do: {:ok, %{}}
+
+  def diff_lines(path, from, to, files) do
+    opts = [
+      timeout: @diff_ms,
+      max_bytes: Application.get_env(:hal_c2, :code_review_diff_bytes, @diff_bytes)
+    ]
+
+    diff = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"]
+
+    with {:ok, changed} <- raw_git(path, diff ++ ["--name-status", "-z", from, to], [], opts),
+         [_ | _] = paths <- touching(changed, files),
+         {:ok, text} <-
+           raw_git(
+             path,
+             diff ++ ["-U3", from, to, "--" | paths],
+             [{"GIT_LITERAL_PATHSPECS", "1"}],
+             opts
+           ) do
+      {:ok, parse(text)}
+    else
+      [] -> {:ok, %{}}
+      _ -> :error
+    end
+  end
+
+  # The changed paths of `--name-status -z` output in an entry that names one of
+  # `files`: a rename or copy (`R<score>`, `C<score>`) names its old and new path.
+  defp touching(changed, files) do
+    changed
+    |> String.split(<<0>>)
+    |> entries([])
+    |> Enum.filter(fn paths -> Enum.any?(paths, &(&1 in files)) end)
+    |> Enum.concat()
+    |> Enum.uniq()
+  end
+
+  defp entries([<<kind, _::binary>>, from, to | rest], acc) when kind in [?R, ?C],
+    do: entries(rest, [[from, to] | acc])
+
+  defp entries([status, file | rest], acc) when status != "", do: entries(rest, [[file] | acc])
+  defp entries(_rest, acc), do: acc
 
   @doc """
   The position `pullRequests.submitReview` takes for a comment on `line` of `file`
@@ -523,14 +608,27 @@ defmodule HalC2Plugins.CodeReview.Checkout do
   defp mark(files, file, key, kind),
     do: Map.update(files, file, %{key => kind}, &Map.put(&1, key, kind))
 
-  # Each review gets a worktree of its own, so whatever is left at `path` goes.
+  # Each review gets a worktree of its own, so whatever is left at `path` goes, and so
+  # does what an add that failed or ran out of time wrote: the next attempt is at a
+  # path of its own and would never clear it.
   defp place(root, path, sha) do
     File.rm_rf(path)
     git(root, ["worktree", "prune"])
     File.mkdir_p!(Path.dirname(path))
 
-    with {:ok, _} <- git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha]),
-         do: :ok
+    case git(root, ["worktree", "add", "-q", "--detach", "--force", path, sha], [],
+           timeout: @checkout_ms
+         ) do
+      {:ok, _} ->
+        :ok
+
+      # An add cut off keeps its entry locked as initializing, which prune skips.
+      error ->
+        git(root, ["worktree", "unlock", path])
+        File.rm_rf(path)
+        git(root, ["worktree", "prune"])
+        error
+    end
   end
 
   # Reviews of one repository share its clone and the store of submodules in it; one
@@ -629,41 +727,42 @@ defmodule HalC2Plugins.CodeReview.Checkout do
     end
   end
 
-  # The clone is the plugin's, so the user's git config is left out: its `insteadOf`
-  # can turn the HTTPS address back into SSH, and its hooks have no business here. Nor
-  # does an inherited `GIT_SSL_NO_VERIFY` turn off the server's certificate check, or
-  # `GIT_CONFIG` point `git config` at a file other than the one `git fetch` reads, so
-  # the certificate check is read from what the fetch uses. Tracing is off, as a trace
-  # of the fetch can carry its token into the error a failed one answers; the token is
-  # taken out of that error as well.
-  @untraced ~w(GIT_TRACE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA GIT_CURL_VERBOSE
-               GIT_TRACE_PACKET GIT_TRACE_PACKFILE GIT_TRACE_SETUP GIT_TRACE2
-               GIT_TRACE2_EVENT GIT_TRACE2_PERF)
-
-  defp git(cwd, args, env \\ []) do
-    with {:ok, out} <- raw_git(cwd, args, env), do: {:ok, String.trim(out)}
+  # The clone is the plugin's, so git runs in it as in any repository the MC keeps for
+  # itself (`HalC2.Git.isolated/1`), with the token taken out of a failed one's error.
+  # Each git has a deadline and a cap on its output; past the deadline it is killed, and
+  # a git that starts programs (a fetch's transport and credential helper, a submodule
+  # update's clones, a worktree's checkout) with what it started. A quick read starts
+  # nothing, so it runs without the shell that records its group.
+  defp git(cwd, args, env \\ [], opts \\ []) do
+    with {:ok, out} <- raw_git(cwd, args, env, opts), do: {:ok, String.trim(out)}
   end
 
-  # `git/3` answering its output as git wrote it.
-  defp raw_git(cwd, args, env \\ []) do
-    case System.cmd("git", args, cd: cwd, stderr_to_stdout: true, env: git_env() ++ env) do
-      {out, 0} -> {:ok, out}
-      {out, _} -> {:error, failed(args, out, env)}
+  # `git/4` answering its output as git wrote it.
+  defp raw_git(cwd, args, env \\ [], opts \\ []) do
+    isolated = HalC2.Git.isolated(if command(args) != "init", do: cwd)
+    {unset, set} = Enum.split_with(env, &match?({_, nil}, &1))
+    max = Keyword.get(opts, :max_bytes, @git_bytes)
+
+    case HalC2.Git.run(cwd, args,
+           env: isolated[:env] ++ set,
+           unset: isolated[:unset] ++ Enum.map(unset, &elem(&1, 0)),
+           timeout: Keyword.get(opts, :timeout, @git_ms),
+           max_bytes: max,
+           input: opts[:input],
+           stop_children: if(command(args) in @starting, do: {__MODULE__, make_ref()})
+         ) do
+      {:ok, %{status: 0, truncated: true}} ->
+        {:error, "git #{command(args)} wrote more than #{max} bytes."}
+
+      {:ok, %{status: 0, out: out}} ->
+        {:ok, out}
+
+      {:ok, %{out: out, err: err}} ->
+        {:error, failed(args, out <> err, env)}
+
+      {:error, reason} ->
+        {:error, redact(reason, env)}
     end
-  rescue
-    e in [ErlangError, File.Error] ->
-      {:error, "git #{command(args)} failed: #{Exception.message(e)}"}
-  end
-
-  defp git_env do
-    [
-      {"GIT_TERMINAL_PROMPT", "0"},
-      {"GIT_CONFIG_GLOBAL", "/dev/null"},
-      {"GIT_CONFIG_NOSYSTEM", "1"},
-      {"GIT_CONFIG", nil},
-      {"GIT_SSL_NO_VERIFY", nil},
-      {"GIT_TRACE_REDACT", "1"}
-    ] ++ Enum.map(@untraced, &{&1, nil})
   end
 
   defp failed(args, out, env) do
@@ -674,22 +773,6 @@ defmodule HalC2Plugins.CodeReview.Checkout do
       |> Enum.map_join(" ", &String.trim/1)
 
     "git #{command(args)} failed: #{said}"
-  end
-
-  # `git/3` under `@submodules_ms`: past it git and the programs it started are killed.
-  defp bounded_git(cwd, args, env) do
-    {unset, set} = Enum.split_with(git_env() ++ env, &match?({_, nil}, &1))
-
-    case HalC2.Git.run(cwd, args,
-           env: set,
-           unset: Enum.map(unset, &elem(&1, 0)),
-           timeout: @submodules_ms,
-           stop_children: {__MODULE__, cwd}
-         ) do
-      {:ok, %{status: 0, out: out}} -> {:ok, String.trim(out)}
-      {:ok, %{out: out, err: err}} -> {:error, failed(args, out <> err, env)}
-      {:error, reason} -> {:error, redact(reason, env)}
-    end
   end
 
   defp redact(out, env) do

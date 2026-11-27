@@ -414,6 +414,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-05T00:00:00Z"})
   end
 
+  # The pull request's head moves on the host while the list still shows the one before.
+  step "\#{int} is pushed again before {string} lists it", %{args: [number, @id]} = context do
+    push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+    context
+  end
+
   step "the user asks to review \#{int} again", %{args: [number]} = context do
     {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
     Map.put(context, :reply, reply)
@@ -1689,6 +1695,49 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # A stand-in for git that writes each command line to `context.git_log`.
+  step "the MC's git notes which commands it runs", context do
+    dir = Mc.tmp_dir(context.mc, "git-log")
+    log = Path.join(dir, "commands")
+    git = Path.join(dir, "git")
+    real = System.find_executable("git")
+    File.write!(git, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '#{log}'\nexec '#{real}' \"$@\"\n")
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    Map.put(context, :git_log, log)
+  end
+
+  step "the review of \#{int} is finished with no comments", %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "waiting"))
+    assert review["comments"] == []
+    context
+  end
+
+  step "no diff of \#{int} was read to place comments", %{args: [_number]} = context do
+    commands = File.read!(context.git_log)
+    # The checkout went through this git, so the diff would have too.
+    assert commands =~ "fetch", commands
+    refute commands =~ "--name-status", commands
+    refute commands =~ " -U3 ", commands
+    context
+  end
+
+  step "the diff of \#{int} is longer than a review reads", %{args: [_number]} = context do
+    World.put_app_env(:code_review_diff_bytes, 16)
+    context
+  end
+
+  step "the comments are kept in the review's summary instead of on their lines", context do
+    {review, context} = await_review(context, 12, &(&1["status"] == "waiting"))
+    assert review["comments"] == []
+
+    assert review["summary"] ==
+             "The limits are never enforced.\n\n`src/limits.ts:1`:\n\nMake the limit configurable." <>
+               "\n\n`src/limits.ts:4`:\n\nThis always allows."
+
+    context
+  end
+
   step "the agent's turn ends without a report", context do
     end_turns(context)
   end
@@ -1932,7 +1981,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the review of \#{int} is failed saying {string}", %{args: [number, why]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert String.ends_with?(review["error"], why), "the review says #{inspect(review["error"])}"
-    context
+    Map.put(context, :review, review)
   end
 
   step "the review of \#{int} failed", %{args: [number]} = context do

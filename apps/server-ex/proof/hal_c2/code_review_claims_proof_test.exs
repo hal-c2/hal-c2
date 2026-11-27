@@ -81,7 +81,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.count_start/1" => ~w(tell heard counted),
       "HalC2Plugins.CodeReview state :starts" => ~w(bm join count),
       "HalC2Plugins.CodeReview state :machines" => ~w(bm plus membersOf without part),
-      "HalC2Plugins.CodeReview.Checkout.prepare/5" => ~w(checkout claim lock),
+      "HalC2Plugins.CodeReview.Checkout.prepare/6" => ~w(checkout claim lock),
       "HalC2Plugins.CodeReview.Checkout.remove/2" => "defer",
       "HalC2.Plugins.Host.peers/4" =>
         ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf muted),
@@ -139,7 +139,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "when the next look is; the model looks at any time",
       "HalC2Plugins.CodeReview state :lister" => @shown,
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
-      "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
+      "HalC2Plugins.CodeReview.Checkout.diff_lines/4" => @agent,
+      "HalC2Plugins.CodeReview.Checkout.regular?/3" =>
+        "whether a commit has a regular file at a path, which the agent's prompt says of .gitmodules; no claim or run state",
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.submodules/3" =>
         "fills in the submodules of a checkout prepare made, before its claim, and fails nothing; the model's checkout has no files",
