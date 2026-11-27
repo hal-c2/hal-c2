@@ -49,13 +49,13 @@ Feature: Projects on an MC
       | with no folder                                    | a workspace folder is required              |
       | for missing folder /missing without asking to create it | /missing does not exist on this machine     |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A monogram of more than two characters is refused
     Given project "p1" exists
     When a client sets the icon of "p1" to the monogram "ABC"
     Then it fails with "Project monograms must contain at most two characters."
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A new project script needs an id that can be a shortcut
     Given project "p1" exists
     When a client adds a script to "p1" with the id "<id>"
@@ -268,7 +268,7 @@ Feature: Projects on an MC
     And the refusal names project "p1"
 
   # Legacy: packages/shared/src/path.ts (normalizeProjectPathForComparison), apps/server/src/orchestration/commandInvariants.ts (workspace already in use)
-  @mc @backlog
+  @mc
   Scenario Outline: The same folder written another way still belongs to its project
     Given project "p1" has the folder "<folder>"
     When a client creates another project for "<other>"
@@ -278,6 +278,12 @@ Feature: Projects on an MC
       | folder        | other           |
       | /home/sam/app | /home/sam/app/  |
       | /home/sam/app | /home/sam/app// |
+
+    # Windows spellings compare as Windows paths: a POSIX MC has no drive
+    # root to create them under, so these wait for a Windows test host.
+    @backlog
+    Examples:
+      | folder        | other           |
       | C:\code\app   | C:\code\app\    |
       | C:\code\app   | c:/code/App     |
       | C:\          | C:              |

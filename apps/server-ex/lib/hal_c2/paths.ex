@@ -49,11 +49,17 @@ defmodule HalC2.Paths do
 
   @doc """
   Creates the MC's directories that do not exist yet, and the data directory's
-  `secrets`, readable only by the user.
+  `secrets`, readable only by the user. One an earlier MC or the installer
+  left wider is tightened: the MC's folders are its owner's alone (upstream
+  #27904), their parents are not touched.
   """
+  # The directories are this MC's own, from its configured home.
+  # sobelow_skip ["Traversal.FileModule"]
   def ensure!(dirs \\ dirs()) do
-    for kind <- @kinds, do: mkdir_private!(Map.fetch!(dirs, kind))
-    mkdir_private!(Path.join(dirs.data, "secrets"))
+    for dir <- Enum.map(@kinds, &Map.fetch!(dirs, &1)) ++ [Path.join(dirs.data, "secrets")] do
+      mkdir_private!(dir)
+      File.chmod!(dir, 0o700)
+    end
   end
 
   @doc """

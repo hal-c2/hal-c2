@@ -335,7 +335,7 @@ Feature: Snoozing threads
       | a run that started after the snooze fails    |
 
   # Upstream #22202
-  @backlog @mc @desktop @mobile @priority-high
+  @mc @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario: A run that finishes does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When a run that started after the snooze finishes

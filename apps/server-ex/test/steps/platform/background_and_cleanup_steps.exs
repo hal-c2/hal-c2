@@ -398,6 +398,32 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     context
   end
 
+  # The desktop's power report, as the common power step sends it, with the
+  # host under strain: its thermal state serious or critical, or suspended.
+  step ~r/^the host reports (?:its thermal state is (?<thermal>serious|critical)|it is suspended)$/,
+       %{args: [thermal]} = context do
+    policy = Mc.ensure(BackgroundPolicy)
+    :erlang.trace(policy, true, [:receive])
+
+    snapshot = %{
+      "source" => "desktop",
+      "idle" => "false",
+      "idleSeconds" => 0,
+      "locked" => "false",
+      "suspended" => thermal == nil,
+      "onBattery" => "false",
+      "lowPowerMode" => "false",
+      "thermalState" => thermal || "nominal",
+      "stale" => false,
+      "updatedAt" => World.iso_from_now(0)
+    }
+
+    {nil, context} = World.call!(context, "server.reportHostPowerState", snapshot)
+    assert_receive {:trace, ^policy, :receive, {:"$gen_cast", {:power, ^snapshot}}}, 2_000
+    assert BackgroundPolicy.snapshot()["hostPower"] == snapshot
+    context
+  end
+
   # "the host reports it is locked" is the common power step.
   step "a client in front shows a checkout and provider status", context do
     context =
