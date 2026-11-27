@@ -8,7 +8,7 @@
 //!               [--render PNG [--size WxH] [--settle MS]]
 //!               [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...
 //!   hal-c2-ljos --check [--qml-dir DIR]
-//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]
+//!   hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL] [--load]
 //!               [--json] [--allow FILE] [--render options]...
 //!
 //! As desktop-qt's main.cpp, the shell runs the desktop host, which
@@ -61,7 +61,10 @@
 //! lines `RULE PATH  # why`, PATH the end of the path of the QML file the
 //! finding is in, or of one it names (what covers a control, for
 //! `layout-occluded`). `--act=false` keeps the checks that act (focus, Escape,
-//! toggles, popups) from running the shell's handlers.
+//! toggles, popups) from running the shell's handlers. `--load` audits the
+//! shell busy (src/loaded.rs): under an MC of its own with a working day's
+//! threads and a plugin, whose news comes on the picture's clock while the
+//! health checks let time pass.
 //!
 //! The shell runs the QML build.rs compiled into it (its pack), with the
 //! user's `<config>/qml` and `<config>/shell.qml` laid over it: Main.qml is a
@@ -98,6 +101,8 @@ use hal_c2_shell::{Launch, desktop_host, single_instance, store};
 use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ColorSpace, ShellConfig};
+
+mod loaded;
 
 /// The entry: Main.qml, the ShellLoader (src/runtime.rs).
 const ROOT: &str = hal_c2_shell::runtime::MAIN;
@@ -156,7 +161,7 @@ fn usage() -> ExitCode {
          \x20                  [--render PNG [--size WxH] [--settle MS]]\n\
          \x20                  [--screenshot PNG [--size WxH]] [FOLDER | HOST-ARGUMENT]...\n\
          \x20      hal-c2-ljos --check [--qml-dir DIR]\n\
-         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL]\n\
+         \x20      hal-c2-ljos --audit [--matrix M] [--rules A,B] [--touch] [--act BOOL] [--load]\n\
          \x20                  [--json] [--allow FILE] [--render options]..."
     );
     ExitCode::from(2)
@@ -269,6 +274,7 @@ fn parse() -> Result<Options, String> {
                 }
             }
             "--json" => o.audit.json = true,
+            "--load" => o.audit.load = true,
             "--allow" => o.audit.allow = Some(value()?.into()),
             "--render" => o.render = Some(value()?.into()),
             "--screenshot" => o.screenshot = Some(value()?.into()),
@@ -332,6 +338,9 @@ fn parse() -> Result<Options, String> {
     }
     if o.audit.on && (o.render.is_some() || o.screenshot.is_some()) {
         return Err("--audit reads the scene --render would draw; it takes no picture".into());
+    }
+    if o.audit.load && (!o.audit.on || o.launch.mc_origin.is_some() || o.pair.is_some()) {
+        return Err("--load is the audit's own MC: give it --audit and no other MC".into());
     }
     // The checks that act run the shell's handlers, which write settings and
     // drafts: never into the user's own files.
@@ -425,6 +434,19 @@ fn main() -> ExitCode {
         };
     }
     if options.audit.on {
+        // `--load` needs the plugin's QML compiled as it is fetched, which
+        // only a run lays over the pack (render_loaded).
+        #[cfg(not(feature = "dev-qml"))]
+        if options.audit.load {
+            return match render_loaded(app, options) {
+                Ok(false) => ExitCode::SUCCESS,
+                Ok(true) => ExitCode::FAILURE,
+                Err(e) => {
+                    eprintln!("hal-c2-ljos: {e}");
+                    ExitCode::from(2)
+                }
+            };
+        }
         let out = Output::Audit(&options.audit);
         return match render_to(app, &options, out, Capture::render(&options)) {
             Ok(false) => ExitCode::SUCCESS,
@@ -744,6 +766,9 @@ struct Audit {
     act: bool,
     json: bool,
     allow: Option<PathBuf>,
+    /// `--load`: the shell under the audit's own MC ([`loaded`]), busy as on
+    /// a working day, rather than with none.
+    load: bool,
 }
 
 impl Default for Audit {
@@ -756,6 +781,7 @@ impl Default for Audit {
             act: true,
             json: false,
             allow: None,
+            load: false,
         }
     }
 }
@@ -766,25 +792,94 @@ enum Output<'a> {
     Audit(&'a Audit),
 }
 
+/// [`settle_and_output`] on an engine of the app's own: the built-in
+/// shell alone, which is what a picture and an audit but `--load`'s are of.
+fn render_to(
+    app: App,
+    options: &Options,
+    out: Output<'_>,
+    capture: Capture,
+) -> Result<bool, String> {
+    let engine = app.build_engine();
+    settle_and_output(engine, options, out, capture).map(|(failed, _)| failed)
+}
+
+/// `--audit --load` of a shell built without `dev-qml`: [`settle_and_output`]
+/// in Ljós's headless shell, the one run that lays the user's files over
+/// the pack (`App::user_qml`, as the window's does). An engine from
+/// `build_engine` applies none of them and has no compiler for the plugin
+/// QML McPlugin fetches into the cache, so the audit would show the shell
+/// without the plugin it advertises. The work is done in the setup, before
+/// the shell's first pass, and the run quits as that pass ends. What it
+/// lays over the pack is the audit home's config (`--home-dir`, as
+/// `--audit` requires; with_qml refuses a `shell.qml` there), never the
+/// user's own: the built-in shell stays the shell audited, with the
+/// plugin's files loaded beside it.
+#[cfg(not(feature = "dev-qml"))]
+fn render_loaded(app: App, options: Options) -> Result<bool, String> {
+    let config = ShellConfig::new("HAL-C2")
+        .with_size(options.size.0 as f32, options.size.1 as f32)
+        .with_color_space(ColorSpace::Untagged);
+    let app = with_user_files(app, &options)
+        .shell_config(config)
+        .on_message(|_: &Engine, _: Message| {});
+    let done: Rc<std::cell::RefCell<Option<Result<bool, String>>>> = Rc::default();
+    let kept = done.clone();
+    let setup = move |setup: &mut ljos::Setup<'_, Message>| {
+        let engine = Engine::clone(setup.engine());
+        let out = Output::Audit(&options.audit);
+        match settle_and_output(engine.clone(), &options, out, Capture::render(&options)) {
+            Ok((failed, root)) => {
+                *kept.borrow_mut() = Some(Ok(failed));
+                engine.request_quit();
+                Ok(root)
+            }
+            Err(e) => {
+                *kept.borrow_mut() = Some(Err(e.clone()));
+                Err(e.into())
+            }
+        }
+    };
+    match app.run_headless_with(setup) {
+        Ok(()) => done
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| Err("the loaded audit did not run".into())),
+        Err(e) => Err(done
+            .borrow_mut()
+            .take()
+            .and_then(Result::err)
+            .unwrap_or_else(|| e.to_string())),
+    }
+}
+
 /// A picture without a window: the shell once its MC's first snapshot is in
 /// (what the cache kept, when the MC does not answer in time), or as it
 /// shows disconnected; or `--audit`'s report of that scene. True when it is
 /// the picture of a start that failed (`capture.failure`, or the MC refusing
 /// the connection here), which ScriptedRun's `captureFailure` takes for
 /// exit code 2; for an audit, when it found an error `--allow` does not name.
-fn render_to(
-    app: App,
+/// With it, the loader Main.qml made: the root a shell run shows.
+fn settle_and_output(
+    engine: Engine,
     options: &Options,
     out: Output<'_>,
     mut capture: Capture,
-) -> Result<bool, String> {
+) -> Result<(bool, ljos::ObjectId), String> {
     // The bundled font: the same picture on every machine.
     ljos::render::set_fonts(Fonts::Bundled);
-    let engine = app.build_engine();
     // As the window's shell does: the `Window` Main.qml's loader shows gets a
     // window of its own, where its popups find their overlay. Before it is
     // made: a `Window` made unhosted stays an item of the loader for good.
     ljos_controls::WindowSystem::of(&engine).set_host(|| {});
+    let load = match out {
+        Output::Audit(audit) => {
+            // What the turns do from the first one the shell's QML runs.
+            ljos_audit::watch(&engine);
+            audit.load
+        }
+        Output::Png(_) => false,
+    };
     let picture = Picture::new(options.size.0, options.size.1).settle(capture.settle_ms);
     picture.install(&engine);
     report_warnings(&engine);
@@ -824,12 +919,12 @@ fn render_to(
             scripted_run::run(engine, step);
         }
     };
-    let root = match connection {
+    let (loader, root) = match connection {
         Some(connection) => {
             hal_c2_shell::start(&engine, &launch, connection.clone());
             hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = shown(&engine)?;
+            let (loader, root) = shown(&engine)?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
             // `--screenshot` plays its steps on the picture's clock instead.
             let mut played = capture.play_after_snapshot;
@@ -866,7 +961,30 @@ fn render_to(
                 }
                 pump.pump(&engine);
             }
-            root
+            (loader, root)
+        }
+        None if load => {
+            // The audit's MC: the store waits on its snapshot as on any.
+            launch.mc_origin = Some(loaded::ORIGIN.into());
+            let mc = loaded::Loaded::new()?;
+            hal_c2_shell::start(&engine, &launch, mc.clone());
+            hal_c2_shell::controllers::threads::set_wake(&engine, wired.local_cache.waker());
+            hal_c2_shell::theme::set_application_font(&engine);
+            let (loader, root) = shown(&engine)?;
+            // A picture has no frame loop to drain the cache's stream, so
+            // each tick of the loaded clock drains it instead: the store
+            // asks the MC for a thread an action opens only once the cache
+            // has answered.
+            mc.on_tick(hal_c2_shell::controllers::threads::drain);
+            mc.start(&engine);
+            if !capture.play_after_snapshot {
+                play(&engine, &capture.steps);
+                mc.deliver(&engine);
+                hal_c2_shell::controllers::threads::drain(&engine);
+                mc.deliver(&engine);
+                pump.pump(&engine);
+            }
+            (loader, root)
         }
         None => {
             let mc = Rc::new(Disconnected::default());
@@ -876,14 +994,14 @@ fn render_to(
                 Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
             }
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = shown(&engine)?;
+            let (loader, root) = shown(&engine)?;
             // Once the bricks are there, as with an MC: what opens on a
             // signal (the palette's popup) misses one sent before.
             if !capture.play_after_snapshot {
                 play(&engine, &capture.steps);
             }
             mc.deliver(&engine);
-            root
+            (loader, root)
         }
     };
     // The window as large as the picture: ShellWindow says a size of its own,
@@ -906,7 +1024,7 @@ fn render_to(
             }
             let failed = audited(&engine, &picture, root, audit)?;
             store::flush(&engine);
-            return Ok(failed);
+            return Ok((failed, loader));
         }
     };
     let png = picture.png(&engine, root).map_err(|e| e.to_string())?;
@@ -916,16 +1034,18 @@ fn render_to(
     }
     std::fs::write(out, png).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("hal-c2-ljos: wrote {}", out.display());
-    Ok(capture.failure.is_some())
+    Ok((capture.failure.is_some(), loader))
 }
 
-/// The window a picture is of: what Main.qml's ShellLoader shows.
-fn shown(engine: &Engine) -> Result<ljos::ObjectId, String> {
-    hal_c2_shell::runtime::open(engine)?;
-    hal_c2_shell::runtime::window(engine).ok_or_else(|| {
+/// The loader Main.qml made and the window a picture is of: what its
+/// ShellLoader shows.
+fn shown(engine: &Engine) -> Result<(ljos::ObjectId, ljos::ObjectId), String> {
+    let loader = hal_c2_shell::runtime::open(engine)?;
+    let window = hal_c2_shell::runtime::window(engine).ok_or_else(|| {
         let why = hal_c2_shell::runtime::user_shell_failed(engine).unwrap_or_default();
         format!("no shell to draw: {why}")
-    })
+    })?;
+    Ok((loader, window))
 }
 
 /// `--audit`'s report of `root` as `picture` would draw it, on stdout; true
@@ -948,6 +1068,8 @@ fn audited(
     };
     options.matrix = audit.matrix.clone();
     options.act = audit.act;
+    // The health checks that let time pass run on the picture's clock.
+    options.clock = picture.clock().into();
     let options = options.only(&audit.rules).map_err(|e| e.to_string())?;
     let mut before = None;
     let mut scene = picture

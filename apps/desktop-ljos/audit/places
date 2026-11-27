@@ -1,9 +1,12 @@
 # The places `mise run desktop-ljos:audit` audits the shell at, one per line:
 # the hal-c2-ljos options that reach it (`--settle 500` is the shell as it
 # opens). The shell runs with no MC, past the first-run wizard but for a
-# place with `--first-run`.
+# place with `--first-run`. `--load` is the shell busy under the audit's own
+# MC (shell/src/loaded.rs): 90 threads in 6 projects and the code-review
+# plugin, with news every 250 ms while the health checks let time pass.
 --first-run --settle 500
 --settle 500
+--load --settle 1500
 --action settings.navigate={"to":"/settings/general"}
 --action settings.navigate={"to":"/settings/appearance"}
 --action settings.navigate={"to":"/settings/diagnostics"}
