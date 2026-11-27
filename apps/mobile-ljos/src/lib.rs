@@ -20,6 +20,7 @@ pub mod notifications;
 pub mod pairing;
 pub mod push_crypto;
 pub mod push_inbox;
+pub mod push_system;
 pub mod qr_reader;
 pub mod resume;
 pub mod scan_camera;
@@ -152,6 +153,7 @@ pub fn device() -> hal_c2_mc::pairing::Client {
 /// MobileApp keeps it in the shell's config). Before
 /// [`hal_c2_shell::start_with`].
 pub fn install(engine: &Engine, data: Option<PathBuf>, config: Option<PathBuf>) {
+    notifications::set_data_dir(engine, data.clone());
     pairing::set_path(engine, data.map(|dir| dir.join("pairing.json")));
     mobile_terminal::set_store_path(engine, config.map(|dir| dir.join("terminal.json")));
     pairing::set_device(engine, device());
@@ -161,6 +163,7 @@ pub fn install(engine: &Engine, data: Option<PathBuf>, config: Option<PathBuf>) 
 /// (MobileApp::start). After [`hal_c2_shell::start_with`], before the root.
 pub fn start(engine: &Engine) {
     pairing::start(engine);
+    notifications::start(engine);
 }
 
 #[cfg(test)]
