@@ -163,6 +163,28 @@ defmodule HalC2.Steps.Terminal.Sessions do
     fallback_shells(context, ["/bin/zsh", "/bin/bash"])
   end
 
+  # A Windows MC with only the shells named, each a stand-in under its own
+  # name on a path of its own, so the pick is the installed set's doing.
+  step ~r/^the MC runs on Windows with (?<installed>PowerShell 7|only Windows PowerShell|neither PowerShell)$/,
+       %{args: [installed]} = context do
+    context = Terminal.ensure(context)
+    World.put_app_env(:os_type, {:win32, :nt})
+    bin = Terminal.mkdir(context, "/windows-bin")
+
+    names =
+      case installed do
+        "PowerShell 7" -> ~w(pwsh powershell cmd)
+        "only Windows PowerShell" -> ~w(powershell cmd)
+        "neither PowerShell" -> ~w(cmd)
+      end
+
+    for name <- names, do: File.ln_s!("/bin/sh", Path.join(bin, name))
+    Terminal.put_env("HOME", context.mc.home)
+    Terminal.put_env("SHELL", nil)
+    Terminal.put_env("PATH", bin)
+    context
+  end
+
   step "the shell that runs is {string}", %{args: [shell]} = context do
     # Once something has printed, the shell is the program running under the PTY. Not
     # by typing at it: fish throws away what is typed while it starts.
@@ -177,7 +199,10 @@ defmodule HalC2.Steps.Terminal.Sessions do
         context
       end
 
-    assert Terminal.comm(context.snapshot["pid"]) == shell
+    # Windows shells are named for the user; the program that runs is the
+    # executable those names stand for.
+    program = %{"PowerShell 7" => "pwsh", "Windows PowerShell" => "powershell"}[shell] || shell
+    assert Terminal.comm(context.snapshot["pid"]) == program
     context
   end
 

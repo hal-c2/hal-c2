@@ -194,6 +194,23 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     Map.put(context, :before, before)
   end
 
+  step "the user is told the thread's title and id, the file's path, and how many events, attachments and terminal logs it holds",
+       context do
+    [line] = context.exported
+    archive = context.thread_file |> File.read!() |> JSON.decode!()
+    id = archive["thread"]["id"]
+
+    assert line ==
+             "Exported Alpha (#{id}) to #{context.thread_file} " <>
+               "(#{length(archive["entities"])} events, " <>
+               "#{length(archive["attachments"] || [])} attachments, " <>
+               "#{length(archive["terminalLogs"] || [])} terminal logs, " <>
+               "#{length((archive["checkpoints"] || %{})["refs"] || [])} checkpoints" <>
+               "#{if archive["session"], do: ", the agent's session"})"
+
+    context
+  end
+
   step "the user is told there is no thread {string} on {string}",
        %{args: [title, machine]} = context do
     assert context.exported == {:error, "There is no thread #{title} on #{machine}."}

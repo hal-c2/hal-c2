@@ -110,7 +110,7 @@ Feature: A thread hears when a pull request it owns needs attention
 
   # Upstream #18120: Forgejo comments keep their edit time, so an edited comment is news
   # once, the way a new comment is.
-  @mc @backlog
+  @mc
   Scenario: An edited comment wakes the thread once
     Given the agent of "t1" was woken for a comment from the owner
     When the owner edits that comment and the MC reads "acme/app#12" again

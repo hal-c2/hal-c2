@@ -74,7 +74,7 @@ Feature: Terminal sessions
         | not set, no zsh   | "bash"      |
         | not set, no bash  | "sh"        |
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario Outline: On Windows the MC picks a PowerShell and falls back to the command prompt
       Given the MC runs on Windows with <installed>
       When a terminal opens
