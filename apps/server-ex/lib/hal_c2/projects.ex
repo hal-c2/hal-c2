@@ -15,9 +15,12 @@ defmodule HalC2.Projects do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Orchestration.Entities
 
-  @spec mutate(map) :: {:ok, map} | {:error, String.t()}
-  def mutate(m) do
-    case apply_mutation(m) do
+  # `existing_script_ids` is an import's saved script ids, already saved under
+  # whatever rules then held: a create carrying them keeps them. It is an
+  # option, not a field of `m`, so no client can name its own ids existing.
+  @spec mutate(map, keyword) :: {:ok, map} | {:error, String.t()}
+  def mutate(m, opts \\ []) do
+    case apply_mutation(m, opts) do
       {:error, {:owned, message, _owner}} -> {:error, message}
       reply -> reply
     end
@@ -29,7 +32,7 @@ defmodule HalC2.Projects do
   """
   @spec mutate_for_client(map) :: {:ok, map} | {:error, String.t() | map}
   def mutate_for_client(m) do
-    case apply_mutation(m) do
+    case apply_mutation(m, []) do
       {:error, {:owned, message, owner}} ->
         {:error, %{"_tag" => "WorkspaceInUse", "message" => message, "projectId" => owner}}
 
@@ -38,7 +41,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m, opts) do
     root = workspace_root(m["workspaceRoot"] || "")
 
     cond do
@@ -50,6 +53,9 @@ defmodule HalC2.Projects do
 
       HalC2.Workspace.mc_own_dir?(root) ->
         {:error, "#{root} is inside the MC's own directories"}
+
+      refusal = shape_refusal(m, Keyword.get(opts, :existing_script_ids, [])) ->
+        {:error, refusal}
 
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
@@ -83,7 +89,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m, _opts) do
     fields =
       m
       |> Map.take(
@@ -96,7 +102,26 @@ defmodule HalC2.Projects do
         )
       )
 
-    case relative_root(fields) || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
+    # Only a scripts update needs the saved ids, and only this project's.
+    existing =
+      if Map.has_key?(fields, "scripts") do
+        path = HalC2.Store.path()
+        project = StreamState.get(StreamState.load(path, id), "project")[id]
+
+        if project && project["deletedAt"] == nil,
+          do: for(script <- List.wrap(project["scripts"]), is_map(script), do: script["id"]),
+          else: []
+      else
+        []
+      end
+
+    refused =
+      case relative_root(fields) do
+        {:refused, error} -> {:refused, error}
+        nil -> if(error = shape_refusal(fields, existing), do: {:refused, error})
+      end
+
+    case refused || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
       {:refused, error} ->
         {:error, error}
 
@@ -122,7 +147,7 @@ defmodule HalC2.Projects do
   end
 
   # A project with threads is deleted only with `force`, which deletes its threads first.
-  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m, _opts) do
     case {threads(id), m["force"] == true} do
       {[_ | _], false} ->
         {:error, "Project #{id} is not empty."}
@@ -141,7 +166,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  defp apply_mutation(%{"type" => type}), do: {:error, "#{type} is not supported"}
+  defp apply_mutation(%{"type" => type}, _opts), do: {:error, "#{type} is not supported"}
 
   # A deleted project's settings go with it: a provider it turned on would otherwise
   # stay checked for a project nobody can open (upstream #17879).
@@ -505,6 +530,45 @@ defmodule HalC2.Projects do
 
   defp relative_error(path),
     do: "Workspace #{path} is not an absolute path. Use a full path or one starting with ~/."
+
+  # Why an icon or a script in `fields` cannot be saved, or nil. A script's id
+  # doubles as its shortcut, so a new one must be sayable as one; ids already
+  # saved stay editable even if they no longer fit.
+  defp shape_refusal(fields, existing_script_ids) do
+    icon_refusal(fields["projectIcon"]) || script_refusal(fields["scripts"], existing_script_ids)
+  end
+
+  defp icon_refusal(%{"kind" => "monogram", "text" => text}), do: monogram_refusal(text)
+
+  defp icon_refusal(%{"kind" => "lucide"} = icon),
+    do: monogram_refusal(icon["monogramText"] || icon["monogram"])
+
+  defp icon_refusal(_icon), do: nil
+
+  defp monogram_refusal(text) when is_binary(text) do
+    if length(String.graphemes(text)) > 2,
+      do: "Project monograms must contain at most two characters."
+  end
+
+  defp monogram_refusal(_text), do: nil
+
+  defp script_refusal(scripts, existing) when is_list(scripts) do
+    Enum.find_value(scripts, fn
+      %{"id" => id} ->
+        if id not in existing and
+             not (is_binary(id) and Regex.match?(~r/\A[a-z0-9][a-z0-9-]{0,23}\z/, id)) do
+          shown = if is_binary(id), do: id, else: inspect(id)
+
+          "Script ID '#{shown}' must be 1-24 lowercase letters, digits or hyphens, " <>
+            "starting with a letter or digit."
+        end
+
+      _other ->
+        nil
+    end)
+  end
+
+  defp script_refusal(_scripts, _existing), do: nil
 
   defp expand("~"), do: home()
   defp expand("~/" <> rest), do: Path.join(home(), rest)

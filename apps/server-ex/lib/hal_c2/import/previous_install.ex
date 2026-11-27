@@ -281,15 +281,25 @@ defmodule HalC2.Import.PreviousInstall do
           "scripts" => project.scripts
         }
 
-        case Projects.mutate(input) do
+        # The scripts are the install's saved ones, kept as they are: their ids
+        # were saved under whatever rules then held, as on an update here.
+        existing =
+          for script <- List.wrap(project.scripts),
+              is_map(script),
+              script["id"] != nil,
+              do: script["id"]
+
+        case Projects.mutate(input, existing_script_ids: existing) do
           {:ok, local} ->
             # The project's row is written a moment after the commit; a retry of a failed
             # import must find the project it made, not try to make it again.
             HalC2.Streams.flush_shell(id)
             {:ok, project, local}
 
-          {:error, _} ->
-            {:error, "Its project folder #{root} is no longer on this machine."}
+          {:error, message} ->
+            if File.dir?(root),
+              do: {:error, message},
+              else: {:error, "Its project folder #{root} is no longer on this machine."}
         end
     end
   end

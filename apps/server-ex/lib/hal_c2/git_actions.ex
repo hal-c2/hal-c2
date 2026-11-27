@@ -118,9 +118,14 @@ defmodule HalC2.GitActions do
     commit? = action in @commit_actions
     feature? = input["featureBranch"] == true
 
+    # A pull request needs its head published: a branch with no upstream, commits
+    # its upstream lacks, or an upstream that is its base rather than itself (cut
+    # from another branch, even one it is level with) is pushed first.
     push? =
       action in ~w(push commit_push commit_push_pr) or
-        (action == "create_pr" and (not status["hasUpstream"] or status["aheadCount"] > 0))
+        (action == "create_pr" and
+           (not status["hasUpstream"] or status["aheadCount"] > 0 or
+              not tracks_itself?(cwd, branch)))
 
     pr? = action in ~w(create_pr commit_push_pr)
 
@@ -477,7 +482,18 @@ defmodule HalC2.GitActions do
             do: upstream_name,
             else: upstream.ref
 
-        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+        remember_base(cwd, branch, base)
+        result
+
+      # Cut from a local branch: that branch is its base, as above, but it
+      # names no remote to publish to, so the push remote fallback decides.
+      upstream && is_nil(upstream.remote) && !same? ->
+        remote =
+          push_remote(cwd, branch) ||
+            fail!("Cannot push because no git remote is configured for this repository.")
+
+        result = publish(cwd, branch, remote)
+        remember_base(cwd, branch, upstream_name)
         result
 
       remote = push_remote(cwd, branch) ->
@@ -486,6 +502,29 @@ defmodule HalC2.GitActions do
       true ->
         fail!("Cannot push because no git remote is configured for this repository.")
     end
+  end
+
+  # Whether `branch`'s upstream is the branch itself on a remote, as opposed to
+  # a branch it was cut from.
+  defp tracks_itself?(_cwd, nil), do: false
+
+  defp tracks_itself?(cwd, branch) do
+    case Git.upstream(cwd, branch) do
+      %{remote: remote} = upstream when is_binary(remote) ->
+        Git.same_branch?(cwd, branch, upstream_branch_name(upstream))
+
+      _ ->
+        false
+    end
+  end
+
+  # Remembers the base a branch was cut from, unless one is remembered already
+  # (set by the user or `gh`), which still names the base it means.
+  defp remember_base(cwd, branch, base) do
+    key = "branch.#{branch}.gh-merge-base"
+
+    with {:error, _} <- Git.ok(cwd, ["config", "--get", key]),
+         do: Git.ok(cwd, ["config", key, base])
   end
 
   defp upstream_branch_name(%{remote: nil, ref: name}), do: name
@@ -544,7 +583,7 @@ defmodule HalC2.GitActions do
 
     case target do
       %{kind: "forgejo"} ->
-        forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
+        forgejo_pull_request(cwd, branch, Map.put(target, :url, url), pushed?)
 
       %{kind: kind} when kind not in ["unknown"] ->
         github_pull_request(cwd, branch, kind, target, pushed?)
@@ -569,8 +608,9 @@ defmodule HalC2.GitActions do
     {base, base_qualified} = pr_base(cwd, branch)
     {head_branch, fork_owner} = github_head(cwd, branch, target, pushed?)
     head = if fork_owner, do: "#{fork_owner}:#{head_branch}", else: head_branch
+    lookup_owners = pr_lookup_owners(cwd, branch, fork_owner, pushed?)
 
-    case existing_github_pull_request(cwd, head_branch, fork_owner) do
+    case existing_github_pull_request(cwd, head_branch, lookup_owners) do
       %{"url" => url} = pr ->
         %{
           "status" => "opened_existing",
@@ -612,13 +652,29 @@ defmodule HalC2.GitActions do
     end
   end
 
+  # The head owners an existing pull request may be from, in the order to
+  # take them: the fork owner's alone, or — for a branch whose repository
+  # cannot be told apart (`published_repositories/3` names more than one) —
+  # every candidate's owner. Nil keeps "the base repository's own branch".
+  defp pr_lookup_owners(cwd, branch, fork_owner, pushed?) do
+    case published_repositories(cwd, branch, pushed?) do
+      [_one, _two | _] = repositories ->
+        repositories
+        |> Enum.map(&(String.split(&1, "/") |> hd()))
+        |> Enum.uniq_by(&String.downcase/1)
+
+      _ ->
+        if fork_owner, do: [fork_owner]
+    end
+  end
+
   # The open pull request from `head_branch`, or nil. `gh pr list --head` takes
   # a branch name only (`<owner>:<branch>` is not supported there), so a list
   # for a fork's branch also holds same-named branches on the base repository
-  # and other forks: for a fork, more are fetched and only the fork owner's
-  # is taken.
-  defp existing_github_pull_request(cwd, head_branch, fork_owner) do
-    limit = if fork_owner, do: "100", else: "1"
+  # and other forks: for a fork, more are fetched and only a named owner's
+  # is taken, the first owner that has one winning.
+  defp existing_github_pull_request(cwd, head_branch, fork_owners) do
+    limit = if fork_owners, do: "100", else: "1"
 
     args =
       ~w(pr list --state open --limit) ++
@@ -627,8 +683,19 @@ defmodule HalC2.GitActions do
         [head_branch]
 
     case gh_json(cwd, args) do
-      prs when is_list(prs) -> Enum.find(prs, &own_pull_request?(&1, fork_owner))
-      _ -> nil
+      prs when is_list(prs) ->
+        case fork_owners do
+          nil ->
+            Enum.find(prs, &own_pull_request?(&1, nil))
+
+          owners ->
+            Enum.find_value(owners, fn owner ->
+              Enum.find(prs, &own_pull_request?(&1, owner))
+            end)
+        end
+
+      _ ->
+        nil
     end
   end
 
@@ -646,21 +713,57 @@ defmodule HalC2.GitActions do
 
   # The branch the pull request is from, as its remote has it (`pr_head/2`),
   # and the owner of the fork it was published to — nil when that is the base
-  # repository itself, as `forgejo_head/3` tells it.
-  defp github_head(cwd, branch, target, pushed?),
-    do: {pr_head(cwd, branch), fork_owner(cwd, branch, target && target.repository, pushed?)}
+  # repository itself, as `forgejo_head/4` tells it.
+  defp github_head(cwd, branch, target, pushed?) do
+    fork = fork_repository(cwd, branch, target && target.repository, pushed?)
+    {pr_head(cwd, branch), fork && fork |> String.split("/") |> hd()}
+  end
 
-  # The owner is read from the remote's push URL: git pushes to `pushurl`
-  # when one is set, whatever the fetch URL names.
-  defp fork_owner(cwd, branch, base_repository, pushed?) do
+  # The fork the branch was published to as `owner/name` (nil when that is the
+  # base repository itself), read from the published remote's push URL: git
+  # pushes to `pushurl` when one is set, whatever the fetch URL names.
+  defp fork_repository(cwd, branch, base_repository, pushed?) do
     with remote when is_binary(remote) <- published_remote(cwd, branch, pushed?),
          url when is_binary(url) <- push_url(cwd, remote),
          %{repository: repository} <- PullRequests.parse_remote(url),
          false <- same_repository?(repository, base_repository),
-         [owner, _name | _] <- String.split(repository, "/"),
-         do: owner,
+         [_owner, _name | _] <- String.split(repository, "/"),
+         do: repository,
          else: (_ -> nil)
   end
+
+  # The repositories the branch may already have a pull request from, in
+  # the order to look in: where it was published (the published remote's
+  # push URL, as `fork_repository/4` reads it), plus — when no push ran
+  # and that remote fetches from a different repository than it pushes
+  # to (`pushurl`) — the fetch repository. A push through `pushurl` and
+  # a fetch update the same remote-tracking ref, so git's refs cannot
+  # tell which repository an in-sync branch lives on; looking under
+  # both finds its open pull request either way. Creating still uses
+  # the push repository, as `fork_repository/4` tells it.
+  defp published_repositories(cwd, branch, pushed?) do
+    case published_remote(cwd, branch, pushed?) do
+      remote when is_binary(remote) ->
+        push = repository_at(push_url(cwd, remote))
+        fetch = repository_at(remote_url(cwd, remote))
+
+        if !pushed? && push && fetch && !same_repository?(push, fetch),
+          do: [push, fetch],
+          else: Enum.reject([push], &is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp repository_at(url) when is_binary(url) do
+    case PullRequests.parse_remote(url) do
+      %{repository: repository} -> repository
+      _ -> nil
+    end
+  end
+
+  defp repository_at(_url), do: nil
 
   # Read from config, as `remote_url/2` reads the fetch URL: `git remote
   # get-url --push` would first expand the checkout's `insteadOf` rewrites,
@@ -721,18 +824,12 @@ defmodule HalC2.GitActions do
 
   # As the Forgejo provider's `createChangeRequest`: in the repository the primary
   # remote names, from `owner:branch` when the branch is pushed to a fork of it.
-  defp forgejo_pull_request(cwd, branch, target) do
+  defp forgejo_pull_request(cwd, branch, target, pushed?) do
     {base, base_qualified} = pr_base(cwd, branch)
-    {head_branch, fork} = forgejo_head(cwd, branch, target)
+    {head_branch, fork} = forgejo_head(cwd, branch, target, pushed?)
     owner = fork && fork |> String.split("/") |> hd()
 
-    # Only a pull request from this branch's own repository is its pull request: a fork
-    # can hold a branch of the same name.
-    case ChangeRequests.forgejo_list(cwd, target, head_branch,
-           state: "open",
-           limit: 1,
-           head_repository: fork || target.repository
-         ) do
+    case existing_forgejo_pull_request(cwd, branch, head_branch, target, fork, pushed?) do
       [pr | _] ->
         %{
           "status" => "opened_existing",
@@ -777,32 +874,36 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # The branch the pull request is from, as its upstream names it, and the fork it was
-  # pushed to as `owner/name` (nil when that is the target repository itself).
-  defp forgejo_head(cwd, branch, target) do
-    config = fn key ->
-      case Git.ok(cwd, ["config", "--get", "branch.#{branch}.#{key}"]) do
-        {:ok, value} -> String.trim(value)
-        _ -> nil
-      end
-    end
-
-    head =
-      case config.("merge") do
-        "refs/heads/" <> head -> head
-        _ -> branch
+  # Only a pull request from this branch's own repository is its pull
+  # request: a fork can hold a branch of the same name. Where that
+  # repository cannot be told apart (`published_repositories/3`), each
+  # candidate is looked in, the push repository first.
+  defp existing_forgejo_pull_request(cwd, branch, head_branch, target, fork, pushed?) do
+    repositories =
+      case published_repositories(cwd, branch, pushed?) do
+        [_one, _two | _] = repositories -> repositories
+        _ -> [fork || target.repository]
       end
 
-    fork =
-      with remote when is_binary(remote) <- config.("remote"),
-           url when is_binary(url) <- remote_url(cwd, remote),
-           %{repository: repository} <- PullRequests.parse_remote(url),
-           false <- String.downcase(repository) == String.downcase(target.repository),
-           do: repository,
-           else: (_ -> nil)
-
-    {head, fork}
+    Enum.find_value(repositories, [], fn repository ->
+      case ChangeRequests.forgejo_list(cwd, target, head_branch,
+             state: "open",
+             limit: 1,
+             head_repository: repository
+           ) do
+        [] -> nil
+        pulls -> pulls
+      end
+    end)
   end
+
+  # The branch the pull request is from, as its remote has it (`pr_head/2`),
+  # and the fork it was published to as `owner/name` (nil when that is the
+  # target repository itself) — as `github_head/4` tells them, from where the
+  # branch was published (`published_remote/3`, `push_url/2`), not from the
+  # upstream it tracks.
+  defp forgejo_head(cwd, branch, target, pushed?),
+    do: {pr_head(cwd, branch), fork_repository(cwd, branch, target.repository, pushed?)}
 
   defp remote_url(cwd, remote) do
     case Git.ok(cwd, ["config", "--get", "remote.#{remote}.url"]) do

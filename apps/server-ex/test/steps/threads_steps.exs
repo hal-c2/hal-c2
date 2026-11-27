@@ -582,6 +582,20 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # A run that began after the snooze and finishes: its work ending is not news.
+  step "a run that started after the snooze finishes", context do
+    context
+    |> World.add_run("Refactor cart", "completed", World.iso_from_now(1_000))
+    |> then(fn context ->
+      World.await_row(
+        World.thread_id(context, "Refactor cart"),
+        &(&1["latestRunCompletedAt"] != nil)
+      )
+
+      context
+    end)
+  end
+
   # A run that began before the snooze ends after it: the earlier run's failure.
   step "a run that started before the snooze reports a failure", context do
     snoozed_at = World.thread(context, "Refactor cart")["snoozedAt"]
@@ -1111,6 +1125,22 @@ defmodule HalC2.Steps.Threads do
     )
     |> World.add_message(thread, "assistant", "A token bucket per IP rate limits logins well.")
     |> Map.put(:current, thread)
+  end
+
+  # The thread's worktree is gone, as storage cleanup left it: the folder is
+  # removed and the thread still names it.
+  step "its worktree was removed by storage cleanup", context do
+    thread = World.current(context)
+    id = World.thread_id(context, thread)
+    dir = Path.join([context.mc.home, "worktrees", id])
+    File.mkdir_p!(dir)
+
+    context =
+      World.put_entity(context, thread, "thread", id, %{"s" => %{"worktreePath" => dir}})
+
+    World.await_row(id, &(&1["worktreePath"] == dir))
+    File.rm_rf!(dir)
+    context
   end
 
   step "the user asks for a new title", context do

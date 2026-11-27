@@ -186,7 +186,7 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
       HalC2.Test.Mc.Host.home(context)
 
       World.create_project(context, title, %{
-        "workspaceRoot" => folder,
+        "workspaceRoot" => HalC2.Test.Mc.Host.path(context, folder),
         "createWorkspaceRootIfMissing" => true
       })
     end

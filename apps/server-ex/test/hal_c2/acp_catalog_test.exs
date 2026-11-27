@@ -104,6 +104,18 @@ defmodule HalC2.Acp.CatalogTest do
     assert %{"id" => "other", "distribution" => "npx", "integrity" => "registry"} = second
   end
 
+  test "search leaves out twins of HAL-C2's own providers, which still install by id",
+       %{served: served, base: base, sha: sha} do
+    publish(served, [
+      fake(base, sha, %{"id" => "codex-acp", "name" => "Codex ACP"})
+    ])
+
+    assert {:ok, %{"agents" => []}} = HalC2.Acp.Catalog.search(%{"query" => "codex"})
+
+    assert {:ok, %{"agentId" => "codex-acp", "prepared" => true}} =
+             HalC2.Acp.Catalog.prepare(%{"agentId" => "codex-acp"})
+  end
+
   test "an agent installs, runs from its instance, and uninstalls when unused",
        %{served: served, base: base, sha: sha} do
     publish(served, [fake(base, sha)])

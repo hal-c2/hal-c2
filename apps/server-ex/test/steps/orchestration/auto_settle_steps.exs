@@ -178,14 +178,12 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
 
   step "thread {string} was snoozed and a turn completed after the snooze",
        %{args: [thread]} = context do
-    context
-    |> ensure_thread(thread)
-    |> World.patch_thread(thread, %{
-      "createdAt" => World.iso_from_now(-2 * @hour),
-      "snoozedAt" => World.iso_from_now(-@hour),
-      "snoozedUntil" => World.iso_from_now(World.days(1))
-    })
-    |> World.add_run(thread, "completed", World.iso_from_now(-div(@hour, 2)))
+    run_after_snooze(context, thread, "completed")
+  end
+
+  step "thread {string} was snoozed and a run failed after the snooze",
+       %{args: [thread]} = context do
+    run_after_snooze(context, thread, "failed")
   end
 
   step "its linked pull request merged after that", context do
@@ -211,14 +209,7 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
 
   step "thread {string} was snoozed and a run was interrupted after the snooze",
        %{args: [thread]} = context do
-    context
-    |> ensure_thread(thread)
-    |> World.patch_thread(thread, %{
-      "createdAt" => World.iso_from_now(-2 * @hour),
-      "snoozedAt" => World.iso_from_now(-@hour),
-      "snoozedUntil" => World.iso_from_now(World.days(1))
-    })
-    |> World.add_run(thread, "interrupted", World.iso_from_now(-div(@hour, 2)))
+    run_after_snooze(context, thread, "interrupted")
   end
 
   step "thread {string} is still snoozed and not settled", %{args: [thread]} = context do
@@ -596,6 +587,18 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
       "stderr" => "error connecting to api.github.com\n",
       "exit" => 1
     })
+  end
+
+  # A thread snoozed an hour ago until tomorrow, whose run ended half an hour ago as `status`.
+  defp run_after_snooze(context, thread, status) do
+    context
+    |> ensure_thread(thread)
+    |> World.patch_thread(thread, %{
+      "createdAt" => World.iso_from_now(-2 * @hour),
+      "snoozedAt" => World.iso_from_now(-@hour),
+      "snoozedUntil" => World.iso_from_now(World.days(1))
+    })
+    |> World.add_run(thread, status, World.iso_from_now(-div(@hour, 2)))
   end
 
   defp ensure_thread(context, thread) do

@@ -300,7 +300,7 @@ Feature: Providers settings panel
       And opening "Show more" shows registry results without waiting for a new search
 
     # Upstream #25753: the registry list leaves out agents HAL-C2 carries as its own providers.
-    @backlog @mc @desktop @plugin-acp-registry @priority-low
+    @mc @desktop @backlog-desktop @plugin-acp-registry @priority-low
     Scenario Outline: The ACP Registry does not offer a twin of HAL-C2's own provider
       When the user searches the ACP Registry for "<search>"
       Then "<twin>" is not listed

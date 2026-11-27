@@ -1047,6 +1047,60 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     Map.merge(context, %{read_task: task, sync_pr: pr})
   end
 
+  step "a branch status look-up sees {string} open", %{args: [pr]} = context do
+    {_repository, number} = parse(pr)
+    context = branch_answer(context, "feature/x", pr_entry(pr, "OPEN"))
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
+    root = World.project(context, "demo").root
+    HalC2.PullRequests.Branches.forget(root)
+    assert %{"number" => ^number} = HalC2.Vcs.branch_pull_request(root, "feature/x")
+    context
+  end
+
+  step "the user closes or merges {string} from HAL-C2", %{args: [pr]} = context do
+    {repository, number} = parse(pr)
+
+    context =
+      context
+      |> serve_state(pr, "OPEN")
+      |> World.cli_rules([
+        %{
+          "args" => ["api graphql"],
+          "stdin" => ["viewerPermission"],
+          "stdout" => %{
+            "data" => %{
+              "repository" => %{
+                "mergeCommitAllowed" => true,
+                "squashMergeAllowed" => true,
+                "rebaseMergeAllowed" => true,
+                "autoMergeAllowed" => false,
+                "viewerPermission" => "WRITE",
+                "pullRequest" => %{
+                  "mergeStateStatus" => "CLEAN",
+                  "isCrossRepository" => false,
+                  "state" => "OPEN",
+                  "maintainerCanModify" => false,
+                  "viewerCanUpdate" => true,
+                  "viewerDidAuthor" => true
+                }
+              }
+            }
+          }
+        },
+        %{"args" => ["pr close"], "stdout" => ""}
+      ])
+
+    {{:ok, _}, context} =
+      World.call(context, "pullRequests.runAction", %{
+        "projectId" => World.project(context, "demo").id,
+        "repository" => repository,
+        "number" => number,
+        "action" => "close"
+      })
+
+    context
+  end
+
   step "a client asks to refresh {string}", %{args: [pr]} = context do
     {repository, number} = parse(pr)
 

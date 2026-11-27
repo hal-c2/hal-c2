@@ -31,4 +31,37 @@ defmodule HalC2.SourceControlNamesTest do
                "repository" => "--org=x"
              })
   end
+
+  # Follow-up to #1837 (#1851): the host of a pasted GitHub address is
+  # kept for every host, github.com included, or `gh` would read the
+  # repository on its default host (GH_HOST, or a sole Enterprise login).
+  # The stand-in `gh` answers with the repository it was asked for.
+  test "a pasted github.com address keeps its host for the lookup", %{tmp_dir: dir} do
+    gh = Path.join(dir, "gh")
+
+    File.write!(gh, """
+    #!/bin/sh
+    printf '{"nameWithOwner":"%s","url":"https://example.test/x","sshUrl":"git@example.test:x"}' "$3"
+    """)
+
+    File.chmod!(gh, 0o755)
+    Application.put_env(:hal_c2, :gh_command, gh)
+    on_exit(fn -> Application.delete_env(:hal_c2, :gh_command) end)
+
+    File.write!(Path.join(dir, "hosts.yml"), "")
+    previous = System.get_env("GH_CONFIG_DIR")
+    System.put_env("GH_CONFIG_DIR", dir)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("GH_CONFIG_DIR", previous),
+        else: System.delete_env("GH_CONFIG_DIR")
+    end)
+
+    assert {:ok, %{"nameWithOwner" => "github.com/acme/web"}} =
+             HalC2.SourceControl.lookup(%{
+               "provider" => "github",
+               "repository" => "https://github.com/acme/web.git?tab=readme"
+             })
+  end
 end
