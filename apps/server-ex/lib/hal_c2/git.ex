@@ -89,7 +89,16 @@ defmodule HalC2.Git do
   # and says it where `stop_children/1` can find it when the caller was killed instead.
   defp stopping_children(key, argv, run) do
     File.mkdir_p!(Path.dirname(children_file(key)))
-    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
+
+    result =
+      try do
+        run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
+      catch
+        # The caller is stopping (`within/2`): what git started goes first.
+        :exit, reason ->
+          stop_children(key)
+          exit(reason)
+      end
 
     if match?({:ok, {:ok, _}}, result),
       do: File.rm(children_file(key)),
@@ -133,8 +142,11 @@ defmodule HalC2.Git do
 
   # Killing the task takes the program with it: Exile stops a process its owner
   # left, and the task stays linked so killing the caller takes both. Exits are
-  # trapped around the yield, so a task that exits abnormally reports
-  # `{:exit, reason}` here instead of taking the caller with it.
+  # trapped around the wait, so a task that exits abnormally reports
+  # `{:exit, reason}` here instead of taking the caller with it. A caller that did
+  # not trap exits itself still stops on another process's exit signal (its
+  # supervisor's `:shutdown`, a linked owner's crash) as it would have, taking the
+  # task with it, rather than carrying on once the task is done.
   @doc """
   Runs `fun` in a task given `ms` to finish (`nil` runs it in place):
   `{:ok, result}`, `{:exit, reason}` or `:timeout`.
@@ -146,11 +158,7 @@ defmodule HalC2.Git do
     task = Task.async(fun)
 
     try do
-      case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
-        {:ok, result} -> {:ok, result}
-        {:exit, reason} -> {:exit, reason}
-        nil -> :timeout
-      end
+      await(task, ms, trap)
     after
       receive do
         {:EXIT, pid, _reason} when pid == task.pid -> :ok
@@ -159,6 +167,28 @@ defmodule HalC2.Git do
       end
 
       Process.flag(:trap_exit, trap)
+    end
+  end
+
+  defp await(%Task{ref: ref, pid: pid} = task, ms, trap) do
+    receive do
+      {^ref, result} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, result}
+
+      {:DOWN, ^ref, _, _, reason} ->
+        {:exit, reason}
+
+      {:EXIT, from, reason} when from != pid and not trap and reason != :normal ->
+        Task.shutdown(task, :brutal_kill)
+        exit(reason)
+    after
+      ms ->
+        case Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> {:ok, result}
+          {:exit, reason} -> {:exit, reason}
+          nil -> :timeout
+        end
     end
   end
 
@@ -229,6 +259,42 @@ defmodule HalC2.Git do
   catch
     # Exile exits the caller when the program outlives every signal (`:kill_timeout`).
     :exit, reason -> {:error, "#{name} did not exit: #{inspect(reason)}"}
+  end
+
+  # Tracing is off, as a trace of a fetch can carry its credentials into an error.
+  @untraced ~w(GIT_TRACE GIT_TRACE_CURL GIT_TRACE_CURL_NO_DATA GIT_CURL_VERBOSE
+               GIT_TRACE_PACKET GIT_TRACE_PACKFILE GIT_TRACE_SETUP GIT_TRACE2
+               GIT_TRACE2_EVENT GIT_TRACE2_PERF)
+
+  @doc """
+  `run/3`'s `:env` and `:unset` for git in a repository the MC keeps for itself, such
+  as the code review plugin's clones: the user's git config is left out (its
+  `insteadOf` can turn an HTTPS address into SSH, and its hooks have no business
+  there), git never prompts, an inherited `GIT_SSL_NO_VERIFY` does not turn off a
+  server's certificate check, nor `GIT_CONFIG` point `git config` at another file
+  than the one a fetch reads, and tracing is off.
+
+  `repository` is the directory git runs in, or nil (`git init`). One with no `.git` in
+  it is a bare repository and is named to git (`GIT_DIR`), as `run/3` has git look
+  for none on its own.
+  """
+  def isolated(repository) do
+    bare =
+      if repository && not File.exists?(Path.join(repository, ".git")),
+        do: [{"GIT_DIR", repository}],
+        else: []
+
+    [
+      env:
+        bare ++
+          [
+            {"GIT_TERMINAL_PROMPT", "0"},
+            {"GIT_CONFIG_GLOBAL", "/dev/null"},
+            {"GIT_CONFIG_NOSYSTEM", "1"},
+            {"GIT_TRACE_REDACT", "1"}
+          ],
+      unset: ["GIT_CONFIG", "GIT_SSL_NO_VERIFY" | @untraced]
+    ]
   end
 
   @doc "Runs git and returns its stdout when it exits 0."

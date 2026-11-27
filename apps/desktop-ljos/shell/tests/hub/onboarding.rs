@@ -602,6 +602,7 @@ fn a_shell_started_without_an_mc_pairs_and_connects_from_the_wizard() {
                 origin: "https://laptop.example".into(),
                 token: "session".into(),
                 descriptor,
+                expires_at: None,
             }
         }))
     });
@@ -663,6 +664,7 @@ fn a_link_no_mc_takes_says_why() {
                 origin: "https://x.example".into(),
                 token: String::new(),
                 descriptor: Map::new(),
+                expires_at: None,
             }))
         });
         rig.dispatch(
@@ -1373,6 +1375,7 @@ fn a_shell_without_an_mc_pairs_once_whatever_the_order() {
                             origin: "https://laptop.example".into(),
                             token: "session".into(),
                             descriptor: Map::new(),
+                            expires_at: None,
                         }))
                     });
                     let url = if link { "https://laptop.example/pair#token=T" } else { "laptop" };

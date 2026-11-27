@@ -74,6 +74,7 @@ pub type OnFrame = Box<dyn FnMut(&Engine, &Frame)>;
 pub type Resume = Box<dyn FnMut() -> Frame>;
 pub type OnReady = Box<dyn FnMut(&Engine, bool)>;
 pub type OnStatus = Box<dyn FnMut(&Engine, &Status)>;
+pub type OnRenewed = Box<dyn FnMut(&Engine, DateTime<Utc>)>;
 /// A call went out or was settled ([`Mc::on_call`]).
 pub type OnCall = Box<dyn FnMut(&Engine, &CallEvent)>;
 
@@ -182,6 +183,9 @@ pub trait Mc {
     fn credential_expiry(&self) -> Option<DateTime<Utc>> {
         None
     }
+    /// Runs `f` with the new expiry when a renewal completes, while
+    /// the connection stays ready (McClient::credentialRenewed).
+    fn on_credential_renewed(&self, _f: OnRenewed) {}
     /// Opens as [`Mc::open`], at an MC that must say it serves
     /// `environment` (a saved environment's).
     fn open_expecting(&self, origin: &str, token: &str, _environment: &str) -> Result<(), String> {
@@ -764,6 +768,11 @@ impl Mc for Connection {
 
     fn credential_expiry(&self) -> Option<DateTime<Utc>> {
         self.client.credential_expiry()
+    }
+
+    fn on_credential_renewed(&self, mut f: OnRenewed) {
+        self.client
+            .on_credential_renewed(move |at| with_delivering(|engine| f(engine, at)));
     }
 
     fn open_expecting(&self, origin: &str, token: &str, environment: &str) -> Result<(), String> {

@@ -16,6 +16,7 @@ pub type ListenerId = u64;
 
 type StatusListener = Box<dyn FnMut(&Status)>;
 type CheckedListener = Box<dyn FnMut(bool)>;
+type RenewedListener = Box<dyn FnMut(DateTime<Utc>)>;
 type FrameHandler = Box<dyn FnMut(&Frame)>;
 type Resume = Box<dyn FnMut() -> Frame>;
 type Reply = Box<dyn FnOnce(Result<Value, CallError>)>;
@@ -83,12 +84,16 @@ struct State {
     next_listener: ListenerId,
     status_listeners: Vec<(ListenerId, Option<StatusListener>)>,
     checked_listeners: Vec<(ListenerId, Option<CheckedListener>)>,
+    renewed_listeners: Vec<(ListenerId, Option<RenewedListener>)>,
     /// When the credential runs out; None when it never does or is unknown.
     expires_at: Option<DateTime<Utc>>,
     /// None: [`DEFAULT_RENEW_WITHIN`].
     renew_within: Option<chrono::TimeDelta>,
-    /// Who waits on the renewal in flight; empty while none is.
-    renewing: Vec<Renewed>,
+    /// Who waits on a renewal in flight, by the session it is for;
+    /// empty while none is. `renew_posted` is the sessions a renew
+    /// request is out for.
+    renewing: Vec<((Option<Url>, String), Renewed)>,
+    renew_posted: Vec<(Option<Url>, String)>,
     /// The timings set on it, for [`McClient::copy_timings_to`].
     timings: Timings,
 }
@@ -373,6 +378,21 @@ impl McClient {
         id
     }
 
+    /// Runs `listener` with the new expiry when a renewal completes
+    /// (desktop-qt's McClient::credentialRenewed): whoever keeps the
+    /// credential saves by the new date, while the connection stays
+    /// ready and no status changes.
+    pub fn on_credential_renewed(
+        &self,
+        listener: impl FnMut(DateTime<Utc>) + 'static,
+    ) -> ListenerId {
+        let mut state = self.state();
+        state.next_listener += 1;
+        let id = state.next_listener;
+        state.renewed_listeners.push((id, Some(Box::new(listener))));
+        id
+    }
+
     pub fn remove_listener(&self, id: ListenerId) {
         let mut state = self.state();
         state
@@ -381,6 +401,38 @@ impl McClient {
         state
             .checked_listeners
             .retain(|(listener, _)| *listener != id);
+        state
+            .renewed_listeners
+            .retain(|(listener, _)| *listener != id);
+    }
+
+    fn notify_renewed(&self, at: DateTime<Utc>) {
+        let ids: Vec<_> = self
+            .state()
+            .renewed_listeners
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let listener = self
+                .state()
+                .renewed_listeners
+                .iter_mut()
+                .find(|(listener, _)| *listener == id)
+                .and_then(|(_, listener)| listener.take());
+            let Some(mut listener) = listener else {
+                continue;
+            };
+            listener(at);
+            if let Some((_, slot)) = self
+                .state()
+                .renewed_listeners
+                .iter_mut()
+                .find(|(l, _)| *l == id)
+            {
+                slot.get_or_insert(listener);
+            }
+        }
     }
 
     fn notify_status(&self, status: &Status) {
@@ -607,18 +659,28 @@ impl McClient {
 
     // One renewal at a time; whoever asks meanwhile waits on it.
     fn renew(&self, done: Renewed) {
-        {
+        // The session this renewal is for: a reply that lands after
+        // the client opened (or closed) another writes no expiry
+        // over that session's.
+        let opened = {
             let mut state = self.state();
-            state.renewing.push(done);
-            if state.renewing.len() > 1 {
+            let opened = (state.origin.clone(), state.token.clone());
+            state.renewing.push((opened.clone(), done));
+            if state.renew_posted.contains(&opened) {
                 return;
             }
-        }
+            state.renew_posted.push(opened.clone());
+            opened
+        };
         let client = self.downgrade();
         let id = self.expect(Pending::Value(Box::new(
             move |result: Result<Value, CallError>| {
                 let Some(client) = client.upgrade() else {
                     return;
+                };
+                let still_open = {
+                    let state = client.state();
+                    state.origin == opened.0 && state.token == opened.1
                 };
                 let expires_at = result.as_ref().ok().and_then(|body| {
                     let at = body.get("expiresAt")?.as_str()?;
@@ -626,7 +688,9 @@ impl McClient {
                 });
                 let renewed = match (result, expires_at) {
                     (Ok(_), Some(at)) => {
-                        client.state().expires_at = Some(at.with_timezone(&Utc));
+                        if still_open {
+                            client.state().expires_at = Some(at.with_timezone(&Utc));
+                        }
                         Ok(())
                     }
                     (Ok(_), None) => Err(CallError::new(
@@ -640,9 +704,33 @@ impl McClient {
                         detail: error.detail,
                     }),
                 };
-                let waiting = std::mem::take(&mut client.state().renewing);
+                // A reply for a session the client left renews
+                // nothing here: its waiters fail rather than run
+                // against the session now open.
+                let renewed = if still_open {
+                    renewed
+                } else {
+                    Err(CallError::new(
+                        "The environment credential could not be renewed (the session changed).",
+                    ))
+                };
+                let waiting: Vec<Renewed> = {
+                    let mut state = client.state();
+                    state.renew_posted.retain(|posted| *posted != opened);
+                    state
+                        .renewing
+                        .extract_if(.., |(for_session, _)| *for_session == opened)
+                        .map(|(_, done)| done)
+                        .collect()
+                };
                 for done in waiting {
                     done(renewed.clone());
+                }
+                if still_open
+                    && renewed.is_ok()
+                    && let Some(at) = client.credential_expiry()
+                {
+                    client.notify_renewed(at);
                 }
             },
         )));

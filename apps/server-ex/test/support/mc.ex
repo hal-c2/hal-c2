@@ -1286,7 +1286,7 @@ defmodule HalC2.Test.Mc.World do
   @doc "The text generation calls made so far: `%{\"argv\", \"cwd\", \"prompt\"}` each."
   def text_calls(context) do
     case File.read(Path.join(context.mc.home, "text-calls.jsonl")) do
-      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, text} -> json_lines(text)
       _ -> []
     end
   end
@@ -1594,12 +1594,22 @@ defmodule HalC2.Test.Mc.World do
     context
   end
 
+  # The complete lines of a JSON-lines log a fake writes to while the MC runs: a
+  # read can land in the middle of an append, so a last line without its newline
+  # is left for the next read.
+  defp json_lines(text) do
+    text
+    |> String.split("\n")
+    |> Enum.drop(-1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&JSON.decode!/1)
+  end
+
   @doc "The fake CLI calls so far whose joined args contain `fragment`, as `%{cmd, args, stdin, cwd}` maps."
   def cli_calls(context, fragment \\ "") do
     context.cli.log
     |> File.read!()
-    |> String.split("\n", trim: true)
-    |> Enum.map(&JSON.decode!/1)
+    |> json_lines()
     |> Enum.filter(&(Enum.join(&1["args"], " ") =~ fragment))
   end
 
@@ -2930,7 +2940,7 @@ defmodule HalC2.Test.Mc.World do
   """
   def provider_inputs(context) do
     case File.read(Path.join(context.mc.home, "codex-inputs.jsonl")) do
-      {:ok, lines} -> lines |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, lines} -> json_lines(lines)
       {:error, :enoent} -> []
     end
   end
@@ -2941,7 +2951,7 @@ defmodule HalC2.Test.Mc.World do
   """
   def claude_mcp_servers(context) do
     case File.read(Path.join(context.mc.home, "claude-mcp.jsonl")) do
-      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, text} -> json_lines(text)
       {:error, :enoent} -> []
     end
   end
@@ -2949,7 +2959,7 @@ defmodule HalC2.Test.Mc.World do
   @doc "The arguments of each fake Claude CLI start in this scenario, oldest first."
   def claude_starts(context) do
     case File.read(Path.join(context.mc.home, "claude-argv.jsonl")) do
-      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, text} -> json_lines(text)
       {:error, :enoent} -> []
     end
   end
@@ -3013,7 +3023,7 @@ defmodule HalC2.Test.Mc.World do
         file = if driver == "claudeAgent", do: "claude-inputs.jsonl", else: "acp-inputs.jsonl"
 
         case File.read(Path.join(context.mc.home, file)) do
-          {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+          {:ok, text} -> json_lines(text)
           {:error, :enoent} -> []
         end
     end
@@ -3060,7 +3070,7 @@ defmodule HalC2.Test.Mc.World do
   """
   def codex_sessions(context) do
     case File.read(Path.join(context.mc.home, "codex-sessions.jsonl")) do
-      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, text} -> json_lines(text)
       {:error, :enoent} -> []
     end
   end
@@ -3871,7 +3881,7 @@ defmodule HalC2.Test.Mc.World do
   @doc "What a fake provider (`\"claude\"`, `\"codex\"` or `\"acp\"`) was sent, as decoded JSON lines."
   def provider_log(context, name) do
     case File.read(context.fakes.logs[name]) do
-      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:ok, text} -> json_lines(text)
       {:error, :enoent} -> []
     end
   end

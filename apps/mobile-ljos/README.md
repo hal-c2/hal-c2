@@ -18,7 +18,7 @@ phone is shaped as it is: `docs/internals/mobile-qt.md`.
   screen's exchange, `pairing.json`, environments beside the first),
   `mobile_terminal.rs` (MobileTerminal's key row, text size and line
   picking; its menu is H1), `layout.rs` (MobileApp's `layout.desktop`),
-  `resume.rs` (Resume's decision, unwired without an Android host),
+  `resume.rs` (Resume's decision and its Application wiring),
   `push_crypto.rs` and `push_inbox.rs` (PushCrypto's RFC 8291
   decryption and PushInbox's showing rules, ported; the Android
   receivers that call them wait for hal-c2/ljos-ui#616),
