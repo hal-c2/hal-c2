@@ -530,6 +530,20 @@ ColumnLayout {
             font.pixelSize: Theme.type.body.size
         }
 
+        // An agent that can run in a sandbox may still have no way to its model there,
+        // a sign-in with no API key above all; the MC says why, and what to pick instead.
+        Label {
+            objectName: "codeReviewSandboxRoute"
+            Layout.fillWidth: true
+            visible: settings.provider !== null && settings.provider.sandboxable !== false && !!settings.provider.sandboxRefusal
+            text: settings.values.reviewTrustedOnThisMachine === true
+                ? qsTr("Reviews of pull requests HAL-C2 does not trust run in a sandbox, where %1 fails: %2").arg(settings.provider?.name ?? "").arg(settings.provider?.sandboxRefusal ?? "")
+                : qsTr("Every review runs in a sandbox, where %1 fails: %2").arg(settings.provider?.name ?? "").arg(settings.provider?.sandboxRefusal ?? "")
+            color: settings.errorColor
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.body.size
+        }
+
         Toggle {
             key: "reviewTrustedOnThisMachine"
             title: qsTr("Review trusted pull requests on this machine")
@@ -686,6 +700,20 @@ ColumnLayout {
                     value: (settings.values.publishingByRepository ?? {})[publishing.modelData] ?? ""
                     onPicked: value => settings.setFor("publishingByRepository", publishing.modelData, value === "" ? undefined : value)
                 }
+            }
+        }
+
+        SettingsField {
+            title: qsTr("Review heading")
+            description: qsTr("The first line of every posted review. Leave empty for none.")
+
+            ShellTextField {
+                objectName: "codeReviewSetting:heading"
+                Accessible.name: qsTr("Review heading")
+                Accessible.description: qsTr("The first line of every posted review. Leave empty for none.")
+                implicitWidth: 240
+                text: settings.values.heading ?? ""
+                onTextEdited: settings.set("heading", text)
             }
         }
 

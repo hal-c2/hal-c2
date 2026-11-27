@@ -80,4 +80,27 @@ defmodule HalC2.CodexGeneratedImagesTest do
       assert GeneratedImages.host_path(destination) == path
     end
   end
+
+  # A sandboxed review's Codex (#1412) saves its images in the sandbox: its turn
+  # keeps none to show, so its reply never names a sandbox path as the MC's file.
+  test "a sandboxed review's generated images stay in the sandbox" do
+    turn = %{native_turn_id: "turn-1", ids: %{thread: "thread-1"}}
+    image = %{"id" => "image-1", "status" => "completed", "savedPath" => "/sandbox/fox.png"}
+
+    for state <- [
+          %{turn: turn, sandboxed: true, items: %{}},
+          %{turn: Map.put(turn, :sandbox, true), items: %{}}
+        ] do
+      generating = GeneratedImages.started(state, "turn-1", "image-1")
+      assert GeneratedImages.generating(generating) == []
+
+      saved = GeneratedImages.completed(generating, "turn-1", image)
+      assert saved == state
+      assert GeneratedImages.turn_ended(saved, "completed", :open) == state
+    end
+
+    # Outside a sandbox the same image waits to join the reply.
+    open = GeneratedImages.completed(%{turn: turn, items: %{}}, "turn-1", image)
+    assert %{"turn-1" => %{saved: ["/sandbox/fox.png"]}} = open.images
+  end
 end

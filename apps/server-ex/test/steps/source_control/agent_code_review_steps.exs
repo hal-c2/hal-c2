@@ -32,6 +32,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     "commented" => "comment"
   }
   @counts %{"one" => 1, "two" => 2, "three" => 3, "four" => 4}
+  @heading "## Agentic code review\n\n"
   # A CLIProxyAPI on this machine, as the plugin runs one.
 
   # --- background ------------------------------------------------------------------------
@@ -622,6 +623,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
   end
 
+  step "\#{int} was reviewed with an off-diff finding at an older head commit",
+       %{args: [number]} = context do
+    context =
+      context
+      |> save(%{"repositories" => [context.repository], "activation" => "automatic"})
+      |> open(number)
+      |> refresh()
+      |> started(number)
+      |> report(%{
+        "verdict" => "comment",
+        "summary" => "Mostly fine.",
+        "comments" => [%{"path" => "src/other.ts", "line" => 40, "body" => "Check the caller."}]
+      })
+      |> await_review!(number, &(&1["status"] == "waiting"))
+
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
   step "\#{int} was reviewed at an older head commit after the user asked for it",
        %{args: [number]} = context do
     context =
@@ -982,6 +1006,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "someone who is not a member or collaborator left the unresolved review comment {string} on \#{int}",
        %{args: [body, number]} = context do
     review_comment(context, number, "stranger", "NONE", body)
+  end
+
+  step "{int} members left unresolved review comments on \#{int}",
+       %{args: [count, number]} = context do
+    Enum.reduce(1..count, context, fn i, context ->
+      review_comment(context, number, "octocat", "MEMBER", "Note #{i}.")
+    end)
   end
 
   step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
@@ -1768,13 +1799,40 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the review posted to \#{int} opens with {string} then {string}",
+       %{args: [number, heading, headline]} = context do
+    [_, body | _] = posted_review(context, number)
+    assert String.starts_with?(body, "#{heading}\n\n#{headline}\n\n"), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the review posted to \#{int} does not open with {string}",
+       %{args: [number, prefix]} = context do
+    [_, body | _] = posted_review(context, number)
+    refute String.starts_with?(body, prefix), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the user sets the review heading to {string}", %{args: [heading]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"heading" => heading}
+      })
+
+    Map.put(context, :saved, reply)
+  end
+
   step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
        %{args: [number]} = context do
     [_, body | _] = posted_review(context, number)
     [visible | _] = String.split(body, "<details>")
     assert visible =~ "**Not run**\n\n- the full suite: it needs the staging database"
     assert visible =~ ~r/\*\*Blocked[^\n]*\n\n- the e2e tests: STRIPE_KEY is not set/
-    assert String.starts_with?(body, "No findings.\n\nBumps the HTTP client.\n\n"), body
+
+    assert String.starts_with?(body, "#{@heading}No findings.\n\nBumps the HTTP client.\n\n"),
+           body
+
     context
   end
 
@@ -2306,7 +2364,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert review["event"] == "COMMENT"
-    assert String.starts_with?(review["body"], "**Changes requested**")
+    assert String.starts_with?(review["body"], "#{@heading}**Changes requested**")
     context
   end
 
@@ -2315,14 +2373,51 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "waiting"))
   end
 
+  # gh's stderr has only GitHub's message when its answer also lists `errors`; the
+  # reason is in the body.
   step "GitHub refuses the review", context do
+    refuse_reviews(context, "Can not approve your own pull request")
+  end
+
+  step "the user has an unsubmitted draft review on \#{int} on GitHub", context do
+    refuse_reviews(context, "User can only have one pending review per pull request")
+  end
+
+  step "the user is told to submit or discard their draft review on GitHub, then publish again",
+       context do
+    assert {:error, _, _} = context.reply
+
+    assert inspect(context.reply) =~
+             "This account has an unsubmitted draft review on this pull request on GitHub. " <>
+               "Submit or discard it there, then publish again."
+
+    context
+  end
+
+  step "the review of \#{int} is still waiting, its draft on GitHub left alone",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1["publishError"])
+    assert %{"status" => "waiting", "comments" => [_, _]} = review
+    assert review["publishError"] =~ "Submit or discard it there"
+    # One post, and no call that would submit or discard the user's draft.
+    writes =
+      for c <- World.cli_calls(context, "pulls/#{number}/reviews"), "--method" in c["args"], do: c
+
+    assert [%{"args" => args}] = writes
+    assert "POST" in args
+    context
+  end
+
+  defp refuse_reviews(context, reason) do
     World.cli_rules(context, [
       %{
         "args" => ["--method POST", "pulls/12/reviews"],
-        "stderr" =>
-          "gh: Unprocessable Entity\nCan not approve your own pull request (HTTP 422)\n",
-        "stdout" =>
-          ~s({"message":"Unprocessable Entity","errors":["Can not approve your own pull request"]}),
+        "head" => %{"status" => "HTTP/2.0 422 Unprocessable Entity"}
+      },
+      %{
+        "args" => ["--method POST", "pulls/12/reviews"],
+        "stderr" => "gh: Unprocessable Entity (HTTP 422)\n",
+        "stdout" => JSON.encode!(%{"message" => "Unprocessable Entity", "errors" => [reason]}),
         "exit" => 1
       }
     ])

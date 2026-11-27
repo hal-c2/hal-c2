@@ -127,6 +127,30 @@ defmodule HalC2.Steps.SourceControl.PullRequestRouting do
     context
   end
 
+  step "a client asks for pull request {int} of {string} on {string}",
+       %{args: [number, repository, host]} = context do
+    {reply, context} =
+      World.call(context, "pullRequests.detail", %{
+        "host" => host,
+        "repository" => repository,
+        "number" => number
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the GitHub CLI of {string} answers without a login or an account id",
+       %{args: [remote]} = context do
+    assert remote == context.remote
+
+    context
+    |> World.github_project("acme/shop")
+    |> World.cli_rules([
+      %{"args" => ["auth token"], "stdout" => token("octocat") <> "\n"},
+      %{"args" => ["api user"], "stdout" => %{}}
+    ])
+  end
+
   defp token(login), do: "gho_#{login}_token"
 
   defp sign_in(context, login) do

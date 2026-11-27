@@ -131,6 +131,9 @@ defmodule HalC2.GitActions do
       feature? and not commit? ->
         fail!("Feature-branch checkout is only supported for commit actions.")
 
+      not feature? and (push? or pr?) and branch == nil ->
+        fail!("Cannot #{if pr?, do: "create a pull request", else: "push"} from detached HEAD.")
+
       action == "create_pr" and status["hasWorkingTreeChanges"] ->
         fail!("Commit local changes before creating a PR.")
 
@@ -149,9 +152,6 @@ defmodule HalC2.GitActions do
           do: phase
 
     emit.(%{"kind" => "action_started", "phases" => phases})
-
-    if not feature? and (push? or pr?) and branch == nil,
-      do: fail!("Cannot #{if pr?, do: "create a pull request", else: "push"} from detached HEAD.")
 
     {branch_step, branch, suggestion} =
       if feature? do
@@ -177,7 +177,7 @@ defmodule HalC2.GitActions do
     pr_step =
       if pr? do
         phase!(emit, "pr", "Preparing PR...")
-        pull_request(cwd, branch)
+        pull_request(cwd, branch, push_step["status"] == "pushed")
       else
         %{"status" => "skipped_not_requested"}
       end
@@ -376,7 +376,14 @@ defmodule HalC2.GitActions do
   defp suggestion(cwd, branch, input, include_branch) do
     case input["filePaths"] do
       [_ | _] = paths ->
-        Git.run(cwd, ["reset"])
+        # A reset that fails (another git holds the index lock) stops the commit:
+        # carrying on could commit files the user left out.
+        case Git.run(cwd, ["reset"]) do
+          {:ok, %{status: 0}} -> :ok
+          {:ok, %{err: err}} -> fail!("git reset failed: #{last_lines(err)}")
+          {:error, reason} -> fail!("git reset failed: #{reason}")
+        end
+
         git!(cwd, ["--literal-pathspecs", "add", "-A", "--"] ++ paths)
 
       _ ->
@@ -398,7 +405,11 @@ defmodule HalC2.GitActions do
 
         nil ->
           {:ok, %{out: patch}} =
-            Git.run(cwd, ~w(diff --no-ext-diff --cached --patch --minimal), max_bytes: 200_000)
+            Git.run(
+              cwd,
+              ~w(diff --no-ext-diff --no-textconv --cached --patch --minimal),
+              max_bytes: 200_000
+            )
 
           policy = Style.policy(cwd)
 
@@ -430,28 +441,91 @@ defmodule HalC2.GitActions do
     # An upstream whose remote-tracking ref is gone (its branch was deleted and pruned)
     # still has config; treat it as unset so the push publishes the branch again.
     upstream = upstream && upstream_ref_exists?(cwd, upstream) && upstream
+    upstream_name = upstream && upstream_branch_name(upstream)
+
+    # A local branch named after its upstream under a remote's prefix
+    # ("upstream/effect-atom" tracking "origin/effect-atom") is that branch.
+    same? = upstream_name && Git.same_branch?(cwd, branch, upstream_name)
 
     cond do
-      upstream && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
+      upstream && same? && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
         %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      upstream && upstream.remote ->
-        push!(cwd, ["push"], upstream.remote)
+      upstream && upstream.remote && same? ->
+        # A plain push refuses an upstream of a different name (push.default
+        # simple), so an alias pushes to its upstream branch by name.
+        args =
+          if upstream_name == branch,
+            do: ["push"],
+            else: ["push", upstream.remote, "HEAD:refs/heads/#{upstream_name}"]
+
+        push!(cwd, args, upstream.remote)
         %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      remote = Git.primary_remote(cwd) ->
-        push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"], remote)
+      # Cut from another branch: the upstream is its base, not its publish
+      # target. Publish under its own name — to the configured push remote when
+      # one is set, as git would, else to the base's remote — and remember the base.
+      upstream && upstream.remote ->
+        result = publish(cwd, branch, configured_push_remote(cwd, branch) || upstream.remote)
 
-        %{
-          "status" => "pushed",
-          "branch" => branch,
-          "upstreamBranch" => "#{remote}/#{branch}",
-          "setUpstream" => true
-        }
+        # Publishing replaces the tracking that named the base, so remember
+        # it as it was read: qualified with its remote when that is not the
+        # primary one, or `base_branch/2` would take the primary remote's
+        # branch of the same name instead.
+        base =
+          if upstream.remote == Git.primary_remote(cwd),
+            do: upstream_name,
+            else: upstream.ref
+
+        Git.ok(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+        result
+
+      remote = push_remote(cwd, branch) ->
+        publish(cwd, branch, remote)
 
       true ->
         fail!("Cannot push because no git remote is configured for this repository.")
     end
+  end
+
+  defp upstream_branch_name(%{remote: nil, ref: name}), do: name
+
+  defp upstream_branch_name(%{remote: remote, ref: ref}),
+    do: String.replace_prefix(ref, "#{remote}/", "")
+
+  # Publishes `branch` on `remote` under its own name (a branch named after the
+  # remote's branch loses the remote's prefix) and tracks it there.
+  defp publish(cwd, branch, remote) do
+    name = String.replace_prefix(branch, "#{remote}/", "")
+    push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{name}"], remote)
+
+    %{
+      "status" => "pushed",
+      "branch" => branch,
+      "upstreamBranch" => "#{remote}/#{name}",
+      "setUpstream" => true
+    }
+  end
+
+  # The remote a first push goes to: the branch's pushRemote, the repository's
+  # pushDefault, then the primary remote — as git's own settings name them.
+  defp push_remote(cwd, branch),
+    do: configured_push_remote(cwd, branch) || Git.primary_remote(cwd)
+
+  # The push remote git's own settings name for `branch` (`branch.<name>.pushRemote`,
+  # then `remote.pushDefault`), or nil when neither names a remote that exists.
+  defp configured_push_remote(cwd, branch) do
+    remotes = Git.remotes(cwd)
+
+    configured =
+      Enum.find_value(["branch.#{branch}.pushRemote", "remote.pushDefault"], fn key ->
+        case Git.ok(cwd, ["config", "--get", key]) do
+          {:ok, out} -> String.trim(out) |> then(&if(&1 == "", do: nil, else: &1))
+          _ -> nil
+        end
+      end)
+
+    if configured in remotes, do: configured
   end
 
   defp upstream_ref_exists?(cwd, %{remote: nil, ref: ref}),
@@ -461,36 +535,43 @@ defmodule HalC2.GitActions do
     do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{ref}"]))
 
   # The open pull request for this branch, or a new one: on Forgejo through its API,
-  # anywhere else through `gh`.
-  defp pull_request(cwd, branch) do
+  # anywhere else through `gh`. `pushed?` says this action's push step ran and
+  # pushed, which is what makes a configured push remote the published one.
+  defp pull_request(cwd, branch, pushed?) do
     remote = Git.primary_remote(cwd)
     url = remote && remote_url(cwd, remote)
+    target = url && PullRequests.parse_remote(url)
 
-    case url && PullRequests.parse_remote(url) do
-      %{kind: "forgejo"} = target -> forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
-      %{kind: kind} when kind not in ["unknown"] -> github_pull_request(cwd, branch, kind)
-      _ -> github_pull_request(cwd, branch, "github")
+    case target do
+      %{kind: "forgejo"} ->
+        forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
+
+      %{kind: kind} when kind not in ["unknown"] ->
+        github_pull_request(cwd, branch, kind, target, pushed?)
+
+      _ ->
+        github_pull_request(cwd, branch, "github", target, pushed?)
     end
   end
 
   # The user asked for this pull request: its reads and the create go through a pause.
   # `kind` is the remote's host, which decides the change request template the text follows;
-  # a host `gh` is not known to serve (self-hosted) is treated as GitHub.
-  defp github_pull_request(cwd, branch, kind),
-    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch, kind) end)
+  # a host `gh` is not known to serve (self-hosted) is treated as GitHub. `target` is
+  # the base repository as the primary remote names it (or nil), against which a
+  # fork the branch was published to is told apart.
+  defp github_pull_request(cwd, branch, kind, target, pushed?),
+    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch, kind, target, pushed?) end)
 
-  defp create_github_pull_request(cwd, branch, kind) do
+  defp create_github_pull_request(cwd, branch, kind, target, pushed?) do
     System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
       fail!("Creating a PR needs the GitHub CLI (gh).")
 
-    base = pr_base(cwd, branch)
+    {base, base_qualified} = pr_base(cwd, branch)
+    {head_branch, fork_owner} = github_head(cwd, branch, target, pushed?)
+    head = if fork_owner, do: "#{fork_owner}:#{head_branch}", else: head_branch
 
-    case gh_json(
-           cwd,
-           ~w(pr list --state open --limit 1 --json number,title,url,baseRefName,headRefName --head) ++
-             [branch]
-         ) do
-      [%{"url" => url} = pr | _] ->
+    case existing_github_pull_request(cwd, head_branch, fork_owner) do
+      %{"url" => url} = pr ->
         %{
           "status" => "opened_existing",
           "url" => url,
@@ -501,10 +582,11 @@ defmodule HalC2.GitActions do
         }
 
       _ ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, kind)
+        %{"title" => title, "body" => body} =
+          pr_content(cwd, base, base_qualified, branch, kind)
 
         args =
-          ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
+          ["pr", "create", "--base", base, "--head", head, "--title", title] ++
             ["--body-file", "-"]
 
         case GitHub.gh(cwd, args, input: body, timeout: 120_000) do
@@ -516,7 +598,7 @@ defmodule HalC2.GitActions do
                   "url" => url,
                   "number" => String.to_integer(number),
                   "baseBranch" => base,
-                  "headBranch" => branch,
+                  "headBranch" => head_branch,
                   "title" => title
                 }
 
@@ -530,10 +612,117 @@ defmodule HalC2.GitActions do
     end
   end
 
+  # The open pull request from `head_branch`, or nil. `gh pr list --head` takes
+  # a branch name only (`<owner>:<branch>` is not supported there), so a list
+  # for a fork's branch also holds same-named branches on the base repository
+  # and other forks: for a fork, more are fetched and only the fork owner's
+  # is taken.
+  defp existing_github_pull_request(cwd, head_branch, fork_owner) do
+    limit = if fork_owner, do: "100", else: "1"
+
+    args =
+      ~w(pr list --state open --limit) ++
+        [limit] ++
+        ~w(--json number,title,url,baseRefName,headRefName,headRepositoryOwner --head) ++
+        [head_branch]
+
+    case gh_json(cwd, args) do
+      prs when is_list(prs) -> Enum.find(prs, &own_pull_request?(&1, fork_owner))
+      _ -> nil
+    end
+  end
+
+  # Whether a listed pull request is the fork's: only one whose head owner
+  # `gh` names as the fork's owner is (`gh` always returns the owner when
+  # asked, so a reply naming none matches nothing).
+  defp own_pull_request?(_pr, nil), do: true
+
+  defp own_pull_request?(pr, fork_owner) do
+    case get_in(pr, ["headRepositoryOwner", "login"]) do
+      login when is_binary(login) -> String.downcase(login) == String.downcase(fork_owner)
+      _ -> false
+    end
+  end
+
+  # The branch the pull request is from, as its remote has it (`pr_head/2`),
+  # and the owner of the fork it was published to — nil when that is the base
+  # repository itself, as `forgejo_head/3` tells it.
+  defp github_head(cwd, branch, target, pushed?),
+    do: {pr_head(cwd, branch), fork_owner(cwd, branch, target && target.repository, pushed?)}
+
+  # The owner is read from the remote's push URL: git pushes to `pushurl`
+  # when one is set, whatever the fetch URL names.
+  defp fork_owner(cwd, branch, base_repository, pushed?) do
+    with remote when is_binary(remote) <- published_remote(cwd, branch, pushed?),
+         url when is_binary(url) <- push_url(cwd, remote),
+         %{repository: repository} <- PullRequests.parse_remote(url),
+         false <- same_repository?(repository, base_repository),
+         [owner, _name | _] <- String.split(repository, "/"),
+         do: owner,
+         else: (_ -> nil)
+  end
+
+  # Read from config, as `remote_url/2` reads the fetch URL: `git remote
+  # get-url --push` would first expand the checkout's `insteadOf` rewrites,
+  # which name transport aliases (or local paths), not the repository.
+  defp push_url(cwd, remote) do
+    case Git.ok(cwd, ["config", "--get", "remote.#{remote}.pushurl"]) do
+      {:ok, url} -> String.trim(url)
+      _ -> remote_url(cwd, remote)
+    end
+  end
+
+  defp same_repository?(_repository, nil), do: false
+
+  defp same_repository?(repository, base),
+    do: String.downcase(repository) == String.downcase(base)
+
+  # The remote the branch was published to, following `push/2`'s arms: an
+  # alias is pushed to its upstream's remote by name, but every other push
+  # honours the branch's push remote settings first — a same-named upstream
+  # included, since a plain `git push` sends it to `pushRemote`. A configured
+  # push remote is only the published one when the push ran (this action's,
+  # or an earlier one the remote-tracking ref still shows): when publication
+  # was skipped, the branch lives where its upstream says, however its push
+  # settings are aimed.
+  defp published_remote(cwd, branch, pushed?) do
+    case Git.upstream(cwd, branch) do
+      %{remote: remote} = upstream when is_binary(remote) ->
+        name = upstream_branch_name(upstream)
+
+        cond do
+          name != branch and Git.same_branch?(cwd, branch, name) ->
+            remote
+
+          configured = configured_push_remote(cwd, branch) ->
+            if pushed? or remote_branch?(cwd, configured, branch),
+              do: configured,
+              else: remote
+
+          true ->
+            remote
+        end
+
+      _ ->
+        configured_push_remote(cwd, branch)
+    end
+  end
+
+  # Whether `remote` is known to hold `branch` (under the name publishing
+  # gives it there), from its remote-tracking ref.
+  defp remote_branch?(cwd, remote, branch) do
+    name = String.replace_prefix(branch, "#{remote}/", "")
+
+    match?(
+      {:ok, _},
+      Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{remote}/#{name}"])
+    )
+  end
+
   # As the Forgejo provider's `createChangeRequest`: in the repository the primary
   # remote names, from `owner:branch` when the branch is pushed to a fork of it.
   defp forgejo_pull_request(cwd, branch, target) do
-    base = pr_base(cwd, branch)
+    {base, base_qualified} = pr_base(cwd, branch)
     {head_branch, fork} = forgejo_head(cwd, branch, target)
     owner = fork && fork |> String.split("/") |> hd()
 
@@ -555,7 +744,8 @@ defmodule HalC2.GitActions do
         }
 
       [] ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, target.kind)
+        %{"title" => title, "body" => body} =
+          pr_content(cwd, base, base_qualified, branch, target.kind)
 
         request = %{
           "base" => base,
@@ -621,21 +811,53 @@ defmodule HalC2.GitActions do
     end
   end
 
-  defp pr_base(cwd, branch) do
-    (Git.base_branch(cwd, branch) || "main")
-    |> String.replace_prefix("#{Git.primary_remote(cwd)}/", "")
-    |> then(&if(&1 == branch, do: "main", else: &1))
+  # The branch name the pull request is from, as the remote has it: a local
+  # alias of its upstream ("upstream/effect-atom" tracking "origin/effect-atom")
+  # is published under the upstream's name, so that is its head. A branch cut
+  # from another keeps its own name (its upstream is its base, not itself).
+  defp pr_head(cwd, branch) do
+    case Git.upstream(cwd, branch) do
+      %{remote: remote} = upstream when is_binary(remote) ->
+        name = upstream_branch_name(upstream)
+        if Git.same_branch?(cwd, branch, name), do: name, else: branch
+
+      _ ->
+        branch
+    end
   end
 
-  # The title and body the text generator writes for the branch's commits since `base`.
-  defp pr_content(cwd, base, branch, kind) do
-    base_ref = base_ref(cwd, base)
+  # The base twice: as the host names it (its branch name, without the local
+  # remote it was read from, which need not be the primary one) for `--base`,
+  # and qualified with that remote for local git work, or the primary
+  # remote's branch of the same name would be compared against instead.
+  defp pr_base(cwd, branch) do
+    base = Git.base_branch(cwd, branch) || "main"
+
+    name =
+      Enum.find_value(Git.remotes(cwd), base, fn remote ->
+        case String.replace_prefix(base, "#{remote}/", "") do
+          ^base -> nil
+          stripped -> stripped
+        end
+      end)
+
+    if name == branch, do: {"main", "main"}, else: {name, base}
+  end
+
+  # The title and body the text generator writes for the branch's commits
+  # since `base`, compared against its qualified ref.
+  defp pr_content(cwd, base, base_qualified, branch, kind) do
+    base_ref = base_ref(cwd, base_qualified)
     range = "#{base_ref}...HEAD"
     {:ok, commits} = Git.ok(cwd, ["log", "--oneline", String.replace(range, "...", "..")])
     {:ok, %{out: stat}} = Git.run(cwd, ["diff", "--stat", range], max_bytes: 100_000)
 
     {:ok, %{out: patch}} =
-      Git.run(cwd, ["diff", "--no-ext-diff", "--patch", "--minimal", range], max_bytes: 200_000)
+      Git.run(
+        cwd,
+        ["diff", "--no-ext-diff", "--no-textconv", "--patch", "--minimal", range],
+        max_bytes: 200_000
+      )
 
     case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
            policy: Style.policy(cwd),
@@ -782,7 +1004,13 @@ defmodule HalC2.GitActions do
 
       {:ok, %{err: err}} ->
         {hint, cta} = push_refusal(err, remote_repository(cwd, remote))
-        fail!("git push failed: #{last_lines(err)}#{hint}", cta)
+
+        # A named refusal (the workflow scope cases above) keeps its hint; a plain
+        # rejection is said in fixed words, quoting none of the remote's output.
+        case {hint, push_rejection(err)} do
+          {"", message} when is_binary(message) -> fail!(message)
+          _ -> fail!("git push failed: #{last_lines(err)}#{hint}", cta)
+        end
 
       {:error, reason} ->
         fail!("git push failed: #{reason}")
@@ -837,6 +1065,21 @@ defmodule HalC2.GitActions do
 
       true ->
         {"", nil}
+    end
+  end
+
+  # Why the remote turned a push away, from git's own rejection lines, said in
+  # fixed words: a hook's or the server's own output is never quoted.
+  defp push_rejection(err) do
+    cond do
+      err =~ "non-fast-forward" ->
+        "The remote has commits this branch doesn't have. Pull or rebase, then push again."
+
+      err =~ "[remote rejected]" ->
+        "The remote rejected the push. Push this branch from a terminal to see the server's message."
+
+      true ->
+        nil
     end
   end
 

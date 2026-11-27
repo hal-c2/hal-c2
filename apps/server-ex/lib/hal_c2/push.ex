@@ -165,7 +165,7 @@ defmodule HalC2.Push do
     if Process.whereis(HalC2.Auth), do: {:ok, _, _} = HalC2.Auth.subscribe(self())
 
     registrations = load()
-    shell = HalC2.Shell.rows()
+    shell = HalC2.Shell.query(kind: "thread")
 
     state = %{
       clock: clock,
@@ -174,7 +174,10 @@ defmodule HalC2.Push do
       started_at: clock.(),
       seen: %{},
       # The MCs whose rows were seen: the first rows of another are a baseline. The
-      # shell sends a member's rows whole when it joins, even none.
+      # shell sends a member's rows whole when it joins, even none, and records a
+      # version for every member whose rows it takes (`held_mcs/0`), so one with
+      # no threads — or none at all — is covered. A descriptor alone is not: it
+      # can arrive before the rows it travels with.
       known:
         MapSet.new([node() | HalC2.Shell.held_mcs()] ++ for({{mc, _id}, _} <- shell, do: mc)),
       registrations: registrations,
@@ -194,7 +197,7 @@ defmodule HalC2.Push do
     {seen, _due} = Alerts.observe(%{}, threads(shell), state.started_at)
     # Alerts held before a restart go when their quiet hours allow.
     if state.held != %{}, do: send(self(), :tick)
-    {:ok, %{state | seen: seen}}
+    {:ok, %{state | seen: seen}, :hibernate}
   end
 
   # Registrations of sessions revoked while the MC was down, and ones saved
@@ -306,8 +309,8 @@ defmodule HalC2.Push do
     {:noreply, %{state | scheduled: true}}
   end
 
-  def handle_info(:evaluate, state), do: {:noreply, evaluate_rows(state)}
-  def handle_info(:tick, state), do: {:noreply, evaluate(%{state | timer: nil}, [])}
+  def handle_info(:evaluate, state), do: {:noreply, evaluate_rows(state), :hibernate}
+  def handle_info(:tick, state), do: {:noreply, evaluate(%{state | timer: nil}, []), :hibernate}
 
   # A machine removed from the cluster that joins again is new again.
   def handle_info({:hal_c2_shell, {:mc, mc, :removed}}, state),
@@ -413,7 +416,7 @@ defmodule HalC2.Push do
   defp evaluate(state, due) do
     now = state.clock.()
     live? = Enum.any?(state.registrations, fn {_, r} -> r["liveActivity"] end)
-    all = if live?, do: threads(HalC2.Shell.rows()), else: []
+    all = if live?, do: threads(HalC2.Shell.query(kind: "thread")), else: []
     activity = if live?, do: Alerts.activity(all, now)
 
     state =

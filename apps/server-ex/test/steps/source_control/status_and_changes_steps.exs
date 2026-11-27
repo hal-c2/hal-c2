@@ -979,6 +979,19 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     context
   end
 
+  step "{string} exists only on this machine and has no upstream",
+       %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    World.commit!(context.cwd, %{"src/new.ts" => "export const fresh = 1\n"}, "Add a fresh file")
+    context
+  end
+
+  step "the host is not asked about the branch", context do
+    branch = git(context, ~w(branch --show-current))
+    assert World.cli_calls(context, "--head #{branch}") == []
+    context
+  end
+
   step "status is read for {string} on {string}", %{args: [_title, branch]} = context do
     assert git(context, ~w(branch --show-current)) == branch
     {reply, context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})

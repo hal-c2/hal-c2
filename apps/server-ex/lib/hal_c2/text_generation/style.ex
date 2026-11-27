@@ -65,13 +65,20 @@ defmodule HalC2.TextGeneration.Style do
 
     claude? = TextGeneration.driver(TextGeneration.model_selection(cwd, :writer)) == "claudeAgent"
 
+    agents = instructions(cwd, "AGENTS.md")
+
+    # A CLAUDE.md that copies AGENTS.md would say the same thing twice.
+    claude =
+      if claude? and file_text(cwd, "CLAUDE.md") != file_text(cwd, "AGENTS.md"),
+        do: instructions(cwd, "CLAUDE.md")
+
     examples =
       [
         if(subjects != [],
           do: Enum.join(["Recent commit subjects from this repository:" | subjects], "\n")
         ),
-        instructions(cwd, "AGENTS.md"),
-        if(claude?, do: instructions(cwd, "CLAUDE.md"))
+        agents,
+        claude
       ]
       |> Enum.reject(&is_nil/1)
       |> Enum.join("\n\n")
@@ -87,14 +94,21 @@ defmodule HalC2.TextGeneration.Style do
     end
   end
 
-  # A regular file of at most 20 kB in the checkout itself; links are not followed.
   defp instructions(cwd, name) do
+    case file_text(cwd, name) do
+      nil -> nil
+      text -> "Local #{name}:\n#{text}"
+    end
+  end
+
+  # A regular file of at most 20 kB in the checkout itself; links are not followed.
+  defp file_text(cwd, name) do
     path = Path.join(cwd, name)
 
     with {:ok, %File.Stat{type: :regular, size: size}} when size <= 20_000 <- File.lstat(path),
          {:ok, text} <- File.read(path),
          text when text != "" <- String.trim(text) do
-      "Local #{name}:\n#{text}"
+      text
     else
       _ -> nil
     end

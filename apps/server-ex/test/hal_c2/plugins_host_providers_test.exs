@@ -66,6 +66,29 @@ defmodule HalC2.PluginsHostProvidersTest do
            } = listed()
   end
 
+  # Settings → Code review says before a review fails when a sandbox has no way to the
+  # agent's model. With the CLIProxyAPI plugin's instance there it is named instead (the
+  # plugin runs in the code-review feature's scenario of it).
+  test "an instance says why a sandboxed review on it would fail for want of a key" do
+    keys = for key <- ~w(ANTHROPIC_API_KEY OPENAI_API_KEY), do: {key, System.get_env(key)}
+    for {key, _} <- keys, do: System.delete_env(key)
+
+    on_exit(fn ->
+      for {key, value} <- keys, value != nil, do: System.put_env(key, value)
+    end)
+
+    assert %{
+             "claude-work" => %{"sandboxRefusal" => nil},
+             "claudeAgent" => %{"sandboxRefusal" => bare}
+           } =
+             listed()
+
+    assert bare =~ "needs ANTHROPIC_API_KEY for Claude"
+    assert bare =~ "which the CLIProxyAPI plugin adds"
+
+    assert listed()["codex"]["sandboxRefusal"] =~ "needs OPENAI_API_KEY for Codex"
+  end
+
   test "each instance carries its provider status in the snapshot's vocabulary" do
     for {_, entry} <- listed() do
       assert is_boolean(entry["enabled"])
@@ -85,11 +108,15 @@ defmodule HalC2.PluginsHostProvidersTest do
     encoded = JSON.encode!(entries)
 
     refute encoded =~ "sk-ant-secret"
-    refute encoded =~ "ANTHROPIC_API_KEY"
+    # A sandbox's refusal names the variable a key goes in, never the instance's own.
+    refute JSON.encode!(
+             Map.new(entries, fn {id, entry} -> {id, Map.delete(entry, "sandboxRefusal")} end)
+           ) =~
+             "ANTHROPIC_API_KEY"
 
     for {_, entry} <- entries do
       assert Map.keys(entry) --
-               ~w(instanceId name driverKind enabled installed status availability auth sandboxable models) ==
+               ~w(instanceId name driverKind enabled installed status availability auth sandboxable sandboxRefusal models) ==
                []
     end
   end

@@ -39,7 +39,11 @@ defmodule HalC2.Test.Storage do
 
     World.put_app_env(
       :service_platform,
-      if(platform == "macOS", do: {:unix, :darwin}, else: {:unix, :linux})
+      case platform do
+        "macOS" -> {:unix, :darwin}
+        "Windows" -> {:win32, :nt}
+        _ -> {:unix, :linux}
+      end
     )
 
     context = World.capture_log(context)
@@ -540,7 +544,13 @@ defmodule HalC2.Test.Storage do
   def service(context, command) do
     context = user(context)
     log = service_manager(context)
-    {:ok, text} = as_release(fn -> HalC2.Service.command([command]) end)
+    # A command that fails (an unsupported platform, say) says so in its output.
+    text =
+      case as_release(fn -> HalC2.Service.command([command]) end) do
+        {:ok, text} -> text
+        {:error, text} -> text
+      end
+
     Map.merge(context, %{service_output: text, service_tools: log})
   end
 

@@ -1114,8 +1114,8 @@ defmodule HalC2.PullRequests do
     id = input["projectId"]
 
     owner =
-      Enum.find_value(HalC2.Shell.rows(), node(), fn
-        {{mc, ^id}, {"project", _}} -> mc
+      Enum.find_value(HalC2.Shell.query(kind: "project", id: id), node(), fn
+        {{mc, _id}, {"project", _}} -> mc
         _ -> nil
       end)
 
@@ -1586,8 +1586,9 @@ defmodule HalC2.PullRequests do
       end
 
     threads =
-      for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-          host != nil and mc == node() and row["deletedAt"] == nil,
+      for {{_mc, _}, {"thread", row}} <-
+            HalC2.Shell.query(mc: :local, kind: "thread", present: "pullRequests"),
+          host != nil and row["deletedAt"] == nil,
           Enum.any?(row["pullRequests"] || [], &linked?(&1, host, repository, ref["number"])) do
         row
       end
@@ -1627,8 +1628,9 @@ defmodule HalC2.PullRequests do
   # they were told by (`origin`, else the first).
   @doc "This MC's projects whose checkout has a remote, with its host and repository."
   def projects do
-    for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
-        mc == node() and is_binary(root) and project["deletedAt"] == nil,
+    for {{_mc, id}, {"project", %{"workspaceRoot" => root} = project}} <-
+          HalC2.Shell.query(mc: :local, kind: "project", present: "workspaceRoot"),
+        is_binary(root) and project["deletedAt"] == nil,
         remote = remote(root) do
       Map.merge(remote, %{
         id: project["id"] || id,

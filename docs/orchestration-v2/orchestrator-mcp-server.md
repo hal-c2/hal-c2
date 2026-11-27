@@ -331,6 +331,11 @@ invalid_request
 orchestration_error
 ```
 
+A plugin's tool failure also names the plugin in `plugin`. Its `code` and `details`
+are the plugin's own when it returned a structured error (`HalC2.Plugins.McpToolPack`),
+and `plugin_failed` when it crashed or returned anything else, so a plugin's codes are
+never mistaken for HAL-C2's.
+
 ## Code Ownership
 
 - Tool schemas and instructions: `apps/server-ex/priv/mcp_tools.json`,

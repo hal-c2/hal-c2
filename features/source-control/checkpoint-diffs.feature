@@ -198,7 +198,7 @@ Feature: What each turn changed
 
   # Upstream #29579: under diff.suppressBlankEmpty a turn's diff wrote blank context lines empty,
   # so the clients dropped them and numbered every later line of the hunk wrong.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A turn's diff keeps blank context lines when git is set to write them empty
     Given the user set git to suppress blank context lines in the project
     And turn 3 changed a line of "src/cart.ts" that follows a blank line
