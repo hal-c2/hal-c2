@@ -258,6 +258,7 @@ impl Phone {
                 token: "session".into(),
                 label: "env-1".into(),
                 environment_id: "env-1".into(),
+                expires_at: String::new(),
             },
         ));
         let inbox = Inbox::new(&data);
