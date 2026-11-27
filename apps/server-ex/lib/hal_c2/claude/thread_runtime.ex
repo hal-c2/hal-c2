@@ -259,7 +259,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   def start_link(thread_id),
     do:
       GenServer.start_link(__MODULE__, thread_id,
-        name: {:via, Registry, {HalC2.Claude.Registry, thread_id}}
+        name: {:via, Registry, {HalC2.Claude.Registry, thread_id}},
+        # A turn's large provider messages would otherwise sit on the heap of a
+        # runtime idle between turns, which never GCs on its own.
+        hibernate_after: 15_000
       )
 
   defp ensure(thread_id) do

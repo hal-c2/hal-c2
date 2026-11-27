@@ -84,13 +84,13 @@ defmodule HalC2.StorageCleanup do
   end
 
   @impl true
-  def handle_call(:sweep, _from, state), do: {:reply, :ok, %{state | report: run()}}
+  def handle_call(:sweep, _from, state), do: {:reply, :ok, %{state | report: run()}, :hibernate}
 
   def handle_call(:report, _from, state), do: {:reply, state.report, state}
 
   @impl true
   def handle_info(:tick, state) do
-    {:noreply, %{state | report: run(), timer: schedule(:timer.hours(1))}}
+    {:noreply, %{state | report: run(), timer: schedule(:timer.hours(1))}, :hibernate}
   end
 
   # A changed policy is applied at once; other settings changes are not a reason to sweep.
@@ -102,7 +102,7 @@ defmodule HalC2.StorageCleanup do
         do: %{state | report: run()},
         else: state
 
-    {:noreply, %{state | policy: policy}}
+    {:noreply, %{state | policy: policy}, :hibernate}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -141,7 +141,7 @@ defmodule HalC2.StorageCleanup do
     HalC2.Scratch.clear_leftovers()
 
     # An empty sidebar has not been read yet, and every folder would look like nobody's.
-    if HalC2.Shell.rows() != [],
+    if HalC2.Shell.query(limit: 1) != [],
       do: HalC2.Scratch.sweep(scratch_threads(), HalC2.Scratch.idle_days(settings), now)
 
     for {dir, key} <- [
@@ -156,8 +156,7 @@ defmodule HalC2.StorageCleanup do
   # This MC's threads as `HalC2.Scratch.stale/4` reads them, a live session or a
   # background task keeping a thread running however long ago its last turn was.
   defp scratch_threads do
-    for {{mc, id}, {"thread", thread}} <- HalC2.Shell.rows(),
-        mc == node(),
+    for {{_mc, id}, {"thread", thread}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
         thread["deletedAt"] == nil do
       running? =
         thread["activeRunId"] != nil or running_background?(thread) or
@@ -208,9 +207,18 @@ defmodule HalC2.StorageCleanup do
   end
 
   defp local_rows do
-    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
-    projects = for {"project", project} <- rows, into: %{}, do: {project["id"], project}
-    threads = for {"thread", thread} <- rows, is_binary(thread["worktreePath"]), do: thread
+    projects =
+      for {{_mc, _id}, {"project", project}} <-
+            HalC2.Shell.query(mc: :local, kind: "project"),
+          into: %{},
+          do: {project["id"], project}
+
+    threads =
+      for {{_mc, _id}, {"thread", thread}} <-
+            HalC2.Shell.query(mc: :local, kind: "thread", present: "worktreePath"),
+          is_binary(thread["worktreePath"]),
+          do: thread
+
     {projects, threads}
   end
 
@@ -382,13 +390,16 @@ defmodule HalC2.StorageCleanup do
       end)
 
     session? =
-      Enum.any?(HalC2.Shell.rows(), fn
-        {{mc, id}, {"thread", %{"worktreePath" => wt}}} when mc == node() and is_binary(wt) ->
-          within?(Path.expand(wt), path) and session?(id)
+      Enum.any?(
+        HalC2.Shell.query(mc: :local, kind: "thread", present: "worktreePath"),
+        fn
+          {{_mc, id}, {"thread", %{"worktreePath" => wt}}} when is_binary(wt) ->
+            within?(Path.expand(wt), path) and session?(id)
 
-        _ ->
-          false
-      end)
+          _ ->
+            false
+        end
+      )
 
     cond do
       terminal? -> "Open terminal"
