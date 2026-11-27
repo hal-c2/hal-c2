@@ -37,6 +37,14 @@ defmodule HalC2.ServiceTest do
     %{log: log}
   end
 
+  test "a platform with no service manager refuses install, restart and uninstall" do
+    Application.put_env(:hal_c2, :service_platform, {:win32, :nt})
+    message = "Background services are supported on Linux (systemd) and macOS only."
+    assert Service.install() == {:error, message}
+    assert Service.restart() == {:error, message}
+    assert Service.uninstall() == {:error, message}
+  end
+
   test "lingering that is only switched off is switched on before the service changes",
        %{log: log} do
     assert {:ok, %{"current" => true, "problems" => []}} = Service.install()

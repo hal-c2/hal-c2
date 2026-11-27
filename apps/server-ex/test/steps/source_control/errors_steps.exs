@@ -211,6 +211,36 @@ defmodule HalC2.Steps.SourceControl.Errors do
     context
   end
 
+  # A committed change on the named branch, then the remote turning its push away:
+  # a declining pre-receive hook, or the remote having moved on without it.
+  step ~r/^git reports the push of "(?<branch>[^"]+)" as (?<rejection>rejected by the remote \(a declining hook\)|rejected as not a fast-forward)$/,
+       %{args: [branch, rejection]} = context do
+    World.git!(context.cwd, ["checkout", "-q", "-b", branch])
+    World.commit!(context.cwd, %{"src/tax.ts" => "export const tax = 1\n"}, "Add tax")
+
+    case rejection do
+      "rejected by the remote (a declining hook)" ->
+        hook = Path.join([context.bare, "hooks", "pre-receive"])
+        File.write!(hook, "#!/bin/sh\necho 'pushes are frozen' >&2\nexit 1\n")
+        File.chmod!(hook, 0o755)
+        Map.put(context, :remote_said, "pushes are frozen")
+
+      "rejected as not a fast-forward" ->
+        World.git!(context.cwd, ["push", "-q", "origin", branch])
+        World.git!(context.cwd, ["reset", "-q", "--hard", "HEAD~1"])
+        World.commit!(context.cwd, %{"src/tax.ts" => "export const tax = 2\n"}, "Add tax again")
+        Map.put(context, :remote_said, "non-fast-forward")
+    end
+  end
+
+  step "the failure quotes none of the remote's output", context do
+    message = World.failure(context)
+    refute message =~ context.remote_said
+    refute message =~ "hint:"
+    refute message =~ "remote:"
+    context
+  end
+
   step "the user is told the repository could not be found on GitHub", context do
     assert {:error, message, detail} = context.reply
     assert detail["provider"] == "github"

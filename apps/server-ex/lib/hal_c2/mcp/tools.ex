@@ -412,8 +412,8 @@ defmodule HalC2.Mcp.Tools do
 
   def run("hal_c2_project_list", args, _caller) do
     projects =
-      for {{mc, _}, {"project", row}} <- HalC2.Shell.rows(),
-          mc == node() and row["deletedAt"] == nil,
+      for {{_mc, _}, {"project", row}} <- HalC2.Shell.query(mc: :local, kind: "project"),
+          row["deletedAt"] == nil,
           do: project(row)
 
     cursor = args["cursor"] || 0
@@ -732,8 +732,9 @@ defmodule HalC2.Mcp.Tools do
   @doc "A project's threads that are not deleted, most recently updated first."
   def project_threads(project_id) do
     for(
-      {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-      mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+      {{_mc, _}, {"thread", row}} <-
+        HalC2.Shell.query(mc: :local, kind: "thread", where: %{"projectId" => project_id}),
+      row["deletedAt"] == nil,
       do: row
     )
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
@@ -756,8 +757,8 @@ defmodule HalC2.Mcp.Tools do
   @doc "Every thread on this MC that is not deleted, most recently updated first."
   def all_threads do
     for(
-      {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
-      mc == node() and row["deletedAt"] == nil,
+      {{_mc, _}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
+      row["deletedAt"] == nil,
       do: row
     )
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)

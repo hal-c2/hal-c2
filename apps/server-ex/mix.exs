@@ -87,6 +87,9 @@ defmodule HalC2.MixProject do
       # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
       {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
+      # The streams' memory-release receipt (`HalC2.Streams.Server`); already
+      # carried by Bandit and Plug, named here because the MC emits on it itself.
+      {:telemetry, "~> 1.0"},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
       # Slack's Socket Mode (HalC2.Slack.Socket).

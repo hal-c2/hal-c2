@@ -748,6 +748,26 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     context
   end
 
+  step "the user changed one setting", context do
+    Mc.ensure(HalC2.Settings)
+
+    Map.merge(context, %{
+      saved_before: saved(),
+      changed_setting: %{"timestampFormat" => "24-hour"}
+    })
+  end
+
+  step "the MC saves the settings", context do
+    World.update_settings(context, context.changed_setting)
+  end
+
+  step "settings.json holds only that setting", context do
+    # Nothing but the change was written: no default is pinned into the file.
+    assert saved() == Map.merge(context.saved_before, context.changed_setting)
+    assert (Map.keys(saved()) -- Map.keys(context.saved_before)) -- ["timestampFormat"] == []
+    context
+  end
+
   defp settings_path, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
 
   defp saved do

@@ -768,6 +768,16 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   # --- helpers -------------------------------------------------------------------
 
+  step "the repository {string} is looked up", %{args: [repository]} = context do
+    assert Enum.any?(
+             World.cli_calls(context, "repo view"),
+             &(Enum.join(&1["args"], " ") =~ "repo view #{repository} ")
+           ),
+           inspect(World.cli_calls(context, "repo view"))
+
+    context
+  end
+
   defp discovered(context, label) do
     %{"versionControlSystems" => vcs, "sourceControlProviders" => providers} = context.discovery
     Enum.find(vcs ++ providers, &(&1["label"] == label)) || flunk("#{label} was not reported")

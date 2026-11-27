@@ -42,7 +42,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
     end
 
     Process.send_after(self(), :tick, interval)
-    {:noreply, interval}
+    {:noreply, interval, :hibernate}
   end
 
   @doc """
@@ -55,10 +55,19 @@ defmodule HalC2.Orchestration.LimitRecovery do
     auto_resume = settings["autoResumeLimitedThreads"] == true
     snooze = settings["snoozeLimitedThreads"] == true
 
-    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+    limited =
+      Enum.uniq_by(
+        HalC2.Shell.query(
+          mc: :local,
+          kind: "thread",
+          where: %{"lastErrorClass" => "usage_limit"}
+        ) ++
+          HalC2.Shell.query(mc: :local, kind: "thread", present: "limitRecovery"),
+        fn {{_mc, thread_id}, _row} -> thread_id end
+      )
+
+    for {{_mc, thread_id}, {"thread", _row}} <- limited,
         Application.get_env(:hal_c2, :auto_actions, true),
-        mc == node(),
-        row["lastErrorClass"] == "usage_limit" or row["limitRecovery"] != nil,
         # Rows trail their streams; decide on the thread as it is now.
         state = HalC2.Streams.state(thread_id),
         shell = HalC2.Projection.Shell.thread_shell(state),

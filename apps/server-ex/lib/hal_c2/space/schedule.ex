@@ -165,8 +165,8 @@ defmodule HalC2.Space.Schedule do
     since = DateTime.add(DateTime.utc_now(), -@recent_ms, :millisecond) |> DateTime.to_iso8601()
 
     rows =
-      for {{mc, id}, {"thread", row}} <- Shell.rows(),
-          mc == node(),
+      for {{_mc, id}, {"thread", row}} <-
+            Shell.query(mc: :local, kind: "thread", present: "updatedAt"),
           row["deletedAt"] == nil and row["archivedAt"] == nil,
           is_binary(row["updatedAt"]) and row["updatedAt"] >= since,
           do: {id, row}

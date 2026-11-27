@@ -130,8 +130,7 @@ defmodule HalC2.Orchestration.Recovery do
   defp own_rows,
     do:
       for(
-        {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node(),
+        {{_mc, thread_id}, {"thread", row}} <- HalC2.Shell.query(mc: :local, kind: "thread"),
         do: {thread_id, row}
       )
 
